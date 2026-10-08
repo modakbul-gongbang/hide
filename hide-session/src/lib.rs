@@ -43,8 +43,8 @@ pub use envelope::envelope_sender;
 pub use sightings::{MAX_SIGHTINGS_PER_OUTPUT, PrSighting, pull_request_addresses};
 
 pub use label_owner::{
-    ConfirmedLabelSession, confirm_label_session, confirm_session_file, label_reference_token,
-    read_session_file, valid_native_id,
+    ConfirmedLabelSession, SessionReadScope, confirm_label_session, confirm_session_file,
+    label_reference_token, read_session_file, valid_native_id,
 };
 
 pub use conversation_cursor::{ConversationCheckpoint, ConversationCursor};

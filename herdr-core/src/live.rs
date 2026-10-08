@@ -2290,18 +2290,79 @@ pub(crate) fn start_agent(
     args: Vec<String>,
     codex_daemon: crate::codex_launch::CodexDaemon,
 ) -> Result<String, String> {
-    crate::agent_start::start_at_shell(
+    start_agent_checked(
+        connector,
+        request_id,
+        pane_id,
+        name,
+        kind,
+        args,
+        codex_daemon,
+        &|| Ok(()),
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // the existing start identity plus its effect admission
+fn start_agent_checked(
+    connector: &dyn ApiConnector,
+    request_id: &str,
+    pane_id: &str,
+    name: &str,
+    kind: &str,
+    args: Vec<String>,
+    codex_daemon: crate::codex_launch::CodexDaemon,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<String, String> {
+    crate::agent_start::start_at_shell_checked(
         connector,
         request_id,
         pane_id,
         wire::agent_start_params(pane_id, name, kind, args, codex_daemon)?,
         Duration::from_secs(5),
+        check,
     )
     .map_err(|error| match error {
         crate::agent_start::StartError::NotStarted(message) => message,
         crate::agent_start::StartError::Herdr(error) => format!("agent.start failed: {error}"),
     })
     .and_then(wire::started_agent)
+}
+
+/// One action-only node proof, never called under Runtime. Authenticated
+/// Identity and Activity facts are checked before and after the bounded read.
+pub(crate) fn confirm_session_launch(
+    node: &dyn crate::node_access::NodeLink,
+    kind: &str,
+    id: &str,
+    cwd: Option<&str>,
+) -> Result<(), String> {
+    if hide_agent_adapter::canonical_kind(kind) != "pi" {
+        return Ok(());
+    }
+    use hide_node_link::sessions::ReaderFeature;
+    let check = || {
+        for feature in [ReaderFeature::Identity, ReaderFeature::Activity] {
+            hide_node_link::link::check_reader_support(node, hide_session::Agent::Pi, feature)
+                .map_err(|_| "session_route_reader_unavailable".to_owned())?;
+        }
+        Ok(())
+    };
+    check()?;
+    let _: hide_session::session_activity::SessionActivity = crate::node_access::call_as(
+        node,
+        hide_node_link::protocol::Call::SessionActivity {
+            request: hide_session::session_activity::SessionActivityRequest {
+                agent: hide_session::Agent::Pi,
+                reference_kind: "id".into(),
+                reference_value: id.into(),
+                cwd: Some(cwd.ok_or("session_route_cwd_unconfirmed")?.into()),
+                exact_route: true,
+            },
+        },
+        Duration::from_secs(10),
+    )
+    .map_err(|_| "session_route_unconfirmed".to_owned())?;
+    check()
 }
 
 fn fetch_pane_layout(
@@ -2833,8 +2894,13 @@ pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<()
             let parent_pane_id = request.parent_pane_id.clone();
             let result = run_agent_fork_with_registration(
                 context.api_connector.as_ref(),
+                context.node.as_ref(),
                 &request,
-                |parent, child| crate::coordination::link_fork(&context, parent, child),
+                &|| fork_execution_current(&context, &request),
+                |parent, child| {
+                    fork_execution_current(&context, &request)?;
+                    crate::coordination::link_fork(&context, parent, child)
+                },
             );
             let elapsed_ms = started.elapsed().as_millis();
             let Some(runtime) = context.runtime.upgrade() else {
@@ -2853,14 +2919,40 @@ pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<()
         .map_err(|error| format!("fork worker could not be started: {error}"))
 }
 
+fn fork_execution_current(context: &LiveContext, request: &ForkRequest) -> Result<(), String> {
+    if request.agent != crate::fork::ForkableAgent::Pi {
+        return Ok(());
+    }
+    let runtime = context.runtime.upgrade().ok_or("runtime stopped")?;
+    let runtime = runtime.lock().map_err(|_| "runtime unavailable")?;
+    if !runtime.fork_request_is_current(request) || !Arc::ptr_eq(&runtime.own_node(), &context.node)
+    {
+        return Err("session_fork_execution_changed".into());
+    }
+    Ok(())
+}
+
 /// Starts the fork without changing the parent's tab for Pi. Legacy providers
 /// retain their sibling split. A pane whose agent never started is closed;
 /// registration never turns a working fork into a failure.
 fn run_agent_fork_with_registration(
     connector: &dyn ApiConnector,
+    node: &dyn crate::node_access::NodeLink,
     request: &ForkRequest,
+    current: &dyn Fn() -> Result<(), String>,
     register: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> Result<String, String> {
+    let check = || {
+        current()?;
+        confirm_session_launch(
+            node,
+            request.agent.kind(),
+            &request.session_id,
+            request.cwd.as_deref(),
+        )?;
+        current()
+    };
+    check()?;
     let child_pane_id = if request.agent == crate::fork::ForkableAgent::Pi {
         let cwd = request
             .cwd
@@ -2880,6 +2972,7 @@ fn run_agent_fork_with_registration(
         if parents.next().is_some() {
             return Err("Pi fork parent has ambiguous workspace ownership".into());
         }
+        check()?;
         create_tab_in(
             connector,
             &parent.workspace_id,
@@ -2898,7 +2991,7 @@ fn run_agent_fork_with_registration(
         )
         .and_then(wire::split_pane)?
     };
-    let started = start_agent(
+    let started = start_agent_checked(
         connector,
         &format!("herdr-core:fork:{}:start", request.name),
         &child_pane_id,
@@ -2906,6 +2999,7 @@ fn run_agent_fork_with_registration(
         request.agent.kind(),
         request.agent.resume_arguments(&request.session_id),
         request.codex_daemon,
+        &check,
     );
     match started {
         Ok(pane_id) => {
@@ -4264,7 +4358,41 @@ mod tests {
 
     #[test]
     fn a_pi_fork_gets_its_own_unfocused_tab_and_failed_start_closes_only_its_pane() {
-        for refused in [false, true] {
+        for case in [
+            "success",
+            "refused",
+            "duplicate-before",
+            "duplicate-after",
+            "execution-after",
+        ] {
+            let refused = case == "refused";
+            let home = tempfile::tempdir().unwrap();
+            let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
+            let folder = home.path().join(".pi/agent/sessions").join(format!(
+                "--{}--",
+                cwd.to_string_lossy()
+                    .trim_start_matches('/')
+                    .replace(['/', '\\', ':'], "-")
+            ));
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(
+                folder.join("native.jsonl"),
+                format!(
+                    "{}\n",
+                    json!({"type":"session", "version":3, "id":"native-pi", "cwd":cwd})
+                ),
+            )
+            .unwrap();
+            let source = folder.join("native.jsonl");
+            let before = std::fs::read(&source).unwrap();
+            if case == "duplicate-before" {
+                std::fs::copy(&source, folder.join("duplicate.jsonl")).unwrap();
+            }
+            let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let observed_changed = Arc::clone(&changed);
+            let node = hide_node::Local::new(Some(home.path().to_path_buf()));
+            let expected_cwd = cwd.display().to_string();
+            let tab_source = source.clone();
             let herdr = FakeHerdr::start_with_errors("pi-fork-tab", move |method, params| {
                 Ok(match method {
                     "session.snapshot" => json!({"type": "session_snapshot", "snapshot": {
@@ -4277,8 +4405,18 @@ mod tests {
                                 "rect":{"x":0,"y":0,"width":80,"height":24}}], "splits": []}]
                     }}),
                     "tab.create" => {
+                        if case == "duplicate-after" {
+                            std::fs::copy(
+                                &tab_source,
+                                tab_source.with_file_name("duplicate.jsonl"),
+                            )
+                            .unwrap();
+                        }
+                        if case == "execution-after" {
+                            observed_changed.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
                         assert_eq!(params["workspace_id"], "w1");
-                        assert_eq!(params["cwd"], "/checkout");
+                        assert_eq!(params["cwd"], expected_cwd);
                         assert_eq!(params["focus"], false);
                         json!({"type":"tab_created",
                             "tab":{"tab_id":"w1:t2","workspace_id":"w1","number":2,"label":"fork", "focused":false,"pane_count":1,"agent_status":"idle"},
@@ -4305,17 +4443,35 @@ mod tests {
                 })
             });
             let request = ForkRequest {
+                parent_state_change_seq: None,
+                connection_generation: 0,
                 codex_daemon: Default::default(),
                 parent_pane_id: "parent-pane".into(),
                 agent: crate::fork::ForkableAgent::Pi,
                 session_id: "native-pi".into(),
-                cwd: Some("/checkout".into()),
+                cwd: Some(cwd.display().to_string()),
                 name: "fork-pi-1".into(),
             };
-            let result =
-                run_agent_fork_with_registration(&herdr.connector(), &request, |_, _| Ok(()));
-            assert_eq!(result.is_err(), refused);
-            if !refused {
+            let result = run_agent_fork_with_registration(
+                &herdr.connector(),
+                &node,
+                &request,
+                &|| {
+                    if changed.load(std::sync::atomic::Ordering::SeqCst) {
+                        Err("session_fork_execution_changed".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_, _| Ok(()),
+            );
+            assert_eq!(result.is_err(), case != "success", "{case}");
+            assert_eq!(
+                std::fs::read(&source).unwrap(),
+                before,
+                "fork never rewrites its source"
+            );
+            if case == "success" {
                 assert_eq!(result.unwrap(), "child-pane");
             }
             let mut expected = vec![
@@ -4324,10 +4480,15 @@ mod tests {
                 "pane.process_info",
                 "agent.start",
             ];
-            if refused {
+            if case == "duplicate-before" {
+                expected.clear();
+            } else if case == "duplicate-after" || case == "execution-after" {
+                expected.pop();
+                expected.push("pane.close");
+            } else if refused {
                 expected.push("pane.close");
             }
-            assert_eq!(herdr.methods(), expected);
+            assert_eq!(herdr.methods(), expected, "{case}");
         }
     }
 
@@ -4351,6 +4512,8 @@ mod tests {
             other => panic!("unexpected {other}"),
         });
         let request = ForkRequest {
+            parent_state_change_seq: None,
+            connection_generation: 0,
             codex_daemon: crate::codex_launch::CodexDaemon::Present,
             parent_pane_id: "parent-pane".to_owned(),
             agent: crate::fork::ForkableAgent::Codex,
@@ -4359,9 +4522,13 @@ mod tests {
             name: "fork-parent-pane-1".to_owned(),
         };
 
-        let pane_id = run_agent_fork_with_registration(&herdr.connector(), &request, |_, _| {
-            Err("ledger_unavailable".into())
-        })
+        let pane_id = run_agent_fork_with_registration(
+            &herdr.connector(),
+            &hide_node::Local::new(None),
+            &request,
+            &|| Ok(()),
+            |_, _| Err("ledger_unavailable".into()),
+        )
         .expect("registration cannot close a started fork");
         assert_eq!(pane_id, "child-pane");
         assert_eq!(

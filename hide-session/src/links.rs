@@ -259,8 +259,8 @@ pub(crate) fn claude_line(item: &Value, offset: u64, links: &mut LinkAccumulator
 
 /// Pi records a native owner and cwd, but no branch, interactive marker or
 /// subagent identity. parentSession is a file pointer, not a native id.
-pub(crate) fn pi_line(item: &Value, _offset: u64, links: &mut LinkAccumulator) {
-    if item["type"] == "session" {
+pub(crate) fn pi_line(item: &Value, offset: u64, links: &mut LinkAccumulator) {
+    if offset == 0 && item["type"] == "session" && item["version"] == 3 {
         links.facts.session_id = item["id"].as_str().map(str::to_owned);
         links.facts.cwd = item["cwd"].as_str().map(str::to_owned);
     }
@@ -614,8 +614,10 @@ fn read_one(home: &std::path::Path, request: &ReadRequest) -> ReadAnswer {
     } else {
         None
     };
+    let stamp = crate::search_read::stamp_at(&path);
     match cursor.read(request.agent, &path) {
         Ok(parsed) => {
+            let mut facts = parsed.links;
             if let Some((header, before)) = pi_before {
                 let after = crate::confirm_session_file(
                     home,
@@ -625,16 +627,16 @@ fn read_one(home: &std::path::Path, request: &ReadRequest) -> ReadAnswer {
                     header.cwd.to_str(),
                 );
                 if !after.is_ok_and(|after| {
-                    after.owner == before.owner
-                        && after.incarnation == before.incarnation
-                        && after.bytes >= before.bytes
+                    crate::label_owner::same_read(&path, &before, &after, stamp.as_deref())
                 }) {
                     answer.error = Some("label_session_read_changed".to_owned());
                     return answer;
                 }
+                facts.session_id = Some(header.id);
+                facts.cwd = header.cwd.to_str().map(str::to_owned);
             }
             answer.rescanned = parsed.rescan_reason.is_some();
-            answer.facts = parsed.links;
+            answer.facts = facts;
             answer.checkpoint = Some(cursor.checkpoint());
             answer.has_more = cursor.has_more();
         }

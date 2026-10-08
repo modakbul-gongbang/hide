@@ -18,6 +18,9 @@ pub struct SessionActivityRequest {
     pub reference_value: String,
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Action-only proof that the exact native ID has one safe CLI route.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exact_route: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +37,16 @@ pub fn read(home: &Path, request: &SessionActivityRequest) -> Result<SessionActi
         &request.reference_value,
         request.cwd.as_deref(),
     )?;
+    if request.exact_route {
+        if request.agent != Agent::Pi {
+            return Err("session_route_unsupported".to_owned());
+        }
+        let native_id = before
+            .native_session_id
+            .as_deref()
+            .ok_or("session_route_unconfirmed")?;
+        crate::pi::confirm_route(home, &path, native_id).map_err(|error| error.to_string())?;
+    }
     let metadata =
         std::fs::metadata(&path).map_err(|_| "session_activity_stat_failed".to_owned())?;
     let identity = FileIdentity::from_metadata(&metadata);
@@ -104,6 +117,7 @@ mod tests {
             reference_kind: "path".to_owned(),
             reference_value: path.to_string_lossy().into_owned(),
             cwd: None,
+            exact_route: false,
         }
     }
 
@@ -169,6 +183,7 @@ mod tests {
             reference_kind: "id".into(),
             reference_value: "missing-native".into(),
             cwd: None,
+            exact_route: false,
         };
         assert_eq!(read(home.path(), &input).unwrap_err(), "session_capacity");
         assert!(
@@ -189,6 +204,7 @@ mod tests {
                 reference_kind: "id".into(),
                 reference_value: "native-a".into(),
                 cwd: None,
+                exact_route: false,
             };
             let before = read(home.path(), &input).unwrap();
             use std::io::Write;

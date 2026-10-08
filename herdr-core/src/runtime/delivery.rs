@@ -149,6 +149,7 @@ impl Runtime {
                         reference_kind: reference.kind.clone(),
                         reference_value: reference.value.clone(),
                         cwd: agent.cwd.clone().filter(|cwd| cwd.len() <= 4096),
+                        exact_route: false,
                     }
                 });
             let observation = Observation {

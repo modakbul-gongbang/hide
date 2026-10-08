@@ -4347,6 +4347,17 @@ impl Runtime {
             .as_ref()
             .filter(|launch| launch.task == id);
         Some(live::PendingAgentStart {
+            resume_scope: launch
+                .filter(|launch| {
+                    operation.agent_kind.as_deref() == Some("pi")
+                        && launch.args.first().map(String::as_str) == Some("--session")
+                })
+                .and_then(|launch| {
+                    Some(hide_session::SessionReadScope {
+                        id: launch.args.get(1)?.clone(),
+                        cwd: operation.path.clone()?,
+                    })
+                }),
             pane_id: pane_id.to_owned(),
             kind: operation.agent_kind.clone()?,
             prompt: launch.and_then(|launch| launch.prompt.clone()),

@@ -172,6 +172,19 @@ fn persisted_dormant(path: &Path, id: &crate::agent_sleep::SleepId) -> serde_jso
 #[test]
 #[cfg(unix)]
 fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmation() {
+    durable_dormant_journey("claude", "none");
+}
+
+#[test]
+#[cfg(unix)]
+fn a_pi_dormant_journey_refuses_a_changed_route_before_close_wake_or_start() {
+    for phase in ["none", "before-close", "before-wake", "before-start"] {
+        durable_dormant_journey("pi", phase);
+    }
+}
+
+#[cfg(unix)]
+fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     use crate::agent_sleep::DormantPhase;
     let folder = tempfile::tempdir().unwrap();
     let cwd = folder
@@ -182,18 +195,60 @@ fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmat
         .unwrap()
         .to_owned();
     let (mut runtime, _) = live_tab_order_runtime(&cwd);
+    let home = tempfile::tempdir().unwrap();
+    let native_folder = home.path().join(".pi/agent/sessions").join(format!(
+        "--{}--",
+        cwd.trim_start_matches(['/', '\\'])
+            .replace(['/', '\\', ':'], "-")
+    ));
+    std::fs::create_dir_all(&native_folder).unwrap();
+    let native_path = native_folder.join("native.jsonl");
+    let native_id = "11111111-2222-3333-4444-555555555555";
+    std::fs::write(
+        &native_path,
+        format!(
+            "{}\n",
+            serde_json::json!({"type":"session", "version":3, "id":native_id, "cwd":cwd})
+        ),
+    )
+    .unwrap();
+    let native_before = std::fs::read(&native_path).unwrap();
+    if kind == "pi" {
+        runtime.own_node = Arc::new(hide_node::Local::new(Some(home.path().to_path_buf())));
+        runtime.live.as_mut().unwrap().node = runtime.own_node();
+    }
     let mut initial = session(Some(4));
     for pane in &mut initial.panes {
         pane.cwd = Some(cwd.clone());
     }
     initial.agents[0].cwd = Some(cwd.clone());
+    initial.agents[0].agent = Some(kind.into());
+    initial.agents[0].facts = Some(crate::request_view::RowFacts {
+        native_session_id: Some(native_id.into()),
+        ..Default::default()
+    });
     runtime.ingest_session(Ok(initial));
     let id = dormant_intent(&mut runtime);
+    {
+        let record = runtime
+            .snapshot
+            .ui_state
+            .agent_sleep
+            .dormant
+            .get_mut(&id)
+            .unwrap();
+        record.kind = kind.into();
+        record.label_owner = hide_session::label_reference_token(kind, "id", native_id).unwrap();
+    }
+    if interference == "before-close" {
+        std::fs::copy(&native_path, native_folder.join("duplicate.jsonl")).unwrap();
+    }
     assert_eq!(runtime.snapshot.ui_state.agent_sleep.dormant[&id].cwd, cwd);
     let path = runtime.state_path.clone();
     let saved_path = path.clone();
     let saved_id = id.clone();
     let saved_cwd = cwd.clone();
+    let create_source = native_path.clone();
     let (effects, observed) = std::sync::mpsc::channel();
     let mut created = false;
     let herdr = FakeHerdr::start("dormant-success", move |method, params| match method {
@@ -225,6 +280,13 @@ fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmat
             serde_json::json!({"type":"session_snapshot","snapshot":dormant_wire_session(&saved_cwd, &tabs)})
         }
         "layout.apply" => {
+            if interference == "before-start" {
+                std::fs::copy(
+                    &create_source,
+                    create_source.with_file_name("duplicate.jsonl"),
+                )
+                .unwrap();
+            }
             assert_eq!(
                 persisted_dormant(&saved_path, &saved_id)["phase"],
                 "saving_wake"
@@ -253,10 +315,17 @@ fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmat
             assert_eq!(saved["phase"], "saving_start");
             assert_eq!(saved["wake_pane_id"], "w-order:t3:p");
             assert_eq!(params["pane_id"], "w-order:t3:p");
-            assert_eq!(params["kind"], "claude");
+            assert_eq!(params["kind"], kind);
             assert_eq!(
                 params["args"],
-                serde_json::json!(["--resume", "11111111-2222-3333-4444-555555555555"])
+                serde_json::json!([
+                    if kind == "pi" {
+                        "--session"
+                    } else {
+                        "--resume"
+                    },
+                    "11111111-2222-3333-4444-555555555555"
+                ])
             );
             effects.send("start").unwrap();
             serde_json::json!({"type":"agent_started","argv":[],"agent":{
@@ -270,6 +339,32 @@ fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmat
     let shared = Arc::new(std::sync::Mutex::new(runtime));
     shared.lock().unwrap().live.as_mut().unwrap().runtime = Arc::downgrade(&shared);
     shared.lock().unwrap().write_ui_state().unwrap();
+    if interference == "before-close" {
+        wait_for("refused Pi close", || {
+            !shared
+                .lock()
+                .unwrap()
+                .snapshot
+                .ui_state
+                .agent_sleep
+                .dormant
+                .contains_key(&id)
+        });
+        // Capturing the old layout is read-only. B2/B8 forbid close or launch
+        // effects after the exact native route becomes unconfirmed.
+        assert!(observed.try_recv().is_err());
+        assert!(
+            !herdr.methods().iter().any(|method| matches!(
+                method.as_str(),
+                "pane.close" | "tab.close" | "layout.apply" | "agent.start"
+            )),
+            "unexpected effect: {:?}",
+            herdr.methods()
+        );
+        assert_eq!(row(&shared.lock().unwrap())["pane_id"], SLEEPER);
+        assert_eq!(std::fs::read(&native_path).unwrap(), native_before);
+        return;
+    }
     assert_eq!(
         observed.recv_timeout(Duration::from_secs(5)).unwrap(),
         "close"
@@ -300,13 +395,50 @@ fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmat
             DormantPhase::Sleeping
         );
         assert_eq!(runtime.snapshot.recent_closed.count, 0);
+        if interference == "before-wake" {
+            std::fs::copy(&native_path, native_folder.join("duplicate.jsonl")).unwrap();
+        }
         assert!(runtime.request_dormant_wake(&id));
         assert!(!runtime.request_dormant_wake(&id));
+    }
+    if interference == "before-wake" {
+        wait_for("refused Pi wake tab", || {
+            shared.lock().unwrap().snapshot.ui_state.agent_sleep.dormant[&id].phase
+                == DormantPhase::Failed
+        });
+        assert!(
+            !herdr
+                .methods()
+                .iter()
+                .any(|method| matches!(method.as_str(), "layout.apply" | "agent.start"))
+        );
+        assert!(
+            shared.lock().unwrap().snapshot.ui_state.agent_sleep.dormant[&id]
+                .wake_pane_id
+                .is_none()
+        );
+        assert_eq!(std::fs::read(&native_path).unwrap(), native_before);
+        return;
     }
     assert_eq!(
         observed.recv_timeout(Duration::from_secs(5)).unwrap(),
         "create"
     );
+    if interference == "before-start" {
+        wait_for("refused Pi wake start", || {
+            shared.lock().unwrap().snapshot.ui_state.agent_sleep.dormant[&id].phase
+                == DormantPhase::Failed
+        });
+        assert!(!herdr.methods().iter().any(|method| method == "agent.start"));
+        assert_eq!(
+            shared.lock().unwrap().snapshot.ui_state.agent_sleep.dormant[&id]
+                .wake_pane_id
+                .as_deref(),
+            Some("w-order:t3:p")
+        );
+        assert_eq!(std::fs::read(&native_path).unwrap(), native_before);
+        return;
+    }
     assert_eq!(
         observed.recv_timeout(Duration::from_secs(5)).unwrap(),
         "start"
@@ -336,9 +468,13 @@ fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmat
             "w-order:t1",
         );
         let mut agent = session(Some(5)).agents.remove(0);
+        agent.agent = Some(kind.into());
         agent.pane_id = Some("w-order:t3:p".into());
         agent.cwd = Some(cwd.clone());
-        agent.facts = Some(Default::default());
+        agent.facts = Some(crate::request_view::RowFacts {
+            native_session_id: Some(native_id.into()),
+            ..Default::default()
+        });
         confirmed.agents.push(agent);
         runtime.ingest_session(Ok(confirmed));
         assert!(runtime.snapshot.navigator.sleeping_sessions.is_empty());

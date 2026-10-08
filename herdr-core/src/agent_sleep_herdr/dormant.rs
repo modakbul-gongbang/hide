@@ -21,7 +21,7 @@ pub(crate) enum DormantStartOutcome {
 
 pub(crate) enum DormantTabOutcome {
     Created(String, String, Box<SessionSnapshotPayload>),
-    NotCreated,
+    NotCreated(&'static str),
     Unknown,
 }
 
@@ -94,33 +94,40 @@ pub(crate) fn spawn_dormant_tab(
             if !work_is_current(&context, &work) {
                 return;
             }
-            let result =
-                if !crate::node_access::is_directory(context.node.as_ref(), &work.record.cwd) {
-                    DormantTabOutcome::NotCreated
-                } else {
-                    match crate::live::create_sleep_tab(
-                        &CurrentWorkConnector {
-                            context: context.clone(),
-                            intent: CurrentIntent::Wake(Arc::new(work.clone())),
-                        },
-                        context.node.as_ref(),
-                        work.id.as_str(),
-                        &work.record.context,
-                        &owner,
-                        &work.record.cwd,
-                    ) {
-                        Ok((tab, pane, snapshot)) => {
-                            DormantTabOutcome::Created(tab, pane, Box::new(snapshot))
-                        }
-                        Err(_) => {
-                            crate::diagnostic!(serde_json::json!({
-                                "component": "agent_sleep", "kind": "agent_sleep.tab_unconfirmed",
-                                "sleep_id": work.id.as_str(),
-                            }));
-                            DormantTabOutcome::Unknown
-                        }
+            let route = crate::live::confirm_session_launch(
+                context.node.as_ref(),
+                &work.record.kind,
+                &work.record.native_session_id,
+                Some(&work.record.cwd),
+            );
+            let result = if route.is_err() {
+                DormantTabOutcome::NotCreated("The saved conversation has no confirmed native route. Check its records before retrying; no tab was created.")
+            } else if !crate::node_access::is_directory(context.node.as_ref(), &work.record.cwd) {
+                DormantTabOutcome::NotCreated("The saved working folder is unavailable. Restore it before retrying; no tab was created.")
+            } else {
+                match crate::live::create_sleep_tab(
+                    &CurrentWorkConnector {
+                        context: context.clone(),
+                        intent: CurrentIntent::Wake(Arc::new(work.clone())),
+                    },
+                    context.node.as_ref(),
+                    work.id.as_str(),
+                    &work.record.context,
+                    &owner,
+                    &work.record.cwd,
+                ) {
+                    Ok((tab, pane, snapshot)) => {
+                        DormantTabOutcome::Created(tab, pane, Box::new(snapshot))
                     }
-                };
+                    Err(_) => {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "agent_sleep", "kind": "agent_sleep.tab_unconfirmed",
+                            "sleep_id": work.id.as_str(),
+                        }));
+                        DormantTabOutcome::Unknown
+                    }
+                }
+            };
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
             };
@@ -216,6 +223,38 @@ fn intent_is_current(context: &LiveContext, intent: &CurrentIntent) -> bool {
 
 impl ApiConnector for CurrentWorkConnector {
     fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError> {
+        if let CurrentIntent::Close(effect) = &self.intent {
+            let record = self
+                .context
+                .runtime
+                .upgrade()
+                .and_then(|runtime| {
+                    runtime
+                        .lock()
+                        .ok()?
+                        .snapshot()
+                        .ui_state
+                        .agent_sleep
+                        .dormant
+                        .values()
+                        .find(|record| record.close_key.as_deref() == Some(effect.key.as_str()))
+                        .cloned()
+                })
+                .ok_or_else(|| ApiError::Remote {
+                    code: "sleep_intent_superseded".into(),
+                    message: "Sleeping session changed".into(),
+                })?;
+            crate::live::confirm_session_launch(
+                self.context.node.as_ref(),
+                &record.kind,
+                &record.native_session_id,
+                Some(&record.cwd),
+            )
+            .map_err(|reason| ApiError::Remote {
+                code: reason,
+                message: "Session route is unconfirmed".into(),
+            })?;
+        }
         let stream = self.context.api_connector.connect()?;
         Ok(Box::new(CurrentWorkStream {
             stream,
@@ -291,12 +330,20 @@ fn start_dormant(
         Ok(params) => params,
         Err(_) => return DormantStartOutcome::NotStarted,
     };
-    match crate::agent_start::start_at_shell(
+    match crate::agent_start::start_at_shell_checked(
         connector,
         &format!("hide:{}:resume", work.id.as_str()),
         pane,
         params,
         Duration::from_millis(AGENT_START_TIMEOUT_MS + 5_000),
+        &|| {
+            crate::live::confirm_session_launch(
+                node,
+                &work.record.kind,
+                &work.record.native_session_id,
+                Some(&work.record.cwd),
+            )
+        },
     ) {
         Ok(_) => DormantStartOutcome::Started,
         Err(StartError::NotStarted(_)) | Err(StartError::Herdr(ApiError::Remote { .. })) => {

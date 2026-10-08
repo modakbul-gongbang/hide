@@ -572,16 +572,25 @@ mod pi {
         let mut index =
             hide_session::search::SearchIndex::open(&native.home.path().join("index.sqlite3"))
                 .unwrap();
-        hide_session::read_session_file(native.home.path(), Agent::Pi, &native.path, || {
-            hide_session::search_read::update(
-                &mut index,
-                &project.id,
-                "pi-native-a",
-                Agent::Pi,
-                &native.path,
-                0,
-            )
-        })
+        hide_session::read_session_file(
+            native.home.path(),
+            Agent::Pi,
+            &native.path,
+            Some(&hide_session::SessionReadScope {
+                id: "pi-native-a".into(),
+                cwd: native.cwd.display().to_string(),
+            }),
+            || {
+                hide_session::search_read::update(
+                    &mut index,
+                    &project.id,
+                    "pi-native-a",
+                    Agent::Pi,
+                    &native.path,
+                    0,
+                )
+            },
+        )
         .unwrap();
         let results = hide_session::search_read::search(&index, &project.id, "긴 요청", 0).unwrap();
         assert_eq!(results.hits.len(), 1);
@@ -649,6 +658,214 @@ mod pi {
             .to_string(),
             "label_session_id_unresumable"
         );
+    }
+
+    fn route(native: &Native) -> Result<hide_session::session_activity::SessionActivity, String> {
+        hide_session::session_activity::read(
+            native.home.path(),
+            &hide_session::session_activity::SessionActivityRequest {
+                agent: Agent::Pi,
+                reference_kind: "id".into(),
+                reference_value: "pi-native-a".into(),
+                cwd: native.cwd.to_str().map(str::to_owned),
+                exact_route: true,
+            },
+        )
+    }
+
+    #[test]
+    fn native_route_refuses_duplicate_histories_and_missing_exact_ids_before_prefix_fallback() {
+        let native = Native::new();
+        assert!(route(&native).is_ok());
+        let duplicate = native.path.with_file_name("zz-duplicate.jsonl");
+        fs::copy(&native.path, &duplicate).unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&duplicate)
+            .unwrap()
+            .write_all(b"different history\n")
+            .unwrap();
+        assert_eq!(route(&native).unwrap_err(), "session_route_ambiguous");
+        let by_path = hide_session::session_activity::SessionActivityRequest {
+            agent: Agent::Pi,
+            reference_kind: "path".into(),
+            reference_value: duplicate.display().to_string(),
+            cwd: native.cwd.to_str().map(str::to_owned),
+            exact_route: true,
+        };
+        assert_eq!(
+            hide_session::session_activity::read(native.home.path(), &by_path).unwrap_err(),
+            "session_route_ambiguous"
+        );
+        // A reported path alone remains readable, but does not authorize CLI routing.
+        assert!(
+            hide_session::confirm_session_file(
+                native.home.path(),
+                Agent::Pi,
+                &duplicate,
+                Some("pi-native-a"),
+                native.cwd.to_str()
+            )
+            .is_ok()
+        );
+        fs::remove_file(duplicate).unwrap();
+        let contents = fs::read_to_string(&native.path).unwrap();
+        fs::write(
+            &native.path,
+            contents.replace("pi-native-a", "pi-native-ab"),
+        )
+        .unwrap();
+        assert!(
+            route(&native).is_err(),
+            "missing exact ID cannot borrow its native prefix match"
+        );
+    }
+
+    #[test]
+    fn native_route_refuses_uninspectable_candidates_and_aggregate_metadata_capacity() {
+        let native = Native::new();
+        let sibling = native.path.with_file_name("candidate.jsonl");
+        for content in [
+            "not-json\n",
+            "\n{\"type\":\"session\",\"id\":\"pi-native-a\"}\n",
+            "{}",
+        ] {
+            fs::write(&sibling, content).unwrap();
+            assert!(route(&native).is_err());
+        }
+        fs::remove_file(&sibling).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&native.path, &sibling).unwrap();
+            assert!(route(&native).is_err());
+            fs::remove_file(&sibling).unwrap();
+        }
+        for index in 0..6 {
+            let header = json!({"type":"session", "version":3, "id":format!("other-{index}"),
+                "cwd":native.cwd, "padding":"x".repeat(200_000)});
+            fs::write(
+                native.path.with_file_name(format!("budget-{index}.jsonl")),
+                format!("{header}\n"),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            route(&native).unwrap_err(),
+            "session_route_capacity",
+            "the whole candidate set shares one metadata budget"
+        );
+    }
+
+    #[test]
+    fn queued_reads_refuse_replacement_owner_before_the_body_reader_runs() {
+        let native = Native::new();
+        let expected = hide_session::SessionReadScope {
+            id: "pi-native-a".into(),
+            cwd: native.cwd.display().to_string(),
+        };
+        let old = fs::read_to_string(&native.path).unwrap();
+        fs::write(&native.path, old.replace("pi-native-a", "pi-native-b")).unwrap();
+        let called = std::cell::Cell::new(false);
+        let result = hide_session::read_session_file(
+            native.home.path(),
+            Agent::Pi,
+            &native.path,
+            Some(&expected),
+            || {
+                called.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(result.unwrap_err(), "label_session_id_mismatch");
+        assert!(!called.get());
+        assert!(
+            hide_session::read_session_file(
+                native.home.path(),
+                Agent::Pi,
+                &native.path,
+                None,
+                || Ok(())
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn incremental_link_facts_keep_the_proven_first_header_despite_later_session_records() {
+        let native = Native::new();
+        let mut request = hide_session::links::ReadRequest {
+            agent: Agent::Pi,
+            path: native.path.display().to_string(),
+            checkpoint: None,
+        };
+        let first = hide_session::links::read(native.home.path(), &[request.clone()]).remove(0);
+        assert!(first.error.is_none());
+        request.checkpoint = first.checkpoint;
+        native.append(json!({"type":"session", "version":0, "id":"other-owner", "cwd":"/other"}));
+        native.append(json!({"type":"message", "timestamp":"2026-10-03T01:02:00Z", "message":{"role":"toolResult", "content":[{"type":"text", "text":"https://github.com/acme/project/pull/44"}]}}));
+        let next = hide_session::links::read(native.home.path(), &[request]).remove(0);
+        assert!(next.error.is_none());
+        assert_eq!(next.facts.session_id.as_deref(), Some("pi-native-a"));
+        assert_eq!(next.facts.cwd.as_deref(), native.cwd.to_str());
+        assert!(next.facts.prs.iter().any(|pr| pr.number == 44));
+    }
+
+    #[test]
+    fn native_route_and_queued_reads_do_not_trust_colliding_encoded_checkouts() {
+        let mut native = Native::new();
+        let a = native.home.path().join("a-b");
+        let b = native.home.path().join("a/b");
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        let a = hide_platform::fs::identity::canonical(&a).unwrap();
+        let b = hide_platform::fs::identity::canonical(&b).unwrap();
+        let folder = native.home.path().join(".pi/agent/sessions").join(format!(
+            "--{}--",
+            a.to_string_lossy()
+                .trim_start_matches(['/', '\\'])
+                .replace(['/', '\\', ':'], "-")
+        ));
+        fs::create_dir_all(&folder).unwrap();
+        native.path = folder.join("a.jsonl");
+        native.cwd = a.clone();
+        fs::write(
+            &native.path,
+            format!(
+                "{}\n",
+                json!({"type":"session", "version":3, "id":"pi-native-a", "cwd":a})
+            ),
+        )
+        .unwrap();
+        assert!(route(&native).is_ok());
+        fs::write(
+            folder.join("b.jsonl"),
+            format!(
+                "{}\n",
+                json!({"type":"session", "version":3, "id":"pi-native-a", "cwd":b})
+            ),
+        )
+        .unwrap();
+        assert_eq!(route(&native).unwrap_err(), "session_route_ambiguous");
+        let expected = hide_session::SessionReadScope {
+            id: "pi-native-a".into(),
+            cwd: a.display().to_string(),
+        };
+        fs::write(
+            &native.path,
+            format!(
+                "{}\n",
+                json!({"type":"session", "version":3, "id":"pi-native-a", "cwd":b})
+            ),
+        )
+        .unwrap();
+        let result = hide_session::read_session_file(
+            native.home.path(),
+            Agent::Pi,
+            &native.path,
+            Some(&expected),
+            || Ok(()),
+        );
+        assert_eq!(result.unwrap_err(), "label_session_cwd_mismatch");
     }
 
     #[test]

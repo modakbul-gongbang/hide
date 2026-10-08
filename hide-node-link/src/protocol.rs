@@ -445,12 +445,16 @@ pub enum Call {
         agent: hide_session::Agent,
         path: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<hide_session::SessionReadScope>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         saved: Option<hide_session::search::SavedFile>,
     },
     /// Each session file's current stamp, `null` for one gone or
     /// unreadable, at most `hide_session::search::STAMP_LIMIT` paths.
     SessionStamps {
         paths: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scopes: Option<Vec<Option<hide_session::SessionReadScope>>>,
     },
     /// The agent sessions the node holds for `project`, newest first, at most
     /// `hide_session::SESSION_DISCOVERY_LIMIT` files visited
@@ -468,11 +472,15 @@ pub enum Call {
     /// The session file's size and modification time (`sessions::SessionStat`).
     SessionStat {
         path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<hide_session::SessionReadScope>,
     },
     /// The complete lines of the session file at `path` past `checkpoint`,
     /// one bounded read (`sessions::SessionChunk`).
     SessionChunk {
         path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<hide_session::SessionReadScope>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         checkpoint: Option<hide_session::CursorCheckpoint>,
     },
@@ -480,6 +488,8 @@ pub enum Call {
     /// `hide_session::SESSION_READ_LIMIT_BYTES`, as text.
     SessionText {
         path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<hide_session::SessionReadScope>,
     },
     /// Starts this node's pane service for the Herdr at `herdr_socket`: the
     /// bootstrap socket a device pane's `hide` asks on. Answered with

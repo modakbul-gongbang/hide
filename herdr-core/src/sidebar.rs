@@ -664,6 +664,9 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .as_ref()
             .and_then(|facts| facts.native_session_id.clone())
             .or_else(|| {
+                if hide_agent_adapter::canonical_kind(agent_kind) == "pi" {
+                    return None;
+                }
                 agent
                     .agent_session
                     .as_ref()
@@ -1639,6 +1642,24 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_reported_pi_id_grants_no_fork_until_the_current_reader_proves_it() {
+        let mut agent: SessionAgentPayload = serde_json::from_value(json!({
+            "pane_id":"p", "agent":"pi", "agent_status":"idle", "state_change_seq":1,
+            "agent_session":{"kind":"id", "value":"reported-native-id"}
+        }))
+        .unwrap();
+        assert!(project_agent(agent.clone()).unwrap().session_id.is_none());
+        agent.facts = Some(crate::request_view::RowFacts {
+            native_session_id: Some("proven-native-id".into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            project_agent(agent).unwrap().session_id.as_deref(),
+            Some("proven-native-id")
+        );
     }
 
     /// The old `summary` token is not read: a plugin still publishing it

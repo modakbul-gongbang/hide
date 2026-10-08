@@ -155,6 +155,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         request.cwd.as_deref(),
     )?;
     let reported_id = (request.reference_kind == "id").then_some(request.reference_value.as_str());
+    let stamp = crate::search_read::stamp_at(&path);
     let mut cursor = request
         .checkpoint
         .clone()
@@ -185,10 +186,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         request.cwd.as_deref(),
     )
     .map_err(|error| error.to_string())?;
-    if after.owner != before.owner
-        || after.incarnation != before.incarnation
-        || after.bytes < before.bytes
-    {
+    if !crate::label_owner::same_read(&path, &before, &after, stamp.as_deref()) {
         return Err("label_session_read_changed".to_owned());
     }
     let mut events = Vec::with_capacity(parsed.events.len());

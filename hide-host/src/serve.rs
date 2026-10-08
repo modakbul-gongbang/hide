@@ -291,6 +291,7 @@ fn session_file(env: &Env, agents: &[hide_session::Agent], path: &str) -> HostRe
 fn session_read<T: serde::Serialize>(
     env: &Env,
     path: &str,
+    scope: Option<&hide_session::SessionReadScope>,
     read: impl FnOnce(&Path) -> Result<T, String>,
 ) -> HostResult<serde_json::Value> {
     let path = session_file(env, &SESSION_FILE_AGENTS, path)?;
@@ -303,7 +304,7 @@ fn session_read<T: serde::Serialize>(
             hide_session::Agent::Claude
         };
     to_value(
-        hide_session::read_session_file(home, agent, &path, || read(&path))
+        hide_session::read_session_file(home, agent, &path, scope, || read(&path))
             .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
     )
 }
@@ -756,16 +757,25 @@ pub fn handle_with_progress(
                     .map_err(|code| HostError::new(ErrorCode::Io, code))?;
             to_value(listed)
         }
-        Call::SessionIndexRead { agent, path, saved } => {
+        Call::SessionIndexRead {
+            agent,
+            path,
+            saved,
+            scope,
+        } => {
             let path = session_file(env, &[agent], &path)?;
             let home = env.home("sessions_home_unavailable")?;
-            let (step, _) = hide_session::read_session_file(Path::new(&home), agent, &path, || {
-                hide_session::search_read::read_step(saved.as_ref(), agent, &path)
-            })
+            let (step, _) = hide_session::read_session_file(
+                Path::new(&home),
+                agent,
+                &path,
+                scope.as_ref(),
+                || hide_session::search_read::read_step(saved.as_ref(), agent, &path),
+            )
             .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
             to_value(step)
         }
-        Call::SessionStamps { paths } => {
+        Call::SessionStamps { paths, scopes } => {
             if paths.len() > hide_session::search::STAMP_LIMIT {
                 return Err(HostError::new(
                     ErrorCode::InvalidRequest,
@@ -779,7 +789,8 @@ pub fn handle_with_progress(
             to_value(
                 paths
                     .iter()
-                    .map(|path| {
+                    .enumerate()
+                    .map(|(index, path)| {
                         let path = Path::new(path);
                         if !path.is_absolute() {
                             return None;
@@ -801,9 +812,17 @@ pub fn handle_with_progress(
                         } else {
                             hide_session::Agent::Claude
                         };
-                        hide_session::read_session_file(Path::new(&home), agent, &path, || {
-                            Ok(hide_session::search_read::stamp_at(&path))
-                        })
+                        let scope = scopes
+                            .as_ref()
+                            .and_then(|scopes| scopes.get(index))
+                            .and_then(Option::as_ref);
+                        hide_session::read_session_file(
+                            Path::new(&home),
+                            agent,
+                            &path,
+                            scope,
+                            || Ok(hide_session::search_read::stamp_at(&path)),
+                        )
                         .ok()
                         .flatten()
                     })
@@ -818,10 +837,14 @@ pub fn handle_with_progress(
                     .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?;
             to_value(sessions)
         }
-        Call::SessionStat { path } => session_read(env, &path, |path| {
+        Call::SessionStat { path, scope } => session_read(env, &path, scope.as_ref(), |path| {
             crate::sessions::stat(path).map_err(|e| e.to_string())
         }),
-        Call::SessionChunk { path, checkpoint } => session_read(env, &path, |path| {
+        Call::SessionChunk {
+            path,
+            checkpoint,
+            scope,
+        } => session_read(env, &path, scope.as_ref(), |path| {
             crate::sessions::chunk(path, checkpoint).map_err(|e| e.to_string())
         }),
         Call::PanesStart { .. }
@@ -832,7 +855,7 @@ pub fn handle_with_progress(
             ErrorCode::Unsupported,
             "Only a device node's link carries its panes' credentials and commands",
         )),
-        Call::SessionText { path } => session_read(env, &path, |path| {
+        Call::SessionText { path, scope } => session_read(env, &path, scope.as_ref(), |path| {
             hide_session::read_bounded(path, hide_session::SESSION_READ_LIMIT_BYTES)
                 .map_err(|e| e.to_string())
         }),
@@ -954,6 +977,7 @@ mod tests {
             reference_kind: "path".to_owned(),
             reference_value: path.to_string_lossy().into_owned(),
             cwd: None,
+            exact_route: false,
         };
         let answer = session_activity(home.path(), &request).unwrap();
         assert_eq!(answer.as_object().unwrap().len(), 2);
@@ -996,15 +1020,23 @@ mod tests {
         let named = |path: &Path| path.to_string_lossy().into_owned();
         let reads = |path: String| {
             vec![
-                Call::SessionText { path: path.clone() },
-                Call::SessionStat { path: path.clone() },
+                Call::SessionText {
+                    path: path.clone(),
+                    scope: None,
+                },
+                Call::SessionStat {
+                    path: path.clone(),
+                    scope: None,
+                },
                 Call::SessionChunk {
                     path: path.clone(),
+                    scope: None,
                     checkpoint: None,
                 },
                 Call::SessionIndexRead {
                     agent: hide_session::Agent::Claude,
                     path,
+                    scope: None,
                     saved: None,
                 },
             ]
@@ -1025,6 +1057,7 @@ mod tests {
         }
         let stamps = handle_in(
             Call::SessionStamps {
+                scopes: None,
                 paths: vec![named(&session), named(&secret), named(&planted)],
             },
             &env,
@@ -1055,6 +1088,69 @@ mod tests {
                 .expect("a pipe read answers at once");
             assert_eq!(refused.unwrap_err().code, ErrorCode::Io);
         }
+    }
+
+    #[test]
+    fn queued_pi_archive_search_memory_and_stamps_refuse_a_replaced_catalog_owner() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
+        let folder = home.path().join(".pi/agent/sessions").join(format!(
+            "--{}--",
+            cwd.to_string_lossy()
+                .trim_start_matches(['/', '\\'])
+                .replace(['/', '\\', ':'], "-")
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("native.jsonl");
+        let env = Env::standalone(Some(home.path().to_path_buf()));
+        let scope = hide_session::SessionReadScope {
+            id: "owner-a".into(),
+            cwd: cwd.display().to_string(),
+        };
+        let reads = || {
+            vec![
+                Call::SessionText {
+                    path: path.display().to_string(),
+                    scope: Some(scope.clone()),
+                },
+                Call::SessionStat {
+                    path: path.display().to_string(),
+                    scope: Some(scope.clone()),
+                },
+                Call::SessionChunk {
+                    path: path.display().to_string(),
+                    scope: Some(scope.clone()),
+                    checkpoint: None,
+                },
+                Call::SessionIndexRead {
+                    agent: hide_session::Agent::Pi,
+                    path: path.display().to_string(),
+                    scope: Some(scope.clone()),
+                    saved: None,
+                },
+            ]
+        };
+        let stamps = || Call::SessionStamps {
+            paths: vec![path.display().to_string()],
+            scopes: Some(vec![Some(scope.clone())]),
+        };
+        let write = |id| {
+            std::fs::write(&path, format!("{}\n{}\n",
+            serde_json::json!({"type":"session", "version":3, "id":id, "cwd":cwd}),
+            serde_json::json!({"type":"message", "message":{"role":"user", "content":[{"type":"text", "text":"private native history"}]}}))).unwrap()
+        };
+        write("owner-a");
+        for call in reads() {
+            handle_in(call, &env).unwrap();
+        }
+        assert!(handle_in(stamps(), &env).unwrap()[0].is_string());
+        write("owner-b");
+        for call in reads() {
+            let error = handle_in(call, &env).unwrap_err();
+            assert_eq!(error.code, ErrorCode::Io);
+            assert_eq!(error.message, "label_session_id_mismatch");
+        }
+        assert!(handle_in(stamps(), &env).unwrap()[0].is_null());
     }
 
     /// The SSH channel is gone: nothing written reaches anyone.

@@ -1097,6 +1097,7 @@ mod tests {
                 reference_kind: "id".into(),
                 reference_value: "native-target".into(),
                 cwd: None,
+                exact_route: false,
             }),
             host_scope: Some("fixture".into()),
             turn: crate::delivery::doorbell::Turn::Unread,

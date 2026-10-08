@@ -135,6 +135,60 @@ fn header_budgeted(path: &Path, remaining: &mut u64) -> Result<Header> {
     })
 }
 
+/// Prove the exact ID's native CLI route before an effect. Pi picks the first
+/// matching header, skips malformed prefixes and falls back to prefix/global
+/// matches. Refuse uncertainty instead of depending on directory enumeration.
+/// This directory scan is action-only, never a snapshot or per-file catalog read.
+pub(crate) fn confirm_route(home: &Path, path: &Path, id: &str) -> Result<()> {
+    let expected = inside_root(home, path).map_err(|_| anyhow!("session_route_unconfirmed"))?;
+    let directory = path
+        .parent()
+        .ok_or_else(|| anyhow!("session_route_unconfirmed"))?;
+    let mut budget = DiscoveryBudget::default();
+    let mut remaining = crate::SESSION_INCREMENT_READ_LIMIT_BYTES;
+    let paths = crate::read_directory(directory, &mut budget).map_err(|error| match error {
+        SessionError::Capacity { .. } => anyhow!("session_route_capacity"),
+        _ => anyhow!("session_route_unconfirmed"),
+    })?;
+    let mut matches = 0;
+    for candidate in paths {
+        if !candidate
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().ends_with(".jsonl"))
+        {
+            continue;
+        }
+        let checked =
+            inside_root(home, &candidate).map_err(|_| anyhow!("session_route_unconfirmed"))?;
+        let file = crate::open_session_file(&candidate)
+            .map_err(|_| anyhow!("session_route_unconfirmed"))?;
+        if !file.metadata().is_ok_and(|metadata| metadata.is_file())
+            || hide_platform::fs::identity::link_count(&file).ok() != Some(1)
+        {
+            return Err(anyhow!("session_route_unconfirmed"));
+        }
+        // A strict first header is a safe subset of native discovery. Any
+        // prefixed, malformed, incomplete or unreadable sibling is uncertain.
+        let header = header_budgeted(&candidate, &mut remaining).map_err(|error| {
+            if error.to_string() == "session_discovery_read_capacity" {
+                anyhow!("session_route_capacity")
+            } else {
+                anyhow!("session_route_unconfirmed")
+            }
+        })?;
+        if header.id == id {
+            matches += 1;
+            if matches != 1 || checked != expected {
+                return Err(anyhow!("session_route_ambiguous"));
+            }
+        }
+    }
+    if matches != 1 {
+        return Err(anyhow!("session_route_missing"));
+    }
+    Ok(())
+}
+
 pub(crate) fn locate(
     home: &Path,
     identity: Option<&SessionIdentity>,
@@ -185,7 +239,7 @@ pub(crate) fn locate(
         {
             continue;
         }
-        if let Some(modified) = fs::metadata(&path).and_then(|m| m.modified()).ok() {
+        if let Ok(modified) = fs::metadata(&path).and_then(|m| m.modified()) {
             candidates.push((modified, path));
         }
     }

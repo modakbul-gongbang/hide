@@ -441,6 +441,7 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
                 agent,
                 ReaderFeature::Memory,
                 Call::SessionStat {
+                    scope: None,
                     path: candidate.path.clone(),
                 },
                 TIMEOUT,
@@ -452,6 +453,7 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
                 agent,
                 ReaderFeature::Conversation,
                 Call::SessionText {
+                    scope: None,
                     path: candidate.path.clone(),
                 },
                 TIMEOUT,
@@ -461,6 +463,7 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
             let indexed: hide_session::search::IndexStep = call_as(
                 device.link.as_ref(),
                 Call::SessionIndexRead {
+                    scope: None,
                     agent,
                     path: candidate.path.clone(),
                     saved: None,

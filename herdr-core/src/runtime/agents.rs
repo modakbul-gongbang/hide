@@ -1941,6 +1941,33 @@ impl Runtime {
         }
     }
 
+    /// A Pi fork is bound to the admitted live execution, not just its pane.
+    /// The worker checks this without doing file I/O under Runtime.
+    pub(crate) fn fork_request_is_current(&self, request: &ForkRequest) -> bool {
+        request.connection_generation == self.live_generation
+            && self.live.is_some()
+            && request.parent_state_change_seq.is_some()
+            && self.snapshot.navigator.agents.iter().any(|agent| {
+                agent.pane_id == request.parent_pane_id
+                    && hide_agent_adapter::canonical_kind(&agent.agent_kind) == request.agent.kind()
+                    && agent.state_change_seq == request.parent_state_change_seq
+                    && agent.session_id.as_deref() == Some(request.session_id.as_str())
+                    && agent.row_facts.is_some()
+            })
+            && self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.checkouts)
+                .flat_map(|checkout| &checkout.tabs)
+                .flat_map(|tab| &tab.panes)
+                .any(|pane| {
+                    pane.id == request.parent_pane_id
+                        && Some(pane.cwd.as_str()) == request.cwd.as_deref()
+                })
+    }
+
     pub fn ingest_fork_result(
         &mut self,
         parent_pane_id: &str,

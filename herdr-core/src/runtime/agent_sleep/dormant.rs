@@ -798,8 +798,8 @@ impl Runtime {
                 }
                 self.persist_ui_state();
             }
-            agent_sleep_herdr::DormantTabOutcome::NotCreated => {
-                self.fail_dormant(&work.id, "The saved working folder is unavailable. Restore it before retrying; no tab was created.");
+            agent_sleep_herdr::DormantTabOutcome::NotCreated(reason) => {
+                self.fail_dormant(&work.id, reason);
             }
             agent_sleep_herdr::DormantTabOutcome::Unknown => {
                 let current = self

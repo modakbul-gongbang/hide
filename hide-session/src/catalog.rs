@@ -292,11 +292,13 @@ fn read_project_session(
     }
     let pi_before = (agent == Agent::Pi)
         .then(|| crate::confirm_session_file(home, agent, &path, Some(&id), cwd.to_str()));
-    let (mut parsed, mut unavailable) = match metadata {
-        Some(metadata) if metadata.len() > SESSION_READ_LIMIT_BYTES => {
+    let stamp = crate::search_read::stamp_at(&path);
+    let (mut parsed, mut unavailable) = match (pi_before.as_ref(), metadata) {
+        (Some(Err(reason)), _) => (None, Some(reason.to_string())),
+        (_, Some(metadata)) if metadata.len() > SESSION_READ_LIMIT_BYTES => {
             (None, Some("session_too_large".to_owned()))
         }
-        Some(_) => match read_bounded(&path, SESSION_READ_LIMIT_BYTES) {
+        (_, Some(_)) => match read_bounded(&path, SESSION_READ_LIMIT_BYTES) {
             Ok(contents) => {
                 let parsed = parse_events(agent, &contents);
                 let unavailable = (parsed.events.is_empty() && parsed.skipped_lines > 0)
@@ -312,18 +314,12 @@ fn read_project_session(
                 }),
             ),
         },
-        None => (None, Some("session_missing".to_owned())),
+        (_, None) => (None, Some("session_missing".to_owned())),
     };
-    if let Some(before) = pi_before {
+    if let Some(Ok(before)) = pi_before {
         let after = crate::confirm_session_file(home, agent, &path, Some(&id), cwd.to_str());
-        if !before
-            .and_then(|before| {
-                after.map(|after| {
-                    after.owner == before.owner
-                        && after.incarnation == before.incarnation
-                        && after.bytes >= before.bytes
-                })
-            })
+        if !after
+            .map(|after| crate::label_owner::same_read(&path, &before, &after, stamp.as_deref()))
             .unwrap_or(false)
         {
             parsed = None;

@@ -1708,6 +1708,10 @@ fn session_stat(
         session.agent,
         hide_node_link::sessions::ReaderFeature::Memory,
         Call::SessionStat {
+            scope: Some(hide_session::SessionReadScope {
+                id: session.id.clone(),
+                cwd: session.checkout_path.to_string_lossy().into_owned(),
+            }),
             path: session.locator.to_string_lossy().into_owned(),
         },
         SESSION_CALL_TIMEOUT,
@@ -1737,6 +1741,10 @@ fn session_chunk(
         session.agent,
         hide_node_link::sessions::ReaderFeature::Memory,
         Call::SessionChunk {
+            scope: Some(hide_session::SessionReadScope {
+                id: session.id.clone(),
+                cwd: session.checkout_path.to_string_lossy().into_owned(),
+            }),
             path: session.locator.to_string_lossy().into_owned(),
             checkpoint,
         },
@@ -2368,6 +2376,10 @@ pub(super) fn load_session_detail(
         agent,
         hide_node_link::sessions::ReaderFeature::Conversation,
         Call::SessionText {
+            scope: Some(hide_session::SessionReadScope {
+                id: row.id.clone(),
+                cwd: row.checkout_path.clone(),
+            }),
             path: row.locator.clone(),
         },
         SESSION_CALL_TIMEOUT,

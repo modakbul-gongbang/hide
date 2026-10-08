@@ -204,34 +204,54 @@ fn confirm_metadata(
 }
 
 /// Run a bounded archive/search read between the same native proofs. These
-/// consumers discover checkout metadata from the file itself; a live pane
-/// instead supplies its cwd to confirm_session_file. No proof is persisted.
+/// consumers supply the native ID and checkout of the queued catalog row.
+/// A replacement cannot grant itself the requested owner's authority.
+/// No proof is persisted.
 pub fn read_session_file<T>(
     home: &Path,
     agent: Agent,
     path: &Path,
+    expected: Option<&SessionReadScope>,
     read: impl FnOnce() -> std::result::Result<T, String>,
 ) -> std::result::Result<T, String> {
     if agent != Agent::Pi {
         return read();
     }
+    let expected = expected.ok_or_else(|| "label_session_scope_required".to_owned())?;
     crate::inside_session_root(home, &[agent], path)
         .map_err(|_| "label_session_outside_roots".to_owned())?;
-    let header = crate::pi::header(path).map_err(|e| e.to_string())?;
-    let before = confirm_session_file(home, agent, path, Some(&header.id), header.cwd.to_str())
+    let before = confirm_session_file(home, agent, path, Some(&expected.id), Some(&expected.cwd))
         .map_err(|e| e.to_string())?;
     let stamp = crate::search_read::stamp_at(path);
     let result = read()?;
-    let after = confirm_session_file(home, agent, path, Some(&header.id), header.cwd.to_str())
+    let after = confirm_session_file(home, agent, path, Some(&expected.id), Some(&expected.cwd))
         .map_err(|e| e.to_string())?;
-    if after.owner != before.owner
-        || after.incarnation != before.incarnation
-        || after.bytes < before.bytes
-        || (after.bytes == before.bytes && crate::search_read::stamp_at(path) != stamp)
-    {
+    if !same_read(path, &before, &after, stamp.as_deref()) {
         return Err("label_session_read_changed".to_owned());
     }
     Ok(result)
+}
+
+pub(crate) fn same_read(
+    path: &Path,
+    before: &ConfirmedLabelSession,
+    after: &ConfirmedLabelSession,
+    stamp: Option<&str>,
+) -> bool {
+    after.owner == before.owner
+        && after.incarnation == before.incarnation
+        && after.bytes >= before.bytes
+        && (after.bytes != before.bytes
+            || stamp
+                .is_some_and(|stamp| crate::search_read::stamp_at(path).as_deref() == Some(stamp)))
+}
+
+/// Expected catalog ownership carried across queued file reads. A pathname
+/// alone must not let its replacement adopt a previously discovered identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionReadScope {
+    pub id: String,
+    pub cwd: String,
 }
 
 #[cfg(test)]

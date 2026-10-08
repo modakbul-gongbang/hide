@@ -3385,6 +3385,14 @@ impl Runtime {
         self.set_task_agent_launch(id, prompt, arguments);
         let request = live::CheckoutTabRequest {
             id,
+            resume_scope: payload
+                .resume_session_id
+                .as_ref()
+                .filter(|_| agent_kind.as_deref() == Some("pi"))
+                .map(|id| hide_session::SessionReadScope {
+                    id: id.clone(),
+                    cwd: checkout_path.clone(),
+                }),
             checkout_path,
             label,
             host,

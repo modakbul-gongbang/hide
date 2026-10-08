@@ -52,14 +52,15 @@ pub(crate) enum StartError {
     Herdr(ApiError),
 }
 
-/// Sends `agent.start` with `params` for `pane_id` once the pane's shell
-/// holds its terminal, and returns Herdr's answer.
-pub(crate) fn start_at_shell(
+/// Action proof after shell readiness, repeated before every actual start
+/// attempt. No proof is cached across startup waits or a busy-pane refusal.
+pub(crate) fn start_at_shell_checked(
     connector: &dyn ApiConnector,
     correlation_id: &str,
     pane_id: &str,
     params: Value,
     answer_timeout: Duration,
+    check: &dyn Fn() -> Result<(), String>,
 ) -> Result<Value, StartError> {
     start_within(
         connector,
@@ -69,10 +70,11 @@ pub(crate) fn start_at_shell(
         answer_timeout,
         SHELL_WAIT,
         Duration::ZERO,
+        check,
     )
 }
 
-/// [`start_at_shell`] for an agent that goes back under the name of the one
+/// A start for an agent that goes back under the name of the one
 /// just ended in this pane: `agent_name_taken` is answered by sending the
 /// start again until Herdr has released the name, within [`NAME_RELEASE_WAIT`].
 pub(crate) fn start_at_shell_reusing_name(
@@ -90,10 +92,12 @@ pub(crate) fn start_at_shell_reusing_name(
         answer_timeout,
         SHELL_WAIT,
         NAME_RELEASE_WAIT,
+        &|| Ok(()),
     )
 }
 
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
+#[allow(clippy::too_many_arguments)] // one bounded start with shell/name waits and effect admission
 fn start_within(
     connector: &dyn ApiConnector,
     correlation_id: &str,
@@ -102,12 +106,14 @@ fn start_within(
     answer_timeout: Duration,
     wait: Duration,
     name_release_wait: Duration,
+    check: &dyn Fn() -> Result<(), String>,
 ) -> Result<Value, StartError> {
     let started = Instant::now();
     let deadline = started + wait;
     let name_deadline = started + name_release_wait;
     loop {
         wait_for_shell(connector, correlation_id, pane_id, started, deadline)?;
+        check().map_err(StartError::NotStarted)?;
         match request_with_correlation_id(
             connector,
             correlation_id,
@@ -219,6 +225,7 @@ mod tests {
             Duration::from_secs(5),
             wait,
             Duration::ZERO,
+            &|| Ok(()),
         )
     }
 
@@ -231,6 +238,7 @@ mod tests {
             Duration::from_secs(5),
             Duration::from_secs(5),
             name_wait,
+            &|| Ok(()),
         )
     }
 
@@ -285,6 +293,45 @@ mod tests {
                 "agent.start"
             ]
         );
+    }
+
+    #[test]
+    fn a_changed_session_after_readiness_or_a_busy_refusal_never_types_another_start() {
+        for previously_admitted in [false, true] {
+            let herdr = FakeHerdr::start_with_errors("checked-start", |method, _| match method {
+                "pane.process_info" => Ok(process_info(SHELL, &[SHELL])),
+                "agent.start" => Err((PANE_BUSY.into(), "busy before typing".into())),
+                other => panic!("unexpected {other}"),
+            });
+            let checks = std::cell::Cell::new(0);
+            let answer = start_within(
+                &herdr.connector(),
+                "checked",
+                "w1:p1",
+                json!({"pane_id":"w1:p1"}),
+                Duration::from_secs(5),
+                Duration::from_secs(5),
+                Duration::ZERO,
+                &|| {
+                    let count = checks.get();
+                    checks.set(count + 1);
+                    if previously_admitted && count == 0 {
+                        Ok(())
+                    } else {
+                        Err("session_route_unconfirmed".into())
+                    }
+                },
+            );
+            assert!(
+                matches!(answer, Err(StartError::NotStarted(reason)) if reason == "session_route_unconfirmed")
+            );
+            let typed_attempts = herdr
+                .methods()
+                .iter()
+                .filter(|method| *method == "agent.start")
+                .count();
+            assert_eq!(typed_attempts, usize::from(previously_admitted));
+        }
     }
 
     #[test]

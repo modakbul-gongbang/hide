@@ -1489,6 +1489,92 @@ fn waits(worker: &LabelWorker, agent: &ObservedAgent) -> (Option<Waiting>, Optio
     (waiting, row)
 }
 
+#[test]
+fn a_failed_pi_reread_revokes_same_reference_authority_until_a_fresh_native_proof() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let cwd = hide_platform::fs::identity::canonical(harness.home.path()).unwrap();
+    let folder = harness.home.path().join(".pi/agent/sessions").join(format!(
+        "--{}--",
+        cwd.to_string_lossy()
+            .trim_start_matches(['/', '\\'])
+            .replace(['/', '\\', ':'], "-")
+    ));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("native.jsonl");
+    let original = format!(
+        "{}\n{}\n",
+        json!({"type":"session", "version":3, "id":"native-pi", "cwd":cwd}),
+        json!({"type":"session_info", "name":"Native Pi title"})
+    );
+    let mut current = ObservedAgent {
+        agent: Some("pi".into()),
+        cwd: Some(cwd.display().to_string()),
+        ..agent(&path, "idle", 1)
+    };
+    let facts = |worker: &LabelWorker, current: &ObservedAgent| {
+        let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{
+            "pane_id":current.pane_id, "agent":current.agent, "agent_status":current.status,
+            "state_change_seq":current.state_change_seq,
+            "agent_session":{"kind":"path", "value":path.display().to_string()}
+        }]}))
+        .unwrap();
+        worker.overlay().apply(&mut payload);
+        payload.agents.remove(0).facts
+    };
+    for failure in ["missing", "wrong-cwd", "malformed", "hardlink"] {
+        std::fs::write(&path, &original).unwrap();
+        current.state_change_seq += 1;
+        observe(&mut worker, &current);
+        settle(&mut worker, &woken);
+        assert_eq!(
+            facts(&worker, &current)
+                .unwrap()
+                .native_session_id
+                .as_deref(),
+            Some("native-pi")
+        );
+        let alias = folder.join("alias.jsonl");
+        match failure {
+            "missing" => std::fs::remove_file(&path).unwrap(),
+            "wrong-cwd" => std::fs::write(
+                &path,
+                format!(
+                    "{}\n",
+                    json!({"type":"session", "version":3, "id":"native-pi", "cwd":"/"})
+                ),
+            )
+            .unwrap(),
+            "malformed" => std::fs::write(&path, "not-json\n").unwrap(),
+            "hardlink" => std::fs::hard_link(&path, &alias).unwrap(),
+            _ => unreachable!(),
+        }
+        current.state_change_seq += 1;
+        observe(&mut worker, &current);
+        settle(&mut worker, &woken);
+        assert!(
+            facts(&worker, &current).is_none(),
+            "{failure} retained native authority"
+        );
+        if alias.exists() {
+            std::fs::remove_file(alias).unwrap();
+        }
+    }
+    std::fs::write(&path, original).unwrap();
+    current.state_change_seq += 1;
+    observe(&mut worker, &current);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        facts(&worker, &current)
+            .unwrap()
+            .native_session_id
+            .as_deref(),
+        Some("native-pi")
+    );
+    assert_eq!(harness.backend.calls(), 0);
+}
+
 /// D-02, D-06: the wait is read without any AI, and it holds for the Herdr
 /// state it was read under only; a newer state is not known until read.
 #[test]

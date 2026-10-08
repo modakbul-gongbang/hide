@@ -215,6 +215,7 @@ impl Runtime {
         self.request_home_link_syncs();
         Some(live::CheckoutTabRequest {
             id,
+            resume_scope: None,
             checkout_path: synced.home,
             label,
             host,

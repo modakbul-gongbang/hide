@@ -642,7 +642,12 @@ Pi 1.0.4 extends the shared file reader through `hide-session::pi`: the first ve
 The native default cwd directory is additionally required because Pi's ID lookup outside it prompts to fork instead of resuming the same session; lossy folder encoding still never proves ownership.
 Filename suffixes never supply an ID, and links below home and custom session directories confer no read authority.
 Native IDs ending in `.jsonl` are refused locally because this CLI treats that argument as a path.
+Before a Pi close, fork, wake or archive resume, the current Identity/Activity-capable node audits its default directory for one safe exact-ID route.
+The action-only audit shares the discovery entry cap and a 1 MiB aggregate header budget; duplicate IDs, linked entries and uninspectable native-resolver candidates refuse the effect.
+Queued starts repeat the route proof after shell readiness and before each actual start attempt; fork execution and task/helper identity must still match their admitted intent.
+Search, archive detail and Memory reads carry the catalog row's expected native ID and checkout, and refuse a replacement rather than deriving their requested owner from the new file.
 Labels, activity, project catalog, content search, archive detail, link sightings and local phone pages use the same before/after native proof; a phone idle poll and a cloned older-page reader cannot retain a replaced owner's history.
+Same-length reads compare the physical file stamp, failed Pi label reads revoke cached native authority, and link identity comes only from the proven first header even across incremental chunks.
 The parser reads Pi's raw recorded history, including messages on earlier branches, without reconstructing active model context or following a fork's `parentSession` file.
 Pi `session_info.name` is the native/manual title; an explicit empty name clears it, while absence on an incremental read preserves the prior name.
 Only recorded message times and actual tool-result or bash-execution output supply PR sightings; thinking, custom extension context, compaction and branch summaries supply no human request.
