@@ -3147,6 +3147,8 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
     assert_eq!(
         runtime.pending_task_agent_start(id),
         Some(live::PendingAgentStart {
+            resume_reference: None,
+            resume_scope: None,
             codex_daemon: Default::default(),
             pane_id: "w1:p9".to_owned(),
             kind: "claude".to_owned(),

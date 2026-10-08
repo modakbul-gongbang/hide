@@ -9,7 +9,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Agent, FileIdentity, confirm_label_session, label_transcript};
+use crate::{Agent, FileIdentity, label_transcript};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionActivityRequest {
@@ -18,6 +18,12 @@ pub struct SessionActivityRequest {
     pub reference_value: String,
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Action-only proof that the exact native ID has one safe CLI route.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exact_route: bool,
+    /// An effect's admitted native owner, including when its reference is a path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +40,23 @@ pub fn read(home: &Path, request: &SessionActivityRequest) -> Result<SessionActi
         &request.reference_value,
         request.cwd.as_deref(),
     )?;
+    if request
+        .expected_id
+        .as_deref()
+        .is_some_and(|id| before.native_session_id.as_deref() != Some(id))
+    {
+        return Err("session_route_owner_changed".into());
+    }
+    if request.exact_route {
+        if request.agent != Agent::Pi {
+            return Err("session_route_unsupported".to_owned());
+        }
+        let native_id = before
+            .native_session_id
+            .as_deref()
+            .ok_or("session_route_unconfirmed")?;
+        crate::pi::confirm_route(home, &path, native_id).map_err(|error| error.to_string())?;
+    }
     let metadata =
         std::fs::metadata(&path).map_err(|_| "session_activity_stat_failed".to_owned())?;
     let identity = FileIdentity::from_metadata(&metadata);
@@ -46,9 +69,18 @@ pub fn read(home: &Path, request: &SessionActivityRequest) -> Result<SessionActi
         .as_millis()
         .try_into()
         .map_err(|_| "session_activity_mtime_invalid".to_owned())?;
-    let reported_id = (request.reference_kind == "id").then_some(request.reference_value.as_str());
-    let after = confirm_label_session(request.agent, &path, reported_id)
-        .map_err(|error| error.to_string())?;
+    let reported_id = request
+        .expected_id
+        .as_deref()
+        .or_else(|| (request.reference_kind == "id").then_some(request.reference_value.as_str()));
+    let after = crate::confirm_session_file(
+        home,
+        request.agent,
+        &path,
+        reported_id,
+        request.cwd.as_deref(),
+    )
+    .map_err(|error| error.to_string())?;
     if !metadata.is_file()
         || before.owner != after.owner
         || before.incarnation != sampled_incarnation
@@ -73,14 +105,14 @@ mod tests {
         let root = match agent {
             Agent::Claude => home.join(".claude/projects/project"),
             Agent::Codex => home.join(".codex/sessions/2026/01/01"),
-            Agent::OpenCode => unreachable!("OpenCode has no transcript file"),
+            Agent::Pi | Agent::OpenCode => unreachable!("legacy metadata fixtures"),
         };
         fs::create_dir_all(&root).unwrap();
         let path = root.join("native-a.jsonl");
         let header = match agent {
             Agent::Claude => serde_json::json!({"type":"user","sessionId":"native-a"}),
             Agent::Codex => serde_json::json!({"type":"session_meta","payload":{"id":"native-a"}}),
-            Agent::OpenCode => unreachable!("OpenCode has no transcript file"),
+            Agent::Pi | Agent::OpenCode => unreachable!("legacy metadata fixtures"),
         };
         // Conversation records are deliberately invalid: activity must not
         // parse or project them after establishing the native owner.
@@ -98,6 +130,8 @@ mod tests {
             reference_kind: "path".to_owned(),
             reference_value: path.to_string_lossy().into_owned(),
             cwd: None,
+            exact_route: false,
+            expected_id: None,
         }
     }
 
@@ -163,6 +197,8 @@ mod tests {
             reference_kind: "id".into(),
             reference_value: "missing-native".into(),
             cwd: None,
+            exact_route: false,
+            expected_id: None,
         };
         assert_eq!(read(home.path(), &input).unwrap_err(), "session_capacity");
         assert!(
@@ -183,6 +219,8 @@ mod tests {
                 reference_kind: "id".into(),
                 reference_value: "native-a".into(),
                 cwd: None,
+                exact_route: false,
+                expected_id: None,
             };
             let before = read(home.path(), &input).unwrap();
             use std::io::Write;

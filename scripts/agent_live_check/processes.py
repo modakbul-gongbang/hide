@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import selectors
 import secrets
+import select
 import signal
 import stat
 import subprocess
@@ -449,6 +450,56 @@ def group_exists(group):
         return state is ProcessState.ZOMBIE
 
 
+class ExitWatch:
+    """Wakes as soon as an unreaped child exits, and never reaps it: the root's
+    zombie keeps its process group reserved until the guardian waits for it.
+
+    Kqueue's NOTE_EXIT on macOS and a pidfd on Linux report the exit, so a
+    command that ends at once is not held for a whole poll (issue 828: one
+    fixed 100 ms wait per command, about 110 commands a two-scene run).
+    Elsewhere the wait is the poll it always was. The poll still bounds every
+    wait, so cancellation and the descendant budgets keep their cadence.
+    """
+
+    def __init__(self, pid):
+        self.exited = False
+        self.kqueue = None
+        self.pidfd = None
+        try:
+            if hasattr(select, "kqueue"):
+                self.kqueue = select.kqueue()
+                self.kqueue.control([select.kevent(
+                    pid, filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                    fflags=select.KQ_NOTE_EXIT)], 0, 0)
+            elif hasattr(os, "pidfd_open"):
+                self.pidfd = os.pidfd_open(pid)
+        except ProcessLookupError:
+            # Only an exited child refuses: its unreaped zombie holds the pid.
+            self.exited = True
+        except BaseException:
+            self.close()
+            raise
+
+    def wait(self, seconds, cancelled):
+        """Waits at most `seconds` for the exit; true once it has happened."""
+        if self.exited:
+            cancelled.wait(seconds)
+        elif self.kqueue is not None:
+            self.exited = bool(self.kqueue.control(None, 1, seconds))
+        elif self.pidfd is not None:
+            self.exited = bool(select.select([self.pidfd], [], [], seconds)[0])
+        else:
+            cancelled.wait(seconds)
+        return self.exited
+
+    def close(self):
+        if self.kqueue is not None:
+            self.kqueue.close()
+        if self.pidfd is not None:
+            os.close(self.pidfd)
+
+
 def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
           launch_deadline: float | None = None) -> int:
     cancelled = threading.Event()
@@ -480,6 +531,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
     launch_timed_out = False
     confirmed = False
     root_exited = False
+    exit_watch = None
     rss_samples = RssSamples()
     initial = snapshot()
     identity = initial[os.getpid()]
@@ -593,6 +645,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
         # below remains the authoritative live/terminal membership evidence.
         if group <= 1 or group == os.getpgrp():
             raise ProcessError("owned_group_unconfirmed")
+        exit_watch = ExitWatch(child.pid)
         while not cancelled.is_set():
             table = collect()
             if len(table) > MAX_DESCENDANTS:
@@ -612,7 +665,7 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
                 break
             if time.monotonic() >= deadline:
                 raise ProcessError("guardian_run_timeout")
-            cancelled.wait(POLL_SECONDS)
+            exit_watch.wait(POLL_SECONDS, cancelled)
     except BaseException as error:
         if (child is None and launch_deadline is not None and time.monotonic() >= launch_deadline
                 and isinstance(error, ProcessError) and str(error) in ("command_timeout", "run_cancelled_or_timed_out")):
@@ -624,6 +677,8 @@ def guard(reader: int, argv: list[str], diagnostic: str = "", family: str = "",
             sys.stderr.write("guardian_failure:" + type(error).__name__ + ":" + str(error) + "\n")
             failed = True
     finally:
+        if exit_watch is not None:
+            exit_watch.close()
         try:
             if child is not None:
                 try:

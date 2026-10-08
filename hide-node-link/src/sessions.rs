@@ -305,6 +305,30 @@ mod reader_tests {
             assert!(!facts.supports(provider, ReaderFeature::Identity));
         }
     }
+
+    #[test]
+    fn pi_has_its_complete_reader_but_no_structured_wait_or_content() {
+        let facts = ReaderFeatures::implemented();
+        for feature in [
+            ReaderFeature::Identity,
+            ReaderFeature::Labels,
+            ReaderFeature::Titles,
+            ReaderFeature::Conversation,
+            ReaderFeature::Search,
+            ReaderFeature::Memory,
+            ReaderFeature::Links,
+            ReaderFeature::Activity,
+        ] {
+            assert!(facts.supports("pi", feature), "{feature:?}");
+            assert!(!ReaderFeatures::protocol24().supports("pi", feature));
+        }
+        for feature in [ReaderFeature::Turns, ReaderFeature::UserTurnContent] {
+            assert!(!facts.supports("pi", feature));
+        }
+        for provider in ["omp", "grok", "cursor"] {
+            assert!(!facts.supports(provider, ReaderFeature::Identity));
+        }
+    }
 }
 
 /// A session file's size and modification time, read when asked.

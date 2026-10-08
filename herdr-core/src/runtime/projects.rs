@@ -3362,6 +3362,20 @@ impl Runtime {
                 return true;
             }
         };
+        let resume_reference = if agent_kind.as_deref() == Some("pi") && resume.is_some() {
+            let Some(path) = payload.resume_session_path.as_ref().filter(|path| {
+                !path.is_empty() && path.len() <= 4096 && !path.chars().any(char::is_control)
+            }) else {
+                self.set_request_error("agent_start.invalid_resume", "The selected session has no confirmed source file. Refresh its record before retrying.", false, request_id.as_deref());
+                return true;
+            };
+            Some(crate::sidebar::SessionAgentSessionPayload {
+                kind: "path".into(),
+                value: path.clone(),
+            })
+        } else {
+            None
+        };
         let id = match self.begin_task_operation(
             "agent_start",
             Some(workspace_path),
@@ -3387,8 +3401,20 @@ impl Runtime {
             &[],
         ));
         self.set_task_agent_launch(id, prompt, arguments);
+        if let Some(launch) = self.task_agent_launch.as_mut() {
+            launch.resume_reference = resume_reference.clone();
+        }
         let request = live::CheckoutTabRequest {
             id,
+            resume_reference,
+            resume_scope: payload
+                .resume_session_id
+                .as_ref()
+                .filter(|_| agent_kind.as_deref() == Some("pi"))
+                .map(|id| hide_session::SessionReadScope {
+                    id: id.clone(),
+                    cwd: checkout_path.clone(),
+                }),
             checkout_path,
             label,
             host,
@@ -3396,7 +3422,7 @@ impl Runtime {
         let target = if local {
             self.live
                 .as_ref()
-                .map(live::TabTarget::local)
+                .map(|context| live::TabTarget::local(context, self.live_generation))
                 .ok_or("start an agent: a live Herdr connection is required")
         } else {
             self.remote_controls
@@ -3824,14 +3850,19 @@ fn pull_request_times(
 /// that is not one plain token: it reaches the agent's command line, where
 /// one that began with `-` would read as an option.
 fn resume_session_arguments(kind: &str, session_id: &str) -> Option<Vec<String>> {
-    let plain = session_id
-        .bytes()
-        .next()
-        .is_some_and(|byte| byte.is_ascii_alphanumeric())
-        && session_id.len() <= 128
-        && session_id
+    let pi = hide_agent_adapter::adapter(kind).is_some_and(|adapter| adapter.id == "pi");
+    let plain = if pi {
+        hide_session::valid_native_id(session_id) && !session_id.ends_with(".jsonl")
+    } else {
+        session_id
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+            && session_id.len() <= 128
+            && session_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    };
     if !plain {
         return None;
     }

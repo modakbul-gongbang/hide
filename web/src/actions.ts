@@ -1219,6 +1219,7 @@ export function createActions(send: DispatchFn) {
       requestId?: string;
       /** The session to resume instead of a new conversation (PRD link-graph B12); never with a prompt. */
       resumeSessionId?: string;
+      resumeSessionPath?: string;
     }) {
       dispatch({
         schema_version: 2,
@@ -1231,6 +1232,7 @@ export function createActions(send: DispatchFn) {
           ...(request.prompt ? { prompt: request.prompt } : {}),
           ...(request.requestId ? { request_id: request.requestId } : {}),
           ...(request.resumeSessionId ? { resume_session_id: request.resumeSessionId } : {}),
+          ...(request.resumeSessionPath ? { resume_session_path: request.resumeSessionPath } : {}),
         },
       });
       // Keys typed before the new tab holds the keyboard reach its agent once

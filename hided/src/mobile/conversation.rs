@@ -118,6 +118,82 @@ pub struct Transcript {
     end: u64,
     /// The file's length at the last read, so an idle poll reads nothing.
     length: u64,
+    proof: Option<NativeProof>,
+}
+
+/// The phone retains no native authority beyond its source. Every Pi page,
+/// poll (including idle) and cloned pager proves that same source again.
+#[derive(Clone, Debug)]
+struct NativeProof {
+    home: PathBuf,
+    source: Source,
+    confirmed: hide_session::ConfirmedLabelSession,
+    stamp: String,
+}
+
+impl NativeProof {
+    fn confirm(
+        home: &Path,
+        source: &Source,
+        path: &Path,
+    ) -> Result<hide_session::ConfirmedLabelSession, SessionError> {
+        let reported_id = match &source.identity {
+            SessionIdentity::Id(id) => Some(id.as_str()),
+            SessionIdentity::Path(_) => None,
+        };
+        hide_session::confirm_session_file(
+            home,
+            source.agent,
+            path,
+            reported_id,
+            source.cwd.as_deref(),
+        )
+        .map_err(|error| SessionError::Checkpoint(error.to_string()))
+    }
+
+    fn new(home: &Path, source: &Source, path: &Path) -> Result<Option<Self>, SessionError> {
+        if source.agent != Agent::Pi {
+            return Ok(None);
+        }
+        let confirmed = Self::confirm(home, source, path)?;
+        let stamp =
+            hide_session::search_read::stamp_at(path).ok_or(SessionError::SessionFileMissing)?;
+        Ok(Some(Self {
+            home: home.to_path_buf(),
+            source: source.clone(),
+            confirmed,
+            stamp,
+        }))
+    }
+
+    fn current(&self, path: &Path) -> Result<Self, SessionError> {
+        let confirmed = Self::confirm(&self.home, &self.source, path)?;
+        if confirmed.owner != self.confirmed.owner {
+            return Err(SessionError::Checkpoint(
+                "label_session_read_changed".to_owned(),
+            ));
+        }
+        let stamp =
+            hide_session::search_read::stamp_at(path).ok_or(SessionError::SessionFileMissing)?;
+        Ok(Self {
+            confirmed,
+            stamp,
+            ..self.clone()
+        })
+    }
+
+    fn require_same(&self, path: &Path) -> Result<Self, SessionError> {
+        let current = self.current(path)?;
+        if current.confirmed.incarnation != self.confirmed.incarnation
+            || current.confirmed.bytes < self.confirmed.bytes
+            || (current.confirmed.bytes == self.confirmed.bytes && current.stamp != self.stamp)
+        {
+            return Err(SessionError::Checkpoint(
+                "label_session_read_changed".to_owned(),
+            ));
+        }
+        Ok(current)
+    }
 }
 
 /// What the agent appended since the last poll.
@@ -138,14 +214,17 @@ impl Transcript {
             Some(&source.identity),
             source.cwd.as_deref(),
         )?;
+        let proof = NativeProof::new(home, &source, &path)?;
         let length = file_length(&path)?;
         let (page, end) = page_before(&path, source.agent, None)?;
+        let proof = proof.map(|proof| proof.require_same(&path)).transpose()?;
         Ok((
             Self {
                 source,
                 path,
                 end,
                 length,
+                proof,
             },
             page,
         ))
@@ -161,19 +240,34 @@ impl Transcript {
         Pager {
             path: self.path.clone(),
             agent: self.source.agent,
+            proof: self.proof.clone(),
         }
     }
 
     /// The messages appended since the last read.
     pub fn poll(&mut self) -> Result<Tail, SessionError> {
+        let proof = self
+            .proof
+            .as_ref()
+            .map(|proof| proof.current(&self.path))
+            .transpose()?;
+        if let (Some(before), Some(after)) = (&self.proof, &proof)
+            && (before.confirmed.incarnation != after.confirmed.incarnation
+                || after.confirmed.bytes < before.confirmed.bytes
+                || (before.confirmed.bytes == after.confirmed.bytes && before.stamp != after.stamp))
+        {
+            return Ok(Tail::Reset);
+        }
         let length = file_length(&self.path)?;
         if length == self.length {
+            if let Some(proof) = proof {
+                self.proof = Some(proof.require_same(&self.path)?);
+            }
             return Ok(Tail::Messages(Vec::new()));
         }
         if length < self.end {
             return Ok(Tail::Reset);
         }
-        self.length = length;
         // A small append is read whole and no further back: the newest line
         // ends at or before `length`, so this window reaches `self.end`.
         let window = (length - self.end).clamp(1, WINDOW_BYTES);
@@ -197,6 +291,10 @@ impl Transcript {
             }
             end = Some(chunk.start_offset);
         }
+        if let Some(proof) = proof {
+            self.proof = Some(proof.require_same(&self.path)?);
+        }
+        self.length = length;
         self.end = newest_end.unwrap_or(self.end);
         Ok(Tail::Messages(messages))
     }
@@ -207,11 +305,21 @@ impl Transcript {
 pub struct Pager {
     path: PathBuf,
     agent: Agent,
+    proof: Option<NativeProof>,
 }
 
 impl Pager {
     pub fn before(&self, cursor: u64) -> Result<Page, SessionError> {
-        page_before(&self.path, self.agent, Some(cursor)).map(|(page, _)| page)
+        let proof = self
+            .proof
+            .as_ref()
+            .map(|proof| proof.require_same(&self.path))
+            .transpose()?;
+        let (page, _) = page_before(&self.path, self.agent, Some(cursor))?;
+        if let Some(proof) = proof {
+            proof.require_same(&self.path)?;
+        }
+        Ok(page)
     }
 }
 
@@ -360,6 +468,7 @@ mod tests {
         let older = Pager {
             path: path.clone(),
             agent: Agent::Claude,
+            proof: None,
         }
         .before(newest.before.unwrap())
         .unwrap();
@@ -368,6 +477,7 @@ mod tests {
         let oldest = Pager {
             path,
             agent: Agent::Claude,
+            proof: None,
         }
         .before(older.before.unwrap())
         .unwrap();
@@ -416,6 +526,7 @@ mod tests {
             path: path.clone(),
             end,
             length,
+            proof: None,
         };
         assert_eq!(open.poll().unwrap(), Tail::Messages(Vec::new()));
         let mut file = std::fs::OpenOptions::new()
@@ -448,5 +559,88 @@ mod tests {
         let (page, _) = page_before(&path, Agent::Claude, None).unwrap();
         assert!(page.messages[0].truncated);
         assert_eq!(page.messages[0].text.chars().count(), MESSAGE_CHARS);
+    }
+
+    fn pi_transcript() -> (tempfile::TempDir, PathBuf, Source) {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().join("checkout");
+        std::fs::create_dir(&cwd).unwrap();
+        let cwd = std::fs::canonicalize(cwd).unwrap();
+        let encoded = cwd
+            .to_string_lossy()
+            .trim_start_matches(['/', '\\'])
+            .replace(['/', '\\', ':'], "-");
+        let path = home
+            .path()
+            .join(".pi/agent/sessions")
+            .join(format!("--{encoded}--"))
+            .join("timestamp_native-phone.jsonl");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut file = std::fs::File::create(&path).unwrap();
+        writeln!(file, "{}", serde_json::json!({"type":"session","version":3,"id":"native-phone","cwd":cwd,"timestamp":"2026-10-03T01:00:00Z"})).unwrap();
+        for index in 0..70 {
+            writeln!(file, "{}", serde_json::json!({"type":"message","id":format!("entry-{index}"),"parentId":null,"timestamp":"2026-10-03T01:00:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hidden"},{"type":"text","text":format!("답변 {index}")}],"stopReason":"stop"}})).unwrap();
+        }
+        let source = Source {
+            agent: Agent::Pi,
+            identity: SessionIdentity::path(&path),
+            cwd: Some(cwd.display().to_string()),
+        };
+        (home, path, source)
+    }
+
+    #[test]
+    fn pi_phone_pages_native_message_units_and_only_appends_new_messages() {
+        let (home, path, source) = pi_transcript();
+        let (mut transcript, page) = Transcript::open(home.path(), "pane", source).unwrap();
+        assert_eq!(texts(&page.messages).first(), Some(&"답변 40"));
+        assert_eq!(texts(&page.messages).last(), Some(&"답변 69"));
+        let older = transcript.pager().before(page.before.unwrap()).unwrap();
+        assert_eq!(texts(&older.messages).first(), Some(&"답변 10"));
+        assert_eq!(transcript.poll().unwrap(), Tail::Messages(vec![]));
+        let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        for (role, content) in [
+            ("user", "다음 요청"),
+            ("toolResult", "hidden tool output"),
+            ("custom", "hidden context"),
+            ("assistant", "다음 답변"),
+        ] {
+            writeln!(file, "{}", serde_json::json!({"type":"message","timestamp":"2026-10-03T01:01:00Z","message":{"role":role,"content":content}})).unwrap();
+        }
+        let Tail::Messages(messages) = transcript.poll().unwrap() else {
+            panic!("unexpected reset");
+        };
+        assert_eq!(texts(&messages), ["다음 요청", "다음 답변"]);
+    }
+
+    #[test]
+    fn pi_idle_poll_and_cloned_pager_reject_rebound_native_owner() {
+        let (home, path, source) = pi_transcript();
+        let (mut transcript, page) = Transcript::open(home.path(), "pane", source).unwrap();
+        let pager = transcript.pager();
+        let original = std::fs::read_to_string(&path).unwrap();
+        let changed = original.replace("native-phone", "other-ownerx");
+        assert_eq!(original.len(), changed.len());
+        std::fs::write(path, changed).unwrap();
+        assert!(
+            transcript.poll().is_err(),
+            "same length idle reads prove the original owner"
+        );
+        assert!(pager.before(page.before.unwrap()).is_err());
+    }
+
+    #[test]
+    fn pi_same_owner_same_length_edit_resets_phone_and_invalidates_old_pager() {
+        let (home, path, source) = pi_transcript();
+        let (mut transcript, page) = Transcript::open(home.path(), "pane", source).unwrap();
+        let pager = transcript.pager();
+        let original = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, original.replace("답변 69", "수정 69")).unwrap();
+        assert_eq!(
+            std::fs::metadata(path).unwrap().len(),
+            original.len() as u64
+        );
+        assert_eq!(transcript.poll().unwrap(), Tail::Reset);
+        assert!(pager.before(page.before.unwrap()).is_err());
     }
 }

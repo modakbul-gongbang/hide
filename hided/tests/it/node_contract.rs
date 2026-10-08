@@ -299,12 +299,28 @@ fn authenticated_node_advertises_only_its_compiled_readers() {
             .supports("codex", ReaderFeature::Turns)
     );
     assert!(
-        !device
+        device
             .link
             .reader_features()
             .unwrap()
             .supports("pi", ReaderFeature::Conversation)
     );
+    assert!(
+        !device
+            .link
+            .reader_features()
+            .unwrap()
+            .supports("pi", ReaderFeature::Turns)
+    );
+    for agent in ["omp", "grok", "cursor"] {
+        assert!(
+            !device
+                .link
+                .reader_features()
+                .unwrap()
+                .supports(agent, ReaderFeature::Conversation)
+        );
+    }
 }
 
 // This test-only input names a retained release payload directory. It is
@@ -425,6 +441,7 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
                 agent,
                 ReaderFeature::Memory,
                 Call::SessionStat {
+                    scope: None,
                     path: candidate.path.clone(),
                 },
                 TIMEOUT,
@@ -436,6 +453,7 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
                 agent,
                 ReaderFeature::Conversation,
                 Call::SessionText {
+                    scope: None,
                     path: candidate.path.clone(),
                 },
                 TIMEOUT,
@@ -445,6 +463,7 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
             let indexed: hide_session::search::IndexStep = call_as(
                 device.link.as_ref(),
                 Call::SessionIndexRead {
+                    scope: None,
                     agent,
                     path: candidate.path.clone(),
                     saved: None,
