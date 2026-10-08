@@ -54,6 +54,11 @@ async function start(label: string): Promise<Stack> {
     execFileSync(herdr.bin, ["pane", "run", herdr.panes[0], "pi"], { env: herdr.env, timeout: 10_000 });
     execFileSync(herdr.bin, ["pane", "run", herdr.panes[1], "omp"], { env: herdr.env, timeout: 10_000 });
     const [pi, omp] = await Promise.all(herdr.panes.map((pane) => piOmpHost(dir, pane)));
+    // The core learns each pane's session from its own Herdr subscription, which can trail `herdr agent list`; a
+    // mailbox command answers only once it has, so the panes' agents are heard before the spec writes to them.
+    for (const host of [pi!, omp!]) {
+      await expect.poll(async () => (await hide(host, "inbox")).ok, { message: `hided heard the ${host.agent} pane's session`, timeout: 20_000 }).toBe(true);
+    }
     return { herdr, daemon, home, pi: pi!, omp: omp! };
   } catch (error) {
     daemon?.stop();
