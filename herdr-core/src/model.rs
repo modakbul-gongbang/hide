@@ -5444,6 +5444,22 @@ mod wire_enum_tests {
         checked.insert("factory_gate");
         assert_wire(&contract, "factory_result_code", &ResultCode::ALL);
         checked.insert("factory_result_code");
+        use hide_factory::model::{DecisionKind, NoticeCode, ObserverMode, PauseReason};
+        assert_wire(&contract, "factory_notice", &NoticeCode::ALL);
+        checked.insert("factory_notice");
+        assert_wire(&contract, "factory_decision_kind", &DecisionKind::ALL);
+        checked.insert("factory_decision_kind");
+        assert_wire(&contract, "factory_pause_reason", &PauseReason::ALL);
+        checked.insert("factory_pause_reason");
+        assert_wire(&contract, "factory_observer_mode", &ObserverMode::ALL);
+        checked.insert("factory_observer_mode");
+        use hide_factory::judgment::WorkerTextSource;
+        assert_wire(
+            &contract,
+            "factory_diagnosis_source",
+            &WorkerTextSource::ALL,
+        );
+        checked.insert("factory_diagnosis_source");
 
         let unchecked = contract
             .keys()

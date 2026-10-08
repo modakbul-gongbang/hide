@@ -283,7 +283,7 @@ const conditionName = condition => `${condition.theme}-${condition.width}-${cond
 const conditionWords = condition => `${condition.theme === 'light' ? 'Light' : 'Dark'} · ${condition.width}px · ${condition.content === 'long' ? 'long Korean titles' : 'reference content'} · text x${condition.scale}`;
 
 /** Puts one scene into a named state through the product's own controls. */
-async function enterState(page, state) {
+async function enterState(page, state, target) {
   await page.mouse.move(0, 0);
   await page.evaluate(() => document.activeElement?.blur());
   if (state === 'hover-parent') await page.locator('nav[data-sidebar] li[data-pane="a1"]').hover();
@@ -295,13 +295,23 @@ async function enterState(page, state) {
   if (state === 'checkout-closed') await page.locator('nav[data-sidebar] [data-checkout-toggle="herdr-ide:main"]').click();
   if (state === 'folded-parent' || state === 'checkout-closed') await page.mouse.move(0, 0);
   if (state === 'server-picker') await page.getByRole('button', {name:'Open server', exact:true}).click();
-  // The Factory screen's other views, reached through its own tabs and cards.
-  if (['board', 'graph', 'sizes'].includes(state)) {
+  // The Factory screen's other views, and the states a target's scene sets up from its address.
+  if (['board', 'graph', 'sizes', ...(target.urlStates ?? [])].includes(state)) {
     const url = new URL(page.url());
     url.searchParams.set('state', state);
     await page.goto(url.href);
     await page.locator('[data-factory-screen]').waitFor();
     await page.evaluate(() => document.fonts.ready);
+  }
+  // The Observer frames that show a disclosure or a menu open.
+  if (state === 'obs-direct') {
+    await page.locator('[data-factory-settings-group="advanced"] > summary').click();
+    await page.mouse.move(0, 0);
+  }
+  if (state === 'obs-pick') {
+    await page.locator('[data-factory-worker-select]').click();
+    await page.locator('[data-factory-worker-option]').first().waitFor();
+    await page.locator('[data-factory-worker-option="2"]').hover();
   }
   if (state === 'task') {
     await page.locator('[data-factory-tab="board"]').click();
@@ -505,10 +515,13 @@ async function reviewParts(root, {noPen, slug, bundle, manifest, target, themes,
         const measured = geometry.measure ? await geometry.measure(page) : await measure(page, geometry);
         for (const result of evaluate(manifest.rules, measured)) report.rules.push({condition: conditionName(condition), ...result});
         for (const state of new Set(['rest', ...states])) {
-          await page.reload();
+          await page.goto(sceneUrl(origin, target, condition));
           await page.locator(target.selector).waitFor();
           await page.waitForTimeout(150);
-          await enterState(page, state);
+          // Each state is captured at its own frame's height when the bundle has one.
+          const own = manifest.frames.find(frame => frame.state === state && ['theme', 'width', 'content', 'scale'].every(key => frame[key] === condition[key]));
+          await page.setViewportSize({width: condition.width, height: Math.ceil(own?.height ?? height)});
+          await enterState(page, state, target);
           const file = path.join(out, 'actual', `${conditionName(condition)}-${state}.png`);
           fs.mkdirSync(path.dirname(file), {recursive: true});
           await page.locator(target.selector).screenshot({path: file});

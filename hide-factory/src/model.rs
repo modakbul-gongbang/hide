@@ -53,6 +53,18 @@ pub struct Factory {
     /// GitHub write happens without it (D-62).
     #[serde(default)]
     pub github_approval: Option<GithubApproval>,
+    /// The operator paused the whole Factory (D-48): no starts, no AI
+    /// judgments, no auto merge, workers asleep.
+    #[serde(default)]
+    pub paused: bool,
+    /// Observer calls sent on `observer_day` (local days since the epoch).
+    #[serde(default)]
+    pub observer_day: u64,
+    #[serde(default)]
+    pub observer_calls: u32,
+    /// The local day the daily cap notice was last given (D-34: once a day).
+    #[serde(default)]
+    pub observer_cap_notice_day: u64,
 }
 
 /// Who approved a GitHub Factory's access, for which repository, and when,
@@ -137,28 +149,154 @@ pub enum MergeMethod {
     Rebase,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Runtime {
-    Claude,
-    Codex,
-}
+/// An agent a worker runs, by the Herdr kind its adapter declares (D-28).
+/// Only an agent whose adapter declares a start is one; what it can do
+/// beyond starting (waking, resuming, its texts) is read from the same
+/// declaration. Stored as that kind, so `claude` and `codex` records an
+/// earlier build wrote read unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Runtime(&'static str);
 
 impl Runtime {
+    pub const CLAUDE: Self = Self("claude");
+    pub const CODEX: Self = Self("codex");
+
+    pub fn as_str(self) -> &'static str {
+        self.0
+    }
+
+    /// Any id or alias of an agent whose adapter declares a start.
+    pub fn parse(value: &str) -> Option<Self> {
+        hide_agent_adapter::start_kind(value).map(Self)
+    }
+
+    pub fn adapter(self) -> &'static hide_agent_adapter::AgentAdapter {
+        hide_agent_adapter::adapter(self.0).expect("a Runtime is made only from a declared start")
+    }
+
+    /// The agent's display name.
+    pub fn label(self) -> &'static str {
+        self.adapter().label
+    }
+
+    /// Every agent a Factory can start, in the adapters' support order.
+    pub fn all() -> impl Iterator<Item = Self> {
+        hide_agent_adapter::START_KINDS
+            .iter()
+            .map(|kind| Self(kind))
+    }
+
+    /// Whether the agent's adapter declares a sleep; one that does not keeps
+    /// working where the Factory would put it to sleep (D-28).
+    pub fn sleeps(self) -> bool {
+        self.adapter().sleep.is_some()
+    }
+
+    /// How the agent's start takes a model and an effort.
+    pub fn launch_options(self) -> Option<hide_agent_adapter::LaunchOptions> {
+        self.adapter().start.map(|start| start.options())
+    }
+}
+
+impl Serialize for Runtime {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Runtime {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value)
+            .ok_or_else(|| serde::de::Error::custom(format!("not a startable agent: {value}")))
+    }
+}
+
+/// One worker a Factory may start: an agent, optionally its model and
+/// effort, and the operator's one line about when it fits (D-41).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerCandidate {
+    pub agent: Runtime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub description: String,
+}
+
+impl WorkerCandidate {
+    pub fn bare(agent: Runtime) -> Self {
+        Self {
+            agent,
+            model: None,
+            effort: None,
+            description: String::new(),
+        }
+    }
+
+    /// The launch arguments its model and effort add, refused with the reason
+    /// when the agent does not declare them.
+    pub fn launch_arguments(&self) -> Result<Vec<String>, String> {
+        if self.model.is_none() && self.effort.is_none() {
+            return Ok(Vec::new());
+        }
+        let options = self
+            .agent
+            .launch_options()
+            .ok_or_else(|| format!("{} takes no model or effort", self.agent.label()))?;
+        options
+            .arguments(self.model.as_deref(), self.effort.as_deref())
+            .map_err(|detail| format!("{}: {detail}", self.agent.label()))
+    }
+}
+
+/// The most worker candidates one Factory keeps (D-42).
+pub const WORKER_CANDIDATE_LIMIT: usize = 5;
+/// The longest worker candidate description, in Unicode characters; every
+/// intake review carries it.
+pub const WORKER_DESCRIPTION_LIMIT: usize = 200;
+/// The Observer's daily call cap: default and range (D-17, D-34).
+pub const OBSERVER_DAILY_DEFAULT: u32 = 100;
+pub const OBSERVER_DAILY_RANGE: std::ops::RangeInclusive<u32> = 1..=1000;
+
+/// Who decides a Factory's decision requests (D-14, D-18): on screen 직접,
+/// 함께 and 맡김.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObserverMode {
+    Manual,
+    #[default]
+    Assist,
+    Autonomous,
+}
+
+impl ObserverMode {
+    pub const ALL: [Self; 3] = [Self::Manual, Self::Assist, Self::Autonomous];
+
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
+            Self::Manual => "manual",
+            Self::Assist => "assist",
+            Self::Autonomous => "autonomous",
         }
     }
 
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "claude" => Some(Self::Claude),
-            "codex" => Some(Self::Codex),
-            _ => None,
-        }
+        Self::ALL.into_iter().find(|mode| mode.as_str() == value)
     }
+}
+
+/// The agent, model and effort a Factory's AI judgments run on (D-40).
+/// `None` in the config means the app's Hide AI.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FactoryAi {
+    /// A Hide AI provider id (`claude`, `codex`, ...).
+    pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// When a natural-language check runs (D-15).
@@ -230,7 +368,16 @@ pub struct Config {
     pub verify_failure_limit: u32,
     pub verify_timeout_ms: u64,
     pub disk_floor_bytes: u64,
+    /// The first candidate's agent. Read as the only candidate while
+    /// `workers` is empty, which is how a Factory made before candidates
+    /// reads until the operator next changes its workers (D-42).
     pub default_runtime: Runtime,
+    /// Worker candidates, the first the default; empty means one candidate
+    /// of `default_runtime` with the CLI's own model and effort.
+    pub workers: Vec<WorkerCandidate>,
+    pub observer_mode: ObserverMode,
+    pub observer_daily_limit: u32,
+    pub factory_ai: Option<FactoryAi>,
     pub harness: Option<Harness>,
     pub autonomy: Vec<AutonomyScope>,
     pub autonomy_diff_limit: u32,
@@ -265,7 +412,11 @@ impl Default for Config {
             verify_failure_limit: 3,
             verify_timeout_ms: 60 * MINUTE_MS,
             disk_floor_bytes: 20 * 1024 * 1024 * 1024,
-            default_runtime: Runtime::Claude,
+            default_runtime: Runtime::CLAUDE,
+            workers: Vec::new(),
+            observer_mode: ObserverMode::Assist,
+            observer_daily_limit: OBSERVER_DAILY_DEFAULT,
+            factory_ai: None,
             harness: None,
             autonomy: AutonomyScope::presets(),
             autonomy_diff_limit: 200,
@@ -275,6 +426,17 @@ impl Default for Config {
             prd_in_issue: false,
             macos_notifications: false,
             worker_args: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+impl Config {
+    /// The worker candidates in order, the first the default.
+    pub fn candidates(&self) -> Vec<WorkerCandidate> {
+        if self.workers.is_empty() {
+            vec![WorkerCandidate::bare(self.default_runtime)]
+        } else {
+            self.workers.clone()
         }
     }
 }
@@ -523,7 +685,11 @@ pub struct HumanFields {
     pub review_directly: bool,
     pub priority: i32,
     pub merge_mode: Option<MergeMode>,
+    /// Pins the agent's first candidate (`add --runtime`).
     pub runtime: Option<Runtime>,
+    /// Pins a candidate by its place in the list, 0 first (`add --worker`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<usize>,
 }
 
 /// The record a Task is shown by: its issue once Ready, else its Task id.
@@ -631,11 +797,157 @@ pub struct Question {
     pub answer: Option<Answer>,
     /// The letter a worker asked through, answered by reply.
     pub letter: Option<String>,
+    /// Where a decision request was sent and why (D-14, D-18).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<Routing>,
+    /// What an engine notice says, for the notice group (D-43).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<NoticeCode>,
+    /// The question an Observer notice is about, which "다른 답" overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refers_to: Option<String>,
+}
+
+/// The five kinds the Observer sorts a decision request into (D-14).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DecisionKind {
+    /// The answer is already there.
+    A,
+    /// A technical choice.
+    B,
+    /// A product or taste choice.
+    C,
+    /// A permission: cost, sign-in, deletion, security, outside effect, out
+    /// of scope, irreversible.
+    D,
+    /// The card is wrong.
+    E,
+}
+
+impl DecisionKind {
+    pub const ALL: [Self; 5] = [Self::A, Self::B, Self::C, Self::D, Self::E];
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "A" => Some(Self::A),
+            "B" => Some(Self::B),
+            "C" => Some(Self::C),
+            "D" => Some(Self::D),
+            "E" => Some(Self::E),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::A => "A",
+            Self::B => "B",
+            Self::C => "C",
+            Self::D => "D",
+            Self::E => "E",
+        }
+    }
+}
+
+/// Where a decision request went.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteTo {
+    /// The Observer is judging it; a person may still answer first.
+    Pending,
+    Person,
+    /// The Observer answered or applied its proposal.
+    Observer,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Routing {
+    pub to: RouteTo,
+    /// The Factory's mode when the request arrived; a later change does not
+    /// move it (D-18).
+    pub mode: ObserverMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<DecisionKind>,
+    /// The Observer's one-line reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Why it went to a person without the Observer's verdict: `failed`,
+    /// `daily_limit`, `paused`, `queue_full` (B10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    /// E in assist: the Observer's fix, offered as a choice (D-33).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<ObserverProposal>,
+    /// A person replaced the Observer's answer.
+    #[serde(default)]
+    pub overridden: bool,
+}
+
+/// What the Observer proposes for a wrong card (D-33).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ObserverProposal {
+    CardFix { card: Box<Card> },
+    NewTask { card: Box<Card>, prerequisite: bool },
+}
+
+/// The choice an assist-mode E request carries for the Observer's proposal.
+pub const PROPOSAL_CHOICE: &str = "AI 제안 적용";
+
+/// Engine notices the notice group shows (D-32, D-34, D-38).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoticeCode {
+    AiAnswered,
+    AiCardFixed,
+    AiNewTask,
+    AiRiskMerge,
+    DailyLimit,
+}
+
+impl NoticeCode {
+    pub const ALL: [Self; 5] = [
+        Self::AiAnswered,
+        Self::AiCardFixed,
+        Self::AiNewTask,
+        Self::AiRiskMerge,
+        Self::DailyLimit,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AiAnswered => "ai_answered",
+            Self::AiCardFixed => "ai_card_fixed",
+            Self::AiNewTask => "ai_new_task",
+            Self::AiRiskMerge => "ai_risk_merge",
+            Self::DailyLimit => "daily_limit",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AiAnswered => "AI가 답함",
+            Self::AiCardFixed => "AI가 카드를 고침",
+            Self::AiNewTask => "AI가 새 Task를 만듦",
+            Self::AiRiskMerge => "AI가 위험 경로 머지를 승인함",
+            Self::DailyLimit => "오늘 AI 판단 상한에 닿음",
+        }
+    }
 }
 
 impl Question {
     pub fn open(&self) -> bool {
         self.answer.is_none()
+    }
+
+    /// Open and a person's to answer: not a notice, and not a request the
+    /// Observer is still sorting.
+    pub fn awaits_person(&self) -> bool {
+        self.open()
+            && self
+                .routing
+                .as_ref()
+                .is_none_or(|routing| routing.to != RouteTo::Pending)
     }
 }
 
@@ -701,7 +1013,27 @@ pub struct DecisionRecord {
     pub text: String,
     pub by: String,
     pub at: UnixMs,
+    /// The Observer's kind and one-line reason for a decision it made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<DecisionKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
+
+impl DecisionRecord {
+    pub fn new(text: String, by: String, at: UnixMs) -> Self {
+        Self {
+            text,
+            by,
+            at,
+            kind: None,
+            reason: None,
+        }
+    }
+}
+
+/// `by` of a decision, an answer or a merge the Observer made (D-19).
+pub const OBSERVER: &str = "observer";
 
 /// A person gate that sends an auto Task to merge waiting (D-25, B39, B41).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -763,10 +1095,12 @@ pub enum StopReason {
     EnvironmentRepeated,
     WorkerStart,
     PublishRefused,
+    /// The worker disappeared again after its one automatic restart (D-25).
+    WorkerGone,
 }
 
 impl StopReason {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::NoReport,
         Self::Stalled,
         Self::VerifyFailed,
@@ -774,6 +1108,7 @@ impl StopReason {
         Self::EnvironmentRepeated,
         Self::WorkerStart,
         Self::PublishRefused,
+        Self::WorkerGone,
     ];
 
     pub fn label(self) -> &'static str {
@@ -785,6 +1120,7 @@ impl StopReason {
             Self::EnvironmentRepeated => "같은 환경 실패 반복",
             Self::WorkerStart => "worker 시작 실패",
             Self::PublishRefused => "push 거절됨",
+            Self::WorkerGone => "작업자 사라짐",
         }
     }
 }
@@ -828,6 +1164,12 @@ pub struct WorkerRef {
     pub branch: String,
     pub started_at: UnixMs,
     pub asleep: bool,
+    /// The candidate's model and effort it started with; `None` is the
+    /// CLI's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// A verification attempt in progress or finished.
@@ -922,9 +1264,12 @@ pub struct Task {
     pub done_at: Option<UnixMs>,
     /// A person has seen the completion (the done column's unread dot).
     pub seen: bool,
-    /// Worker reported done and then went quiet; tracked for B24.
+    /// The worker's last report: ask, block, propose, decide or done.
     pub last_report_at: Option<UnixMs>,
-    pub idle_since: Option<UnixMs>,
+    /// When the engine last started or woke the worker; a rest that began
+    /// before it is not the worker's current one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub woken_at: Option<UnixMs>,
     /// Intent keys of external writes already made (B73).
     pub writes: BTreeSet<String>,
     /// Environment hold: a start was refused by the pre-start check (B57).
@@ -934,6 +1279,67 @@ pub struct Task {
     pub held_code: Option<EnvHold>,
     pub label_path: bool,
     pub source_body_hash: Option<String>,
+    /// The intake review's candidate and its reason (D-41).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_pick: Option<WorkerPick>,
+    /// The candidate the worker first started with; a retry, an automatic
+    /// restart and a resume reuse it (D-42).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launched: Option<WorkerCandidate>,
+    /// The wake and diagnosis of a worker resting without a report (D-22,
+    /// D-23, D-35); cleared by the next report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<Recovery>,
+    /// The rest start seen last and the one before it (D-24).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_seen: Option<UnixMs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_before: Option<UnixMs>,
+    /// The Observer's one-line diagnosis of a no-report stop (B23).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnosis: Option<String>,
+    /// Automatic restarts of a vanished worker since a person last started
+    /// it (D-25).
+    #[serde(default)]
+    pub auto_restarts: u32,
+    /// Why the Task is paused, when it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause_reason: Option<PauseReason>,
+}
+
+/// The intake review's candidate, by its place in the list.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerPick {
+    pub index: usize,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Recovery {
+    /// When the engine woke the worker, or decided it could not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub woke_at: Option<UnixMs>,
+    /// When the diagnosis was asked, and whether its answer came.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnosed_at: Option<UnixMs>,
+    #[serde(default)]
+    pub diagnosing: bool,
+    /// The one worker text the diagnosis read, if it had any (D-37).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnosed_from: Option<crate::judgment::WorkerTextSource>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PauseReason {
+    /// A person paused the Task.
+    Person,
+    /// The operator closed the worker's pane in Hide (D-26).
+    PaneClosed,
+}
+
+impl PauseReason {
+    pub const ALL: [Self; 2] = [Self::Person, Self::PaneClosed];
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1001,12 +1407,20 @@ impl Task {
             done_at: None,
             seen: true,
             last_report_at: None,
-            idle_since: None,
+            woken_at: None,
             writes: BTreeSet::new(),
             held: None,
             held_code: None,
             label_path: false,
             source_body_hash: None,
+            ai_pick: None,
+            launched: None,
+            recovery: None,
+            rest_seen: None,
+            rest_before: None,
+            diagnosis: None,
+            auto_restarts: 0,
+            pause_reason: None,
         }
     }
 
@@ -1028,19 +1442,50 @@ impl Task {
         self.human.merge_mode.unwrap_or(factory.config.merge_mode)
     }
 
-    pub fn runtime(&self, factory: &Factory) -> Runtime {
-        self.human.runtime.unwrap_or(factory.config.default_runtime)
+    /// The candidate a new worker starts with, its place in the list when it
+    /// is one, and whether a person chose it: the started one, else a
+    /// person's pin, else the review's pick, else the first (D-41, D-42).
+    pub fn candidate(&self, factory: &Factory) -> (WorkerCandidate, Option<usize>, bool) {
+        let candidates = factory.config.candidates();
+        if let Some(launched) = &self.launched {
+            let index = candidates.iter().position(|c| c == launched);
+            return (launched.clone(), index, true);
+        }
+        if let Some(index) = self.human.worker.filter(|i| *i < candidates.len()) {
+            return (candidates[index].clone(), Some(index), true);
+        }
+        if let Some(agent) = self.human.runtime {
+            return match candidates.iter().position(|c| c.agent == agent) {
+                Some(index) => (candidates[index].clone(), Some(index), true),
+                None => (WorkerCandidate::bare(agent), None, true),
+            };
+        }
+        if let Some(pick) = self.ai_pick.as_ref().filter(|p| p.index < candidates.len()) {
+            return (candidates[pick.index].clone(), Some(pick.index), false);
+        }
+        (candidates[0].clone(), Some(0), false)
     }
 
     /// The card a person must look at: blocked, stopped, merge waiting, or
-    /// an open question (D-28, D-47).
+    /// an open question (D-28, D-47). A Task blocked only on requests the
+    /// Observer is still sorting is not yet a person's (D-14).
     pub fn needs_person(&self) -> bool {
-        matches!(
+        let sorting = self.state == TaskState::Blocked && {
+            let mut open = self
+                .open_questions()
+                .filter(|question| !matches!(question.kind, QuestionKind::Notice))
+                .peekable();
+            open.peek().is_some() && open.all(|question| !question.awaits_person())
+        };
+        (matches!(
             self.state,
             TaskState::Blocked | TaskState::Stopped | TaskState::MergeWaiting
-        ) || self
-            .open_questions()
-            .any(|question| !matches!(question.kind, QuestionKind::Notice))
+        ) && !sorting)
+            || (self.state == TaskState::Paused
+                && self.pause_reason == Some(PauseReason::PaneClosed))
+            || self.open_questions().any(|question| {
+                question.awaits_person() && !matches!(question.kind, QuestionKind::Notice)
+            })
     }
 
     pub fn branch_slug(&self) -> String {

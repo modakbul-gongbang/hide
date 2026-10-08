@@ -2,14 +2,14 @@
 // menu's commands in, the stored macOS pane chords out for the menu to show,
 // the host's OS, a file or folder to show in the OS file manager, a folder the operator picks to add as a project,
 // the paths a terminal link names and handing one to macOS, and the pages of
-// browser displays (issue 155).
+// browser displays (issue 155), and the Factory's notifications with their clicks.
 // No Node API, no other channel. Browser pages load in their own session with no preload, so none
 // of this reaches them.
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { BrowserCommand, BrowserHostEvent, BrowserSync } from "../../../web/src/host";
 import type { ProbedPath } from "../../../web/src/host";
-import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, NOTIFY_CHANNEL, NOTIFY_OPEN_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
 
 contextBridge.exposeInMainWorld("hideHost", {
   kind: "electron",
@@ -40,6 +40,18 @@ contextBridge.exposeInMainWorld("hideHost", {
   },
   openPath(path: string): void {
     ipcRenderer.send(OPEN_PATH_CHANNEL, path);
+  },
+  notify(id: string, title: string, body: string): void {
+    ipcRenderer.send(NOTIFY_CHANNEL, { id, title, body });
+  },
+  onNotificationOpen(listener: (id: string) => void): () => void {
+    const handler = (_event: IpcRendererEvent, id: unknown) => {
+      if (typeof id === "string") listener(id);
+    };
+    ipcRenderer.on(NOTIFY_OPEN_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(NOTIFY_OPEN_CHANNEL, handler);
+    };
   },
   browser: {
     endCycle(cycleId: number): void {
