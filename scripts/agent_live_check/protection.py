@@ -88,8 +88,8 @@ class FileStamp:
     identity: tuple[int, int]
 
 
-def stamp(path: Path) -> FileStamp | None:
-    """Hash ordinary owned files; reject aliases and unbounded reads."""
+def configuration_bytes(path: Path) -> tuple[FileStamp, bytes] | None:
+    """Read and stamp one bounded ordinary file through the same descriptor."""
     try:
         info = path.lstat()
     except FileNotFoundError:
@@ -98,17 +98,31 @@ def stamp(path: Path) -> FileStamp | None:
         raise ProtectionError("config_not_private_regular_file")
     if info.st_size > MAX_BACKUP_BYTES:
         raise ProtectionError("config_file_over_budget")
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    # A regular pathname can become a FIFO between lstat and open. Do not
+    # block on that replacement while trying to inspect its descriptor.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         opened = os.fstat(stream.fileno())
-        if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid()
+                or opened.st_nlink != 1
+                or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)):
             raise ProtectionError("config_changed_during_open")
+        if opened.st_size > MAX_BACKUP_BYTES:
+            raise ProtectionError("config_file_over_budget")
         data = stream.read(MAX_BACKUP_BYTES + 1)
         after = os.fstat(stream.fileno())
-    if len(data) > MAX_BACKUP_BYTES or (opened.st_size, opened.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+    if (len(data) > MAX_BACKUP_BYTES
+            or (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns, opened.st_mode, opened.st_nlink)
+            != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_mode, after.st_nlink)):
         raise ProtectionError("config_changed_during_read")
-    return FileStamp(hashlib.sha256(data).hexdigest(), len(data),
-                     stat.S_IMODE(info.st_mode), (info.st_dev, info.st_ino))
+    return (FileStamp(hashlib.sha256(data).hexdigest(), len(data),
+                      stat.S_IMODE(opened.st_mode), (opened.st_dev, opened.st_ino)), data)
+
+
+def stamp(path: Path) -> FileStamp | None:
+    """Hash ordinary owned files; reject aliases and unbounded reads."""
+    value = configuration_bytes(path)
+    return value[0] if value is not None else None
 
 
 def fingerprint(roots: list[Path], histories: list[Path] | None = None) -> dict[str, dict]:
@@ -185,13 +199,11 @@ class ConfigGuard:
         self.writes = {}
         self.inventory = fingerprint(roots, self.histories)
         for index, path in enumerate(self.known):
-            before = stamp(path)
+            value = configuration_bytes(path)
+            before = value[0] if value is not None else None
             self.before[path] = before
-            if before is not None:
-                data = path.read_bytes()
-                if hashlib.sha256(data).hexdigest() != before.digest:
-                    raise ProtectionError("config_changed_before_backup")
-                write_private(backup / str(index), data)
+            if value is not None:
+                write_private(backup / str(index), value[1])
         write_private(backup / "index.json", json.dumps([
             {"path": str(path), "backup": str(index),
              "existed": self.before[path] is not None}
@@ -234,9 +246,10 @@ class ConfigGuard:
                 if current is not None:
                     path.unlink()
             else:
-                data = (self.backup / str(index)).read_bytes()
-                if hashlib.sha256(data).hexdigest() != original.digest:
+                saved = configuration_bytes(self.backup / str(index))
+                if saved is None or saved[0].digest != original.digest:
                     raise ProtectionError("backup_integrity_failed")
+                data = saved[1]
                 temporary = path.with_name(path.name + ".live-check-restore")
                 write_private(temporary, data)
                 try:

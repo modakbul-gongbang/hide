@@ -230,11 +230,21 @@ def main(argv=None):
     except Exception as error:
         report["failures"].append({"type": type(error).__name__, "reason": str(error)})
     finally:
-        if runtime:
-            report["cleanup"] = runtime.close()
-        else:
-            owner.close()
-            report["cleanup"] = {"confirmed": True, "probe_removed": True}
+        try:
+            if runtime:
+                report["cleanup"] = runtime.close()
+            else:
+                owner.close()
+                report["cleanup"] = {"confirmed": True, "probe_removed": True}
+        except Exception as error:
+            report["cleanup"] = {"confirmed": False, "failures": [str(error)]}
+            report["failures"].append({"type": type(error).__name__, "reason": str(error)})
+            # A protocol/filesystem close failure must not prevent the
+            # process owner's independent final attempt or config recovery.
+            try:
+                owner.close()
+            except Exception as cleanup_error:
+                report["cleanup"]["failures"].append(str(cleanup_error))
         try:
             report["cleanup"]["attribution"] = owner.attribution_report()
         except (OSError, ValueError, ProcessError) as error:

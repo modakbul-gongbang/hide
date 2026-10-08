@@ -348,8 +348,11 @@ class Runtime:
                 except Exception as error:
                     failures.append(str(error))
             if not failures:
-                shutil.rmtree(self.probe)
-                shutil.rmtree(self.short)
+                for directory in (self.probe, self.short):
+                    try:
+                        shutil.rmtree(directory)
+                    except Exception as error:
+                        failures.append(str(error))
         finally:
             self.owner.deadline = original_deadline
             if original_cancelled:
