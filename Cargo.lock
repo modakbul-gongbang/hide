@@ -1327,6 +1327,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cap-std",
+ "futures-util",
  "hide-herdr-client",
  "hide-host",
  "hide-kit",
