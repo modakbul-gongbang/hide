@@ -17,9 +17,10 @@ The origin field records who spawned the agent in both modes; it grants no autho
 Use delegation for work you will collect and report, and handoff for independent work the operator will handle.
 Responsibility cannot be changed after spawn; reusing an intent with another mode is refused.
 
-Start the agent on a connected device with --machine <device id>:
+Start the agent on a connected device with --machine <device id>, from the machine that runs Hide:
   The id is the device_id `hide workspace info` shows and the machine `hide agent list` shows for agents there.
   --repo and --path are then paths on that device. Your own id, or no --machine, starts the agent here.
+  An agent running on a device cannot use --machine: it is refused with machine_not_permitted.
   A device id that is unknown or not connected, a repository missing on the device or an agent not installed there is refused before anything is created.
   Reusing an intent with another machine is refused; running the same command again returns the same agent.";
 
