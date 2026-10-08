@@ -1,5 +1,29 @@
 use super::*;
 
+#[test]
+fn pane_header_transitions_reach_the_wire_once_and_stay_quiet_when_unchanged() {
+    let mut runtime = runtime();
+    let first = runtime.snapshot_delta_payload(0, 0);
+    runtime.snapshot.terminal.headers.insert(
+        "pane".to_owned(),
+        crate::agent_state::header::Header {
+            working: true,
+            ..Default::default()
+        },
+    );
+    let changed = runtime.snapshot_delta_payload(first.revision, 0);
+    let wire: serde_json::Value =
+        serde_json::from_slice(&serialize_snapshot_delta(&changed).unwrap()).unwrap();
+    assert_eq!(wire["rest"]["terminal"]["headers"]["pane"]["working"], true);
+    let unchanged = runtime.snapshot_delta_payload(changed.revision, 0);
+    assert!(unchanged.rest.is_none());
+    runtime.snapshot.terminal.headers.clear();
+    let cleared = runtime.snapshot_delta_payload(changed.revision, 0);
+    let wire: serde_json::Value =
+        serde_json::from_slice(&serialize_snapshot_delta(&cleared).unwrap()).unwrap();
+    assert_eq!(wire["rest"]["terminal"]["headers"], serde_json::json!({}));
+}
+
 /// R8, AC14. The agent notes are what the next person reads before they
 /// touch this subsystem, and both of their claims about it were wrong: the
 /// shell was described as reading the snapshot on every change

@@ -4526,6 +4526,7 @@ pub struct RestSections {
     pub terminal_exit_code: Option<i32>,
     pub terminal_panes: Vec<TerminalPaneSnapshot>,
     pub terminal_input_requests: Vec<InputRequestSnapshot>,
+    pub terminal_headers: BTreeMap<String, crate::agent_state::header::Header>,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
     pub status: StatusSnapshot,
@@ -4564,6 +4565,7 @@ impl RestSections {
             terminal_exit_code: snapshot.terminal.exit_code,
             terminal_panes: snapshot.terminal.panes.clone(),
             terminal_input_requests: snapshot.terminal.input_requests.clone(),
+            terminal_headers: snapshot.terminal.headers.clone(),
             ui_state: snapshot.ui_state.clone(),
             ime: snapshot.ime.clone(),
             status: snapshot.status.clone(),
@@ -4603,6 +4605,7 @@ impl RestSections {
             && self.terminal_exit_code == snapshot.terminal.exit_code
             && self.terminal_panes == snapshot.terminal.panes
             && self.terminal_input_requests == snapshot.terminal.input_requests
+            && self.terminal_headers == snapshot.terminal.headers
             && self.ui_state == snapshot.ui_state
             && self.ime == snapshot.ime
             && self.status == snapshot.status
@@ -4806,6 +4809,7 @@ impl<'a> RestWire<'a> {
                 exit_code: rest.terminal_exit_code,
                 panes: &rest.terminal_panes,
                 input_requests: &rest.terminal_input_requests,
+                headers: &rest.terminal_headers,
             },
             ui_state: &rest.ui_state,
             ime: &rest.ime,
@@ -4826,6 +4830,7 @@ pub struct TerminalMetaWire<'a> {
     pub exit_code: Option<i32>,
     pub panes: &'a [TerminalPaneSnapshot],
     pub input_requests: &'a [InputRequestSnapshot],
+    pub headers: &'a BTreeMap<String, crate::agent_state::header::Header>,
 }
 
 #[cfg(test)]
