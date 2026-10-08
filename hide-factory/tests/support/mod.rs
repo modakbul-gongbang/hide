@@ -409,13 +409,19 @@ impl WorkerRuntime for Shared {
         if let Some(failure) = world.spawn_failure.clone() {
             return Err(failure);
         }
+        let generation = world
+            .spawned
+            .iter()
+            .filter(|spawn| spawn.task == request.task)
+            .count()
+            + 1;
         world.spawned.push(request.clone());
         world.worker_status.remove(&request.task);
         Ok(WorkerRef {
-            factory: String::new(),
-            agent: Some(format!("agent-{}", request.task)),
+            factory: request.factory.clone(),
+            agent: Some(format!("agent-{}-{generation}", request.task)),
             name: request.name.clone(),
-            pane: Some(format!("pane-{}", request.task)),
+            pane: Some(format!("pane-{}-{generation}", request.task)),
             runtime: request.runtime,
             worktree: format!("/work/fixture.worktrees/{}", request.task),
             branch: request.branch.clone(),

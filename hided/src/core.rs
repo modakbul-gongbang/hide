@@ -16,6 +16,16 @@ pub struct SnapshotReply {
 }
 
 enum Command {
+    FactoryQuestionGuard {
+        device_id: String,
+        pane_id: String,
+        expected: Context,
+        session: String,
+        agent_runtime: String,
+        terminal_id: String,
+        deadline: std::time::Instant,
+        reply: Sender<Result<herdr_core::factory::PreparedQuestionGuard, String>>,
+    },
     DeliveryHuman {
         reply: Sender<Result<herdr_core::delivery::worker::PreparedHuman, String>>,
     },
@@ -168,6 +178,39 @@ impl CoreHandle {
             .map_err(|_| "factory_unavailable".to_owned())?
     }
 
+    #[allow(clippy::too_many_arguments)] // carry the authenticated pane facts and caller-owned deadline unchanged
+    pub fn prepare_factory_question_guard(
+        &self,
+        device: &str,
+        pane: &str,
+        expected: &Context,
+        session: String,
+        agent_runtime: String,
+        terminal_id: String,
+        deadline: std::time::Instant,
+    ) -> Result<herdr_core::factory::PreparedQuestionGuard, String> {
+        let (reply, result) = mpsc::channel();
+        let left = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .filter(|left| !left.is_zero())
+            .ok_or("factory_guard_expired")?;
+        self.commands
+            .send(Command::FactoryQuestionGuard {
+                device_id: device.to_owned(),
+                pane_id: pane.to_owned(),
+                expected: expected.clone(),
+                session,
+                agent_runtime,
+                terminal_id,
+                deadline,
+                reply,
+            })
+            .map_err(|_| "factory_guard_unavailable")?;
+        result
+            .recv_timeout(left)
+            .map_err(|_| "factory_guard_expired")?
+    }
+
     pub fn set_file_roots(
         &self,
         roots: Vec<(std::path::PathBuf, std::fs::File)>,
@@ -310,6 +353,33 @@ impl CoreHandle {
             reason: "core_unavailable",
             next_action: "Reconnect Hide and retry",
         })?
+    }
+
+    pub fn workspace_query_until(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        query: Query,
+        deadline: std::time::Instant,
+    ) -> Result<QueryResult, Refusal> {
+        let unavailable = || Refusal {
+            reason: "factory_guard_expired",
+            next_action: "Continue the tool call",
+        };
+        let left = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .filter(|left| !left.is_zero())
+            .ok_or_else(unavailable)?;
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::WorkspaceQuery {
+                device_id: device_id.to_owned(),
+                pane_id: pane_id.to_owned(),
+                query,
+                reply,
+            })
+            .map_err(|_| unavailable())?;
+        rx.recv_timeout(left).map_err(|_| unavailable())?
     }
 
     pub fn workspace_action(
@@ -462,6 +532,26 @@ fn owner_loop(
     let mut _held_roots = hide_node::HeldRoots::default();
     while let Ok(command) = commands.recv() {
         match command {
+            Command::FactoryQuestionGuard {
+                device_id,
+                pane_id,
+                expected,
+                session,
+                agent_runtime,
+                terminal_id,
+                deadline,
+                reply,
+            } => {
+                let _ = reply.send(core.prepare_factory_question_guard(
+                    &device_id,
+                    &pane_id,
+                    &expected,
+                    &session,
+                    &agent_runtime,
+                    &terminal_id,
+                    deadline,
+                ));
+            }
             Command::DeliveryHuman { reply } => {
                 let _ = reply.send(core.prepare_delivery_human());
             }

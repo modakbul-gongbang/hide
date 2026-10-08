@@ -278,7 +278,9 @@ fn oversized_claude_tool_blocks_resume_after_restart_without_losing_human_text()
     let human = |text: &str| {
         serde_json::json!({"type":"user","userType":"external","promptId":"p","timestamp":"2026-10-01T00:00:00Z","message":{"role":"user","content":text}}).to_string()+"\n"
     };
-    let tool = serde_json::json!({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"x".repeat(3*1024*1024)}]}}).to_string()+"\n";
+    // A named Bash call cannot answer a native question. A correlated
+    // result omits the tool name and cannot safely authorize a discard.
+    let tool = serde_json::json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"x".repeat(3*1024*1024)}}]}}).to_string()+"\n";
     fs::write(
         &source,
         human("before tool") + &tool + &human("after tool 대화검색"),

@@ -1015,6 +1015,10 @@ pub struct SidebarAgentSnapshot {
     /// overview-lenses-tiles-agents D-50). Absent when neither was reported.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// Bounded native question/plan content for the current session and
+    /// state. Missing source content remains absent rather than inferred.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_turn: Option<hide_session::turns::UserTurnFact>,
     /// Derived: whether the row draws its status word. It leaves working and
     /// read rows, where the mark already says it, and stays on rows that
     /// still concern the operator.
@@ -4965,6 +4969,16 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "label_end", &ends);
         checked.insert("label_end");
+
+        use hide_session::turns::UserTurnKind;
+        let user_turns = [UserTurnKind::PlanApproval, UserTurnKind::Question];
+        for variant in user_turns {
+            match variant {
+                UserTurnKind::PlanApproval | UserTurnKind::Question => {}
+            }
+        }
+        assert_wire(&contract, "user_turn_kind", &user_turns);
+        checked.insert("user_turn_kind");
 
         let statuses = [
             ChangedFileStatus::Modified,

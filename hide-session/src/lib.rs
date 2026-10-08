@@ -349,6 +349,8 @@ pub enum SkipReason {
     MissingTimestamp,
     InvalidTimestamp,
     NonConversationCapacity,
+    UserTurnCapacity,
+    UserTurnInvalid,
 }
 
 impl SkipReason {
@@ -358,6 +360,8 @@ impl SkipReason {
             Self::MissingTimestamp => "missing_timestamp",
             Self::InvalidTimestamp => "invalid_timestamp",
             Self::NonConversationCapacity => "non_conversation_capacity",
+            Self::UserTurnCapacity => "user_turn_capacity",
+            Self::UserTurnInvalid => "user_turn_invalid",
         }
     }
 }
@@ -1183,7 +1187,8 @@ pub(crate) fn parse_events_into(
             base_offset,
             parse_claude_line,
             links::claude_line,
-            None,
+            Some(turns::native::claude),
+            true,
             found,
         ),
         Agent::Codex => parse_lines_at(
@@ -1191,7 +1196,8 @@ pub(crate) fn parse_events_into(
             base_offset,
             parse_codex_line,
             links::codex_line,
-            Some(codex_turn_mark),
+            Some(turns::native::codex),
+            false,
             found,
         ),
         Agent::OpenCode => ParsedSession::default(),
@@ -1206,7 +1212,8 @@ fn parse_lines_at(
     base_offset: u64,
     mut extract: impl FnMut(&Value) -> LineResult,
     link: links::LinkLine,
-    turn: Option<fn(&Value) -> Option<turns::TurnMark>>,
+    turn: Option<turns::native::Parser>,
+    human_starts_turn: bool,
     found: &mut links::LinkAccumulator,
 ) -> ParsedSession {
     let mut parsed = ParsedSession::default();
@@ -1226,17 +1233,27 @@ fn parse_lines_at(
             }
         };
         link(&value, line_offset, found);
-        if let Some(mark) = turn.and_then(|turn| turn(&value)) {
-            parsed.turn_marks.push((line_offset, mark));
+        if let Some(turn) = turn {
+            match turn(&value) {
+                Ok(Some(mark)) => parsed.turn_marks.push((line_offset, mark)),
+                Err(reason) => parsed.skipped(reason),
+                Ok(None) => {}
+            }
         }
         match extract(&value) {
             LineResult::Ignore => {}
             LineResult::Skip(reason) => parsed.skipped(reason),
             LineResult::Event(event) => {
-                if turn.is_some() && event.kind == EventKind::Human {
-                    parsed
-                        .turn_marks
-                        .push((line_offset, turns::TurnMark::Human));
+                if turn.is_some() {
+                    let mark = match event.kind {
+                        EventKind::Human if human_starts_turn => Some(turns::TurnMark::HumanTurn),
+                        EventKind::Human => Some(turns::TurnMark::Human),
+                        EventKind::Interrupted => Some(turns::TurnMark::Interrupted),
+                        _ => None,
+                    };
+                    if let Some(mark) = mark {
+                        parsed.turn_marks.push((line_offset, mark));
+                    }
                 }
                 found.event(event.kind, event.at_unix_ms, &event.text);
                 parsed.events.push(event);
@@ -1478,59 +1495,6 @@ fn parse_codex_line(item: &Value) -> LineResult {
         text
     };
     LineResult::Event(ConversationEvent::new(role, kind, timestamp, text).with_images(images))
-}
-
-/// The turn record a Codex rollout line is, if any (PRD
-/// codex-plan-approval-hold D-03; the record shapes are those of codex-cli
-/// 0.160.1). Codex writes each turn as `event_msg` records: `task_started`
-/// with `collaboration_mode_kind` (`plan` or `default`), an `item_completed`
-/// whose item is a `Plan` when a plan-mode turn proposes one, then
-/// `task_complete`, or `turn_aborted` when the operator interrupts it; the
-/// proposed plan is also the assistant's final message, wrapped in a
-/// `<proposed_plan>` block. Codex then shows "Implement this plan?" and
-/// writes nothing until the operator answers, which starts the next turn.
-/// Herdr reads that menu as an ordinary stop (`idle` under its 2026.10.01.1
-/// Codex manifest), and a bell's Enter picks "Yes, implement this plan", so
-/// these records are the only place the wait is visible. A mode this parser
-/// does not know is reported as unknown, so a renamed field holds the bell
-/// rather than reading as a turn that proposes nothing.
-fn codex_turn_mark(item: &Value) -> Option<turns::TurnMark> {
-    let payload = item.get("payload")?;
-    let turn = || {
-        payload
-            .get("turn_id")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
-    let kind = payload.get("type").and_then(Value::as_str);
-    match item.get("type").and_then(Value::as_str)? {
-        "event_msg" => match kind? {
-            "task_started" => Some(turns::TurnMark::Started {
-                turn: turn(),
-                mode: match payload
-                    .get("collaboration_mode_kind")
-                    .and_then(Value::as_str)
-                {
-                    Some("plan") => turns::TurnMode::Plan,
-                    Some("default") => turns::TurnMode::Other,
-                    _ => turns::TurnMode::Unknown,
-                },
-            }),
-            "item_completed" => (payload.pointer("/item/type").and_then(Value::as_str)
-                == Some("Plan"))
-            .then(|| turns::TurnMark::Plan { turn: turn() }),
-            "task_complete" => Some(turns::TurnMark::Completed { turn: turn() }),
-            "turn_aborted" => Some(turns::TurnMark::Aborted { turn: turn() }),
-            _ => None,
-        },
-        "response_item" if kind == Some("message") => {
-            let assistant = payload.get("role").and_then(Value::as_str) == Some("assistant");
-            let proposed = session_text(payload.get("content"))
-                .is_some_and(|text| text.contains("<proposed_plan>"));
-            (assistant && proposed).then_some(turns::TurnMark::Plan { turn: None })
-        }
-        _ => None,
-    }
 }
 
 /// All prefixes that identify prompt scaffolding live here so both providers

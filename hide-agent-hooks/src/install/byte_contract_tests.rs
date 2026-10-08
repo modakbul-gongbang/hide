@@ -1,4 +1,4 @@
-//! PRD agent-adapter-layer D-10: the accepted pre-move installation bytes.
+//! P9 D-05: the version-seven installation command contract.
 //! These fixtures pin all six commands, matchers, markers and file ordering.
 //! A command change would invalidate Codex trust even if its meaning stayed the same.
 
@@ -66,7 +66,7 @@ fn every_installed_command_keeps_its_premove_bytes_on_both_platforms() {
 }
 
 #[test]
-fn complete_installed_files_keep_their_premove_bytes_and_second_install_is_inert() {
+fn installed_commands_keep_their_premove_bytes_and_operator_source_is_untouched() {
     for (runtime, helper, windows, baseline) in BASELINES {
         if windows != cfg!(windows) {
             continue;
@@ -79,16 +79,25 @@ fn complete_installed_files_keep_their_premove_bytes_and_second_install_is_inert
         let first = install(runtime, home.path(), Path::new(helper)).unwrap();
         assert!(first.changed);
         assert_eq!(first.preserved_entries, 1, "the operator hook survives");
+        // B5 supersedes the old whole-file pretty-serialization fixture:
+        // only Hide's entries may change; operator source stays literal.
+        let installed = fs::read_to_string(&config).unwrap();
+        assert!(installed.contains(r#""operator_setting":{"enabled":true}"#));
+        assert!(
+            installed.contains(r#"{"hooks":[{"type":"command","command":"echo operator-hook"}]}"#)
+        );
+        let actual: Value = serde_json::from_str(&installed).unwrap();
+        let expected: Value = serde_json::from_str(baseline).unwrap();
         assert_eq!(
-            fs::read(&config).unwrap(),
-            baseline.as_bytes(),
-            "{}: complete installed file bytes",
+            actual,
+            expected,
+            "{}: installed command contract",
             runtime.id()
         );
 
         let second = install(runtime, home.path(), Path::new(helper)).unwrap();
         assert!(!second.changed, "a repeat install must write nothing");
         assert_eq!(second.preserved_entries, 1);
-        assert_eq!(fs::read(&config).unwrap(), baseline.as_bytes());
+        assert_eq!(fs::read_to_string(&config).unwrap(), installed);
     }
 }

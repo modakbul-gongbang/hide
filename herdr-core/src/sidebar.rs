@@ -651,6 +651,10 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         expected_reply,
         detail: None,
         message,
+        user_turn: agent
+            .facts
+            .as_ref()
+            .and_then(|facts| facts.user_turn.clone()),
         status_word_visible: true,
         changed_at_unix_ms: agent.changed_at_unix_ms,
         last_activity,

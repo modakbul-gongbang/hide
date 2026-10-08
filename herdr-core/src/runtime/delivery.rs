@@ -1283,6 +1283,11 @@ pub(crate) mod tests {
         );
         assert_eq!(
             observe(&mut guard, "claude", 2, "recipient-native", None),
+            Turn::Unread,
+            "a supported question reader must finish before the bell rings"
+        );
+        assert_eq!(
+            observe(&mut guard, "opencode", 2, "recipient-native", None),
             Turn::NotReported
         );
         // Adapter D-08/B5: every spelling of one agent reads the same turn.
