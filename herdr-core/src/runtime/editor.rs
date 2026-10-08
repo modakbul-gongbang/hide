@@ -677,6 +677,7 @@ impl Runtime {
             .filter_map(|key| {
                 self.close_operations
                     .get(key)
+                    .filter(|operation| operation.request.retain_for_reopen)
                     .map(|operation| (key, operation))
             })
             .map(
@@ -697,7 +698,8 @@ impl Runtime {
             .close_capture_order
             .back()
             .filter(|_| local)
-            .and_then(|key| self.close_operations.get(key));
+            .and_then(|key| self.close_operations.get(key))
+            .filter(|operation| operation.request.retain_for_reopen);
         let queueable =
             newest_close.is_some_and(PendingClose::settling) && self.reopen_after_close.is_none();
         self.snapshot.recent_closed.can_reopen = queueable
@@ -1229,7 +1231,21 @@ impl Runtime {
             }]);
             return true;
         };
+        let retain_for_reopen =
+            !self
+                .snapshot
+                .ui_state
+                .agent_sleep
+                .dormant
+                .values()
+                .any(|record| {
+                    record.old_pane_id == target_id
+                        && record.connection_generation == self.live_generation
+                        && record.phase == crate::agent_sleep::DormantPhase::Closing
+                        && record.close_key.is_none()
+                });
         let request = live::CloseCaptureRequest {
+            retain_for_reopen,
             key: self.next_recent_closed_key(),
             connection_generation: self.live_generation,
             context,
@@ -1570,6 +1586,9 @@ impl Runtime {
         request: &live::CloseCaptureRequest,
         result: Result<live::CloseCaptureOutcome, String>,
     ) -> (bool, Vec<live::CloseEffectRequest>) {
+        if !request.retain_for_reopen && !self.close_operations.contains_key(&request.key) {
+            return (false, Vec::new());
+        }
         self.ensure_pending_close_from_request(request);
         let Some(operation) = self.close_operations.get(&request.key).cloned() else {
             return (false, Vec::new());
@@ -1640,6 +1659,7 @@ impl Runtime {
             },
         ));
         let effect = live::CloseEffectRequest {
+            retain_for_reopen: request.retain_for_reopen,
             allow_replacement_create: operation.allow_replacement_create,
             key: request.key.clone(),
             connection_generation: request.connection_generation,
@@ -1669,6 +1689,9 @@ impl Runtime {
         request: &live::CloseEffectRequest,
         result: Result<(), hide_herdr_client::ApiError>,
     ) -> bool {
+        if !request.retain_for_reopen && !self.close_operations.contains_key(&request.key) {
+            return false;
+        }
         if !self.close_operations.contains_key(&request.key) {
             // A result can outlive the runtime that created its reservation.
             // Rehydrate that reservation without putting it back on the
@@ -1679,6 +1702,7 @@ impl Runtime {
                 live::CloseCaptureTarget::Tab { tab_id } => tab_id.clone(),
             };
             self.ensure_pending_close_from_request(&live::CloseCaptureRequest {
+                retain_for_reopen: request.retain_for_reopen,
                 key: request.key.clone(),
                 connection_generation: request.connection_generation,
                 context: ClosedContext {
@@ -1854,9 +1878,11 @@ impl Runtime {
             self.clear_close_guards(&operation);
             // Without a captured item the reopen would reach an older close.
             queued_close_completed |= self.reopen_after_close.as_deref() == Some(key.as_str())
+                && operation.request.retain_for_reopen
                 && operation.phase == "completed"
                 && operation.item.is_some();
             if operation.phase == "completed"
+                && operation.request.retain_for_reopen
                 && let Some(item) = operation.item
             {
                 push_bounded(&mut self.recent_closed, item);
@@ -2325,6 +2351,7 @@ impl Runtime {
         if self.reopen_device() == self.node.as_str()
             && let Some(key) = self.close_capture_order.back().cloned()
             && let Some(operation) = self.close_operations.get(&key)
+            && operation.request.retain_for_reopen
         {
             // The tab already left the screen, so a reopen pressed right
             // after the close is the operator's intent, not a mistake: it

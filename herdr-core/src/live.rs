@@ -1008,6 +1008,8 @@ pub enum CloseCaptureTarget {
 
 #[derive(Clone, Debug)]
 pub struct CloseCaptureRequest {
+    /// A sleep close must never acquire the independent ordinary undo route.
+    pub retain_for_reopen: bool,
     pub key: String,
     /// A response from an older live connection must never settle a newer
     /// close intent after reconnect.
@@ -1024,6 +1026,7 @@ pub struct CloseCaptureOutcome {
 
 #[derive(Clone, Debug)]
 pub struct CloseEffectRequest {
+    pub retain_for_reopen: bool,
     pub allow_replacement_create: bool,
     pub replacement: Option<ClosedContext>,
     pub key: String,

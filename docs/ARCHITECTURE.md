@@ -564,6 +564,8 @@ The common mechanism does not grant a provider sleep support; its adapter must d
 The record's `SleepId` names the durable intent, while the captured native session, node, connection generation and execution sequence fence the old execution.
 The existing coalesced state writer acknowledges the exact record only after private atomic replacement and persistence barriers; a failed or stale write cannot authorize a close or start.
 Close admission reuses the existing geometry reservation and capture owner, saves the bound close key before sending its effect, and waits for authoritative disappearance before publishing a sleeping row.
+The captured close carries an immutable non-reopenable purpose through its worker replies, so a dormant conversation has only its SleepId wake route and never enters ordinary Reopen Closed.
+After that reservation retires, a late sleep capture or close reply cannot recreate an ordinary close operation.
 The archive holds at most 256 conversations and four pending or uncertain transitions; a full archive or transition budget refuses admission without closing a pane.
 An uncertain result retains its admission and offers explicit status inspection, with at most one inspection worker and a bounded intent-marker scan.
 A recovered intent with no saved close key sent no close and is released by that status action without a pane effect.

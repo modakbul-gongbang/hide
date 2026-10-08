@@ -128,7 +128,7 @@ fn dormant_intent(runtime: &mut Runtime) -> crate::agent_sleep::SleepId {
             kind: "claude".into(),
             native_session_id,
             identity_label: agent.identity_label,
-            cwd: CHECKOUT.into(),
+            cwd: context.checkout_path.clone(),
             context,
             close_key: None,
             closed: false,
@@ -139,6 +139,333 @@ fn dormant_intent(runtime: &mut Runtime) -> crate::agent_sleep::SleepId {
             reason: None,
         })
         .unwrap()
+}
+
+/// External Herdr replies use its pinned wire contract, not an owned worker mock.
+#[cfg(unix)]
+fn dormant_wire_session(cwd: &str, tabs: &[&str]) -> serde_json::Value {
+    serde_json::json!({"version":"fixture", "protocol":hide_herdr_client::HERDR_PROTOCOL_REVISION,
+        "workspaces":[{"workspace_id":"w-order","label":"order","active_tab_id":"w-order:t1","focused":true}],
+        "tabs":tabs.iter().enumerate().map(|(index, tab)| serde_json::json!({
+            "tab_id":tab,"workspace_id":"w-order","number":index+1,"label":"fixture",
+            "focused":index==0,"pane_count":1,"agent_status":"idle"
+        })).collect::<Vec<_>>(),
+        "panes":tabs.iter().map(|tab| serde_json::json!({
+            "pane_id":format!("{tab}:p"),"terminal_id":format!("term-{tab}"),"workspace_id":"w-order",
+            "tab_id":tab,"cwd":cwd,"focused":false,"agent_status":"idle","revision":0
+        })).collect::<Vec<_>>(),
+        "layouts":tabs.iter().map(|tab| serde_json::json!({
+            "workspace_id":"w-order","tab_id":tab,"zoomed":false,
+            "area":{"x":0,"y":0,"width":80,"height":24},"focused_pane_id":format!("{tab}:p"),
+            "panes":[{"pane_id":format!("{tab}:p"),"focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]
+        })).collect::<Vec<_>>(),"agents":[]})
+}
+
+#[cfg(unix)]
+fn persisted_dormant(path: &Path, id: &crate::agent_sleep::SleepId) -> serde_json::Value {
+    let state: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    state["agent_sleep"]["dormant"][id.as_str()].clone()
+}
+
+/// B5: real state writes authorize the ordinary close and wake workers.
+/// The external server observes each saved intent before accepting its effect.
+#[test]
+#[cfg(unix)]
+fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmation() {
+    use crate::agent_sleep::DormantPhase;
+    let folder = tempfile::tempdir().unwrap();
+    let cwd = folder.path().to_str().unwrap().to_owned();
+    let (mut runtime, _) = live_tab_order_runtime(&cwd);
+    let mut initial = session(Some(4));
+    for pane in &mut initial.panes {
+        pane.cwd = Some(cwd.clone());
+    }
+    initial.agents[0].cwd = Some(cwd.clone());
+    runtime.ingest_session(Ok(initial));
+    let id = dormant_intent(&mut runtime);
+    let path = runtime.state_path.clone();
+    let saved_path = path.clone();
+    let saved_id = id.clone();
+    let saved_cwd = cwd.clone();
+    let (effects, observed) = std::sync::mpsc::channel();
+    let mut created = false;
+    let herdr = FakeHerdr::start("dormant-success", move |method, params| match method {
+        "layout.export" => {
+            assert_eq!(
+                persisted_dormant(&saved_path, &saved_id)["phase"],
+                "saving_close"
+            );
+            serde_json::json!({"type":"layout_export","layout":{
+                "workspace_id":"w-order","tab_id":"w-order:t2","zoomed":false,
+                "focused_pane_id":SLEEPER,"root":{"type":"pane","pane_id":SLEEPER,"cwd":saved_cwd,"env":{}}
+            }})
+        }
+        "pane.close" => {
+            let saved = persisted_dormant(&saved_path, &saved_id);
+            assert_eq!(saved["phase"], "saving_close_ready");
+            assert!(saved["close_key"].is_string());
+            assert_eq!(params["pane_id"], SLEEPER);
+            effects.send("close").unwrap();
+            serde_json::json!({"type":"pane_closed","pane_id":SLEEPER,"workspace_id":"w-order"})
+        }
+        "session.snapshot" => {
+            // The layout worker reads once before and once after creating its own tab.
+            let tabs = if created {
+                vec!["w-order:t1", "w-order:t3"]
+            } else {
+                vec!["w-order:t1"]
+            };
+            serde_json::json!({"type":"session_snapshot","snapshot":dormant_wire_session(&saved_cwd, &tabs)})
+        }
+        "layout.apply" => {
+            assert_eq!(
+                persisted_dormant(&saved_path, &saved_id)["phase"],
+                "saving_wake"
+            );
+            assert_eq!(params["root"]["cwd"], saved_cwd);
+            assert!(
+                params["root"]["env"]["HIDE_REOPEN_INTENT"]
+                    .as_str()
+                    .unwrap()
+                    .contains(saved_id.as_str())
+            );
+            created = true;
+            effects.send("create").unwrap();
+            serde_json::json!({"type":"layout_apply","layout":{
+                "workspace_id":"w-order","tab_id":"w-order:t3","zoomed":false,
+                "focused_pane_id":"w-order:t3:p","root":{"type":"pane","pane_id":"w-order:t3:p","cwd":saved_cwd,"env":params["root"]["env"]}
+            }})
+        }
+        "tab.move" => tab_list(&["w-order:t1", "w-order:t3"]),
+        "pane.process_info" => serde_json::json!({"type":"pane_process_info","process_info":{
+            "pane_id":"w-order:t3:p","shell_pid":42,"foreground_process_group_id":42,
+            "foreground_processes":[{"pid":42,"name":"zsh"}]
+        }}),
+        "agent.start" => {
+            let saved = persisted_dormant(&saved_path, &saved_id);
+            assert_eq!(saved["phase"], "saving_start");
+            assert_eq!(saved["wake_pane_id"], "w-order:t3:p");
+            assert_eq!(params["pane_id"], "w-order:t3:p");
+            assert_eq!(params["kind"], "claude");
+            assert_eq!(
+                params["args"],
+                serde_json::json!(["--resume", "11111111-2222-3333-4444-555555555555"])
+            );
+            effects.send("start").unwrap();
+            serde_json::json!({"type":"agent_started","argv":[],"agent":{
+                "pane_id":"w-order:t3:p","terminal_id":"term-wake","workspace_id":"w-order",
+                "tab_id":"w-order:t3","focused":false,"agent_status":"idle","revision":1
+            }})
+        }
+        other => panic!("unexpected dormant effect: {other}"),
+    });
+    runtime.live.as_mut().unwrap().api_connector = Arc::new(herdr.connector());
+    let shared = Arc::new(std::sync::Mutex::new(runtime));
+    shared.lock().unwrap().live.as_mut().unwrap().runtime = Arc::downgrade(&shared);
+    shared.lock().unwrap().write_ui_state().unwrap();
+    assert_eq!(
+        observed.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "close"
+    );
+    let retired_capture;
+    {
+        let mut runtime = shared.lock().unwrap();
+        retired_capture = runtime
+            .close_operations
+            .values()
+            .next()
+            .unwrap()
+            .request
+            .clone();
+        assert!(!runtime.snapshot.recent_closed.can_reopen);
+        assert!(runtime.snapshot.recent_closed.pending.is_empty());
+        runtime.dispatch_json(&event("reopen_closed", serde_json::json!({})));
+        assert!(runtime.reopen_after_close.is_none());
+        runtime.ingest_session(Ok(tab_order_payload(
+            &cwd,
+            &["w-order:t1"],
+            &["w-order:t1"],
+            "w-order:t1",
+        )));
+        assert_eq!(runtime.snapshot.navigator.sleeping_sessions.len(), 1);
+        assert_eq!(
+            runtime.snapshot.navigator.sleeping_sessions[0].phase,
+            DormantPhase::Sleeping
+        );
+        assert_eq!(runtime.snapshot.recent_closed.count, 0);
+        assert!(runtime.request_dormant_wake(&id));
+        assert!(!runtime.request_dormant_wake(&id));
+    }
+    assert_eq!(
+        observed.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "create"
+    );
+    assert_eq!(
+        observed.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "start"
+    );
+    {
+        let mut runtime = shared.lock().unwrap();
+        let work = crate::agent_sleep_herdr::DormantWork {
+            id: id.clone(),
+            record: runtime.snapshot.ui_state.agent_sleep.dormant[&id].clone(),
+        };
+        let mut stale = work.clone();
+        stale.record.connection_generation += 1;
+        assert!(
+            !runtime
+                .ingest_dormant_tab(&stale, crate::agent_sleep_herdr::DormantTabOutcome::Unknown)
+        );
+        assert_eq!(
+            runtime.snapshot.ui_state.agent_sleep.dormant[&id],
+            work.record
+        );
+        assert!(!runtime.request_dormant_wake(&id));
+        assert_eq!(runtime.snapshot.navigator.sleeping_sessions.len(), 1);
+        let mut confirmed = tab_order_payload(
+            &cwd,
+            &["w-order:t1", "w-order:t3"],
+            &["w-order:t1", "w-order:t3"],
+            "w-order:t1",
+        );
+        let mut agent = session(Some(5)).agents.remove(0);
+        agent.pane_id = Some("w-order:t3:p".into());
+        agent.cwd = Some(cwd.clone());
+        agent.facts = Some(Default::default());
+        confirmed.agents.push(agent);
+        runtime.ingest_session(Ok(confirmed));
+        assert!(runtime.snapshot.navigator.sleeping_sessions.is_empty());
+        assert!(runtime.snapshot.ui_state.agent_sleep.dormant.is_empty());
+        assert_eq!(runtime.snapshot.recent_closed.count, 0);
+        assert!(persisted_dormant(&path, &id).is_null());
+        let (changed, effects) = runtime.ingest_close_capture_result(
+            &retired_capture,
+            Ok(live::CloseCaptureOutcome { item: None }),
+        );
+        assert!(!changed);
+        assert!(effects.is_empty());
+        assert!(!runtime.ingest_close_effect_result(
+            &live::CloseEffectRequest {
+                retain_for_reopen: false,
+                allow_replacement_create: false,
+                replacement: None,
+                key: retired_capture.key.clone(),
+                connection_generation: retired_capture.connection_generation,
+                target: retired_capture.target.clone(),
+            },
+            Ok(())
+        ));
+        assert!(runtime.close_operations.is_empty());
+    }
+    let calls = herdr.methods();
+    for method in ["pane.close", "layout.apply", "agent.start"] {
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|called| called.as_str() == method)
+                .count(),
+            1,
+            "{calls:?}"
+        );
+    }
+}
+
+/// An uncertain close is inspected through the real worker, never repaired.
+#[test]
+#[cfg(unix)]
+fn checking_an_uncertain_sent_sleep_keeps_live_topology_and_sends_no_mutation() {
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    runtime.ingest_session(Ok(session(Some(4))));
+    let id = dormant_intent(&mut runtime);
+    let record = runtime
+        .snapshot
+        .ui_state
+        .agent_sleep
+        .dormant
+        .get_mut(&id)
+        .unwrap();
+    record.phase = crate::agent_sleep::DormantPhase::CloseUnknown;
+    record.close_key = Some("saved-sent-close".into());
+    runtime.refresh_dormant_rows();
+    let herdr = FakeHerdr::start("dormant-status-read-only", |method, _| match method {
+        "session.snapshot" => {
+            serde_json::json!({"type":"session_snapshot","snapshot":dormant_wire_session(CHECKOUT, &TABS)})
+        }
+        other => panic!("status inspection must not mutate Herdr: {other}"),
+    });
+    runtime.live.as_mut().unwrap().api_connector = Arc::new(herdr.connector());
+    let shared = Arc::new(std::sync::Mutex::new(runtime));
+    shared.lock().unwrap().live.as_mut().unwrap().runtime = Arc::downgrade(&shared);
+    assert!(shared.lock().unwrap().request_dormant_status(&id));
+    wait(&shared, "read-only dormant status", |runtime| {
+        runtime.dormant_status_check.is_none()
+    });
+    let runtime = shared.lock().unwrap();
+    assert_eq!(herdr.methods(), ["session.snapshot"]);
+    assert_eq!(pane(&runtime)["id"], SLEEPER);
+    let row = &runtime.snapshot.navigator.sleeping_sessions[0];
+    assert_eq!(row.sleep_id, id);
+    assert_eq!(row.phase, crate::agent_sleep::DormantPhase::CloseUnknown);
+    assert!(!row.wake_available);
+    assert!(!row.checking);
+    assert_eq!(runtime.snapshot.recent_closed.count, 0);
+}
+
+/// A retired sleep record cannot change the original close's purpose.
+#[test]
+fn a_dormant_close_never_becomes_reopenable_after_archive_retirement() {
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    runtime.ingest_session(Ok(session(Some(4))));
+    let id = dormant_intent(&mut runtime);
+    runtime
+        .snapshot
+        .ui_state
+        .agent_sleep
+        .dormant
+        .get_mut(&id)
+        .unwrap()
+        .phase = crate::agent_sleep::DormantPhase::Closing;
+    let herdr = FakeHerdr::start("dormant-retired-capture", |method, _| match method {
+        "layout.export" => serde_json::json!({"type":"layout_export","layout":{
+            "workspace_id":"w-order","tab_id":"w-order:t2","zoomed":false,"focused_pane_id":SLEEPER,
+            "root":{"type":"pane","pane_id":SLEEPER,"cwd":CHECKOUT,"env":{}}
+        }}),
+        other => panic!("unexpected retired sleep effect: {other}"),
+    });
+    runtime.live.as_mut().unwrap().api_connector = Arc::new(herdr.connector());
+    runtime.close_local_pane(SLEEPER.into(), false, false);
+    let key = runtime.snapshot.ui_state.agent_sleep.dormant[&id]
+        .close_key
+        .clone()
+        .unwrap();
+    let operation = runtime.close_operations.get_mut(&key).unwrap();
+    operation.phase = "awaiting_topology".into();
+    operation.item = Some(ClosedItem::Pane {
+        key: key.clone(),
+        context: operation.request.context.clone(),
+        pane: operation
+            .request
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == SLEEPER)
+            .unwrap()
+            .clone(),
+        placement: crate::recent_closed::PanePlacement {
+            neighbor_pane_id: None,
+            parent_path: vec![],
+            direction: crate::recent_closed::ClosedSplitDirection::Right,
+            ratio: 0.5,
+            target_was_first: false,
+        },
+    });
+    assert!(!operation.request.retain_for_reopen);
+    runtime.snapshot.ui_state.agent_sleep.dormant.remove(&id);
+    assert!(runtime.mark_close_topology_confirmed(&key));
+    runtime.promote_close_reservations();
+    assert_eq!(runtime.snapshot.recent_closed.count, 0);
+    assert!(!runtime.snapshot.recent_closed.can_reopen);
+    assert!(runtime.snapshot.recent_closed.pending.is_empty());
+    herdr.wait_for_requests(1, Duration::from_secs(5));
 }
 
 #[test]
