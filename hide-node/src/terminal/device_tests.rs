@@ -214,6 +214,8 @@ struct GatedLink {
     fail: Mutex<Option<LineRefused>>,
     /// Lines answered busy before the link takes one.
     busy: Mutex<usize>,
+    /// Why the writer ended the link, once it has.
+    ended: Mutex<Option<String>>,
 }
 
 impl GatedLink {
@@ -252,6 +254,10 @@ impl LineLink for GatedLink {
         }
         self.written.lock().unwrap().push(line.to_vec());
         Ok(())
+    }
+
+    fn end(&self, reason: &str) {
+        *self.ended.lock().unwrap() = Some(reason.to_owned());
     }
 }
 
@@ -531,6 +537,65 @@ fn a_waiting_run_of_keys_stops_at_a_pane_a_control_an_enter_and_an_escape() {
         .position(|line| matches!(line, TerminalDown::Key { data, .. } if decode_base64(data).unwrap() == b"d"))
         .unwrap();
     assert_eq!(control, d + 1);
+}
+
+/// What waits for a device's link is capped (D-18, principle 15): with the
+/// link stalled, lines past the count and keys of many panes past the bytes
+/// stop the queue growing, drop what waited, refuse later keys with a
+/// reason, and end the link once its writer is free, as a link that ends
+/// does (D-19).
+#[test]
+fn a_stalled_link_past_what_may_wait_is_ended_rather_than_grown() {
+    let (views, link, heard) = proxy();
+    stall(&views);
+    let mut most = 0;
+    for _ in 0..MAX_WAITING_LINES + 100 {
+        views.view("w1:p1", SIZE, false);
+        most = most.max(lock(&views.shared.state).lines.len());
+    }
+    assert_eq!(most, MAX_WAITING_LINES);
+    assert!(
+        lock(&views.shared.state).lines.is_empty(),
+        "what waited was dropped"
+    );
+    views.key(KeyTarget::Pane("w1:p1".into()), b"late".to_vec(), 1);
+    let refused = |heard: &Heard| {
+        heard
+            .reports
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, report)| {
+                matches!(report, TerminalReport::Error { kind, .. } if kind == "terminal.device_disconnected")
+            })
+            .count()
+    };
+    assert_eq!(refused(&heard), 1);
+    link.release();
+    wait_for(|| link.ended.lock().unwrap().is_some());
+    assert_eq!(
+        link.lines().len(),
+        1,
+        "only the line already on its way was written"
+    );
+
+    let (proxy, link, heard) = proxy();
+    stall(&proxy);
+    let keys = vec![b'k'; MAX_UNSENT_KEY_BYTES];
+    let mut most = 0;
+    for pane in 0..64 {
+        proxy.key(KeyTarget::Pane(format!("w1:p{pane}")), keys.clone(), 1);
+        most = most.max(lock(&proxy.shared.state).waiting_bytes);
+    }
+    assert!(most <= MAX_WAITING_BYTES, "{most} bytes waited");
+    assert!(lock(&proxy.shared.state).failed.is_some());
+    assert!(refused(&heard) > 0);
+    link.release();
+    wait_for(|| link.ended.lock().unwrap().is_some());
+    assert!(
+        key_lines(&link).is_empty(),
+        "no key of a dropped queue went down"
+    );
 }
 
 #[test]

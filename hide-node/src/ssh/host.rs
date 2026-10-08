@@ -747,6 +747,10 @@ impl crate::terminal::device::LineLink for RemoteHost {
                 error => LineRefused::Ended(error.to_string()),
             })
     }
+
+    fn end(&self, reason: &str) {
+        self.close(reason);
+    }
 }
 
 impl NodeLink for RemoteHost {
@@ -984,6 +988,7 @@ fn start_terminals(
                 "component": "remote_host",
                 "kind": "host.terminals_started",
                 "target": host.inner.target,
+                "link": terminals.link(),
             }));
             Some(Arc::new(terminals))
         }

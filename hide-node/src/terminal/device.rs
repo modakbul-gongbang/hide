@@ -25,6 +25,14 @@
 //! named in the log as unwritten. A link busy with another call writes the
 //! line again once it is free; a link that ends takes every flow with it
 //! and refuses later keys rather than keep them for another link.
+//!
+//! Everything waiting for the link, controls, views, redraws and keys of
+//! every pane, is capped at [`MAX_WAITING_LINES`] lines and
+//! [`MAX_WAITING_BYTES`] bytes. A link that falls that far behind is
+//! treated as stalled: what waited is dropped (its keys named in the log as
+//! unwritten), later keys are refused, and the writer ends the link, so the
+//! device's panes read unavailable and attach again when 2b's reconnect
+//! brings a new link (D-19).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
@@ -451,11 +459,24 @@ pub enum LineRefused {
 pub trait LineLink: Send + Sync + 'static {
     /// Writes one whole line.
     fn send_line(&self, line: &[u8]) -> Result<(), LineRefused>;
+    /// Ends the link as stalled; whoever holds it reconnects.
+    fn end(&self, reason: &str);
 }
 
 /// The most key bytes one waiting line gathers; a longer run of keys goes
 /// down as several lines, in order.
 const MAX_KEY_LINE_BYTES: usize = 16 * 1024;
+/// What may wait to go down one link, in lines and in bytes (keys counted
+/// as their own bytes, other lines whole); past either the link is treated
+/// as stalled. Far above what a link that keeps up holds, and under 9 MiB
+/// with each line's own cost.
+pub(super) const MAX_WAITING_LINES: usize = 8192;
+pub(super) const MAX_WAITING_BYTES: usize = 8 * 1024 * 1024;
+const STALLED: &str =
+    "terminal lines waited past what one device link may hold, so the link is treated as stalled";
+
+/// Each link's writer, by number, for the log.
+static NEXT_LINK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// One thing waiting to go down the link.
 enum Waiting {
@@ -474,6 +495,10 @@ enum Waiting {
 #[derive(Default)]
 struct ProxyState {
     lines: VecDeque<Waiting>,
+    /// The bytes `lines` holds, counted as [`MAX_WAITING_BYTES`] counts them.
+    waiting_bytes: usize,
+    /// The link fell behind past what may wait: the writer ends it.
+    end_link: bool,
     /// Key bytes each pane has waiting in `lines`.
     key_bytes: HashMap<String, usize>,
     /// Panes whose keys passed the cap: they refuse keys until attached.
@@ -488,11 +513,49 @@ struct ProxyState {
     stopping: bool,
 }
 
+/// What a stall dropped, for the log.
+struct Stalled {
+    lines: usize,
+    bytes: usize,
+    unwritten: HashMap<String, usize>,
+}
+
+impl Waiting {
+    fn bytes(&self) -> usize {
+        match self {
+            Self::Line(line) => line.len(),
+            Self::Keys { bytes, .. } => bytes.len(),
+        }
+    }
+}
+
 impl ProxyState {
+    /// Whether `bytes` more, possibly in a line of their own, pass what may
+    /// wait for the link.
+    fn would_overflow(&self, bytes: usize) -> bool {
+        self.lines.len() >= MAX_WAITING_LINES || self.waiting_bytes + bytes > MAX_WAITING_BYTES
+    }
+
+    /// The link fell behind past what may wait: what waited is dropped,
+    /// every later key is refused, and the writer ends the link.
+    fn stall(&mut self) -> Stalled {
+        let stalled = Stalled {
+            lines: self.lines.len(),
+            bytes: self.waiting_bytes,
+            unwritten: unwritten_keys(self.lines.drain(..)),
+        };
+        self.key_bytes.clear();
+        self.waiting_bytes = 0;
+        self.failed = Some(STALLED.to_owned());
+        self.end_link = true;
+        stalled
+    }
+
     /// Queues `bytes` for `pane`, onto the plain run of its keys waiting
     /// last in line when both are plain.
     fn queue_keys(&mut self, pane: String, bytes: Vec<u8>, typed_at_unix_ms: u64) {
         *self.key_bytes.entry(pane.clone()).or_default() += bytes.len();
+        self.waiting_bytes += bytes.len();
         let plain = !bytes.iter().any(|byte| matches!(byte, b'\r' | 0x1b));
         if plain
             && let Some(Waiting::Keys {
@@ -517,8 +580,20 @@ impl ProxyState {
     }
 }
 
+/// Each pane's key bytes among `waiting`, for the log.
+fn unwritten_keys(waiting: impl Iterator<Item = Waiting>) -> HashMap<String, usize> {
+    let mut unwritten = HashMap::<String, usize>::new();
+    for waiting in waiting {
+        if let Waiting::Keys { pane, bytes, .. } = waiting {
+            *unwritten.entry(pane).or_default() += bytes.len();
+        }
+    }
+    unwritten
+}
+
 struct ProxyShared {
     device: String,
+    link: u64,
     state: Mutex<ProxyState>,
     ready: Condvar,
     sink: Arc<dyn DeviceSink>,
@@ -539,6 +614,7 @@ impl DeviceTerminals {
     ) -> std::io::Result<Self> {
         let shared = Arc::new(ProxyShared {
             device: device.to_owned(),
+            link: NEXT_LINK.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             state: Mutex::default(),
             ready: Condvar::new(),
             sink,
@@ -548,6 +624,11 @@ impl DeviceTerminals {
             .name("hide-device-terminal-writer".into())
             .spawn(move || write_lines(&writer, link.as_ref()))?;
         Ok(Self { shared })
+    }
+
+    /// This link's writer's number, as the log names it.
+    pub fn link(&self) -> u64 {
+        self.shared.link
     }
 
     /// What reads the device's terminal lines off the link: output to the
@@ -565,6 +646,14 @@ impl DeviceTerminals {
         if state.failed.is_some() || state.stopping {
             return;
         }
+        if state.would_overflow(line.len()) {
+            let stalled = state.stall();
+            drop(state);
+            self.shared.ready.notify_one();
+            self.shared.log_stalled(stalled);
+            return;
+        }
+        state.waiting_bytes += line.len();
         state.lines.push_back(Waiting::Line(line));
         drop(state);
         self.shared.ready.notify_one();
@@ -606,8 +695,16 @@ impl TerminalNode for DeviceTerminals {
             }));
             return;
         };
+        let mut stalled = None;
         let refusal = {
             let mut state = lock(&self.shared.state);
+            if !state.stopping
+                && state.failed.is_none()
+                && !state.overflowed.contains(&pane)
+                && state.would_overflow(bytes.len())
+            {
+                stalled = Some(state.stall());
+            }
             if let Some(reason) = state.failed.clone() {
                 if !state.told_failed.insert(pane.clone()) {
                     return;
@@ -635,6 +732,10 @@ impl TerminalNode for DeviceTerminals {
                 }
             }
         };
+        if let Some(stalled) = stalled {
+            self.shared.ready.notify_one();
+            self.shared.log_stalled(stalled);
+        }
         if let Some((kind, message, ended)) = refusal {
             crate::diagnostic!(json!({
                 "component": "device_terminal",
@@ -688,6 +789,34 @@ fn overflow_message() -> String {
 }
 
 impl ProxyShared {
+    fn log_stalled(&self, stalled: Stalled) {
+        crate::diagnostic!(json!({
+            "component": "device_terminal",
+            "kind": "terminal.device_link_stalled",
+            "device": self.device,
+            "link": self.link,
+            "lines": stalled.lines,
+            "bytes": stalled.bytes,
+            "cap_lines": MAX_WAITING_LINES,
+            "cap_bytes": MAX_WAITING_BYTES,
+        }));
+        self.log_unwritten(stalled.unwritten, STALLED);
+    }
+
+    fn log_unwritten(&self, unwritten: HashMap<String, usize>, reason: &str) {
+        for (pane, bytes) in unwritten {
+            crate::diagnostic!(json!({
+                "component": "device_terminal",
+                "kind": "terminal.keys_unwritten",
+                "device": self.device,
+                "link": self.link,
+                "pane_id": pane,
+                "key_bytes": bytes,
+                "reason": reason,
+            }));
+        }
+    }
+
     fn inbound(&self, line: &[u8]) {
         let up = match serde_json::from_slice::<TerminalLine<TerminalUp>>(line) {
             Ok(line) => line.terminal,
@@ -793,6 +922,12 @@ fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {
                 if state.stopping {
                     return;
                 }
+                if state.end_link {
+                    let reason = state.failed.clone().unwrap_or_else(|| STALLED.to_owned());
+                    drop(state);
+                    link.end(&reason);
+                    return;
+                }
                 if let Some(next) = state.lines.pop_front() {
                     break next;
                 }
@@ -825,6 +960,7 @@ fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {
         let mut state = lock(&shared.state);
         let reason = match sent {
             Ok(()) => {
+                state.waiting_bytes = state.waiting_bytes.saturating_sub(next.bytes());
                 if let Waiting::Keys { pane, bytes, .. } = &next
                     && let Some(unsent) = state.key_bytes.get_mut(pane)
                 {
@@ -833,6 +969,13 @@ fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {
                         state.key_bytes.remove(pane);
                     }
                 }
+                continue;
+            }
+            Err(LineRefused::Busy) if state.end_link => {
+                // The link stalled while this line waited for it: the line
+                // goes with the rest, and the next turn ends the link.
+                drop(state);
+                shared.log_unwritten(unwritten_keys(std::iter::once(next)), STALLED);
                 continue;
             }
             Err(LineRefused::Busy) => {
@@ -850,27 +993,15 @@ fn write_lines(shared: &ProxyShared, link: &dyn LineLink) {
             Err(LineRefused::Ended(reason)) => reason,
         };
         // The keys still waiting were taken and will not be written: each
-        // pane's count goes to the log, never to another link.
-        let mut unwritten = HashMap::<String, usize>::new();
-        let waiting = std::iter::once(next).chain(state.lines.drain(..));
-        for waiting in waiting {
-            if let Waiting::Keys { pane, bytes, .. } = waiting {
-                *unwritten.entry(pane).or_default() += bytes.len();
-            }
-        }
+        // pane's count goes to the log, never to another link. The link has
+        // ended already, so a stall noted meanwhile need not end it.
+        let unwritten = unwritten_keys(std::iter::once(next).chain(state.lines.drain(..)));
         state.key_bytes.clear();
+        state.waiting_bytes = 0;
+        state.end_link = false;
         state.failed = Some(reason.clone());
         drop(state);
-        for (pane, bytes) in unwritten {
-            crate::diagnostic!(json!({
-                "component": "device_terminal",
-                "kind": "terminal.keys_unwritten",
-                "device": shared.device,
-                "pane_id": pane,
-                "key_bytes": bytes,
-                "reason": reason,
-            }));
-        }
+        shared.log_unwritten(unwritten, &reason);
         return;
     }
 }
