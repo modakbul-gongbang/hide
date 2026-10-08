@@ -131,7 +131,6 @@ const EVERY: [&str; 5] = ["w1:p1", "w1:p2", "w1:p3", "w1:p4", "w5:p5"];
 fn tree_runtime(status: &[(&str, &str)]) -> Runtime {
     let mut runtime = runtime();
     runtime.restore_hint_pending = false;
-    runtime.suppress_terminal_session_workers = true;
     let socket_path = std::env::temp_dir()
         .join(format!(
             "herdr-core-tree-close-{}-{}.sock",

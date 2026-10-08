@@ -1859,3 +1859,73 @@ fn a_failed_device_link_is_tried_again_after_a_doubling_wait() {
     let at = runtime.device_host_retries[DEVICE].at_unix_ms.unwrap();
     assert_eq!((at - before) / 1_000, 2);
 }
+
+/// PRD core-host-node-terminal D-18, D-19, B17: a device's terminals ride its
+/// node link. A device without consent opens no link, so none are installed
+/// and its panes have no terminal; a link installs them, and its end removes
+/// them and leaves the device's panes unavailable until a link is back.
+#[test]
+fn a_devices_terminals_ride_its_link_and_end_with_it() {
+    let shared = device_runtime(None, None);
+    {
+        let mut runtime = shared.lock().unwrap();
+        let terminals = record_terminals(&mut runtime);
+        runtime.start_device_host(DEVICE);
+        assert!(matches!(
+            runtime.device_hosts[DEVICE].phase,
+            hosts::HostPhase::NotAllowed
+        ));
+        assert!(terminals.devices().is_empty());
+    }
+
+    let probe = device_runtime(None, None);
+    let shared = device_runtime(Some(granted(&probe)), None);
+    let mut runtime = shared.lock().unwrap();
+    let terminals = record_terminals(&mut runtime);
+    runtime.start_device_host(DEVICE);
+    let generation = runtime.device_host_generation(DEVICE);
+    let established = hide_node_link::device::Established {
+        host: KitDevice::answering(Err("not asked".to_owned())),
+        identity: hide_node_link::device::HostIdentity {
+            user: "me".to_owned(),
+            hostname: "studio.local".to_owned(),
+            port: 22,
+            host_key_sha256: "key".to_owned(),
+        },
+        hello: hide_node_link::protocol::Hello {
+            protocol: hide_node_link::protocol::PROTOCOL_VERSION,
+            version: "test".to_owned(),
+            os: "macos".to_owned(),
+            arch: "aarch64".to_owned(),
+            home: Some("/home/me".to_owned()),
+            machine_identity: hide_node_link::protocol::MachineIdentity::Unavailable {
+                reason: "test".to_owned(),
+            },
+        },
+        installed: false,
+        helper_path: "/home/me/.local/share/hide/host-helper/0123456789abcdef/hided".to_owned(),
+        upload: Default::default(),
+        terminals: Some(Arc::new(RecordedTerminals::default())),
+    };
+    runtime.ingest_host_established(DEVICE, generation, Ok(established));
+    assert_eq!(terminals.devices(), ["install:studio"]);
+
+    let pane = "remote:studio:pane:w1:p1";
+    runtime.ensure_terminal_pane(pane);
+    report_terminal(&mut runtime, pane, terminal_state("controlling", 1));
+    runtime.ingest_host_closed(DEVICE, generation, "the link dropped".to_owned());
+    assert_eq!(terminals.devices(), ["install:studio", "remove:studio"]);
+    let projected = runtime
+        .snapshot()
+        .terminal
+        .panes
+        .iter()
+        .find(|row| row.pane_id == pane)
+        .expect("the device's pane stays projected")
+        .clone();
+    assert_eq!(projected.transport_state, "unavailable");
+    assert_eq!(
+        projected.transport_exit_category.as_deref(),
+        Some("device_unavailable")
+    );
+}

@@ -147,12 +147,6 @@ impl Runtime {
             context.runtime.clone(),
             context.notifier.clone(),
         ));
-        self.install_remote_terminal(live::RemoteTerminalContext::new(
-            device_id.clone(),
-            Arc::clone(&transport),
-            context.runtime.clone(),
-            context.notifier.clone(),
-        ));
         self.install_remote_file_transport(device_id.clone(), Arc::clone(&transport));
         let sync_context = session_sync::SessionSyncContext::remote(
             device_id.clone(),
@@ -228,7 +222,7 @@ impl Runtime {
             self.retired_remote_syncs.push(sync);
         }
         self.remote_controls.remove(device_id);
-        self.remote_terminals.remove(device_id);
+        self.terminals.remove_device(device_id);
         self.remote_file_transports.remove(device_id);
         self.remote_connection_generations.remove(device_id);
         self.remote_operations

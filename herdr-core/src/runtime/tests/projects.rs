@@ -1981,11 +1981,11 @@ fn projects_follow_authoritative_activity_and_identical_snapshots_settle() {
             .ends_with("/hide-context-zeta")
     );
     runtime.ingest_session(Ok(payload.clone()));
-    let before = runtime.snapshot_delta_payload(0, 0);
+    let before = runtime.snapshot_delta_payload(0);
     let revision = before.revision;
     for _ in 0..5 {
         runtime.ingest_session(Ok(payload.clone()));
-        let delta = runtime.snapshot_delta_payload(revision, 0);
+        let delta = runtime.snapshot_delta_payload(revision);
         assert!(
             delta.rest.is_none(),
             "Unchanged activity must not resend the navigator"

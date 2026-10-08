@@ -1538,7 +1538,7 @@ fn the_snapshot_carries_no_stall_notice_and_ownership_is_operator_or_delegated()
             ("w1:p2", Some("w1:p1"), "blocked", ""),
         ],
     );
-    let payload = runtime.snapshot_delta_payload(0, 0);
+    let payload = runtime.snapshot_delta_payload(0);
     let bytes = crate::runtime::serialize_snapshot_delta(&payload).expect("snapshot encodes");
     let text = String::from_utf8(bytes).unwrap();
     assert!(!text.contains("stall_"), "no stall field reaches the shell");
@@ -2197,7 +2197,7 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
     assert_eq!(quiet.uninstrumented_code, None);
 
     if let Ok(path) = std::env::var("HIDE_SNAPSHOT_OUT") {
-        let payload = runtime.snapshot_delta_payload(0, 0);
+        let payload = runtime.snapshot_delta_payload(0);
         let bytes = crate::runtime::serialize_snapshot_delta(&payload).expect("snapshot encodes");
         std::fs::write(&path, bytes).expect("snapshot is written");
     }

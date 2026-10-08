@@ -75,7 +75,7 @@ impl ChangeNotifier {
 
 pub struct Core {
     _delivery: Option<crate::delivery::worker::Worker>,
-    _terminal_maintenance: Option<crate::terminal_recovery::Maintenance>,
+    _terminal_reports: Option<crate::terminal_reports::ReportPump>,
     _changes: Option<crate::changes::ChangesPump>,
     _kit: Option<crate::kit::KitPump>,
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
@@ -112,7 +112,7 @@ impl Drop for Core {
         self.own_node.close("core stopping");
         self._session_search.take();
         self._links.take();
-        self._terminal_maintenance.take();
+        self._terminal_reports.take();
         self._changes.take();
         self._session_sync.take();
         // Taken under the lock, joined outside it: a coordinator's last act is
@@ -176,7 +176,7 @@ impl Core {
         let own_node = lock_recover(&runtime).own_node();
         let core = Self {
             own_node,
-            _terminal_maintenance: None,
+            _terminal_reports: None,
             _changes: None,
             _kit: None,
             _session_sync: None,
@@ -197,11 +197,17 @@ impl Core {
     /// `own_herdr` is that node's connection to the Herdr server at
     /// `options.herdr_socket_path`, given exactly when a socket is.
     /// `devices` opens the transport to each registered device.
+    /// `terminals` reaches every node's terminal service, and `reports` is
+    /// what those services answer (PRD core-host-node-terminal D-05): the
+    /// core decides which panes are attached and reads their state, while
+    /// keys and output pass between the screen and the node beside it.
     pub fn create(
         options: CoreOptions,
         own_node: std::sync::Arc<dyn crate::node_access::NodeLink>,
         own_herdr: Option<std::sync::Arc<dyn hide_herdr_client::ApiConnector>>,
         devices: std::sync::Arc<dyn crate::remote::DeviceConnector>,
+        terminals: std::sync::Arc<dyn hide_node_link::terminal::TerminalRoutes>,
+        reports: crate::terminal_reports::TerminalReports,
     ) -> Option<Box<Self>> {
         if validate_options(&options).is_err()
             || options.herdr_socket_path.is_some() != own_herdr.is_some()
@@ -238,6 +244,23 @@ impl Core {
         )));
         let notifier = ChangeNotifier::new();
         lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());
+        lock_recover(&runtime).set_terminals(terminals);
+        // Started before anything can attach, so no report waits on it.
+        let terminal_reports = match crate::terminal_reports::ReportPump::spawn(
+            reports,
+            Arc::downgrade(&runtime),
+            notifier.clone(),
+        ) {
+            Ok(pump) => Some(pump),
+            Err(error) => {
+                lock_recover(&runtime).set_error(
+                    "terminal.reports_unavailable",
+                    error.to_string(),
+                    true,
+                );
+                None
+            }
+        };
         let delivery_path = hide_kit::layout::delivery_ledger(
             std::path::Path::new(&options.app_state_path)
                 .parent()
@@ -364,20 +387,6 @@ impl Core {
         if lock_recover(&runtime).connect_registered_devices() {
             notifier.notify();
         }
-        let maintenance = match crate::terminal_recovery::Maintenance::spawn(
-            Arc::downgrade(&runtime),
-            notifier.clone(),
-        ) {
-            Ok(handle) => Some(handle),
-            Err(error) => {
-                lock_recover(&runtime).set_error(
-                    "terminal.recovery_unavailable",
-                    error.to_string(),
-                    true,
-                );
-                None
-            }
-        };
         // History reads through each checkout's own host, so it runs whether
         // or not this machine has a Herdr session.
         let changes =
@@ -414,7 +423,7 @@ impl Core {
         };
         Some(Box::new(Core {
             _delivery: delivery,
-            _terminal_maintenance: maintenance,
+            _terminal_reports: terminal_reports,
             _changes: changes,
             _kit: kit,
             own_node,
@@ -632,7 +641,7 @@ impl Core {
         result
     }
 
-    pub fn snapshot_delta(&self, have_revision: u64, have_terminal_sequence: u64) -> Vec<u8> {
+    pub fn snapshot_delta(&self, have_revision: u64) -> Vec<u8> {
         if !check_owner_thread(self, "snapshot") {
             notify_change(self);
             return Vec::new();
@@ -640,7 +649,7 @@ impl Core {
         self.notifier.clear_announcement();
         let payload = {
             let mut runtime = lock_recover(&self.runtime);
-            runtime.snapshot_delta_payload(have_revision, have_terminal_sequence)
+            runtime.snapshot_delta_payload(have_revision)
         };
         crate::runtime::serialize_snapshot_delta(&payload).unwrap_or_default()
     }

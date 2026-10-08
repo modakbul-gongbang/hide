@@ -354,7 +354,9 @@ impl Runtime {
         changed |= self.tick_attachment();
         changed |= self.tick_project_memory(now_unix_ms);
         changed |= self.tick_device_hosts(now_unix_ms);
-        changed |= self.reattach_resized_observers(now_unix_ms);
+        // Agents fall asleep and closes end on paths of their own; their
+        // nodes hear of it here at the latest.
+        changed |= self.sync_terminal_intents();
         // A close ahead in a tab's line ends on paths of its own; its turn
         // passes on here at the latest.
         changed |= self.pump_geometry_queues();
@@ -1520,7 +1522,7 @@ impl Runtime {
                 match created_pane_id.as_deref() {
                     Some(created) => {
                         self.op_timings.learn(id, None, Some(created));
-                        self.op_timings.await_frame(id, created, false);
+                        self.await_op_frame(id, created, false);
                         // The split is drawn now, with the pane Herdr named
                         // (D-03, D-07); Herdr's layout replaces it on arrival.
                         if let GeometryRequest::Pane(PaneControlAction::Split {
@@ -1551,7 +1553,7 @@ impl Runtime {
                             created,
                         );
                     }
-                    None => self.op_timings.await_frame(id, &operation.target_id, true),
+                    None => self.await_op_frame(id, &operation.target_id, true),
                 }
                 if let Some(current) = self.pane_operations.get_mut(id) {
                     current.phase = "awaiting_topology".to_owned();

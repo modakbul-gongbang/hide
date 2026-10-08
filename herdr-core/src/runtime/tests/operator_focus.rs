@@ -130,7 +130,7 @@ fn the_record_is_capped_and_an_eviction_is_logged() {
 #[test]
 fn the_snapshot_carries_the_record_next_to_the_focused_pane() {
     let (mut runtime, _checkout) = tab_order_runtime("/tmp/hide-operator-focus");
-    let before = runtime.snapshot_delta_payload(0, 0);
+    let before = runtime.snapshot_delta_payload(0);
     assert_eq!(
         serde_json::to_value(&runtime.snapshot.focused).expect("focused")["operator_focus"],
         serde_json::Value::Null,
@@ -143,7 +143,7 @@ fn the_snapshot_carries_the_record_next_to_the_focused_pane() {
         "page-a",
         1,
     ));
-    let after = runtime.snapshot_delta_payload(before.revision, before.terminal_sequence);
+    let after = runtime.snapshot_delta_payload(before.revision);
     assert!(
         after.rest.is_some(),
         "an acknowledgement alone is a change the page has to receive"

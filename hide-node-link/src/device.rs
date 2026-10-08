@@ -370,6 +370,10 @@ pub struct Established {
     pub helper_path: String,
     /// How the build's files reached the device on this connection.
     pub upload: Upload,
+    /// The device's terminals inside this link, when its node started its
+    /// terminal service; a device whose Herdr could not be found has none
+    /// and the reason is in the log.
+    pub terminals: Option<std::sync::Arc<dyn crate::terminal::TerminalNode>>,
 }
 
 /// What one connection's install did with the build's files: how many it
@@ -382,14 +386,6 @@ pub struct Upload {
     pub reused: usize,
     pub missing: Vec<String>,
 }
-
-/// A device terminal session's ends: its output, its input when the session
-/// takes input, and what ends it.
-pub type TerminalSessionParts = (
-    Box<dyn std::io::Read + Send>,
-    Option<Box<dyn std::io::Write + Send>>,
-    Box<dyn FnOnce() + Send>,
-);
 
 /// Where an alias leads, as `ssh -G` resolved it.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -502,14 +498,6 @@ pub trait DeviceTransport: Send + Sync {
         retirement_projects: &[String],
         on_close: Box<dyn FnOnce(String) + Send + 'static>,
     ) -> Result<Established, EstablishError>;
-    /// A Herdr terminal session for `pane_id` on the device.
-    fn open_terminal_session(
-        &self,
-        pane_id: &str,
-        mode: &str,
-        rows: u16,
-        cols: u16,
-    ) -> RemoteResult<TerminalSessionParts>;
     /// Stages `files` on the device under `request_id`; answers each one's
     /// path there.
     fn stage_attachments(

@@ -1154,6 +1154,7 @@ impl Runtime {
         for pane_id in &operation.pane_ids {
             self.panes_closing.remove(pane_id);
         }
+        self.sync_terminal_intents();
     }
 
     pub(super) fn start_close_capture(
@@ -1321,6 +1322,8 @@ impl Runtime {
             }));
         }
         self.panes_closing.extend(pane_ids);
+        // The node refuses keys for a closing pane from now on.
+        self.sync_terminal_intents();
         self.move_from_closing_target(&request.target, &tab);
         let selection_after = self.close_selection_state(restore_checkout_id.as_deref());
         if selection_before != selection_after

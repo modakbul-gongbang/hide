@@ -233,7 +233,7 @@ fn browser_authority_regrant_survives_coalesced_session_updates() {
     let browser = layout.new_browser_display("https://example.test/scoped", 1);
     layout.insert("a1", browser, 1).unwrap();
     store.generation += 1;
-    let initial = runtime.snapshot_delta_payload(0, 0);
+    let initial = runtime.snapshot_delta_payload(0);
     assert_eq!(runtime.snapshot.browser_views.len(), 1);
     let initial_incarnation = runtime.snapshot.browser_scopes[0].incarnation;
 
@@ -244,7 +244,7 @@ fn browser_authority_regrant_survives_coalesced_session_updates() {
     // No snapshot is read between the failure and recovery, as with two
     // worker updates under one latched notification.
     with_tabs(&mut runtime, &directory);
-    let recovered = runtime.snapshot_delta_payload(initial.revision, 0);
+    let recovered = runtime.snapshot_delta_payload(initial.revision);
     assert_ne!(
         runtime.snapshot.browser_scopes[0].incarnation, initial_incarnation,
         "a native client must observe a new grant even without an absent frame"
@@ -260,7 +260,7 @@ fn browser_authority_regrant_survives_coalesced_session_updates() {
         ))),
         "an unchanged session must not publish another change"
     );
-    runtime.snapshot_delta_payload(recovered.revision, 0);
+    runtime.snapshot_delta_payload(recovered.revision);
     assert_eq!(
         runtime.snapshot.browser_scopes[0].incarnation, recovered_incarnation,
         "unchanged session updates preserve authority"
@@ -269,7 +269,7 @@ fn browser_authority_regrant_survives_coalesced_session_updates() {
     assert!(runtime.ingest_session(Err(SessionFetchError::Unreachable(
         "fixture connection lost again".into()
     ))));
-    let revoked = runtime.snapshot_delta_payload(recovered.revision, 0);
+    let revoked = runtime.snapshot_delta_payload(recovered.revision);
     let wire: serde_json::Value =
         serde_json::from_slice(&serialize_snapshot_delta(&revoked).unwrap()).unwrap();
     assert_eq!(wire["rest"]["browser_scopes"], serde_json::json!([]));
@@ -313,7 +313,7 @@ fn browser_authority_records_remote_session_and_catalog_revocations_before_reads
     store.views.entry("mini", path);
     store.generation += 1;
     assert!(runtime.ingest_remote_session("mini", Ok(raw.clone())));
-    let initial = runtime.snapshot_delta_payload(0, 0);
+    let initial = runtime.snapshot_delta_payload(0);
     assert_eq!(runtime.snapshot.browser_scopes.len(), 1);
     let initial_incarnation = runtime.snapshot.browser_scopes[0].incarnation;
 
@@ -323,7 +323,7 @@ fn browser_authority_records_remote_session_and_catalog_revocations_before_reads
     ));
     assert!(runtime.snapshot.browser_scopes.is_empty());
     assert!(runtime.ingest_remote_session("mini", Ok(raw.clone())));
-    let recovered = runtime.snapshot_delta_payload(initial.revision, 0);
+    let recovered = runtime.snapshot_delta_payload(initial.revision);
     let recovered_incarnation = runtime.snapshot.browser_scopes[0].incarnation;
     assert_ne!(recovered_incarnation, initial_incarnation);
 
@@ -337,7 +337,7 @@ fn browser_authority_records_remote_session_and_catalog_revocations_before_reads
     assert!(runtime.snapshot.browser_scopes.is_empty());
     runtime.device_raw_sessions.insert("mini".into(), raw);
     assert!(runtime.refresh_device_catalog("mini"));
-    runtime.snapshot_delta_payload(recovered.revision, 0);
+    runtime.snapshot_delta_payload(recovered.revision);
     assert_ne!(
         runtime.snapshot.browser_scopes[0].incarnation, recovered_incarnation,
         "a catalog loss/regrant also retires the old grant before a read"
@@ -374,7 +374,7 @@ fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas()
         if separate {
             assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
             let shown = runtime
-                .snapshot_delta_payload(0, 0)
+                .snapshot_delta_payload(0)
                 .documents
                 .map(|documents| documents.visible)
                 .unwrap_or_default();
@@ -993,7 +993,7 @@ fn opening_a_file_that_came_back_clears_its_unavailable_tab() {
     assert_eq!(gone(&restarted), vec![false]);
     assert_eq!(active_label(&restarted).as_deref(), Some("gone.md"));
     let shown = restarted
-        .snapshot_delta_payload(0, 0)
+        .snapshot_delta_payload(0)
         .documents
         .expect("a fresh reader gets the documents on screen");
     assert_eq!(

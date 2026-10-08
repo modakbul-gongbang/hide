@@ -12,6 +12,8 @@
 //! Pane ids here are the node's own: a device's node knows its panes by its
 //! Herdr's ids, and the screen side scopes them to the device.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 /// Panes one node keeps attached at once (D-18). A pane wanted past it is
@@ -203,7 +205,7 @@ pub enum KeyTarget {
 }
 
 /// What travels down a device link for its terminals, one JSON line
-/// `{"terminal": …}` that takes no call slot.
+/// [`TerminalLine`] that takes no call slot.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TerminalDown {
@@ -224,6 +226,33 @@ pub enum TerminalDown {
         pane: String,
     },
 }
+
+/// What travels up a device link from its terminals, one JSON line
+/// [`TerminalLine`] beside the link's answers and events.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TerminalUp {
+    Output(TerminalOutput),
+    Report {
+        report: TerminalReport,
+    },
+    /// A diagnostic record the device's terminal service wrote; the core's
+    /// side files it with the device it came from, since a device's own log
+    /// reaches no one.
+    Diagnostic {
+        record: serde_json::Value,
+    },
+}
+
+/// One terminal line on a device link, either way: `{"terminal": …}`.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TerminalLine<T> {
+    pub terminal: T,
+}
+
+/// The prefix every terminal line starts with, so a link's reader can tell
+/// one from an answer without parsing it.
+pub const TERMINAL_LINE_PREFIX: &[u8] = b"{\"terminal\":";
 
 /// One pane's output as it leaves a node.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -251,6 +280,75 @@ pub trait TerminalNode: Send + Sync {
 
     /// A reader lost the pane's output: draw it again from a full frame.
     fn redraw(&self, pane: &str);
+}
+
+/// Where a node's reports go: the core, for this machine's node, or the
+/// device link, for a device's.
+pub trait ReportSink: Send + Sync {
+    fn report(&self, report: TerminalReport);
+}
+
+/// Every node's terminals behind one [`TerminalNode`], as the core and the
+/// screen reach them: this machine's panes by their own ids, a device's by
+/// the ids the core scopes to it ([`device_pane_id`]).
+pub trait TerminalRoutes: TerminalNode {
+    /// The device's node took its link: its panes' terminals go there.
+    fn install_device(&self, device: &str, node: Arc<dyn TerminalNode>);
+    /// The device's link ended or the device was removed: its panes have no
+    /// terminal until a link is installed again.
+    fn remove_device(&self, device: &str);
+}
+
+/// The id the core gives pane `pane` of `device`.
+pub fn device_pane_id(device: &str, pane: &str) -> String {
+    format!("{}{pane}", device_pane_prefix(device))
+}
+
+/// What every pane id of `device` starts with.
+pub fn device_pane_prefix(device: &str) -> String {
+    format!("remote:{device}:pane:")
+}
+
+impl TerminalReport {
+    /// The pane the report is about, for the reports that name one.
+    pub fn pane_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Self::State { pane, .. }
+            | Self::FirstFrame { pane, .. }
+            | Self::FrameShown { pane, .. }
+            | Self::Input { pane, .. }
+            | Self::Error { pane, .. }
+            | Self::Note { pane, .. } => Some(pane),
+            Self::RequestDiscarded { .. }
+            | Self::AttachmentInput { .. }
+            | Self::AttachmentDelivered { .. } => None,
+        }
+    }
+}
+
+impl TerminalControl {
+    /// The pane the control is about, for the controls that name one.
+    pub fn pane_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Self::Attach { pane, .. }
+            | Self::Release { pane, .. }
+            | Self::Forget { pane }
+            | Self::Closing { pane, .. }
+            | Self::Resize { pane, .. }
+            | Self::Scroll { pane, .. }
+            | Self::Write { pane, .. }
+            | Self::Asleep { pane, .. }
+            | Self::AttachmentHold { pane, .. }
+            | Self::WatchFrame { pane } => Some(pane),
+            Self::Shown { .. }
+            | Self::RequestOpen { .. }
+            | Self::RequestResolve { .. }
+            | Self::RequestDiscard { .. }
+            | Self::AttachmentRefuse { .. }
+            | Self::AttachmentDeliver { .. }
+            | Self::AttachmentRelease { .. } => None,
+        }
+    }
 }
 
 #[cfg(test)]

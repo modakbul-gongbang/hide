@@ -1,9 +1,65 @@
+use hide_node_link::terminal::{
+    GridSize, PaneTerminalState, TerminalControl, TerminalNode, TerminalReport, TerminalRoutes,
+};
+
 use super::*;
 
-/// How long an observed view's size has to hold before its observer is
-/// attached again at it: longer than the gap between a window drag's
-/// resizes, short beside the 250 ms tick that acts on it.
-const OBSERVER_RESIZE_QUIET_MS: u64 = 150;
+/// A wheel carries the pointer's cell and modifiers because Herdr uses them
+/// when the application tracks the mouse. Coordinates are zero-based.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ScrollRequest {
+    pub(crate) lines: i32,
+    pub(crate) column: Option<u16>,
+    pub(crate) row: Option<u16>,
+    pub(crate) modifiers: u8,
+}
+
+/// What the nodes were last told about the panes on screen, the agents
+/// asleep and the panes closing; each is sent again only when it changes.
+#[derive(Debug, Default)]
+pub(super) struct TerminalIntents {
+    shown: Vec<String>,
+    asleep: HashSet<String>,
+    closing: HashSet<String>,
+}
+
+/// The routes a runtime has before its core gives it the nodes': no node
+/// takes anything, and each control says so in the log. Only a runtime
+/// built outside `Core::create` (a test's) keeps it.
+pub(crate) struct NoTerminals;
+
+impl TerminalNode for NoTerminals {
+    fn control(&self, control: TerminalControl) {
+        crate::diagnostic!(serde_json::json!({
+            "component": "terminal",
+            "kind": "terminal.no_node",
+            "control": serde_json::to_value(&control).ok().and_then(|value| value.get("op").cloned()),
+        }));
+    }
+    fn key(&self, _target: hide_node_link::terminal::KeyTarget, _bytes: Vec<u8>, _at: u64) {}
+    fn view(&self, _pane: &str, _size: GridSize, _new_view: bool) {}
+    fn redraw(&self, _pane: &str) {}
+}
+
+impl TerminalRoutes for NoTerminals {
+    fn install_device(&self, _device: &str, _node: Arc<dyn TerminalNode>) {}
+    fn remove_device(&self, _device: &str) {}
+}
+
+/// Whether a pane in `state` may be asked to attach: one with a session, or
+/// on its way to one, or failed and waiting for the operator, is not.
+pub(super) fn attach_allowed(state: &str) -> bool {
+    !matches!(
+        state,
+        "starting"
+            | "controlling"
+            | "observing"
+            | "unavailable"
+            | "ended"
+            | "closing"
+            | "waiting_size"
+    )
+}
 
 impl Runtime {
     pub(crate) fn ingest_pane_focus_completion(
@@ -183,53 +239,28 @@ impl Runtime {
         for pane_id in &pane_ids {
             self.ensure_terminal_pane(pane_id);
         }
-        let idle_lifecycle = TerminalSessionLifecycle::default();
-        for pane in self.snapshot.terminal.panes.iter_mut().filter(|pane| {
-            belongs_to_target(&pane.pane_id) && !active_pane_ids.contains(&pane.pane_id)
-        }) {
-            let idle = TerminalPaneSnapshot {
-                pane_id: pane.pane_id.clone(),
-                closed: false,
-                exit_code: None,
-                transport_state: idle_lifecycle.state.to_owned(),
-                transport_message: None,
-                transport_generation: 0,
-                transport_attempt: 0,
-                transport_last_attempt_at_unix_ms: None,
-                transport_exit_category: None,
-                transport_retry_decision: idle_lifecycle.retry_decision.to_owned(),
-                scroll_held_elsewhere: false,
-                grid_held: false,
-            };
-            if *pane != idle {
-                *pane = idle;
-                changed = true;
+        for pane_id in &pane_ids {
+            if !active_pane_ids.contains(pane_id) {
+                let before = self.terminal_pane_snapshot(pane_id);
+                self.sync_transport_projection(pane_id);
+                changed |= self.terminal_pane_snapshot(pane_id) != before;
             }
         }
         let mut active_pane_ids = active_pane_ids.iter().cloned().collect::<Vec<_>>();
         active_pane_ids.sort();
         for pane_id in active_pane_ids {
-            let current = self
-                .terminal_session_lifecycles
-                .get(&pane_id)
-                .cloned()
-                .unwrap_or_default();
-            changed |= terminal_control_request_allowed(
-                current.state,
-                self.terminal_sessions.contains_key(&pane_id),
-            );
-            self.request_terminal_control(&pane_id);
+            changed |= self.request_terminal_control(&pane_id);
         }
         changed
     }
-    /// Removes every piece of terminal state for panes that no longer exist.
-    /// Keeping this list in one place prevents a newly added pane-keyed cache
-    /// from surviving retirement and being inherited if Herdr reuses an id.
+    /// Removes every piece of terminal state for panes that no longer exist,
+    /// and tells their node to forget them. Keeping this list in one place
+    /// prevents a newly added pane-keyed cache from surviving retirement and
+    /// being inherited if Herdr reuses an id.
     pub(super) fn retain_terminal_pane_state(&mut self, keep: impl Fn(&str) -> bool) -> bool {
         let before = self.terminal_state_len();
         self.retain_terminal_session_state(&keep);
         self.terminal_sizes.retain(|pane_id, _| keep(pane_id));
-        self.terminal_view_sizes.retain(|pane_id, _| keep(pane_id));
         let close_held_panes = self
             .close_operations
             .values()
@@ -239,51 +270,38 @@ impl Runtime {
             .retain(|pane_id| keep(pane_id) || close_held_panes.contains(pane_id));
         before != self.terminal_state_len()
     }
-    /// Removes the state of a pane's terminal session while the pane itself,
-    /// and so its sizes, stays known.
+    /// Ends the terminal session of every pane `keep` rejects while the pane
+    /// itself, and so its sizes, stays known: its node forgets the pane.
     pub(super) fn retain_terminal_session_state(&mut self, keep: impl Fn(&str) -> bool) -> bool {
         let before = self.terminal_state_len();
-        self.terminal_sessions.retain(|pane_id, _| keep(pane_id));
-        self.terminal_session_generations
-            .retain(|pane_id, _| keep(pane_id));
-        self.reconcile_attachment_target();
-        self.terminal_session_lifecycles
-            .retain(|pane_id, _| keep(pane_id));
-        self.terminal_recovery.retain(|pane_id, _| keep(pane_id));
-        self.terminal_frames_need_full
-            .retain(|pane_id| keep(pane_id));
-        self.terminal_foreign_frame_sizes
-            .retain(|pane_id, _| keep(pane_id));
-        self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
         // A pane Herdr named for typed keys is not gone before its layout
         // first carries it (D-11, B9).
-        let requests = &self.input_requests;
-        self.pane_input_hold
-            .retain(|pane_id| keep(pane_id) || requests.awaits_layout(pane_id));
+        let gone = self
+            .terminal_states
+            .keys()
+            .filter(|pane_id| !keep(pane_id) && !self.input_requests.awaits_layout(pane_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for pane_id in gone {
+            self.terminal_states.remove(&pane_id);
+            self.terminals
+                .control(TerminalControl::Forget { pane: pane_id });
+        }
+        self.reconcile_attachment_target();
         self.held_resizes.retain(|pane_id| keep(pane_id));
         self.wheel_before_attach.retain(|pane_id, _| keep(pane_id));
         self.viewport_scrolls.retain(|pane_id, _| keep(pane_id));
         self.panes_scroll_held.retain(|pane_id| keep(pane_id));
-        self.observers_resized.retain(|pane_id, _| keep(pane_id));
         before != self.terminal_state_len()
     }
     /// Every pane-keyed terminal map, counted together so a retain pass can
     /// report whether it removed anything.
     pub(super) fn terminal_state_len(&self) -> usize {
-        self.terminal_sessions.len()
-            + self.terminal_session_generations.len()
-            + self.terminal_session_lifecycles.len()
-            + self.terminal_recovery.len()
+        self.terminal_states.len()
             + self.terminal_sizes.len()
-            + self.terminal_view_sizes.len()
-            + self.terminal_frames_need_full.len()
-            + self.terminal_foreign_frame_sizes.len()
-            + self.panes_awaiting_size.len()
-            + self.pane_input_hold.len()
             + self.wheel_before_attach.len()
             + self.viewport_scrolls.len()
             + self.panes_scroll_held.len()
-            + self.observers_resized.len()
             + self.panes_closing.len()
     }
     pub(super) fn reconcile_remote_terminal_selection(&mut self) -> bool {
@@ -325,33 +343,34 @@ impl Runtime {
         self.snapshot.terminal.panes.push(pane);
     }
     pub(super) fn terminal_pane_snapshot(&self, pane_id: &str) -> TerminalPaneSnapshot {
-        let lifecycle = self
-            .terminal_session_lifecycles
-            .get(pane_id)
-            .cloned()
-            .unwrap_or_default();
+        let idle = PaneTerminalState {
+            state: "idle".to_owned(),
+            mode: None,
+            generation: 0,
+            attempt: 0,
+            message: None,
+            exit_category: None,
+            retry_decision: "automatic_initial".to_owned(),
+            last_attempt_at_unix_ms: None,
+        };
+        let state = self.terminal_states.get(pane_id).unwrap_or(&idle);
         TerminalPaneSnapshot {
             pane_id: pane_id.to_owned(),
             closed: false,
             exit_code: None,
-            transport_state: lifecycle.state.to_owned(),
-            transport_message: lifecycle.message,
-            transport_generation: lifecycle.generation,
-            transport_attempt: lifecycle.attempt,
-            transport_last_attempt_at_unix_ms: self
-                .terminal_recovery
-                .get(pane_id)
-                .and_then(|r| r.last_attempt_at_unix_ms),
-            transport_exit_category: lifecycle.exit_category,
-            transport_retry_decision: lifecycle.retry_decision.to_owned(),
+            transport_state: state.state.clone(),
+            transport_message: state.message.clone(),
+            transport_generation: state.generation,
+            transport_attempt: state.attempt,
+            transport_last_attempt_at_unix_ms: state.last_attempt_at_unix_ms,
+            transport_exit_category: state.exit_category.clone(),
+            transport_retry_decision: state.retry_decision.clone(),
             scroll_held_elsewhere: self.panes_scroll_held.contains(pane_id),
             grid_held: self.grid_held_panes.contains(pane_id),
         }
     }
     pub(super) fn sync_transport_projection(&mut self, pane_id: &str) {
-        let Some(lifecycle) = self.terminal_session_lifecycles.get(pane_id).cloned() else {
-            return;
-        };
+        let projected = self.terminal_pane_snapshot(pane_id);
         if let Some(pane) = self
             .snapshot
             .terminal
@@ -359,18 +378,11 @@ impl Runtime {
             .iter_mut()
             .find(|pane| pane.pane_id == pane_id)
         {
-            pane.transport_state = lifecycle.state.to_owned();
-            pane.transport_message = lifecycle.message;
-            pane.transport_generation = lifecycle.generation;
-            pane.transport_attempt = lifecycle.attempt;
-            pane.transport_last_attempt_at_unix_ms = self
-                .terminal_recovery
-                .get(pane_id)
-                .and_then(|r| r.last_attempt_at_unix_ms);
-            pane.transport_exit_category = lifecycle.exit_category;
-            pane.transport_retry_decision = lifecycle.retry_decision.to_owned();
-            pane.scroll_held_elsewhere = self.panes_scroll_held.contains(pane_id);
-            pane.grid_held = self.grid_held_panes.contains(pane_id);
+            *pane = TerminalPaneSnapshot {
+                closed: pane.closed,
+                exit_code: pane.exit_code,
+                ..projected
+            };
         }
     }
     pub(super) fn sync_focused_terminal_projection(&mut self) {
@@ -468,7 +480,7 @@ impl Runtime {
             let lines = i32::from(lines) * if direction == "up" { 1 } else { -1 };
             return self.scroll_pane(
                 pane_id,
-                live::ScrollRequest {
+                ScrollRequest {
                     lines,
                     ..Default::default()
                 },
@@ -575,40 +587,40 @@ impl Runtime {
     ///
     /// Herdr gives terminal control to one client per pane. The controlling
     /// session writes `terminal.scroll`, which Herdr routes to the program's
-    /// mouse handling or the history. A pane another client controls (another
-    /// Herdr client on the same server, say) is observed, and an observer has
-    /// no writer, so its wheel moves Herdr's viewport with `pane.scroll`
-    /// instead; Herdr keeps one viewport per pane, so both clients see the
-    /// move. A pane with no session yet keeps the lines for its first frame.
-    /// Every scroll producer comes through here, so none of them drops a wheel.
-    pub(super) fn scroll_pane(&mut self, pane_id: &str, request: live::ScrollRequest) -> bool {
+    /// mouse handling or the history; the node writes it. A pane another
+    /// client controls (another Herdr client on the same server, say) is
+    /// observed, and an observer has no writer, so its wheel moves Herdr's
+    /// viewport with `pane.scroll` instead; Herdr keeps one viewport per pane,
+    /// so both clients see the move. A pane with no session yet keeps the
+    /// lines for its first frame. Every scroll producer comes through here,
+    /// so none of them drops a wheel.
+    pub(super) fn scroll_pane(&mut self, pane_id: &str, request: ScrollRequest) -> bool {
         if request.lines == 0 {
             return false;
         }
         match self
-            .terminal_sessions
+            .terminal_states
             .get(pane_id)
-            .map(|session| session.mode)
+            .map(|state| state.state.as_str())
         {
-            Some(TerminalSessionMode::Control) => {
-                let session = self
-                    .terminal_sessions
-                    .get(pane_id)
-                    .expect("the session was just read");
-                if let Err(message) = session.scroll(request) {
-                    self.set_error("terminal.scroll_failed", message, true);
-                    return true;
-                }
+            Some("controlling") => {
+                self.terminals.control(TerminalControl::Scroll {
+                    pane: pane_id.to_owned(),
+                    lines: request.lines,
+                    column: request.column,
+                    row: request.row,
+                    modifiers: request.modifiers,
+                });
                 false
             }
-            Some(TerminalSessionMode::Observe) => {
+            Some("observing") => {
                 if let Some(pending) = self.viewport_scrolls.get_mut(pane_id) {
                     *pending = pending.saturating_add(request.lines);
                     return false;
                 }
                 self.start_viewport_scroll(pane_id, request.lines)
             }
-            None => {
+            _ => {
                 let first = !self.wheel_before_attach.contains_key(pane_id);
                 let pending = self
                     .wheel_before_attach
@@ -636,7 +648,7 @@ impl Runtime {
         if let Some(lines) = self.wheel_before_attach.remove(pane_id) {
             self.scroll_pane(
                 pane_id,
-                live::ScrollRequest {
+                ScrollRequest {
                     lines,
                     ..Default::default()
                 },
@@ -701,7 +713,7 @@ impl Runtime {
         };
         changed |= self.scroll_pane(
             pane_id,
-            live::ScrollRequest {
+            ScrollRequest {
                 lines: pending,
                 ..Default::default()
             },
@@ -1072,316 +1084,7 @@ impl Runtime {
             }
         }
     }
-    /// The grid a frame has to arrive at to be drawn: the view's own grid
-    /// while one is known, else the settled size the attach asked for.
-    pub(super) fn expected_terminal_size(&self, pane_id: &str) -> Option<(u16, u16)> {
-        self.terminal_view_sizes
-            .get(pane_id)
-            .or_else(|| self.terminal_sizes.get(pane_id))
-            .copied()
-    }
-    /// Attaches again every observed pane whose view resizes have been quiet
-    /// for `OBSERVER_RESIZE_QUIET_MS`, from the async-operation tick. A pane
-    /// whose attach is still in flight has no session; its first frame's grid
-    /// check covers the change.
-    pub(super) fn reattach_resized_observers(&mut self, now_unix_ms: u64) -> bool {
-        let settled = self
-            .observers_resized
-            .iter()
-            .filter(|(_, at)| now_unix_ms.saturating_sub(**at) >= OBSERVER_RESIZE_QUIET_MS)
-            .map(|(pane_id, _)| pane_id.clone())
-            .collect::<Vec<_>>();
-        for pane_id in &settled {
-            self.observers_resized.remove(pane_id);
-            if self
-                .terminal_sessions
-                .get(pane_id)
-                .is_some_and(|session| session.mode == TerminalSessionMode::Observe)
-            {
-                self.reattach_observer(pane_id, "resize");
-            }
-        }
-        !settled.is_empty()
-    }
 
-    /// Starts the pane's observer again at the view's grid. Herdr draws an
-    /// observer at the grid it attached with, so this is how an observed
-    /// view changes size. One attach is in flight at a time: the pane has no
-    /// session until the attach lands, so a resize meanwhile only records the
-    /// grid, and the check on the new session's first frame catches it.
-    fn reattach_observer(&mut self, pane_id: &str, cause: &'static str) {
-        let lifecycle = self
-            .terminal_session_lifecycles
-            .get(pane_id)
-            .cloned()
-            .unwrap_or_default();
-        crate::diagnostic!(serde_json::json!({
-            "component": "terminal", "kind": "terminal.observer_reattached",
-            "pane_id": pane_id, "cause": cause,
-            "view": self.expected_terminal_size(pane_id).map(|(rows, cols)| [cols, rows]),
-        }));
-        self.start_terminal_session(
-            pane_id,
-            TerminalSessionMode::Observe,
-            lifecycle.attempt,
-            lifecycle.retry_decision,
-            lifecycle.message,
-        );
-    }
-
-    /// Appends only the decoded frame bytes when the delivering official
-    /// terminal session is still the current generation and mode.
-    /// None retires the reader; Some(false) keeps reading a held frame without
-    /// publishing it. Skipping a foreign grid must not terminate observation.
-    pub fn ingest_terminal_session_frame(
-        &mut self,
-        pane_id: &str,
-        generation: u64,
-        mode: TerminalSessionMode,
-        bytes: &[u8],
-        frame: crate::model::TerminalFrame,
-    ) -> Option<bool> {
-        if self.terminal_session_generations.get(pane_id) != Some(&generation)
-            || self
-                .terminal_sessions
-                .get(pane_id)
-                .is_none_or(|session| session.mode != mode)
-        {
-            return None;
-        }
-        let expected = self.expected_terminal_size(pane_id);
-        let arrived = (frame.height, frame.width);
-        if expected != Some(arrived) {
-            // Herdr draws an observer at the grid it attached with, and an
-            // observer has no writer to resize, so a view that changed size
-            // since would hold every frame from now on. It attaches again at
-            // the view's grid; this generation's reader retires.
-            if mode == TerminalSessionMode::Observe && expected.is_some() {
-                // While the view is still being resized the tick attaches
-                // it once the size settles; until then the frame is held.
-                if self.observers_resized.contains_key(pane_id) {
-                    return Some(false);
-                }
-                self.reattach_observer(pane_id, "frame_grid");
-                return None;
-            }
-            self.terminal_frames_need_full.insert(pane_id.to_owned());
-            // Logged to the file and stderr sink only, once per foreign grid.
-            // A push into the snapshot's diagnostics would restamp the
-            // revisioned rest section on every frame of a mismatch burst.
-            if self
-                .terminal_foreign_frame_sizes
-                .insert(pane_id.to_owned(), arrived)
-                != Some(arrived)
-            {
-                crate::diagnostic!(serde_json::json!({
-                    "component": "terminal", "kind": "terminal.frame_geometry_mismatch",
-                    "pane_id": pane_id, "frame": [frame.width, frame.height],
-                    "expected": expected.map(|(height, width)| [width, height]),
-                }));
-            }
-            return Some(false);
-        }
-        self.terminal_foreign_frame_sizes.remove(pane_id);
-        if self.terminal_frames_need_full.contains(pane_id) && !frame.full {
-            return Some(false);
-        }
-        // Preserve the last valid view during a retry. Reset the parser only
-        // as part of the replacement full frame, so no empty canvas is exposed.
-        let reset_bytes = self
-            .terminal_frames_need_full
-            .remove(pane_id)
-            .then(|| [b"\x1bc".as_slice(), bytes].concat());
-        let bytes = reset_bytes.as_deref().unwrap_or(bytes);
-        if mode == TerminalSessionMode::Control {
-            if let Some(recovery) = self.terminal_recovery.remove(pane_id) {
-                crate::diagnostic!(serde_json::json!({
-                    "kind": "terminal.control_frame_ready", "pane_id": pane_id,
-                    "generation": generation, "occurred_at": unix_milliseconds(),
-                    "retries": recovery.retries,
-                    "last_attempt_at_unix_ms": recovery.last_attempt_at_unix_ms,
-                    "rows": frame.height, "cols": frame.width,
-                }));
-            }
-            if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
-                lifecycle.message = None;
-                lifecycle.retry_decision = "none";
-            }
-            self.sync_transport_projection(pane_id);
-        }
-        self.release_wheel_before_attach(pane_id);
-        self.op_timings
-            .note_frame(pane_id, std::time::Instant::now());
-        self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(bytes));
-        self.snapshot
-            .terminal
-            .chunks
-            .last_mut()
-            .expect("just appended frame")
-            .frame = Some(frame);
-        Some(true)
-    }
-    /// Handles a `terminal.closed` envelope or stdout EOF. An owner conflict
-    /// falls back exactly once to Herdr's concurrent read-only observer; every
-    /// other close ends only the transport, never the authoritative pane.
-    /// Whether this pane is on its way out: Hide asked Herdr to close it, or
-    /// Herdr has already stopped listing it in any tab's layout.
-    pub(super) fn pane_is_going_away(&self, pane_id: &str) -> bool {
-        if self.panes_closing.contains(pane_id) {
-            return true;
-        }
-        // An empty layout list is a session that has not arrived, not a pane
-        // that left one.
-        !self.snapshot.pane_layouts.is_empty() && self.layout_holding_pane(pane_id).is_none()
-    }
-    pub fn ingest_terminal_session_closed(
-        &mut self,
-        pane_id: &str,
-        generation: u64,
-        mode: TerminalSessionMode,
-        reason: Option<String>,
-    ) -> bool {
-        if self.terminal_session_generations.get(pane_id) != Some(&generation) {
-            return false;
-        }
-        if self
-            .terminal_sessions
-            .get(pane_id)
-            .is_none_or(|session| session.mode != mode)
-        {
-            return false;
-        }
-        let _ended_session = self.terminal_sessions.remove(pane_id);
-        let attempt = self
-            .terminal_session_lifecycles
-            .get(pane_id)
-            .map_or(1, |lifecycle| lifecycle.attempt);
-        let category = live::terminal_closed_category(reason.as_deref());
-        let message = reason
-            .unwrap_or_else(|| format!("Pane {pane_id} terminal {} session ended", mode.as_str()));
-
-        if mode == TerminalSessionMode::Control && category == "owner_conflict" {
-            crate::diagnostic!(serde_json::json!({
-                "component": "terminal_session",
-                "kind": "terminal.control_owner_conflict",
-                "pane_id": pane_id,
-                "generation": generation,
-                "attempt": attempt,
-                "mode": mode.as_str(),
-                "duration_ms": 0,
-                "exit_category": category,
-                "retry_decision": self.terminal_retry_decision(pane_id, "observe_once"),
-            }));
-            self.schedule_terminal_recovery(
-                pane_id,
-                "Another client owns terminal control; viewing read-only".to_owned(),
-            );
-            let retry_message = self.terminal_recovery.get(pane_id).map(|r| r.message());
-            self.start_terminal_session(
-                pane_id,
-                TerminalSessionMode::Observe,
-                attempt,
-                "observe_once",
-                retry_message,
-            );
-            return true;
-        }
-
-        // A pane that is going away, either because Hide asked or because
-        // Herdr has already stopped reporting it, ends its transport as a
-        // consequence of the close. It is not a failure, so nothing is drawn
-        // over the pane's last frame and no notice is appended to it: the pane
-        // keeps what it was showing until it is removed. Every other reason
-        // still reports itself.
-        if self.pane_is_going_away(pane_id) {
-            let close_still_pending = self.close_operation_holds_pane(pane_id);
-            if !close_still_pending {
-                self.panes_closing.remove(pane_id);
-            }
-            self.terminal_session_lifecycles.insert(
-                pane_id.to_owned(),
-                TerminalSessionLifecycle {
-                    state: "closing",
-                    message: None,
-                    generation,
-                    attempt,
-                    mode: Some(mode),
-                    exit_category: Some(category.to_owned()),
-                    retry_decision: "none",
-                },
-            );
-            self.sync_transport_projection(pane_id);
-            crate::diagnostic!(serde_json::json!({
-                "component": "terminal_session",
-                "kind": "terminal.session_closed_with_pane",
-                "pane_id": pane_id,
-                "generation": generation,
-                "attempt": attempt,
-                "mode": mode.as_str(),
-                "duration_ms": 0,
-                "exit_category": category,
-                "retry_decision": "none",
-            }));
-            return true;
-        }
-
-        self.terminal_session_lifecycles.insert(
-            pane_id.to_owned(),
-            TerminalSessionLifecycle {
-                state: "ended",
-                message: Some(message.clone()),
-                generation,
-                attempt,
-                mode: Some(mode),
-                exit_category: Some(category.to_owned()),
-                retry_decision: "manual",
-            },
-        );
-        self.schedule_terminal_recovery(pane_id, message.clone());
-        self.sync_transport_projection(pane_id);
-        let notice = format!("\r\n[{message}]\r\n");
-        self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(notice.as_bytes()));
-        crate::diagnostic!(serde_json::json!({
-            "component": "terminal_session",
-            "kind": "terminal.session_ended",
-            "pane_id": pane_id,
-            "generation": generation,
-            "attempt": attempt,
-            "mode": mode.as_str(),
-            "duration_ms": 0,
-            "exit_category": category,
-            "retry_decision": self.terminal_retry_decision(pane_id, "manual"),
-        }));
-        true
-    }
-    pub fn ingest_terminal_session_write_failure(
-        &mut self,
-        pane_id: &str,
-        generation: u64,
-        message: String,
-    ) -> bool {
-        if self.terminal_session_generations.get(pane_id) != Some(&generation) {
-            return false;
-        }
-        self.set_error("terminal.write_failed", message.clone(), true);
-        if !pane_id.starts_with("remote:") {
-            self.terminal_sessions.remove(pane_id);
-            if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
-                lifecycle.state = "unavailable";
-            }
-            self.schedule_terminal_recovery(pane_id, message.clone());
-            self.sync_transport_projection(pane_id);
-        }
-        crate::diagnostic!(serde_json::json!({
-            "component": "terminal_session",
-            "kind": "terminal.control_write_failed",
-            "pane_id": pane_id,
-            "generation": generation,
-            "message": message,
-            "retry_decision": self.terminal_retry_decision(pane_id, "manual"),
-        }));
-        true
-    }
     /// Drops the rendered terminal state before selecting a pane in another
     /// checkout. Herdr's globally focused pane may belong to another
     /// workspace, so retaining the attach set here would let the next sync
@@ -1547,8 +1250,8 @@ impl Runtime {
             .and_then(|checkout_id| self.visible_tab_ids.get(checkout_id))
             .cloned()
     }
-    /// Records that a tab was on screen and releases whatever fell out of the
-    /// window that leaves.
+    /// Records that a tab was on screen, releases whatever fell out of the
+    /// window that leaves, and tells the nodes what is on screen now.
     pub(super) fn track_visible_tab_attachments(&mut self) -> bool {
         let known_tabs = self
             .snapshot
@@ -1567,7 +1270,8 @@ impl Runtime {
         }
         self.recent_visible_tabs
             .truncate(ATTACHED_TAB_LIMIT.max(shown.len()));
-        self.release_sessions_outside_attach_window()
+        let released = self.release_sessions_outside_attach_window();
+        self.sync_terminal_intents() | released
     }
     /// Ends the terminal session of every pane whose tab has left the attach
     /// window.
@@ -1601,9 +1305,9 @@ impl Runtime {
             .map(str::to_owned)
             .collect::<HashSet<_>>();
         let releasing = self
-            .terminal_session_lifecycles
+            .terminal_states
             .iter()
-            .filter(|(_, lifecycle)| lifecycle.state != "released")
+            .filter(|(_, state)| state.state != "released")
             .map(|(pane_id, _)| pane_id)
             .filter(|pane_id| !pane_id.starts_with("remote:"))
             .filter(|pane_id| placed.contains(*pane_id) && !attached.contains(*pane_id))
@@ -1613,550 +1317,297 @@ impl Runtime {
             return false;
         }
         for pane_id in releasing {
-            let _released_session = self.terminal_sessions.remove(&pane_id);
-            self.panes_awaiting_size.remove(&pane_id);
-            self.terminal_recovery.remove(&pane_id);
-            self.pane_input_hold.discard(&pane_id, "released");
-            let attempt = self
-                .terminal_session_lifecycles
-                .get(&pane_id)
-                .map_or(0, |lifecycle| lifecycle.attempt);
-            let generation = self
-                .terminal_session_generations
-                .get(&pane_id)
-                .copied()
-                .unwrap_or_default();
-            self.terminal_session_lifecycles.insert(
-                pane_id.clone(),
-                TerminalSessionLifecycle {
-                    state: "released",
-                    message: Some(format!(
-                        "Pane {pane_id} was detached after its tab left the last {ATTACHED_TAB_LIMIT} shown"
-                    )),
-                    generation,
-                    attempt,
-                    mode: None,
-                    exit_category: None,
-                    retry_decision: "on_next_visit",
-                },
+            let message = format!(
+                "Pane {pane_id} was detached after its tab left the last {ATTACHED_TAB_LIMIT} shown"
             );
+            // The node says the same once it has ended the session; the
+            // screen shows it from this event on.
+            if let Some(state) = self.terminal_states.get_mut(&pane_id) {
+                state.state = "released".to_owned();
+                state.message = Some(message.clone());
+                state.mode = None;
+                state.exit_category = None;
+                state.retry_decision = "on_next_visit".to_owned();
+            }
+            self.terminals.control(TerminalControl::Release {
+                pane: pane_id.clone(),
+                message,
+            });
             self.sync_transport_projection(&pane_id);
             self.push_diagnostic(
                 "terminal.session_released",
                 format!("Released the terminal session for pane {pane_id}"),
             );
-            crate::diagnostic!(serde_json::json!({
-                "component": "terminal_session",
-                "kind": "terminal.session_released",
-                "pane_id": pane_id,
-                "generation": generation,
-                "attempt": attempt,
-                "retry_decision": "on_next_visit",
-            }));
         }
         true
     }
-    pub(super) fn terminal_retry_decision(
-        &self,
-        pane_id: &str,
-        fallback: &'static str,
-    ) -> &'static str {
-        self.terminal_recovery
+    /// Starts waiting for `pane_id`'s next frame on record `id`; its node
+    /// reports when that frame reaches the screen.
+    pub(super) fn await_op_frame(&mut self, id: &str, pane_id: &str, after_applied: bool) {
+        self.op_timings.await_frame(id, pane_id, after_applied);
+        self.terminals.control(TerminalControl::WatchFrame {
+            pane: pane_id.to_owned(),
+        });
+    }
+
+    /// Asks the pane's node to attach it, with the size the pane last had, and
+    /// whether that changed what the pane shows. A pane with a session, on
+    /// its way to one, or failed and waiting for the operator is left as it
+    /// is; its node keeps that rule too, so a repeated sync update asks for
+    /// nothing twice.
+    pub(super) fn request_terminal_control(&mut self, pane_id: &str) -> bool {
+        let allowed = self
+            .terminal_states
             .get(pane_id)
-            .map_or(fallback, |r| r.decision())
-    }
-    pub(super) fn schedule_terminal_recovery(&mut self, pane_id: &str, reason: String) {
-        // Remote reconnect policy is owned by its existing transport.
-        if pane_id.starts_with("remote:") {
-            return;
+            .is_none_or(|state| attach_allowed(&state.state));
+        if !allowed {
+            return false;
         }
-        let recovery = self
-            .terminal_recovery
-            .entry(pane_id.to_owned())
-            .or_insert_with(|| {
-                crate::terminal_recovery::Recovery::new(Instant::now(), reason.clone())
-            });
-        recovery.reason = reason;
-        if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
-            lifecycle.message = Some(recovery.message());
-            lifecycle.retry_decision = recovery.decision();
-        }
+        self.attach_terminal(pane_id, false);
+        true
     }
-    pub(crate) fn maintain_terminals(&mut self, now: Instant) -> bool {
-        let shown = self.shown_agent_tabs();
-        let visible = self
+
+    fn attach_terminal(&mut self, pane_id: &str, manual: bool) {
+        // A released pane asked for again is no longer released; its node
+        // reports what the attach does next, and one ask is enough.
+        if let Some(state) = self
+            .terminal_states
+            .get_mut(pane_id)
+            .filter(|state| state.state == "released")
+        {
+            state.state = "idle".to_owned();
+        }
+        let size = self
+            .terminal_sizes
+            .get(pane_id)
+            .map(|&(rows, cols)| GridSize { rows, cols });
+        self.terminals.control(TerminalControl::Attach {
+            pane: pane_id.to_owned(),
+            size,
+            manual,
+        });
+    }
+
+    /// The operator's Reconnect: the pane's node starts again from a first
+    /// attempt, whatever it was doing.
+    pub(super) fn reconnect_terminal(&mut self, pane_id: &str) {
+        self.push_diagnostic(
+            "pane.reconnect.requested",
+            format!("Reconnect requested for pane {pane_id}"),
+        );
+        self.attach_terminal(pane_id, true);
+    }
+
+    /// Tells the nodes what changed among the panes on screen, the agents
+    /// asleep and the panes closing, and asks a shown pane that was released
+    /// to attach again. Whether a shown pane's state changed is returned.
+    pub(super) fn sync_terminal_intents(&mut self) -> bool {
+        let shown_tabs = self.shown_agent_tabs();
+        let mut shown = self
             .snapshot
             .pane_layouts
             .iter()
-            .filter(|layout| shown.contains(&layout.tab_id))
+            .filter(|layout| shown_tabs.contains(&layout.tab_id))
             .flat_map(|layout| layout.pane_ids())
             .map(str::to_owned)
-            .collect::<HashSet<_>>();
+            .collect::<Vec<_>>();
+        // The router tells each node which of its own panes are shown.
+        shown.sort();
+        shown.dedup();
         let mut changed = false;
-        for pane_id in &visible {
-            if self
-                .terminal_session_lifecycles
-                .get(pane_id)
-                .is_some_and(|lifecycle| lifecycle.state == "released")
-            {
-                self.request_terminal_control(pane_id);
+        if shown != self.terminal_intents.shown {
+            // A released pane back on screen attaches again (B10).
+            let returning = shown
+                .iter()
+                .filter(|pane_id| {
+                    self.terminal_states
+                        .get(*pane_id)
+                        .is_some_and(|state| state.state == "released")
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            self.terminals.control(TerminalControl::Shown {
+                panes: shown.clone(),
+            });
+            self.terminal_intents.shown = shown;
+            for pane_id in returning {
+                self.attach_terminal(&pane_id, false);
                 changed = true;
             }
         }
-        let due = self
-            .terminal_recovery
+        let asleep = self
+            .snapshot
+            .ui_state
+            .agent_sleep
+            .records
             .iter()
-            .filter(|(pane_id, recovery)| {
-                visible.contains(*pane_id) && recovery.due.is_some_and(|due| now >= due)
-            })
+            .filter(|(_, record)| record.phase != crate::agent_sleep::SleepPhase::Ending)
             .map(|(pane_id, _)| pane_id.clone())
-            .collect::<Vec<_>>();
-        for pane_id in due {
-            if self.pane_is_going_away(&pane_id) {
-                self.terminal_recovery.remove(&pane_id);
-                continue;
+            .collect::<HashSet<_>>();
+        if asleep != self.terminal_intents.asleep {
+            for pane in asleep.difference(&self.terminal_intents.asleep) {
+                self.terminals.control(TerminalControl::Asleep {
+                    pane: pane.clone(),
+                    asleep: true,
+                });
             }
-            let retry = self
-                .terminal_recovery
-                .get_mut(&pane_id)
-                .expect("collected recovery")
-                .advance(now);
-            let message = self.terminal_recovery[&pane_id].message();
-            if retry && self.terminal_sizes.contains_key(&pane_id) {
-                let attempt = self
-                    .terminal_session_lifecycles
-                    .get(&pane_id)
-                    .map_or(1, |l| l.attempt + 1);
-                self.start_terminal_session(
-                    &pane_id,
-                    TerminalSessionMode::Control,
-                    attempt,
-                    "automatic_bounded",
-                    Some(message.clone()),
-                );
-            } else if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(&pane_id) {
-                lifecycle.message = Some(message.clone());
-                lifecycle.retry_decision = if retry { "automatic_bounded" } else { "manual" };
-                if !retry && lifecycle.state != "observing" {
-                    lifecycle.state = "unavailable";
-                    self.terminal_sessions.remove(&pane_id);
-                    // A late spawn cannot revive an exhausted attempt.
-                    self.terminal_session_generations.remove(&pane_id);
-                    // The pane is no longer connecting; keys held for it
-                    // would run whenever the operator reconnects, so they
-                    // end here (PRD instant-pane-topology B10).
-                    self.pane_input_hold.discard(&pane_id, "session_failed");
-                }
-                self.sync_transport_projection(&pane_id);
+            for pane in self.terminal_intents.asleep.difference(&asleep) {
+                self.terminals.control(TerminalControl::Asleep {
+                    pane: pane.clone(),
+                    asleep: false,
+                });
             }
-            self.push_diagnostic(
-                if retry {
-                    "terminal.retrying"
-                } else {
-                    "terminal.retries_exhausted"
-                },
-                format!("Pane {pane_id}: {message}"),
-            );
-            changed = true;
+            self.terminal_intents.asleep = asleep;
+        }
+        let closing = self.panes_closing.clone();
+        if closing != self.terminal_intents.closing {
+            for pane in closing.difference(&self.terminal_intents.closing) {
+                self.terminals.control(TerminalControl::Closing {
+                    pane: pane.clone(),
+                    closing: true,
+                });
+            }
+            for pane in self.terminal_intents.closing.difference(&closing) {
+                self.terminals.control(TerminalControl::Closing {
+                    pane: pane.clone(),
+                    closing: false,
+                });
+            }
+            self.terminal_intents.closing = closing;
         }
         changed
     }
-    /// Starts one control attempt. Repeated sync updates are no-ops while any
-    /// official control or observer session is starting or active.
-    pub(super) fn request_terminal_control(&mut self, pane_id: &str) {
-        let current = self
-            .terminal_session_lifecycles
-            .get(pane_id)
-            .cloned()
-            .unwrap_or_default();
-        if !terminal_control_request_allowed(
-            current.state,
-            self.terminal_sessions.contains_key(pane_id),
-        ) {
-            self.sync_transport_projection(pane_id);
-            return;
+
+    /// What the nodes reported about their panes since the last batch.
+    /// Returns whether the snapshot changed.
+    pub fn ingest_terminal_reports(&mut self, reports: Vec<TerminalReport>) -> bool {
+        let mut changed = false;
+        for report in reports {
+            changed |= self.ingest_terminal_report(report);
         }
-        // Herdr sizes the PTY from the attach, so attaching before a view has
-        // reported a size costs a full frame at a guessed size and a second
-        // one after the resize. The pane's own view reports within a frame of
-        // the layout arriving, and the resize handler starts the attach then.
-        if !self.terminal_sizes.contains_key(pane_id) {
-            if self.panes_awaiting_size.insert(pane_id.to_owned()) {
-                self.push_diagnostic(
-                    "terminal.attach_deferred",
-                    format!(
-                        "Pane {pane_id} is waiting for its view to report a size before attaching"
-                    ),
-                );
-            }
-            self.terminal_session_lifecycles
-                .entry(pane_id.to_owned())
-                .or_default()
-                .state = "waiting_size";
-            self.schedule_terminal_recovery(
-                pane_id,
-                "Waiting for the pane view to report its size".to_owned(),
-            );
-            self.sync_transport_projection(pane_id);
-            return;
-        }
-        let attempt = current.attempt.saturating_add(1);
-        self.start_terminal_session(
-            pane_id,
-            TerminalSessionMode::Control,
-            attempt,
-            if attempt == 1 {
-                "automatic_initial"
-            } else {
-                "manual"
-            },
-            None,
-        );
+        changed
     }
-    pub(super) fn terminal_session_context(&self, pane_id: &str) -> Option<TerminalSessionContext> {
-        if pane_id.starts_with("remote:") {
-            self.remote_terminals
-                .iter()
-                .find_map(|(target_id, context)| {
-                    remote_pane_source_id(target_id, pane_id).map(|source_pane_id| {
-                        TerminalSessionContext::Remote {
-                            context: context.clone(),
-                            source_pane_id: source_pane_id.to_owned(),
-                        }
-                    })
-                })
-        } else {
-            self.live
-                .as_ref()
-                .cloned()
-                .map(TerminalSessionContext::Local)
-        }
-    }
-    pub(super) fn start_terminal_session(
-        &mut self,
-        pane_id: &str,
-        mode: TerminalSessionMode,
-        attempt: u64,
-        retry_decision: &'static str,
-        message: Option<String>,
-    ) {
-        self.terminal_frames_need_full.insert(pane_id.to_owned());
-        self.observers_resized.remove(pane_id);
-        self.next_terminal_session_generation =
-            self.next_terminal_session_generation.saturating_add(1);
-        let generation = self.next_terminal_session_generation;
-        self.terminal_session_generations
-            .insert(pane_id.to_owned(), generation);
-        self.adopt_attachment_terminal(pane_id, generation);
-        let _retired_session = self.terminal_sessions.remove(pane_id);
-        self.terminal_session_lifecycles.insert(
-            pane_id.to_owned(),
-            TerminalSessionLifecycle {
-                state: "starting",
-                message,
-                generation,
-                attempt,
-                mode: Some(mode),
-                exit_category: None,
-                retry_decision,
-            },
-        );
-        if mode == TerminalSessionMode::Control {
-            self.schedule_terminal_recovery(
-                pane_id,
-                "Waiting for the first terminal frame".to_owned(),
-            );
-            if let Some(recovery) = self.terminal_recovery.get_mut(pane_id) {
-                recovery.last_attempt_at_unix_ms = Some(unix_milliseconds());
-            }
-        }
-        let decision = self.terminal_retry_decision(pane_id, retry_decision);
-        if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
-            lifecycle.retry_decision = decision;
-        }
-        self.sync_transport_projection(pane_id);
-        self.push_diagnostic(
-            "terminal.session_requested",
-            format!(
-                "Starting terminal {} session for pane {pane_id}",
-                mode.as_str()
-            ),
-        );
-        // The view's grid is the one the frame guard accepts, so it is the
-        // grid the attach asks for. Starting at a settled size the view has
-        // already left holds every frame until a resize, and a pane that is
-        // not drawn sends none: five attempts at 50x25 against a 41x18 view,
-        // then retries exhausted (2026-09-14).
-        if let Some(view) = self.terminal_view_sizes.get(pane_id).copied() {
-            self.terminal_sizes.insert(pane_id.to_owned(), view);
-        }
-        #[cfg(test)]
-        if self.suppress_terminal_session_workers {
-            let session = TerminalSession::test_stub(pane_id, generation, mode);
-            self.write_held_input(pane_id, &session);
-            self.terminal_sessions.insert(pane_id.to_owned(), session);
-            if let Some(lifecycle) = self.terminal_session_lifecycles.get_mut(pane_id) {
-                lifecycle.state = match mode {
-                    TerminalSessionMode::Control => "controlling",
-                    TerminalSessionMode::Observe => "observing",
-                };
-            }
-            self.sync_transport_projection(pane_id);
-            self.reconcile_attachment_target();
-            return;
-        }
-        let context = self.terminal_session_context(pane_id);
-        let Some(context) = context else {
-            let message = if pane_id.starts_with("remote:") {
-                format!("Pane {pane_id} has no configured remote terminal transport")
-            } else {
-                "Local terminal sessions require a live Herdr connection".to_owned()
-            };
-            self.record_terminal_session_failure(
-                pane_id,
-                generation,
-                attempt,
-                mode,
-                "transport_unavailable",
-                &message,
-                0,
-            );
-            self.set_error("terminal.transport_unavailable", message, true);
-            return;
-        };
-        // Herdr sizes the PTY from the attach, so there is no honest size to
-        // send when no view has reported one. Every path here has one:
-        // `request_terminal_control` holds a pane back until its view reports,
-        // and an observe session only follows a control session that already
-        // had a size. A pane that arrives here without one is a routing bug,
-        // and saying so beats attaching at a guess and hiding it.
-        let Some((rows, cols)) = self.terminal_sizes.get(pane_id).copied() else {
-            let message =
-                format!("Pane {pane_id} has no reported terminal size, so it cannot be attached");
-            self.record_terminal_session_failure(
-                pane_id,
-                generation,
-                attempt,
-                mode,
-                "size_unknown",
-                &message,
-                0,
-            );
-            self.set_error("terminal.size_unknown", message, true);
-            return;
-        };
-        if let Err(message) =
-            live::spawn_terminal_session(context, pane_id.to_owned(), generation, mode, rows, cols)
-        {
-            self.record_terminal_session_failure(
-                pane_id,
-                generation,
-                attempt,
-                mode,
-                "worker_start_failed",
-                &message,
-                0,
-            );
-            let notice = format!(
-                "\r\n[Terminal {} session for {pane_id} failed: {message}]\r\n",
-                mode.as_str()
-            );
-            self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(notice.as_bytes()));
-            self.set_error("terminal.session_worker_failed", message, true);
-        }
-    }
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn record_terminal_session_failure(
-        &mut self,
-        pane_id: &str,
-        generation: u64,
-        attempt: u64,
-        mode: TerminalSessionMode,
-        category: &str,
-        message: &str,
-        elapsed_ms: u128,
-    ) {
-        self.terminal_session_lifecycles.insert(
-            pane_id.to_owned(),
-            TerminalSessionLifecycle {
-                state: "unavailable",
-                message: Some(message.to_owned()),
-                generation,
-                attempt,
-                mode: Some(mode),
-                exit_category: Some(category.to_owned()),
-                retry_decision: "manual",
-            },
-        );
-        self.schedule_terminal_recovery(pane_id, format!("Terminal start refused: {message}"));
-        self.sync_transport_projection(pane_id);
-        crate::diagnostic!(serde_json::json!({
-            "component": "terminal_session",
-            "kind": "terminal.session_unavailable",
-            "pane_id": pane_id,
-            "generation": generation,
-            "attempt": attempt,
-            "mode": mode.as_str(),
-            "duration_ms": elapsed_ms,
-            "exit_category": category,
-            "retry_decision": self.terminal_retry_decision(pane_id, "manual"),
-        }));
-    }
-    #[allow(clippy::too_many_arguments)]
-    pub fn ingest_terminal_session_spawn(
-        &mut self,
-        generation: u64,
-        pane_id: &str,
-        mode: TerminalSessionMode,
-        result: Result<TerminalSession, String>,
-        elapsed_ms: u128,
-        worker_runtime: Weak<Mutex<Runtime>>,
-        notifier: crate::handle::ChangeNotifier,
-    ) -> bool {
-        if self.terminal_session_generations.get(pane_id) != Some(&generation) {
-            return false;
-        }
-        if self
-            .terminal_session_lifecycles
-            .get(pane_id)
-            .is_none_or(|lifecycle| lifecycle.mode != Some(mode))
-        {
-            return false;
-        }
-        if !pane_id.starts_with("remote:")
-            && !self.snapshot.pane_layouts.is_empty()
-            && self.layout_holding_pane(pane_id).is_none()
-        {
-            return false;
-        }
-        match result {
-            Ok(session) => {
-                if mode == TerminalSessionMode::Control
-                    && let Some((rows, cols)) = self.terminal_sizes.get(pane_id).copied()
-                    && let Err(message) = session.resize(rows, cols)
-                {
-                    self.set_error("terminal.resize_after_attach_failed", message, true);
+
+    fn ingest_terminal_report(&mut self, report: TerminalReport) -> bool {
+        match report {
+            TerminalReport::State { pane, state } => {
+                // A pane Herdr no longer lists is not brought back by a late
+                // report from its node.
+                if !self.pane_still_terminal(&pane) {
+                    return false;
                 }
-                self.write_held_input(pane_id, &session);
-                self.terminal_sessions.insert(pane_id.to_owned(), session);
-                let reader_result = self
-                    .terminal_sessions
-                    .get_mut(pane_id)
-                    .expect("terminal session was just inserted")
-                    .start_reader(worker_runtime, notifier);
-                if let Err(message) = reader_result {
-                    let _failed_session = self.terminal_sessions.remove(pane_id);
-                    let attempt = self
-                        .terminal_session_lifecycles
-                        .get(pane_id)
-                        .map_or(1, |lifecycle| lifecycle.attempt);
-                    self.record_terminal_session_failure(
-                        pane_id,
-                        generation,
-                        attempt,
-                        mode,
-                        "reader_start_failed",
-                        &message,
-                        elapsed_ms,
-                    );
-                    self.set_error("terminal.session_reader_failed", message, true);
+                if state.state == "controlling" {
+                    // This client's own wheel reaches a controlled pane.
+                    self.panes_scroll_held.remove(&pane);
+                }
+                if state.state == "closing" && !self.close_operation_holds_pane(&pane) {
+                    self.panes_closing.remove(&pane);
+                }
+                let generation = state.generation;
+                let session = matches!(state.state.as_str(), "controlling" | "observing");
+                if self.terminal_states.get(&pane) == Some(&state) {
+                    return false;
+                }
+                self.terminal_states.insert(pane.clone(), state);
+                if session {
+                    self.adopt_attachment_terminal(&pane, generation);
+                    // A file dropped before this session attached is written now.
+                    self.reconcile_attachment_target();
+                }
+                self.ensure_terminal_pane(&pane);
+                self.sync_transport_projection(&pane);
+                true
+            }
+            TerminalReport::FirstFrame { pane, .. } => {
+                self.release_wheel_before_attach(&pane);
+                false
+            }
+            TerminalReport::FrameShown { pane, at_unix_ms } => {
+                let age = unix_milliseconds().saturating_sub(at_unix_ms);
+                let at = Instant::now()
+                    .checked_sub(std::time::Duration::from_millis(age))
+                    .unwrap_or_else(Instant::now);
+                self.op_timings.note_frame(&pane, at);
+                // A grid change counts only a frame after Herdr applied it;
+                // one before that leaves the record waiting for the next.
+                if self.op_timings.awaits_frame(&pane) {
+                    self.terminals.control(TerminalControl::WatchFrame { pane });
+                }
+                false
+            }
+            TerminalReport::Input {
+                pane,
+                at_unix_ms,
+                submitted,
+                focus,
+            } => {
+                self.note_delivery_key_at(&pane, at_unix_ms);
+                if submitted {
+                    self.record_operator_submit(&pane);
+                }
+                if focus && self.snapshot.terminal.pane_id.as_deref() != Some(pane.as_str()) {
+                    self.snapshot.focused.surface = Surface::Terminal;
+                    self.snapshot.focused.pane_id = Some(pane.clone());
+                    self.snapshot.terminal.pane_id = Some(pane.clone());
+                    self.ensure_terminal_pane(&pane);
+                    self.sync_focused_terminal_projection();
                     return true;
                 }
-                let attempt = self
-                    .terminal_session_lifecycles
-                    .get(pane_id)
-                    .map_or(1, |lifecycle| lifecycle.attempt);
-                let message = self
-                    .terminal_session_lifecycles
-                    .get(pane_id)
-                    .and_then(|lifecycle| lifecycle.message.clone());
-                let state = match mode {
-                    TerminalSessionMode::Control => "controlling",
-                    TerminalSessionMode::Observe => "observing",
-                };
-                // This client's own wheel reaches a controlled pane.
-                if mode == TerminalSessionMode::Control {
-                    self.panes_scroll_held.remove(pane_id);
-                }
-                self.terminal_session_lifecycles.insert(
-                    pane_id.to_owned(),
-                    TerminalSessionLifecycle {
-                        state,
-                        message,
-                        generation,
-                        attempt,
-                        mode: Some(mode),
-                        exit_category: None,
-                        retry_decision: self.terminal_retry_decision(
-                            pane_id,
-                            if mode == TerminalSessionMode::Observe {
-                                "manual"
-                            } else {
-                                "none"
-                            },
-                        ),
-                    },
-                );
-                self.sync_transport_projection(pane_id);
-                self.push_diagnostic(
-                    "terminal.session_ready",
-                    format!(
-                        "Pane {pane_id} terminal {} session ready in {elapsed_ms} ms",
-                        mode.as_str()
-                    ),
-                );
-                crate::diagnostic!(serde_json::json!({
-                    "component": "terminal_session",
-                    "kind": "terminal.session_ready",
-                    "pane_id": pane_id,
-                    "generation": generation,
-                    "attempt": attempt,
-                    "mode": mode.as_str(),
-                    "duration_ms": elapsed_ms,
-                    "exit_category": null,
-                    "retry_decision": self.terminal_retry_decision(pane_id, if mode == TerminalSessionMode::Observe { "manual" } else { "none" }),
-                    "last_attempt_at_unix_ms": self.terminal_recovery.get(pane_id).and_then(|r| r.last_attempt_at_unix_ms),
-                }));
-                // A file dropped before this session attached is written now.
-                self.reconcile_attachment_target();
+                false
+            }
+            TerminalReport::Error {
+                pane: _,
+                kind,
+                message,
+            } => {
+                self.set_error(kind, message, true);
                 true
             }
-            Err(message) => {
-                let attempt = self
-                    .terminal_session_lifecycles
-                    .get(pane_id)
-                    .map_or(1, |lifecycle| lifecycle.attempt);
-                self.record_terminal_session_failure(
-                    pane_id,
-                    generation,
-                    attempt,
-                    mode,
-                    "spawn_failed",
-                    &message,
-                    elapsed_ms,
-                );
-                let notice = format!(
-                    "\r\n[Terminal {} session for {pane_id} failed: {message}]\r\n",
-                    mode.as_str()
-                );
-                self.append_terminal_chunk(
-                    pane_id.to_owned(),
-                    live::encode_base64(notice.as_bytes()),
-                );
-                self.set_error("terminal.session_failed", message, true);
+            TerminalReport::Note {
+                pane: _,
+                kind,
+                message,
+            } => {
+                self.push_diagnostic(kind, message);
                 true
+            }
+            TerminalReport::RequestDiscarded { request, .. } => {
+                if self.input_requests.discarded_by_node(&request) {
+                    self.sync_input_requests();
+                    return true;
+                }
+                false
+            }
+            TerminalReport::AttachmentInput {
+                intent,
+                outcome,
+                bytes,
+            } => self.attachment_input_refused(&intent, outcome, bytes),
+            TerminalReport::AttachmentDelivered { intent, written } => {
+                self.attachment_delivered(&intent, written)
             }
         }
     }
-    /// Routes key bytes, typed at `typed_at`, only to an official controller.
-    /// The actual pipe write runs on the session writer thread, outside the
-    /// runtime mutex.
-    pub(super) fn write_terminal_control(
-        &mut self,
-        pane_id: &str,
-        bytes_base64: &str,
-        typed_at: Instant,
-    ) {
+
+    /// Whether the core still projects a terminal for `pane`: one of this
+    /// machine's panes in a layout or named by a creation, or a connected
+    /// device's pane.
+    fn pane_still_terminal(&self, pane: &str) -> bool {
+        if pane.starts_with("remote:") {
+            return self
+                .snapshot
+                .terminal
+                .panes
+                .iter()
+                .any(|projected| projected.pane_id == pane);
+        }
+        self.snapshot.pane_layouts.is_empty()
+            || self.layout_holding_pane(pane).is_some()
+            || self.input_requests.awaits_layout(pane)
+    }
+    /// Writes bytes the core makes itself (a click's mouse report) to the
+    /// pane, through its node's writer like every key.
+    pub(super) fn write_terminal_control(&mut self, pane_id: &str, bytes: &[u8]) {
         if self.close_operation_holds_pane(pane_id) {
             self.set_error(
                 "terminal.close_pending",
@@ -2165,104 +1616,9 @@ impl Runtime {
             );
             return;
         }
-        let bytes = match live::decode_base64(bytes_base64) {
-            Ok(bytes) => bytes,
-            Err(message) => {
-                self.set_error("terminal.invalid_input", message, false);
-                return;
-            }
-        };
-        match self.terminal_sessions.get(pane_id) {
-            Some(session) if session.mode == TerminalSessionMode::Control => {
-                if let Err(message) = session.write_bytes(&bytes) {
-                    self.set_error("terminal.write_failed", message, true);
-                }
-            }
-            Some(_) => {
-                self.set_error(
-                    "terminal.read_only",
-                    format!(
-                        "Pane {pane_id} is read-only because another client owns terminal control; use Reconnect to try again"
-                    ),
-                    true,
-                );
-            }
-            // A pane whose control session is still opening keeps its input
-            // until the session can take it (PRD instant-pane-topology D-11).
-            None if self.terminal_session_opening(pane_id) => {
-                self.pane_input_hold.hold(pane_id, &bytes, typed_at);
-            }
-            None => {
-                self.set_error(
-                    "terminal.unavailable",
-                    format!("Pane {pane_id} has no terminal session; use Reconnect to try again"),
-                    true,
-                );
-            }
-        }
-    }
-
-    /// Input typed while the session was opening goes first, in the order it
-    /// was typed, unless it is older than the hold's age limit; an observer
-    /// cannot take it.
-    fn write_held_input(&mut self, pane_id: &str, session: &TerminalSession) {
-        let Some(held) = self.pane_input_hold.take(pane_id, Instant::now()) else {
-            return;
-        };
-        if session.mode == TerminalSessionMode::Control {
-            if let Err(message) = session.write_bytes(&held) {
-                self.set_error("terminal.write_failed", message, true);
-            }
-            return;
-        }
-        crate::diagnostic!(serde_json::json!({
-            "component": "terminal_input",
-            "kind": "terminal.input_discarded",
-            "pane_id": pane_id,
-            "reason": "read_only",
-            "bytes": held.len(),
-        }));
-    }
-
-    /// Whether this machine's pane is on its way to a control session: never
-    /// attached yet, waiting for its view's size, starting, or retrying after
-    /// a failed start. A released, ended or closing pane is not.
-    fn terminal_session_opening(&self, pane_id: &str) -> bool {
-        // A pane a creation's answer named is opening even before a layout
-        // carries it: the operator's keys for it arrive first (D-11).
-        if pane_id.starts_with("remote:")
-            || self.panes_closing.contains(pane_id)
-            || (self.layout_holding_pane(pane_id).is_none() && !self.input_requests.names(pane_id))
-        {
-            return false;
-        }
-        match self
-            .terminal_session_lifecycles
-            .get(pane_id)
-            .map(|lifecycle| lifecycle.state)
-        {
-            None | Some("idle" | "waiting_size" | "starting") => true,
-            // Retrying; a pane whose retries ran out waits for the operator's
-            // Reconnect and holds nothing for it.
-            Some("unavailable") => self
-                .terminal_recovery
-                .get(pane_id)
-                .is_some_and(|recovery| recovery.due.is_some()),
-            Some(_) => false,
-        }
-    }
-    pub(super) fn append_terminal_chunk(&mut self, pane_id: String, bytes_base64: String) {
-        self.snapshot.terminal.sequence = self.snapshot.terminal.sequence.saturating_add(1);
-        self.snapshot.terminal.chunks.push(TerminalChunk {
-            pane_id,
-            sequence: self.snapshot.terminal.sequence,
-            bytes_base64,
-            frame: None,
+        self.terminals.control(TerminalControl::Write {
+            pane: pane_id.to_owned(),
+            data: live::encode_base64(bytes),
         });
-        const RETAINED_TERMINAL_CHUNKS: usize = 512;
-        if self.snapshot.terminal.chunks.len() > RETAINED_TERMINAL_CHUNKS {
-            let excess = self.snapshot.terminal.chunks.len() - RETAINED_TERMINAL_CHUNKS;
-            self.snapshot.terminal.chunks.drain(..excess);
-        }
     }
 }

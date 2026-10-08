@@ -299,8 +299,16 @@ impl Runtime {
     /// own session, a phone reply, or the pane entering work proves the
     /// composer was sent.
     pub(crate) fn note_delivery_key(&mut self, pane_id: &str) {
+        self.note_delivery_key_at(pane_id, unix_milliseconds());
+    }
+
+    /// [`Runtime::note_delivery_key`] for a key its node saw typed at
+    /// `at_unix_ms`: the node reports a burst's keys once, with the time of
+    /// its last, so the quiet period counts from that key (PRD
+    /// core-host-node-terminal D-13, B7).
+    pub(crate) fn note_delivery_key_at(&mut self, pane_id: &str, at_unix_ms: u64) {
         if let Some(observation) = self.delivery_observations.get_mut(pane_id) {
-            observation.last_input_at_unix_ms = unix_milliseconds();
+            observation.last_input_at_unix_ms = observation.last_input_at_unix_ms.max(at_unix_ms);
         }
     }
 
@@ -1064,14 +1072,6 @@ pub(crate) mod tests {
         observation
     }
 
-    fn key_event(pane: &str, bytes: &[u8]) -> Vec<u8> {
-        serde_json::to_vec(&json!({
-            "schema_version": SCHEMA_VERSION, "kind": "key",
-            "payload": {"pane_id": pane, "bytes_base64": crate::live::encode_base64(bytes)},
-        }))
-        .unwrap()
-    }
-
     fn observe_recipient_status(runtime: &mut Runtime, status: &str, sequence: u64) {
         let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
@@ -1132,9 +1132,11 @@ pub(crate) mod tests {
 
         // `/model` and Enter: the picker is open and Herdr reads the pane
         // `done`, so the bell must keep holding on a draft.
-        for keys in [&b"/model"[..], b"\x1b", b"\x1b\r", b"\r"] {
-            guard.dispatch_json(&key_event("recipient", keys));
-            assert_eq!(written(&mut guard), (true, false, false), "{keys:?}");
+        // The node reports `/model`, Esc and Esc-Return as typing and the
+        // Return as a submit; none of them is a delivery submit.
+        for submitted in [false, false, false, true] {
+            crate::runtime::tests::typed_into(&mut guard, "recipient", submitted);
+            assert_eq!(written(&mut guard), (true, false, false), "{submitted}");
         }
         let observation = guard.delivery_observations.get_mut("recipient").unwrap();
         observation.last_input_at_unix_ms = unix_milliseconds().saturating_sub(120_000);

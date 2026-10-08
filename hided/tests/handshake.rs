@@ -326,7 +326,21 @@ async fn a_reconnect_resumes_from_the_client_cursor() {
         "a snapshot carries rest"
     );
     let revision = full["payload"]["revision"].as_u64().unwrap();
-    let sequence = full["payload"]["terminal_sequence"].as_u64().unwrap();
+    // Terminal output and its cursor ride `terminal` frames of their own
+    // (PRD core-host-node-terminal D-15); a snapshot carries neither, and
+    // this client was sent none, so its terminal cursor is still 0.
+    for field in [
+        "terminal_sequence",
+        "chunks",
+        "chunks_dropped",
+        "input_generation",
+    ] {
+        assert!(
+            full["payload"].get(field).is_none(),
+            "{field} left the snapshot"
+        );
+    }
+    let sequence = 0;
 
     // Same cursor the first client applied: nothing changed, so a delta
     // without the rest section, not a second full snapshot.

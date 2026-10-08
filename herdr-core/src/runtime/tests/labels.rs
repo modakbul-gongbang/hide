@@ -81,22 +81,17 @@ fn an_operator_submit_is_recorded_for_the_agent_pane_and_an_approval_enter_is_no
     );
     runtime.install_label_services(std::sync::Arc::clone(&services));
     runtime.ingest_session(Ok(projection(SESSION)));
-    let key = |bytes: &[u8]| {
-        serde_json::to_vec(&serde_json::json!({
-            "schema_version": SCHEMA_VERSION, "kind": "key",
-            "payload": {"pane_id": PANE, "bytes_base64": crate::live::encode_base64(bytes)},
-        }))
-        .unwrap()
-    };
     let submits = || {
         services
             .input
             .submits(crate::labels::store::LOCAL_TARGET, PANE)
     };
-    runtime.dispatch_json(&key(b"hello"));
-    runtime.dispatch_json(&key(b"\x1b\r"));
+    // An escaped return (a newline in Claude Code) is not a submit; the
+    // node decides that, and reports only what it decided.
+    typed_into(&mut runtime, PANE, false);
+    typed_into(&mut runtime, PANE, false);
     assert!(submits().is_empty());
-    runtime.dispatch_json(&key(b"\r"));
+    typed_into(&mut runtime, PANE, true);
     assert_eq!(submits().len(), 1);
     assert!(!submits()[0].while_working);
 
@@ -120,7 +115,7 @@ fn an_operator_submit_is_recorded_for_the_agent_pane_and_an_approval_enter_is_no
     agent.agent_status = Some("blocked".to_owned());
     agent.state_change_seq = Some(5);
     runtime.ingest_session(Ok(blocked));
-    runtime.dispatch_json(&key(b"\r"));
+    typed_into(&mut runtime, PANE, true);
     assert_eq!(submits().len(), 2, "an approval's Enter is not a request");
 }
 
@@ -492,13 +487,7 @@ fn the_enter_that_approves_a_waiting_plan_is_the_operators_submit() {
     );
     runtime.install_label_services(std::sync::Arc::clone(&services));
     let enter = |runtime: &mut Runtime| {
-        runtime.dispatch_json(
-            &serde_json::to_vec(&serde_json::json!({
-                "schema_version": SCHEMA_VERSION, "kind": "key",
-                "payload": {"pane_id": PANE, "bytes_base64": crate::live::encode_base64(b"\r")},
-            }))
-            .unwrap(),
-        );
+        typed_into(runtime, PANE, true);
         services
             .input
             .submits(crate::labels::store::LOCAL_TARGET, PANE)

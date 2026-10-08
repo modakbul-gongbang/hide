@@ -9,6 +9,19 @@ use hide_node_link::attachments::{
 };
 use hide_platform::fs::identity::stamp_of;
 
+/// Removes a paste's clipboard image. Only a clipboard image's own path is
+/// accepted, so the call cannot name its way to another file.
+pub fn remove_clipboard(path: &Path) -> Result<(), String> {
+    if !hide_node_link::attachments::is_clipboard_path(path) {
+        return Err("The path is not a pasted clipboard image.".to_owned());
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("The clipboard image could not be removed: {error}")),
+    }
+}
+
 /// Reads each of `paths` in order; `go_on` is asked before each file, and a
 /// false answer ends the read as cancelled.
 pub fn read_sources(
@@ -120,5 +133,32 @@ mod tests {
                 .contains("20 MiB")
         );
         assert!(read_sources(&[file.to_string_lossy().into_owned()], &mut |_| false).is_err());
+    }
+
+    /// Only a paste's own clipboard image is removed; any other path the
+    /// call names is refused and left in place.
+    #[test]
+    fn a_clipboard_removal_deletes_only_a_clipboard_image() {
+        let folder = tempfile::tempdir().unwrap();
+        let clipboard = folder
+            .path()
+            .join(hide_node_link::attachments::CLIPBOARD_FOLDER);
+        fs::create_dir(&clipboard).unwrap();
+        let id = "123e4567-e89b-12d3-a456-426614174000";
+        let image = clipboard.join(hide_node_link::attachments::clipboard_file_name(id));
+        fs::write(&image, b"png").unwrap();
+        let other = clipboard.join("notes.txt");
+        fs::write(&other, b"keep").unwrap();
+        let outside = folder
+            .path()
+            .join(hide_node_link::attachments::clipboard_file_name(id));
+        fs::write(&outside, b"keep").unwrap();
+
+        assert!(remove_clipboard(&other).is_err());
+        assert!(remove_clipboard(&outside).is_err());
+        assert!(other.exists() && outside.exists());
+        remove_clipboard(&image).unwrap();
+        assert!(!image.exists());
+        remove_clipboard(&image).unwrap();
     }
 }

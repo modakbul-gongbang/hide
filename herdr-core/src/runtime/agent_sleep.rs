@@ -106,10 +106,11 @@ impl Runtime {
                 "pane_id": pane_id,
                 "phase": phase,
             }));
-            self.agent_sleep_dropped_input.remove(pane_id);
             self.agent_sleep_backoff.remove(pane_id);
         }
         self.persist_ui_state();
+        // A woken agent's pane takes keys again (B16).
+        self.sync_terminal_intents();
     }
 
     /// Marks the projected rows that sleep and moves each awake agent's
@@ -264,25 +265,6 @@ impl Runtime {
         }
     }
 
-    /// Typed input to a pane whose agent sleeps goes nowhere: the pane shows
-    /// no terminal, and the shell under it is not what the operator was
-    /// typing to (B12). Logged once per pane. `None` lets the input through.
-    pub(super) fn drop_input_to_sleeping_pane(&mut self, pane_id: &str) -> Option<bool> {
-        let record = self.snapshot.ui_state.agent_sleep.records.get(pane_id)?;
-        if record.phase == SleepPhase::Ending {
-            return None;
-        }
-        if self.agent_sleep_dropped_input.insert(pane_id.to_owned()) {
-            crate::diagnostic!(serde_json::json!({
-                "component": "agent_sleep",
-                "kind": "agent_sleep.input_dropped",
-                "pane_id": pane_id,
-                "phase": record.phase,
-            }));
-        }
-        Some(false)
-    }
-
     /// The end worker's answer. A refusal or a timeout leaves the agent awake
     /// and the pane alone for an hour (B8).
     pub(crate) fn ingest_agent_sleep_end(
@@ -309,6 +291,8 @@ impl Runtime {
                 record.state_change_seq = Some(state_change_seq);
                 record.since_unix_ms = now;
                 let pending_wake = record.pending_wake.take();
+                // Keys for the sleeping pane are dropped at its node from now.
+                self.sync_terminal_intents();
                 crate::diagnostic!(serde_json::json!({
                     "component": "agent_sleep",
                     "kind": "agent_sleep.slept",

@@ -28,6 +28,7 @@ pub mod state_file;
 // The old folder is this Mac's history; no Windows build ever wrote it.
 #[cfg(unix)]
 pub mod state_move;
+pub mod terminal_hub;
 pub mod watch;
 pub mod workspace_cli;
 
@@ -464,21 +465,21 @@ pub async fn wait_shutdown(running: &RunningDaemon) {
 /// Three readers share it: the seed in `start_daemon` before the server
 /// serves, the notification reader (`spawn_root_refresh`), and a client event
 /// the boundary refused as outside every checkout (`server::admit_event`). One
-/// pair of cursors behind one lock means each read starts where the last one
+/// cursor behind one lock means each read starts where the last one
 /// ended, a reader never applies an older snapshot over a newer one, and a
 /// read that waited for another to finish finds the roots that one applied.
 ///
 /// Reading with a cursor keeps the whole rest/editor/changes payload off the
-/// notify path: a delta that changed only terminal chunks carries no `rest`,
-/// and roots and expanded folders both live in it. Nothing here runs under
+/// notify path: a delta that changed nothing of it carries no `rest`, and
+/// roots and expanded folders both live in it. Nothing here runs under
 /// the runtime mutex.
 pub struct RootFollower {
     core: Arc<CoreHandle>,
     boundary: Arc<Boundary>,
     watch: Arc<watch::WatchService>,
     index: Arc<IndexService>,
-    /// The revision and terminal sequence the last read reached.
-    cursors: Mutex<(u64, u64)>,
+    /// The revision the last read reached.
+    cursor: Mutex<u64>,
     /// Wakes the refresh loop when a client arrives after none were
     /// connected, so the reads it skipped meanwhile catch up at once.
     resumed: Notify,
@@ -496,7 +497,7 @@ impl RootFollower {
             boundary,
             watch,
             index,
-            cursors: Mutex::new((0, 0)),
+            cursor: Mutex::new(0),
             resumed: Notify::new(),
         }
     }
@@ -510,11 +511,11 @@ impl RootFollower {
     /// in it; true when the read carried them. An error means the core's
     /// owner thread is gone.
     pub fn catch_up(&self) -> Result<bool, String> {
-        let mut cursors = self
-            .cursors
+        let mut cursor = self
+            .cursor
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let reply = self.core.snapshot(cursors.0, cursors.1)?;
+        let reply = self.core.snapshot(*cursor)?;
         if reply.bytes.is_empty() {
             return Ok(false);
         }
@@ -526,12 +527,7 @@ impl RootFollower {
             }
         };
         if let Some(revision) = value.get("revision").and_then(Value::as_u64) {
-            cursors.0 = revision;
-        }
-        // Advancing the terminal cursor keeps the retained chunk window out of
-        // every later read: this reader uses none of those bytes.
-        if let Some(sequence) = value.get("terminal_sequence").and_then(Value::as_u64) {
-            cursors.1 = sequence;
+            *cursor = revision;
         }
         if !carries_roots(&value) {
             return Ok(false);
@@ -595,7 +591,7 @@ fn spawn_root_refresh(roots: Arc<RootFollower>, clients: Arc<AtomicUsize>) {
 }
 
 /// Whether a snapshot value carries the sections this reader needs: a `rest`
-/// object with a navigator. A delta that changed only terminal chunks carries
+/// object with a navigator. A delta that changed something else carries
 /// no `rest` at all, or a null, and reading it would clear the roots.
 fn carries_roots(value: &Value) -> bool {
     value.get("rest").is_some_and(Value::is_object)
@@ -786,7 +782,7 @@ mod tests {
     fn only_a_snapshot_with_a_navigator_can_move_the_roots() {
         let full = serde_json::json!({"revision": 3, "rest": {"navigator": {"root_path": "/repo", "workspaces": []}}});
         assert!(carries_roots(&full));
-        // A delta that changed only terminal chunks: no rest, or a null, must
+        // A delta that changed something else: no rest, or a null, must
         // never be read as an empty root set.
         assert!(!carries_roots(&serde_json::json!({"revision": 4})));
         assert!(!carries_roots(

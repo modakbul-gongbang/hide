@@ -104,8 +104,6 @@ STORES = {
 # goes in the change that moves it; the check fails once a listed file no
 # longer reaches a machine, so a stale entry cannot linger.
 LATER_LAYERS = {
-    "herdr-core/src/live.rs": (3, "3: the terminal attach child moves to the node's terminal path"),
-    "herdr-core/src/terminal_attachments.rs": (2, "3: pasted attachments move with the terminal path"),
     "herdr-core/src/labels/generator.rs": (
         6,
         "4: the one-generator lock is keyed by the Herdr server it labels, "

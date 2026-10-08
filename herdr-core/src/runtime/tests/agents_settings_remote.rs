@@ -81,7 +81,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
 #[test]
 fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     let mut runtime = runtime();
-    runtime.suppress_terminal_session_workers = true;
+    let terminals = record_terminals(&mut runtime);
     runtime.snapshot.navigator.devices.push(DeviceSnapshot {
         agent_scope: Default::default(),
         id: "mini".to_owned(),
@@ -157,7 +157,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     };
 
     assert!(runtime.ingest_remote_session("mini", Ok(session.clone())));
-    assert!(runtime.terminal_sessions.is_empty());
+    assert!(terminals.attaches().is_empty());
     assert!(
         runtime
             .snapshot
@@ -168,8 +168,8 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
             .all(|pane| pane.transport_state == "idle")
     );
 
-    // The canvas that draws this pane reports its size, and an attach is
-    // held back until one has arrived.
+    // Focusing the device asks its node to attach the active tab's pane,
+    // and only that one; the attach carries the size its view reported.
     runtime.terminal_sizes.insert(pane_id.to_owned(), (40, 120));
     let focus_remote = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
@@ -178,23 +178,36 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     }))
     .expect("focus remote event");
     assert!(runtime.dispatch_json(&focus_remote));
+    let attached = terminals
+        .take()
+        .into_iter()
+        .filter_map(|control| match control {
+            TerminalControl::Attach { pane, size, .. } => Some((pane, size)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
-        runtime.terminal_sessions[pane_id].mode,
-        TerminalSessionMode::Control
+        attached,
+        [(
+            pane_id.to_owned(),
+            Some(GridSize {
+                rows: 40,
+                cols: 120
+            })
+        )]
     );
+    report_terminal(&mut runtime, pane_id, terminal_state("controlling", 1));
     assert_eq!(
-        runtime.terminal_session_lifecycles[pane_id].state,
-        "controlling"
-    );
-    assert!(
         runtime
             .snapshot
             .terminal
             .panes
             .iter()
-            .any(|pane| pane.pane_id == pane_id)
+            .find(|pane| pane.pane_id == pane_id)
+            .expect("the active pane is projected")
+            .transport_state,
+        "controlling"
     );
-    assert!(!runtime.terminal_sessions.contains_key(inactive_pane_id));
     assert_eq!(
         runtime
             .snapshot
@@ -207,27 +220,13 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         "idle"
     );
     assert!(!runtime.ingest_remote_session("mini", Ok(session)));
-
-    let focus_local = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "focus_device",
-        "payload": {"device_id": crate::node::TEST_NODE}
-    }))
-    .expect("focus local event");
-    assert!(runtime.dispatch_json(&focus_local));
-    assert!(runtime.terminal_sessions.is_empty());
-    assert_eq!(
-        runtime
-            .snapshot
-            .terminal
-            .panes
-            .iter()
-            .find(|pane| pane.pane_id == pane_id)
-            .expect("inactive target pane remains projected")
-            .transport_state,
-        "idle"
+    assert!(
+        terminals.attaches().is_empty(),
+        "an unchanged session asks again"
     );
 
+    // The device's panes leave its session: their node forgets them and so
+    // does the projection, while this machine's pane stays.
     assert!(runtime.ingest_remote_session(
         "mini",
         Ok(RemoteSessionSnapshot {
@@ -242,7 +241,10 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
             pane_hook_tokens: Default::default(),
         })
     ));
-    assert!(!runtime.terminal_sessions.contains_key(pane_id));
+    assert!(terminals.take().contains(&TerminalControl::Forget {
+        pane: pane_id.into()
+    }));
+    assert!(!runtime.terminal_states.contains_key(pane_id));
     assert!(
         runtime
             .snapshot
@@ -381,16 +383,26 @@ fn remote_file_results_are_scoped_and_generation_guarded() {
 #[test]
 fn ordinary_click_uses_detected_pane_agent_and_never_sends_enter() {
     let mut runtime = runtime();
+    let terminals = record_terminals(&mut runtime);
     let pane_id = "w-click:p1";
-    runtime.terminal_sessions.insert(
-        pane_id.to_owned(),
-        live::TerminalSession::test_stub(pane_id, 1, TerminalSessionMode::Control),
-    );
+    report_terminal(&mut runtime, pane_id, terminal_state("controlling", 1));
     let click = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION, "kind": "terminal_click",
         "payload": {"pane_id": pane_id, "column": 7, "row": 3, "modifiers": 3}
     }))
     .unwrap();
+    let written = |terminals: &RecordedTerminals| {
+        terminals
+            .take()
+            .into_iter()
+            .filter_map(|control| match control {
+                TerminalControl::Write { pane, data } if pane == pane_id => {
+                    Some(live::decode_base64(&data).unwrap())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
     for (detected_pane, kind, expected) in [
         ("w-click:p2", "claude", false),
         (pane_id, "codex", false),
@@ -403,23 +415,20 @@ fn ordinary_click_uses_detected_pane_agent_and_never_sends_enter() {
         .unwrap();
         runtime.snapshot.navigator.agents = crate::sidebar::project_agents(payload).agents;
         runtime.dispatch_json(&click);
-        let lines = runtime.terminal_sessions[pane_id].test_written_lines();
-        assert_eq!(lines.len(), usize::from(expected), "{detected_pane} {kind}");
+        let writes = written(&terminals);
+        assert_eq!(
+            writes.len(),
+            usize::from(expected),
+            "{detected_pane} {kind}"
+        );
         if expected {
-            let line: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
-            assert_eq!(line["type"], "terminal.input");
-            let bytes = live::decode_base64(line["bytes"].as_str().unwrap()).unwrap();
-            assert_eq!(bytes, b"\x1b[<20;8;4M\x1b[<20;8;4m");
-            assert!(!bytes.contains(&b'\r') && !bytes.contains(&b'\n'));
+            assert_eq!(writes[0], b"\x1b[<20;8;4M\x1b[<20;8;4m");
+            assert!(!writes[0].contains(&b'\r') && !writes[0].contains(&b'\n'));
         }
     }
     runtime.snapshot.navigator.agents.clear();
     runtime.dispatch_json(&click);
-    assert!(
-        runtime.terminal_sessions[pane_id]
-            .test_written_lines()
-            .is_empty()
-    );
+    assert!(written(&terminals).is_empty());
 }
 
 #[test]

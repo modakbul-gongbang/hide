@@ -126,12 +126,12 @@ fn snapshot_delivery_leaves_the_rest_section_alone_when_a_republish_moves_nothin
 
     let mut runtime = runtime();
     runtime.ingest_session(Ok(session()));
-    let first = runtime.snapshot_delta_payload(0, 0);
+    let first = runtime.snapshot_delta_payload(0);
     assert!(first.rest.is_some(), "a fresh cursor reads the whole state");
     let caught_up = first.revision;
 
     runtime.ingest_session(Ok(session()));
-    let second = runtime.snapshot_delta_payload(caught_up, first.terminal_sequence);
+    let second = runtime.snapshot_delta_payload(caught_up);
     assert!(
         second.rest.is_none(),
         "an identical republish must not restamp the rest section"
@@ -183,17 +183,17 @@ fn a_changes_read_resends_the_section_only_when_it_differs() {
 
     let mut runtime = runtime();
     assert!(runtime.ingest_changes(answer(&runtime, &["a.txt"])));
-    let first = runtime.snapshot_delta_payload(0, 0);
+    let first = runtime.snapshot_delta_payload(0);
     assert_eq!(entries(&first), Some(vec!["a.txt".to_owned()]));
 
     assert!(!runtime.ingest_changes(answer(&runtime, &["a.txt"])));
-    let same = runtime.snapshot_delta_payload(first.revision, 0);
+    let same = runtime.snapshot_delta_payload(first.revision);
     assert_eq!(entries(&same), None, "an identical read is not sent again");
     assert_eq!(same.revision, first.revision);
 
     assert!(runtime.ingest_changes(answer(&runtime, &["a.txt", "b.txt"])));
     assert!(runtime.ingest_changes(answer(&runtime, &["b.txt"])));
-    let moved = runtime.snapshot_delta_payload(first.revision, 0);
+    let moved = runtime.snapshot_delta_payload(first.revision);
     assert_eq!(entries(&moved), Some(vec!["b.txt".to_owned()]));
 }
 
@@ -208,7 +208,7 @@ fn a_changes_read_resends_the_section_only_when_it_differs() {
 #[test]
 fn snapshot_delivery_serializes_the_delta_outside_the_runtime_lock() {
     let mut runtime = runtime();
-    let payload = runtime.snapshot_delta_payload(0, 0);
+    let payload = runtime.snapshot_delta_payload(0);
     // A payload outlives the borrow it came from, which is what lets the
     // caller drop the guard between the two halves.
     drop(runtime);
@@ -306,13 +306,16 @@ fn retained_views_keep_a_visited_tab_in_the_projection_across_a_switch() {
 
 /// R3, AC5, AC6. The half of retention the canvas cannot show: a tab the
 /// operator is not looking at keeps producing output, and that output has
-/// to reach the snapshot on its own sequence while it is hidden. If it
-/// only arrived once the tab was visible again, coming back would replay
-/// rather than resume.
+/// to keep arriving while it is hidden. If it only arrived once the tab was
+/// visible again, coming back would replay rather than resume. Leaving a tab
+/// inside the attach window keeps its session; the output itself reaches
+/// the screen beside the snapshot, on the terminal hub's own sequence
+/// (`hided` `terminal_hub` tests).
 #[test]
 fn retained_views_keep_a_hidden_tabs_output_arriving() {
     let checkout_path = "/private/tmp/hide-retained-views-hidden-output";
     let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let terminals = record_terminals(&mut runtime);
     let tabs = ["w-order:t1", "w-order:t2"];
     runtime.ingest_session(Ok(tab_order_payload(
         checkout_path,
@@ -328,13 +331,12 @@ fn retained_views_keep_a_hidden_tabs_output_arriving() {
         &tabs,
         "w-order:t2",
     )));
-    runtime
-        .terminal_session_generations
-        .insert("w-order:t2:p".to_owned(), 7);
-    runtime.terminal_sessions.insert(
-        "w-order:t2:p".to_owned(),
-        TerminalSession::test_stub("w-order:t2:p", 7, TerminalSessionMode::Control),
+    report_terminal(
+        &mut runtime,
+        "w-order:t2:p",
+        terminal_state("controlling", 7),
     );
+    terminals.take();
     assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
     runtime.ingest_session(Ok(tab_order_payload(
         checkout_path,
@@ -343,43 +345,16 @@ fn retained_views_keep_a_hidden_tabs_output_arriving() {
         "w-order:t1",
     )));
     assert_eq!(runtime.snapshot().tab.id.as_deref(), Some("w-order:t1"));
-    let before = runtime.snapshot().terminal.sequence;
-    runtime
-        .terminal_sizes
-        .insert("w-order:t2:p".to_owned(), (40, 120));
-
+    let controls = terminals.take();
     assert!(
-        runtime.ingest_terminal_session_frame(
-            "w-order:t2:p",
-            7,
-            TerminalSessionMode::Control,
-            b"hidden tab still talking",
-            crate::model::TerminalFrame {
-                width: 120,
-                height: 40,
-                full: true
-            },
-        ) == Some(true),
-        "the session behind a hidden tab is still delivering"
+        !controls.iter().any(|control| matches!(
+            control,
+            TerminalControl::Release { pane, .. } | TerminalControl::Forget { pane }
+                if pane == "w-order:t2:p"
+        )),
+        "the hidden tab's session was ended: {controls:?}"
     );
-
-    let snapshot = runtime.snapshot();
-    assert_eq!(
-        snapshot.terminal.sequence,
-        before + 1,
-        "the chunk rides the cursor, so a hidden tab costs one sequence step and no resend"
-    );
-    let arrived = snapshot
-        .terminal
-        .chunks
-        .last()
-        .expect("the chunk that just arrived");
-    assert_eq!(arrived.pane_id, "w-order:t2:p");
-    assert_eq!(arrived.sequence, before + 1);
-    assert_eq!(
-        live::decode_base64(&arrived.bytes_base64).expect("chunk bytes"),
-        b"hidden tab still talking".to_vec()
-    );
+    assert_eq!(runtime.terminal_states["w-order:t2:p"].state, "controlling");
 }
 
 /// AC5. A hidden pane's size is what the shell last reported for it, and a
@@ -537,11 +512,11 @@ fn search_progress_has_its_own_small_idempotent_delta_and_shares_history_rows() 
         indexing: true,
         ..Default::default()
     });
-    let full = r.snapshot_delta_payload(0, 0);
+    let full = r.snapshot_delta_payload(0);
     let full_bytes = serialize_snapshot_delta(&full).unwrap().len();
     let rows = Arc::clone(&full.project_sessions.as_ref().unwrap().rows);
     r.snapshot.session_search.as_mut().unwrap().indexed = 8;
-    let delta = r.snapshot_delta_payload(full.revision, 0);
+    let delta = r.snapshot_delta_payload(full.revision);
     assert!(
         delta.project_sessions.is_none()
             && delta.rest.is_none()
@@ -552,7 +527,7 @@ fn search_progress_has_its_own_small_idempotent_delta_and_shares_history_rows() 
     let bytes = serialize_snapshot_delta(&delta).unwrap();
     assert_eq!(
         bytes,
-        serialize_snapshot_delta(&r.snapshot_delta_payload(full.revision, 0)).unwrap()
+        serialize_snapshot_delta(&r.snapshot_delta_payload(full.revision)).unwrap()
     );
     assert!(bytes.len() < 1024);
     assert!(Arc::ptr_eq(
@@ -560,12 +535,12 @@ fn search_progress_has_its_own_small_idempotent_delta_and_shares_history_rows() 
         &r.snapshot.project_sessions.as_ref().unwrap().rows
     ));
     assert!(
-        r.snapshot_delta_payload(delta.revision, 0)
+        r.snapshot_delta_payload(delta.revision)
             .session_search
             .is_none()
     );
     r.snapshot.session_search = Some(Default::default());
-    let clear = r.snapshot_delta_payload(delta.revision, 0);
+    let clear = r.snapshot_delta_payload(delta.revision);
     assert!(
         clear
             .session_search

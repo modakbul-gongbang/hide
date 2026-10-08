@@ -291,6 +291,17 @@ impl OpTimings {
         }
     }
 
+    /// Whether a record waits for a frame of `pane_id`.
+    pub(super) fn awaits_frame(&self, pane_id: &str) -> bool {
+        self.open.iter().any(|record| {
+            !record.has(Stage::FirstFrame)
+                && record
+                    .frame_pane
+                    .as_ref()
+                    .is_some_and(|(pane, _)| pane == pane_id)
+        })
+    }
+
     /// A terminal frame of `pane_id` was published at `at`.
     pub(super) fn note_frame(&mut self, pane_id: &str, at: Instant) {
         let finished = self

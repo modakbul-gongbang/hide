@@ -1,22 +1,19 @@
 //! Bounded, explicit terminal file ingress. No provider draft or submission state.
 //! The picked files are read by the node that holds them
-//! (`hide_host::attachments`); the clipboard image is the core's own file in
-//! its state folder.
-use std::fs;
+//! (`hide_host::attachments`); the clipboard image waits in a folder beside
+//! the core's state file, where the screen's hided staged it, and the core's
+//! own node removes it.
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) use hide_node_link::attachments::{
     AttachmentFile, COMMIT_GRACE, MAX_FILES, MAX_PATH_BYTES, check_cancelled, valid_request_id,
 };
-pub(crate) const MAX_QUEUED_INPUT: usize = 64 * 1024;
-
-pub(crate) fn clipboard_root(state_path: &Path) -> PathBuf {
-    state_path.with_file_name("TerminalClipboard")
-}
 
 pub(crate) fn clipboard_path(state_path: &Path, request_id: &str) -> PathBuf {
-    clipboard_root(state_path).join(format!("hide-{request_id}.png"))
+    state_path
+        .with_file_name(hide_node_link::attachments::CLIPBOARD_FOLDER)
+        .join(hide_node_link::attachments::clipboard_file_name(request_id))
 }
 
 /// Reads the picked files on `node`, which asks after each file whether to
@@ -100,17 +97,26 @@ pub(crate) fn paste_bytes(
     Ok(text.into_bytes())
 }
 
-pub(crate) fn remove_clipboard(state_path: &Path, request_id: &str) {
-    // This exact generated child is the only local file this feature may remove.
+/// Asks `node`, the core's own, to remove the clipboard image a paste left;
+/// a failure is logged, since the screen's hided ages the folder out too.
+pub(crate) fn remove_clipboard(
+    node: &dyn crate::node_access::NodeLink,
+    state_path: &Path,
+    request_id: &str,
+) {
     let path = clipboard_path(state_path, request_id);
-    if let Err(error) = fs::remove_file(path)
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
+    let call = hide_node_link::protocol::Call::RemoveClipboard {
+        path: path.to_string_lossy().into_owned(),
+    };
+    if let Err(error) = crate::node_access::call_as::<()>(node, call, REMOVE_TIMEOUT) {
         crate::diagnostic!(
             serde_json::json!({"kind":"terminal.attachment.clipboard_cleanup_failed", "request_id":request_id, "error":error.to_string()})
         );
     }
 }
+
+/// Removing one file from a local disk.
+const REMOVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[cfg(test)]
 mod tests {
@@ -149,7 +155,7 @@ mod tests {
     fn picked_files_are_read_on_the_node_with_its_refusal_in_the_operators_words() {
         let folder = tempfile::tempdir().unwrap();
         let file = folder.path().join("한글.png");
-        fs::write(&file, b"explicit bytes").unwrap();
+        std::fs::write(&file, b"explicit bytes").unwrap();
         let node = hide_node::Local::of_process();
         let paths = vec![file.to_string_lossy().into_owned()];
         let read = read_sources(&node, &paths, &AtomicBool::new(false)).unwrap();

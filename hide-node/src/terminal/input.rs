@@ -345,8 +345,9 @@ impl Requests {
 }
 
 /// What a pane whose control session is not open yet has been sent.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(super) enum PaneHold {
+    #[default]
     Empty,
     Holding {
         chunks: Vec<HeldChunk>,
@@ -355,12 +356,6 @@ pub(super) enum PaneHold {
     /// The cap was crossed: everything typed until the session opens is
     /// dropped too, so the pane never receives the tail of a lost paste.
     Overflowed,
-}
-
-impl Default for PaneHold {
-    fn default() -> Self {
-        Self::Empty
-    }
 }
 
 impl PaneHold {

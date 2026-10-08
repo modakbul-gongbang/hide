@@ -160,7 +160,7 @@ impl Attachments {
         let dir = state_dir.join("attachments");
         // The core reads a clipboard image from its own fixed path, so hided
         // stages it exactly there (`herdr-core/src/terminal_attachments.rs`).
-        let clipboard_root = state_dir.join("TerminalClipboard");
+        let clipboard_root = state_dir.join(hide_node_link::attachments::CLIPBOARD_FOLDER);
         for folder in [&dir, &clipboard_root] {
             // The staged bytes are the operator's own files and screenshots;
             // the directories stay private like the state file itself.
@@ -239,7 +239,7 @@ impl Attachments {
             &self.dir
         };
         let file_name = if clipboard {
-            format!("hide-{request_id}.png")
+            hide_node_link::attachments::clipboard_file_name(&request_id)
         } else {
             format!("{request_id}-{name}")
         };

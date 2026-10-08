@@ -253,16 +253,28 @@ fn a_legacy_sleep_record_without_a_label_owner_shows_no_stale_label() {
     assert!(slept.get("progress").is_none_or(serde_json::Value::is_null));
 }
 
-/// B12: typed input to a sleeping pane reaches no terminal.
+/// B12: typed input to a sleeping pane reaches no terminal: the pane's node
+/// is told it sleeps, and drops its keys until it wakes
+/// (`hide-node` `keys_for_a_sleeping_pane_are_dropped_until_it_wakes`).
 #[test]
 fn input_to_a_sleeping_pane_goes_nowhere() {
-    let (mut runtime, _) = asleep();
-    let generation = runtime.snapshot().input_generation;
-    assert!(!runtime.dispatch_json(&event(
-        "key",
-        serde_json::json!({"pane_id": SLEEPER, "bytes_base64": "aGk="})
-    )));
-    assert_eq!(runtime.snapshot().input_generation, generation);
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    let terminals = record_terminals(&mut runtime);
+    runtime.ingest_session(Ok(session(Some(4))));
+    runtime.dispatch_json(&event(
+        "agent_sleep",
+        serde_json::json!({"pane_id": SLEEPER}),
+    ));
+    let asleep = TerminalControl::Asleep {
+        pane: SLEEPER.into(),
+        asleep: true,
+    };
+    assert!(
+        !terminals.take().contains(&asleep),
+        "the agent takes keys until its end lands (B8)"
+    );
+    assert!(runtime.ingest_agent_sleep_end(SLEEPER, Ok(4)));
+    assert!(terminals.take().contains(&asleep));
 }
 
 /// B12, D-12: a committed visit to the tab wakes the agent; another event

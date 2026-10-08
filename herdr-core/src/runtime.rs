@@ -61,6 +61,8 @@ pub(crate) use control_lane::LaneStart;
 use events::*;
 pub(crate) use op_timing::HerdrArrival;
 use operations::*;
+#[cfg(test)]
+pub(crate) use terminal::NoTerminals;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
 use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
 
@@ -70,8 +72,7 @@ use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
 use crate::handle::ChangeNotifier;
 use crate::live::{
     LiveContext, PaneControlAction, PaneControlOutcome, PaneResizeDirection, PaneSplitDirection,
-    RemoteControlAction, RemoteControlContext, RemoteControlOutcome, RemoteTerminalContext,
-    SessionFetchError, TerminalSession, TerminalSessionContext, TerminalSessionMode,
+    RemoteControlAction, RemoteControlContext, RemoteControlOutcome, SessionFetchError,
 };
 use crate::model::{
     AgentStatusCode, ArchiveDetailSnapshot, CheckoutSnapshot, CoreOptions, DEFAULT_PANE_TEXT_SCALE,
@@ -81,8 +82,8 @@ use crate::model::{
     PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot,
     PetSnapshot, RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot,
     RightPanelSection, SCHEMA_VERSION, SessionRowSnapshot, SidebarAgentSnapshot, Snapshot,
-    StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot,
-    UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
+    StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalPaneSnapshot, UiStateSnapshot,
+    WorkspaceSnapshot, clamp_pane_text_scale,
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
 use crate::remote::{DeviceConnector, DeviceTransport};
@@ -1011,43 +1012,10 @@ fn remote_tab_creation_key(
 /// A file tab that has been read but not yet put on screen.
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct TerminalSessionLifecycle {
-    state: &'static str,
-    message: Option<String>,
-    generation: u64,
-    attempt: u64,
-    mode: Option<TerminalSessionMode>,
-    exit_category: Option<String>,
-    retry_decision: &'static str,
-}
-
-impl Default for TerminalSessionLifecycle {
-    fn default() -> Self {
-        Self {
-            state: "idle",
-            message: None,
-            generation: 0,
-            attempt: 0,
-            mode: None,
-            exit_category: None,
-            retry_decision: "automatic_initial",
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 struct PurposeOperationTarget {
     id: u64,
     checkout_id: String,
     remote_target_id: Option<String>,
-}
-
-fn terminal_control_request_allowed(state: &str, has_active_session: bool) -> bool {
-    !has_active_session
-        && !matches!(
-            state,
-            "starting" | "controlling" | "observing" | "unavailable" | "ended" | "closing"
-        )
 }
 
 /// The first prompt and CLI arguments of the agent one task starts.
@@ -1144,7 +1112,6 @@ pub struct Runtime {
     host_cli_dir: String,
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
-    remote_terminals: HashMap<String, RemoteTerminalContext>,
     remote_file_transports: HashMap<String, Arc<dyn DeviceTransport>>,
     remote_control_requests: VecDeque<(String, String)>,
     /// Remote mutations waiting for a transport answer or fresh topology,
@@ -1154,26 +1121,21 @@ pub struct Runtime {
     /// answer from an older connection cannot settle a newer request.
     remote_connection_generations: HashMap<String, u64>,
     remote_tab_creations_in_flight: HashSet<(String, String, String, String)>,
-    terminal_sessions: HashMap<String, TerminalSession>,
-    terminal_session_generations: HashMap<String, u64>,
-    terminal_session_lifecycles: HashMap<String, TerminalSessionLifecycle>,
-    terminal_recovery: HashMap<String, crate::terminal_recovery::Recovery>,
-    next_terminal_session_generation: u64,
+    /// Every node's terminals (PRD core-host-node-terminal): the core tells
+    /// them which panes attach and hears their state back; keys and output
+    /// never pass here.
+    terminals: Arc<dyn hide_node_link::terminal::TerminalRoutes>,
+    /// Each pane's attach state as its node last reported it, which the
+    /// terminal projection shows.
+    terminal_states: HashMap<String, hide_node_link::terminal::PaneTerminalState>,
+    /// What the nodes were last told is on screen, asleep and closing, so
+    /// only a change is sent.
+    terminal_intents: terminal::TerminalIntents,
     next_remote_file_generation: u64,
     attachment: Option<attachments::PendingAttachment>,
     attachment_rejection: Option<crate::model::AsyncOperationSnapshot>,
     attachment_worker: Option<thread::JoinHandle<()>>,
     terminal_sizes: HashMap<String, (u16, u16)>,
-    terminal_view_sizes: HashMap<String, (u16, u16)>,
-    terminal_frames_need_full: HashSet<String>,
-    /// The foreign grid a pane's held frames are arriving at, so a burst is
-    /// diagnosed once per grid rather than once per frame: one contested pane
-    /// wrote 8,500 mismatch lines in twelve minutes and rotated the log.
-    terminal_foreign_frame_sizes: HashMap<String, (u16, u16)>,
-    /// Panes whose attach is held until a view reports their size. Herdr
-    /// sizes the PTY from the attach, so starting one at a guess costs a
-    /// full frame at the wrong size and a second one after the resize.
-    panes_awaiting_size: HashSet<String>,
     /// Wheel lines that arrived before the pane had a session to take them
     /// (no size reported yet, or its attach still starting after a tab
     /// switch), summed per pane and sent at the pane's first frame through
@@ -1185,11 +1147,6 @@ pub struct Runtime {
     /// Observed panes whose last wheel Herdr did not move: another client
     /// holds their scrolling (`TerminalPaneSnapshot::scroll_held_elsewhere`).
     panes_scroll_held: HashSet<String>,
-    /// Observed panes whose view settled at a grid they were not attached
-    /// at, by the time of the latest such resize. The async-operation tick
-    /// attaches each again once its resizes go quiet, so a window drag costs
-    /// one new observer, not one per intermediate size.
-    observers_resized: HashMap<String, u64>,
     /// The tabs that have been on screen, most recent first. An attach lives
     /// for as long as its tab is in this window; every other pane's session is
     /// released. Herdr renders a pane for every attached client, so an attach
@@ -1293,10 +1250,9 @@ pub struct Runtime {
     /// Stage times of each Hide-started tab creation and pane operation
     /// (PRD instant-pane-topology D-14).
     op_timings: op_timing::OpTimings,
-    /// Keys sent against a creation request, and input for panes whose
-    /// control session is not open yet (PRD instant-pane-topology D-11).
+    /// The creation requests keys are sent against before Herdr names their
+    /// pane (PRD instant-pane-topology D-11); the node holds the keys.
     input_requests: terminal_input::InputRequests,
-    pane_input_hold: terminal_input::PaneInputHold,
     /// Panes of a tab drawn ahead of Herdr, whose PTY keeps its size until
     /// Herdr confirms (PRD instant-pane-topology D-08). Recomputed with every
     /// session overlay, so it never outlives the predictions behind it.
@@ -1354,12 +1310,6 @@ pub struct Runtime {
     /// than waiting (`session.rs`, `BirthClock`).
     birth_clock: session::BirthClock,
     next_async_operation_id: u64,
-    /// Panes that were scrolled before any view reported their size. One
-    /// diagnostic answers for the whole wait; a wheel burst against a pane
-    /// with no size would otherwise fill the bounded diagnostics list with the
-    /// same sentence and push out everything else that happened.
-    #[cfg(test)]
-    suppress_terminal_session_workers: bool,
     workspace_creations_in_flight: HashSet<String>,
     /// Each open file tab's document, edited under a number so a snapshot
     /// read re-sends a View document only when it moved.
@@ -1570,8 +1520,6 @@ pub struct Runtime {
     agent_sleep_next_decision_unix_ms: u64,
     /// Panes whose agent would not end, and until when they are left alone (B8).
     agent_sleep_backoff: HashMap<String, agent_sleep::Backoff>,
-    /// Panes whose typed input was dropped while asleep, logged once each (B12).
-    agent_sleep_dropped_input: HashSet<String>,
     /// Panes with a Reopen running or just refused, until the pane connects,
     /// leaves, or stops showing a connection chip (B29). One entry per pane,
     /// so a second press while one runs starts nothing.
@@ -1908,30 +1856,22 @@ impl Runtime {
             host_cli_dir,
             live: None,
             remote_controls: HashMap::new(),
-            remote_terminals: HashMap::new(),
             remote_file_transports: HashMap::new(),
             remote_control_requests: VecDeque::new(),
             remote_operations: HashMap::new(),
             remote_connection_generations: HashMap::new(),
             remote_tab_creations_in_flight: HashSet::new(),
-            terminal_sessions: HashMap::new(),
-            terminal_session_generations: HashMap::new(),
-            terminal_session_lifecycles: HashMap::new(),
-            terminal_recovery: HashMap::new(),
-            next_terminal_session_generation: 0,
+            terminals: Arc::new(terminal::NoTerminals),
+            terminal_states: HashMap::new(),
+            terminal_intents: terminal::TerminalIntents::default(),
             next_remote_file_generation: 0,
             attachment: None,
             attachment_rejection: None,
             attachment_worker: None,
-            terminal_view_sizes: HashMap::new(),
-            terminal_frames_need_full: HashSet::new(),
-            terminal_foreign_frame_sizes: HashMap::new(),
             terminal_sizes: pane_terminal_sizes.into_iter().collect(),
-            panes_awaiting_size: HashSet::new(),
             wheel_before_attach: HashMap::new(),
             viewport_scrolls: HashMap::new(),
             panes_scroll_held: HashSet::new(),
-            observers_resized: HashMap::new(),
             pane_relocations_in_flight: BTreeMap::new(),
             pane_hook_tokens: BTreeMap::new(),
             hook_diagnosis: None,
@@ -1969,7 +1909,6 @@ impl Runtime {
             confirmed_pane_layout_signatures: HashMap::new(),
             op_timings: op_timing::OpTimings::default(),
             input_requests: terminal_input::InputRequests::default(),
-            pane_input_hold: terminal_input::PaneInputHold::default(),
             grid_held_panes: HashSet::new(),
             held_resizes: HashSet::new(),
             drawn_closes: HashMap::new(),
@@ -1990,8 +1929,6 @@ impl Runtime {
             republish_requested: false,
             birth_clock: Arc::new(Instant::now),
             next_async_operation_id: 0,
-            #[cfg(test)]
-            suppress_terminal_session_workers: false,
             workspace_creations_in_flight: HashSet::new(),
             editor_documents: HashMap::new(),
             archive_documents: HashMap::new(),
@@ -2076,7 +2013,6 @@ impl Runtime {
             forks_in_flight: HashSet::new(),
             agent_sleep_next_decision_unix_ms: 0,
             agent_sleep_backoff: HashMap::new(),
-            agent_sleep_dropped_input: HashSet::new(),
             pane_reopens: HashMap::new(),
             fork_sequence: 0,
             listening_ports: crate::model::ListeningPortsSnapshot::default(),
@@ -2130,6 +2066,14 @@ impl Runtime {
             runtime.persist_ui_state();
         }
         runtime
+    }
+
+    /// Every node's terminals, reached once the shell has built them.
+    pub(crate) fn set_terminals(
+        &mut self,
+        terminals: Arc<dyn hide_node_link::terminal::TerminalRoutes>,
+    ) {
+        self.terminals = terminals;
     }
 
     pub fn install_worker_context(
@@ -2209,11 +2153,6 @@ impl Runtime {
         self.remote_controls
             .get(target_id)
             .map(RemoteControlContext::api_connector)
-    }
-
-    pub fn install_remote_terminal(&mut self, context: RemoteTerminalContext) {
-        self.remote_terminals
-            .insert(context.target_id().to_owned(), context);
     }
 
     pub fn install_remote_file_transport(

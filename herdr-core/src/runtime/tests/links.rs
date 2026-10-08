@@ -240,9 +240,9 @@ fn opening_a_pull_request_reads_its_sessions_on_the_panels_own_revision() {
     assert_eq!(pr.branch, "4-task");
     assert_eq!(pr.issues.len(), 2);
 
-    let first = runtime.snapshot_delta_payload(0, 0);
+    let first = runtime.snapshot_delta_payload(0);
     assert!(first.link_panel.is_some());
-    let again = runtime.snapshot_delta_payload(first.revision, 0);
+    let again = runtime.snapshot_delta_payload(first.revision);
     assert!(again.link_panel.is_none(), "an unchanged panel is not sent");
     drop(runtime);
     wait(&shared, "the session chip", |runtime| {

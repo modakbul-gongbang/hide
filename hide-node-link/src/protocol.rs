@@ -75,7 +75,12 @@ use crate::error::HostError;
 /// panes ask for credentials and run `hide` commands over this link
 /// (`panes_start`, `pane_proof_answer`, `pane_inspect`, the stream calls and
 /// [`crate::panes::NodeEvent`]) instead of a separate bridge.
-pub const PROTOCOL_VERSION: u32 = 24;
+/// 25: the device's panes' terminals flow inside this link (PRD
+/// core-host-node-terminal D-10, D-18): `terminals_start` starts the node's
+/// terminal service and [`crate::terminal::TerminalLine`]s carry controls,
+/// keys and output both ways. A node on 24 would read those lines as
+/// unreadable requests, so it is refused at Hello and reinstalled.
+pub const PROTOCOL_VERSION: u32 = 25;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -364,6 +369,12 @@ pub enum Call {
     ReadAttachments {
         paths: Vec<String>,
     },
+    /// Removes the clipboard image a paste left at `path`
+    /// (`attachments::is_clipboard_path`, refused otherwise); a file already
+    /// gone is not an error.
+    RemoveClipboard {
+        path: String,
+    },
     /// `SIGTERM` to every member of the process group `leader` leads: a
     /// pane's foreground job, ended for agent sleep. A group of 1 or less is
     /// refused unsent, since kill(-0) and kill(-1) reach far more.
@@ -484,6 +495,12 @@ pub enum Call {
     PanesStart {
         herdr_socket: String,
     },
+    /// Starts this node's terminal service for the Herdr at `herdr_socket`:
+    /// from then on the link's terminal lines reach it. Asking again while
+    /// it runs changes nothing.
+    TerminalsStart {
+        herdr_socket: String,
+    },
     /// The core's answer to the pane proof `request` the node sent up.
     PaneProofAnswer {
         request: u64,
@@ -591,6 +608,7 @@ impl Call {
             | Self::SessionChunk { .. }
             | Self::SessionText { .. }
             | Self::PanesStart { .. }
+            | Self::TerminalsStart { .. }
             | Self::PaneProofAnswer { .. }
             | Self::PaneInspect { .. }
             | Self::StreamWrite { .. }
@@ -607,6 +625,7 @@ impl Call {
             | Self::ClaudeUsageText { .. }
             | Self::Gh { .. }
             | Self::ReadAttachments { .. }
+            | Self::RemoveClipboard { .. }
             | Self::Factory { .. } => false,
         }
     }

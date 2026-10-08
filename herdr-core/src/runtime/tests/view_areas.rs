@@ -937,7 +937,7 @@ fn closing_one_of_two_displays_keeps_the_document_and_its_draft() {
         .find(|tab| tab.id == tab_id)
         .expect("the document stays open");
     assert!(tab.dirty);
-    let documents = runtime.snapshot_delta_payload(0, 0).documents.unwrap();
+    let documents = runtime.snapshot_delta_payload(0).documents.unwrap();
     assert_eq!(
         documents.changed[0].1.contents_utf8.as_deref(),
         Some("draft\n")
@@ -1279,7 +1279,7 @@ fn a_draft_or_conflict_choice_for_a_closed_document_is_refused_and_changes_nothi
     draft(&mut runtime, &notes, "draft\n");
     let in_use = |runtime: &mut Runtime| {
         let documents = runtime
-            .snapshot_delta_payload(0, 0)
+            .snapshot_delta_payload(0)
             .documents
             .expect("a fresh reader gets the section");
         let (_, document) = documents
@@ -1685,26 +1685,21 @@ fn a_keystroke_resends_only_its_own_document() {
             .collect::<Vec<_>>()
     };
 
-    let fresh = runtime.snapshot_delta_payload(0, 0);
+    let fresh = runtime.snapshot_delta_payload(0);
     let documents = fresh.documents.expect("a fresh reader gets the section");
     assert_eq!(documents.visible, vec![notes.clone(), b.clone()]);
     assert_eq!(changed(&documents), vec![notes.clone(), b.clone()]);
     let cursor = fresh.revision;
-    assert!(
-        runtime
-            .snapshot_delta_payload(cursor, 0)
-            .documents
-            .is_none()
-    );
+    assert!(runtime.snapshot_delta_payload(cursor).documents.is_none());
 
     draft(&mut runtime, &notes, "one\n");
-    let first = runtime.snapshot_delta_payload(cursor, 0);
+    let first = runtime.snapshot_delta_payload(cursor);
     assert_eq!(
         changed(first.documents.as_ref().unwrap()),
         vec![notes.clone()]
     );
     draft(&mut runtime, &notes, "two\n");
-    let second = runtime.snapshot_delta_payload(first.revision, 0);
+    let second = runtime.snapshot_delta_payload(first.revision);
     let documents = second.documents.expect("the edited document");
     assert_eq!(documents.visible, vec![notes.clone(), b]);
     assert_eq!(changed(&documents), vec![notes]);

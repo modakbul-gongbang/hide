@@ -338,7 +338,7 @@ impl Runtime {
         }
         for pane_id in released {
             if self.held_resizes.remove(&pane_id) {
-                self.send_terminal_size(&pane_id, None);
+                self.send_terminal_size(&pane_id, true);
             }
         }
     }

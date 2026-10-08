@@ -69,10 +69,10 @@ struct StampedDocument {
 
 impl Runtime {
     /// Takes one delta response for the snapshot wire: sections whose revision
-    /// passed `have_revision`, plus terminal chunks past `have_sequence`.
+    /// passed `have_revision`.
     /// Reading is idempotent - the same cursors return the same delta again -
     /// so a caller that failed to apply a response recovers by re-reading with
-    /// its unadvanced cursors.
+    /// its unadvanced cursor.
     ///
     /// This is the half that needs the runtime, and it is deliberately the
     /// only half: it stamps revisions and copies out what the wire needs, and
@@ -83,7 +83,6 @@ impl Runtime {
     pub fn snapshot_delta_payload(
         &mut self,
         have_revision: u64,
-        have_sequence: u64,
     ) -> crate::model::SnapshotDeltaPayload {
         use crate::model::{RestSections, SnapshotDeltaPayload};
 
@@ -172,21 +171,6 @@ impl Runtime {
             have_revision
         };
 
-        // Chunks are cloned rather than drained: a caller whose apply failed
-        // re-reads with the same cursor and has to get the same bytes back.
-        let chunks: Vec<_> = self
-            .snapshot
-            .terminal
-            .chunks
-            .iter()
-            .filter(|chunk| chunk.sequence > have_sequence)
-            .cloned()
-            .collect();
-        let chunks_dropped = match self.snapshot.terminal.chunks.first() {
-            Some(oldest) => have_sequence + 1 < oldest.sequence,
-            None => have_sequence < self.snapshot.terminal.sequence,
-        };
-
         SnapshotDeltaPayload {
             schema_version: self.snapshot.schema_version,
             revision: self.delta.revision,
@@ -260,10 +244,6 @@ impl Runtime {
                 && self.delta.factory_task_revision > have_revision)
                 .then(|| self.snapshot.factory_task.as_deref().cloned()),
             find: self.snapshot.find.clone(),
-            input_generation: self.snapshot.input_generation,
-            terminal_sequence: self.snapshot.terminal.sequence,
-            chunks,
-            chunks_dropped,
         }
     }
 

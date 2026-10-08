@@ -1,4 +1,5 @@
 use super::*;
+use hide_node_link::terminal::{GridSize, PaneTerminalState, TerminalControl, TerminalReport};
 use std::time::Duration;
 
 use crate::fake_herdr::FakeHerdr;
@@ -216,137 +217,115 @@ fn wait_for(what: &str, ready: impl Fn() -> bool) {
     }
 }
 
-fn assert_owner_conflict_observes_and_reconnects(owner_conflict: &str) {
-    let mut runtime = runtime();
-    runtime.suppress_terminal_session_workers = true;
-    runtime.snapshot.navigator.workspaces = vec![workspace(
-        "w1",
-        "Fixture",
-        "/tmp/hide-terminal-session-runtime",
-        vec![checkout(
-            "w1",
-            "checkout-1",
-            "/tmp/hide-terminal-session-runtime",
-            Some(pane("w1:p1", "/tmp/hide-terminal-session-runtime")),
-        )],
-    )];
-    runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
-        pane_id: "w1:p1".to_owned(),
-        closed: false,
-        ..TerminalPaneSnapshot::default()
-    }];
-    runtime.next_terminal_session_generation = 40;
-    // The pane is one the operator is looking at, so its view has already
-    // reported a size; an attach is held back until one has.
-    runtime.terminal_sizes.insert("w1:p1".to_owned(), (40, 120));
-    runtime
-        .terminal_session_generations
-        .insert("w1:p1".to_owned(), 40);
-    runtime.terminal_session_lifecycles.insert(
-        "w1:p1".to_owned(),
-        TerminalSessionLifecycle {
-            state: "controlling",
-            generation: 40,
-            attempt: 1,
-            mode: Some(TerminalSessionMode::Control),
-            retry_decision: "none",
-            ..TerminalSessionLifecycle::default()
+/// Every node's terminals as a runtime under test reaches them: each control
+/// is recorded and nothing answers, so a test reports what a node would.
+#[derive(Default)]
+pub(super) struct RecordedTerminals {
+    controls: Mutex<Vec<TerminalControl>>,
+    devices: Mutex<Vec<String>>,
+}
+
+impl RecordedTerminals {
+    /// The controls sent since the last take.
+    pub(super) fn take(&self) -> Vec<TerminalControl> {
+        std::mem::take(&mut *self.controls.lock().unwrap())
+    }
+
+    /// The panes asked to attach since the last take, and whether each was
+    /// the operator's Reconnect.
+    pub(super) fn attaches(&self) -> Vec<(String, bool)> {
+        self.take()
+            .into_iter()
+            .filter_map(|control| match control {
+                TerminalControl::Attach { pane, manual, .. } => Some((pane, manual)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `install:<device>` and `remove:<device>`, in order.
+    pub(super) fn devices(&self) -> Vec<String> {
+        self.devices.lock().unwrap().clone()
+    }
+}
+
+impl hide_node_link::terminal::TerminalNode for RecordedTerminals {
+    fn control(&self, control: TerminalControl) {
+        self.controls.lock().unwrap().push(control);
+    }
+
+    fn key(&self, _: hide_node_link::terminal::KeyTarget, _: Vec<u8>, _: u64) {
+        unreachable!("keys reach the node beside the screen, never through the core");
+    }
+
+    fn view(&self, _: &str, _: GridSize, _: bool) {
+        unreachable!("views reach the node beside the screen, never through the core");
+    }
+
+    fn redraw(&self, _: &str) {
+        unreachable!("redraws reach the node beside the screen, never through the core");
+    }
+}
+
+impl hide_node_link::terminal::TerminalRoutes for RecordedTerminals {
+    fn install_device(&self, device: &str, _: Arc<dyn hide_node_link::terminal::TerminalNode>) {
+        self.devices
+            .lock()
+            .unwrap()
+            .push(format!("install:{device}"));
+    }
+
+    fn remove_device(&self, device: &str) {
+        self.devices
+            .lock()
+            .unwrap()
+            .push(format!("remove:{device}"));
+    }
+}
+
+/// Gives `runtime` recorded terminal routes.
+pub(super) fn record_terminals(runtime: &mut Runtime) -> Arc<RecordedTerminals> {
+    let terminals = Arc::new(RecordedTerminals::default());
+    runtime.set_terminals(Arc::clone(&terminals) as _);
+    terminals
+}
+
+/// A pane's state as its node reports it.
+pub(super) fn terminal_state(state: &str, generation: u64) -> PaneTerminalState {
+    PaneTerminalState {
+        state: state.to_owned(),
+        mode: match state {
+            "controlling" => Some("control".to_owned()),
+            "observing" => Some("observe".to_owned()),
+            _ => None,
         },
-    );
-    runtime.terminal_sessions.insert(
-        "w1:p1".to_owned(),
-        TerminalSession::test_stub("w1:p1", 40, TerminalSessionMode::Control),
-    );
+        generation,
+        attempt: 1,
+        message: None,
+        exit_category: None,
+        retry_decision: "none".to_owned(),
+        last_attempt_at_unix_ms: None,
+    }
+}
 
-    assert!(runtime.ingest_terminal_session_closed(
-        "w1:p1",
-        40,
-        TerminalSessionMode::Control,
-        Some(owner_conflict.to_owned()),
-    ));
-    let observing = runtime
-        .terminal_session_lifecycles
-        .get("w1:p1")
-        .expect("observer lifecycle");
-    assert_eq!(observing.state, "observing");
-    assert_eq!(observing.mode, Some(TerminalSessionMode::Observe));
-    assert_eq!(observing.generation, 41);
-    assert_eq!(observing.attempt, 1);
-    assert_eq!(runtime.terminal_sessions.len(), 1);
-    assert_eq!(
-        runtime.terminal_sessions["w1:p1"].mode,
-        TerminalSessionMode::Observe
-    );
-    assert!(
-        !runtime.snapshot.terminal.panes[0].closed,
-        "transport owner conflict must not close the authoritative pane"
-    );
+/// What a pane's node reports for keys the operator typed into it on the
+/// screen; whether they submitted is the node's to decide
+/// (`hide-node` `terminal::input::submits`).
+pub(super) fn typed_into(runtime: &mut Runtime, pane: &str, submitted: bool) -> bool {
+    runtime.ingest_terminal_reports(vec![TerminalReport::Input {
+        pane: pane.to_owned(),
+        at_unix_ms: unix_milliseconds(),
+        submitted,
+        focus: true,
+    }])
+}
 
-    let chunk_count = runtime.snapshot.terminal.chunks.len();
-    assert_eq!(
-        runtime.ingest_terminal_session_frame(
-            "w1:p1",
-            40,
-            TerminalSessionMode::Control,
-            b"stale-generation",
-            crate::model::TerminalFrame {
-                width: 80,
-                height: 24,
-                full: true
-            },
-        ),
-        None
-    );
-    assert_eq!(
-        runtime.ingest_terminal_session_frame(
-            "w1:p1",
-            41,
-            TerminalSessionMode::Control,
-            b"stale-mode",
-            crate::model::TerminalFrame {
-                width: 80,
-                height: 24,
-                full: true
-            },
-        ),
-        None
-    );
-    assert!(!runtime.ingest_terminal_session_closed(
-        "w1:p1",
-        40,
-        TerminalSessionMode::Control,
-        Some(owner_conflict.to_owned()),
-    ));
-    assert_eq!(runtime.snapshot.terminal.chunks.len(), chunk_count);
-    assert_eq!(runtime.next_terminal_session_generation, 41);
-
-    let reconnect = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "reconnect_pane",
-        "payload": {"pane_id": "w1:p1"}
-    }))
-    .expect("reconnect event");
-    assert!(runtime.dispatch_json(&reconnect));
-    let controlling = runtime
-        .terminal_session_lifecycles
-        .get("w1:p1")
-        .expect("controller lifecycle");
-    assert_eq!(controlling.state, "controlling");
-    assert_eq!(controlling.mode, Some(TerminalSessionMode::Control));
-    assert_eq!(controlling.generation, 42);
-    assert_eq!(controlling.attempt, 2);
-    assert_eq!(runtime.terminal_sessions.len(), 1);
-
-    runtime.request_terminal_control("w1:p1");
-    assert_eq!(runtime.next_terminal_session_generation, 42);
-    assert_eq!(
-        runtime
-            .terminal_session_lifecycles
-            .get("w1:p1")
-            .expect("same controller")
-            .attempt,
-        2
-    );
+/// Reports `state` for `pane` the way its node would.
+pub(super) fn report_terminal(runtime: &mut Runtime, pane: &str, state: PaneTerminalState) -> bool {
+    runtime.ingest_terminal_reports(vec![TerminalReport::State {
+        pane: pane.to_owned(),
+        state,
+    }])
 }
 
 fn context_payload() -> SessionSnapshotPayload {

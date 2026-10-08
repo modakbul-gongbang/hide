@@ -3618,7 +3618,7 @@ impl Runtime {
                         );
                         self.op_timings
                             .learn(&timing_id, Some(tab_id), Some(pane_id.as_str()));
-                        self.op_timings.await_frame(&timing_id, &pane_id, false);
+                        self.await_op_frame(&timing_id, &pane_id, false);
                     }
                     (Some(_), _) => self.op_timings.finish(&timing_id, "device"),
                     (None, None) => self.op_timings.finish(&timing_id, "no_tab"),
@@ -4564,7 +4564,7 @@ impl Runtime {
                         created_pane_id.as_deref(),
                     );
                     if let Some(pane_id) = created_pane_id.as_deref() {
-                        self.op_timings.await_frame(id, pane_id, false);
+                        self.await_op_frame(id, pane_id, false);
                     }
                 }
                 Ok(_) => {}

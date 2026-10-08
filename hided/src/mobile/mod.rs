@@ -1478,7 +1478,7 @@ impl Mobile {
     async fn follow(self: Arc<Self>) {
         let mut changes = self.config.core.notify.subscribe();
         let mut stopping = self.stopping.subscribe();
-        let mut cursors = (0_u64, 0_u64);
+        let mut cursor = 0_u64;
         let mut rest = Value::Null;
         let mut transitions = push::Transitions::default();
         loop {
@@ -1486,7 +1486,7 @@ impl Mobile {
                 return;
             }
             if !self.follower_active() {
-                cursors = (0, 0);
+                cursor = 0;
                 rest = Value::Null;
                 transitions.reset();
                 self.catalog
@@ -1506,10 +1506,8 @@ impl Mobile {
                 }
             }
             let core = Arc::clone(&self.config.core);
-            let (have_revision, have_sequence) = cursors;
-            let read =
-                tokio::task::spawn_blocking(move || core.snapshot(have_revision, have_sequence))
-                    .await;
+            let have_revision = cursor;
+            let read = tokio::task::spawn_blocking(move || core.snapshot(have_revision)).await;
             let value = match read {
                 Ok(Ok(reply)) if !reply.bytes.is_empty() => {
                     serde_json::from_slice::<Value>(&reply.bytes).ok()
@@ -1519,26 +1517,17 @@ impl Mobile {
             };
             if let Some(value) = value {
                 let revision = value.get("revision").and_then(Value::as_u64);
-                let dropped = value
-                    .get("chunks_dropped")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                let full = crate::server::classify_frame(have_revision, revision, dropped);
+                let full = crate::server::classify_frame(have_revision, revision);
                 match full {
                     None => {
                         // The daemon's revision went back or the window moved:
                         // read everything again.
-                        cursors = (0, 0);
+                        cursor = 0;
                         continue;
                     }
                     Some(kind) => {
                         if let Some(revision) = revision {
-                            cursors.0 = revision;
-                        }
-                        if let Some(sequence) =
-                            value.get("terminal_sequence").and_then(Value::as_u64)
-                        {
-                            cursors.1 = sequence;
+                            cursor = revision;
                         }
                         let full = matches!(kind, crate::server::FrameKind::Snapshot);
                         if projection::merge_rest(&mut rest, &value, full) {

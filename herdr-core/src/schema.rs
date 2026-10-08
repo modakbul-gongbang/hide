@@ -7,8 +7,6 @@
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::model::TerminalChunk;
-
 /// Owned form of `SnapshotDeltaWire` for schema generation.
 #[derive(Serialize, JsonSchema)]
 pub struct SnapshotDeltaDocument {
@@ -21,10 +19,6 @@ pub struct SnapshotDeltaDocument {
     pub documents: Option<serde_json::Value>,
     pub project_sessions: Option<serde_json::Value>,
     pub find: serde_json::Value,
-    pub input_generation: u64,
-    pub terminal_sequence: u64,
-    pub chunks: Vec<TerminalChunk>,
-    pub chunks_dropped: bool,
 }
 
 pub fn snapshot_delta_schema() -> schemars::schema::RootSchema {

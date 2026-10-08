@@ -20,8 +20,10 @@
 //! sink under it, so a pane's bytes keep their order, and the sink must
 //! return at once and never call back.
 
+pub mod device;
 mod input;
 pub mod protocol;
+pub mod router;
 pub mod session;
 
 use std::collections::{HashMap, HashSet};
@@ -52,10 +54,7 @@ pub trait OutputSink: Send + Sync {
     fn forget(&self, pane: &str);
 }
 
-/// Where the core hears about this node's panes.
-pub trait ReportSink: Send + Sync {
-    fn report(&self, report: TerminalReport);
-}
+pub use hide_node_link::terminal::ReportSink;
 
 /// How long an observed view's size has to hold before its observer is
 /// attached again at it: longer than the gap between a window drag's
@@ -779,7 +778,7 @@ impl Inner {
 
     /// The writer path every key takes once it is the pane's.
     fn write_typed(&mut self, pane: &str, chunk: HeldChunk, now: Instant) {
-        if self.panes.get(pane).is_none() && self.requests.names(pane) {
+        if !self.panes.contains_key(pane) && self.requests.names(pane) {
             // Herdr made the pane for keys the operator is already typing,
             // before the core asked for it to attach.
             self.panes.insert(pane.to_owned(), Pane::default());

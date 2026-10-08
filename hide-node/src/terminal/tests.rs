@@ -3,10 +3,10 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 use super::*;
 
-const WAIT: Duration = Duration::from_secs(5);
+pub(super) const WAIT: Duration = Duration::from_secs(5);
 
 /// A session's stdout as the test writes it.
-struct LineReader {
+pub(super) struct LineReader {
     lines: Receiver<String>,
     pending: Vec<u8>,
 }
@@ -30,7 +30,7 @@ impl Read for LineReader {
 }
 
 /// A session's stdin as the test reads it, one line per write.
-struct LineWriter {
+pub(super) struct LineWriter {
     lines: Sender<serde_json::Value>,
     pending: Vec<u8>,
 }
@@ -54,16 +54,16 @@ impl Write for LineWriter {
 }
 
 /// One session the fake attacher opened.
-struct Opened {
-    pane: String,
-    mode: Mode,
-    size: GridSize,
-    output: Sender<String>,
-    input: Receiver<serde_json::Value>,
+pub(super) struct Opened {
+    pub(super) pane: String,
+    pub(super) mode: Mode,
+    pub(super) size: GridSize,
+    pub(super) output: Sender<String>,
+    pub(super) input: Receiver<serde_json::Value>,
 }
 
 impl Opened {
-    fn frame(&self, size: GridSize, full: bool, bytes: &[u8]) {
+    pub(super) fn frame(&self, size: GridSize, full: bool, bytes: &[u8]) {
         self.output
             .send(
                 json!({
@@ -87,7 +87,7 @@ impl Opened {
         self.input.recv_timeout(WAIT).expect("a line was written")
     }
 
-    fn next_input(&self) -> Vec<u8> {
+    pub(super) fn next_input(&self) -> Vec<u8> {
         loop {
             let line = self.next_line();
             if line["type"] == "terminal.input" {
@@ -97,9 +97,9 @@ impl Opened {
     }
 }
 
-struct FakeAttacher {
-    opened: Mutex<Sender<Opened>>,
-    refuse: Mutex<Option<String>>,
+pub(super) struct FakeAttacher {
+    pub(super) opened: Mutex<Sender<Opened>>,
+    pub(super) refuse: Mutex<Option<String>>,
 }
 
 impl Attacher for FakeAttacher {
@@ -135,7 +135,7 @@ impl Attacher for FakeAttacher {
 }
 
 #[derive(Default)]
-struct Outputs {
+pub(super) struct Outputs {
     written: Mutex<Vec<(String, Vec<u8>, bool)>>,
     forgotten: Mutex<Vec<String>>,
 }
@@ -153,7 +153,7 @@ impl OutputSink for Outputs {
     }
 }
 
-struct Reports(Mutex<Sender<TerminalReport>>);
+pub(super) struct Reports(Mutex<Sender<TerminalReport>>);
 
 impl ReportSink for Reports {
     fn report(&self, report: TerminalReport) {
@@ -277,7 +277,11 @@ impl Harness {
 fn an_attach_without_a_size_waits_for_one_then_attaches_at_it() {
     let harness = harness(RetryPolicy::Automatic);
     harness.attach("w1:p1", None);
-    harness.state("w1:p1", "waiting_size");
+    harness.report_where(|report| {
+        matches!(report, TerminalReport::Note { kind, .. } if kind == "terminal.attach_deferred")
+    });
+    let waiting = harness.state("w1:p1", "waiting_size");
+    assert!(waiting.message.unwrap().contains("Waiting"));
     harness.service.control(TerminalControl::Resize {
         pane: "w1:p1".into(),
         size: GridSize {
@@ -382,6 +386,147 @@ fn a_frame_at_a_foreign_grid_waits_for_a_full_frame_at_the_view_grid() {
     assert!(written[0].2, "a reset frame draws the whole screen");
     assert_eq!(written[1].1, b"next".to_vec());
     assert!(!written[1].2);
+}
+
+/// A control session asks Herdr for the grid the view reported, the one
+/// the frame guard accepts, not an older settled size.
+#[test]
+fn a_control_session_attaches_at_the_grid_the_view_reported() {
+    let harness = harness(RetryPolicy::Automatic);
+    let view = GridSize { rows: 18, cols: 41 };
+    harness.service.view("w1:p1", view, true);
+    harness.attach("w1:p1", Some(GridSize { rows: 25, cols: 50 }));
+    let opened = harness.opened();
+    assert_eq!(opened.size, view);
+    opened.frame(view, true, b"attach frame");
+    assert_eq!(harness.wait_written(1)[0].1, b"\x1bcattach frame".to_vec());
+}
+
+/// A new session for a pane on screen draws nothing until a full frame at
+/// the pane's grid arrives, so the last screen stays up instead of a blank.
+#[test]
+fn retry_preserves_the_canvas_until_a_matching_replacement_frame() {
+    let harness = harness(RetryPolicy::Automatic);
+    let opened = harness.controlling("w1:p1");
+    opened.frame(SIZE, true, b"last valid screen");
+    harness.wait_written(1);
+    harness.service.control(TerminalControl::Attach {
+        pane: "w1:p1".into(),
+        size: Some(SIZE),
+        manual: true,
+    });
+    let second = harness.opened();
+    second.frame(GridSize { rows: 9, cols: 2 }, true, b"wrong grid");
+    second.frame(SIZE, false, b"partial");
+    second.frame(SIZE, true, b"replacement");
+    let written = harness.wait_written(2);
+    assert_eq!(
+        written.len(),
+        2,
+        "nothing was drawn in between: {written:?}"
+    );
+    assert_eq!(written[1].1, b"\x1bcreplacement".to_vec());
+}
+
+/// B2. Herdr draws an observer at the grid it attached with and an observer
+/// cannot resize, so a view that changed size after the attach held every
+/// frame and the pane froze. The observer attaches again at the view's grid.
+#[test]
+fn an_observed_frame_at_an_old_grid_reattaches_the_observer_at_the_views_grid() {
+    let harness = harness(RetryPolicy::Automatic);
+    let opened = harness.controlling("w1:p1");
+    opened.close(Some("terminal attach taken over"));
+    let observer = harness.opened();
+    harness.state("w1:p1", "observing");
+    let view = GridSize {
+        rows: 33,
+        cols: 143,
+    };
+    harness.service.view("w1:p1", view, false);
+    observer.frame(SIZE, false, b"old");
+    let again = harness.opened();
+    assert_eq!((again.mode, again.size), (Mode::Observe, view));
+    again.frame(view, true, b"new");
+    assert_eq!(harness.wait_written(1)[0].1, b"\x1bcnew".to_vec());
+}
+
+/// B2, B8. An idle observed pane sends no frame after its size changes, so
+/// once the size has held for a moment the observer attaches again at it;
+/// a drag's intermediate sizes and the old-grid frames meanwhile attach
+/// nothing.
+#[test]
+fn an_observed_view_that_changes_size_reattaches_once_the_size_settles() {
+    let harness = harness(RetryPolicy::Automatic);
+    let opened = harness.controlling("w1:p1");
+    opened.close(Some("terminal attach taken over"));
+    let observer = harness.opened();
+    harness.state("w1:p1", "observing");
+    for cols in [160, 180, 200] {
+        harness.service.control(TerminalControl::Resize {
+            pane: "w1:p1".into(),
+            size: GridSize { rows: 33, cols },
+            force: false,
+        });
+    }
+    observer.frame(SIZE, false, b"old");
+    let again = harness.opened();
+    assert_eq!(
+        (again.mode, again.size),
+        (
+            Mode::Observe,
+            GridSize {
+                rows: 33,
+                cols: 200
+            }
+        )
+    );
+    assert!(
+        harness
+            .opened
+            .recv_timeout(OBSERVER_RESIZE_QUIET * 3)
+            .is_err(),
+        "one new observer for the whole drag"
+    );
+    assert!(harness.written().is_empty(), "the old-grid frame was held");
+}
+
+/// R6, R7. A pane keeps its session while its canvas is rebuilt, and the
+/// view that comes back has an empty grid; Herdr sends nothing more until
+/// the pane produces output. A size that did not change is not sent on, but
+/// one reported after a new view is, so Herdr draws a full frame for it.
+#[test]
+fn a_rebuilt_view_for_an_attached_pane_is_given_a_frame_to_draw() {
+    let harness = harness(RetryPolicy::Automatic);
+    let opened = harness.controlling("w1:p1");
+    assert_eq!(opened.next_line()["type"], "terminal.resize");
+    opened.frame(SIZE, true, b"first");
+    harness.wait_written(1);
+    let resize = || {
+        harness.service.control(TerminalControl::Resize {
+            pane: "w1:p1".into(),
+            size: SIZE,
+            force: false,
+        })
+    };
+    resize();
+    assert!(
+        opened
+            .input
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "a size that did not change was forwarded to Herdr"
+    );
+    harness.service.view("w1:p1", SIZE, true);
+    resize();
+    let line = opened.next_line();
+    assert_eq!(
+        (
+            line["type"].clone(),
+            line["rows"].clone(),
+            line["cols"].clone()
+        ),
+        (json!("terminal.resize"), json!(24), json!(80))
+    );
 }
 
 #[test]
@@ -527,6 +672,13 @@ fn a_failed_attach_is_retried_while_shown_and_reported_with_its_reason() {
     let state = harness.state("w1:p1", "unavailable");
     assert_eq!(state.exit_category.as_deref(), Some("spawn_failed"));
     assert_eq!(state.retry_decision, "automatic_bounded");
+    assert!(state.message.unwrap().contains("Retrying in 5 seconds"));
+    // The reason is written into that pane's own output once, where the
+    // terminal would have been.
+    let written = harness.wait_written(1);
+    assert_eq!(written.len(), 1);
+    assert_eq!(written[0].0, "w1:p1");
+    assert!(String::from_utf8_lossy(&written[0].1).contains("no herdr"));
     let due = harness.service.shared.lock().panes["w1:p1"]
         .recovery
         .as_ref()
@@ -540,6 +692,48 @@ fn a_failed_attach_is_retried_while_shown_and_reported_with_its_reason() {
     harness.opened();
     let state = harness.state("w1:p1", "controlling");
     assert_eq!(state.attempt, 2);
+}
+
+/// B10: keys held for a pane whose retries run out are dropped, and keys
+/// typed after that are not kept for a later Reconnect.
+#[test]
+fn input_held_for_a_pane_whose_retries_ran_out_is_not_written_on_reconnect() {
+    let harness = harness(RetryPolicy::Automatic);
+    *harness.refuse.refuse.lock().unwrap() = Some("no herdr".into());
+    harness.service.control(TerminalControl::Shown {
+        panes: vec!["w1:p1".into()],
+    });
+    harness.attach("w1:p1", Some(SIZE));
+    harness.state("w1:p1", "unavailable");
+    harness.key("w1:p1", b"make deploy");
+    let now = Instant::now();
+    {
+        let mut inner = harness.service.shared.lock();
+        let recovery = inner
+            .panes
+            .get_mut("w1:p1")
+            .and_then(|entry| entry.recovery.as_mut())
+            .unwrap();
+        recovery.retries = RETRY_SECONDS.len();
+        recovery.due = Some(now);
+    }
+    harness
+        .service
+        .shared
+        .run(|inner, shared| inner.tick(shared, now));
+    let exhausted = harness.state("w1:p1", "unavailable");
+    assert_eq!(exhausted.retry_decision, "manual");
+    harness.key("w1:p1", b"\r");
+    *harness.refuse.refuse.lock().unwrap() = None;
+    harness.service.control(TerminalControl::Attach {
+        pane: "w1:p1".into(),
+        size: Some(SIZE),
+        manual: true,
+    });
+    let opened = harness.opened();
+    harness.state("w1:p1", "controlling");
+    harness.key("w1:p1", b"ok");
+    assert_eq!(opened.next_input(), b"ok");
 }
 
 #[test]

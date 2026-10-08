@@ -1,6 +1,7 @@
 use super::*;
 use crate::model::AsyncOperationSnapshot;
 use crate::terminal_attachments::{self as ingress, AttachmentFile};
+use hide_node_link::terminal::{AttachmentInputOutcome, TerminalControl};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -23,8 +24,11 @@ pub(super) struct PendingAttachment {
     /// The paste text, made when the files are ready and held while the
     /// terminal is awaited.
     paste: Option<Vec<u8>>,
-    queued: Vec<u8>,
+    /// Input bytes the node refused at the held input's cap; the keys under
+    /// it wait on the node, behind the paste.
     rejected_bytes: usize,
+    /// The node was asked to write the paste and has not answered.
+    writing: bool,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -33,7 +37,9 @@ impl Runtime {
         if let Some(pending) = &mut self.attachment {
             pending.cancelled.store(true, Ordering::Release);
             pending.operation.stage = "cancelling".to_owned();
-            pending.queued.clear();
+            let intent = pending.operation.id.clone();
+            self.terminals
+                .control(TerminalControl::AttachmentRefuse { intent });
         }
         // A failed intent can outlive its transfer thread and still own staged
         // files. Start one cleanup worker now so destruction takes and joins it.
@@ -63,8 +69,10 @@ impl Runtime {
         }
         let pending = self.attachment.as_mut().expect("checked above");
         pending.cancelled.store(true, Ordering::Release);
-        pending.queued.clear();
         pending.operation.stage = "retired".to_owned();
+        let intent = pending.operation.id.clone();
+        self.terminals
+            .control(TerminalControl::AttachmentRefuse { intent });
         self.fail_attachment("The original terminal closed or reconnected. Held input was discarded and nothing was sent. Cancel and paste again.", false);
         if !self
             .attachment
@@ -95,9 +103,15 @@ impl Runtime {
     /// Ends the wait once the awaited session is there, and writes a paste
     /// that was ready before it.
     fn attachment_terminal_arrived(&mut self) -> bool {
-        let Some(pending) = self.attachment.as_mut().filter(|pending| {
-            pending.awaiting_terminal && self.terminal_sessions.contains_key(&pending.pane_id)
-        }) else {
+        let controlling = self
+            .attachment
+            .as_ref()
+            .is_some_and(|pending| self.terminal_controlling(&pending.pane_id));
+        let Some(pending) = self
+            .attachment
+            .as_mut()
+            .filter(|pending| pending.awaiting_terminal && controlling)
+        else {
             return false;
         };
         pending.awaiting_terminal = false;
@@ -161,12 +175,7 @@ impl Runtime {
         if self.close_operation_holds_pane(&pending.pane_id) {
             return false;
         }
-        if self
-            .terminal_session_generations
-            .get(&pending.pane_id)
-            .copied()
-            != pending.terminal_generation
-        {
+        if self.terminal_generation(&pending.pane_id) != pending.terminal_generation {
             return false;
         }
         if !self
@@ -192,14 +201,38 @@ impl Runtime {
                 return false;
             }
         }
-        match self.terminal_sessions.get(&pending.pane_id) {
-            Some(session) => session.mode == TerminalSessionMode::Control,
-            None => {
-                pending.awaiting_terminal
-                    || (self.live.is_none()
-                        && pending.remote.is_none()
-                        && !pending.pane_id.starts_with("remote:"))
-            }
+        match self
+            .terminal_states
+            .get(&pending.pane_id)
+            .map(|state| state.state.as_str())
+        {
+            Some("controlling") => true,
+            Some("observing") => false,
+            _ => pending.awaiting_terminal,
+        }
+    }
+
+    /// The generation of the pane's current or last session, as its node
+    /// reported it.
+    fn terminal_generation(&self, pane_id: &str) -> Option<u64> {
+        self.terminal_states
+            .get(pane_id)
+            .map(|state| state.generation)
+            .filter(|generation| *generation > 0)
+    }
+
+    fn terminal_controlling(&self, pane_id: &str) -> bool {
+        self.terminal_states
+            .get(pane_id)
+            .is_some_and(|state| state.state == "controlling")
+    }
+
+    /// Drops the paste and lets the node drop what it held behind it.
+    fn clear_attachment(&mut self) {
+        if let Some(pending) = self.attachment.take() {
+            self.terminals.control(TerminalControl::AttachmentRelease {
+                intent: pending.operation.id,
+            });
         }
     }
 
@@ -275,10 +308,9 @@ impl Runtime {
                     .get(target)
                     .map(|generation| (target.clone(), *generation))
             });
-        let awaiting_terminal = self.live.is_some()
-            && remote.is_none()
+        let awaiting_terminal = remote.is_none()
             && !payload.pane_id.starts_with("remote:")
-            && !self.terminal_sessions.contains_key(&payload.pane_id);
+            && !self.terminal_controlling(&payload.pane_id);
         if awaiting_terminal {
             operation.deadline_at_unix_ms = Some(operation.started_at_unix_ms.saturating_add(
                 u64::try_from(ingress::COMMIT_GRACE.as_millis()).unwrap_or(u64::MAX),
@@ -286,10 +318,7 @@ impl Runtime {
         }
         let pending = PendingAttachment {
             operation,
-            terminal_generation: self
-                .terminal_session_generations
-                .get(&payload.pane_id)
-                .copied(),
+            terminal_generation: self.terminal_generation(&payload.pane_id),
             awaiting_terminal,
             pane_id: payload.pane_id,
             remote,
@@ -299,8 +328,8 @@ impl Runtime {
             paths: payload.paths,
             prepared: None,
             paste: None,
-            queued: Vec::new(),
             rejected_bytes: 0,
+            writing: false,
             cancelled: Arc::new(AtomicBool::new(false)),
         };
         let valid = self.attachment_target_valid(&pending)
@@ -313,6 +342,11 @@ impl Runtime {
                 "generation": pending.terminal_generation,
             }));
         }
+        // Keys typed for the pane from now on wait behind the paste.
+        self.terminals.control(TerminalControl::AttachmentHold {
+            pane: pending.pane_id.clone(),
+            intent: pending.operation.id.clone(),
+        });
         self.attachment = Some(pending);
         self.attachment_rejection = None;
         if !valid {
@@ -340,7 +374,7 @@ impl Runtime {
         };
         pending.clipboard_preparing = false;
         if ["cancelling", "retired"].contains(&pending.operation.stage.as_str()) {
-            self.attachment = None;
+            self.clear_attachment();
             self.sync_async_operations();
             return true;
         }
@@ -387,56 +421,70 @@ impl Runtime {
         self.sync_async_operations();
     }
 
-    pub(super) fn hold_attachment_input(&mut self, payload: &KeyPayload) -> Option<bool> {
-        let pending = self.attachment.as_mut().filter(|pending| {
-            pending.pane_id == payload.pane_id && pending.operation.stage != "retired"
-        })?;
-        if pending.operation.stage == "cancelling" {
-            let message = "Cancellation is finishing. New terminal input was refused; wait for this notice to close before typing.";
-            if pending.operation.message.as_deref() == Some(message) {
-                return Some(false);
-            }
-            pending.operation.message = Some(message.to_owned());
-            self.sync_async_operations();
-            return Some(true);
-        }
-        // Bound decoding before allocating, including a large ordinary text paste.
-        let padding = if payload.bytes_base64.ends_with("==") {
-            2
-        } else if payload.bytes_base64.ends_with('=') {
-            1
-        } else {
-            0
+    /// The node refused a key for the paste's pane: the paste is cancelling,
+    /// or the input held behind it reached its cap. Returns whether the
+    /// snapshot changed.
+    pub(super) fn attachment_input_refused(
+        &mut self,
+        intent: &str,
+        outcome: AttachmentInputOutcome,
+        bytes: usize,
+    ) -> bool {
+        let Some(pending) = self
+            .attachment
+            .as_mut()
+            .filter(|pending| pending.operation.id == intent)
+        else {
+            return false;
         };
-        let decoded_length = (payload.bytes_base64.len() / 4 * 3).saturating_sub(padding);
-        if pending.queued.len().saturating_add(decoded_length) > ingress::MAX_QUEUED_INPUT {
-            pending.rejected_bytes = pending.rejected_bytes.saturating_add(decoded_length);
-            pending.cancelled.store(true, Ordering::Release);
-            self.fail_attachment(
-                "Held input reached its 64 KiB limit. Cancel and paste again.",
-                false,
-            );
-            return Some(true);
-        }
-        let bytes = match live::decode_base64(&payload.bytes_base64) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                self.fail_attachment("Invalid terminal input was refused.", false);
-                return Some(true);
+        match outcome {
+            AttachmentInputOutcome::Cancelling => {
+                let message = "Cancellation is finishing. New terminal input was refused; wait for this notice to close before typing.";
+                if pending.operation.message.as_deref() == Some(message) {
+                    return false;
+                }
+                pending.operation.message = Some(message.to_owned());
+                self.sync_async_operations();
+                true
             }
-        };
-        if pending.queued.len().saturating_add(bytes.len()) > ingress::MAX_QUEUED_INPUT {
-            pending.rejected_bytes = pending.rejected_bytes.saturating_add(bytes.len());
-            pending.cancelled.store(true, Ordering::Release);
-            self.fail_attachment(
-                "Held input reached its 64 KiB limit. Cancel and paste again.",
-                false,
-            );
-            Some(true)
-        } else {
-            pending.queued.extend_from_slice(&bytes);
-            Some(false)
+            AttachmentInputOutcome::Limit => {
+                pending.rejected_bytes = pending.rejected_bytes.saturating_add(bytes);
+                pending.cancelled.store(true, Ordering::Release);
+                self.fail_attachment(
+                    "Held input reached its 64 KiB limit. Cancel and paste again.",
+                    false,
+                );
+                true
+            }
         }
+    }
+
+    /// The node wrote the paste and the input held behind it, or its
+    /// session could not take them.
+    pub(super) fn attachment_delivered(&mut self, intent: &str, written: bool) -> bool {
+        let Some(pending) = self
+            .attachment
+            .as_mut()
+            .filter(|pending| pending.operation.id == intent && pending.writing)
+        else {
+            return false;
+        };
+        pending.writing = false;
+        if !written {
+            self.fail_attachment(
+                "Terminal input was not accepted. Check the connection and retry.",
+                true,
+            );
+            return true;
+        }
+        let pane_id = pending.pane_id.clone();
+        // The paste is composer text the operator has not sent, and an Enter
+        // held behind it does not send it either.
+        self.note_delivery_key(&pane_id);
+        // The node dropped its hold with the write.
+        self.attachment = None;
+        self.sync_async_operations();
+        true
     }
 
     pub(super) fn attachment_action(&mut self, payload: AttachmentActionPayload) -> bool {
@@ -466,7 +514,9 @@ impl Runtime {
                     pending.operation.stage = "cancelling".to_owned();
                     pending.operation.message =
                         Some("Cancelling transfer and discarding held input…".to_owned());
-                    pending.queued.clear();
+                    let intent = pending.operation.id.clone();
+                    self.terminals
+                        .control(TerminalControl::AttachmentRefuse { intent });
                 } else {
                     self.start_attachment_cleanup();
                 }
@@ -501,9 +551,10 @@ impl Runtime {
 
     fn start_attachment_cleanup(&mut self) {
         let Some(context) = self.worker_context.clone() else {
-            self.attachment = None;
+            self.clear_attachment();
             return;
         };
+        let node = self.own_node();
         let Some(pending) = self.attachment.as_mut() else {
             return;
         };
@@ -516,17 +567,19 @@ impl Runtime {
             .and_then(|(target, _)| self.remote_file_transports.get(target))
             .cloned();
         let state_path = self.state_path.clone();
-        pending.queued.clear();
         pending.operation.stage = "cancelling".to_owned();
+        let intent = request_id.clone();
         pending.operation.phase = "pending".to_owned();
         pending.operation.retryable = false;
         pending.operation.message =
             Some("Cancelling transfer and discarding held input…".to_owned());
+        self.terminals
+            .control(TerminalControl::AttachmentRefuse { intent });
         match thread::Builder::new()
             .name("hide-attachment-cleanup".to_owned())
             .spawn(move || {
                 if clipboard {
-                    ingress::remove_clipboard(&state_path, &request_id);
+                    ingress::remove_clipboard(node.as_ref(), &state_path, &request_id);
                 }
                 if let (Some(transport), Some(files)) = (transport, files) {
                     transport.remove_attachments(&request_id, &files);
@@ -540,14 +593,14 @@ impl Runtime {
                         .as_ref()
                         .is_some_and(|pending| pending.operation.id == request_id)
                 {
-                    runtime.attachment = None;
+                    runtime.clear_attachment();
                     runtime.sync_async_operations();
                 }
                 context.notifier.notify();
             }) {
             Ok(worker) => self.attachment_worker = Some(worker),
             Err(_) => {
-                self.attachment = None;
+                self.clear_attachment();
                 crate::diagnostic!(
                     serde_json::json!({"kind":"terminal.attachment.cleanup_worker_failed"})
                 );
@@ -619,7 +672,7 @@ impl Runtime {
                 let cleanup_files = prepared.as_ref().ok().cloned();
                 let Some(runtime) = context.runtime.upgrade() else {
                     if clipboard {
-                        ingress::remove_clipboard(&state_path, &request_id);
+                        ingress::remove_clipboard(node.as_ref(), &state_path, &request_id);
                     }
                     if let (Some(transport), Some(files)) = (transport, cleanup_files) {
                         transport.remove_attachments(&request_id, &files);
@@ -634,7 +687,7 @@ impl Runtime {
                 };
                 let cleaned_cancellation = cancelled.load(Ordering::Acquire);
                 if clipboard && (cleaned_cancellation || remote_uploaded) {
-                    ingress::remove_clipboard(&state_path, &request_id);
+                    ingress::remove_clipboard(node.as_ref(), &state_path, &request_id);
                 }
                 if cleaned_cancellation
                     && let (Some(transport), Some(files)) = (&transport, &cleanup_files)
@@ -651,7 +704,7 @@ impl Runtime {
                 // that arrived after the first check here, never in an unjoined child.
                 if draining_cleanup {
                     if clipboard {
-                        ingress::remove_clipboard(&state_path, &request_id);
+                        ingress::remove_clipboard(node.as_ref(), &state_path, &request_id);
                     }
                     if let (Some(transport), Some(files)) = (&transport, &cleanup_files) {
                         transport.remove_attachments(&request_id, files);
@@ -677,7 +730,7 @@ impl Runtime {
         });
         if needs_cleanup {
             if draining || cleaned_cancellation {
-                self.attachment = None;
+                self.clear_attachment();
                 self.sync_async_operations();
             } else {
                 self.start_attachment_cleanup();
@@ -707,7 +760,7 @@ impl Runtime {
             return false;
         };
         if pending.operation.stage == "cancelling" {
-            self.attachment = None;
+            self.clear_attachment();
             self.sync_async_operations();
             return true;
         }
@@ -715,8 +768,10 @@ impl Runtime {
             let pending = self.attachment.as_mut().expect("matched");
             pending.cancelled.store(true, Ordering::Release);
             pending.prepared = None;
-            pending.queued.clear();
             pending.operation.stage = "retired".to_owned();
+            let intent = pending.operation.id.clone();
+            self.terminals
+                .control(TerminalControl::AttachmentRefuse { intent });
             self.fail_attachment("The original terminal closed or reconnected. No files or held input were sent. Paste again in the new terminal.", false);
             return true;
         }
@@ -753,41 +808,36 @@ impl Runtime {
         true
     }
 
-    /// Writes the ready paste and the input held behind it to the pane's
-    /// terminal, or keeps both while the pane's session is awaited.
+    /// Asks the node to write the ready paste, and the input held behind it,
+    /// to the pane's session, or keeps both while that session is awaited.
     fn deliver_attachment(&mut self) {
+        let controlling = self
+            .attachment
+            .as_ref()
+            .is_some_and(|pending| self.terminal_controlling(&pending.pane_id));
         let Some(pending) = self.attachment.as_mut() else {
             return;
         };
         let Some(paste) = pending.paste.as_ref() else {
             return;
         };
-        let pane_id = pending.pane_id.clone();
-        let mut bytes = paste.clone();
-        bytes.extend_from_slice(&pending.queued);
-        match self.terminal_sessions.get(&pane_id) {
-            Some(session) => {
-                if session.write_bytes(&bytes).is_err() {
-                    self.fail_attachment(
-                        "Terminal input was not accepted. Check the connection and retry.",
-                        true,
-                    );
-                    return;
-                }
-            }
-            None if pending.awaiting_terminal => {
-                pending.operation.stage = "terminal".to_owned();
-                pending.operation.message = Some("Waiting for the terminal to attach…".to_owned());
-                self.sync_async_operations();
-                return;
-            }
-            None => self.append_terminal_chunk(pane_id.clone(), live::encode_base64(&bytes)),
+        if controlling {
+            let control = TerminalControl::AttachmentDeliver {
+                intent: pending.operation.id.clone(),
+                generation: pending.terminal_generation.unwrap_or_default(),
+                paste: live::encode_base64(paste),
+            };
+            pending.writing = true;
+            self.terminals.control(control);
+            return;
         }
-        // The paste is composer text the operator has not sent, and an Enter
-        // held behind it does not send it either.
-        self.note_delivery_key(&pane_id);
-        self.attachment = None;
-        self.sync_async_operations();
+        if pending.awaiting_terminal {
+            pending.operation.stage = "terminal".to_owned();
+            pending.operation.message = Some("Waiting for the terminal to attach…".to_owned());
+            self.sync_async_operations();
+            return;
+        }
+        self.fail_attachment(TERMINAL_UNAVAILABLE, false);
     }
 }
 
@@ -797,6 +847,10 @@ const TERMINAL_UNAVAILABLE: &str =
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::tests::{
+        RecordedTerminals, record_terminals, report_terminal, terminal_state,
+    };
+    use hide_node_link::terminal::TerminalReport;
     const ID: &str = "01234567-0123-0123-0123-0123456789ab";
     const OTHER_ID: &str = "01234567-0123-0123-0123-0123456789ac";
 
@@ -843,31 +897,55 @@ mod tests {
         }));
     }
 
-    fn key(pane: &str, bytes: &[u8]) -> KeyPayload {
-        KeyPayload {
-            pane_id: pane.to_owned(),
-            bytes_base64: live::encode_base64(bytes),
-        }
+    /// The routes the runtime reaches its node by, with `pane-one`
+    /// attached in control.
+    fn controlled(runtime: &mut Runtime) -> Arc<RecordedTerminals> {
+        let terminals = record_terminals(runtime);
+        report_terminal(runtime, "pane-one", terminal_state("controlling", 1));
+        terminals.take();
+        terminals
     }
 
+    /// The paste each AttachmentDeliver asked for, in order.
+    fn delivered(terminals: &RecordedTerminals) -> Vec<Vec<u8>> {
+        terminals
+            .take()
+            .into_iter()
+            .filter_map(|control| match control {
+                TerminalControl::AttachmentDeliver { intent, paste, .. } => {
+                    assert_eq!(intent, ID);
+                    Some(live::decode_base64(&paste).unwrap())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn written(runtime: &mut Runtime, intent: &str) -> bool {
+        runtime.ingest_terminal_reports(vec![TerminalReport::AttachmentDelivered {
+            intent: intent.to_owned(),
+            written: true,
+        }])
+    }
+
+    /// The node holds the keys typed behind a paste and writes them after it
+    /// (`hide-node` `a_paste_is_written_before_the_keys_typed_behind_it`);
+    /// the core asks it to hold, and to write once the files are staged.
     #[test]
     fn failed_attachment_holds_enter_and_success_releases_in_order_without_extra_publication() {
         let mut runtime = runtime();
+        let terminals = controlled(&mut runtime);
         begin(&mut runtime, ID, "pane-one");
-        assert_eq!(
-            runtime.hold_attachment_input(&key("pane-one", b" AFTER\r")),
-            Some(false)
-        );
-        assert_eq!(
-            runtime.hold_attachment_input(&key("different-pane", b"ordinary")),
-            None
-        );
+        assert!(terminals.take().contains(&TerminalControl::AttachmentHold {
+            pane: "pane-one".into(),
+            intent: ID.into()
+        }));
         runtime.finish_attachment(
             ID,
             None,
             Err("A file exceeds the 20 MiB attachment limit.".to_owned()),
         );
-        assert!(runtime.snapshot.terminal.chunks.is_empty());
+        assert!(delivered(&terminals).is_empty());
         assert!(
             runtime
                 .attachment
@@ -879,88 +957,96 @@ mod tests {
                 .unwrap()
                 .contains("20 MiB")
         );
-        assert_eq!(
-            runtime.hold_attachment_input(&key("pane-one", b"next")),
-            Some(false)
-        );
         runtime.finish_attachment(ID, None, Ok(vec!["/remote/private/image.png".to_owned()]));
-        assert!(runtime.attachment.is_none());
         assert_eq!(
-            live::decode_base64(
-                &runtime
-                    .snapshot
-                    .terminal
-                    .chunks
-                    .last()
-                    .unwrap()
-                    .bytes_base64
-            )
-            .unwrap(),
-            b"\x1b[200~\"/remote/private/image.png\"\x1b[201~ AFTER\rnext"
+            delivered(&terminals),
+            [b"\x1b[200~\"/remote/private/image.png\"\x1b[201~".to_vec()]
         );
+        assert!(written(&mut runtime, ID));
+        assert!(runtime.attachment.is_none());
     }
 
     #[test]
     fn input_limit_is_visible_and_never_sends_partial_input() {
         let mut runtime = runtime();
+        let terminals = controlled(&mut runtime);
         begin(&mut runtime, ID, "pane-one");
-        assert_eq!(
-            runtime.hold_attachment_input(&key("pane-one", &vec![b'x'; ingress::MAX_QUEUED_INPUT])),
-            Some(false)
-        );
-        assert_eq!(
-            runtime.hold_attachment_input(&key("pane-one", b"\r")),
-            Some(true)
+        assert!(
+            runtime.ingest_terminal_reports(vec![TerminalReport::AttachmentInput {
+                intent: ID.to_owned(),
+                outcome: AttachmentInputOutcome::Limit,
+                bytes: 1,
+            }])
         );
         let pending = runtime.attachment.as_ref().unwrap();
-        assert_eq!(pending.queued.len(), ingress::MAX_QUEUED_INPUT);
         assert!(
             pending
                 .operation
                 .message
                 .as_ref()
                 .unwrap()
-                .contains("1 further input bytes were refused")
+                .contains("64 KiB")
         );
         runtime.finish_attachment(ID, None, Ok(vec!["/remote/file.png".to_owned()]));
-        assert!(runtime.snapshot.terminal.chunks.is_empty());
+        assert!(delivered(&terminals).is_empty());
         assert!(!runtime.attachment.as_ref().unwrap().operation.retryable);
     }
 
     #[test]
     fn competing_paste_dismissal_preserves_original_and_cancel_discards_held_input() {
         let mut runtime = runtime();
+        let terminals = controlled(&mut runtime);
         begin(&mut runtime, ID, "pane-one");
-        runtime.hold_attachment_input(&key("pane-one", b"\r"));
         begin(&mut runtime, OTHER_ID, "pane-one");
         assert_eq!(
             runtime.attachment_rejection.as_ref().unwrap().phase,
             "refused"
         );
+        terminals.take();
         runtime.attachment_action(AttachmentActionPayload {
             request_id: OTHER_ID.to_owned(),
             pane_id: "pane-one".to_owned(),
             action: "cancel".to_owned(),
         });
-        assert_eq!(runtime.attachment.as_ref().unwrap().queued, b"\r");
+        assert!(
+            terminals.take().is_empty(),
+            "dismissing the refused paste touched the original's held input"
+        );
         runtime.attachment_action(AttachmentActionPayload {
             request_id: ID.to_owned(),
             pane_id: "pane-one".to_owned(),
             action: "cancel".to_owned(),
         });
-        assert!(runtime.attachment.as_ref().unwrap().queued.is_empty());
+        assert!(
+            terminals
+                .take()
+                .contains(&TerminalControl::AttachmentRefuse { intent: ID.into() })
+        );
         runtime.attachment_ready(AttachmentCompletionPayload {
             request_id: ID.to_owned(),
             pane_id: "pane-one".to_owned(),
             error: None,
         });
         assert!(runtime.attachment.is_none());
-        assert!(runtime.snapshot.terminal.chunks.is_empty());
+        let controls = terminals.take();
+        assert!(
+            controls.contains(&TerminalControl::AttachmentRelease { intent: ID.into() }),
+            "{controls:?}"
+        );
+        assert!(
+            !controls
+                .iter()
+                .any(|control| matches!(control, TerminalControl::AttachmentDeliver { .. }))
+        );
     }
 
+    /// The paste is composer text the operator has not sent. That an Enter
+    /// held behind it is not a send either is the node's
+    /// (`a_paste_is_written_before_the_keys_typed_behind_it`).
     #[test]
     fn a_pasted_attachment_is_a_draft_for_the_doorbell_even_with_an_enter_held_behind_it() {
         let mut runtime = runtime();
+        let _terminals = controlled(&mut runtime);
         let payload: crate::sidebar::SessionSnapshotPayload = serde_json::from_value(
             serde_json::json!({"agents":[{"id":"a","pane_id":"pane-one","agent":"claude","agent_status":"idle","state_change_seq":1,"lineage_session":"s"}]}),
         )
@@ -979,37 +1065,33 @@ mod tests {
         clocks(&mut runtime);
         begin(&mut runtime, ID, "pane-one");
         runtime.finish_attachment(ID, None, Ok(vec!["/remote/file.png".to_owned()]));
+        assert!(written(&mut runtime, ID));
         let (input, submit) = clocks(&mut runtime);
         assert!(input > 0 && submit == 0, "pasted text is an unsent draft");
-
-        begin(&mut runtime, OTHER_ID, "pane-one");
-        runtime.hold_attachment_input(&key("pane-one", b"\r"));
-        runtime.finish_attachment(OTHER_ID, None, Ok(vec!["/remote/file.png".to_owned()]));
-        let (input, submit) = clocks(&mut runtime);
-        assert!(input > 0 && submit == 0, "an Enter is not proof of a send");
     }
 
     #[test]
     fn changed_generation_retires_intent_and_unknown_remote_never_falls_back_locally() {
         let mut runtime = runtime();
+        let terminals = controlled(&mut runtime);
         begin(&mut runtime, ID, "pane-one");
-        runtime.hold_attachment_input(&key("pane-one", b"\r"));
-        runtime
-            .terminal_session_generations
-            .insert("pane-one".to_owned(), 99);
-        assert!(runtime.reconcile_attachment_target());
+        terminals.take();
+        report_terminal(&mut runtime, "pane-one", terminal_state("controlling", 99));
         assert_eq!(
             runtime.attachment.as_ref().unwrap().operation.stage,
             "retired"
         );
-        assert!(runtime.attachment.as_ref().unwrap().queued.is_empty());
+        assert!(
+            terminals
+                .take()
+                .contains(&TerminalControl::AttachmentRefuse { intent: ID.into() })
+        );
         runtime.attachment_ready(AttachmentCompletionPayload {
             request_id: ID.to_owned(),
             pane_id: "pane-one".to_owned(),
             error: None,
         });
         assert!(runtime.attachment.is_none());
-        assert!(runtime.snapshot.terminal.chunks.is_empty());
         runtime.ensure_terminal_pane("remote:missing:pane");
         begin(&mut runtime, OTHER_ID, "remote:missing:pane");
         assert_eq!(
@@ -1017,13 +1099,14 @@ mod tests {
             "failed"
         );
         assert!(!runtime.attachment.as_ref().unwrap().operation.retryable);
-        assert!(runtime.snapshot.terminal.chunks.is_empty());
+        assert!(delivered(&terminals).is_empty());
     }
 
     #[test]
     fn cancel_after_completion_and_retirement_release_the_admission_slot() {
         for retire in [false, true] {
             let mut runtime = runtime();
+            let _terminals = controlled(&mut runtime);
             begin(&mut runtime, ID, "pane-one");
             runtime.attachment.as_mut().unwrap().clipboard_preparing = false;
             runtime.attachment.as_mut().unwrap().operation.stage = "transfer".to_owned();
@@ -1034,10 +1117,11 @@ mod tests {
             }));
             runtime.finish_attachment(ID, None, Err("Transfer failed.".to_owned()));
             if retire {
-                runtime
-                    .terminal_session_generations
-                    .insert("pane-one".to_owned(), 99);
-                assert!(runtime.reconcile_attachment_target());
+                report_terminal(&mut runtime, "pane-one", terminal_state("controlling", 99));
+                assert_eq!(
+                    runtime.attachment.as_ref().unwrap().operation.stage,
+                    "retired"
+                );
             } else {
                 runtime.attachment_action(AttachmentActionPayload {
                     request_id: ID.to_owned(),
@@ -1054,38 +1138,37 @@ mod tests {
                 runtime.attachment.as_ref().unwrap().operation.phase,
                 "pending"
             );
-            assert!(runtime.snapshot.terminal.chunks.is_empty());
         }
     }
 
     /// A runtime attached to Herdr whose pane is on screen before its
     /// terminal session, the order the web shows a new pane in.
-    fn live_pane() -> Runtime {
+    fn live_pane() -> (Runtime, Arc<RecordedTerminals>) {
         let mut runtime = crate::runtime::tests::live_runtime();
-        runtime.suppress_terminal_session_workers = true;
+        let terminals = record_terminals(&mut runtime);
         runtime.ensure_terminal_pane("pane-one");
         runtime
             .terminal_sizes
             .insert("pane-one".to_owned(), (24, 80));
-        runtime
+        (runtime, terminals)
     }
 
     const STAGED: &str = "/state/attachments/image.png";
 
     /// Issue 735: a drop reached the core 3 ms before the pane's first
     /// session was requested, failed as unavailable, and nothing was pasted.
-    /// The paste and the input typed behind it now wait for that session and
-    /// reach it in order, whichever of the files and the session is first.
+    /// The paste now waits for that session and is written to it, whichever
+    /// of the files and the session is first; the input typed behind it
+    /// follows it there at the node.
     #[test]
     fn a_drop_before_the_panes_first_session_is_written_to_that_session() {
         for files_first in [true, false] {
-            let mut runtime = live_pane();
+            let (mut runtime, terminals) = live_pane();
             begin(&mut runtime, ID, "pane-one");
             assert_eq!(
                 runtime.attachment.as_ref().unwrap().operation.phase,
                 "pending"
             );
-            runtime.hold_attachment_input(&key("pane-one", b" AFTER\r"));
             if files_first {
                 runtime.finish_attachment(ID, None, Ok(vec![STAGED.to_owned()]));
                 assert_eq!(
@@ -1093,22 +1176,30 @@ mod tests {
                     "pending"
                 );
             }
-            runtime.request_terminal_control("pane-one");
+            report_terminal(&mut runtime, "pane-one", terminal_state("controlling", 3));
             if !files_first {
                 runtime.finish_attachment(ID, None, Ok(vec![STAGED.to_owned()]));
             }
-            assert!(runtime.attachment.is_none(), "files_first={files_first}");
+            let controls = terminals.take();
+            let deliveries = controls
+                .iter()
+                .filter_map(|control| match control {
+                    TerminalControl::AttachmentDeliver {
+                        generation, paste, ..
+                    } => Some((*generation, live::decode_base64(paste).unwrap())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
             assert_eq!(
-                runtime.terminal_sessions["pane-one"].test_written_lines(),
-                vec![
-                    live::terminal_input_line(
-                        b"\x1b[200~\"/state/attachments/image.png\"\x1b[201~ AFTER\r"
-                    )
-                    .unwrap()
-                ],
+                deliveries,
+                [(
+                    3,
+                    b"\x1b[200~\"/state/attachments/image.png\"\x1b[201~".to_vec()
+                )],
                 "files_first={files_first}"
             );
-            assert!(runtime.snapshot.terminal.chunks.is_empty());
+            assert!(written(&mut runtime, ID));
+            assert!(runtime.attachment.is_none(), "files_first={files_first}");
         }
     }
 
@@ -1117,10 +1208,9 @@ mod tests {
     /// the slot is free for the next drop, and a late session gets nothing.
     #[test]
     fn a_drop_whose_terminal_never_attaches_fails_at_the_commit_grace() {
-        let mut runtime = live_pane();
+        let (mut runtime, terminals) = live_pane();
         begin(&mut runtime, ID, "pane-one");
         runtime.attachment.as_mut().unwrap().clipboard_preparing = false;
-        runtime.hold_attachment_input(&key("pane-one", b"\r"));
         runtime.finish_attachment(ID, None, Ok(vec![STAGED.to_owned()]));
         let operation = &runtime.attachment.as_ref().unwrap().operation;
         let deadline = operation.started_at_unix_ms + ingress::COMMIT_GRACE.as_millis() as u64;
@@ -1140,13 +1230,8 @@ mod tests {
         );
         assert!(runtime.attachment.is_none());
 
-        runtime.request_terminal_control("pane-one");
-        assert!(
-            runtime.terminal_sessions["pane-one"]
-                .test_written_lines()
-                .is_empty()
-        );
-        assert!(runtime.snapshot.terminal.chunks.is_empty());
+        report_terminal(&mut runtime, "pane-one", terminal_state("controlling", 1));
+        assert!(delivered(&terminals).is_empty());
         begin(&mut runtime, OTHER_ID, "pane-one");
         assert_eq!(
             runtime.attachment.as_ref().unwrap().operation.phase,
@@ -1159,31 +1244,35 @@ mod tests {
     #[test]
     fn an_awaited_pane_that_leaves_or_reattaches_retires_the_paste() {
         for leaves in [true, false] {
-            let mut runtime = live_pane();
+            let (mut runtime, terminals) = live_pane();
             runtime
-                .terminal_session_generations
-                .insert("pane-one".to_owned(), 7);
+                .terminal_states
+                .insert("pane-one".to_owned(), terminal_state("starting", 7));
             begin(&mut runtime, ID, "pane-one");
-            runtime.hold_attachment_input(&key("pane-one", b"\r"));
             if leaves {
                 runtime.snapshot.terminal.panes.clear();
             } else {
                 runtime
-                    .terminal_session_generations
-                    .insert("pane-one".to_owned(), 8);
+                    .terminal_states
+                    .insert("pane-one".to_owned(), terminal_state("starting", 8));
             }
             assert!(runtime.reconcile_attachment_target());
             let pending = runtime.attachment.as_ref().unwrap();
             assert_eq!(pending.operation.stage, "retired", "leaves={leaves}");
-            assert!(pending.queued.is_empty());
+            assert!(
+                terminals
+                    .take()
+                    .contains(&TerminalControl::AttachmentRefuse { intent: ID.into() })
+            );
             runtime.finish_attachment(ID, None, Ok(vec![STAGED.to_owned()]));
-            assert!(runtime.snapshot.terminal.chunks.is_empty());
+            assert!(delivered(&terminals).is_empty());
         }
     }
 
     #[test]
     fn destruction_drains_its_joined_worker_without_spawning_cleanup_or_retry() {
         let mut runtime = runtime();
+        let terminals = controlled(&mut runtime);
         begin(&mut runtime, ID, "pane-one");
         runtime.attachment.as_mut().unwrap().clipboard_preparing = false;
         let gate = Arc::new(std::sync::Barrier::new(2));
@@ -1200,6 +1289,6 @@ mod tests {
         assert!(runtime.attachment.is_none() && runtime.attachment_worker.is_none());
         gate.wait();
         joined.join().unwrap();
-        assert!(runtime.snapshot.terminal.chunks.is_empty());
+        assert!(delivered(&terminals).is_empty());
     }
 }

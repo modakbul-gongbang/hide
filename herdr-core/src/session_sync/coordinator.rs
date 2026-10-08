@@ -2108,8 +2108,8 @@ mod worktree_observer_tests {
                 },
                 std::sync::Arc::new(hide_node::Local::of_process()),
             );
-            let baseline: Value = serde_json::from_slice(&core.snapshot_delta(0, 0))
-                .expect("initial observer snapshot");
+            let baseline: Value =
+                serde_json::from_slice(&core.snapshot_delta(0)).expect("initial observer snapshot");
             assert_eq!(
                 baseline["rest"]["git_worktrees"]["worktrees"][0]["branch"],
                 "feature/preflight"
@@ -2147,7 +2147,7 @@ mod worktree_observer_tests {
         }
 
         fn snapshot(&self) -> Value {
-            serde_json::from_slice(&self.core.snapshot_delta(0, 0)).expect("observer snapshot")
+            serde_json::from_slice(&self.core.snapshot_delta(0)).expect("observer snapshot")
         }
 
         fn expect_wake_after_unlock(&self) {

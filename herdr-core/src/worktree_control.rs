@@ -1977,6 +1977,8 @@ mod tests {
     use hide_herdr_client::{ApiError, ApiStream};
     use hide_platform::ipc::LocalStream;
     use std::collections::VecDeque;
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::Command;
 
     // The only fake is the external server's newline-delimited protocol.
     struct Server {

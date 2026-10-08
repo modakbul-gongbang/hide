@@ -11,24 +11,6 @@ pub(super) struct EventEnvelope {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct KeyPayload {
-    pub(super) pane_id: String,
-    pub(super) bytes_base64: String,
-}
-
-/// A `key` event as the shell sends it: for a pane, or, right after the
-/// operator asked for a new tab or split, for that creation request (PRD
-/// instant-pane-topology D-11), whose pane only Herdr's answer names.
-#[derive(Debug, Deserialize)]
-pub(super) struct KeyEventPayload {
-    #[serde(default)]
-    pub(super) pane_id: Option<String>,
-    #[serde(default)]
-    pub(super) pending_request: Option<String>,
-    pub(super) bytes_base64: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct AttachmentPayload {
     pub request_id: String,
     pub pane_id: String,
@@ -51,12 +33,6 @@ pub(super) struct AttachmentActionPayload {
     pub request_id: String,
     pub pane_id: String,
     pub action: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct TerminalOutputPayload {
-    pub(super) pane_id: String,
-    pub(super) bytes_base64: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1217,8 +1193,6 @@ pub(super) struct TerminalResizePayload {
     pub(super) pane_id: String,
     pub(super) cols: u16,
     pub(super) rows: u16,
-    #[serde(default)]
-    pub(super) new_view: bool,
 }
 
 pub(super) enum Event {
@@ -1227,11 +1201,9 @@ pub(super) enum Event {
     AgentLayout(AgentLayoutPayload),
     BrowserOpen(BrowserOpenPayload),
     BrowserState(BrowserStatePayload),
-    Key(KeyEventPayload),
     Attachment(AttachmentPayload),
     AttachmentReady(AttachmentCompletionPayload),
     AttachmentAction(AttachmentActionPayload),
-    TerminalOutput(TerminalOutputPayload),
     SessionSnapshot(SessionSnapshotPayload),
     RefreshStatus,
     Click(ClickPayload),
@@ -1318,7 +1290,6 @@ pub(super) enum Event {
     UiAttached(UiAttachedPayload),
     AiSettings(AiSettingsPayload),
     TerminalResize(TerminalResizePayload),
-    TerminalViewport(TerminalResizePayload),
     TerminalScroll(TerminalScrollPayload),
     TerminalClick(TerminalClickPayload),
     PaneFind(PaneFindPayload),
@@ -1432,11 +1403,9 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
     }
 
     match kind.as_str() {
-        "key" => decode!(KeyEventPayload, Key),
         "terminal_attachment" => decode!(AttachmentPayload, Attachment),
         "terminal_attachment_ready" => decode!(AttachmentCompletionPayload, AttachmentReady),
         "terminal_attachment_action" => decode!(AttachmentActionPayload, AttachmentAction),
-        "terminal_output" => decode!(TerminalOutputPayload, TerminalOutput),
         "session_snapshot" => decode!(SessionSnapshotPayload, SessionSnapshot),
         "refresh_status" => Ok(Event::RefreshStatus),
         "click" => decode!(ClickPayload, Click),
@@ -1537,7 +1506,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "ui_attached" => decode!(UiAttachedPayload, UiAttached),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
-        "terminal_viewport" => decode!(TerminalResizePayload, TerminalViewport),
         "terminal_scroll" => decode!(TerminalScrollPayload, TerminalScroll),
         "terminal_click" => decode!(TerminalClickPayload, TerminalClick),
         "pane_find" => decode!(PaneFindPayload, PaneFind),
@@ -1656,19 +1624,6 @@ impl Runtime {
             Event::Attachment(payload) => self.begin_attachment(payload),
             Event::AttachmentReady(payload) => self.attachment_ready(payload),
             Event::AttachmentAction(payload) => self.attachment_action(payload),
-            Event::Key(payload) => match self.route_key(payload) {
-                Ok(payload) => self.deliver_key(payload),
-                Err(changed) => changed,
-            },
-            Event::TerminalOutput(payload) => {
-                if self.snapshot.terminal.pane_id.is_none() {
-                    self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
-                    self.snapshot.focused.pane_id = Some(payload.pane_id.clone());
-                }
-                self.ensure_terminal_pane(&payload.pane_id);
-                self.append_terminal_chunk(payload.pane_id, payload.bytes_base64);
-                true
-            }
             Event::SessionSnapshot(payload) => self.ingest_session(Ok(payload)),
             Event::AgentSleepSet(payload) => self.set_agent_sleep_after(payload),
             Event::AgentSleep(payload) => self.request_agent_sleep(&payload.pane_id),
@@ -1754,7 +1709,6 @@ impl Runtime {
                 true
             }
             Event::ReconnectPane(payload) => {
-                self.terminal_recovery.remove(&payload.pane_id);
                 let pane_id = payload.pane_id;
                 let pane_exists = self
                     .snapshot
@@ -1773,24 +1727,7 @@ impl Runtime {
                     );
                     return true;
                 }
-                let previous_attempt = self
-                    .terminal_session_lifecycles
-                    .get(&pane_id)
-                    .map_or(0, |lifecycle| lifecycle.attempt);
-                let _retired_session = self.terminal_sessions.remove(&pane_id);
-                self.terminal_session_lifecycles.insert(
-                    pane_id.clone(),
-                    TerminalSessionLifecycle {
-                        attempt: previous_attempt,
-                        retry_decision: "manual",
-                        ..TerminalSessionLifecycle::default()
-                    },
-                );
-                self.push_diagnostic(
-                    "pane.reconnect.requested",
-                    format!("Reconnect requested for pane {pane_id}"),
-                );
-                self.request_terminal_control(&pane_id);
+                self.reconnect_terminal(&pane_id);
                 true
             }
             Event::KitAgentSet(payload) => {
@@ -3039,11 +2976,7 @@ impl Runtime {
                         | ((payload.modifiers & 4) * 2);
                     let bytes =
                         format!("\x1b[<{flags};{column};{row}M\x1b[<{flags};{column};{row}m");
-                    self.write_terminal_control(
-                        &payload.pane_id,
-                        &live::encode_base64(bytes.as_bytes()),
-                        Instant::now(),
-                    );
+                    self.write_terminal_control(&payload.pane_id, bytes.as_bytes());
                     return self.snapshot.status.last_error.is_some();
                 }
                 false
@@ -3063,24 +2996,13 @@ impl Runtime {
                     i32::from(payload.lines) * if payload.direction == "up" { 1 } else { -1 };
                 self.scroll_pane(
                     &payload.pane_id,
-                    live::ScrollRequest {
+                    terminal::ScrollRequest {
                         lines,
                         column: payload.column,
                         row: payload.row,
                         modifiers: payload.modifiers,
                     },
                 )
-            }
-            Event::TerminalViewport(payload) => {
-                let size = (payload.rows, payload.cols);
-                let changed = self
-                    .terminal_view_sizes
-                    .insert(payload.pane_id.clone(), size)
-                    != Some(size);
-                if changed || payload.new_view {
-                    self.terminal_frames_need_full.insert(payload.pane_id);
-                }
-                false
             }
             Event::TerminalResize(payload) => {
                 if payload.rows == 0 || payload.cols == 0 {
@@ -3104,27 +3026,27 @@ impl Runtime {
                 if previous.is_none() {
                     self.persist_ui_state();
                 }
-                if self.panes_awaiting_size.remove(&payload.pane_id) {
-                    self.terminal_recovery.remove(&payload.pane_id);
-                    self.terminal_session_lifecycles
-                        .entry(payload.pane_id.clone())
-                        .or_default()
-                        .state = "idle";
-                    self.request_terminal_control(&payload.pane_id);
-                    return true;
-                }
                 // A pane whose tab is drawn ahead of Herdr keeps its PTY size
                 // until Herdr confirms the layout; the size is sent then
-                // (PRD instant-pane-topology D-08).
-                if self.grid_held_panes.contains(&payload.pane_id)
-                    && self.terminal_sessions.contains_key(&payload.pane_id)
-                {
+                // (PRD instant-pane-topology D-08). One waiting for its first
+                // size gets it now, since there is no PTY size to keep.
+                let attached = self
+                    .terminal_states
+                    .get(&payload.pane_id)
+                    .is_some_and(|state| {
+                        matches!(
+                            state.state.as_str(),
+                            "starting" | "controlling" | "observing"
+                        )
+                    });
+                if self.grid_held_panes.contains(&payload.pane_id) && attached {
                     if previous != Some(size) {
                         self.held_resizes.insert(payload.pane_id);
                     }
                     return false;
                 }
-                self.send_terminal_size(&payload.pane_id, previous)
+                self.send_terminal_size(&payload.pane_id, false);
+                false
             }
             Event::PaneFind(payload) => {
                 if payload.term.is_empty() {
@@ -3688,10 +3610,7 @@ impl Event {
     pub(super) fn is_terminal_io(&self) -> bool {
         matches!(
             self,
-            Event::Key(_)
-                | Event::TerminalOutput(_)
-                | Event::TerminalResize(_)
-                | Event::TerminalViewport(_)
+            Event::TerminalResize(_)
                 | Event::TerminalScroll(_)
                 | Event::TerminalClick(_)
                 | Event::Attachment(_)
@@ -3702,138 +3621,22 @@ impl Event {
 }
 
 impl Runtime {
-    /// Resolves who a `key` event is for: its pane, or the pane Herdr's
-    /// answer named for the creation request it was sent against. Keys for a
-    /// request still waiting are kept, and keys for a refused or unknown one
-    /// are dropped; `Err` carries whether the snapshot changed.
-    fn route_key(&mut self, payload: KeyEventPayload) -> Result<KeyPayload, bool> {
-        let KeyEventPayload {
-            pane_id,
-            pending_request,
-            bytes_base64,
-        } = payload;
-        let Some(request_id) = pending_request else {
-            let Some(pane_id) = pane_id else {
-                self.set_error("terminal.invalid_input", "A key names no pane", false);
-                return Err(true);
-            };
-            return Ok(KeyPayload {
-                pane_id,
-                bytes_base64,
-            });
+    /// Sends the size the pane's view last reported to its node, which
+    /// resizes its session (an observer attaches again once the size
+    /// settles). `force` sends it even when the session already has it: a
+    /// size held while the layout was drawn ahead.
+    pub(super) fn send_terminal_size(&mut self, pane_id: &str, force: bool) {
+        let Some(&(rows, cols)) = self.terminal_sizes.get(pane_id) else {
+            return;
         };
-        let bytes = match live::decode_base64(&bytes_base64) {
-            Ok(bytes) => bytes,
-            Err(message) => {
-                self.set_error("terminal.invalid_input", message, false);
-                return Err(true);
-            }
-        };
-        match self
-            .input_requests
-            .route(&request_id, &bytes, Instant::now())
-        {
-            (super::terminal_input::KeyRoute::Pane(pane_id), _) => Ok(KeyPayload {
-                pane_id,
-                bytes_base64,
-            }),
-            (_, changed) => {
-                if changed {
-                    self.sync_input_requests();
-                }
-                Err(changed)
-            }
-        }
-    }
-
-    /// Writes typed bytes to `payload.pane_id`, the one path every key takes.
-    /// Sends the size the pane's view last reported to its session. With
-    /// `previous`, the size the view reported before, an unchanged size sends
-    /// nothing; without it the size is sent as a held pane's release.
-    pub(super) fn send_terminal_size(
-        &mut self,
-        pane_id: &str,
-        previous: Option<(u16, u16)>,
-    ) -> bool {
-        let Some(&size) = self.terminal_sizes.get(pane_id) else {
-            return false;
-        };
-        let (rows, cols) = size;
-        if previous == Some(size) && !self.terminal_frames_need_full.contains(pane_id) {
-            return false;
-        }
         crate::diagnostic!(
             serde_json::json!({"kind":"terminal.resize_settled", "pane_id":pane_id, "rows":rows, "cols":cols})
         );
-        let Some(session) = self.terminal_sessions.get_mut(pane_id) else {
-            return false;
-        };
-        match session.mode {
-            TerminalSessionMode::Control => {
-                if let Err(message) = session.resize(rows, cols) {
-                    self.set_error("terminal.resize_failed", message, true);
-                    return true;
-                }
-                false
-            }
-            // An observer cannot resize and Herdr keeps drawing it at
-            // the grid it attached with; an idle pane sends no frame
-            // that would show the change, so the view would keep the
-            // old frame reflowed. It attaches again at the new grid
-            // once the size settles (`reattach_resized_observers`).
-            TerminalSessionMode::Observe if previous != Some(size) => {
-                self.observers_resized
-                    .insert(pane_id.to_owned(), unix_milliseconds());
-                false
-            }
-            TerminalSessionMode::Observe => false,
-        }
-    }
-
-    pub(super) fn deliver_key(&mut self, payload: KeyPayload) -> bool {
-        self.write_key(payload, true, Instant::now())
-    }
-
-    /// Writes one key, typed at `typed_at`, to its pane; `takes_focus` is
-    /// false for keys held for a creation, which reach the new pane without
-    /// moving the keyboard.
-    pub(super) fn write_key(
-        &mut self,
-        payload: KeyPayload,
-        takes_focus: bool,
-        typed_at: Instant,
-    ) -> bool {
-        let submits = crate::labels::input::key_submits(&payload.bytes_base64);
-        self.note_delivery_key(&payload.pane_id);
-        if let Some(changed) = self.drop_input_to_sleeping_pane(&payload.pane_id) {
-            return changed;
-        }
-        if let Some(changed) = self.hold_attachment_input(&payload) {
-            return changed;
-        }
-        if takes_focus {
-            self.snapshot.input_generation = self.snapshot.input_generation.saturating_add(1);
-            self.snapshot.focused.surface = Surface::Terminal;
-            self.snapshot.focused.pane_id = Some(payload.pane_id.clone());
-            self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
-            self.ensure_terminal_pane(&payload.pane_id);
-            self.sync_focused_terminal_projection();
-        }
-        if submits {
-            self.record_operator_submit(&payload.pane_id);
-        }
-        if self.live.is_some()
-            || self
-                .remote_terminals
-                .keys()
-                .any(|target_id| remote_pane_source_id(target_id, &payload.pane_id).is_some())
-        {
-            self.write_terminal_control(&payload.pane_id, &payload.bytes_base64, typed_at);
-        } else {
-            // Fixture mode has no PTY behind the pane; the loopback
-            // echo is the whole byte bridge.
-            self.append_terminal_chunk(payload.pane_id, payload.bytes_base64);
-        }
-        true
+        self.terminals
+            .control(hide_node_link::terminal::TerminalControl::Resize {
+                pane: pane_id.to_owned(),
+                size: hide_node_link::terminal::GridSize { rows, cols },
+                force,
+            });
     }
 }

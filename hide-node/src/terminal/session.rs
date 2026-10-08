@@ -6,7 +6,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::sync::mpsc::{Sender, TryRecvError, channel};
 use std::thread;
 use std::time::Duration;
 
@@ -423,6 +423,7 @@ fn reap_child(child: &mut OwnedChild, pane_id: &str) {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    use std::sync::mpsc::Receiver;
 
     /// A pipe end that hands each flushed batch of lines to the test.
     struct Sink {

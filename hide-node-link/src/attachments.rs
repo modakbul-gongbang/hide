@@ -35,6 +35,34 @@ pub fn valid_request_id(id: &str) -> bool {
         })
 }
 
+/// The folder beside the core's state file where a pasted clipboard image
+/// waits, and the one file name a request's image takes there.
+pub const CLIPBOARD_FOLDER: &str = "TerminalClipboard";
+
+pub fn clipboard_file_name(request_id: &str) -> String {
+    format!("hide-{request_id}.png")
+}
+
+/// Whether `path` names a clipboard image: a request's file directly inside
+/// a clipboard folder, the only file a clipboard removal may delete.
+pub fn is_clipboard_path(path: &std::path::Path) -> bool {
+    let named = |component: Option<&std::ffi::OsStr>, wanted: &dyn Fn(&str) -> bool| {
+        component
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(wanted)
+    };
+    path.is_absolute()
+        && named(path.file_name(), &|name| {
+            name.strip_prefix("hide-")
+                .and_then(|rest| rest.strip_suffix(".png"))
+                .is_some_and(valid_request_id)
+        })
+        && named(
+            path.parent().and_then(std::path::Path::file_name),
+            &|folder| folder == CLIPBOARD_FOLDER,
+        )
+}
+
 pub fn check_cancelled(cancelled: &std::sync::atomic::AtomicBool) -> Result<(), String> {
     if cancelled.load(std::sync::atomic::Ordering::Acquire) {
         Err("File transfer was cancelled.".to_owned())

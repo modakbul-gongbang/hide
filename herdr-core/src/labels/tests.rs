@@ -947,6 +947,8 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
             std::sync::Arc::new(hide_node::Local::of_process()),
             None,
             crate::node::test_devices(),
+            crate::node::test_terminals().0,
+            crate::node::test_terminals().1,
         )
         .is_none(),
         "a relative home names no account folder"
@@ -956,6 +958,8 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
         std::sync::Arc::new(hide_node::Local::new(Some(home.path().to_path_buf()))),
         None,
         crate::node::test_devices(),
+        crate::node::test_terminals().0,
+        crate::node::test_terminals().1,
     )
     .expect("a core starts");
     drop(core);

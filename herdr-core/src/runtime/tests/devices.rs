@@ -369,13 +369,7 @@ fn returning_to_this_machine_gives_the_keyboard_back_to_the_local_pane() {
     runtime.snapshot.ui_state.selected_pane_id = Some("w1:p1".to_owned());
     runtime.snapshot.terminal.pane_id = Some("w1:p1".to_owned());
     assert!(dispatch_device(&mut runtime, "focus_device", "studio"));
-    let key = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "key",
-        "payload": { "pane_id": "remote:studio:pane:w9:p1", "bytes_base64": "YQ==" }
-    }))
-    .unwrap();
-    assert!(runtime.dispatch_json(&key));
+    assert!(typed_into(&mut runtime, "remote:studio:pane:w9:p1", false));
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
         Some("remote:studio:pane:w9:p1")

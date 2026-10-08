@@ -313,6 +313,14 @@ pub struct PaneHook {
     pub events: PaneEventsSlot,
 }
 
+/// Which device a link serves and where its terminals' output and reports
+/// go on this side.
+#[derive(Clone)]
+pub struct TerminalHook {
+    pub node: String,
+    pub sink: Arc<dyn crate::terminal::device::DeviceSink>,
+}
+
 /// A live helper connection. Cloning shares it; the SSH connection ends when
 /// the last clone is dropped or [`RemoteHost::close`] is called.
 #[derive(Clone)]
@@ -451,6 +459,9 @@ struct Inner {
     /// Checkout roots this connection has opened, pinned to the directory
     /// they named then.
     roots: Mutex<HashMap<String, hide_node_link::RootIdentity>>,
+    /// Where the node's terminal lines go once its terminal service started
+    /// on this link (`crate::terminal::device`).
+    terminals: std::sync::OnceLock<crate::terminal::device::LineHandler>,
 }
 
 impl Drop for Inner {
@@ -500,6 +511,7 @@ impl RemoteHost {
                 gate: Gate::new(),
                 next_id: AtomicU64::new(1),
                 roots: Mutex::new(HashMap::new()),
+                terminals: std::sync::OnceLock::new(),
             }),
         }
     }
@@ -656,8 +668,25 @@ impl RemoteHost {
             }
         };
         line.push(b'\n');
-        if let Some(reason) = self.closed_reason() {
+        let written = self.write_line(&line, timeout, cancels);
+        if written.is_err() {
             lock_recover(&inner.pending).remove(&id);
+        }
+        written
+    }
+
+    /// Hands what the node's terminal service sends on this link to
+    /// `terminals`; a link takes one handler for its life.
+    pub fn take_terminal_lines(&self, terminals: crate::terminal::device::LineHandler) -> bool {
+        self.inner.terminals.set(terminals).is_ok()
+    }
+
+    /// Writes one whole line, which carries its newline. A line that was
+    /// started and not finished ends the connection, since the node would
+    /// read the next line as its tail.
+    fn write_line(&self, line: &[u8], timeout: Duration, cancels: bool) -> Result<(), LinkError> {
+        let inner = &self.inner;
+        if let Some(reason) = self.closed_reason() {
             return Err(LinkError::NotConnected(reason));
         }
         // Waiting behind another request's write sends nothing, so running
@@ -675,40 +704,41 @@ impl RemoteHost {
                 return Err(LinkError::NotConnected(reason));
             }
             Ok(tokio::time::timeout_at(deadline, async {
-                writer.write_all(&line).await?;
+                writer.write_all(line).await?;
                 writer.flush().await
             })
             .await)
-        });
-        let written = match written {
-            Ok(written) => written,
-            Err(unsent) => {
-                lock_recover(&inner.pending).remove(&id);
-                return Err(unsent);
-            }
-        };
+        })?;
         match written {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => Ok(()),
             // A write that failed or timed out may have sent part of the
             // line, and the next request would be read as its tail, so the
             // connection ends here; the next use reconnects.
             Ok(Err(error)) => {
-                lock_recover(&inner.pending).remove(&id);
                 self.close("a request could not be written to the device helper");
-                return Err(LinkError::Unknown(format!(
+                Err(LinkError::Unknown(format!(
                     "The connection to the device failed while the request was sent ({error}); its result is unknown"
-                )));
+                )))
             }
             Err(_) => {
-                lock_recover(&inner.pending).remove(&id);
                 self.close("a request was not accepted by the device helper in time");
-                return Err(LinkError::Unknown(
+                Err(LinkError::Unknown(
                     "The device did not accept the request in time; its result is unknown"
                         .to_owned(),
-                ));
+                ))
             }
         }
-        Ok(())
+    }
+}
+
+/// How long one terminal line may wait to be taken by the link before the
+/// link is ended as stalled.
+const TERMINAL_LINE_TIMEOUT: Duration = Duration::from_secs(30);
+
+impl crate::terminal::device::LineLink for RemoteHost {
+    fn send_line(&self, line: &[u8]) -> Result<(), String> {
+        self.write_line(line, TERMINAL_LINE_TIMEOUT, false)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -809,6 +839,7 @@ pub fn establish(
     consent: &HostConsent,
     retirement_projects: &[String],
     panes: Option<PaneHook>,
+    terminals: Option<TerminalHook>,
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> Result<Established, EstablishError> {
     let since = Instant::now();
@@ -898,6 +929,10 @@ pub fn establish(
         establish_stage(target, "panes", since);
         start_panes(client, &host);
     }
+    let terminals = terminals.and_then(|hook| {
+        establish_stage(target, "terminals", since);
+        start_terminals(client, &host, hook)
+    });
     establish_stage(target, "ready", since);
     Ok(Established {
         host: Arc::new(host),
@@ -906,7 +941,55 @@ pub fn establish(
         installed,
         helper_path,
         upload,
+        terminals,
     })
+}
+
+/// Starts the node's terminal service for the device's Herdr and the writer
+/// that carries the core's side of it, so the device's panes' terminals
+/// flow inside this link (PRD core-host-node-terminal D-10). A device whose
+/// Herdr cannot be found has none; its panes read unavailable and the
+/// reason goes to the log.
+fn start_terminals(
+    client: &RusshRemoteClient,
+    host: &RemoteHost,
+    hook: TerminalHook,
+) -> Option<Arc<dyn hide_node_link::terminal::TerminalNode>> {
+    let started = client
+        .herdr_socket_path()
+        .map_err(|error| error.to_string())
+        .and_then(|herdr_socket| {
+            host.call(Call::TerminalsStart { herdr_socket }, HELLO_TIMEOUT)
+                .map_err(|error| error.to_string())
+        })
+        .and_then(|_| {
+            crate::terminal::device::DeviceTerminals::start(
+                &hook.node,
+                Arc::new(host.clone()),
+                hook.sink,
+            )
+            .map_err(|error| format!("the terminal writer could not start: {error}"))
+        });
+    match started {
+        Ok(terminals) => {
+            host.take_terminal_lines(terminals.inbound());
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.terminals_started",
+                "target": host.inner.target,
+            }));
+            Some(Arc::new(terminals))
+        }
+        Err(reason) => {
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.terminals_unstarted",
+                "target": host.inner.target,
+                "reason": reason,
+            }));
+            None
+        }
+    }
 }
 
 /// B30: each step a device's connection reaches, so a connection that
@@ -1661,6 +1744,7 @@ fn spawn_host(
         gate: Gate::new(),
         next_id: AtomicU64::new(1),
         roots: Mutex::new(HashMap::new()),
+        terminals: std::sync::OnceLock::new(),
     });
     let reader = Arc::downgrade(&inner);
     client.runtime.spawn(async move {
@@ -1684,6 +1768,18 @@ fn spawn_host(
                         scanned = 0;
                         let line: Vec<u8> = buffer.drain(..=end).collect();
                         let Some(inner) = reader.upgrade() else { return };
+                        if line.starts_with(hide_node_link::terminal::TERMINAL_LINE_PREFIX) {
+                            match inner.terminals.get() {
+                                Some(terminals) => terminals(&line),
+                                None => crate::diagnostic!(json!({
+                                    "component": "remote_host",
+                                    "kind": "host.terminal_line_unheard",
+                                    "target": inner.target,
+                                    "bytes": line.len(),
+                                })),
+                            }
+                            continue;
+                        }
                         if line.starts_with(b"{\"event\":") {
                             deliver_event(&inner, panes.as_ref(), &line);
                             continue;
@@ -2301,6 +2397,7 @@ mod probe {
             &packages,
             &consent,
             &[],
+            None,
             None,
             Box::new(move |reason| {
                 let _ = seen.send(reason);

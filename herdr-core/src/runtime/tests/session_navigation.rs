@@ -4122,7 +4122,6 @@ fn browser_shortcut_bindings_survive_a_ui_state_update_that_omits_them() {
 fn pane_focus_request_on_a_closing_pane_is_answered_as_failed() {
     let checkout_path = "/private/tmp/hide-pane-focus-closing";
     let (mut runtime, _) = live_tab_order_runtime(checkout_path);
-    runtime.suppress_terminal_session_workers = true;
     let tabs = ["w-order:t1", "w-order:t2"];
     runtime.ingest_session(Ok(tab_order_payload(
         checkout_path,

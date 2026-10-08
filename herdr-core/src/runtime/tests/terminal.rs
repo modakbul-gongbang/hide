@@ -1,333 +1,40 @@
 use super::*;
 
-#[test]
-fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
-    let mut runtime = runtime();
-    let pane = "w-grid:p1";
-    runtime.terminal_sessions.insert(
-        pane.to_owned(),
-        TerminalSession::test_stub(pane, 1, TerminalSessionMode::Control),
-    );
-    runtime
-        .terminal_session_generations
-        .insert(pane.to_owned(), 1);
-    runtime
-        .terminal_view_sizes
-        .insert(pane.to_owned(), (45, 115));
-    let before = runtime.snapshot.terminal.sequence;
-    for width in [84, 2] {
-        assert_eq!(
-            runtime.ingest_terminal_session_frame(
-                pane,
-                1,
-                TerminalSessionMode::Control,
-                b"foreign",
-                crate::model::TerminalFrame {
-                    width,
-                    height: 9,
-                    full: true
-                }
-            ),
-            Some(false)
-        );
-    }
-    assert_eq!(runtime.snapshot.terminal.sequence, before);
-    assert_eq!(
-        runtime.ingest_terminal_session_frame(
-            pane,
-            1,
-            TerminalSessionMode::Control,
-            b"partial",
-            crate::model::TerminalFrame {
-                width: 115,
-                height: 45,
-                full: false
-            }
-        ),
-        Some(false)
-    );
-    assert_eq!(
-        runtime.ingest_terminal_session_frame(
-            pane,
-            1,
-            TerminalSessionMode::Control,
-            b"matching",
-            crate::model::TerminalFrame {
-                width: 115,
-                height: 45,
-                full: true
-            }
-        ),
-        Some(true)
-    );
-    assert_eq!(runtime.snapshot.terminal.sequence, before + 1);
-    assert_eq!(
-        runtime
-            .snapshot
-            .terminal
-            .chunks
-            .last()
-            .unwrap()
-            .frame
-            .as_ref()
-            .unwrap()
-            .width,
-        115
-    );
-}
-
-/// B2. Herdr draws an observer at the grid it attached with and an observer
-/// cannot resize, so a view that changed size after the attach (the web
-/// pane beside another client that holds control) held every frame and the
-/// pane froze. The observer attaches again at the view's grid instead.
-#[test]
-fn an_observed_frame_at_an_old_grid_reattaches_the_observer_at_the_views_grid() {
-    let mut runtime = runtime();
-    runtime.suppress_terminal_session_workers = true;
-    let pane = "w-observed:p1";
-    runtime.terminal_sessions.insert(
-        pane.to_owned(),
-        TerminalSession::test_stub(pane, 7, TerminalSessionMode::Observe),
-    );
-    runtime
-        .terminal_session_generations
-        .insert(pane.to_owned(), 7);
-    runtime.terminal_session_lifecycles.insert(
-        pane.to_owned(),
-        TerminalSessionLifecycle {
-            state: "observing",
-            attempt: 5,
-            mode: Some(TerminalSessionMode::Observe),
-            ..TerminalSessionLifecycle::default()
-        },
-    );
-    runtime
-        .terminal_view_sizes
-        .insert(pane.to_owned(), (33, 143));
-    let frame = |width| crate::model::TerminalFrame {
-        width,
-        height: 33,
-        full: false,
-    };
-    assert_eq!(
-        runtime.ingest_terminal_session_frame(
-            pane,
-            7,
-            TerminalSessionMode::Observe,
-            b"old",
-            frame(186)
-        ),
-        None,
-        "the old observer retires"
-    );
-    let generation = runtime.terminal_session_generations[pane];
-    assert_ne!(generation, 7);
-    assert_eq!(runtime.terminal_sizes[pane], (33, 143));
-    assert_eq!(
-        runtime.terminal_sessions[pane].mode,
-        TerminalSessionMode::Observe
-    );
-    assert_eq!(runtime.terminal_session_lifecycles[pane].attempt, 5);
-    assert_eq!(
-        runtime.ingest_terminal_session_frame(
-            pane,
-            generation,
-            TerminalSessionMode::Observe,
-            b"new",
-            crate::model::TerminalFrame {
-                width: 143,
-                height: 33,
-                full: true
-            }
-        ),
-        Some(true)
-    );
-}
-
-fn resize_event(pane_id: &str, cols: u16, rows: u16) -> Vec<u8> {
-    serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "terminal_resize",
-        "payload": {"pane_id": pane_id, "cols": cols, "rows": rows}
-    }))
-    .expect("resize event")
-}
-
-/// B2, B8. An idle observed pane sends no frame after its view changes size
-/// (the View region leaving widens it), so waiting for one left the old
-/// frame reflowed at the new width. Once the view's size has held for a
-/// moment the tick attaches the observer again at it; a drag's intermediate
-/// sizes and the frames drawn at the old grid meanwhile attach nothing, and
-/// the size it already has attaches nothing either.
-#[test]
-fn an_observed_view_that_changes_size_reattaches_once_the_size_settles() {
-    let mut runtime = runtime();
-    runtime.suppress_terminal_session_workers = true;
-    let pane = "w-observed:p1";
-    runtime.terminal_view_sizes.insert(pane.into(), (33, 143));
-    runtime.start_terminal_session(pane, TerminalSessionMode::Observe, 1, "initial", None);
-    let first = runtime.terminal_session_generations[pane];
-    runtime.dispatch_json(&resize_event(pane, 143, 33));
-    runtime.tick_async_operations(unix_milliseconds() + 1_000);
-    assert_eq!(runtime.terminal_session_generations[pane], first);
-
-    for cols in [160, 180, 200] {
-        runtime.terminal_view_sizes.insert(pane.into(), (33, cols));
-        runtime.dispatch_json(&resize_event(pane, cols, 33));
-    }
-    let old_grid = crate::model::TerminalFrame {
-        width: 143,
-        height: 33,
-        full: false,
-    };
-    assert_eq!(
-        runtime.ingest_terminal_session_frame(
-            pane,
-            first,
-            TerminalSessionMode::Observe,
-            b"old",
-            old_grid
-        ),
-        Some(false),
-        "a frame at the old grid is held while the size settles"
-    );
-    runtime.tick_async_operations(unix_milliseconds());
-    assert_eq!(runtime.terminal_session_generations[pane], first);
-
-    runtime.tick_async_operations(unix_milliseconds() + 1_000);
-    let second = runtime.terminal_session_generations[pane];
-    assert_eq!(second, first + 1, "one new observer for the whole drag");
-    assert_eq!(runtime.terminal_sizes[pane], (33, 200));
-    assert_eq!(
-        runtime.terminal_sessions[pane].mode,
-        TerminalSessionMode::Observe
-    );
-    runtime.tick_async_operations(unix_milliseconds() + 2_000);
-    assert_eq!(runtime.terminal_session_generations[pane], second);
-    assert!(runtime.snapshot.status.last_error.is_none());
-}
-
-/// A view that reported 41x18 while the settled size still said 50x25
-/// had every attach frame held and its retries exhausted: the attach
-/// asks for the grid the frame guard accepts.
-#[test]
-fn a_control_session_attaches_at_the_grid_the_view_reported() {
-    let mut runtime = runtime();
-    runtime.suppress_terminal_session_workers = true;
-    let pane = "w-view:p1";
-    runtime.terminal_sizes.insert(pane.into(), (25, 50));
-    runtime.terminal_view_sizes.insert(pane.into(), (18, 41));
-    runtime.start_terminal_session(
-        pane,
-        TerminalSessionMode::Control,
-        1,
-        "automatic_initial",
-        None,
-    );
-    assert_eq!(runtime.terminal_sizes[pane], (18, 41));
-    let generation = runtime.terminal_session_generations[pane];
-    assert_eq!(
-        runtime.ingest_terminal_session_frame(
-            pane,
-            generation,
-            TerminalSessionMode::Control,
-            b"attach frame",
-            crate::model::TerminalFrame {
-                width: 41,
-                height: 18,
-                full: true
-            }
-        ),
-        Some(true)
-    );
-}
-
-#[test]
-fn retry_preserves_the_canvas_until_a_matching_replacement_frame() {
-    let mut runtime = runtime();
-    runtime.suppress_terminal_session_workers = true;
-    let pane = "w-retry:p1";
-    runtime.terminal_sizes.insert(pane.into(), (24, 80));
-    runtime.append_terminal_chunk(pane.into(), live::encode_base64(b"last valid screen"));
-    let before = runtime.snapshot.terminal.sequence;
-    runtime.start_terminal_session(
-        pane,
-        TerminalSessionMode::Control,
-        2,
-        "automatic_bounded",
-        None,
-    );
-    assert_eq!(
-        runtime.snapshot.terminal.sequence, before,
-        "retry must not blank the canvas"
-    );
-    let recovery = &runtime.terminal_recovery[pane];
-    assert!(recovery.last_attempt_at_unix_ms.is_some());
-    assert_eq!(
-        runtime.terminal_session_lifecycles[pane].retry_decision,
-        "automatic_bounded"
-    );
-    let generation = runtime.terminal_session_generations[pane];
-    assert_eq!(
-        runtime.ingest_terminal_session_frame(
-            pane,
-            generation,
-            TerminalSessionMode::Control,
-            b"wrong grid",
-            crate::model::TerminalFrame {
-                width: 2,
-                height: 9,
-                full: true
-            }
-        ),
-        Some(false)
-    );
-    assert_eq!(runtime.snapshot.terminal.sequence, before);
-    assert_eq!(
-        runtime.ingest_terminal_session_frame(
-            pane,
-            generation,
-            TerminalSessionMode::Control,
-            b"replacement",
-            crate::model::TerminalFrame {
-                width: 80,
-                height: 24,
-                full: true
-            }
-        ),
-        Some(true)
-    );
-    assert_eq!(runtime.snapshot.terminal.sequence, before + 1);
-    assert_eq!(
-        live::decode_base64(
-            &runtime
-                .snapshot
-                .terminal
-                .chunks
-                .last()
-                .unwrap()
-                .bytes_base64
-        )
-        .unwrap(),
-        b"\x1bcreplacement"
-    );
-    assert!(!runtime.terminal_recovery.contains_key(pane));
-    assert!(runtime.terminal_session_lifecycles[pane].message.is_none());
-}
-
+/// A pane with a session, on its way to one, or failed and waiting for the
+/// operator is not asked to attach again, so a repeated session update asks
+/// its node for nothing twice; a pane with no size known yet is asked with
+/// none, and its node waits for one.
 #[test]
 fn repeated_sync_updates_do_not_start_a_second_terminal_session() {
-    assert!(terminal_control_request_allowed("idle", false));
+    assert!(crate::runtime::terminal::attach_allowed("idle"));
+    assert!(crate::runtime::terminal::attach_allowed("released"));
     for state in [
         "starting",
         "controlling",
         "observing",
         "unavailable",
         "ended",
+        "closing",
+        "waiting_size",
     ] {
-        assert!(!terminal_control_request_allowed(state, false), "{state}");
+        assert!(!crate::runtime::terminal::attach_allowed(state), "{state}");
     }
-    assert!(!terminal_control_request_allowed("idle", true));
+    let mut runtime = runtime();
+    let terminals = record_terminals(&mut runtime);
+    assert!(runtime.request_terminal_control("w1:p1"));
+    assert_eq!(
+        terminals.take(),
+        [TerminalControl::Attach {
+            pane: "w1:p1".into(),
+            size: None,
+            manual: false
+        }]
+    );
+    report_terminal(&mut runtime, "w1:p1", terminal_state("starting", 1));
+    assert!(!runtime.request_terminal_control("w1:p1"));
+    report_terminal(&mut runtime, "w1:p1", terminal_state("controlling", 1));
+    assert!(!runtime.request_terminal_control("w1:p1"));
+    assert!(terminals.attaches().is_empty());
 }
 
 /// An answer for which no operation of this runtime is waiting (a late or a
@@ -418,49 +125,21 @@ fn pane_mutation_receipts_without_an_operation_move_nothing() {
     }
 }
 
-/// AC6's failure half: an attach that fails names its reason on the pane
-/// it failed for and leaves every other pane alone.
-///
-/// A launch pointed at a Herdr binary that is not there reaches the
-/// runtime as exactly this spawn error. That launch cannot be staged from
-/// outside the app - `HerdrRuntimeResolver.resolve` searches absolute
-/// paths that ignore both HOME and PATH, so any staging finds the
-/// operator's installed Herdr - which is why the failure is proven here,
-/// at the boundary the failure actually crosses, rather than by a window
-/// screenshot.
 #[test]
 fn attach_failure_names_its_reason_on_that_pane_and_leaves_the_others_idle() {
     let mut runtime = runtime();
-    runtime.suppress_terminal_session_workers = true;
     // Both panes are projected the way the runtime projects them, so the
     // untouched one carries a real resting state rather than a zero value
     // a hand-built struct would have handed the assertion for free.
     runtime.ensure_terminal_pane("w1:p1");
     runtime.ensure_terminal_pane("w1:p2");
-    runtime
-        .terminal_session_generations
-        .insert("w1:p1".to_owned(), 7);
-    runtime.terminal_session_lifecycles.insert(
-        "w1:p1".to_owned(),
-        TerminalSessionLifecycle {
-            state: "starting",
-            generation: 7,
-            attempt: 1,
-            mode: Some(TerminalSessionMode::Control),
-            ..TerminalSessionLifecycle::default()
-        },
-    );
 
     let reason = "herdr terminal control failed: no such file or directory";
-    assert!(runtime.ingest_terminal_session_spawn(
-        7,
-        "w1:p1",
-        TerminalSessionMode::Control,
-        Err(reason.to_owned()),
-        12,
-        Weak::new(),
-        crate::handle::ChangeNotifier::noop(),
-    ));
+    let mut failed = terminal_state("unavailable", 7);
+    failed.message = Some(format!("{reason}. Retrying in 5 seconds."));
+    failed.exit_category = Some("spawn_failed".to_owned());
+    failed.retry_decision = "automatic_bounded".to_owned();
+    assert!(report_terminal(&mut runtime, "w1:p1", failed));
 
     let failed = runtime
         .snapshot
@@ -471,13 +150,6 @@ fn attach_failure_names_its_reason_on_that_pane_and_leaves_the_others_idle() {
         .expect("the pane whose attach failed is still projected");
     assert_eq!(failed.transport_state, "unavailable");
     assert!(failed.transport_message.as_ref().unwrap().contains(reason));
-    assert!(
-        failed
-            .transport_message
-            .as_ref()
-            .unwrap()
-            .contains("Retrying in 5 seconds")
-    );
     assert_eq!(
         failed.transport_exit_category.as_deref(),
         Some("spawn_failed")
@@ -497,32 +169,40 @@ fn attach_failure_names_its_reason_on_that_pane_and_leaves_the_others_idle() {
     );
     assert_eq!(untouched.transport_message, None);
     assert_eq!(untouched.transport_exit_category, None);
-
-    // The reason is also written into that pane's own byte stream, so the
-    // operator reads it where the terminal would have been and nowhere
-    // else on the canvas.
-    let notices: Vec<&TerminalChunk> = runtime
-        .snapshot
-        .terminal
-        .chunks
-        .iter()
-        .filter(|chunk| {
-            String::from_utf8(live::decode_base64(&chunk.bytes_base64).expect("chunk bytes"))
-                .is_ok_and(|text| text.contains(reason))
-        })
-        .collect();
-    assert_eq!(notices.len(), 1, "the reason is announced once");
-    assert_eq!(notices[0].pane_id, "w1:p1");
 }
 
+/// The operator's Reconnect asks the pane's node to start again from a
+/// first attempt, once, whatever the pane is doing; an observed pane (one
+/// another client controls) is asked the same way.
 #[test]
 fn runtime_owner_conflict_observes_ignores_stale_delivery_and_reconnects_once() {
-    for reason in [
-        "terminal attach failed: terminal 42 already has an attached client; retry with --takeover",
-        "terminal attach taken over",
-    ] {
-        assert_owner_conflict_observes_and_reconnects(reason);
-    }
+    let mut runtime = runtime();
+    let terminals = record_terminals(&mut runtime);
+    runtime.snapshot.navigator.workspaces = vec![workspace(
+        "w1",
+        "Fixture",
+        "/tmp/hide-terminal-session-runtime",
+        vec![checkout(
+            "w1",
+            "checkout-1",
+            "/tmp/hide-terminal-session-runtime",
+            Some(pane("w1:p1", "/tmp/hide-terminal-session-runtime")),
+        )],
+    )];
+    runtime.ensure_terminal_pane("w1:p1");
+    report_terminal(&mut runtime, "w1:p1", terminal_state("observing", 41));
+    let reconnect = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "reconnect_pane",
+        "payload": {"pane_id": "w1:p1"}
+    }))
+    .expect("reconnect event");
+    runtime.dispatch_json(&reconnect);
+    assert_eq!(terminals.attaches(), [("w1:p1".to_owned(), true)]);
+    assert!(
+        !runtime.snapshot.terminal.panes[0].closed,
+        "a pane another client controls is not closed"
+    );
 }
 
 /// The shell used to draw an even grid of the tab's panes whenever it had
@@ -554,45 +234,6 @@ fn tab_layouts_have_no_uniform_grid_stand_in_left_in_the_shell() {
     );
 }
 
-/// R5, AC9. Herdr sizes a pane's PTY from the attach, so an attach before
-/// any view has reported a size draws a full frame at a guess and a
-/// second one after the resize corrects it. The wait is reported, because
-/// a pane that never attaches must not look like a pane with no output.
-#[test]
-fn one_launch_holds_an_attach_until_the_view_reports_a_size() {
-    let mut runtime = runtime();
-    runtime.suppress_terminal_session_workers = true;
-    runtime.live = None;
-
-    runtime.request_terminal_control("w-size:p1");
-    assert!(
-        !runtime.terminal_sessions.contains_key("w-size:p1"),
-        "no session may be started for a pane with no reported size"
-    );
-    assert!(
-        runtime
-            .snapshot
-            .status
-            .diagnostics
-            .iter()
-            .any(|entry| entry.kind == "terminal.attach_deferred"),
-        "the wait must be reported: {:?}",
-        runtime.snapshot.status.diagnostics
-    );
-    assert!(runtime.panes_awaiting_size.contains("w-size:p1"));
-    assert_eq!(
-        runtime.terminal_session_lifecycles["w-size:p1"].state,
-        "waiting_size"
-    );
-    assert!(
-        runtime.terminal_session_lifecycles["w-size:p1"]
-            .message
-            .as_ref()
-            .unwrap()
-            .contains("Waiting")
-    );
-}
-
 fn wheel_event(pane_id: &str, direction: &str, lines: u16) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
@@ -609,6 +250,7 @@ fn wheel_event(pane_id: &str, direction: &str, lines: u16) -> Vec<u8> {
 #[test]
 fn a_wheel_before_the_attach_is_sent_with_the_first_frame() {
     let mut runtime = runtime();
+    let terminals = record_terminals(&mut runtime);
     let pane = "w1:p1";
     assert!(runtime.dispatch_json(&wheel_event(pane, "up", 3)));
     for _ in 0..20 {
@@ -624,39 +266,20 @@ fn a_wheel_before_the_attach_is_sent_with_the_first_frame() {
         .count();
     assert_eq!(deferred, 1, "a wheel burst filled the diagnostics list");
 
-    runtime.terminal_sessions.insert(
-        pane.to_owned(),
-        TerminalSession::test_stub(pane, 1, TerminalSessionMode::Control),
-    );
-    runtime
-        .terminal_session_generations
-        .insert(pane.to_owned(), 1);
-    runtime.terminal_view_sizes.insert(pane.to_owned(), (9, 40));
-    assert_eq!(
-        runtime.ingest_terminal_session_frame(
-            pane,
-            1,
-            TerminalSessionMode::Control,
-            b"frame",
-            crate::model::TerminalFrame {
-                width: 40,
-                height: 9,
-                full: true
-            }
-        ),
-        Some(true)
-    );
-    let written = runtime.terminal_sessions[pane].test_written_lines();
-    let scrolls = written
-        .iter()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("a protocol line"))
-        .filter(|line| line["type"] == "terminal.scroll")
-        .map(|line| (line["direction"].clone(), line["lines"].clone()))
+    report_terminal(&mut runtime, pane, terminal_state("controlling", 1));
+    runtime.ingest_terminal_reports(vec![TerminalReport::FirstFrame {
+        pane: pane.to_owned(),
+        generation: 1,
+    }]);
+    let scrolls = terminals
+        .take()
+        .into_iter()
+        .filter_map(|control| match control {
+            TerminalControl::Scroll { pane, lines, .. } => Some((pane, lines)),
+            _ => None,
+        })
         .collect::<Vec<_>>();
-    assert_eq!(
-        scrolls,
-        vec![(serde_json::json!("up"), serde_json::json!(60))]
-    );
+    assert_eq!(scrolls, [(pane.to_owned(), 60)]);
     assert!(runtime.wheel_before_attach.is_empty());
 }
 
@@ -695,18 +318,9 @@ fn observed_runtime(herdr: &FakeHerdr, pane: &str) -> SharedRuntime {
             api_connector: Arc::new(herdr.connector()),
             node: Arc::new(hide_node::Local::of_process()),
         });
-        runtime.terminal_sessions.insert(
-            pane.to_owned(),
-            TerminalSession::test_stub(pane, 1, TerminalSessionMode::Observe),
-        );
-        runtime.terminal_session_lifecycles.insert(
-            pane.to_owned(),
-            TerminalSessionLifecycle {
-                state: "observing",
-                mode: Some(TerminalSessionMode::Observe),
-                ..TerminalSessionLifecycle::default()
-            },
-        );
+        runtime
+            .terminal_states
+            .insert(pane.to_owned(), terminal_state("observing", 1));
         runtime.ensure_terminal_pane(pane);
     }
     shared
@@ -918,104 +532,29 @@ fn a_device_pane_is_searched_on_its_own_herdr() {
 #[test]
 fn retiring_a_pane_clears_every_pane_keyed_terminal_state() {
     let mut runtime = runtime();
+    let terminals = record_terminals(&mut runtime);
     let pane = "w-retired:p1";
-    runtime.terminal_session_generations.insert(pane.into(), 7);
     runtime
-        .terminal_session_lifecycles
-        .insert(pane.into(), TerminalSessionLifecycle::default());
-    runtime.terminal_recovery.insert(
-        pane.into(),
-        crate::terminal_recovery::Recovery::new(Instant::now(), "retry".into()),
-    );
+        .terminal_states
+        .insert(pane.into(), terminal_state("controlling", 7));
     runtime.terminal_sizes.insert(pane.into(), (80, 24));
-    runtime.terminal_view_sizes.insert(pane.into(), (120, 40));
-    runtime.terminal_frames_need_full.insert(pane.into());
-    runtime
-        .terminal_foreign_frame_sizes
-        .insert(pane.into(), (9, 84));
-    runtime.panes_awaiting_size.insert(pane.into());
     runtime.wheel_before_attach.insert(pane.into(), 3);
     runtime.viewport_scrolls.insert(pane.into(), 0);
     runtime.panes_scroll_held.insert(pane.into());
     runtime.panes_closing.insert(pane.into());
 
     assert!(runtime.retain_terminal_pane_state(|known| known != pane));
-    assert!(!runtime.terminal_session_generations.contains_key(pane));
-    assert!(!runtime.terminal_session_lifecycles.contains_key(pane));
-    assert!(!runtime.terminal_recovery.contains_key(pane));
+    assert!(!runtime.terminal_states.contains_key(pane));
     assert!(!runtime.terminal_sizes.contains_key(pane));
-    assert!(!runtime.terminal_view_sizes.contains_key(pane));
-    assert!(!runtime.terminal_frames_need_full.contains(pane));
-    assert!(!runtime.terminal_foreign_frame_sizes.contains_key(pane));
-    assert!(!runtime.panes_awaiting_size.contains(pane));
     assert!(!runtime.wheel_before_attach.contains_key(pane));
     assert!(!runtime.viewport_scrolls.contains_key(pane));
     assert!(!runtime.panes_scroll_held.contains(pane));
     assert!(!runtime.panes_closing.contains(pane));
-}
-
-/// R6, R7. A pane keeps its session while its canvas is rebuilt - a zoom,
-/// a tab visit, a return to a checkout - and the view that comes back has
-/// an empty grid. Herdr sent the attach frame to the view that came
-/// before it and sends nothing more until the pane produces output, so
-/// the operator sees a blank pane that a single wheel notch repairs.
-/// The repaint has to reach Herdr even though the size did not change.
-#[test]
-fn a_rebuilt_view_for_an_attached_pane_is_given_a_frame_to_draw() {
-    let checkout_path = "/private/tmp/hide-pane-repaint";
-    let (mut runtime, _checkout_id) = live_tab_order_runtime(checkout_path);
-    runtime.suppress_terminal_session_workers = true;
-    let tabs = ["w-repaint:t1"];
-    runtime.ingest_session(Ok(tab_order_payload(
-        checkout_path,
-        &tabs,
-        &tabs,
-        "w-repaint:t1",
-    )));
-    let pane_id = "w-repaint:t1:p";
-    let resize = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "terminal_resize",
-        "payload": {"pane_id": pane_id, "rows": 30, "cols": 100}
-    }))
-    .expect("resize event");
-    // The first view reporting its size is what starts the attach.
-    runtime.dispatch_json(&resize);
-    assert!(runtime.terminal_sessions.contains_key(pane_id));
-    let _attach_writes = runtime.terminal_sessions[pane_id].test_written_lines();
-    runtime.terminal_frames_need_full.remove(pane_id);
-
-    // The same size reported again is still swallowed: that is the report
-    // every settled view makes, and answering it would double the frames.
-    runtime.dispatch_json(&resize);
-    assert!(
-        runtime.terminal_sessions[pane_id]
-            .test_written_lines()
-            .is_empty(),
-        "a size that did not change was forwarded to Herdr"
-    );
-
-    // A new view reports its first geometry, then its settled geometry.
-    runtime.dispatch_json(
-        &serde_json::to_vec(&serde_json::json!({
-            "schema_version": SCHEMA_VERSION, "kind": "terminal_viewport",
-            "payload": {"pane_id": pane_id, "rows": 30, "cols": 100, "new_view": true}
-        }))
-        .unwrap(),
-    );
-    runtime.dispatch_json(&resize);
-    let written = runtime.terminal_sessions[pane_id].test_written_lines();
+    // Its node forgets it too, so an id Herdr reuses starts clean.
     assert_eq!(
-        written.len(),
-        1,
-        "the repaint did not reach Herdr exactly once"
+        terminals.take(),
+        [TerminalControl::Forget { pane: pane.into() }]
     );
-    let line: serde_json::Value =
-        serde_json::from_str(written[0].trim_end()).expect("repaint line is JSON");
-    assert_eq!(line["type"], "terminal.resize");
-    assert_eq!(line["rows"], 30);
-    assert_eq!(line["cols"], 100);
-    assert!(runtime.snapshot().status.last_error.is_none());
 }
 
 /// AC8, R7, SC5. Attaching every tab the operator ever visited left a
@@ -1024,9 +563,25 @@ fn a_rebuilt_view_for_an_attached_pane_is_given_a_frame_to_draw() {
 /// are released, say so, and attach again on the next visit.
 #[test]
 fn only_the_last_five_shown_tabs_keep_their_panes_attached() {
+    /// Reports every attach the core asked for as its node would, and
+    /// returns the panes it released.
+    fn answer(runtime: &mut Runtime, terminals: &RecordedTerminals) -> (Vec<String>, Vec<String>) {
+        let (mut attached, mut released) = (Vec::new(), Vec::new());
+        for control in terminals.take() {
+            match control {
+                TerminalControl::Attach { pane, .. } => {
+                    report_terminal(runtime, &pane, terminal_state("controlling", 1));
+                    attached.push(pane);
+                }
+                TerminalControl::Release { pane, .. } => released.push(pane),
+                _ => {}
+            }
+        }
+        (attached, released)
+    }
     let checkout_path = "/private/tmp/hide-attach-window";
     let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
-    runtime.suppress_terminal_session_workers = true;
+    let terminals = record_terminals(&mut runtime);
     let tabs = [
         "w-order:t1",
         "w-order:t2",
@@ -1042,28 +597,20 @@ fn only_the_last_five_shown_tabs_keep_their_panes_attached() {
         &tabs,
         "w-order:t1",
     )));
-    // The first tab is already on screen; its view reports, which is what
-    // starts an attach.
-    let report_size = |runtime: &mut Runtime, tab_id: &str| {
-        let resize = serde_json::to_vec(&serde_json::json!({
-            "schema_version": SCHEMA_VERSION,
-            "kind": "terminal_resize",
-            "payload": {"pane_id": format!("{tab_id}:p"), "rows": 30, "cols": 100}
-        }))
-        .expect("resize event");
-        runtime.dispatch_json(&resize);
-    };
-    report_size(&mut runtime, "w-order:t1");
-    assert!(runtime.terminal_sessions.contains_key("w-order:t1:p"));
+    let (attached, _) = answer(&mut runtime, &terminals);
+    assert_eq!(attached, ["w-order:t1:p"]);
+    let mut released = Vec::new();
     for tab_id in &tabs[1..] {
         assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, tab_id)));
-        report_size(&mut runtime, tab_id);
+        released.extend(answer(&mut runtime, &terminals).1);
     }
-
+    released.sort();
+    assert_eq!(released, ["w-order:t1:p", "w-order:t2:p"]);
     let attached = runtime
-        .terminal_sessions
-        .keys()
-        .cloned()
+        .terminal_states
+        .iter()
+        .filter(|(_, state)| state.state == "controlling")
+        .map(|(pane, _)| pane.clone())
         .collect::<BTreeSet<_>>();
     assert_eq!(
         attached,
@@ -1103,43 +650,35 @@ fn only_the_last_five_shown_tabs_keep_their_panes_attached() {
         1
     );
 
-    // A tick that changes nothing must not attach any of them again.
-    let before = runtime
-        .terminal_sessions
-        .keys()
-        .cloned()
-        .collect::<BTreeSet<_>>();
+    // An update that changes nothing must not attach any of them again.
     runtime.ingest_session(Ok(tab_order_payload(
         checkout_path,
         &tabs,
         &tabs,
         "w-order:t7",
     )));
-    assert_eq!(
-        runtime
-            .terminal_sessions
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>(),
-        before,
-        "an idle tick re-attached a released pane"
+    assert!(
+        terminals.attaches().is_empty(),
+        "an idle update re-attached a released pane"
     );
 
-    // Going back attaches that tab's pane and nothing else.
+    // Going back attaches that tab's pane once and releases the oldest.
     assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
-    assert!(runtime.terminal_sessions.contains_key("w-order:t1:p"));
-    assert_eq!(runtime.terminal_sessions.len(), ATTACHED_TAB_LIMIT);
+    let (attached, released) = answer(&mut runtime, &terminals);
+    assert_eq!(attached, ["w-order:t1:p"]);
+    assert_eq!(released, ["w-order:t3:p"]);
 }
 
 /// AC15, R11, SC7. Herdr closes the PTY before it reports the pane gone,
 /// so the attach child ends while the pane is still drawn. Reading that as
 /// a transport failure is what flashed "terminal attach ended" over a pane
-/// the operator had just closed.
+/// the operator had just closed. The core tells the pane's node the close
+/// is Hide's own, and the node reports the end as closing.
 #[test]
 fn close_projection_a_close_hide_asked_for_is_not_a_transport_failure() {
     let checkout_path = "/private/tmp/hide-close-projection";
-    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
-    runtime.suppress_terminal_session_workers = true;
+    let (mut runtime, _checkout_id) = live_tab_order_runtime(checkout_path);
+    let terminals = record_terminals(&mut runtime);
     let tabs = ["w-order:t1"];
     runtime.ingest_session(Ok(tab_order_payload(
         checkout_path,
@@ -1148,16 +687,8 @@ fn close_projection_a_close_hide_asked_for_is_not_a_transport_failure() {
         "w-order:t1",
     )));
     let pane_id = "w-order:t1:p";
-    let resize = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "terminal_resize",
-        "payload": {"pane_id": pane_id, "rows": 30, "cols": 100}
-    }))
-    .expect("resize event");
-    runtime.dispatch_json(&resize);
-    assert!(runtime.terminal_sessions.contains_key(pane_id));
-    let generation = runtime.terminal_session_generations[pane_id];
-    let chunks_before = runtime.snapshot().terminal.chunks.len();
+    report_terminal(&mut runtime, pane_id, terminal_state("controlling", 1));
+    terminals.take();
 
     let close = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
@@ -1166,11 +697,17 @@ fn close_projection_a_close_hide_asked_for_is_not_a_transport_failure() {
     }))
     .expect("close pane event");
     runtime.dispatch_json(&close);
-    assert!(runtime.ingest_terminal_session_closed(
+    assert!(
+        terminals.take().contains(&TerminalControl::Closing {
+            pane: pane_id.into(),
+            closing: true
+        }),
+        "the pane's node was not told the close is Hide's"
+    );
+    assert!(report_terminal(
+        &mut runtime,
         pane_id,
-        generation,
-        TerminalSessionMode::Control,
-        None,
+        terminal_state("closing", 1)
     ));
 
     let pane = runtime
@@ -1183,12 +720,6 @@ fn close_projection_a_close_hide_asked_for_is_not_a_transport_failure() {
         .clone();
     assert_eq!(pane.transport_state, "closing");
     assert!(pane.transport_message.is_none());
-    assert_eq!(
-        runtime.snapshot().terminal.chunks.len(),
-        chunks_before,
-        "a notice was written over the pane's last frame"
-    );
-    let _ = checkout_id;
 }
 
 /// The other half of the same rule: a close that is not the pane going
@@ -1197,7 +728,7 @@ fn close_projection_a_close_hide_asked_for_is_not_a_transport_failure() {
 fn close_projection_a_failure_on_a_living_pane_still_reports_ended() {
     let checkout_path = "/private/tmp/hide-close-failure";
     let (mut runtime, _checkout_id) = live_tab_order_runtime(checkout_path);
-    runtime.suppress_terminal_session_workers = true;
+    let terminals = record_terminals(&mut runtime);
     let tabs = ["w-order:t1"];
     runtime.ingest_session(Ok(tab_order_payload(
         checkout_path,
@@ -1206,21 +737,18 @@ fn close_projection_a_failure_on_a_living_pane_still_reports_ended() {
         "w-order:t1",
     )));
     let pane_id = "w-order:t1:p";
-    let resize = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "terminal_resize",
-        "payload": {"pane_id": pane_id, "rows": 30, "cols": 100}
-    }))
-    .expect("resize event");
-    runtime.dispatch_json(&resize);
-    let generation = runtime.terminal_session_generations[pane_id];
-
-    assert!(runtime.ingest_terminal_session_closed(
-        pane_id,
-        generation,
-        TerminalSessionMode::Control,
-        Some("herdr terminal session control exited with status 1".to_owned()),
-    ));
+    report_terminal(&mut runtime, pane_id, terminal_state("controlling", 1));
+    let mut ended = terminal_state("ended", 1);
+    ended.message = Some("herdr terminal session control exited with status 1".to_owned());
+    ended.exit_category = Some("terminal_closed".to_owned());
+    assert!(report_terminal(&mut runtime, pane_id, ended));
+    assert!(
+        !terminals
+            .take()
+            .iter()
+            .any(|control| matches!(control, TerminalControl::Closing { closing: true, .. })),
+        "a pane Hide did not close was told it is closing"
+    );
 
     let pane = runtime
         .snapshot()

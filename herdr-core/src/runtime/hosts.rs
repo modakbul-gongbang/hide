@@ -521,6 +521,15 @@ impl Runtime {
                         helper_path: established.helper_path,
                     },
                 );
+                if let Some(terminals) = established.terminals {
+                    self.terminals.install_device(device_id, terminals);
+                    // The device's panes on screen attach inside the new
+                    // link (D-19, B17).
+                    let prefix = remote_pane_id_prefix(device_id);
+                    self.terminal_states
+                        .retain(|pane_id, _| !pane_id.starts_with(&prefix));
+                    self.reconcile_remote_terminal_selection();
+                }
                 self.settle_device_saves(device_id);
                 self.reset_device_facts(device_id);
                 self.relist_remote_files(device_id);
@@ -595,6 +604,10 @@ impl Runtime {
         }
         host.phase = HostPhase::Unavailable(format!("The device helper disconnected: {reason}"));
         self.schedule_host_retry(device_id, now_unix_ms());
+        self.end_device_terminals(
+            device_id,
+            &format!("The device helper disconnected: {reason}"),
+        );
         self.drop_queued_codex_daemon_off(device_id);
         if self.device_machine_ids.remove(device_id).is_some() {
             self.refresh_agent_lineage();
@@ -615,9 +628,34 @@ impl Runtime {
                 remote.close(reason);
             }
         }
+        self.end_device_terminals(device_id, reason);
         self.drop_queued_codex_daemon_off(device_id);
         if self.device_machine_ids.remove(device_id).is_some() {
             self.refresh_agent_lineage();
+        }
+    }
+
+    /// The device's link ended: every terminal flow inside it ended too, so
+    /// its panes read unavailable and refuse keys until a link is back
+    /// (D-19, B17).
+    fn end_device_terminals(&mut self, device_id: &str, reason: &str) {
+        self.terminals.remove_device(device_id);
+        let prefix = remote_pane_id_prefix(device_id);
+        let panes = self
+            .terminal_states
+            .iter_mut()
+            .filter(|(pane_id, _)| pane_id.starts_with(&prefix));
+        let mut ended = Vec::new();
+        for (pane_id, state) in panes {
+            state.state = "unavailable".to_owned();
+            state.mode = None;
+            state.message = Some(reason.to_owned());
+            state.exit_category = Some("device_unavailable".to_owned());
+            state.retry_decision = "manual".to_owned();
+            ended.push(pane_id.clone());
+        }
+        for pane_id in ended {
+            self.sync_transport_projection(&pane_id);
         }
     }
 

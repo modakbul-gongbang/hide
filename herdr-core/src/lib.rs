@@ -57,7 +57,7 @@ mod sidebar;
 mod split_tree;
 pub mod tasks;
 mod terminal_attachments;
-mod terminal_recovery;
+pub mod terminal_reports;
 mod usage;
 mod view_bookmarks;
 mod view_layout;
