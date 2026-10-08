@@ -439,7 +439,7 @@ class ProcessProtection(unittest.TestCase):
     def test_unavailable_receipts_preserve_known_rss_counts_without_inventing_totals(self):
         # A cleanup receipt failure must not erase a known controller count or
         # turn an unavailable guardian total into zero (letter 2709, B8/B12).
-        for state in ("missing", "unconfirmed", "corrupt", "invalid_samples", "missing_omitted",
+        for state in ("missing", "unconfirmed", "corrupt", "nested", "invalid_samples", "missing_omitted",
                       "missing_unattributed", "invalid_unattributed", "invalid_identity"):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as name:
                 run = Path(name)
@@ -457,6 +457,8 @@ class ProcessProtection(unittest.TestCase):
                     receipt.unlink()
                 elif state == "corrupt":
                     receipt.write_text("{")
+                elif state == "nested":
+                    receipt.write_text("[" * 2048 + "]" * 2048)
                 elif state == "unconfirmed":
                     receipt.write_text(json.dumps({**valid, "confirmed": False}))
                 elif state == "invalid_samples":

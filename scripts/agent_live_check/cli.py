@@ -71,7 +71,9 @@ def record_process_diagnostics(owner, report):
     """Receipt failures fail cleanup but preserve known resource accounting."""
     try:
         report["cleanup"]["attribution"] = owner.attribution_report()
-    except (OSError, ValueError, ProcessError) as error:
+    except Exception as error:
+        # Even a bounded malformed JSON receipt can raise RecursionError.
+        # Diagnostics cannot prevent independent config recovery/report save.
         report["cleanup"]["confirmed"] = False
         report["failures"].append({"type": type(error).__name__, "reason": str(error)})
     report["resources"]["rss_samples"] = owner.rss_report()
