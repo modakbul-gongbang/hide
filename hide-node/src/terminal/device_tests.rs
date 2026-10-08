@@ -862,6 +862,37 @@ fn a_devices_notes_count_against_the_record_cap_and_its_states_do_not() {
     ));
 }
 
+/// A note is charged its line's size: one longer than the whole byte budget
+/// never reaches the core and is counted, while a short one after it does.
+#[test]
+fn a_devices_note_past_the_byte_budget_is_counted_not_passed() {
+    let note = |message: String| {
+        line_of(TerminalUp::Report {
+            report: TerminalReport::Note {
+                pane: "w1:p1".into(),
+                kind: "remote.control.close_status_unknown".into(),
+                message,
+            },
+        })
+        .unwrap()
+    };
+    let ((), records) = crate::diagnostics::capture(|| {
+        let (shared, heard) = held_proxy();
+        shared.inbound(&note("x".repeat(DEVICE_RECORD_BYTES_PER_WINDOW)));
+        shared.inbound(&note("short".into()));
+        let reports = heard.reports.lock().unwrap();
+        assert!(matches!(
+            reports.as_slice(),
+            [(_, TerminalReport::Note { message, .. })] if message == "short"
+        ));
+        drop(reports);
+        drop(shared);
+    });
+    let counted = kinds(&records, "terminal.device_records_unwritten");
+    assert_eq!(counted.len(), 1);
+    assert_eq!(counted[0]["count"], 1);
+}
+
 /// A window writes the cap, and what it did not write is counted once:
 /// when the next window opens, or when the link's last holder lets go.
 #[test]

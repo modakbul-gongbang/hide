@@ -684,10 +684,11 @@ struct ProxyShared {
     records: Mutex<RecordWindow>,
 }
 
-/// The log records a device's lines may make in one second, its own
-/// diagnostics, its notes and errors, and the lines this side could not
-/// read, and the bytes those records may take: past either a record is
-/// counted, not written, so a device cannot rotate this machine's log away.
+/// How many log records, and how many bytes of them, a device's lines may
+/// make in one second: its own diagnostics, its notes and errors, and the
+/// lines this side could not read. Past either a record is counted, not
+/// written, so a device's flood takes a minute, not a second, to fill this
+/// machine's log.
 pub(super) const DEVICE_RECORDS_PER_WINDOW: usize = 64;
 pub(super) const DEVICE_RECORD_BYTES_PER_WINDOW: usize = 16 * 1024;
 const DEVICE_RECORD_WINDOW: Duration = Duration::from_secs(1);
