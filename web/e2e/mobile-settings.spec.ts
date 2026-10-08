@@ -22,7 +22,7 @@ test("a ready Mac is one line, the QR waits for Show QR, and the push dropdown d
     tailscale.ready();
     daemon = await startHided(herdr, "mobile-settings", undefined, { HIDE_TAILSCALE_BIN: tailscale.bin });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await expect(page.locator("[data-sidebar-mode]").first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator("[data-sidebar-overview]")).toBeVisible({ timeout: 20_000 });
     await page.keyboard.press(chord("settings"));
     await page.locator('[data-settings-tab="mobile"]').click();
     const tab = page.locator('[data-mobile-tab="true"]');

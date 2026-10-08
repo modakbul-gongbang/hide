@@ -140,6 +140,7 @@ pub(crate) fn shown_pull_requests(
                     url: pull_request.url.clone(),
                     badge: pull_request.badge,
                     checks: pull_request.checks,
+                    review: pull_request.review,
                     head_branch: pull_request.head_branch.clone(),
                     closing_issues: pull_request.closing_issues.clone(),
                     live,

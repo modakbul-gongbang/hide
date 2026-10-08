@@ -3,7 +3,8 @@
 Hide's core owns agent registration, spawning and lineage, the single mailbox and inactivity watches for local and connected device agents.
 This guide is the public operating contract.
 Approved implementation contracts and run state stay in the private local harness.
-Human Inbox UI, relay/escalate, authority proof and automatic draft clearing remain follow-up work.
+Human Inbox UI, relay/escalate commands, authority proof and automatic draft clearing remain follow-up work.
+Derived UI escalation is separate: the core maps the existing delivery and watch facts to the six causes in [status-model.md](status-model.md#delegated-escalation), without changing delivery clocks, retries, authority or the mailbox protocol.
 
 ## Commands and caller identity
 

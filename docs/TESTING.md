@@ -303,6 +303,7 @@ Its tests share a process with the other modules' under `cargo test`, so a test 
    A program a test copies or writes and then runs inside a product deadline therefore pays that line inside the deadline, and under load it outgrew the hook's budget and the kit's 5 s deadlines (issue 813).
    In `hide-platform`, `hide-agent-hooks` and `hide-kit` a stand-in comes from `hide-platform/tests/it/stand_ins.rs`: `program(at, body)` puts at `at` a hard link to one read-only file per body beside the build's test binaries, started once per process before the test gets it, and `place` does the same for the helper cargo built.
    A body is fixed text and finds its test's files from `HOME` (`${HOME%/*}` for the folder around it), never from a path written into it, because each distinct body is one more file kept for the build.
+   A program checked into the repository, such as `hide-agent-hooks/tests/fixtures/fake-codex.py`, is a new file in every checkout too, so a test that runs it under a deadline makes it ready first with `stand_ins::ready` (issue 824).
 9. **Retries are a classification.**
    CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
    `nextest` does not run doc tests; the workspace has none that runs today, and a runnable one needs its own `cargo test --doc` step.

@@ -193,14 +193,20 @@ async function baseline(root, args) {
       return {...frame, png: `png/${frame.referenceNode ?? frame.node}.png`, height: size.height / PIXEL_RATIO};
     });
     const head = execFileSync('git', ['rev-parse', 'HEAD'], {cwd: root, encoding: 'utf8'}).trim();
-    const dirty = execFileSync('git', ['status', '--porcelain', '--', path.relative(root, from)], {cwd: root, encoding: 'utf8'}).trim() !== '';
+    const relativeSource = path.relative(root, from);
+    const inRepository = relativeSource !== '..' && !relativeSource.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeSource);
+    // An approved proposal may belong to another checkout. Its bytes are
+    // sealed below; this checkout cannot attest to that file's Git state.
+    const dirty = inRepository
+      ? execFileSync('git', ['status', '--porcelain', '--', relativeSource], {cwd: root, encoding: 'utf8'}).trim() !== ''
+      : null;
     const manifest = {
       schema: SCHEMA,
       name,
       createdAt: new Date().toISOString(),
       target: options.target,
       approval: {kind: options.approval, reference: options.reference.trim()},
-      source: {file: path.relative(root, from), gitHead: head, uncommittedChanges: dirty, sha256: sha256(from)},
+      source: {file: inRepository ? relativeSource : from, gitHead: inRepository ? head : null, uncommittedChanges: dirty, sha256: sha256(from)},
       pen: version,
       document: path.basename(from),
       pixelRatio: PIXEL_RATIO,
@@ -244,7 +250,7 @@ function show(args) {
   if (!directory || extra.length) throw new UsageError('show takes one bundle directory');
   const {manifest, problems} = readBundle(path.resolve(directory));
   console.log(`${manifest.name}: ${manifest.target}, ${manifest.approval.kind} (${manifest.approval.reference})`);
-  console.log(`From ${manifest.source.file} at ${manifest.source.gitHead.slice(0, 12)}${manifest.source.uncommittedChanges ? ' with uncommitted changes' : ''}, ${manifest.pen}, ${manifest.createdAt}`);
+  console.log(`From ${manifest.source.file} at ${(manifest.source.gitHead === null ? "unversioned design" : manifest.source.gitHead.slice(0, 12))}${manifest.source.uncommittedChanges ? ' with uncommitted changes' : ''}, ${manifest.pen}, ${manifest.createdAt}`);
   for (const frame of manifest.frames) console.log(`Frame ${frame.node}: ${frame.theme}, ${frame.width}px, scale ${frame.scale}, ${frame.content} content, ${frame.state} -> ${frame.png}`);
   console.log(`Rules: ${JSON.stringify(manifest.rules)}`);
   console.log(problems.length ? `Integrity: ${problems.join('; ')}` : 'Integrity: every file matches its hash');
@@ -291,9 +297,10 @@ async function enterState(page, state, target) {
     await page.keyboard.press('Shift');
     await page.locator('nav[data-sidebar] [data-agent-open="a1"]').focus();
   }
-  if (state === 'folded-parent') await page.locator('nav[data-sidebar] [data-agent-tree-toggle="a1"]').click();
   if (state === 'checkout-closed') await page.locator('nav[data-sidebar] [data-checkout-toggle="herdr-ide:main"]').click();
-  if (state === 'folded-parent' || state === 'checkout-closed') await page.mouse.move(0, 0);
+  if (state === 'checkout-closed') await page.mouse.move(0, 0);
+  if (state === 'children') await page.locator('[data-descendant-badge]').first().click();
+  if (state === 'resolved') await page.locator('[data-session-group=resolved_today] [data-session-focus=group]').click();
   if (state === 'server-picker') await page.getByRole('button', {name:'Open server', exact:true}).click();
   // The Factory screen's other views, and the states a target's scene sets up from its address.
   if (['board', 'graph', 'sizes', ...(target.urlStates ?? [])].includes(state)) {
@@ -580,7 +587,7 @@ function markdown(report, root) {
   const lines = [];
   lines.push(`# Design review: ${report.target} - ${report.status}`, '');
   lines.push(`Checkout ${report.gitHead.slice(0, 12)}${report.uncommittedChanges ? ' with uncommitted changes' : ''}, ${report.createdAt}.`);
-  lines.push(`Baseline ${report.baseline.name}: ${report.baseline.approval.kind === 'user' ? 'chosen by the operator' : 'delegated proposal, not user-approved'} (${report.baseline.approval.reference}), from ${report.baseline.source.file} at ${report.baseline.source.gitHead.slice(0, 12)}.`, '');
+  lines.push(`Baseline ${report.baseline.name}: ${report.baseline.approval.kind === 'user' ? 'chosen by the operator' : 'delegated proposal, not user-approved'} (${report.baseline.approval.reference}), from ${report.baseline.source.file} at ${(report.baseline.source.gitHead === null ? "unversioned design" : report.baseline.source.gitHead.slice(0, 12))}.`, '');
   lines.push('## Automated facts', '');
   lines.push(`- Static design contract: \`${report.static.command}\` exit ${report.static.exitCode}.`);
   lines.push(`- Current Pen: ${report.pen.status}${report.pen.reason ? ` (${report.pen.reason})` : ''}${report.pen.status !== 'RENDERED' ? '' : report.pen.changedSinceBaseline === null ? `; ${report.pen.file}, while the baseline was made from ${report.baseline.source.file}` : report.pen.changedSinceBaseline ? '; the Pen file changed since the baseline' : '; the Pen file is the baseline\'s'}.`);

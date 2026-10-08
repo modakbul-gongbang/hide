@@ -176,6 +176,7 @@ pub fn apply_lineage(
     let mut ancestry = Vec::with_capacity(agents.len());
     let mut descendant_counts =
         vec![crate::model::DescendantCountsSnapshot::default(); agents.len()];
+    let mut direct_child_counts = descendant_counts.clone();
     let mut descendant_signals = vec![BTreeSet::new(); agents.len()];
     for (index, agent) in agents.iter().enumerate() {
         let mut ancestors = Vec::new();
@@ -185,6 +186,9 @@ pub fn apply_lineage(
             root = parent;
         }
         let state = descendant_state(agent);
+        if let Some(parent) = parents[index] {
+            state.count_into(&mut direct_child_counts[parent]);
+        }
         let signals = descendant_signals_of(agent);
         for ancestor in &ancestors {
             state.count_into(&mut descendant_counts[*ancestor]);
@@ -268,6 +272,7 @@ pub fn apply_lineage(
         // the operator has it in the expanded set (PRD D-06).
         agent.lineage_collapsed = !expanded.contains(&agent.pane_id);
         agent.descendant_counts = descendant_counts[index];
+        agent.direct_child_counts = direct_child_counts[index];
         agent.waiting_on_descendants =
             depth == 0 && quiet_itself(agent) && descendants_busy(&descendant_counts[index]);
         agent.descendant_signals = std::mem::take(&mut descendant_signals[index]);

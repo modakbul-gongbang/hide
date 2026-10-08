@@ -949,6 +949,10 @@ pub struct DeviceTestStageSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SidebarAgentSnapshot {
     pub state: crate::agent_state::RowState,
+    pub resolved: Option<crate::agent_state::sessions::Resolution>,
+    pub resolved_today: bool,
+    pub escalation: Option<crate::agent_state::escalation::Escalation>,
+    pub raised_children: Vec<crate::agent_state::escalation::RaisedChild>,
     pub id: String,
     /// The name someone gave the agent in Herdr (`hide agent spawn --name`,
     /// `herdr agent rename`), which ⌘K also finds it by; absent when it has
@@ -1102,6 +1106,8 @@ pub struct SidebarAgentSnapshot {
     /// direct children, because a grandchild's question is still this row's
     /// to answer (PRD B3, B4, D-05).
     pub descendant_counts: DescendantCountsSnapshot,
+    /// Facts for the common direct-child popover, independent of tree folding.
+    pub direct_child_counts: DescendantCountsSnapshot,
     /// A lineage root that is itself quiet - no demand of its own, stopped,
     /// idle or done - while at least one live descendant is working or holds
     /// a question, approval or error. The row is waiting on its children, so
@@ -1237,6 +1243,7 @@ pub struct WorkspaceSnapshot {
     /// rows stay in `checkouts`, which remains the authority for focus,
     /// search, tab state, and every non-sidebar consumer.
     pub inactive_checkouts: InactiveCheckoutGroupSnapshot,
+    pub session_folds: SessionCheckoutFolds,
     /// What `Remove project…` would close, counted by the core so the
     /// confirmation names the same panes the close will send to Herdr
     /// (D-10). Both are zero for a project Herdr has no pane in, which is
@@ -1309,6 +1316,15 @@ pub struct InactiveCheckoutGroupSnapshot {
     pub expanded: bool,
     /// IDs in the same recent-activity order as `WorkspaceSnapshot.checkouts`.
     pub checkout_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct SessionCheckoutFolds {
+    pub empty: Vec<String>,
+    pub cleanup: Vec<String>,
+    pub empty_open: bool,
+    pub cleanup_open: bool,
+    pub open_prs: usize,
 }
 
 /// Agent counts and representative after Hide applies its pane-level read records.
@@ -2147,6 +2163,7 @@ impl PaneLayoutNodeSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TerminalSnapshot {
+    pub headers: BTreeMap<String, crate::agent_state::header::Header>,
     pub pane_id: Option<String>,
     pub sequence: u64,
     pub chunks: Vec<TerminalChunk>,
@@ -2571,7 +2588,7 @@ pub struct EditorSaveSnapshot {
     pub message: Option<String>,
 }
 
-/// The right panel's four persisted sections.
+/// The right panel's persisted sections. AgentSessions never opens Memory.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RightPanelSection {
@@ -2580,6 +2597,7 @@ pub enum RightPanelSection {
     Overview,
     Explorer,
     Changes,
+    AgentSessions,
     Sessions,
 }
 
@@ -2589,6 +2607,7 @@ impl RightPanelSection {
             "overview" | "git" => Some(Self::Overview),
             "explorer" => Some(Self::Explorer),
             "changes" => Some(Self::Changes),
+            "agent_sessions" => Some(Self::AgentSessions),
             "sessions" => Some(Self::Sessions),
             _ => None,
         }
@@ -2621,6 +2640,16 @@ fn serialize_interface_language<S: serde::Serializer>(
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UiStateSnapshot {
+    #[serde(default)]
+    pub resolved_sessions: BTreeMap<String, crate::agent_state::sessions::Resolution>,
+    /// A new input starts work beyond any PR that had already settled.
+    #[serde(default)]
+    pub session_resolution_inputs: BTreeMap<String, u64>,
+    /// Sessions in a checkout start open; older expansion choices are ignored.
+    #[serde(default)]
+    pub session_collapsed_checkout_ids: Vec<String>,
+    #[serde(default)]
+    pub session_open_folds: Vec<String>,
     #[serde(default = "default_panel_visible")]
     pub left_sidebar_visible: bool,
     /// The device rail on the sidebar's left. It is shown by default, and an
@@ -3168,6 +3197,10 @@ pub struct WorktreeNameSnapshot {
 impl Default for UiStateSnapshot {
     fn default() -> Self {
         Self {
+            resolved_sessions: BTreeMap::new(),
+            session_resolution_inputs: BTreeMap::new(),
+            session_collapsed_checkout_ids: Vec::new(),
+            session_open_folds: Vec::new(),
             left_sidebar_visible: true,
             device_rail_visible: true,
             right_panel_visible: true,
@@ -4369,6 +4402,7 @@ impl Snapshot {
             },
             pane_layouts: Vec::new(),
             terminal: TerminalSnapshot {
+                headers: BTreeMap::new(),
                 pane_id: None,
                 sequence: 0,
                 chunks: Vec::new(),
@@ -4499,6 +4533,7 @@ pub struct RestSections {
     pub terminal_exit_code: Option<i32>,
     pub terminal_panes: Vec<TerminalPaneSnapshot>,
     pub terminal_input_requests: Vec<InputRequestSnapshot>,
+    pub terminal_headers: BTreeMap<String, crate::agent_state::header::Header>,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
     pub status: StatusSnapshot,
@@ -4537,6 +4572,7 @@ impl RestSections {
             terminal_exit_code: snapshot.terminal.exit_code,
             terminal_panes: snapshot.terminal.panes.clone(),
             terminal_input_requests: snapshot.terminal.input_requests.clone(),
+            terminal_headers: snapshot.terminal.headers.clone(),
             ui_state: snapshot.ui_state.clone(),
             ime: snapshot.ime.clone(),
             status: snapshot.status.clone(),
@@ -4576,6 +4612,7 @@ impl RestSections {
             && self.terminal_exit_code == snapshot.terminal.exit_code
             && self.terminal_panes == snapshot.terminal.panes
             && self.terminal_input_requests == snapshot.terminal.input_requests
+            && self.terminal_headers == snapshot.terminal.headers
             && self.ui_state == snapshot.ui_state
             && self.ime == snapshot.ime
             && self.status == snapshot.status
@@ -4779,6 +4816,7 @@ impl<'a> RestWire<'a> {
                 exit_code: rest.terminal_exit_code,
                 panes: &rest.terminal_panes,
                 input_requests: &rest.terminal_input_requests,
+                headers: &rest.terminal_headers,
             },
             ui_state: &rest.ui_state,
             ime: &rest.ime,
@@ -4799,6 +4837,7 @@ pub struct TerminalMetaWire<'a> {
     pub exit_code: Option<i32>,
     pub panes: &'a [TerminalPaneSnapshot],
     pub input_requests: &'a [InputRequestSnapshot],
+    pub headers: &'a BTreeMap<String, crate::agent_state::header::Header>,
 }
 
 #[cfg(test)]
@@ -5041,6 +5080,7 @@ mod wire_enum_tests {
             RightPanelSection::Overview,
             RightPanelSection::Explorer,
             RightPanelSection::Changes,
+            RightPanelSection::AgentSessions,
             RightPanelSection::Sessions,
         ];
         for variant in sections {
@@ -5048,11 +5088,56 @@ mod wire_enum_tests {
                 RightPanelSection::Overview
                 | RightPanelSection::Explorer
                 | RightPanelSection::Changes
+                | RightPanelSection::AgentSessions
                 | RightPanelSection::Sessions => {}
             }
         }
         assert_wire(&contract, "right_panel_section", &sections);
         checked.insert("right_panel_section");
+
+        use crate::agent_state::sessions::{Group, Tag};
+        let session_groups = crate::agent_state::sessions::GROUPS;
+        for group in session_groups {
+            match group {
+                Group::MyTurn
+                | Group::ReviewMerge
+                | Group::InProgress
+                | Group::Resting
+                | Group::ResolvedToday => {}
+            }
+        }
+        assert_wire(&contract, "session_group", &session_groups);
+        checked.insert("session_group");
+        let session_tags = [
+            Tag::Answer,
+            Tag::Approval,
+            Tag::Fix,
+            Tag::Review,
+            Tag::Merge,
+            Tag::Stopped,
+            Tag::Result,
+            Tag::Working,
+            Tag::CiWait,
+            Tag::Waiting,
+            Tag::Idle,
+        ];
+        for tag in session_tags {
+            match tag {
+                Tag::Answer
+                | Tag::Approval
+                | Tag::Fix
+                | Tag::Review
+                | Tag::Merge
+                | Tag::Stopped
+                | Tag::Result
+                | Tag::Working
+                | Tag::CiWait
+                | Tag::Waiting
+                | Tag::Idle => {}
+            }
+        }
+        assert_wire(&contract, "session_tag", &session_tags);
+        checked.insert("session_tag");
 
         let strip_kinds = [
             StripTabKind::Herdr,

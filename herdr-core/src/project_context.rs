@@ -156,7 +156,13 @@ pub(crate) fn refresh_inactive_groups(
     let before_checkouts = navigator
         .workspaces
         .iter()
-        .map(|workspace| (workspace.id.clone(), workspace.inactive_checkouts.clone()))
+        .map(|workspace| {
+            (
+                workspace.id.clone(),
+                workspace.inactive_checkouts.clone(),
+                workspace.session_folds.clone(),
+            )
+        })
         .collect::<Vec<_>>();
     let by_pane: HashMap<_, _> = navigator
         .agents
@@ -190,6 +196,11 @@ pub(crate) fn refresh_inactive_groups(
             expanded: expanded_checkout_projects.contains(workspace.path.as_str()),
             checkout_ids: inactive_checkout_ids,
         };
+        refresh_session_folds(workspace, &by_pane, ui_state, focused_checkout_id);
+        workspace
+            .inactive_checkouts
+            .checkout_ids
+            .retain(|id| !workspace.session_folds.cleanup.contains(id));
 
         // A pinned project is exempt from the device fold: the operator asked
         // to see it whatever its activity (D-04). Its own checkouts still
@@ -217,13 +228,67 @@ pub(crate) fn refresh_inactive_groups(
     navigator.inactive_projects = inactive_projects;
 
     navigator.inactive_projects != before_projects
-        || navigator
-            .workspaces
+        || navigator.workspaces.iter().zip(before_checkouts).any(
+            |(workspace, (id, group, session_folds))| {
+                workspace.id != id
+                    || workspace.inactive_checkouts != group
+                    || workspace.session_folds != session_folds
+            },
+        )
+}
+
+pub(crate) fn refresh_session_folds(
+    workspace: &mut WorkspaceSnapshot,
+    agents: &HashMap<&str, &SidebarAgentSnapshot>,
+    ui_state: &UiStateSnapshot,
+    focused_checkout_id: Option<&str>,
+) {
+    let mut folds = crate::model::SessionCheckoutFolds {
+        empty_open: ui_state.session_open_folds.contains(&workspace.id),
+        cleanup_open: ui_state
+            .session_open_folds
+            .contains(&format!("cleanup/{}", workspace.device_id)),
+        ..Default::default()
+    };
+    for checkout in &workspace.checkouts {
+        let subagent = std::path::Path::new(&checkout.path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("worktree-agent-"));
+        if !checkout.exists || subagent {
+            folds.cleanup.push(checkout.id.clone());
+            continue;
+        }
+        let live = checkout
+            .tabs
             .iter()
-            .zip(before_checkouts)
-            .any(|(workspace, (id, group))| {
-                workspace.id != id || workspace.inactive_checkouts != group
-            })
+            .flat_map(|tab| &tab.panes)
+            .filter_map(|pane| agents.get(pane.id.as_str()))
+            .any(|agent| agent.resolved.is_none());
+        if checkout.is_worktree
+            && !checkout.is_primary
+            && !workspace
+                .inactive_checkouts
+                .checkout_ids
+                .contains(&checkout.id)
+            && !live
+            && !checkout.dirty
+            && checkout
+                .unpushed
+                .as_ref()
+                .is_none_or(|value| value.count == 0)
+            && focused_checkout_id != Some(checkout.id.as_str())
+        {
+            folds.empty.push(checkout.id.clone());
+            folds.open_prs += usize::from(
+                checkout
+                    .pull_request
+                    .as_ref()
+                    .is_some_and(|pr| !pr.badge.is_settled()),
+            );
+        }
+    }
+    workspace.session_folds = folds;
 }
 
 pub(crate) fn checkout_panes(
@@ -308,6 +373,7 @@ mod tests {
             pinned: false,
             is_home: false,
             inactive_checkouts: InactiveCheckoutGroupSnapshot::default(),
+            session_folds: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
             cleanup: None,
@@ -323,6 +389,7 @@ mod tests {
             agent_scope: Default::default(),
             id: id.to_owned(),
             is_primary: true,
+            exists: true,
             worktree: last_commit_unix_seconds.map(|seconds| WorktreeSnapshot {
                 last_commit_unix_seconds: Some(seconds),
                 ..Default::default()
@@ -407,6 +474,7 @@ mod tests {
             label: id.to_owned(),
             path: format!("/fixture/{workspace_id}/{id}"),
             is_worktree: true,
+            exists: true,
             worktree: Some(WorktreeSnapshot {
                 last_commit_unix_seconds,
                 ..Default::default()
@@ -518,12 +586,10 @@ mod tests {
         assert_eq!(projects[0].last_activity_unix_ms, Some(3_000_000));
     }
 
-    /// B2, B6, B9, B16. Landed work, settled PR, and the seven-day boundary
-    /// decide membership. The primary stays outside its project's checkout
-    /// fold, a checkout with no known activity is not guessed stale, and one
-    /// Git reads as merged only because it has no commits of its own stays.
+    /// Session B7 preserves existing inactive membership. Only the remaining
+    /// agentless worktrees enter the new fold, shown above Inactive.
     #[test]
-    fn inactive_checkouts_cover_settled_stale_boundary_primary_and_unknown_activity() {
+    fn agentless_worktrees_preserve_legacy_inactivity_membership() {
         let now_ms = 20 * 24 * 60 * 60 * 1_000;
         let old_seconds = (now_ms - (7 * 24 + 1) * 60 * 60 * 1_000) / 1_000;
         let recent_seconds = (now_ms - (6 * 24 + 23) * 60 * 60 * 1_000) / 1_000;
@@ -552,6 +618,10 @@ mod tests {
             now_ms
         ));
 
+        assert_eq!(
+            navigator.workspaces[0].session_folds.empty,
+            ["untouched", "recent", "unknown"]
+        );
         assert_eq!(
             navigator.workspaces[0].inactive_checkouts.checkout_ids,
             ["merged", "stale", "closed"]
@@ -600,7 +670,7 @@ mod tests {
     /// B3, B7. Every live-work exception wins over a settled branch, including
     /// the operator's current selection.
     #[test]
-    fn live_work_and_focus_exceptions_stay_visible() {
+    fn dirty_unpushed_and_focused_checkouts_stay_out_of_the_agentless_fold() {
         let now_ms = 20 * 24 * 60 * 60 * 1_000;
         let mut project = project("alpha", "local", None, &[]);
         let ids = [
@@ -619,6 +689,8 @@ mod tests {
         }
         project.checkouts[1].agent_summary.working = 1;
         project.checkouts[2].agent_summary.needs_you = 1;
+        project.checkouts[1].tabs = checkout("working", None, &["working-pane"]).tabs;
+        project.checkouts[2].tabs = checkout("needs-you", None, &["blocked-pane"]).tabs;
         project.checkouts[3].dirty = true;
         project.checkouts[4].unpushed = Some(UnpushedSnapshot {
             remote: "origin".to_owned(),
@@ -626,9 +698,14 @@ mod tests {
         });
         let mut navigator = navigator(vec![project]);
         navigator.focused_checkout_id = Some("focused".to_owned());
+        navigator.agents = agents(json!([
+            {"pane_id": "working-pane", "agent_status": "working", "state_change_seq": 1},
+            {"pane_id": "blocked-pane", "agent_status": "blocked", "state_change_seq": 1}
+        ]));
 
         refresh_inactive_groups(&mut navigator, &UiStateSnapshot::default(), now_ms);
 
+        assert!(navigator.workspaces[0].session_folds.empty.is_empty());
         assert_eq!(
             navigator.workspaces[0].inactive_checkouts.checkout_ids,
             ["control"]
@@ -754,6 +831,7 @@ mod tests {
 
         assert_eq!(navigator.inactive_projects.len(), 1);
         assert_eq!(navigator.inactive_projects[0].project_ids, ["folded"]);
+        assert!(navigator.workspaces[0].session_folds.empty.is_empty());
         assert_eq!(
             navigator.workspaces[0].inactive_checkouts.checkout_ids,
             ["old-topic"]

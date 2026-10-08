@@ -28,10 +28,6 @@
       "lines": 184,
       "expect": 44
     },
-    "keys.spec.ts::cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier": {
-      "lines": 121,
-      "expect": 19
-    },
     "remote-workspace.spec.ts::remote pane CLI reaches its own Workspace over SSH and leaves the local Workspace in front": {
       "lines": 722,
       "expect": 165

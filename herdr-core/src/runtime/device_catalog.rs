@@ -43,6 +43,19 @@ impl Runtime {
         self.judge_device_pane_children(target, &mut session);
         self.agent_scope_cache
             .restore_projects(&mut session.workspaces);
+        let agents = session
+            .agents
+            .iter()
+            .map(|agent| (agent.pane_id.as_str(), agent))
+            .collect();
+        for workspace in &mut session.workspaces {
+            crate::project_context::refresh_session_folds(
+                workspace,
+                &agents,
+                &self.snapshot.ui_state,
+                session.focused_checkout_id.as_deref(),
+            );
+        }
         session
     }
 

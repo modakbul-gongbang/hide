@@ -1,4 +1,4 @@
-import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SnapshotRest } from "./snapshot";
+import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SessionGroup, SnapshotRest } from "./snapshot";
 
 /** Core-owned membership, status counts and display order for one scope. */
 export type AgentRef = { pane_id: string; occurrence: number };
@@ -6,6 +6,11 @@ export type AgentRef = { pane_id: string; occurrence: number };
 export type RowWork = { pull: number | null; more: number; issues: string[]; issue_chips: string[] };
 
 export type AgentScope = {
+  sessions: {
+    closed_prs: { project_id: string; number: number; tag: "review" | "merge" }[];
+    counts: Record<SessionGroup, number>;
+    groups: { group: SessionGroup; members: number[] }[];
+  };
   overview_needs_you: number;
   work: Record<string, RowWork>;
   has_working: boolean;
@@ -45,6 +50,7 @@ export type AgentScope = {
     badge_children: string[];
   }>;
   tree: AgentTreeScope;
+  sidebar_tree: AgentTreeScope;
   global_tree: AgentTreeScope;
   requests: {
     rows: { member: number; children: string[] }[];

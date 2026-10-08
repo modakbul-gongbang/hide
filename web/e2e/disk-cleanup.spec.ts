@@ -151,7 +151,6 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     const sent = countSent(page);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await openProjectOverview(page, "repo");
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
 
@@ -311,7 +310,6 @@ test("a checkout with a working agent cannot be ticked, and an open pane alone d
     daemon = await startHided(herdr, "disk-cleanup-busy");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await openProjectOverview(page, "repo");
     await page.locator('[data-disk-entrance="true"]').click({ timeout: 30_000 });
     const sheet = page.locator("[data-disk-sheet]");
@@ -377,7 +375,6 @@ test("a worktree left with only a finished agent's pane is chosen and its pane c
     daemon = await startHided(herdr, "disk-cleanup-panes");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
-    await page.locator('[data-sidebar-mode="projects"]').click();
     await openProjectOverview(page, "repo");
     const sheet = page.locator("[data-disk-sheet]");
     const open = async () => {
