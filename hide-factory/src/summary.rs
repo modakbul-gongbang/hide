@@ -2,7 +2,7 @@
 //! the stage 2 screens draw (D-50). Every number in it is derived here from
 //! the store's Tasks (design #4, #10); the shell computes nothing.
 //!
-//! This type is a contract with stage 2: add fields, never rename or remove.
+//! Board columns follow movement; engine lifecycle states remain unchanged.
 
 use std::collections::BTreeMap;
 
@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use crate::dag;
 use crate::model::{
     Attachment, AttemptOutcome, AttemptStage, Column, DAY_MS, DecisionRecord, Discovery, EnvHold,
-    Factory, Gate, MergeMode, PullRequest, Question, QuestionKind, SourceKind, StopReason, Task,
-    TaskState, UnixMs, Verification,
+    Factory, Gate, MergeMode, PullRequest, Question, QuestionKind, Runtime, SourceKind, StopReason,
+    Task, TaskState, UnixMs, Verification,
 };
 
 /// What a card waits for, as a code beside `waiting_for`'s words, so a
@@ -116,9 +116,9 @@ pub struct FactoryView {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Flow {
-    pub drafting: u32,
-    pub waiting: u32,
-    pub running: u32,
+    pub before: u32,
+    pub moving: u32,
+    pub stuck: u32,
     pub done_today: u32,
 }
 
@@ -136,6 +136,16 @@ pub struct CardView {
     pub display_id: String,
     pub column: Option<String>,
     pub title: String,
+    pub summary: String,
+    pub issue: Option<String>,
+    pub issue_url: Option<String>,
+    pub pr: Option<PullRequest>,
+    pub worker_runtime: Option<String>,
+    pub resume_at: Option<UnixMs>,
+    /// `person` or `other`, only in the stuck column.
+    pub waiting_group: Option<String>,
+    /// Waiting, work, verify, merge, or all complete (0..=4).
+    pub stage: u8,
     pub state: String,
     pub state_label: String,
     pub needs_person: bool,
@@ -219,6 +229,7 @@ pub fn build(
     tasks: &[&Task],
     now: UnixMs,
     utc_offset_ms: i64,
+    runtime_holds: &BTreeMap<Runtime, UnixMs>,
 ) -> FactorySummary {
     let mut summary = FactorySummary::default();
     for factory in factories {
@@ -228,7 +239,14 @@ pub fn build(
             .map(|task| (task.id.clone(), (*task).clone()))
             .collect();
         let items = inbox_items(factory, &mine, now);
-        let view = factory_view(factory, &mine, items.len() as u32, now, utc_offset_ms);
+        let view = factory_view(
+            factory,
+            &mine,
+            items.len() as u32,
+            now,
+            utc_offset_ms,
+            runtime_holds,
+        );
         summary.my_turn += view.my_turn;
         summary.inbox.extend(items);
         summary.factories.push(view);
@@ -253,17 +271,28 @@ fn factory_view(
     my_turn: u32,
     now: UnixMs,
     utc_offset_ms: i64,
+    runtime_holds: &BTreeMap<Runtime, UnixMs>,
 ) -> FactoryView {
     let today = local_day(now, utc_offset_ms);
     let mut flow = Flow::default();
     let mut columns: BTreeMap<Column, Vec<(&Task, CardView)>> = BTreeMap::new();
     let mut cancelled = Vec::new();
     for task in tasks.values() {
-        let card = card_view(factory, task, tasks, now);
-        match task.state.column() {
-            Some(Column::Drafting) => flow.drafting += 1,
-            Some(Column::Waiting) => flow.waiting += 1,
-            Some(Column::Running) => flow.running += 1,
+        let mut card = card_view(factory, task, tasks, now);
+        if task.state == TaskState::Waiting {
+            let runtime = task
+                .worker
+                .as_ref()
+                .map_or_else(|| task.runtime(factory), |worker| worker.runtime);
+            card.resume_at = runtime_holds
+                .get(&runtime)
+                .copied()
+                .filter(|until| *until > now);
+        }
+        match board_column(task) {
+            Some(Column::Before) => flow.before += 1,
+            Some(Column::Moving) => flow.moving += 1,
+            Some(Column::Stuck) => flow.stuck += 1,
             Some(Column::Done)
                 if task
                     .done_at
@@ -274,7 +303,7 @@ fn factory_view(
             Some(Column::Done) => {}
             None => {}
         }
-        match task.state.column() {
+        match board_column(task) {
             Some(column) => columns.entry(column).or_default().push((task, card)),
             None => cancelled.push(card),
         }
@@ -285,13 +314,20 @@ fn factory_view(
             let mut cards = columns.remove(&column).unwrap_or_default();
             // Person cards first, longest waiting first; then priority, then age (D-47).
             cards.sort_by(|(a, a_view), (b, b_view)| {
-                b_view.needs_person.cmp(&a_view.needs_person).then_with(|| {
-                    if a_view.needs_person {
-                        a.state_since.cmp(&b.state_since)
-                    } else {
-                        dag::slot_order(a, b)
-                    }
-                })
+                let a_person =
+                    a_view.waiting_group.as_deref() == Some("person") || a_view.needs_person;
+                let b_person =
+                    b_view.waiting_group.as_deref() == Some("person") || b_view.needs_person;
+                b_person
+                    .cmp(&a_person)
+                    .then((b.state == TaskState::Stopped).cmp(&(a.state == TaskState::Stopped)))
+                    .then_with(|| {
+                        if a_person {
+                            a.state_since.cmp(&b.state_since)
+                        } else {
+                            dag::slot_order(a, b)
+                        }
+                    })
             });
             ColumnView {
                 column: column.as_str().to_owned(),
@@ -356,6 +392,42 @@ fn factory_view(
     }
 }
 
+fn has_run(task: &Task) -> bool {
+    task.worker.is_some() || !task.attempts.is_empty() || task.last_report_at.is_some()
+}
+
+fn board_column(task: &Task) -> Option<Column> {
+    match task.state {
+        TaskState::Drafting => Some(Column::Before),
+        TaskState::Waiting if !has_run(task) => Some(Column::Before),
+        TaskState::Running | TaskState::Verifying | TaskState::Relanding | TaskState::Landed => {
+            Some(Column::Moving)
+        }
+        TaskState::Done => Some(Column::Done),
+        TaskState::Cancelled => None,
+        _ => Some(Column::Stuck),
+    }
+}
+
+fn board_stage(task: &Task) -> u8 {
+    match task.state {
+        TaskState::Drafting => 0,
+        TaskState::Waiting if !has_run(task) => 0,
+        TaskState::Verifying => 2,
+        TaskState::Stopped
+            if matches!(
+                task.stop,
+                Some(StopReason::VerifyFailed | StopReason::PublishRefused)
+            ) =>
+        {
+            2
+        }
+        TaskState::MergeWaiting | TaskState::Landed | TaskState::Outside => 3,
+        TaskState::Done => 4,
+        _ => 1,
+    }
+}
+
 pub fn card_view(
     factory: &Factory,
     task: &Task,
@@ -416,8 +488,31 @@ pub fn card_view(
     CardView {
         task: task.id.clone(),
         display_id: task.display_id(),
-        column: task.state.column().map(|column| column.as_str().to_owned()),
+        column: board_column(task).map(|column| column.as_str().to_owned()),
         title: task.card.title.clone(),
+        summary: task.card.summary(),
+        issue: task.issue.as_ref().map(|issue| issue.display()),
+        issue_url: match (&task.issue, &factory.repo) {
+            (Some(crate::model::IssueRef::Github { number }), Some(repo)) => {
+                Some(format!("https://github.com/{repo}/issues/{number}"))
+            }
+            _ => None,
+        },
+        pr: task.pr.clone(),
+        worker_runtime: task
+            .worker
+            .as_ref()
+            .map(|worker| worker.runtime.as_str().to_owned()),
+        resume_at: None,
+        waiting_group: (board_column(task) == Some(Column::Stuck)).then(|| {
+            if task.needs_person() || task.state == TaskState::Paused {
+                "person"
+            } else {
+                "other"
+            }
+            .to_owned()
+        }),
+        stage: board_stage(task),
         state: task.state.as_str().to_owned(),
         state_label: stop
             .map(|reason| format!("{} ({})", task.state.label(), reason.label()))

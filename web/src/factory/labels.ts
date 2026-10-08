@@ -23,9 +23,9 @@ export const STATE_LABEL: Record<TaskState, MessageKey> = {
 };
 
 export const COLUMN_LABEL: Record<Column, MessageKey> = {
-  drafting: "factory.column.drafting",
-  waiting: "factory.column.waiting",
-  running: "factory.column.running",
+  before: "factory.column.before",
+  moving: "factory.column.moving",
+  stuck: "factory.column.stuck",
   done: "factory.column.done",
 };
 

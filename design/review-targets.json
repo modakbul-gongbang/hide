@@ -296,7 +296,7 @@
     },
     "states": {
       "rest": "내 차례 at rest: the first item open with its suggestion picked, nothing hovered or focused.",
-      "board": "보드: four columns with the person-turn cards in the warning border on top and old completions folded.",
+      "board": "보드: four lanes by movement, 시작 전 · 진행 중 · 멈춤 (나를 기다림, 다른 걸 기다림) · 완료, with the narrow lanes drawing their cards small and old completions folded.",
       "graph": "그래프: layered Tasks with arrows, none for a dependency a longer path implies, and the unrelated Tasks below.",
       "task": "Task page of the running Task with its chain, card fields, progress and decision record."
     },
@@ -310,6 +310,93 @@
       "Does the top item of 내 차례 read as one decision: the answer on the button, the result beside it, the default line below, and 자세히 as the way out?",
       "Does the person-turn card read as the person's turn in the warning border without a separate column, on the board and in the graph?",
       "Long Korean titles and the long issue number: is a title still recognizable where the card or row cuts it, and does nothing overlap?"
+    ]
+  },
+  "factory-board": {
+    "description": "The Factory board by movement and the one card at three sizes (PRD factory-board-cards): the board window, the graph with small cards, and every kind of card at the small, normal and wide widths.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-factory",
+    "scene": "factory",
+    "selector": "[data-gallery-scene=\"factory\"]",
+    "measurement": "web/e2e/factory-geometry.mjs",
+    "frames": [
+      {
+        "node": "fx-board-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "board"
+      },
+      {
+        "node": "fx-board-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "board"
+      },
+      {
+        "node": "fx-graph-l",
+        "theme": "light",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "graph"
+      },
+      {
+        "node": "fx-graph-d",
+        "theme": "dark",
+        "width": 1440,
+        "scale": 1,
+        "content": "reference",
+        "state": "graph"
+      },
+      {
+        "node": "fx-sizes-l",
+        "theme": "light",
+        "width": 1232,
+        "scale": 1,
+        "content": "reference",
+        "state": "sizes"
+      },
+      {
+        "node": "fx-sizes-d",
+        "theme": "dark",
+        "width": 1232,
+        "scale": 1,
+        "content": "reference",
+        "state": "sizes"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        1440
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ]
+    },
+    "states": {
+      "board": "보드: four lanes by movement, 시작 전 · 진행 중 · 멈춤 (나를 기다림, 다른 걸 기다림) · 완료, with the narrow lanes drawing their cards small and old completions folded.",
+      "graph": "그래프: layered Tasks as small cards with arrows, none for a dependency a longer path implies, and the unrelated Tasks below.",
+      "sizes": "같은 카드, 세 크기: every kind of card (답 필요, 머지 대기, 멈춤, 실행 중, 하위 에이전트, 검증 중, 쉬는 중, 밖에서 진행, 시작 전, 완료) at 210, 300 and 470 px."
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Does the eye land on the title, the one colored state icon, the problem line and the left band first, with everything else small and gray?",
+      "Does each size drop the less important parts first: small keeps the numbers, logo, icon and a two-line title; normal adds the summary, bar, problem and one button; wide adds the second summary line, the state word with the worker mark, the other buttons and the ✦ line?",
+      "Is 멈춤 the one lane to look at, with 나를 기다림 above 다른 걸 기다림, and do the narrow 시작 전 and 완료 lanes read as quiet?",
+      "Does the hatched current cell read as stopped at that stage without a word, in Light and Dark?",
+      "Long Korean titles and long English identifiers: does each size cut them at its line count without overlap, breaking Korean between words rather than inside one?"
     ]
   }
 }

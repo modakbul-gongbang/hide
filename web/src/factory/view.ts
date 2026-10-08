@@ -24,8 +24,8 @@ export function inboxKey(item: Pick<InboxItem, "factory" | "task" | "question" |
 /** The flow bar's four counts over the shown Factories. */
 export function shownFlow(factories: readonly FactoryView[]): Flow {
   return factories.reduce<Flow>(
-    (sum, view) => ({ drafting: sum.drafting + view.flow.drafting, waiting: sum.waiting + view.flow.waiting, running: sum.running + view.flow.running, done_today: sum.done_today + view.flow.done_today }),
-    { drafting: 0, waiting: 0, running: 0, done_today: 0 },
+    (sum, view) => ({ before: sum.before + view.flow.before, moving: sum.moving + view.flow.moving, stuck: sum.stuck + view.flow.stuck, done_today: sum.done_today + view.flow.done_today }),
+    { before: 0, moving: 0, stuck: 0, done_today: 0 },
   );
 }
 

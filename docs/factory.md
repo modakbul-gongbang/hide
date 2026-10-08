@@ -521,7 +521,7 @@ Add --json to print the answer as JSON.
 | `answer` | Answers a question and records who relayed it. |
 | `ask`, `block`, `propose`, `done`, `decide` | A worker's reports on its own Task. |
 | `config`, `check` | Reads and sets settings, and adds a natural-language check. A check cannot be removed once added. |
-| `priority`, `dep`, `pause`, `resume`, `retry`, `merge`, `request-changes`, `cancel`, `revive`, `close` | A person's actions. `close` needs no Task in the board's running column. |
+| `priority`, `dep`, `pause`, `resume`, `retry`, `merge`, `request-changes`, `cancel`, `revive`, `close` | A person's actions. `close` needs no Task in an active lifecycle state (anything except drafting, waiting, done or cancelled). |
 
 Without `--project`, `add`, `config`, `check` and `close` use the only open Factory, and answer `factory_ambiguous` when there are several.
 A project path is made absolute by the CLI.
@@ -536,7 +536,8 @@ Common refusal reasons are `role_not_allowed`, `task_not_found`, `task_ambiguous
 
 `FactorySummary` and `TaskDetail` are the contract for any screen of the Factory, and `status`, `inbox` and `show --json` print them as they are.
 Every number in them is derived in `hide-factory/src/summary.rs` from the stored Tasks, and a screen computes nothing.
-Fields are added and never renamed or removed.
+The movement board replaces the former `drafting`/`waiting`/`running` column and flow names with `before`/`moving`/`stuck`; lifecycle state names stay unchanged.
+Persisted Tasks accept a missing card `summary` without migration.
 The engine's sentences in `state_label`, `waiting_for`, `result`, `remaining`, `gates` and `stop` have a code beside them, so a screen can say them in any language; the codes are listed under [Codes](#codes) and pinned by `every_summary_code_is_pinned` in `summary.rs`.
 An inbox item's `text` carries only its `kind`, and a question's own text, a split's piece count, a stop's detail and `TaskDetail.verification` have no code yet.
 
@@ -556,7 +557,7 @@ An inbox item's `text` carries only its `kind`, and a question's own text, a spl
 | `source` | `github` or `local`. |
 | `verification` | `ci`, `verify` or `none`. |
 | `closed` | Whether the Factory is closed. |
-| `flow` | `drafting`, `waiting`, `running` and `done_today` counts; `done_today` counts by the machine's local day, read through the clock port's UTC offset. |
+| `flow` | `before`, `moving`, `stuck` and `done_today` counts; `done_today` counts by the machine's local day, read through the clock port's UTC offset. |
 | `my_turn` | This Factory's inbox items. |
 | `columns` | The four board columns, each with its Task cards in order. |
 | `cancelled` | Cancelled Tasks, off the board. |
@@ -573,8 +574,15 @@ An inbox item's `text` carries only its `kind`, and a question's own text, a spl
 | Field | Meaning |
 | --- | --- |
 | `task`, `display_id` | The Task id, and the issue number once Ready. |
-| `column` | `drafting`, `waiting`, `running`, `done` or none. |
+| `column` | `before`, `moving`, `stuck`, `done` or none. |
 | `title` | The card title. |
+| `summary` | A single-line description, capped at 60 Unicode characters, from the optional persisted card summary or the first goal sentence without template headings or a repeated title. |
+| `issue`, `issue_url` | The real issue reference and its GitHub URL, absent before an issue exists; local references have no URL. |
+| `pr` | The current PR, including an outside PR closing the issue. |
+| `worker_runtime` | The worker's actual runtime, absent before a worker exists. |
+| `resume_at` | For a waiting Task, its worker runtime's engine usage-hold deadline, only while it is in the future. |
+| `waiting_group` | `person` for a stuck Task needing a person or paused; `other` for another stuck Task; otherwise absent. |
+| `stage` | 0 waiting, 1 work, 2 verification, 3 merge, 4 complete. |
 | `state`, `state_label` | The state id and its label, with the stop reason for a stopped Task. |
 | `needs_person` | The Task is blocked, stopped, `merge_waiting`, or has an open question that is not a notice. |
 | `waiting_for` | For a waiting Task, the predecessors by display id, the environment hold, or `slot`; for a blocked one, `answer` or `predecessor`. |
@@ -618,9 +626,25 @@ The inbox lists each open question, each `merge_waiting` Task, and each stopped 
 That puts blocking questions first, then other answers, merge waits, stops and notices, so what has waited the longest to be unblocked is at the top.
 Cancelling a Task answers its open questions as `cancel`, so a cancelled Task lists none and no deadline applies a default to it.
 
-A Task's board column comes from its state: `drafting`, `waiting` and `done` have their own, every other state except `cancelled` is in `running`, and `cancelled` is off the board.
-Inside a column the cards a person must look at (blocked, stopped, merge waiting, or holding an open question) come first, oldest first, then the rest by priority and age.
-`flow` counts a Task in `done` only on the day it finished.
+The CLI and screen use the same movement columns.
+`before` holds drafting and waiting Tasks that have never run.
+`moving` holds running, verifying, relanding and landed Tasks.
+`stuck` holds blocked, merge-waiting, stopped, paused, outside and previously-run waiting Tasks.
+`done` holds only done Tasks; cancelled Tasks stay off the board.
+A worker record, a verification attempt or a report establishes prior execution.
+Person waits sort before other waits, stopped cards before other cards in their group, then the existing priority and age order applies.
+`flow.done_today` counts only Tasks completed on the machine's local day.
+
+The stage is derived from the same stored lifecycle and execution history.
+Drafting and never-run waiting are stage 0.
+Running, blocked, paused, relanding, previously-run waiting and stops other than verification or publication refusal are stage 1.
+Verifying and stops for `verify_failed` or `publish_refused` are stage 2.
+Merge waiting, landed and outside are stage 3; done is stage 4.
+
+The existing intake-review response supplies the optional card summary without another judgment or additional input fields.
+A failed or older response falls back to the goal sentence.
+A goal edit invalidates its old summary, and an observed issue-body edit refreshes it from the body already returned by that read, without another GitHub request.
+Old Tasks use the fallback when read and are never rewritten just to add the field.
 
 **`TaskDetail`**
 

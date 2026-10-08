@@ -19,8 +19,8 @@ export function FactoryGraph({ factories, filtered }: { factories: FactoryView[]
   const many = factories.length > 1;
   const nodes = graphs.reduce((sum, { graph }) => sum + graph.layers.flat().length + graph.unrelated.length, 0);
   const draw = (node: GraphNode) => (
-    <div key={node.id} className="w-(--home-column-width)" data-dependency-node={node.id}>
-      <TaskCardView factory={node.factory} card={node.card} showProject={many} dim={node.card.state === "done" || node.card.state === "landed"} />
+    <div key={node.id} className="factory-graph-node" data-dependency-node={node.id}>
+      <TaskCardView factory={node.factory} card={node.card} showProject={many} dim={node.card.state === "done"} />
     </div>
   );
   if (nodes === 0) {

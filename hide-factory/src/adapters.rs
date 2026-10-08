@@ -162,6 +162,7 @@ pub enum OutsideEvent {
     BodyEdited {
         issue: IssueRef,
         body_hash: String,
+        body: String,
     },
     /// A push to main the Factory did not make (B47).
     OutsidePush {

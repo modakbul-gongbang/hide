@@ -9,10 +9,12 @@
 import { useLayoutEffect, useMemo, useState } from "react";
 import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
+import { TaskCardView } from "../factory/FactoryCard";
 import { FactoryScreen } from "../factory/FactoryScreen";
 import type { FactoryCommand } from "../factory/commands";
 import { FACTORY_TABS, FACTORY_ENTRY, useUiStore, type FactoryTab } from "../ui";
 import { Sidebar } from "../sidebar";
+import { clientI18n } from "../i18n/translator";
 import { useShellStore } from "../store";
 import { factoryScene } from "./factorySceneData";
 import { REFERENCE_FOLDS, sidebarScene, type SceneContent } from "./sceneData";
@@ -20,6 +22,8 @@ import { REFERENCE_FOLDS, sidebarScene, type SceneContent } from "./sceneData";
 /** What one Factory scene document shows; every value comes from its query string. */
 export type FactorySceneParams = {
   theme: "light" | "dark";
+  state: string | null;
+  language: "ko" | "en";
   tab: FactoryTab;
   /** A Task id whose page opens over the tabs. */
   task: string | null;
@@ -27,17 +31,19 @@ export type FactorySceneParams = {
 };
 
 export function factorySceneParams(params: URLSearchParams): FactorySceneParams {
-  const tab = params.get("tab") ?? "turn";
+  const state = params.get("state");
+  if (state !== null && !["board", "graph", "sizes"].includes(state)) throw new Error(`Unknown Factory scene state ${state}`);
+  const tab = state === "board" || state === "graph" ? state : params.get("tab") ?? "turn";
   if (!(FACTORY_TABS as readonly string[]).includes(tab)) throw new Error(`Unknown Factory scene tab ${tab}`);
   const content = params.get("content") ?? "reference";
   if (content !== "reference" && content !== "long") throw new Error(`Unknown scene content ${content}`);
-  return { theme: params.get("theme") === "light" ? "light" : "dark", tab: tab as FactoryTab, task: params.get("task"), content };
+  return { state, language: params.get("lang") === "en" ? "en" : "ko", theme: params.get("theme") === "light" ? "light" : "dark", tab: tab as FactoryTab, task: params.get("task"), content };
 }
 
 /** The verbs that finish an inbox item, so the engine would take it off the list. */
 const TAKES_ITEM = new Set(["answer", "merge", "retry", "cancel", "request_changes"]);
 
-export function FactoryScene({ theme, tab, task, content }: FactorySceneParams) {
+export function FactoryScene({ theme, tab, task, content, state, language }: FactorySceneParams) {
   const fixture = useMemo(() => factoryScene(content, Date.now()), [content]);
   const [summary, setSummary] = useState(fixture.summary);
   const openFactory = task === null ? null : (summary.factories.find((view) => view.columns.some((column) => column.cards.some((card) => card.task === task))) ?? null);
@@ -74,7 +80,7 @@ export function FactoryScene({ theme, tab, task, content }: FactorySceneParams) 
   useLayoutEffect(() => {
     useShellStore.setState({
       rest: sidebar.rest,
-      agents: sidebar.agents,
+      agents: [...sidebar.agents, ...fixture.workers],
       connection: "live",
       factory: { summary, actions: useShellStore.getState().factory?.actions ?? [] },
       factoryTask: task === null || openFactory === null ? null : { factory: openFactory.id, task, detail: fixture.detail(task) },
@@ -84,10 +90,15 @@ export function FactoryScene({ theme, tab, task, content }: FactorySceneParams) 
   useLayoutEffect(() => {
     useUiStore.setState({
       sidebarMode: "projects",
-      screen: { kind: "factory", place: { ...FACTORY_ENTRY, tab, task: task === null || openFactory === null ? null : { factory: openFactory.id, task } } },
+      screen: { kind: "factory", place: { ...FACTORY_ENTRY, tab, factory: state === "board" || state === "graph" ? "f-herdr-ide" : null, task: task === null || openFactory === null ? null : { factory: openFactory.id, task } } },
       overviewOpen: false,
     });
-  }, [tab, task, openFactory]);
+  }, [tab, task, openFactory, state]);
+
+  useLayoutEffect(() => {
+    void clientI18n.changeLanguage(language);
+    document.documentElement.lang = language;
+  }, [language]);
 
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -98,8 +109,15 @@ export function FactoryScene({ theme, tab, task, content }: FactorySceneParams) 
   return (
     <TooltipProvider>
       <div className="flex h-full bg-background text-foreground" data-gallery-scene="factory" data-scene-content={content} data-scene-tab={tab}>
-        <Sidebar actions={actions} />
-        <FactoryScreen actions={actions} />
+        {state === "sizes" ? <main data-factory-screen="sizes" className="flex flex-col gap-lg p-xl">
+          <div className="factory-sizes-grid gap-xl text-caption text-muted-foreground"><span>작게 · 240 미만</span><span>보통</span><span>넓게 · 420 이상</span></div>
+          {[420, 405, 417, 412, 415, 398, 426, 430, 421, 410].map((number) => {
+            const view = summary.factories[0]!;
+            const card = view.columns.flatMap((column) => column.cards).find((card) => number === 420 ? card.state === "blocked" : card.task === `t-${number}`)!;
+            const item = summary.inbox.find((item) => item.factory === view.id && item.task === card.task && item.kind !== "notice");
+            return <div key={number} className="factory-sizes-grid items-start gap-xl">{[210, 300, 470].map((width) => <TaskCardView key={width} factory={view} card={card} showProject={false} actions={actions} item={item} />)}</div>;
+          })}
+        </main> : <><Sidebar actions={actions} /><FactoryScreen actions={actions} /></>}
       </div>
     </TooltipProvider>
   );
