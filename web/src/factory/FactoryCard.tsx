@@ -12,7 +12,7 @@ import { cn } from "../lib/utils";
 import { localDeviceId } from "../snapshot";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
-import { ACTION_LABEL, GATE_LABEL, PAUSE_REASON_LABEL, STATE_LABEL, STOP_LABEL, TONE_TEXT, stateTone, waitingText } from "./labels";
+import { actionKey, GATE_LABEL, PAUSE_REASON_LABEL, STATE_LABEL, STOP_LABEL, TONE_TEXT, stateTone, waitingText } from "./labels";
 import type { CardView, FactoryView, InboxItem, TaskState } from "./model";
 import { choiceCommand, itemChoices, Refusal } from "./MyTurn";
 import { useFactoryRequest } from "./request";
@@ -65,7 +65,8 @@ export function TaskCardView({ factory, card, showProject, dim = false, actions,
   const resting = card.resume_at !== null;
   const Icon = resting ? CirclePauseIcon : stateIcon(card.state);
   const state = resting ? t("factory.card.resting") : card.stop ? t(STOP_LABEL[card.stop]) : t(STATE_LABEL[card.state]);
-  const tone = card.state === "stopped" ? "text-destructive" : card.state === "outside" ? "text-muted-foreground" : TONE_TEXT[stateTone(card.state, person)];
+  // A paused Task waits quietly: its band says it is the person's, its icon stays gray.
+  const tone = card.state === "stopped" ? "text-destructive" : card.state === "outside" || card.state === "paused" ? "text-muted-foreground" : TONE_TEXT[stateTone(card.state, person)];
   const problem = card.state === "stopped" && card.stop ? [t(STOP_LABEL[card.stop]), card.stop === "worker_gone" ? t("factory.card.goneAgain") : card.stop === "no_report" ? t("factory.card.noReply") : null].filter((part) => part !== null).join(" · ")
     : closed ? `${t(STATE_LABEL.paused)} · ${t(PAUSE_REASON_LABEL.pane_closed)}`
     : card.state === "merge_waiting" && item ? item.gates.map((gate) => t(GATE_LABEL[gate])).join(" · ")
@@ -75,7 +76,8 @@ export function TaskCardView({ factory, card, showProject, dim = false, actions,
     : card.waiting_code === "predecessors" ? waitingText(card, t) : null;
   const ProblemIcon = resting || closed ? CirclePauseIcon : card.state === "stopped" ? CircleAlertIcon : card.state === "outside" ? GitPullRequestIcon : card.failures > 0 ? TriangleAlertIcon : LockIcon;
   // Factory AI's reading of a quiet worker takes the place of the worker's own line (D-23).
-  const aiLine = item?.observer_reason ? t("factory.turn.diagnosis", { text: item.observer_reason }) : line;
+  const diagnosis = item?.kind === "stopped" ? item.observer_reason : undefined;
+  const aiLine = diagnosis ? t("factory.turn.diagnosis", { text: diagnosis }) : line;
   const open = () => useUiStore.getState().setFactoryPlace({ task: { factory: factory.id, task: card.task } });
   return <div className="factory-card-container">
     <article className={cn("factory-card relative min-w-0 overflow-hidden rounded-md border border-border bg-card text-muted-foreground hover:bg-accent", (dim || card.state === "done") && "opacity-(--opacity-dimmed)")} data-factory-card={card.task} data-factory-card-turn={person ? "true" : undefined}>
@@ -99,7 +101,7 @@ export function TaskCardView({ factory, card, showProject, dim = false, actions,
         {problem ? <div className={cn("factory-card-normal flex min-w-0 items-center gap-xs text-caption", card.state === "stopped" ? "text-destructive" : card.failures > 0 || card.state === "merge_waiting" ? "text-warning" : "text-muted-foreground")} data-factory-problem="true" title={problem}><ProblemIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" /><span className="truncate">{problem}</span></div> : null}
         {person && item && actions && !resting ? <CardAction key={inboxKey(item)} card={card} item={item} actions={actions} onDetail={open} /> : null}
         <div className="factory-card-wide flex min-w-0 items-center gap-md text-caption"><span>{state}</span>{worker ? <span className="flex min-w-0 items-center gap-xxs"><StatusMark symbol={worker.symbol} className="text-muted-foreground" /><span className="truncate">{statusText(t, worker.status_code)}</span></span> : null}{showProject ? <span className="truncate">{factory.project_name}</span> : null}</div>
-        {aiLine ? <div className="factory-card-wide flex min-w-0 items-center gap-xs border-t border-dashed border-border pt-sm text-caption" data-factory-ai={item?.observer_reason ? "diagnosis" : "true"}><SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" /><span className="truncate" title={aiLine}>{aiLine}</span></div> : null}
+        {aiLine ? <div className="factory-card-wide flex min-w-0 items-center gap-xs border-t border-dashed border-border pt-sm text-caption" data-factory-ai={diagnosis ? "diagnosis" : "true"}><SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" /><span className="truncate" title={aiLine}>{aiLine}</span></div> : null}
       </div>
     </article>
   </div>;
@@ -125,7 +127,7 @@ function CardAction({ card, item, actions, onDetail }: { card: CardView; item: I
     const command = choiceCommand(actionItem, { value, own: false }, "");
     if (command) request.send(command);
   };
-  const primary = verb ? t(ACTION_LABEL[actionItem.suggestion] ?? "factory.turn.send") : item.suggestion;
+  const primary = verb ? t(actionKey(actionItem.suggestion, actionItem.kind === "paused")) : item.suggestion;
   return <div className={cn("factory-card-normal flex min-w-0 flex-col gap-sm", !verb && "rounded-sm bg-secondary p-sm")}>
     {!verb ? <p className="factory-card-question text-body font-semibold text-foreground">{item.text}</p> : null}
     <div className="factory-card-control flex min-w-0 flex-wrap items-center gap-xs">

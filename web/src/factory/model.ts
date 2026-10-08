@@ -66,6 +66,10 @@ export type DecisionKind = (typeof DECISION_KINDS)[number];
 export const PAUSE_REASONS = ["person", "pane_closed"] as const;
 export type PauseReason = (typeof PAUSE_REASONS)[number];
 
+/** `contracts/snapshot-wire-enums.json`: `factory_diagnosis_source`, the one worker text a diagnosis read. */
+export const DIAGNOSIS_SOURCES = ["user_turn", "last_answer", "screen"] as const;
+export type DiagnosisSource = (typeof DIAGNOSIS_SOURCES)[number];
+
 /** `contracts/snapshot-wire-enums.json`: `factory_observer_mode`, who answers a Factory's decisions. */
 export const OBSERVER_MODES = ["manual", "assist", "autonomous"] as const;
 export type ObserverMode = (typeof OBSERVER_MODES)[number];
@@ -277,6 +281,7 @@ export type TaskDetail = {
   /** When the engine woke the resting worker, and asked Factory AI why it rests. */
   woke_at: UnixMs | null;
   diagnosed_at: UnixMs | null;
+  diagnosed_from: DiagnosisSource | null;
 };
 
 export type WorkerLine = { agent: string; label: string; model: string | null; effort: string | null; picked: string | null; pick_reason: string | null };

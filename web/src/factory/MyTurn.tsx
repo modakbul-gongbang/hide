@@ -11,7 +11,7 @@ import { useOverviewCount } from "../Overview";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
 import { taskRef, type FactoryCommand } from "./commands";
-import { ACTION_LABEL, DECISION_KIND_LABEL, GROUP_LABEL, KIND_LABEL, MODE_LABEL, decisionWhy, itemWhy, noticeText, refusalText, resultText } from "./labels";
+import { actionKey, DECISION_KIND_LABEL, GROUP_LABEL, KIND_LABEL, MODE_LABEL, decisionWhy, itemWhy, noticeText, refusalText, resultText } from "./labels";
 import type { FactorySummary, FactoryView, InboxItem } from "./model";
 import { useFactoryRequest, type RequestState } from "./request";
 import { inboxKey, shownFactories, shownInbox } from "./view";
@@ -198,16 +198,16 @@ function ClosedItem({ item, view, onOpen }: { item: InboxItem; view: FactoryView
       <button
         type="button"
         className="flex min-w-0 items-center gap-sm rounded-sm px-md py-xs text-left outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
-        aria-label={noticeText(item, t)}
+        aria-label={noticeText(item, t, view?.observer_limit ?? null)}
         data-factory-item={inboxKey(item)}
         data-factory-item-open="false"
         data-factory-notice={item.notice ?? "notice"}
         onClick={onOpen}
       >
         <KindIcon item={item} className="text-subtle-foreground" />
-        <span className="min-w-0 shrink truncate text-body">{noticeText(item, t)}</span>
+        <span className="min-w-0 shrink truncate text-body">{noticeText(item, t, view?.observer_limit ?? null)}</span>
         <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground">{noticeWhy(item, view, t)}</span>
-        {item.overridable ? <span className="shrink-0 text-caption text-foreground">{t("factory.turn.override")}</span> : null}
+        {item.overridable ? <span className="shrink-0 text-caption text-foreground">{t("factory.turn.override")}</span> : item.notice && item.notice !== "daily_limit" ? <span className="shrink-0 text-caption text-foreground">{t("factory.turn.view")}</span> : null}
         <Place item={item} />
         <TimeCue item={item} />
       </button>
@@ -372,7 +372,7 @@ function OpenNotice({ item, view, actions }: { item: InboxItem; view: FactoryVie
       <div className="flex min-w-0 items-start gap-sm">
         <KindIcon item={item} className="mt-xxs text-subtle-foreground" />
         <div className="flex min-w-0 flex-1 flex-col gap-xxs">
-          <span className="text-body font-semibold [overflow-wrap:anywhere]">{noticeText(item, t)}</span>
+          <span className="text-body font-semibold [overflow-wrap:anywhere]">{noticeText(item, t, view?.observer_limit ?? null)}</span>
           <span className="text-body text-subtle-foreground [overflow-wrap:anywhere]">
             {[item.title, noticeWhy(item, view, t)].filter((part) => part !== "").join(" · ")}
             {item.observer_reason ? ` · ${item.observer_reason}` : null}
@@ -409,14 +409,14 @@ function OpenNotice({ item, view, actions }: { item: InboxItem; view: FactoryVie
 }
 
 function choiceLabel(item: InboxItem, choice: Choice, text: string, t: ReturnType<typeof useInterfaceTranslation>["t"]): string {
-  if (VERB_ITEMS.has(item.kind)) return t(ACTION_LABEL[choice.value] ?? "factory.turn.send");
+  if (VERB_ITEMS.has(item.kind)) return t(actionKey(choice.value, item.kind === "paused"));
   if (choice.own) return text.trim() ? t("factory.turn.sendAs", { answer: text.trim() }) : t("factory.turn.send");
   return t("factory.turn.sendAs", { answer: choice.value });
 }
 
 function ChoiceRow({ item, option, at, picked, onPick }: { item: InboxItem; option: Choice; at: number; picked: boolean; onPick: () => void }) {
   const { t } = useInterfaceTranslation();
-  const words = option.own ? t("factory.turn.own") : VERB_ITEMS.has(item.kind) ? t(ACTION_LABEL[option.value] ?? "factory.turn.send") : option.value;
+  const words = option.own ? t("factory.turn.own") : VERB_ITEMS.has(item.kind) ? t(actionKey(option.value, item.kind === "paused")) : option.value;
   return (
     <button
       type="button"

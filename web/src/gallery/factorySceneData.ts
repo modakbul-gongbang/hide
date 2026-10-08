@@ -8,7 +8,8 @@
 import type { AgentRow } from "../snapshot";
 import { galleryAgentState } from "./agentStates";
 import type { FactoryConfig } from "../factory/FactorySettings";
-import type { CardView, Column, FactorySummary, FactoryView, InboxItem, TaskDetail, TaskState } from "../factory/model";
+import type { CardView, Column, FactorySummary, FactoryView, InboxItem, TaskDetail, TaskState, WorkerCandidate } from "../factory/model";
+import type { FactoryTab } from "../ui";
 import type { SceneContent } from "./sceneData";
 
 const MINUTE = 60_000;
@@ -214,18 +215,21 @@ export type FactorySceneFixture = {
  * person, the stops it diagnosed or could not, and its notices, as the
  * `fx-obs-*` frames of `Screen / Factory` draw them.
  */
-function observerScene(base: FactorySceneFixture, now: number): FactorySceneFixture {
+function observerScene(base: FactorySceneFixture, now: number, variant: ObserverVariant | null): FactorySceneFixture {
   const [herdr0, sasu0] = base.summary.factories as [FactoryView, FactoryView];
   const stuck = (spec: CardSpec, patch: Partial<CardView> = {}) => ({ ...card(spec, now), ...patch });
   const t436 = stuck({ number: 436, title: "보드 빈 열 문구", summary: "빈 열에 보일 한 줄 문구를 정한다", state: "blocked", column: "stuck", worker: "worker-436", runtime: "claude", ago: 6 * MINUTE, needsPerson: true });
   const t437 = stuck({ number: 437, title: "정렬 상태 기억", summary: "고른 정렬을 다시 열어도 그대로 둔다", state: "blocked", column: "stuck", worker: "worker-437", ago: 30 * MINUTE, needsPerson: true });
-  const t435 = stuck({ number: 435, title: "Sessions 칩 정렬", summary: "Sessions 칩을 최근 활동순으로 놓는다", state: "stopped", column: "stuck", ago: 9 * MINUTE, needsPerson: true }, { stop: "no_report", worker_runtime: "codex" });
+  const t435 = stuck({ number: 435, title: "Sessions 칩 정렬", summary: "Sessions 칩을 최근 활동순으로 놓는다", state: "stopped", column: "stuck", worker: "worker-435", ago: 9 * MINUTE, needsPerson: true }, { stop: "no_report", worker_runtime: "codex" });
   const t433 = stuck({ number: 433, title: "설정 검색 결과 강조", summary: "설정 검색에서 맞은 글자를 굵게 보인다", state: "stopped", column: "stuck", ago: 18 * MINUTE, needsPerson: true, runtime: "claude" }, { stop: "worker_gone", worker_runtime: "claude" });
   const t434 = stuck({ number: 434, title: "빈 Factory 안내 문구", summary: "Task가 없을 때 넣는 방법을 한 줄로 안내한다", state: "paused", column: "stuck", ago: 25 * MINUTE }, { pause_reason: "pane_closed", worker_runtime: "codex" });
   const added = [t436, t437, t435, t433, t434];
   const columns = herdr0.columns.map((column) => (column.column === "stuck" ? { ...column, cards: [...added, ...column.cards] } : column));
-  const workers = base.config.config.workers;
-  const herdr: FactoryView = { ...herdr0, columns, flow: { ...herdr0.flow, stuck: herdr0.flow.stuck + added.length }, observer_mode: "assist", observer_today: 37, workers, macos_notifications: true };
+  // 직접 keeps one candidate; 맡김 fills all five and has used the whole day.
+  const three = base.config.config.workers;
+  const workers = variant === "direct" ? three.slice(0, 1) : variant === "auto" ? [...three, ...MORE_WORKERS] : three;
+  const observer_mode: FactoryConfig["observer_mode"] = variant === "direct" ? "manual" : variant === "auto" ? "autonomous" : "assist";
+  const herdr: FactoryView = { ...herdr0, columns, flow: { ...herdr0.flow, stuck: herdr0.flow.stuck + added.length }, observer_mode, observer_today: variant === "auto" ? 100 : 37, workers, macos_notifications: true };
   const sasu: FactoryView = { ...sasu0, paused: true, observer_mode: "autonomous", observer_today: 100, workers: workers.slice(0, 1) };
   const item = (patch: Partial<InboxItem> & Pick<InboxItem, "group" | "kind" | "factory" | "task" | "display_id" | "title" | "project" | "text">, ago: number) => inboxItem(patch, now, ago);
   const answers: InboxItem[] = [
@@ -261,30 +265,73 @@ function observerScene(base: FactorySceneFixture, now: number): FactorySceneFixt
         attempts: [],
         allowed: ["retry", "cancel"],
         stop_code: "no_report",
+        verification: "0/3",
+        resting_since: now - 2 * MINUTE,
         branch: "435-session-chips",
         worker_name: "t-435-worker",
         diagnosis: "테스트 실행을 기다리다 멈춘 것으로 보입니다",
         worker: { agent: "codex", label: "Codex", model: "gpt-6.1-luna", effort: "low", picked: "문구, 문서, 작은 UI", pick_reason: "칩 정렬만 바꾸는 작은 UI 변경" },
         woke_at: now - 6 * MINUTE,
         diagnosed_at: now - 4 * MINUTE,
+        diagnosed_from: "screen",
         questions: [{ id: "q-sort", origin: "worker", kind: { kind: "default" }, text: "칩 정렬 키?", suggestion: "last_activity", default_action: null, deadline: null, asked_at: at - 5_000, choices: [], answer: { text: "last_activity", chose: null, relayed_by: "observer", at }, letter: null, routing: { kind: "B" } }],
         decisions: [
           { text: "정렬은 web 쪽에서 한다", by: "worker:t-435", at: now - 2 * HOUR },
-          { text: "뒤집음: 칩 최대 개수 -> 5", by: "p-1", at: now - HOUR },
+          { text: "뒤집음: 칩 최대 개수 -> 5", by: "operator", at: now - HOUR },
           { text: "칩 정렬 키는 last_activity로 둔다", by: "observer", at, kind: "B" },
         ],
       };
     }
-    if (task === taskId(431)) return { ...base.detail(task)!, ai_picked_worker: 3, ai_pick_reason: "문서 링크만 고치는 작은 변경" };
+    if (task === taskId(431)) {
+      return { ...base.detail(task)!, goal: "docs 안의 상대 링크가 모두 열린다.", criteria: ["깨진 상대 링크 23개가 맞는 문서를 가리킨다", "check-doc-links가 docs 전체에서 통과한다"], branch: "431-doc-links", ai_picked_worker: 3, ai_pick_reason: "문서 링크만 고치는 작은 변경" };
+    }
     return base.detail(task);
   };
-  return { ...base, summary, detail };
+  // The values the 고급 설정 frame draws.
+  const config = {
+    config: { ...base.config.config, workers, observer_mode, macos_notifications: true, risk_paths: ["hided/", "herdr-core/"], no_report_ms: 2 * MINUTE, watch_interval_ms: 30 * MINUTE, watch_daily_limit: 5, recovery: [], worker_args: { claude: ["--permission-mode", "acceptEdits"] } },
+    machine: { max_workers: 5 },
+  };
+  // The workers still in a pane, each with the line it last reported.
+  const template = base.workers.find((row) => row.request)!;
+  const panes: AgentRow[] = [[t436, "세 안을 화면에 그려 두고 답을 기다림"], [t437, "두 Task의 완료 조건을 비교하고 답을 기다림"], [t435, "테스트 실행을 기다리는 중"]].map(([task, line]) => {
+    const view = task as CardView;
+    const pane = view.worker_pane!;
+    return { ...template, state: galleryAgentState(pane, null, view.since), id: pane, pane_id: pane, identity_label: pane, agent_kind: view.worker_runtime ?? "codex", activity: "idle", symbol: "○", status_code: "idle", lineage_child_pane_ids: [], close_descendant_pane_ids: [], request: { ...template.request!, line: line as string } };
+  });
+  return { ...base, summary, detail, config, workers: [...base.workers, ...panes] };
 }
 
+/** The two candidates 맡김's frame adds to the three: one more model, and one left on its CLI's defaults. */
+const MORE_WORKERS: WorkerCandidate[] = [
+  { agent: "claude", model: "sonnet", effort: "medium", description: "테스트만 고치는 Task" },
+  { agent: "codex", model: null, effort: null, description: "실험, 버려도 되는 시도" },
+];
+
+export type ObserverVariant = "direct" | "auto";
+
+/**
+ * The `fx-obs-*` frames as scene states: which tab, Factory or Task each
+ * opens, and what differs from the 함께 set. `cards` draws the five Observer
+ * cards at the three sizes; `aiOff` turns Hide AI off.
+ */
+export const OBSERVER_STATES: Record<string, { tab: FactoryTab; factory?: string; task?: string; variant?: ObserverVariant; aiOff?: true; cards?: true }> = {
+  "obs-turn": { tab: "turn" },
+  "obs-set": { tab: "settings", factory: "f-herdr-ide" },
+  "obs-direct": { tab: "settings", factory: "f-herdr-ide", variant: "direct" },
+  "obs-auto": { tab: "settings", factory: "f-herdr-ide", variant: "auto" },
+  "obs-off": { tab: "settings", factory: "f-herdr-ide", aiOff: true },
+  "obs-all": { tab: "settings" },
+  "obs-paused": { tab: "turn", factory: "f-sasu" },
+  "obs-task": { tab: "turn", task: taskId(435) },
+  "obs-pick": { tab: "turn", task: taskId(431) },
+  "obs-cards": { tab: "turn", cards: true },
+};
+
 /** The scene's summary, the Task pages it can open and the settings it answers with. */
-export function factoryScene(content: SceneContent, now: number, observer = false): FactorySceneFixture {
+export function factoryScene(content: SceneContent, now: number, observer = false, variant: ObserverVariant | null = null): FactorySceneFixture {
   const fixture = referenceScene(content, now);
-  return observer ? observerScene(fixture, now) : fixture;
+  return observer ? observerScene(fixture, now, variant) : fixture;
 }
 
 function referenceScene(content: SceneContent, now: number): FactorySceneFixture {
@@ -476,6 +523,7 @@ function referenceScene(content: SceneContent, now: number): FactorySceneFixture
       ai_pick_reason: null,
       woke_at: null,
       diagnosed_at: null,
+      diagnosed_from: null,
     };
   };
 

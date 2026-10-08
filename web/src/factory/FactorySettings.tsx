@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronRightIcon, CirclePauseIcon, PauseIcon, PlayIcon, PlusIcon, SparklesIcon, SquareTerminalIcon, UserIcon, XIcon } from "lucide-react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { BanIcon, ChevronRightIcon, PauseIcon, PlayIcon, PlusIcon, SparklesIcon, SquareTerminalIcon, UserIcon, XIcon } from "lucide-react";
 import type { Actions } from "../actions";
 import { agentAdapter } from "../agentAdapters";
+import { PROVIDER_KINDS } from "../agentPicker";
 import { AgentPicker } from "../components/agent-picker";
 import { Disclosure, Group, Note, Row } from "../components/settings-rows";
 import { Button } from "../components/ui/button";
+import { Checkbox } from "../components/ui/checkbox";
 import { Input } from "../components/ui/input";
 import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
@@ -62,39 +64,24 @@ type ConfigAnswer = { config: FactoryConfig; machine: { max_workers: number } };
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
-const GIB = 1024 * 1024 * 1024;
 /** The most worker candidates a Factory keeps (D-41). */
 const WORKER_LIMIT = 5;
 
 /** A number setting: its key, the unit the engine takes it in, and how it reads from the config. */
-type NumberSetting = { key: string; label: MessageKey; read: (answer: ConfigAnswer) => number };
+type NumberSetting = { key: string; read: (answer: ConfigAnswer) => number };
 
 const per = (unit: number, field: keyof FactoryConfig) => (answer: ConfigAnswer) => Math.round((answer.config[field] as number) / unit);
 const plain = (field: keyof FactoryConfig) => (answer: ConfigAnswer) => answer.config[field] as number;
 
-const VERIFY: NumberSetting[] = [
-  { key: "verify_failure_limit", label: "factory.settings.verifyFailureLimit", read: plain("verify_failure_limit") },
-  { key: "verify_timeout_minutes", label: "factory.settings.verifyTimeout", read: per(MINUTE, "verify_timeout_ms") },
-];
-const THRESHOLDS: NumberSetting[] = [
-  { key: "question_deadline_hours", label: "factory.settings.questionDeadline", read: per(HOUR, "question_deadline_ms") },
-  { key: "stall_minutes", label: "factory.settings.stall", read: per(MINUTE, "stall_ms") },
-  { key: "no_report_minutes", label: "factory.settings.noReport", read: per(MINUTE, "no_report_ms") },
-  { key: "new_task_limit", label: "factory.settings.newTaskLimit", read: plain("new_task_limit") },
-  { key: "observer_daily_limit", label: "factory.settings.observerLimit", read: plain("observer_daily_limit") },
-];
-const WATCH: NumberSetting[] = [
-  { key: "watch_interval_minutes", label: "factory.settings.watchInterval", read: per(MINUTE, "watch_interval_ms") },
-  { key: "watch_daily_limit", label: "factory.settings.watchDailyLimit", read: plain("watch_daily_limit") },
-  { key: "outside_read_minutes", label: "factory.settings.outsideRead", read: per(MINUTE, "outside_read_ms") },
-];
-const KEEP: NumberSetting[] = [
-  { key: "done_fold_days", label: "factory.settings.doneFold", read: per(DAY, "done_fold_ms") },
-  { key: "archive_fold_days", label: "factory.settings.archiveFold", read: per(DAY, "archive_fold_ms") },
-  { key: "cancel_keep_days", label: "factory.settings.cancelKeep", read: per(DAY, "cancel_keep_ms") },
-];
-const AUTONOMY: NumberSetting[] = [{ key: "autonomy_diff_limit", label: "factory.settings.autonomyDiffLimit", read: plain("autonomy_diff_limit") }];
-const ADVANCED: NumberSetting[] = [{ key: "disk_floor_gb", label: "factory.settings.diskFloor", read: per(GIB, "disk_floor_bytes") }];
+const DEADLINE: NumberSetting = { key: "question_deadline_hours", read: per(HOUR, "question_deadline_ms") };
+const STALL: NumberSetting = { key: "stall_minutes", read: per(MINUTE, "stall_ms") };
+const NO_REPORT: NumberSetting = { key: "no_report_minutes", read: per(MINUTE, "no_report_ms") };
+const OBSERVER_LIMIT: NumberSetting = { key: "observer_daily_limit", read: plain("observer_daily_limit") };
+const WATCH_INTERVAL: NumberSetting = { key: "watch_interval_minutes", read: per(MINUTE, "watch_interval_ms") };
+const WATCH_LIMIT: NumberSetting = { key: "watch_daily_limit", read: plain("watch_daily_limit") };
+const CANCEL_KEEP: NumberSetting = { key: "cancel_keep_days", read: per(DAY, "cancel_keep_ms") };
+const DONE_FOLD: NumberSetting = { key: "done_fold_days", read: per(DAY, "done_fold_ms") };
+const ARCHIVE_FOLD: NumberSetting = { key: "archive_fold_days", read: per(DAY, "archive_fold_ms") };
 
 const RECOVERY: readonly { id: string; label: MessageKey }[] = [
   { id: "remove_finished_worktrees", label: "factory.settings.recovery.remove_finished_worktrees" },
@@ -103,13 +90,6 @@ const RECOVERY: readonly { id: string; label: MessageKey }[] = [
   { id: "switch_runtime", label: "factory.settings.recovery.switch_runtime" },
   { id: "retry_reads_and_reconnect", label: "factory.settings.recovery.retry_reads_and_reconnect" },
 ];
-
-const CHECK_POINTS = ["intake", "after_done", "periodic"] as const;
-const CHECK_LABEL: Record<(typeof CHECK_POINTS)[number], MessageKey> = {
-  intake: "factory.settings.checkAt.intake",
-  after_done: "factory.settings.checkAt.after_done",
-  periodic: "factory.settings.checkAt.periodic",
-};
 
 /**
  * What each choice hands to Factory AI and what stays the person's (D-03,
@@ -162,17 +142,17 @@ function FactoryList({ factories, summary, actions }: { factories: FactoryView[]
   }, [read.state, write.state]);
   return (
     <>
-      <Group title={t("factory.settings.factories")} note={undefined} data-factory-settings-group="factories">
+      <Group title={t("factory.settings.factories")} caption={t("factory.settings.factoriesCaption")} data-factory-settings-group="factories">
         {factories.map((view) => {
           const turn = summary.inbox.filter((item) => item.factory === view.id && item.group !== "notice").length;
           return (
             <div key={view.id} className="flex min-w-0 items-center gap-md px-md py-sm" data-factory-list-row={view.id}>
-              <span className="min-w-0 flex-1 truncate text-subhead font-semibold">{view.project_name}</span>
+              <span className="w-[calc(var(--size-control-lg)*3)] min-w-0 shrink truncate text-subhead font-semibold">{view.project_name}</span>
               <span className="flex w-[calc(var(--size-control-lg)*3)] shrink-0 items-center gap-xxs text-caption text-subtle-foreground" data-factory-list-paused={view.paused ? "true" : "false"}>
-                {view.paused ? <CirclePauseIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <span aria-hidden="true" className="size-(--size-status-mark) rounded-full bg-agent-working" />}
+                {view.paused ? <PauseIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <span aria-hidden="true" className="size-(--size-status-mark) rounded-full bg-agent-working" />}
                 {view.paused ? t("factory.settings.paused") : t("factory.settings.running")}
               </span>
-              <span className="flex shrink-0 items-center gap-xxs text-caption text-subtle-foreground">
+              <span className="flex w-[calc(var(--size-control-lg)*2)] shrink-0 items-center gap-xxs text-caption text-subtle-foreground">
                 <SparklesIcon aria-hidden="true" className="size-(--size-icon-sm)" />
                 {t(MODE_LABEL[view.observer_mode])}
               </span>
@@ -180,6 +160,7 @@ function FactoryList({ factories, summary, actions }: { factories: FactoryView[]
                 <SquareTerminalIcon aria-hidden="true" className="size-(--size-icon-sm)" />
                 {t("factory.settings.workerCount", { count: view.workers.length })}
               </span>
+              <span className="flex-1" />
               <span className={cn("shrink-0 text-caption", turn > 0 ? "text-warning" : "text-muted-foreground")}>{t("factory.settings.turnCount", { count: turn })}</span>
               <Button
                 variant="ghost"
@@ -209,6 +190,11 @@ function FactoryList({ factories, summary, actions }: { factories: FactoryView[]
   );
 }
 
+/** The agents whose start arguments the settings offer: every agent Factory can start, and any the config already names. */
+function argAgents(config: FactoryConfig): string[] {
+  return [...new Set([...PROVIDER_KINDS, ...Object.keys(config.worker_args)])];
+}
+
 /** A config's worker candidates; a Factory made before candidates reads as one of its default agent (D-42). */
 function candidatesOf(config: FactoryConfig): WorkerCandidate[] {
   return config.workers.length > 0 ? config.workers : [{ agent: config.default_runtime, description: "" }];
@@ -216,6 +202,7 @@ function candidatesOf(config: FactoryConfig): WorkerCandidate[] {
 
 function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Actions }) {
   const { t } = useInterfaceTranslation();
+  const background = useShellStore((s) => s.rest?.status?.background_ai);
   const read = useFactoryRequest(actions);
   const write = useFactoryRequest(actions);
   const [answer, setAnswer] = useState<ConfigAnswer | null>(null);
@@ -226,13 +213,11 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
     if (read.state.phase === "taken") setAnswer(read.state.answer as unknown as ConfigAnswer);
   }, [read.state]);
   const [refusals, setRefusals] = useState(0);
-  const [writes, setWrites] = useState(0);
   useEffect(() => {
     if (write.state.phase === "refused") setRefusals((count) => count + 1);
     if (write.state.phase !== "taken") return;
-    setWrites((count) => count + 1);
-    // A config write answers with the config; a check or a close answers
-    // with a message, so the config is read again.
+    // A config write answers with the config; a close answers with a
+    // message, so the config is read again.
     const taken = write.state.answer as Record<string, unknown>;
     if ("config" in taken) setAnswer(taken as unknown as ConfigAnswer);
     else read.send({ verb: "config", project: factory.project, set: [] });
@@ -241,10 +226,17 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
     return read.state.phase === "refused" ? <Refusal state={read.state} /> : <div className="h-(--size-control-lg) rounded-md bg-muted" aria-busy="true" aria-label={t("factory.loading")} data-factory-settings-loading="true" />;
   }
   const config = answer.config;
+  // With Hide AI off a risk path is always the person's to merge (B37).
+  const aiOff = background?.enabled === false;
   const set = (key: string, value: string) => write.send({ verb: "config", project: factory.project, set: [[key, value]] });
   const send = (command: FactoryCommand) => write.send(command);
-  const numbers = (rows: NumberSetting[]) => rows.map((row) => <NumberRow key={row.key} reset={refusals} label={t(row.label)} value={row.read(answer)} onCommit={(value) => set(row.key, String(value))} data={row.key} />);
-  const verify = config.verification.kind === "commands" ? config.verification.commands.join(" &&& ") : "";
+  // A number inside a sentence: the field, then the words for its unit (B36).
+  const amount = (row: NumberSetting, unit: MessageKey) => (
+    <span className="flex items-center gap-xs">
+      <TextField reset={refusals} value={String(row.read(answer))} numeric valid={(text) => Number.isInteger(Number(text)) && Number(text) >= 0} onCommit={(value) => set(row.key, value)} data={row.key} />
+      <span className="text-caption text-muted-foreground">{t(unit)}</span>
+    </span>
+  );
   // Closing follows the lifecycle states, independent of board presentation.
   const running = factory.columns.some((column) => column.cards.some((card) => !["drafting", "waiting", "done", "cancelled"].includes(card.state)));
   return (
@@ -262,7 +254,7 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
             {config.verification.kind === "ci" ? t("factory.settings.verificationCi", { checks: config.verification.checks.join(", ") }) : config.verification.kind === "commands" ? t("factory.settings.verificationCommands", { commands: config.verification.commands.join(", ") }) : t("factory.create.none")}
           </span>
         </Row>
-        <Row label={t("factory.settings.riskPaths")} detail={<Note>{config.observer_mode === "autonomous" ? t("factory.settings.riskAi") : t("factory.settings.riskMine")}</Note>}>
+        <Row label={t("factory.settings.riskPaths")} detail={<Note data-factory-risk-note="true">{config.observer_mode === "autonomous" && !aiOff ? t("factory.settings.riskAi") : t("factory.settings.riskMine")}</Note>}>
           <TextField reset={refusals} value={config.risk_paths.join(", ")} mono onCommit={(value) => set("risk_paths", value)} data="risk_paths" />
         </Row>
       </Group>
@@ -271,54 +263,52 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
           <Switch checked={config.macos_notifications} aria-label={t("factory.settings.macosNotifications")} data-factory-setting="macos_notifications" onCheckedChange={(on) => set("macos_notifications", on ? "on" : "off")} />
         </Row>
         <Disclosure title={t("factory.settings.advanced")} summary={t("factory.settings.advancedSummary")} data-factory-settings-group="advanced">
-          {numbers(THRESHOLDS)}
-          {config.verification.kind === "ci" ? (
-            <Row label={t("factory.settings.ciChecks")}>
-              <TextField reset={refusals} value={config.verification.checks.join(", ")} onCommit={(value) => set("ci", value)} data="ci" />
-            </Row>
-          ) : (
-            <Row label={t("factory.settings.verifyCommands")} detail={<Note>{t("factory.settings.verifyCommandsDetail")}</Note>}>
-              <TextField reset={refusals} value={verify} onCommit={(value) => set("verify", value)} data="verify" />
-            </Row>
-          )}
-          {numbers(VERIFY)}
-          <Row label={t("factory.settings.mergeMethod")}>
-            <Choice value={config.merge_method} options={[["merge", t("factory.settings.method.merge")], ["squash", t("factory.settings.method.squash")], ["rebase", t("factory.settings.method.rebase")]]} onChange={(value) => set("merge_method", value)} data="merge_method" />
+          <Row label={t("factory.settings.adv.deadline")} detail={<Note>{t("factory.settings.adv.deadlineDetail")}</Note>}>
+            {amount(DEADLINE, "factory.settings.adv.hours")}
           </Row>
-          <Row label={t("factory.settings.quickCheck")}>
-            <TextField reset={refusals} value={config.quick_check ?? ""} onCommit={(value) => set("quick_check", value)} data="quick_check" />
+          <Row label={t("factory.settings.adv.stop")}>
+            {amount(STALL, "factory.settings.adv.quiet")}
+            {amount(NO_REPORT, "factory.settings.adv.noReport")}
           </Row>
-          <Row label={t("factory.settings.harness")} detail={<Note>{t("factory.settings.harnessDetail")}</Note>}>
-            <TextField reset={refusals} value={config.harness ? `${config.harness.name}: ${config.harness.instructions}` : ""} placeholder={t("factory.settings.harnessPlaceholder")} onCommit={(value) => set("harness", value)} data="harness" />
+          <Row label={t("factory.settings.adv.aiLimit")} detail={<Note>{t("factory.settings.adv.aiLimitDetail")}</Note>}>
+            {amount(OBSERVER_LIMIT, "factory.settings.adv.perDay")}
           </Row>
-          {numbers(WATCH)}
-          {config.checks.map((check, at) => (
-            <Row key={at} label={t(CHECK_LABEL[check.at])}>
-              <span className="min-w-0 text-body text-subtle-foreground [overflow-wrap:anywhere]">{check.instruction}</span>
-            </Row>
-          ))}
-          <AddCheck written={writes} refused={refusals} sending={write.state.phase === "sending"} onAdd={(at, instruction) => send({ verb: "check", project: factory.project, at, instruction })} />
-          {numbers(KEEP)}
-          {config.autonomy.map((scope) => (
-            <Row key={scope.id} label={scope.description}>
-              <Switch checked={scope.enabled} aria-label={scope.description} data-factory-setting={`autonomy:${scope.id}`} onCheckedChange={(on) => set("autonomy", `${scope.id}=${on ? "on" : "off"}`)} />
-            </Row>
-          ))}
-          {numbers(AUTONOMY)}
-          {RECOVERY.map((action) => (
-            <Row key={action.id} label={t(action.label)}>
-              <Switch checked={config.recovery.includes(action.id)} aria-label={t(action.label)} data-factory-setting={`recovery:${action.id}`} onCheckedChange={(on) => set("recovery", `${action.id}=${on ? "on" : "off"}`)} />
-            </Row>
-          ))}
-          {numbers(ADVANCED)}
-          <Row label={t("factory.settings.prdInIssue")}>
-            <Switch checked={config.prd_in_issue} aria-label={t("factory.settings.prdInIssue")} data-factory-setting="prd_in_issue" onCheckedChange={(on) => set("prd_in_issue", on ? "on" : "off")} />
+          <Row label={t("factory.settings.adv.watch")}>
+            {amount(WATCH_INTERVAL, "factory.settings.adv.every")}
+            {amount(WATCH_LIMIT, "factory.settings.adv.perDay")}
           </Row>
-          {[...new Set(candidatesOf(config).map((candidate) => candidate.agent))].map((runtime) => (
-            <Row key={runtime} label={t("factory.settings.workerArgs", { runtime: agentAdapter(runtime)?.label ?? runtime })}>
-              <TextField reset={refusals} value={(config.worker_args[runtime] ?? []).join(" ")} onCommit={(value) => set("worker_args", `${runtime}=${value}`)} data={`worker_args:${runtime}`} />
-            </Row>
-          ))}
+          <Row label={t("factory.settings.adv.keep")}>
+            {amount(CANCEL_KEEP, "factory.settings.adv.cancelDays")}
+            {amount(DONE_FOLD, "factory.settings.adv.doneDays")}
+            {amount(ARCHIVE_FOLD, "factory.settings.adv.archiveDays")}
+          </Row>
+          <Row label={t("factory.settings.adv.recovery")} detail={
+            <div className="flex flex-col gap-xs">
+              {RECOVERY.map((action) => (
+                <label key={action.id} className="flex items-center gap-sm text-body text-foreground">
+                  <Checkbox checked={config.recovery.includes(action.id)} aria-label={t(action.label)} data-factory-setting={`recovery:${action.id}`} onCheckedChange={(on) => set("recovery", `${action.id}=${on === true ? "on" : "off"}`)} />
+                  {t(action.label)}
+                </label>
+              ))}
+            </div>
+          }>
+            <span className="text-caption text-muted-foreground">{t("factory.settings.adv.recoveryCaption")}</span>
+          </Row>
+          <Row label={t("factory.settings.adv.workerArgs")} detail={
+            <div className="grid grid-cols-[auto_1fr] items-center gap-x-md gap-y-xs">
+              {argAgents(config).map((agent) => (
+                <Fragment key={agent}>
+                  <span className="text-caption text-subtle-foreground">{agentAdapter(agent)?.label ?? agent}</span>
+                  <TextField reset={refusals} value={(config.worker_args[agent] ?? []).join(" ")} mono wide placeholder={t("factory.settings.adv.workerArgsFor", { agent: agentAdapter(agent)?.label ?? agent })} onCommit={(value) => set("worker_args", `${agent}=${value}`)} data={`worker_args:${agent}`} />
+                </Fragment>
+              ))}
+            </div>
+          }>
+            <span className="text-caption text-muted-foreground">{t("factory.settings.adv.workerArgsCaption")}</span>
+          </Row>
+          <div className="px-md py-sm">
+            <Note>{t("factory.settings.adv.rest")}</Note>
+          </div>
         </Disclosure>
         <Row label={t("factory.settings.close")} detail={<Note>{running ? t("factory.settings.closeRunning") : t("factory.settings.closeDetail")}</Note>}>
           <Button variant="outline" size="sm" disabled={running || write.state.phase === "sending"} data-factory-close="true" onClick={() => send({ verb: "close", project: factory.project })}>
@@ -343,9 +333,8 @@ function ObserverGroup({ factory, config, reset, set, actions }: { factory: Fact
   const mode = config.observer_mode;
   const full = factory.observer_today >= factory.observer_limit;
   return (
-    <Group title={t("factory.settings.ai")} note={undefined} data-factory-settings-group="observer">
+    <Group title={t("factory.settings.ai")} caption={t("factory.settings.aiCaption")} data-factory-settings-group="observer">
       <div className="flex flex-col gap-sm px-md py-sm">
-        <span className="text-caption text-muted-foreground">{t("factory.settings.aiCaption")}</span>
         <RadioGroup value={mode} disabled={off} onValueChange={(value) => set("observer_mode", value)} className={cn("grid-cols-3", off && "opacity-(--opacity-dimmed)")} aria-label={t("factory.settings.ai")} data-factory-setting="observer_mode">
           {OBSERVER_MODES.map((choice) => (
             <label key={choice} className={cn("flex min-w-0 cursor-pointer items-start gap-sm rounded-md border px-md py-sm", choice === mode ? "border-foreground bg-accent" : "border-border")} data-factory-mode={choice}>
@@ -358,7 +347,12 @@ function ObserverGroup({ factory, config, reset, set, actions }: { factory: Fact
           ))}
         </RadioGroup>
         {off ? (
-          <Note data-factory-ai-off="true">{t("factory.settings.aiOff")}</Note>
+          <Note data-factory-ai-off="true">
+            <span className="flex items-center gap-xs">
+              <BanIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+              {t("factory.settings.aiOff")}
+            </span>
+          </Note>
         ) : (
           <div className="flex flex-col gap-xs" data-factory-mode-table={mode}>
             <ModeChips icon={<UserIcon aria-hidden="true" className="size-(--size-icon-sm)" />} label={t("factory.settings.toMe")} keys={MODE_TABLE[mode].me} />
@@ -369,16 +363,17 @@ function ObserverGroup({ factory, config, reset, set, actions }: { factory: Fact
       <Row label={t("factory.settings.aiAgent")}>
         {off ? <span className="text-body text-subtle-foreground" data-factory-setting="factory_ai">{t("factory.settings.aiNone")}</span> : <FactoryAiPicker value={config.factory_ai} reset={reset} set={set} actions={actions} />}
       </Row>
-      <Row label={t("factory.settings.aiToday")} detail={full ? <Note tone="warn">{t("factory.settings.aiTodayFull")}</Note> : undefined}>
+      {/* With Hide AI off nothing is judged, so there is no day's use to show. */}
+      {off ? null : <Row label={t("factory.settings.aiToday")} detail={full ? <Note>{t("factory.settings.aiTodayFull")}</Note> : undefined}>
         <span className="flex items-center gap-sm" data-factory-ai-today={`${factory.observer_today}/${factory.observer_limit}`}>
           <span aria-hidden="true" className="h-xs w-(--size-settings-control-w) overflow-hidden rounded-full bg-border">
-            <span className={cn("block h-full rounded-full", full ? "bg-warning" : "bg-primary")} style={{ width: `${Math.min(100, (factory.observer_today / Math.max(1, factory.observer_limit)) * 100)}%` }} />
+            <span className="block h-full rounded-full bg-primary" style={{ width: `${Math.min(100, (factory.observer_today / Math.max(1, factory.observer_limit)) * 100)}%` }} />
           </span>
           <span className={cn("font-mono text-caption", full ? "text-warning" : "text-subtle-foreground")}>
             {factory.observer_today} / {factory.observer_limit}
           </span>
         </span>
-      </Row>
+      </Row>}
     </Group>
   );
 }
@@ -474,12 +469,13 @@ function EffortSelect({ value, efforts, onChange, data }: { value: string | null
  */
 function WorkersGroup({ config, machine, reset, set, actions }: { config: FactoryConfig; machine: number; reset: number; set: (key: string, value: string) => void; actions: Actions }) {
   const { t } = useInterfaceTranslation();
+  // With Hide AI off nothing picks per Task, so every start takes the default (D-42).
+  const off = useShellStore((s) => s.rest?.status?.background_ai?.enabled === false);
   const workers = candidatesOf(config);
   const save = (next: WorkerCandidate[]) => set("workers", JSON.stringify(next));
   const change = (at: number, patch: Partial<WorkerCandidate>) => save(workers.map((candidate, index) => (index === at ? { ...candidate, ...patch } : candidate)));
   return (
-    <Group title={t("factory.settings.workers")} data-factory-settings-group="workers">
-      <span className="block px-md pt-sm text-caption text-muted-foreground">{t("factory.settings.workersCaption")}</span>
+    <Group title={t("factory.settings.workers")} caption={off ? t("factory.settings.workersCaptionOff") : t("factory.settings.workersCaption")} data-factory-settings-group="workers">
       {workers.map((candidate, at) => {
         const adapter = agentAdapter(candidate.agent);
         return (
@@ -519,15 +515,6 @@ function WorkersGroup({ config, machine, reset, set, actions }: { config: Factor
   );
 }
 
-/** A number the engine takes in a unit; it is sent when the field is left or Enter is pressed, and only when it changed. */
-function NumberRow({ label, value, onCommit, data, reset }: { label: string; value: number; onCommit: (value: number) => void; data: string; reset: number }) {
-  return (
-    <Row label={label}>
-      <TextField reset={reset} value={String(value)} numeric valid={(text) => Number.isInteger(Number(text)) && Number(text) >= 0} onCommit={(text) => onCommit(Number(text))} data={data} />
-    </Row>
-  );
-}
-
 /** `reset` changes when the engine refuses a write, which leaves the config as it was, so the draft shows it again. */
 function TextField({ value, onCommit, placeholder, numeric = false, mono = false, wide = false, valid, data, reset }: { value: string; onCommit: (value: string) => void; placeholder?: string; numeric?: boolean; mono?: boolean; wide?: boolean; valid?: (text: string) => boolean; data: string; reset: number }) {
   const [draft, setDraft] = useState(value);
@@ -549,7 +536,7 @@ function TextField({ value, onCommit, placeholder, numeric = false, mono = false
     <Input
       value={draft}
       type={numeric ? "number" : "text"}
-      className={cn(numeric ? "w-[calc(var(--size-control-lg)*3)]" : wide ? "w-full" : "w-(--size-settings-control-w)", mono && "font-mono")}
+      className={cn(numeric ? "w-[calc(var(--size-control-lg)*2)] text-right" : wide ? "w-full" : "w-(--size-settings-control-w)", mono && "font-mono")}
       placeholder={placeholder}
       aria-label={placeholder}
       data-factory-setting={data}
@@ -564,48 +551,5 @@ function TextField({ value, onCommit, placeholder, numeric = false, mono = false
         if (event.key === "Escape") setDraft(value);
       }}
     />
-  );
-}
-
-function Choice({ value, options, onChange, data }: { value: string; options: [string, ReactNode][]; onChange: (value: string) => void; data: string }) {
-  return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger size="sm" className="w-auto" data-factory-setting={data}>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {options.map(([option, label]) => (
-          <SelectItem key={option} value={option}>
-            {label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
-/** The instruction stays until the engine takes the check, so a refusal keeps what was typed. */
-function AddCheck({ onAdd, written, refused, sending }: { onAdd: (at: (typeof CHECK_POINTS)[number], instruction: string) => void; written: number; refused: number; sending: boolean }) {
-  const { t } = useInterfaceTranslation();
-  const [at, setAt] = useState<(typeof CHECK_POINTS)[number]>("after_done");
-  const [instruction, setInstruction] = useState("");
-  const asked = useRef(false);
-  useEffect(() => {
-    if (!asked.current) return;
-    asked.current = false;
-    setInstruction("");
-  }, [written]);
-  // A refused check keeps its text, and a later write of another setting leaves it alone.
-  useEffect(() => {
-    asked.current = false;
-  }, [refused]);
-  return (
-    <Row label={t("factory.settings.addCheck")}>
-      <Choice value={at} options={CHECK_POINTS.map((point) => [point, t(CHECK_LABEL[point])])} onChange={(value) => setAt(value as (typeof CHECK_POINTS)[number])} data="check_at" />
-      <Input value={instruction} className="w-(--size-settings-control-w)" placeholder={t("factory.settings.checkInstruction")} aria-label={t("factory.settings.checkInstruction")} data-factory-setting="check_instruction" onChange={(event) => setInstruction(event.target.value)} />
-      <Button size="sm" variant="secondary" disabled={!instruction.trim() || sending} onClick={() => { asked.current = true; onAdd(at, instruction.trim()); }}>
-        {t("factory.settings.add")}
-      </Button>
-    </Row>
   );
 }

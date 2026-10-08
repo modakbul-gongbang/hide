@@ -97,7 +97,7 @@ function detail(state: TaskState, allowed: string[]): TaskDetail {
   return {
     card: card("T-1", state), factory: "f1", project: "/fixture", goal: "목표", criteria: [], out_of_scope: [], before: [], after: [], attachments: [], pr: null,
     verification: "1/3", attempts: [], decisions: [], questions: [], discoveries: [], gates: [], gate_codes: [], allowed, stop: null, stop_code: null, merge_sha: null, worker_name: null, worktree: null, branch: null,
-    worker: null, diagnosis: null, auto_restarts: 0, resting_since: null, pinned_worker: null, ai_picked_worker: null, ai_pick_reason: null, woke_at: null, diagnosed_at: null,
+    worker: null, diagnosis: null, auto_restarts: 0, resting_since: null, pinned_worker: null, ai_picked_worker: null, ai_pick_reason: null, woke_at: null, diagnosed_at: null, diagnosed_from: null,
   };
 }
 
@@ -208,7 +208,7 @@ it("sends a setting once though Enter and leaving the field both commit, and sho
   const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
   const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
   await answerConfig(summary, events);
-  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!;
+  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='watch_daily_limit']")!;
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "0");
     field.dispatchEvent(new Event("input", { bubbles: true }));
@@ -219,7 +219,7 @@ it("sends a setting once though Enter and leaving the field both commit, and sho
   expect(writes).toHaveLength(1);
   const write = writes[0] as unknown as { payload: { request_id: string } };
   await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: write.payload.request_id, answer: { ok: false, reason: "config_invalid", next_action: "Check the value" } }] } }));
-  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!.value).toBe(String(CONFIG.new_task_limit));
+  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='watch_daily_limit']")!.value).toBe(String(CONFIG.watch_daily_limit));
 });
 
 it("treats a Factory whose cards are all archived as empty, not as a filter that matches nothing (B15)", async () => {
@@ -249,26 +249,6 @@ function type(field: HTMLInputElement, value: string) {
 function lastAction(events: Parameters<DispatchFn>[0][]) {
   return events.filter((event) => (event as unknown as { kind: string }).kind === "factory_action").at(-1) as unknown as { payload: { request_id: string; command: Record<string, unknown> } };
 }
-
-it("keeps a check's instruction until the engine takes it, then reads the config again, since a check answers with no config (B22)", async () => {
-  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
-  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
-  await answerConfig(summary, events);
-  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!;
-  await act(async () => type(field, "README가 최신인지"));
-  const add = [...container.querySelectorAll("button")].find((button) => button.textContent === english["factory.settings.add"])!;
-  await act(async () => add.click());
-  const check = lastAction(events);
-  expect(check.payload.command).toMatchObject({ verb: "check", instruction: "README가 최신인지" });
-  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: check.payload.request_id, answer: { ok: false, reason: "instruction_required", next_action: "Give --instruction" } }] } }));
-  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!.value).toBe("README가 최신인지");
-  await act(async () => add.click());
-  const again = lastAction(events);
-  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: again.payload.request_id, answer: { ok: true, message: "check added" } }] } }));
-  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!.value).toBe("");
-  expect(lastAction(events).payload.command).toEqual({ verb: "config", project: "/fixture", set: [] });
-  expect(container.querySelector("[data-factory-close]")).not.toBeNull();
-});
 
 it("puts an emptied number back to the saved value instead of sending 0 (B22)", async () => {
   const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
@@ -315,32 +295,14 @@ it("does not send a taken answer again while its item is still on screen (B10)",
   expect(sentVerbs(events)).toEqual(["merge"]);
 });
 
-it("holds Add while a check is on its way, and keeps a refused check's text through a later write of another setting (B22)", async () => {
-  const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
-  const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
-  await answerConfig(summary, events);
-  await act(async () => type(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!, "README"));
-  const add = [...container.querySelectorAll("button")].find((button) => button.textContent === english["factory.settings.add"])!;
-  await act(async () => add.click());
-  expect(add.disabled).toBe(true);
-  const check = lastAction(events);
-  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: check.payload.request_id, answer: { ok: false, reason: "factory_busy", next_action: "Try again in a moment" } }] } }));
-  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!;
-  await act(async () => type(field, "7"));
-  await act(async () => press(field, { key: "Enter" }));
-  const write = lastAction(events);
-  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: write.payload.request_id, answer: { ok: true, config: { ...CONFIG, new_task_limit: 7 }, machine: { max_workers: 5 } } }] } }));
-  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='check_instruction']")!.value).toBe("README");
-});
-
 it("puts a number the field cannot take back to the saved value instead of leaving it as if saved (B22)", async () => {
   const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
   const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
   await answerConfig(summary, events);
-  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!;
+  const field = container.querySelector<HTMLInputElement>("[data-factory-setting='watch_daily_limit']")!;
   await act(async () => type(field, "2.5"));
   await act(async () => field.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
-  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='new_task_limit']")!.value).toBe(String(CONFIG.new_task_limit));
+  expect(container.querySelector<HTMLInputElement>("[data-factory-setting='watch_daily_limit']")!.value).toBe(String(CONFIG.watch_daily_limit));
 });
 
 it("leaves an open priority form alone when another action on the page is taken (B19)", async () => {
@@ -507,14 +469,18 @@ it("reads a Factory made before worker candidates as one of its default agent, a
   expect(lastAction(events).payload.command).toEqual({ verb: "config", project: "/fixture", set: [["workers", JSON.stringify([{ agent: "claude", description: "" }, { agent: "claude", description: "" }])]] });
 });
 
-it("changes who answers with one of three choices, and dims them while Hide AI is off (B33, B10)", async () => {
+it("changes who answers with one of three choices, and dims them while Hide AI is off, when a risk path is the person's again (B33, B10, B37)", async () => {
   const summary = { my_turn: 0, notices: 0, factories: [factory()], inbox: [] };
   const { container, events } = await mount(summary, { tab: "settings", factory: "f1" });
   await answerConfig(summary, events);
   await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-mode='autonomous'] button")!.click());
-  expect(lastAction(events).payload.command).toEqual({ verb: "config", project: "/fixture", set: [["observer_mode", "autonomous"]] });
+  const write = lastAction(events);
+  expect(write.payload.command).toEqual({ verb: "config", project: "/fixture", set: [["observer_mode", "autonomous"]] });
+  await act(async () => useShellStore.setState({ factory: { summary, actions: [{ request_id: write.payload.request_id, answer: { ok: true, config: { ...CONFIG, observer_mode: "autonomous" }, machine: { max_workers: 5 } } }] } }));
+  expect(container.querySelector("[data-factory-risk-note]")!.textContent).toBe(english["factory.settings.riskAi"]);
   await act(async () => useShellStore.setState((state) => ({ rest: { ...state.rest, status: { ...state.rest?.status, background_ai: { enabled: false, provider: null, chosen: false, providers: [], unavailable_reason: null } } } as never })));
   expect(container.querySelector("[data-factory-ai-off]")!.textContent).toBe(english["factory.settings.aiOff"]);
+  expect(container.querySelector("[data-factory-risk-note]")!.textContent).toBe(english["factory.settings.riskMine"]);
 });
 
 it("lets a person answer a decision Factory AI made differently from the Task page, until the Task finishes (D-19)", async () => {
@@ -536,11 +502,11 @@ it("lets a person answer a decision Factory AI made differently from the Task pa
 });
 
 it("says why a worker stopped with Factory AI's reading, and how the engine treated its rest (B23, D-22)", async () => {
-  const stopped: TaskDetail = { ...detail("stopped", ["retry", "cancel"]), stop_code: "no_report", diagnosis: "테스트 실행을 기다리다 멈춤", woke_at: NOW - 240_000, diagnosed_at: NOW - 120_000 };
+  const stopped: TaskDetail = { ...detail("stopped", ["retry", "cancel"]), stop_code: "no_report", diagnosis: "테스트 실행을 기다리다 멈춤", woke_at: NOW - 240_000, diagnosed_at: NOW - 120_000, diagnosed_from: "screen" };
   const { container } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
   await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: stopped } }));
   expect(container.querySelector("[data-factory-stop='no_report']")!.textContent).toBe(`${english["factory.stop.no_report"]} · ${english["factory.card.noReply"]}`);
-  expect(container.querySelector("[data-factory-diagnosis]")!.textContent).toBe(english["factory.task.diagnosis"].replace("{{text}}", "테스트 실행을 기다리다 멈춤"));
+  expect(container.querySelector("[data-factory-diagnosis]")!.textContent).toBe(`${english["factory.task.diagnosis"].replace("{{text}}", "테스트 실행을 기다리다 멈춤")} · ${english["factory.diagnosisSource.screen"]}`);
   expect(container.querySelector("[data-factory-rest]")!.textContent).toBe(`${english["factory.task.woke"]}${english["factory.task.noReply"]}${english["factory.task.diagnosed"]}`);
 });
 

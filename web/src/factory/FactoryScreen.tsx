@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { CirclePauseIcon, MessageSquareIcon, PauseIcon, PlayIcon, PlusIcon } from "lucide-react";
+import { MessageSquareIcon, PauseIcon, PlayIcon, PlusIcon } from "lucide-react";
 import type { Actions } from "../actions";
 import { Elapsed } from "../components/elapsed";
 import { Button } from "../components/ui/button";
@@ -65,7 +65,7 @@ function FactoryBody({ summary, place, actions }: { summary: FactorySummary; pla
           <TabsList data-factory-tabs="true">
             {FACTORY_TABS.map((tab) => (
               <TabsTrigger key={tab} value={tab} data-factory-tab={tab}>
-                <TabLabel tab={tab} count={summary.my_turn} />
+                <TabLabel tab={tab} count={factory === null ? summary.my_turn : summary.inbox.filter((item) => item.factory === factory && item.group !== "notice").length} />
               </TabsTrigger>
             ))}
           </TabsList>
@@ -81,7 +81,7 @@ function FactoryBody({ summary, place, actions }: { summary: FactorySummary; pla
   );
 }
 
-/** 내 차례 carries the one person-facing number, the same the sidebar's Factory row shows (B12). */
+/** 내 차례 carries the one person-facing number, the same the sidebar shows for the Factory row or the project row the filter keeps (B12). */
 function TabLabel({ tab, count }: { tab: FactoryTab; count: number }) {
   const { t } = useInterfaceTranslation();
   return (
@@ -117,7 +117,7 @@ function FactoryHeader({ factories, factory, actions }: { factories: FactoryView
       </Select>
       {view?.paused ? (
         <span className="flex shrink-0 items-center gap-xxs rounded-full bg-muted px-sm py-xxs text-caption text-subtle-foreground" data-factory-paused-chip="true">
-          <CirclePauseIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+          <PauseIcon aria-hidden="true" className="size-(--size-icon-sm)" />
           {t("factory.pausedChip")}
         </span>
       ) : null}

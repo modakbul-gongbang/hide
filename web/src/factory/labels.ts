@@ -4,7 +4,7 @@
 // writing fails to compile here before it reaches a screen unlabelled.
 
 import type { MessageKey } from "../i18n/catalogs";
-import type { AttemptOutcome, AttemptStage, CardView, Column, DecisionKind, DiscoveryClass, EnvHold, Gate, InboxGroup, InboxItem, Notice, ObserverMode, PauseReason, QuestionOrigin, ResultCode, StopReason, TaskState, WaitingFor } from "./model";
+import type { AttemptOutcome, AttemptStage, CardView, Column, DecisionKind, DiagnosisSource, DiscoveryClass, EnvHold, Gate, InboxGroup, InboxItem, Notice, ObserverMode, PauseReason, QuestionOrigin, ResultCode, StopReason, TaskState, WaitingFor } from "./model";
 
 export const STATE_LABEL: Record<TaskState, MessageKey> = {
   drafting: "factory.state.drafting",
@@ -95,6 +95,11 @@ export const ACTION_LABEL: Record<string, MessageKey> = {
   revive: "factory.action.revive",
 };
 
+/** An action's words; resuming a Task paused by a closed pane starts its worker again (D-26), so it reads 다시 시작. */
+export function actionKey(value: string, paused = false): MessageKey {
+  return paused && value === "resume" ? "factory.resume" : (ACTION_LABEL[value] ?? "factory.turn.send");
+}
+
 /** How a state reads at a glance: the person's turn in the warning tone, work in the working tone, finished work as done. */
 export type StateTone = "turn" | "working" | "done" | "quiet";
 
@@ -178,6 +183,13 @@ export const DECISION_KIND_LABEL: Record<DecisionKind, MessageKey> = {
   C: "factory.decision.C",
   D: "factory.decision.D",
   E: "factory.decision.E",
+};
+
+/** What Factory AI read to diagnose a quiet worker, said after its diagnosis (D-37). */
+export const DIAGNOSIS_SOURCE_LABEL: Record<DiagnosisSource, MessageKey> = {
+  user_turn: "factory.diagnosisSource.user_turn",
+  last_answer: "factory.diagnosisSource.last_answer",
+  screen: "factory.diagnosisSource.screen",
 };
 
 export const PAUSE_REASON_LABEL: Record<PauseReason, MessageKey> = {
@@ -367,8 +379,8 @@ export function itemWhy(item: InboxItem, t: Translate): string {
 }
 
 /** What a notice says: its code's line with the engine's words; the daily cap is said whole. */
-export function noticeText(item: InboxItem, t: Translate): string {
-  if (item.notice === "daily_limit") return t("factory.notice.daily_limit");
+export function noticeText(item: InboxItem, t: Translate, limit: number | null = null): string {
+  if (item.notice === "daily_limit") return limit === null ? t("factory.notice.daily_limit") : t("factory.notice.dailyLimitCount", { limit });
   return item.notice ? t(NOTICE_LABEL[item.notice], { text: item.text }) : item.text;
 }
 

@@ -13,7 +13,7 @@ import { useUiStore, type FactoryPlace } from "../ui";
 import { taskRef, type FactoryCommand } from "./commands";
 import { StateMark, stateIcon } from "./FactoryCard";
 import { useTaskDetail } from "./FactoryScreen";
-import { ACTION_LABEL, DECISION_KIND_LABEL, GATE_LABEL, OUTCOME_LABEL, PAUSE_REASON_LABEL, STAGE_LABEL, STOP_LABEL, TONE_TEXT, stateTone } from "./labels";
+import { actionKey, DECISION_KIND_LABEL, DIAGNOSIS_SOURCE_LABEL, GATE_LABEL, OUTCOME_LABEL, PAUSE_REASON_LABEL, STAGE_LABEL, STOP_LABEL, TONE_TEXT, stateTone } from "./labels";
 import type { AttemptView, CardView, DecisionRecord, FactorySummary, FactoryView, Question, TaskDetail, WorkerCandidate } from "./model";
 import { Refusal } from "./MyTurn";
 import { Revive } from "./FactoryBoard";
@@ -273,7 +273,7 @@ function PageActions({ detail, task, send, sending, form, actions }: { detail: T
   if (allowed.length === 0) return null;
   const button = (action: (typeof PAGE_ACTIONS)[number], onClick: () => void, variant: "default" | "secondary" | "ghost" = "secondary") => (
     <Button key={action} variant={variant} size="sm" disabled={sending} data-factory-action={action} onClick={onClick}>
-      {t(ACTION_LABEL[action]!)}
+      {t(actionKey(action, detail.card.state === "paused"))}
     </Button>
   );
   return (
@@ -512,7 +512,7 @@ function StopLine({ detail }: { detail: TaskDetail }) {
       {detail.diagnosis ? (
         <p className="flex items-center gap-xs pl-(--size-icon) text-caption text-subtle-foreground" data-factory-diagnosis="true">
           <SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
-          <span className="[overflow-wrap:anywhere]">{t("factory.task.diagnosis", { text: detail.diagnosis })}</span>
+          <span className="[overflow-wrap:anywhere]">{[t("factory.task.diagnosis", { text: detail.diagnosis }), detail.diagnosed_from ? t(DIAGNOSIS_SOURCE_LABEL[detail.diagnosed_from]) : null].filter((part) => part !== null).join(" · ")}</span>
         </p>
       ) : null}
     </div>
@@ -552,8 +552,9 @@ function WorkerPick({ factory, detail, actions }: { factory: FactoryView; detail
         <SquareTerminalIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-muted-foreground" />
         <span className="flex-1">{t("factory.settings.workers")}</span>
         <Select value={String(picked)} onValueChange={(value) => request.send({ verb: "worker", task, worker: value === String(ai) && detail.pinned_worker !== null ? null : Number(value) })}>
-          <SelectTrigger size="sm" className="w-auto max-w-3/5" aria-label={t("factory.settings.workers")} data-factory-worker-select="true">
-            <SelectValue />
+          <SelectTrigger size="sm" className="w-[calc(var(--size-settings-control-w)*1.2)] max-w-3/5" aria-label={t("factory.settings.workers")} data-factory-worker-select="true">
+            {/* The trigger names the candidate; its line and the AI mark stay in the menu. */}
+            <SelectValue>{factory.workers[picked - 1] ? candidateText(factory.workers[picked - 1]!, t("factory.settings.cliDefault")) : null}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {factory.workers.map((candidate, at) => (

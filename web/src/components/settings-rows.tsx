@@ -9,14 +9,19 @@ import { cn } from "../lib/utils";
 
 /**
  * A card whose rows are separated by hairlines, like `HideSettingsGroup`; titled unless it stands alone, like the Hide AI switch.
- * An `action` sits at the title's right edge, for the one button that adds to the list below (Add device).
+ * A `caption` beside the title says what the group decides; an `action` sits at the title's right edge, for the one button that adds to the list below (Add device).
  */
-export function Group({ title, note, action, children, ...data }: { title?: string; note?: ReactNode; action?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
+export function Group({ title, caption, note, action, children, ...data }: { title?: string; caption?: ReactNode; note?: ReactNode; action?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
   return (
     <section className="mb-lg" {...data}>
       {title || action ? (
         <div className="mb-sm flex items-center justify-between gap-md">
-          {title ? <h3 className="text-body font-semibold text-subtle-foreground">{title}</h3> : <span />}
+          {title ? (
+            <span className="flex min-w-0 items-baseline gap-sm">
+              <h3 className="shrink-0 text-body font-semibold text-subtle-foreground">{title}</h3>
+              {caption ? <span className="min-w-0 truncate text-caption text-muted-foreground">{caption}</span> : null}
+            </span>
+          ) : <span />}
           {action}
         </div>
       ) : null}
