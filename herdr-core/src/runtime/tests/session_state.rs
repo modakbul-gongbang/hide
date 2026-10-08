@@ -1,5 +1,6 @@
 use super::*;
 use crate::agent_state::sessions::ResolveSource;
+use crate::model::PullRequestSnapshot;
 use serde_json::json;
 
 fn with_session() -> Runtime {
@@ -148,8 +149,24 @@ fn pane_bands_prioritize_connection_then_own_demand_then_raised_children() {
         })
     );
     assert!(!raised.working);
+    // A question already read is quiet; its outstanding descendant demand
+    // still owns the parent's warning line and band (B28).
+    agent.demand = "question".into();
+    agent.unread = false;
+    agent.emphasized = false;
+    let line = crate::agent_state::turn::row_state(&agent).line.unwrap();
+    assert_eq!(line.mode, "raised_child");
+    assert_eq!(line.tone.kind, "warning");
     agent.state.verb = RequestVerb::Answer;
     agent.blocked = true;
+    assert_eq!(
+        crate::agent_state::turn::row_state(&agent)
+            .line
+            .unwrap()
+            .tone
+            .kind,
+        "warning"
+    );
     assert_eq!(
         header::of(&pane, Some(&agent), None, &project, None)
             .band
@@ -163,6 +180,70 @@ fn pane_bands_prioritize_connection_then_own_demand_then_raised_children() {
     assert_eq!(
         (offline.kind.as_str(), offline.tone, offline.action),
         ("device_offline", "muted", None)
+    );
+}
+
+#[test]
+fn pane_pr_band_targets_its_duty_instead_of_another_link_with_higher_sort_priority() {
+    use crate::agent_state::{RequestVerb, header};
+    let mut runtime = with_session();
+    let agent = &mut runtime.snapshot.navigator.agents[0];
+    let pane = pane("session", "/work/app");
+    let mut project = workspace("app", "App", "/work/app", vec![]);
+    let pr = |number, checks| {
+        serde_json::from_value::<PullRequestSnapshot>(json!({
+        "number":number,"title":"Duty","url":format!("https://github.com/acme/app/pull/{number}"),
+        "head_branch":"feature","base_branch":"main","badge":"open","checks":checks,"is_draft":false,"closing_issues":[]
+    })).unwrap()
+    };
+    project.pull_requests = vec![pr(1, "failed"), pr(2, "passing")];
+    let link = |index: usize, duty| {
+        let p = &project.pull_requests[index];
+        crate::request_view::AgentPullRequestSnapshot {
+            number: p.number,
+            title: p.title.clone(),
+            url: p.url.clone(),
+            badge: p.badge,
+            checks: p.checks,
+            review: p.review,
+            head_branch: p.head_branch.clone(),
+            closing_issues: vec![],
+            live: true,
+            duty,
+            created: true,
+            settled_at_unix_ms: None,
+        }
+    };
+    agent.request = Some(crate::request_view::AgentRequestSnapshot {
+        verb: RequestVerb::Review,
+        verb_since_unix_ms: 123,
+        line: Some("Review duty".into()),
+        end: None,
+        request: None,
+        later_by: None,
+        reply: None,
+        pull_requests: vec![link(0, false), link(1, true)],
+    });
+    agent.state = crate::agent_state::turn::row_state(agent);
+    let projected = header::of(&pane, Some(agent), None, &project, None);
+    assert!(matches!(
+        projected.pull,
+        Some(header::Action::Pr { number: 1, .. })
+    ));
+    let band = projected.band.unwrap();
+    assert_eq!(band.kind, "merge");
+    assert!(matches!(
+        band.action,
+        Some(header::Action::Pr { number: 2, .. })
+    ));
+    assert_eq!(band.since_unix_ms, Some(123));
+    assert_eq!(band.reason, None);
+    assert_eq!(
+        band.facts,
+        Some(header::ReasonFacts::PullRequest {
+            checks: crate::model::PullRequestChecks::Passing,
+            review: None
+        })
     );
 }
 

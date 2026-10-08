@@ -28,6 +28,26 @@ pub struct Escalation {
     pub human_notice: bool,
 }
 
+/// A later waiting reason is not a receipt or successful bell. The worker
+/// removes a hold after ringing (or retiring) the letter; until then retain
+/// the cause that already raised it. This table remains bounded by the
+/// worker's current pending letters and is never used for doorbell verdicts.
+pub(crate) fn retain_raised_holds(
+    previous: &BTreeMap<String, Hold>,
+    mut current: BTreeMap<String, Hold>,
+) -> BTreeMap<String, Hold> {
+    for (id, old) in previous {
+        if matches!(
+            old,
+            Hold::Blocked | Hold::AwaitingOperator | Hold::Draft | Hold::Exhausted
+        ) && let Some(next) = current.get_mut(id)
+        {
+            *next = *old;
+        }
+    }
+    current
+}
+
 pub(crate) fn of(
     child: &SidebarAgentSnapshot,
     ledger: Option<&Ledger>,
@@ -168,6 +188,14 @@ mod tests {
             let id = ledger.letters[0].id.clone();
             let holds = BTreeMap::from([(id.clone(), hold)]);
             assert!(of(&child, Some(&ledger), &holds).is_some());
+            for waiting in [Hold::Working, Hold::Quiet, Hold::NotReady] {
+                let retained = retain_raised_holds(&holds, BTreeMap::from([(id.clone(), waiting)]));
+                assert_eq!(
+                    of(&child, Some(&ledger), &retained),
+                    of(&child, Some(&ledger), &holds)
+                );
+            }
+            assert!(retain_raised_holds(&holds, BTreeMap::new()).is_empty());
             assert!(
                 of(&child, Some(&ledger), &BTreeMap::new()).is_none(),
                 "a successful bell clears the hold"

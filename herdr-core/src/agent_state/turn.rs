@@ -139,7 +139,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
                 },
             }
         });
-    if !asking && let Some(child) = agent.raised_children.first() {
+    if let Some(child) = agent.raised_children.first() {
         line = Some(RowLine {
             text: child.reason.as_ref().map_or_else(
                 || format!("↳ {}", child.title),

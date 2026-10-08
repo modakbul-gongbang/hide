@@ -1092,6 +1092,8 @@ pub struct Runtime {
     delivery_holds: BTreeMap<String, crate::delivery::doorbell::Hold>,
     session_day_zone: Result<jiff::tz::TimeZone, jiff::Error>,
     session_next_day_unix_ms: u64,
+    #[cfg(test)]
+    pane_header_derivations: usize,
     state_save_pending: bool,
     state_save_active: bool,
     state_save_worker: Option<thread::JoinHandle<()>>,
@@ -2027,6 +2029,8 @@ impl Runtime {
             delivery_holds: BTreeMap::new(),
             session_day_zone: jiff::tz::TimeZone::try_system(),
             session_next_day_unix_ms: 0,
+            #[cfg(test)]
+            pane_header_derivations: 0,
             state_save_pending: false,
             state_save_active: false,
             state_save_worker: None,

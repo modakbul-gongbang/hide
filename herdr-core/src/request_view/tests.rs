@@ -428,6 +428,14 @@ fn closed_session_prs_need_a_recorded_link_and_never_duplicate_a_live_sessions_c
         [(2, Tag::Merge)]
     );
     assert_eq!(scope.counts[&Group::ReviewMerge], 1);
+    // B17: a live PR with the same number in another repository does not
+    // consume this project's closed-session PR.
+    live[0].request.as_mut().unwrap().pull_requests[0].url =
+        "https://github.com/acme/other/pull/1".into();
+    let mut other = Scope::default();
+    add_closed_prs(&mut other, &project, Some(&[1, 2].into()), &[&live[0]]);
+    assert_eq!(other.closed_prs.len(), 2);
+    assert_eq!(other.counts[&Group::ReviewMerge], 2);
 }
 
 #[test]

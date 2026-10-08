@@ -569,6 +569,10 @@ Regression owners: `agent_state::escalation::tests`, `runtime::tests::lineage`, 
 Connection or sleep availability wins, then the pane's own demand, then the first raised child, then the ordinary task verb.
 Approval, Answer, Fix, Review, Merge, Stopped and Result have bands; Working has only a thin blue line, while CI wait, child wait and Idle have none.
 Bands carry the core reason, action and stable verb time; extra raised children appear as `+N`.
+PR actions select the duty that produced the verb and retain the canonical URL, so equal PR numbers in different repositories cannot redirect the action.
+PR reason facts carry checks and review separately from label progress.
+The existing input does not supply an approval command or failed check names; the band explicitly says those details are unavailable rather than treating a generated sentence as that evidence.
+The quiet identity chip can still show the first linked live PR independently of the duty action.
 A failed exit is red with its real exit code, a normal termination is gray, and connection and sleep actions remain in their existing body surfaces.
 The band overlays the terminal so state changes never resize its PTY grid.
 The identity row retains provider, title, direct-child badge, parent return, PR/CI, Not connected chip and existing controls, dropping the parent text first when narrow.

@@ -20,6 +20,20 @@ pub struct Band {
     pub more: usize,
     pub exit_code: Option<i32>,
     pub child_tag: Option<super::sessions::Tag>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub facts: Option<ReasonFacts>,
+}
+
+/// Facts already read by the core. Missing commands/check names are explicit;
+/// a generated progress sentence cannot stand in for either source.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReasonFacts {
+    ApprovalCommandUnavailable,
+    PullRequest {
+        checks: crate::model::PullRequestChecks,
+        review: Option<crate::model::ReviewDecision>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -27,6 +41,7 @@ pub struct Band {
 pub enum Action {
     Pr {
         workspace_id: String,
+        url: String,
         number: u32,
         checks: crate::model::PullRequestChecks,
         tone: &'static str,
@@ -44,24 +59,44 @@ pub(crate) fn of(
     workspace: &WorkspaceSnapshot,
     offline: Option<&str>,
 ) -> Header {
-    let pull = agent
+    let tag = agent.map(|agent| super::sessions::tag(agent, agent.state.verb));
+    let links = agent
         .and_then(|agent| agent.request.as_ref())
-        .and_then(|request| {
-            request
-                .pull_requests
-                .iter()
-                .find(|pull| pull.live && !pull.badge.is_settled())
+        .map(|request| &request.pull_requests);
+    let live = |pull: &&crate::request_view::AgentPullRequestSnapshot| {
+        pull.live && !pull.badge.is_settled()
+    };
+    let action = |pull: &crate::request_view::AgentPullRequestSnapshot| Action::Pr {
+        workspace_id: workspace.id.clone(),
+        url: pull.url.clone(),
+        number: pull.number,
+        checks: pull.checks,
+        tone: workspace
+            .pull_requests
+            .iter()
+            .find(|pr| pr.url == pull.url)
+            .map_or("pr", pr_tone),
+    };
+    let pull = links.and_then(|links| links.iter().find(live)).map(action);
+    let duty = links.and_then(|links| {
+        links.iter().filter(live).find(|pull| {
+            use super::sessions::Tag;
+            use crate::model::PullRequestChecks;
+            match tag {
+                Some(Tag::Fix) => pull.duty && pull.checks == PullRequestChecks::Failed,
+                Some(Tag::Review | Tag::Merge) => {
+                    pull.duty
+                        && matches!(
+                            pull.checks,
+                            PullRequestChecks::Passing
+                                | PullRequestChecks::None
+                                | PullRequestChecks::Unknown
+                        )
+                }
+                _ => false,
+            }
         })
-        .map(|pull| Action::Pr {
-            workspace_id: workspace.id.clone(),
-            number: pull.number,
-            checks: pull.checks,
-            tone: workspace
-                .pull_requests
-                .iter()
-                .find(|pr| pr.number == pull.number)
-                .map_or("pr", pr_tone),
-        });
+    });
     let band = |kind: &str, tone, reason, since_unix_ms, action, more, exit_code| {
         Some(Band {
             kind: kind.to_owned(),
@@ -72,6 +107,7 @@ pub(crate) fn of(
             more,
             exit_code,
             child_tag: None,
+            facts: None,
         })
     };
     let unavailable = if let Some(name) = offline {
@@ -136,7 +172,6 @@ pub(crate) fn of(
     let Some(agent) = agent else {
         return Header::default();
     };
-    let tag = Some(super::sessions::tag(agent, agent.state.verb));
     let demand = matches!(
         tag,
         Some(super::sessions::Tag::Approval | super::sessions::Tag::Answer)
@@ -173,9 +208,15 @@ pub(crate) fn of(
     let (kind, tone, action) = match tag {
         Some(Tag::Approval) => ("approval", "warning", None),
         Some(Tag::Answer) => ("answer", "warning", None),
-        Some(Tag::Fix) => ("fix", "error", pull.clone()),
-        Some(Tag::Review) => ("review", pull_tone(&pull), pull.clone()),
-        Some(Tag::Merge) => ("merge", pull_tone(&pull), pull.clone()),
+        Some(Tag::Fix) => ("fix", "error", duty.map(action)),
+        Some(Tag::Review) => {
+            let action = duty.map(action);
+            ("review", pull_tone(&action), action)
+        }
+        Some(Tag::Merge) => {
+            let action = duty.map(action);
+            ("merge", pull_tone(&action), action)
+        }
         Some(Tag::Stopped) => ("stopped", "warning", None),
         Some(Tag::Result) => ("result", "success", None),
         _ => {
@@ -200,7 +241,23 @@ pub(crate) fn of(
             action,
             0,
             None,
-        ),
+        )
+        .map(|mut band| {
+            band.facts = match tag {
+                Some(Tag::Approval) => Some(ReasonFacts::ApprovalCommandUnavailable),
+                Some(Tag::Fix | Tag::Review | Tag::Merge) => {
+                    duty.map(|pull| ReasonFacts::PullRequest {
+                        checks: pull.checks,
+                        review: pull.review,
+                    })
+                }
+                _ => None,
+            };
+            if band.facts.is_some() {
+                band.reason = None;
+            }
+            band
+        }),
     }
 }
 

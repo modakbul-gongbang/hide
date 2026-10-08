@@ -211,6 +211,7 @@ impl Runtime {
         &mut self,
         holds: BTreeMap<String, crate::delivery::doorbell::Hold>,
     ) {
+        let holds = escalation::retain_raised_holds(&self.delivery_holds, holds);
         if self.delivery_holds == holds {
             return;
         }

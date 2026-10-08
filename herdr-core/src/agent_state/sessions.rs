@@ -203,17 +203,21 @@ pub(crate) fn add_closed_prs(
     agents: &[&SidebarAgentSnapshot],
 ) {
     let before = scope.closed_prs.len();
+    let live_urls: std::collections::HashSet<_> = agents
+        .iter()
+        .flat_map(|agent| {
+            agent
+                .request
+                .iter()
+                .flat_map(|request| &request.pull_requests)
+        })
+        .filter(|pull| pull.live)
+        .map(|pull| pull.url.as_str())
+        .collect();
     for pr in &project.pull_requests {
         if pr.badge.is_settled()
             || !numbers.is_some_and(|numbers| numbers.contains(&pr.number))
-            || agents.iter().any(|agent| {
-                agent.request.as_ref().is_some_and(|request| {
-                    request
-                        .pull_requests
-                        .iter()
-                        .any(|pull| pull.number == pr.number && pull.live)
-                })
-            })
+            || live_urls.contains(pr.url.as_str())
         {
             continue;
         }

@@ -325,6 +325,10 @@ impl Runtime {
         self.snapshot.terminal.panes.push(pane);
     }
     pub(super) fn refresh_pane_headers(&mut self) -> bool {
+        #[cfg(test)]
+        {
+            self.pane_header_derivations += 1;
+        }
         let mut headers = BTreeMap::new();
         let devices = &self.snapshot.navigator.devices;
         let local = self
@@ -429,6 +433,7 @@ impl Runtime {
         let Some(lifecycle) = self.terminal_session_lifecycles.get(pane_id).cloned() else {
             return;
         };
+        let mut header_changed = false;
         if let Some(pane) = self
             .snapshot
             .terminal
@@ -436,6 +441,8 @@ impl Runtime {
             .iter_mut()
             .find(|pane| pane.pane_id == pane_id)
         {
+            header_changed = pane.transport_state != lifecycle.state
+                || pane.scroll_held_elsewhere != self.panes_scroll_held.contains(pane_id);
             pane.transport_state = lifecycle.state.to_owned();
             pane.transport_message = lifecycle.message;
             pane.transport_generation = lifecycle.generation;
@@ -449,10 +456,15 @@ impl Runtime {
             pane.scroll_held_elsewhere = self.panes_scroll_held.contains(pane_id);
             pane.grid_held = self.grid_held_panes.contains(pane_id);
         }
-        self.refresh_pane_headers();
+        if header_changed {
+            self.refresh_pane_headers();
+        }
     }
     pub(super) fn sync_focused_terminal_projection(&mut self) {
-        self.refresh_pane_headers();
+        let previous = (
+            self.snapshot.terminal.closed,
+            self.snapshot.terminal.exit_code,
+        );
         let Some(pane_id) = self.snapshot.terminal.pane_id.as_deref() else {
             self.snapshot.terminal.closed = false;
             self.snapshot.terminal.exit_code = None;
@@ -467,6 +479,14 @@ impl Runtime {
         {
             self.snapshot.terminal.closed = pane.closed;
             self.snapshot.terminal.exit_code = pane.exit_code;
+        }
+        if previous
+            != (
+                self.snapshot.terminal.closed,
+                self.snapshot.terminal.exit_code,
+            )
+        {
+            self.refresh_pane_headers();
         }
     }
     /// Applies a background pane-control result to the owner-thread snapshot.

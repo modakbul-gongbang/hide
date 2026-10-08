@@ -1318,3 +1318,64 @@ fn find_opens_the_agents_own_search_only_where_herdr_holds_no_history() {
         None
     );
 }
+
+/// Repeated PTY data must not rebuild every pane's operator state under the
+/// runtime lock. Actual transport and scroll-control transitions still do.
+#[test]
+fn control_frames_keep_headers_without_derivation_until_a_relevant_transition() {
+    let mut runtime = runtime();
+    let id = "w-frame:p1";
+    runtime.snapshot.terminal.panes = vec![TerminalPaneSnapshot {
+        pane_id: id.into(),
+        transport_state: "controlling".into(),
+        ..Default::default()
+    }];
+    runtime.terminal_sessions.insert(
+        id.into(),
+        TerminalSession::test_stub(id, 1, TerminalSessionMode::Control),
+    );
+    runtime.terminal_session_generations.insert(id.into(), 1);
+    runtime.terminal_session_lifecycles.insert(
+        id.into(),
+        TerminalSessionLifecycle {
+            state: "controlling",
+            generation: 1,
+            ..Default::default()
+        },
+    );
+    runtime.terminal_view_sizes.insert(id.into(), (24, 80));
+    let before = runtime.pane_header_derivations;
+    for _ in 0..100 {
+        assert_eq!(
+            runtime.ingest_terminal_session_frame(
+                id,
+                1,
+                TerminalSessionMode::Control,
+                b"data",
+                crate::model::TerminalFrame {
+                    width: 80,
+                    height: 24,
+                    full: true
+                }
+            ),
+            Some(true)
+        );
+    }
+    assert_eq!(runtime.pane_header_derivations, before);
+    assert_eq!(runtime.snapshot.terminal.sequence, 100);
+    runtime.panes_scroll_held.insert(id.into());
+    runtime.sync_transport_projection(id);
+    assert!(runtime.snapshot.terminal.panes[0].scroll_held_elsewhere);
+    assert_eq!(runtime.pane_header_derivations, before + 1);
+    runtime
+        .terminal_session_lifecycles
+        .get_mut(id)
+        .unwrap()
+        .state = "unavailable";
+    runtime.sync_transport_projection(id);
+    assert_eq!(
+        runtime.snapshot.terminal.panes[0].transport_state,
+        "unavailable"
+    );
+    assert_eq!(runtime.pane_header_derivations, before + 2);
+}
