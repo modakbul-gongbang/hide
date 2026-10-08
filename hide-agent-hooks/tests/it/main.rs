@@ -10,5 +10,7 @@ mod guidance_hook;
 mod hook_deadline;
 mod letter_origin;
 mod lossless_install;
+mod opencode_helper;
+mod opencode_plugin;
 mod spawn_guard;
 mod windows_hook_command;
