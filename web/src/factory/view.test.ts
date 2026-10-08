@@ -7,7 +7,7 @@ import { boardColumns, factoryGraph, splitAtCuts, taskChain } from "./view";
 function card(task: string, patch: Partial<CardView> = {}): CardView {
   return {
     task, display_id: task, column: "before", title: task, summary: task, issue: null, issue_url: null, pr: null, worker_runtime: null, resume_at: null, waiting_group: null, stage: 0, state: "waiting", state_label: "", needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null,
-    priority: 0, since: 0, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, ...patch,
+    priority: 0, since: 0, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, worker_label: null, pause_reason: null, ...patch,
   };
 }
 
@@ -18,6 +18,7 @@ function factory(cards: CardView[], dependencies: [string, string][], edges: [st
     columns: [{ column: "before", label: "", cards }], cancelled: [],
     graph: { nodes: cards.map((value) => value.task), edges, unrelated: [] }, dependencies,
     outside_read_at: null, stale: false, main_broken: false, auto_merge_available: true, merge_mode: "auto",
+    paused: false, notices: 0, observer_mode: "assist", observer_today: 0, observer_limit: 100, factory_ai: null, workers: [{ agent: "claude", description: "" }], macos_notifications: false,
   };
 }
 
@@ -61,7 +62,7 @@ describe("the Factory board", () => {
 describe("the Factory workers (B13)", () => {
   it("are the panes the engine names on its cards, which the Overview leaves out", () => {
     const view = factory([card("T-1", { worker_pane: "w1:p2" }), card("T-2")], []);
-    expect([...workerPanes({ my_turn: 0, factories: [view], inbox: [] })]).toEqual(["w1:p2"]);
+    expect([...workerPanes({ my_turn: 0, notices: 0, factories: [view], inbox: [] })]).toEqual(["w1:p2"]);
     expect(workerPanes(null).size).toBe(0);
   });
 });

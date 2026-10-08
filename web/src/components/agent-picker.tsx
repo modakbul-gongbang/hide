@@ -40,6 +40,7 @@ export function AgentPicker({
   value,
   onChange,
   withTerminal = false,
+  withModel = true,
   disabled = false,
   className,
 }: {
@@ -48,6 +49,8 @@ export function AgentPicker({
   onChange: (next: AgentSelection) => void;
   /** New worktree offers a tab with no agent as the kind menu's first item; it is never remembered. */
   withTerminal?: boolean;
+  /** False where the chosen agent's start takes no model, so no model menu is drawn. */
+  withModel?: boolean;
   disabled?: boolean;
   className?: string;
 }) {
@@ -57,7 +60,7 @@ export function AgentPicker({
   return (
     <AgentPickerView
       value={value}
-      catalog={value.kind === "terminal" ? null : catalogFor(ai, value.kind)}
+      catalog={value.kind === "terminal" || !withModel ? null : catalogFor(ai, value.kind)}
       onKind={(kind) => onChange(selectKind(kind, start))}
       onModel={(model) => onChange({ kind: value.kind, model })}
       withTerminal={withTerminal}

@@ -173,6 +173,7 @@ struct DedupKey {
     feature_id: std::borrow::Cow<'static, str>,
     subject_id: String,
     input_hash: u64,
+    pick: Option<crate::AiPick>,
 }
 
 struct InFlight {
@@ -456,6 +457,7 @@ impl AiRouter {
             feature_id: request.feature_id.clone(),
             subject_id: request.subject_id.clone(),
             input_hash: input_hash(request),
+            pick: request.pick.clone(),
         };
         let (flight, leader) = {
             let mut state = self.lock();
@@ -595,8 +597,34 @@ impl AiRouter {
         let started = (self.now)();
         let limit = started + self.overall_deadline(request);
         // Availability is read once per request, and a parked provider is
-        // not read at all. Only the providers the operator listed are asked.
-        let selection = self.select_among(self.candidates());
+        // not read at all. Only the providers the operator listed are asked,
+        // or the one agent the caller picked.
+        if let Some(pick) = &request.pick
+            && let Some(effort) = pick.effort.as_deref()
+            && !pick.provider.efforts().contains(&effort)
+        {
+            let error =
+                AiError::Unsupported(format!("effort_not_declared:{}:{effort}", pick.provider));
+            self.finish(
+                request,
+                Some(pick.provider),
+                &Err(error.clone()),
+                started,
+                0,
+                Measured::none(),
+            );
+            return Err(error);
+        }
+        let candidates = match &request.pick {
+            Some(pick) => self
+                .backends
+                .iter()
+                .filter(|backend| backend.id() == pick.provider)
+                .cloned()
+                .collect(),
+            None => self.candidates(),
+        };
+        let selection = self.select_among(candidates);
         self.announce_degradation(request, &selection);
         let connected: Vec<&Arc<dyn AiBackend>> = selection
             .iter()
@@ -1337,6 +1365,7 @@ mod tests {
             output_schema: schema(),
             deadline: Duration::from_secs(5),
             schema_version: "test.v1".into(),
+            pick: None,
         }
     }
 
@@ -1373,6 +1402,39 @@ mod tests {
 
     fn ok(summary: &str) -> Result<Value, AiError> {
         Ok(json!({"summary": summary}))
+    }
+
+    #[test]
+    fn a_picked_provider_is_the_only_one_asked_and_an_undeclared_effort_is_refused() {
+        let sink = Arc::new(Recorder::default());
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
+        let codex = Scripted::new(ProviderId::CODEX, vec![ok("codex")]);
+        let router = make_router(vec![claude.clone(), codex.clone()], sink.clone());
+        let picked = AiRequest {
+            pick: Some(crate::AiPick {
+                provider: ProviderId::CODEX,
+                model: Some("gpt-5.5".into()),
+                effort: Some("high".into()),
+            }),
+            ..request("p1", "x")
+        };
+        let result = router.execute(&picked, &CancelToken::new()).unwrap();
+        assert_eq!(result.provider, ProviderId::CODEX);
+        assert_eq!(claude.calls(), 0);
+
+        let refused = AiRequest {
+            pick: Some(crate::AiPick {
+                provider: ProviderId::CODEX,
+                model: None,
+                effort: Some("max".into()),
+            }),
+            ..request("p2", "x")
+        };
+        assert!(matches!(
+            router.execute(&refused, &CancelToken::new()),
+            Err(AiError::Unsupported(_))
+        ));
+        assert_eq!(codex.calls(), 1);
     }
 
     #[test]

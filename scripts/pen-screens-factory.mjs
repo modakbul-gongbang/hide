@@ -31,14 +31,14 @@ const WIDE_FROM = 420;
 // went back to waiting on a usage limit, which the board shows as 쉬는 중 (D-09).
 const STATE_WORD = {
   drafting: '정리 중', waiting: '대기', resting: '쉬는 중', running: '실행 중', blocked: '막힘', verifying: '검증 중', merge_waiting: '머지 대기',
-  stopped: '멈춤', outside: '밖에서 진행 중', done: '완료', landed: '머지됨',
+  stopped: '멈춤', paused: '일시정지', outside: '밖에서 진행 중', done: '완료', landed: '머지됨',
 };
 const STATE_GLYPH = {
   drafting: 'circle-dashed', waiting: 'circle', resting: 'circle-pause', running: 'circle-dot', verifying: 'loader-circle', outside: 'circle-dot', blocked: 'circle-help',
-  stopped: 'circle-pause', merge_waiting: 'git-merge', done: 'circle-check', landed: 'circle-check',
+  stopped: 'circle-pause', paused: 'circle-pause', merge_waiting: 'git-merge', done: 'circle-check', landed: 'circle-check',
 };
 const TONE = {
-  drafting: MUT, waiting: MUT, resting: MUT, running: WORK, verifying: WORK, outside: MUT, blocked: WARN, stopped: CRIT, merge_waiting: WARN, done: OK, landed: OK,
+  drafting: MUT, waiting: MUT, resting: MUT, running: WORK, verifying: WORK, outside: MUT, blocked: WARN, stopped: CRIT, paused: MUT, merge_waiting: WARN, done: OK, landed: OK,
 };
 
 // Every Task in one example data set. `lane` is the board lane (D-06, D-07) and,
@@ -117,7 +117,84 @@ const GRAPH_EDGES = [['t420', 't421'], ['t421', 't422'], ['t410', 't412'], ['t41
 const GRAPH_UNRELATED = ['t7', 't431', 't405', 't417', 't398', 't426', 't430', 't409'];
 const GRAPH_SASU = ['s91', 's88', 's86'];
 
-export function factoryRows(tokens, {themedXref, screenButton, screenSelect, screenIconButton, screenDialogSurface, screenRadioItem}, s) {
+// -- Observer (PRD factory-observer) ---------------------------------------------------------
+// Two Factories: herdr-ide runs in 보조 and sasu in 자율 (D-03, D-18). These Tasks appear only
+// on the Observer frames, so the board, graph and 내 차례 counts above stay as they were.
+const OBS_TASKS = {
+  t433: {id: '#433', project: 'herdr-ide', title: '설정 검색 결과 강조', state: 'stopped', lane: 'stuck', wait: 'me', stage: 1, agent: 'claude', age: '18분',
+    summary: '설정 검색에서 맞은 글자를 굵게 보인다', problem: {glyph: 'circle-alert', text: '작업자 사라짐 · 다시 띄웠지만 또 사라짐', tone: CRIT}, action: ['다시 시작', '기록 보기']},
+  t434: {id: '#434', project: 'herdr-ide', title: '빈 Factory 안내 문구', state: 'paused', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '25분',
+    summary: 'Task가 없을 때 넣는 방법을 한 줄로 안내한다', problem: {glyph: 'circle-pause', text: '일시정지 · Hide에서 작업자 창을 닫음', tone: MUT}, action: ['다시 시작', '기록 보기']},
+  t435: {id: '#435', project: 'herdr-ide', title: 'Sessions 칩 정렬', state: 'stopped', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '9분',
+    summary: 'Sessions 칩을 최근 활동순으로 놓는다', problem: {glyph: 'circle-alert', text: '보고 없음 · 깨웠지만 답 없음', tone: CRIT}, action: ['다시 시작', '기록 보기'],
+    diagnosis: '테스트 실행을 기다리다 멈춘 것으로 보입니다'},
+  t436: {id: '#436', project: 'herdr-ide', title: '보드 빈 열 문구', state: 'blocked', lane: 'stuck', wait: 'me', stage: 1, agent: 'claude', age: '6분',
+    summary: '빈 열에 보일 한 줄 문구를 정한다',
+    ask: {question: '빈 열에 무엇을 보일까요?', choices: ['아무것도 보이지 않기', '"없음" 한 단어', '열마다 다른 안내']}, mark: ['?', '질문', WARN], ai: '세 안을 화면에 그려 두고 답을 기다림'},
+  t437: {id: '#437', project: 'herdr-ide', title: '정렬 상태 기억', state: 'blocked', lane: 'stuck', wait: 'me', stage: 1, agent: 'codex', age: '30분',
+    summary: '고른 정렬을 다시 열어도 그대로 둔다',
+    ask: {question: '카드가 틀림: 완료 조건이 #412와 겹칩니다', choices: ['AI 제안: #412에 합치기', '그대로 진행']}, mark: ['?', '질문', WARN], ai: '두 Task의 완료 조건을 비교하고 답을 기다림'},
+};
+const taskOf = key => TASKS[key] ?? OBS_TASKS[key];
+// 내 차례 with the Observer: the person gets the 제품·취향, 권한 and 카드가 틀림 requests,
+// the stops, and one line for every AI answer the mode table marks as a notice (D-32).
+const OBS_INBOX = [
+  {group: '답할 것', items: [
+    {kind: 'blocking', glyph: 'message-square', key: 't436', title: '빈 열에 무엇을 보일까요?', why: '제품·취향', text: '함께에서는 내가 정합니다. 작업자는 첫 안을 추천합니다.', cue: '6분',
+      choices: ['아무것도 보이지 않기', '"없음" 한 단어', '열마다 다른 안내'], result: '작업자를 깨워 이어갑니다', footer: ['ban', '기본 행동 없음 · 답할 때까지 기다립니다']},
+    {kind: 'blocking', glyph: 'message-square', key: 't437', title: '카드가 틀림: 완료 조건이 #412와 겹침', text: 'AI 제안: #412에 합치기', cue: '30분'},
+    {kind: 'default', glyph: 'message-square', key: 's88', title: 'gate 요약을 PR 댓글로도 올릴까요?', why: '권한', text: '밖에 글을 씁니다. 맡김이어도 내가 정합니다.', cue: '5시간 남음',
+      choices: ['올리지 않기', 'PR 댓글로 올리기'], result: '다시 시작하면 작업자에게 전합니다', footer: [null, '기본 행동: 5시간 뒤 올리지 않기로 진행']},
+  ]},
+  {group: '머지 대기', items: [{kind: 'merge', glyph: 'git-merge', key: 't405', title: 'PR #561 머지', text: '위험 경로 · 내가 승인합니다', cue: '1시간'}]},
+  {group: '멈춤', items: [
+    {kind: 'stopped', glyph: 'circle-alert', key: 't435', title: '보고 없음', text: 'Observer: 테스트 실행을 기다리다 멈춘 것으로 보입니다', cue: '9분'},
+    {kind: 'stopped', glyph: 'circle-alert', key: 't433', title: '작업자 사라짐', text: '한 번 다시 띄웠지만 또 사라졌습니다', cue: '18분'},
+    {kind: 'stopped', glyph: 'circle-pause', key: 't434', title: '일시정지', text: 'Hide에서 작업자 창을 닫았습니다', cue: '25분'},
+  ]},
+  {group: '알림', items: [
+    {kind: 'ai', glyph: 'sparkles', key: 't412', title: 'AI가 답함: 정렬 키는 updated_at', text: '기술 선택', cue: '12분', button: '다른 답'},
+    {kind: 'ai', glyph: 'sparkles', key: 's86', title: 'AI가 위험 경로 머지를 승인함: PR #84', text: '맡김 · 검증 통과', cue: '50분', button: 'PR 보기'},
+    {kind: 'ai', glyph: 'sparkles', key: 's91', title: 'AI가 새 Task를 만듦: #92', text: '카드가 틀림 · 맡김', cue: '1시간', button: '보기'},
+    {kind: 'notice', glyph: 'bell', key: 's88', title: '오늘 AI 판단 100/100번', text: '남은 결정은 내가 정합니다', cue: '20분'},
+  ]},
+];
+// The 내 차례 number counts only what waits on the person: answers, merges and stops.
+// 알림 lines are read and dismissed, so they sit below a rule and are not counted.
+const countOf = inbox => inbox.filter(group => group.group !== '알림').reduce((sum, group) => sum + group.items.length, 0);
+const inboxOf = project => OBS_INBOX.map(group => ({...group, items: group.items.filter(item => taskOf(item.key).project === project)})).filter(group => group.items.length);
+const OBS_INBOX_COUNT = countOf(OBS_INBOX);
+const obsCount = (lane, project) => Object.values({...TASKS, ...OBS_TASKS}).filter(task => task.lane === lane && (!project || task.project === project) && (lane !== 'done' || task.today)).length;
+const obsFlow = project => ({before: obsCount('before', project), moving: obsCount('moving', project), stuck: obsCount('stuck', project), done: obsCount('done', project)});
+// The Factories: herdr-ide runs with 함께 and sasu, paused, with 맡김.
+const OBS_FACTORIES = [
+  {project: 'herdr-ide', mode: 1, worker: '작업자 후보 3', paused: false},
+  {project: 'sasu', mode: 2, worker: '작업자 후보 1', paused: true},
+];
+// The worker candidates: an agent, model and effort with a line the operator writes; the
+// Factory AI picks one per Task at intake from the card and these lines, the first is the default,
+// and a candidate at its usage limit hands new starts to the next one.
+const WORKERS = [
+  {label: '기본', agent: 'Codex', model: 'gpt-6.1-sol', effort: 'high', when: '대부분의 Task'},
+  {label: '후보', agent: 'Claude Code', model: 'opus', effort: 'max', when: 'herdr-core, 동시성, 큰 리팩터'},
+  {label: '후보', agent: 'Codex', model: 'gpt-6.1-luna', effort: 'low', when: '문구, 문서, 작은 UI'},
+];
+// The full list (five, B32): an agent whose adapter declares no model or effort argument shows
+// only "CLI 기본값".
+const WORKERS_FULL = [
+  ...WORKERS,
+  {label: '후보', agent: 'Claude Code', model: 'sonnet', effort: 'medium', when: '테스트만 고치는 Task'},
+  {label: '후보', agent: 'OpenCode', model: null, effort: null, when: '실험, 버려도 되는 시도'},
+];
+// What each choice hands to the AI (D-14, D-21, D-32): 직접 is the PRD's 수동, 함께 보조, 맡김 자율.
+// The settings show the picked choice's two lists instead of the whole table.
+const MODES = [
+  {name: '직접', line: '모든 결정을 내가', me: ['기술 결정', '제품 결정', '카드 고침', '권한', '위험 경로 머지'], ai: ['답이 이미 있는 질문'], risk: '이 경로를 바꾼 PR은 내가 머지합니다'},
+  {name: '함께', line: '기술은 AI, 제품은 내가', me: ['제품 결정', '카드 고침 (AI 제안)', '권한', '위험 경로 머지'], ai: ['기술 결정', '답이 이미 있는 질문'], risk: '이 경로를 바꾼 PR은 내가 머지합니다'},
+  {name: '맡김', line: '권한만 내가', me: ['권한'], ai: ['기술 결정', '제품 결정', '카드 고침', '위험 경로 머지', '답이 이미 있는 질문'], risk: '이 경로를 바꾼 PR은 AI가 승인합니다. 다른 게이트가 있으면 내가 머지합니다'},
+];
+
+export function factoryRows(tokens, {themedXref, screenButton, screenSelect, screenIconButton, screenDialogSurface, screenRadioItem, screenMenuItem, screenMenuSeparator, screenMenuContent}, s) {
   const HAIR = num(tokens, '--size-hairline');
   const DISABLED = num(tokens, '--opacity-disabled');
   const DIMMED = num(tokens, '--opacity-dimmed');
@@ -168,12 +245,24 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       icon(`${id}-i`, glyph, {size: 12, fill: MUT}), text(`${id}-t`, label, {size: '$--text-body', mono: true, fill: SUB}), spacer(`${id}-s`), cap(`${id}-x`, meta),
     ]);
   }
+  // A Factory under the sidebar's Factory row: picking it is the same choice as the header's project picker.
+  function factoryChild(id, f) {
+    return frame(id, f.project, {width: 'fill_container', height: 26, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm', 0, 26], cornerRadius: '$--radius-sm', ...(f.selected ? {fill: '$--secondary'} : {})}, [
+      frame(`${id}-m`, f.paused ? 'Paused' : 'No mark', {width: 12, height: 12, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, f.paused ? [icon(`${id}-pg`, 'pause', {size: 10, fill: MUT})] : []),
+      icon(`${id}-i`, 'folder-git-2', {size: 12, fill: MUT}),
+      text(`${id}-t`, f.project, {size: '$--text-body', fill: f.selected ? FG : SUB}),
+      spacer(`${id}-s`),
+      ...(f.count ? [cap(`${id}-n`, String(f.count), WARN, {mono: true})] : []),
+    ]);
+  }
   // The sidebar with the Factory row under Overview (count, ⇧⌘F) and, once a Factory exists, the 비서 row beneath it.
-  function sidebar(id, {count, secretary, selected = true}) {
+  // With `factories`, each Factory is a row under it, and a picked one takes the selection from the Factory row.
+  function sidebar(id, {count, secretary, selected = true, factories}) {
     return frame(id, 'Sidebar', {width: SIDE, height: 'fill_container', fill: '$--sidebar', stroke: '$--border', strokeWidth: {right: HAIR}, strokeAlignment: 'inner', layout: 'vertical', gap: '$--spacing-xs', padding: '$--spacing-md', clip: true}, [
       row(`${id}-h`, [text(`${id}-ht`, 'This Mac', {size: '$--text-subhead', weight: '600'}), spacer(`${id}-hs`), screenIconButton(`${id}-hp`, 'plus'), screenIconButton(`${id}-hq`, 'search')], {width: 'fill_container', height: 28, padding: [0, 0, 0, '$--spacing-sm']}),
       placeRow(`${id}-ov`, 'layout-dashboard', 'Overview', [cap(`${id}-ovn`, '2', WARN, {mono: true}), cap(`${id}-ovk`, '⇧⌘O', MUT, {mono: true})], false),
-      placeRow(`${id}-fa`, 'factory', 'Factory', [...(count ? [cap(`${id}-fan`, String(count), WARN, {mono: true})] : []), cap(`${id}-fak`, '⇧⌘F', MUT, {mono: true})], selected),
+      placeRow(`${id}-fa`, 'factory', 'Factory', [...(count ? [cap(`${id}-fan`, String(count), WARN, {mono: true})] : []), cap(`${id}-fak`, '⇧⌘F', MUT, {mono: true})], selected && !factories?.some(f => f.selected)),
+      ...(factories ?? []).map((f, i) => factoryChild(`${id}-fp${i}`, f)),
       ...(secretary ? [frame(`${id}-sec`, '비서', {width: 'fill_container', height: 26, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm', 0, 26]}, [
         frame(`${id}-secm`, 'No mark', {width: 12, height: 12}, []),
         icon(`${id}-secp`, 'sparkle', {size: 12, fill: MUT}),
@@ -196,18 +285,18 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       row(`${id}-f`, [icon(`${id}-fl`, 'laptop', {size: 14, fill: MUT}), spacer(`${id}-fs`), screenIconButton(`${id}-fg`, 'settings', {size: 20})], {width: 'fill_container', height: 28, padding: [0, '$--spacing-xs']}),
     ]);
   }
-  function windowFrame(id, name, main, {height = H, count = INBOX_COUNT, secretary = true} = {}) {
+  function windowFrame(id, name, main, {height = H, count = INBOX_COUNT, secretary = true, factories} = {}) {
     return frame(id, name, {width: W, height, fill: '$--background', layout: 'vertical', clip: true, cornerRadius: '$--radius-lg', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
       chrome(`${id}-chrome`),
-      frame(`${id}-body`, 'Body', {width: W, height: height - CHROME, layout: 'horizontal'}, [rail(`${id}-rail`), sidebar(`${id}-side`, {count, secretary}), main]),
+      frame(`${id}-body`, 'Body', {width: W, height: height - CHROME, layout: 'horizontal'}, [rail(`${id}-rail`), sidebar(`${id}-side`, {count, secretary, factories}), main]),
     ]);
   }
   const caption = (id, label) => text(id, label, {size: '$--text-subhead', weight: '600', fill: FG});
   const captioned = (id, label, node) => col(`${id}-wrap`, [caption(`${id}-cap`, label), node], {gap: '$--spacing-sm'});
 
   // -- the header: title, project filter, create and ask, the flow bar and the tabs ----------
-  function flowBar(id, width, {counts, read = '3분 전'}) {
-    const cells = [['시작 전', counts.before], ['진행 중', counts.moving], ['멈춤', counts.stuck], ['완료 오늘', counts.done]];
+  function flowBar(id, width, {counts, read = '3분 전', paused = false}) {
+    const cells = [['시작 전', counts.before], [paused ? '재움' : '진행 중', counts.moving], ['멈춤', counts.stuck], ['완료 오늘', counts.done]];
     return frame(id, 'Flow bar', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', width, padding: '$--spacing-xxs', fill: '$--muted', cornerRadius: '$--radius-md'}, [
       ...cells.map(([label, count], i) => row(`${id}-${i}`, [text(`${id}-${i}-l`, label, {size: '$--text-body', fill: SUB}), text(`${id}-${i}-n`, String(count), {size: '$--text-body', weight: '600'})], {width: 'fill_container', height: 28, padding: [0, '$--spacing-md']})),
       ...(read ? [row(`${id}-read`, [cap(`${id}-rt`, `GitHub 읽음 ${read}`)], {height: 28, padding: [0, '$--spacing-md']})] : []),
@@ -221,15 +310,22 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
         ...(i === 0 && count ? [cap(`${id}-${i}-n`, String(count), WARN, {mono: true})] : []),
       ])));
   }
-  function header(id, {active, counts, count = INBOX_COUNT, read, scope = '모든 프로젝트'}) {
+  // `pause` is null with every project picked, 'off' for a running Factory and 'on' for a paused one:
+  // pausing starts no Task, puts every worker to sleep and calls no AI until 다시 시작.
+  function header(id, {active, counts, count = INBOX_COUNT, read, scope = '모든 프로젝트', pause = null}) {
     const inner = MAIN - 2 * GUTTER;
+    const controlH = num(tokens, '--size-control-sm');
     return frame(id, 'Header', {layout: 'vertical', gap: '$--spacing-md', width: MAIN, padding: ['$--spacing-lg', GUTTER, '$--spacing-sm', GUTTER]}, [
       row(`${id}-tr`, [
-        text(`${id}-t`, 'Factory', {size: '$--text-headline', weight: '600'}), screenSelect(`${id}-scope`, {content: scope, width: 148}), spacer(`${id}-s`),
+        text(`${id}-t`, 'Factory', {size: '$--text-headline', weight: '600'}), screenSelect(`${id}-scope`, {content: scope, width: 148}),
+        ...(pause === 'on' ? [row(`${id}-pz`, [icon(`${id}-pz-g`, 'pause', {size: 12, fill: MUT}), cap(`${id}-pz-t`, '일시정지됨', SUB)], {gap: '$--spacing-xs', height: 24, padding: [0, '$--spacing-md'], cornerRadius: 12, fill: '$--muted'})] : []),
+        spacer(`${id}-s`),
+        ...(pause === 'off' ? [screenButton(`${id}-pause`, '일시정지', {variant: 'ghost', height: controlH, icon: 'pause'})] : []),
+        ...(pause === 'on' ? [screenButton(`${id}-resume`, '다시 시작', {variant: 'outline', height: controlH, icon: 'play'})] : []),
         screenButton(`${id}-new`, 'Factory 만들기', {variant: 'ghost', height: num(tokens, '--size-control-sm'), icon: 'plus'}),
         screenButton(`${id}-ask`, '비서에게 묻기', {variant: 'ghost', height: num(tokens, '--size-control-sm'), icon: 'message-square'}),
       ], {width: 'fill_container'}),
-      flowBar(`${id}-flow`, inner, {counts, read}),
+      flowBar(`${id}-flow`, inner, {counts, read, paused: pause === 'on'}),
       factoryTabs(`${id}-tabs`, active, count),
     ]);
   }
@@ -239,8 +335,8 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   // -- 내 차례 ----------------------------------------------------------------------------------
   const cue = (id, item) => text(id, item.cue, {size: '$--text-caption', fill: item.cueFill ?? MUT, width: 84, align: 'right'});
   const place = (id, key) => [
-    text(`${id}-id`, TASKS[key].id, {size: '$--text-caption', mono: true, fill: MUT, width: 48, align: 'right'}),
-    text(`${id}-p`, TASKS[key].project, {size: '$--text-caption', fill: MUT, width: 64}),
+    text(`${id}-id`, taskOf(key).id, {size: '$--text-caption', mono: true, fill: MUT, width: 48, align: 'right'}),
+    text(`${id}-p`, taskOf(key).project, {size: '$--text-caption', fill: MUT, width: 64}),
   ];
   function choiceRow(id, n, label, width, picked, suggested) {
     return frame(id, label, {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width, height: 28, padding: [0, '$--spacing-md'], cornerRadius: '$--radius-sm',
@@ -250,12 +346,15 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
     ]);
   }
   function closedItem(id, item, width) {
-    const meta = textWidth(TASKS[item.key].id, 11, true) + 64 + 84 + 3 * 8;
-    const free = width - 2 * 12 - 14 - meta - 16 - 8;
+    const meta = textWidth(taskOf(item.key).id, 11, true) + 64 + 84 + 3 * 8;
+    const action = item.button ? textWidth(item.button, 12) + 2 * 8 + 8 : 0;
+    const free = width - 2 * 12 - 14 - meta - action - 16 - 8;
     const titleWidth = Math.min(textWidth(item.title, 12), Math.floor(free * 0.6));
     return frame(id, item.title, {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width, height: 32, padding: [0, '$--spacing-md'], cornerRadius: '$--radius-sm'}, [
       glyphBox(`${id}-gl`, item.glyph, SUB), body(`${id}-t`, fitText(item.title, titleWidth + 4, 12)),
-      cap(`${id}-x`, fitText(item.text, free - titleWidth, 11)), spacer(`${id}-s`), ...place(id, item.key), cue(`${id}-c`, item),
+      cap(`${id}-x`, fitText(item.text, free - titleWidth, 11)), spacer(`${id}-s`),
+      ...(item.button ? [screenButton(`${id}-b`, item.button, {variant: 'ghost', height: num(tokens, '--size-control-sm')})] : []),
+      ...place(id, item.key), cue(`${id}-c`, item),
     ]);
   }
   function openItem(id, item, width) {
@@ -278,15 +377,24 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
         cap(`${id}-sr`, item.result, SUB),
       ], {padding: [0, 0, 0, indent]}),
       row(`${id}-f`, [
-        icon(`${id}-fi`, item.footer[0], {size: 12, fill: MUT}), cap(`${id}-ft`, item.footer[1]), spacer(`${id}-fs`),
+        ...(item.footer[0] ? [icon(`${id}-fi`, item.footer[0], {size: 12, fill: MUT})] : []), cap(`${id}-ft`, item.footer[1]), spacer(`${id}-fs`),
         screenButton(`${id}-more`, '자세히', {variant: 'ghost', height: num(tokens, '--size-control-sm'), icon: 'arrow-right'}),
       ], {width: 'fill_container', padding: [0, 0, 0, indent]}),
     ]);
   }
-  function turnList(id) {
+  function turnList(id, inbox = INBOX, {quietNotices = false} = {}) {
     const inner = MAIN - 2 * GUTTER;
     const children = [];
-    INBOX.forEach((group, gi) => {
+    inbox.forEach((group, gi) => {
+      if (quietNotices && group.group === '알림') {
+        children.push(frame(`${id}-g${gi}-gap`, 'Gap', {width: 1, height: 8}, []), rule(`${id}-g${gi}-rule`));
+        children.push(row(`${id}-g${gi}`, [
+          cap(`${id}-g${gi}-t`, `알림 ${group.items.length}`, MUT, {weight: '500'}), cap(`${id}-g${gi}-x`, '확인만 하면 되는 것 · 내 차례 숫자에 세지 않음', MUT), spacer(`${id}-g${gi}-s`),
+          screenButton(`${id}-g${gi}-all`, '모두 확인', {variant: 'ghost', height: num(tokens, '--size-control-sm')}),
+        ], {height: 34, padding: [0, '$--spacing-md'], width: 'fill_container'}));
+        group.items.forEach((item, ii) => children.push(closedItem(`${id}-g${gi}-${ii}`, item, inner)));
+        return;
+      }
       children.push(row(`${id}-g${gi}`, [cap(`${id}-g${gi}-t`, `${group.group} ${group.items.length}`, SUB, {weight: '500'})], {height: 30, padding: [0, '$--spacing-md']}));
       group.items.forEach((item, ii) => children.push(gi === 0 && ii === 0 ? openItem(`${id}-g${gi}-${ii}`, item, inner) : closedItem(`${id}-g${gi}-${ii}`, item, inner)));
     });
@@ -335,7 +443,7 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   }
   const controlSm = num(tokens, '--size-control-sm');
   function taskCard(id, key, width, {height} = {}) {
-    const task = TASKS[key];
+    const task = taskOf(key);
     const size = sizeOf(width);
     const small = size === 'small';
     const wide = size === 'wide';
@@ -390,7 +498,10 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
         cap(`${id}-sw`, STATE_WORD[task.state], SUB, {weight: '500'}),
         ...(task.mark ? [row(`${id}-mk`, [text(`${id}-mg`, task.mark[0], {size: '$--text-caption', fill: task.mark[2], mono: true}), cap(`${id}-mw`, task.mark[1])], {gap: '$--spacing-xxs'})] : []),
       ], {gap: '$--spacing-md'}));
-      if (task.ai && task.agent) {
+      if (task.diagnosis) {
+        children.push(dashedRule(`${id}-dr`, inner));
+        children.push(row(`${id}-ai`, [icon(`${id}-aig`, 'sparkles', {size: 12, fill: MUT}), cap(`${id}-ait`, fitText(`Observer: ${task.diagnosis}`, inner - 18, 11), SUB)], {gap: '$--spacing-xs'}));
+      } else if (task.ai && task.agent) {
         children.push(dashedRule(`${id}-dr`, inner));
         children.push(row(`${id}-ai`, [icon(`${id}-aig`, 'sparkles', {size: 12, fill: MUT}), cap(`${id}-ait`, fitText(task.ai, inner - 18, 11), SUB)], {gap: '$--spacing-xs'}));
       }
@@ -636,6 +747,309 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
     ]);
   }
 
+  // -- Observer (PRD factory-observer) -------------------------------------------------------------
+  const sideFactories = picked => OBS_FACTORIES.map(f => ({...f, count: countOf(inboxOf(f.project)), selected: f.project === picked}));
+  function obsTurnMain(id) {
+    return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [header(`${id}-hd`, {active: 0, counts: obsFlow(), count: OBS_INBOX_COUNT}), turnList(`${id}-list`, OBS_INBOX, {quietNotices: true})]);
+  }
+  // A paused Factory's 내 차례: questions still wait for the person while its workers sleep.
+  function obsPausedMain(id, project) {
+    const inbox = inboxOf(project);
+    return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [header(`${id}-hd`, {active: 0, counts: obsFlow(project), count: countOf(inbox), scope: project, pause: 'on'}), turnList(`${id}-list`, inbox, {quietNotices: true})]);
+  }
+  // Settings rows (settings-rows.tsx Group and Row) in the settings sheet's width.
+  const SHEET_W = num(tokens, '--size-settings-sheet-w');
+  const settingsGroup = (id, title, rows, note) => col(id, [
+    row(`${id}-hd`, [text(`${id}-t`, title, {size: '$--text-body', weight: '600', fill: SUB}), ...(note ? [cap(`${id}-n`, note, MUT)] : [])], {gap: '$--spacing-sm'}),
+    frame(`${id}-box`, title, {layout: 'vertical', width: SHEET_W, cornerRadius: '$--radius-md', fill: '$--card', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner', clip: true},
+      rows.flatMap((node, i) => (i ? [rule(`${id}-r${i}`), node] : [node]))),
+  ], {gap: '$--spacing-sm'});
+  const settingsRow = (id, label, control, detail) => col(id, [
+    row(`${id}-h`, [text(`${id}-l`, label, {size: '$--text-subhead'}), spacer(`${id}-s`), ...control], {width: 'fill_container'}),
+    ...(detail ? [detail] : []),
+  ], {gap: '$--spacing-sm', width: 'fill_container', padding: ['$--spacing-sm', '$--spacing-md']});
+  const numberField = (id, value) => frame(id, 'Number field', {layout: 'horizontal', alignItems: 'center', justifyContent: 'end', width: 72, height: controlSm, padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', fill: '$--background', stroke: '$--input', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
+    text(`${id}-t`, value, {size: '$--text-body', mono: true}),
+  ]);
+  const switchOn = (id, on) => frame(id, 'Switch', {width: 32, height: 18, cornerRadius: 9, fill: on ? '$--primary' : '$--secondary', padding: 2, layout: 'horizontal', justifyContent: on ? 'end' : 'start', alignItems: 'center'}, [
+    frame(`${id}-k`, 'Knob', {width: 14, height: 14, cornerRadius: 7, fill: on ? '$--primary-foreground' : MUT}, []),
+  ]);
+  // An empty field shows its placeholder in the muted colour.
+  const textValue = (id, value, width, {mono = true, placeholder} = {}) => frame(id, 'Text field', {layout: 'horizontal', alignItems: 'center', width, height: controlSm, padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', fill: '$--background', stroke: '$--input', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
+    value || !placeholder ? text(`${id}-t`, value, {size: '$--text-body', mono}) : text(`${id}-t`, placeholder, {size: '$--text-body', fill: MUT}),
+  ]);
+  // A folded line (settings-rows.tsx Disclosure): chevron, title, a short summary of what is inside.
+  const disclosure = (id, title, summary, open = false) => row(id, [
+    icon(`${id}-g`, open ? 'chevron-down' : 'chevron-right', {size: 14, fill: MUT}), text(`${id}-t`, title, {size: '$--text-subhead'}), spacer(`${id}-s`), ...(summary ? [cap(`${id}-x`, summary, MUT)] : []),
+  ], {width: 'fill_container', padding: ['$--spacing-sm', '$--spacing-md']});
+  // An agent, its model and its effort, on one line; an agent whose adapter declares neither
+  // launch argument shows "CLI 기본값" in their place (B32).
+  const agentPick = (id, agent, model, effort) => model
+    ? [screenSelect(`${id}-a`, {content: agent, width: 128}), screenSelect(`${id}-m`, {content: model, width: 128}), cap(`${id}-el`, 'effort', MUT), screenSelect(`${id}-e`, {content: effort, width: 84})]
+    : [screenSelect(`${id}-a`, {content: agent, width: 128}), cap(`${id}-cli`, 'CLI 기본값', SUB, {width: 128 + 84 + 2 * GAP_SM + 40})];
+  // The three choices as radio cards; the picked one is filled and ringed.
+  const PAD_MD = num(tokens, '--spacing-md');
+  const GAP_SM = num(tokens, '--spacing-sm');
+  const CHOICE_W = Math.floor((SHEET_W - 2 * PAD_MD - 2 * GAP_SM) / 3);
+  const choiceCard = (id, mode, picked, dim) => frame(id, mode.name, {layout: 'vertical', gap: '$--spacing-xxs', width: CHOICE_W, padding: ['$--spacing-sm', '$--spacing-md'], cornerRadius: '$--radius-md', fill: picked ? '$--secondary' : '$--background', stroke: picked ? FG : '$--border', strokeWidth: HAIR, strokeAlignment: 'inner', ...(dim ? {opacity: DISABLED} : {})}, [
+    screenRadioItem(`${id}-r`, mode.name, picked), frame(`${id}-lw`, 'Line', {layout: 'horizontal', padding: [0, 0, 0, 22]}, [cap(`${id}-l`, mode.line, SUB)]),
+  ]);
+  const chip = (id, label) => frame(id, label, {layout: 'horizontal', alignItems: 'center', height: 20, padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm', fill: '$--secondary'}, [cap(`${id}-t`, label, FG)]);
+  const whoLine = (id, label, glyph, items) => row(id, [
+    row(`${id}-l`, [icon(`${id}-g`, glyph, {size: 12, fill: MUT}), cap(`${id}-t`, label, SUB)], {gap: '$--spacing-xs', width: 104}), ...items.map((item, i) => chip(`${id}-${i}`, item)),
+  ], {gap: '$--spacing-xs'});
+  const meter = (id, used, limit, width = 160) => frame(id, 'Meter', {width, height: 6, cornerRadius: 3, fill: '$--secondary', layout: 'horizontal'}, [
+    frame(`${id}-v`, 'Used', {width: Math.round((width * used) / limit), height: 6, cornerRadius: 3, fill: '$--primary'}, []),
+  ]);
+  // One Factory's settings, for the project the header picks. Only what the operator decides:
+  // who decides what (the choice and its two lists), which agents, how merges land, and the
+  // macOS line; every other engine default sits under 고급 설정 and `hide factory config`.
+  // 고급 설정 unfolded (B36): the seven rows B36 names, then every other value with the control
+  // it has today under small subheads; `hide factory config` sets any of them too.
+  const unit = (id, value, label) => row(id, [numberField(`${id}-n`, value), cap(`${id}-u`, label, SUB)], {gap: '$--spacing-xs'});
+  const FIELD_W = num(tokens, '--size-settings-control-w');
+  // A small heading inside 고급 설정 and the rows it groups, hairlines between the rows only.
+  const subgroup = (id, title, rows) => col(id, [
+    row(`${id}-head`, [cap(`${id}-head-t`, title, SUB, {weight: '600'})], {width: 'fill_container', padding: ['$--spacing-md', '$--spacing-md', '$--spacing-xxs', '$--spacing-md']}),
+    ...rows.flatMap((node, i) => (i ? [rule(`${id}-r${i}`), node] : [node])),
+  ], {gap: 0, width: 'fill_container'});
+  const RECOVERY = ['끝난 Task의 worktree 지우기', '멈춘 작업자 다시 시작', '입력을 기다리는 작업자 재우고 깨우기', '사용량이 막히면 런타임 바꾸기', 'GitHub 읽기 다시 시도와 다시 연결'];
+  function advancedRows(id) {
+    return [
+      disclosure(`${id}`, '고급 설정', '', true),
+      settingsRow(`${id}-ask`, '질문 기한', [unit(`${id}-ask-v`, '24', '시간')], cap(`${id}-ask-d`, '기한이 지나면 기본 행동으로 진행합니다', MUT)),
+      settingsRow(`${id}-stall`, '멈춤 판단 시간', [unit(`${id}-stall-q`, '30', '분 동안 조용하면'), unit(`${id}-stall-r`, '2', '분 동안 보고가 없으면')]),
+      settingsRow(`${id}-lim`, 'AI 판단 상한', [unit(`${id}-lim-v`, '100', '번 / 하루')], cap(`${id}-lim-d`, '닿으면 그날 남은 결정은 나에게 옵니다', MUT)),
+      settingsRow(`${id}-watch`, '점검', [unit(`${id}-watch-i`, '30', '분마다'), unit(`${id}-watch-n`, '5', '번 / 하루')]),
+      settingsRow(`${id}-keep`, '보관 기간', [unit(`${id}-keep-c`, '7', '일 취소'), unit(`${id}-keep-d`, '3', '일 완료 접기'), unit(`${id}-keep-a`, '90', '일 목록')]),
+      settingsRow(`${id}-rec`, '복구 범위', [cap(`${id}-rec-n`, '사람 없이 하는 일', MUT)],
+        col(`${id}-rec-list`, RECOVERY.map((label, i) => row(`${id}-rec-${i}`, [checkbox(`${id}-rec-${i}-c`, false), cap(`${id}-rec-${i}-t`, label, FG)], {gap: '$--spacing-sm'})), {gap: '$--spacing-xs'})),
+      settingsRow(`${id}-args`, '작업자 인자', [cap(`${id}-args-n`, '에이전트마다 시작할 때 붙임', MUT)],
+        col(`${id}-args-list`, [['Claude Code', '--permission-mode acceptEdits'], ['Codex', ''], ['OpenCode', '']].map(([agent, args], i) => row(`${id}-args-${i}`, [
+          cap(`${id}-args-${i}-a`, agent, SUB, {width: 96}), textValue(`${id}-args-${i}-v`, args, SHEET_W - 2 * PAD_MD - 96 - GAP_SM),
+        ], {gap: '$--spacing-sm'})), {gap: '$--spacing-xs'})),
+      subgroup(`${id}-sv`, '검증', [
+        settingsRow(`${id}-sv-ci`, '필수 체크', [textValue(`${id}-sv-ci-v`, 'web-e2e, rust-test', FIELD_W)]),
+        settingsRow(`${id}-sv-fail`, '멈추기 전 실패 횟수', [numberField(`${id}-sv-fail-v`, '3')]),
+        settingsRow(`${id}-sv-time`, '검증 시간 제한(분)', [numberField(`${id}-sv-time-v`, '30')]),
+      ]),
+      subgroup(`${id}-sm`, '머지', [
+        settingsRow(`${id}-sm-way`, '머지 방법', [screenSelect(`${id}-sm-way-v`, {content: 'squash', width: 104})]),
+        settingsRow(`${id}-sm-quick`, '머지 전 빠른 점검', [textValue(`${id}-sm-quick-v`, 'scripts/verify-web.sh', FIELD_W)]),
+      ]),
+      subgroup(`${id}-sr`, '실행', [
+        settingsRow(`${id}-sr-h`, 'harness preset', [textValue(`${id}-sr-h-v`, '', FIELD_W, {mono: false, placeholder: '이름: 작업 방식'})], cap(`${id}-sr-h-d`, '이름과 작업 방식. worker 프롬프트에 들어갑니다', MUT)),
+        settingsRow(`${id}-sr-new`, 'worker가 더할 수 있는 새 Task', [numberField(`${id}-sr-new-v`, '3')]),
+        settingsRow(`${id}-sr-disk`, '남길 디스크 공간(GB)', [numberField(`${id}-sr-disk-v`, '5')]),
+        settingsRow(`${id}-sr-prd`, 'PRD를 issue에 넣기', [switchOn(`${id}-sr-prd-sw`, false)]),
+      ]),
+      subgroup(`${id}-sc`, '점검', [
+        settingsRow(`${id}-sc-read`, 'GitHub 읽기 간격(분)', [numberField(`${id}-sc-read-v`, '5')]),
+        settingsRow(`${id}-sc-0`, 'done 직후', [cap(`${id}-sc-0-t`, '변경이 요구한 범위 밖으로 번지지 않았는지 본다', SUB)]),
+        settingsRow(`${id}-sc-add`, '점검 더하기', [
+          screenSelect(`${id}-sc-add-at`, {content: 'done 직후', width: 104}),
+          textValue(`${id}-sc-add-v`, '', FIELD_W, {mono: false, placeholder: '점검할 내용'}),
+          {...screenButton(`${id}-sc-add-b`, '더하기', {variant: 'secondary', height: controlSm}), opacity: DISABLED},
+        ]),
+      ]),
+      subgroup(`${id}-sa`, '자율 처리', [
+        settingsRow(`${id}-sa-0`, 'branch 이름을 Task 번호에 맞춘다', [switchOn(`${id}-sa-0-sw`, true)]),
+        settingsRow(`${id}-sa-diff`, '자율 변경 최대 크기(줄)', [numberField(`${id}-sa-diff-v`, '200')]),
+      ]),
+      row(`${id}-cli`, [cap(`${id}-cli-t`, '모든 값은 hide factory config로도 바꿀 수 있습니다', MUT)], {width: 'fill_container', padding: ['$--spacing-xs', '$--spacing-md']}),
+    ];
+  }
+  function settingsBody(id, {aiOff, mode = 1, workers = WORKERS, used = 37, advanced = false}) {
+    const pick = MODES[mode];
+    const full = workers.length >= 5;
+    const capped = used >= 100;
+    const handOff = settingsGroup(`${id}-ai`, 'AI에게 맡기기', [
+      col(`${id}-mode`, [
+        row(`${id}-cards`, MODES.map((m, i) => choiceCard(`${id}-c${i}`, m, i === mode, aiOff)), {gap: '$--spacing-sm'}),
+        aiOff
+          ? row(`${id}-off`, [icon(`${id}-off-g`, 'circle-off', {size: 12, fill: MUT}), cap(`${id}-off-t`, 'Hide AI가 꺼져 있어 모든 결정이 나에게 옵니다. 앱 설정에서 켜면 고른 칸이 적용됩니다.', SUB)], {gap: '$--spacing-xs'})
+          : col(`${id}-who`, [whoLine(`${id}-me`, '나에게 오는 것', 'user', pick.me), whoLine(`${id}-bot`, 'AI가 하는 것', 'sparkles', pick.ai)], {gap: '$--spacing-xs'}),
+      ], {gap: '$--spacing-md', width: 'fill_container', padding: '$--spacing-md'}),
+      aiOff
+        ? settingsRow(`${id}-ai-a`, '에이전트', [cap(`${id}-ai-a-v`, '없음', SUB)])
+        : settingsRow(`${id}-ai-a`, '에이전트', agentPick(`${id}-ai-a`, 'Claude Code', 'sonnet', 'low')),
+      ...(aiOff ? [] : [settingsRow(`${id}-today`, '오늘 AI 판단', [meter(`${id}-today-m`, used, 100), cap(`${id}-today-n`, `${used} / 100`, capped ? WARN : SUB, {mono: true})],
+        capped ? cap(`${id}-today-d`, '상한에 닿아 오늘 남은 결정은 나에게 옵니다 · 내일 0부터 다시 셉니다', MUT) : null)]),
+    ], '작업자의 질문과 머지를 누가 정할지');
+    const candidate = (cid, w, i) => settingsRow(cid, w.label, [
+      ...agentPick(cid, w.agent, w.model, w.effort),
+      i ? screenIconButton(`${cid}-x`, 'x', {size: 20}) : frame(`${cid}-xp`, 'Pad', {width: 20, height: 1}, []),
+    ], textValue(`${cid}-w`, w.when, SHEET_W - 2 * PAD_MD, {mono: false}));
+    const worker = settingsGroup(`${id}-wk`, '작업자', [
+      ...workers.map((w, i) => candidate(`${id}-wk${i}`, w, i)),
+      row(`${id}-wk-add`, [
+        {...screenButton(`${id}-wk-add-b`, '후보 추가', {variant: 'ghost', height: controlSm, icon: 'plus'}), ...(full ? {opacity: DISABLED} : {})},
+        ...(full ? [cap(`${id}-wk-full`, '후보는 다섯 개까지', MUT)] : []),
+        spacer(`${id}-wk-add-s`), cap(`${id}-wk-d`, '동시에 도는 작업자는 이 Mac 전체에서 5명 · 모든 프로젝트 설정', MUT),
+      ], {width: 'fill_container', padding: ['$--spacing-xs', '$--spacing-md']}),
+    ], aiOff ? '기본 후보로 시작하고, 사용량이 막히면 다음 후보' : 'Factory AI가 Task마다 카드와 설명을 보고 고름 · 사용량이 막히면 다음 후보');
+    const merge = settingsGroup(`${id}-merge`, '머지', [
+      settingsRow(`${id}-mm`, '검증을 통과하면 바로 머지', [switchOn(`${id}-mm-sw`, true)], cap(`${id}-mm-d`, '끄면 모든 PR을 내가 머지합니다', MUT)),
+      settingsRow(`${id}-vf`, '검증', [cap(`${id}-vf-t`, 'CI 필수 체크 · web-e2e, rust-test', SUB)]),
+      settingsRow(`${id}-rp`, '위험 경로', [textValue(`${id}-rp-v`, 'hided/, herdr-core/', 200)], cap(`${id}-rp-d`, aiOff ? MODES[0].risk : pick.risk, MUT)),
+    ]);
+    const more = settingsGroup(`${id}-more`, '그 밖', [
+      settingsRow(`${id}-mac`, '내 차례 macOS 알림', [switchOn(`${id}-mac-sw`, true)], cap(`${id}-mac-d`, '답할 것, 머지, 멈춤이 생기면 알립니다. 누르면 그 항목이 열립니다', MUT)),
+      ...(advanced ? advancedRows(`${id}-adv`) : [disclosure(`${id}-adv`, '고급 설정', '질문 기한 · 멈춤 판단 시간 · AI 판단 상한 · 점검 · 보관 기간 · 복구 범위 · 작업자 인자')]),
+      settingsRow(`${id}-close`, 'Factory 닫기', [screenButton(`${id}-close-b`, '닫기', {variant: 'outline', height: controlSm})], cap(`${id}-close-d`, '새 작업을 받지 않습니다. 기록은 남습니다', MUT)),
+    ]);
+    return frame(id, '설정', {layout: 'vertical', gap: '$--spacing-lg', width: MAIN, height: 'fill_container', padding: ['$--spacing-sm', GUTTER, '$--spacing-lg', GUTTER], clip: true}, [handOff, worker, merge, more]);
+  }
+  // Settings with every project picked: one row per Factory (state, choice, worker, 내 차례,
+  // pause), which opens that Factory's settings, and the one machine-wide number.
+  function allSettingsBody(id) {
+    const factoryRow = (rid, f) => row(rid, [
+      text(`${rid}-p`, f.project, {size: '$--text-subhead', weight: '600', width: 112}),
+      row(`${rid}-st`, f.paused ? [icon(`${rid}-st-g`, 'pause', {size: 12, fill: MUT}), cap(`${rid}-st-t`, '일시정지', SUB)] : [dot(`${rid}-st-d`, WORK, 7), cap(`${rid}-st-t`, '돌고 있음', SUB)], {gap: '$--spacing-xs', width: 88}),
+      row(`${rid}-m`, [icon(`${rid}-m-g`, 'sparkles', {size: 12, fill: MUT}), cap(`${rid}-m-t`, MODES[f.mode].name, SUB)], {gap: '$--spacing-xs', width: 64}),
+      row(`${rid}-w`, [icon(`${rid}-w-g`, 'square-terminal', {size: 12, fill: MUT}), cap(`${rid}-w-t`, f.worker, SUB)], {gap: '$--spacing-xs'}),
+      spacer(`${rid}-sp`),
+      ...(f.count ? [cap(`${rid}-n`, `내 차례 ${f.count}`, WARN)] : []),
+      screenIconButton(`${rid}-pz`, f.paused ? 'play' : 'pause'),
+      icon(`${rid}-go`, 'chevron-right', {size: 14, fill: MUT}),
+    ], {width: 'fill_container', gap: '$--spacing-md', padding: ['$--spacing-sm', '$--spacing-md']});
+    return frame(id, '설정 · 모든 프로젝트', {layout: 'vertical', gap: '$--spacing-lg', width: MAIN, height: 'fill_container', padding: ['$--spacing-sm', GUTTER, '$--spacing-lg', GUTTER], clip: true}, [
+      settingsGroup(`${id}-fs`, 'Factory', sideFactories(null).map((f, i) => factoryRow(`${id}-f${i}`, f)), '누르면 그 프로젝트의 설정'),
+      settingsGroup(`${id}-mach`, '이 Mac 전체', [
+        settingsRow(`${id}-mw`, '동시에 도는 작업자', [numberField(`${id}-mw-n`, '5')], cap(`${id}-mw-d`, '모든 Factory의 작업자를 합친 수입니다', MUT)),
+      ]),
+    ]);
+  }
+  function settingsMain(id, {project = 'herdr-ide', ...opts} = {}) {
+    const all = project === null;
+    return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [
+      header(`${id}-hd`, all ? {active: 3, counts: obsFlow(), count: OBS_INBOX_COUNT} : {active: 3, counts: obsFlow(project), count: countOf(inboxOf(project)), scope: project, pause: 'off'}),
+      all ? allSettingsBody(`${id}-set`) : settingsBody(`${id}-set`, {aiOff: false, ...opts}),
+    ]);
+  }
+  // The cards the Observer changes, at the three sizes.
+  const OBS_ROWS = [['t436', '답 필요 · 선택지 셋'], ['t437', '카드가 틀림 · AI 제안'], ['t435', '보고 없음 · 진단'], ['t433', '작업자 사라짐 · 재시작 뒤'], ['t434', '일시정지']];
+  function obsCardsBody(id) {
+    const LABEL_W = 132;
+    return frame(id, 'Observer 카드', {layout: 'vertical', gap: '$--spacing-lg', padding: '$--spacing-xl', fill: '$--background', cornerRadius: '$--radius-lg', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
+      row(`${id}-h`, [frame(`${id}-h-pad`, 'Pad', {width: LABEL_W, height: 1}, []), ...SIZE_COLUMNS.map(([label, width], ci) => cap(`${id}-h${ci}`, label, SUB, {weight: '500', width}))], {gap: '$--spacing-xl'}),
+      ...OBS_ROWS.map(([key, label], ri) => row(`${id}-r${ri}`, [
+        cap(`${id}-r${ri}-l`, label, SUB, {width: LABEL_W}),
+        ...SIZE_COLUMNS.map(([, width], ci) => taskCard(`${id}-r${ri}-${ci}`, key, width)),
+      ], {gap: '$--spacing-xl', alignItems: 'start'})),
+    ]);
+  }
+  // The Task page of a worker that went quiet: the problem line, the Observer's one-line
+  // diagnosis under it (B23), and AI decisions in the record with 다른 답 (B11, B12).
+  const OBS_LOG = [
+    {who: 'Observer', glyph: 'sparkles', kind: '기술 선택', line: '칩 정렬 키는 last_activity로 둔다', at: '12분 전', button: '다른 답'},
+    {who: '나', glyph: 'user', kind: '뒤집음', line: '칩 최대 개수: AI 답 8 → 5', at: '1시간 전'},
+    {who: 'worker', glyph: 'square-terminal', kind: null, line: '정렬은 web 쪽에서 한다', at: '2시간 전'},
+  ];
+  function obsTaskPage(id) {
+    const task = OBS_TASKS.t435;
+    const inner = MAIN - 2 * GUTTER;
+    const colW = Math.floor((inner - 48) / 2);
+    const left = col(`${id}-left`, [
+      col(`${id}-goal`, [sectionLabel(`${id}-gl`, '목표'), text(`${id}-gt`, 'Sessions 칩이 최근 활동순으로 놓인다.', {size: '$--text-body', width: colW})]),
+      col(`${id}-crit`, [sectionLabel(`${id}-cl`, '완료 조건'), ...['칩이 마지막 활동 시각 내림차순으로 놓인다', '칩은 다섯 개까지 보이고 나머지는 +n으로 접힌다'].map((line, i) => bullet(`${id}-d${i}`, null, line, colW))]),
+    ], {gap: '$--spacing-xl', width: colW});
+    const logRow = (lid, entry) => row(lid, [
+      row(`${lid}-who`, [icon(`${lid}-wg`, entry.glyph, {size: 12, fill: MUT}), cap(`${lid}-wt`, entry.who, SUB, {weight: '500'})], {gap: '$--spacing-xxs', width: 72}),
+      col(`${lid}-b`, [body(`${lid}-t`, entry.line, {width: colW - 72 - 64 - 3 * 8 - (entry.button ? 64 : 0)}), ...(entry.kind ? [cap(`${lid}-k`, entry.kind)] : [])], {gap: '$--spacing-xxs'}),
+      spacer(`${lid}-s`),
+      ...(entry.button ? [screenButton(`${lid}-btn`, entry.button, {variant: 'ghost', height: controlSm})] : []),
+      cap(`${lid}-at`, entry.at, MUT, {width: 56}),
+    ], {width: colW, alignItems: 'start'});
+    const right = col(`${id}-right`, [
+      col(`${id}-prog`, [
+        sectionLabel(`${id}-pl`, '진행'),
+        row(`${id}-wk`, [
+          icon(`${id}-wk-g`, 'square-terminal', {size: 14, fill: MUT}), body(`${id}-wk-t`, 't-435-worker'), cap(`${id}-wk-c`, 'Codex · gpt-6.1-luna · low', MUT), spacer(`${id}-wk-s`),
+          screenButton(`${id}-wk-b`, 'worker 보기', {variant: 'outline', height: controlSm}),
+        ], {width: colW}),
+        row(`${id}-pick`, [icon(`${id}-pick-g`, 'sparkles', {size: 12, fill: MUT}), cap(`${id}-pick-t`, 'Factory AI가 고른 후보: 문구, 문서, 작은 UI · 칩 정렬만 바꾸는 작은 UI 변경', SUB)], {gap: '$--spacing-xs'}),
+        row(`${id}-at`, [cap(`${id}-at1`, '쉼 2분'), cap(`${id}-at2`, '깨움 1번 · 편지'), cap(`${id}-at3`, '답 없음', CRIT), cap(`${id}-at4`, '진단 1번')], {gap: '$--spacing-md'}),
+      ], {gap: '$--spacing-sm'}),
+      col(`${id}-log`, [sectionLabel(`${id}-ll`, '결정 기록'), ...OBS_LOG.map((entry, i) => logRow(`${id}-l${i}`, entry))], {gap: '$--spacing-md'}),
+    ], {gap: '$--spacing-xl', width: colW});
+    return frame(`${id}-page`, 'Task page', {width: MAIN, height: 'fill_container', layout: 'vertical', gap: '$--spacing-lg', padding: [14, GUTTER, '$--spacing-lg', GUTTER], clip: true}, [
+      row(`${id}-nav`, [screenButton(`${id}-back`, '내 차례', {variant: 'ghost', height: controlSm, icon: 'arrow-left'}), spacer(`${id}-ns`)], {width: 'fill_container'}),
+      col(`${id}-title`, [
+        row(`${id}-tr`, [
+          text(`${id}-t`, task.title, {size: '$--text-headline', weight: '600'}),
+          row(`${id}-chip`, [icon(`${id}-chip-g`, 'circle-pause', {size: 12, fill: CRIT}), cap(`${id}-chip-t`, '멈춤', CRIT)], {gap: '$--spacing-xs', height: 24, padding: [0, '$--spacing-md'], cornerRadius: 12, fill: '$--muted'}),
+          spacer(`${id}-ts`),
+          screenButton(`${id}-retry`, '다시 시작', {height: controlSm}),
+          screenButton(`${id}-cancel`, '취소', {variant: 'ghost', height: controlSm}),
+        ], {gap: '$--spacing-md', width: 'fill_container'}),
+        cap(`${id}-meta`, '#435 · herdr-ide · 435-session-chips'),
+      ], {gap: '$--spacing-xs', width: 'fill_container'}),
+      col(`${id}-prob`, [
+        row(`${id}-pb`, [icon(`${id}-pb-g`, 'circle-alert', {size: 14, fill: CRIT}), body(`${id}-pb-t`, '보고 없음 · 깨웠지만 2분 동안 답이 없었습니다', {fill: CRIT})], {gap: '$--spacing-sm'}),
+        row(`${id}-dx`, [icon(`${id}-dx-g`, 'sparkles', {size: 12, fill: MUT}), cap(`${id}-dx-t`, `Observer 진단: ${task.diagnosis} · 마지막 화면 글을 읽음`, SUB)], {gap: '$--spacing-xs', padding: [0, 0, 0, 22]}),
+      ], {gap: '$--spacing-xs'}),
+      rule(`${id}-rule`),
+      row(`${id}-cols`, [left, right], {gap: 48, alignItems: 'start', width: inner}),
+    ]);
+  }
+  // A Task that has not started yet, with the worker menu open (B33): the Factory AI's pick is
+  // checked and carries its reason; picking another candidate makes it the person's.
+  function obsPickPage(id) {
+    const task = TASKS.t431;
+    const inner = MAIN - 2 * GUTTER;
+    const colW = Math.floor((inner - 48) / 2);
+    const left = col(`${id}-left`, [
+      col(`${id}-goal`, [sectionLabel(`${id}-gl`, '목표'), text(`${id}-gt`, 'docs 안의 상대 링크가 모두 열린다.', {size: '$--text-body', width: colW})]),
+      col(`${id}-crit`, [sectionLabel(`${id}-cl`, '완료 조건'), ...['깨진 상대 링크 23개가 맞는 문서를 가리킨다', 'check-doc-links가 docs 전체에서 통과한다'].map((line, i) => bullet(`${id}-d${i}`, null, line, colW))]),
+    ], {gap: '$--spacing-xl', width: colW});
+    const label = w => (w.model ? `${w.agent} · ${w.model} · ${w.effort}` : `${w.agent} · CLI 기본값`);
+    const AI_PICK = 2;
+    const HOVER = 1;
+    // Every row keeps the check's slot, as a radio menu does, so the labels line up; the slot is
+    // painted in the row's own fill except on the picked row.
+    const pickItem = (mid, w, i) => themedXref(mid, 'mnu-item-m', label(w), i === HOVER ? {fill: '$--accent'} : {}, {
+      'mnu-item-icon': {icon: 'check', enabled: true, fill: i === AI_PICK ? FG : i === HOVER ? '$--accent' : '$--popover'},
+      'mnu-item-label': {content: label(w), fill: i === HOVER ? '$--accent-foreground' : FG},
+      'mnu-item-reason': {content: i === AI_PICK ? `${w.when} · Factory AI가 고름` : w.when, enabled: true, textGrowth: 'fixed-width', width: colW - 48},
+      'mnu-item-shortcut': {enabled: false},
+    });
+    const menu = screenMenuContent(`${id}-menu`, colW, [
+      ...WORKERS.map((w, i) => pickItem(`${id}-mi${i}`, w, i)),
+      screenMenuSeparator(`${id}-msep`),
+      screenMenuItem(`${id}-mfoot`, '후보는 설정의 작업자에서 바꿉니다', {state: 'disabled'}),
+    ]);
+    const right = col(`${id}-right`, [
+      col(`${id}-prog`, [
+        sectionLabel(`${id}-pl`, '진행'),
+        row(`${id}-wk`, [icon(`${id}-wk-g`, 'square-terminal', {size: 14, fill: MUT}), body(`${id}-wk-t`, '작업자'), spacer(`${id}-wk-s`), screenSelect(`${id}-wk-sel`, {content: label(WORKERS[AI_PICK]), width: 240})], {width: colW}),
+        menu,
+        row(`${id}-pick`, [icon(`${id}-pick-g`, 'sparkles', {size: 12, fill: MUT}), cap(`${id}-pick-t`, `Factory AI가 고른 후보: ${WORKERS[AI_PICK].when} · 문서 링크만 고치는 작은 변경`, SUB)], {gap: '$--spacing-xs'}),
+        cap(`${id}-pick-h`, '다른 후보를 고르면 그 후보로 시작하고 Factory AI는 고르지 않습니다', MUT),
+      ], {gap: '$--spacing-sm'}),
+    ], {gap: '$--spacing-xl', width: colW});
+    return frame(`${id}-page`, 'Task page', {width: MAIN, height: 'fill_container', layout: 'vertical', gap: '$--spacing-lg', padding: [14, GUTTER, '$--spacing-lg', GUTTER], clip: true}, [
+      row(`${id}-nav`, [screenButton(`${id}-back`, '보드', {variant: 'ghost', height: controlSm, icon: 'arrow-left'}), spacer(`${id}-ns`)], {width: 'fill_container'}),
+      col(`${id}-title`, [
+        row(`${id}-tr`, [
+          text(`${id}-t`, task.title, {size: '$--text-headline', weight: '600'}),
+          row(`${id}-chip`, [icon(`${id}-chip-g`, STATE_GLYPH[task.state], {size: 12, fill: TONE[task.state]}), cap(`${id}-chip-t`, STATE_WORD[task.state], TONE[task.state])], {gap: '$--spacing-xs', height: 24, padding: [0, '$--spacing-md'], cornerRadius: 12, fill: '$--muted'}),
+          spacer(`${id}-ts`),
+          screenButton(`${id}-cancel`, '취소', {variant: 'ghost', height: controlSm}),
+        ], {gap: '$--spacing-md', width: 'fill_container'}),
+        cap(`${id}-meta`, `${task.id} · herdr-ide · 431-doc-links`),
+      ], {gap: '$--spacing-xs', width: 'fill_container'}),
+      rule(`${id}-rule`),
+      row(`${id}-cols`, [left, right], {gap: 48, alignItems: 'start', width: inner}),
+    ]);
+  }
+  function obsPickMain(id) {
+    return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [obsPickPage(`${id}-tp`)]);
+  }
+  function obsTaskMain(id) {
+    return frame(`${id}-main`, 'Main', {width: MAIN, height: 'fill_container', layout: 'vertical'}, [obsTaskPage(`${id}-tp`)]);
+  }
+
   const id = name => `fx-${name}-${s}`;
   const turn = windowFrame(id('turn'), '내 차례', turnMain(id('turn')));
   const board = windowFrame(id('board'), '보드', boardMain(id('board')), {height: BOARD_H});
@@ -644,6 +1058,16 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
   const task = windowFrame(id('task'), 'Task 페이지', taskMain(id('task')));
   const none = windowFrame(id('none'), 'Factory 없음', noFactoryMain(id('none')), {height: 360, count: 0, secretary: false});
   const empty = windowFrame(id('empty'), 'Task 없음', noTaskMain(id('empty')), {height: 360, count: 0});
+  const obsTurn = windowFrame(id('obs-turn'), '내 차례 · Observer', obsTurnMain(id('obs-turn')), {height: BOARD_H, count: OBS_INBOX_COUNT, factories: sideFactories(null)});
+  const obsSettings = windowFrame(id('obs-set'), '설정 · herdr-ide', settingsMain(id('obs-set')), {height: 1160, count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
+  const obsCards = obsCardsBody(id('obs-cards'));
+  const obsTask = windowFrame(id('obs-task'), 'Task 페이지 · 보고 없음', obsTaskMain(id('obs-task')), {count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
+  const obsOff = windowFrame(id('obs-off'), '설정 · Hide AI 꺼짐', settingsMain(id('obs-off'), {aiOff: true}), {height: 1100, count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
+  const obsAll = windowFrame(id('obs-all'), '설정 · 모든 프로젝트', settingsMain(id('obs-all'), {project: null}), {height: 640, count: OBS_INBOX_COUNT, factories: sideFactories(null)});
+  const obsDirect = windowFrame(id('obs-direct'), '설정 · 직접 · 고급 설정', settingsMain(id('obs-direct'), {mode: 0, workers: WORKERS.slice(0, 1), advanced: true}), {height: 2290, count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
+  const obsAuto = windowFrame(id('obs-auto'), '설정 · 맡김 · 후보 다섯', settingsMain(id('obs-auto'), {mode: 2, workers: WORKERS_FULL, used: 100}), {height: 1340, count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
+  const obsPick = windowFrame(id('obs-pick'), 'Task 페이지 · 작업자 고르기', obsPickMain(id('obs-pick')), {count: OBS_INBOX_COUNT, factories: sideFactories('herdr-ide')});
+  const obsPaused = windowFrame(id('obs-paused'), '내 차례 · 일시정지', obsPausedMain(id('obs-paused'), 'sasu'), {height: 640, count: OBS_INBOX_COUNT, factories: sideFactories('sasu')});
 
   return [
     col(id('frames'), [
@@ -667,6 +1091,28 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
         captioned(id('none'), 'Factory가 없을 때: Factory 만들기만 보인다', none),
         captioned(id('empty'), 'Task가 없을 때: 넣는 방법 한 줄만 보인다', empty),
       ], {alignItems: 'start', gap: '$--spacing-xl'}),
+      row(id('r5'), [
+        captioned(id('obs-turn'), 'Observer · 내 차례: 숫자는 답, 머지, 멈춤만 센다. AI가 처리한 일은 줄 아래 알림으로, 다른 답과 함께', obsTurn),
+        captioned(id('obs-set'), 'Observer · 설정: 헤더와 사이드바가 고른 프로젝트 하나. 세 칸에서 고르면 나에게 오는 것과 AI가 하는 것이 보이고, 작업자는 후보 중 Factory AI가 Task마다 고른다', obsSettings),
+      ], {alignItems: 'start', gap: '$--spacing-xl'}),
+      row(id('r6'), [
+        captioned(id('obs-cards'), 'Observer · 카드: 선택지가 있는 결정 요청, AI 제안, 보고 없음과 진단, 작업자 사라짐, 일시정지', obsCards),
+      ], {alignItems: 'start'}),
+      row(id('r7'), [
+        captioned(id('obs-task'), 'Observer · Task 페이지: 문제 줄 아래 진단 한 줄, 결정 기록의 AI 답과 다른 답', obsTask),
+        captioned(id('obs-off'), 'Observer · Hide AI가 꺼졌을 때: 세 칸은 흐려지고 모든 결정이 나에게 온다', obsOff),
+      ], {alignItems: 'start', gap: '$--spacing-xl'}),
+      row(id('r8'), [
+        captioned(id('obs-all'), 'Observer · 모든 프로젝트의 설정: Factory마다 한 줄, 누르면 그 설정으로. 이 Mac 전체 숫자는 여기에만', obsAll),
+        captioned(id('obs-paused'), 'Observer · 일시정지된 Factory: 새 Task와 AI 판단이 멈추고 작업자는 잔다. 질문은 그대로 기다린다', obsPaused),
+      ], {alignItems: 'start', gap: '$--spacing-xl'}),
+      row(id('r9'), [
+        captioned(id('obs-direct'), 'Observer · 직접: 나에게 오는 것이 가장 많다. 후보 하나(기본, 뺄 수 없음), 고급 설정을 펼친 모습', obsDirect),
+        captioned(id('obs-auto'), 'Observer · 맡김: 권한만 나에게 온다. 오늘 상한에 닿음, 후보 다섯(더 추가 못함), 선언 없는 에이전트는 CLI 기본값', obsAuto),
+      ], {alignItems: 'start', gap: '$--spacing-xl'}),
+      row(id('r10'), [
+        captioned(id('obs-pick'), 'Observer · 시작 전 Task에서 작업자 고르기: Factory AI가 고른 후보에 체크와 이유, 다른 후보를 고르면 그 후보가 쓰인다', obsPick),
+      ], {alignItems: 'start'}),
     ], {gap: '$--spacing-xl'}),
   ];
 }
