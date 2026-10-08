@@ -747,6 +747,79 @@ fn a_devices_unreadable_lines_write_at_most_the_record_cap() {
     assert_eq!(records.unwritten, 36);
 }
 
+/// A device's notes and errors are log records too, so they count against
+/// the same cap, while a pane's state still reaches the core past it.
+#[test]
+fn a_devices_notes_count_against_the_record_cap_and_its_states_do_not() {
+    let (proxy, _link, heard) = proxy();
+    let inbound = proxy.inbound();
+    let error = line_of(TerminalUp::Report {
+        report: TerminalReport::Error {
+            pane: "w1:p1".into(),
+            kind: "remote.control.close_status_unknown".into(),
+            message: "chosen by the device".into(),
+        },
+    })
+    .unwrap();
+    for _ in 0..DEVICE_RECORDS_PER_WINDOW + 36 {
+        inbound(&error);
+    }
+    inbound(
+        &line_of(TerminalUp::Report {
+            report: TerminalReport::State {
+                pane: "w1:p1".into(),
+                state: PaneTerminalState {
+                    state: "live".into(),
+                    mode: None,
+                    generation: 1,
+                    attempt: 1,
+                    message: None,
+                    exit_category: None,
+                    retry_decision: "none".into(),
+                    last_attempt_at_unix_ms: None,
+                },
+            },
+        })
+        .unwrap(),
+    );
+    let reports = heard.reports.lock().unwrap();
+    let notes = reports
+        .iter()
+        .filter(|(_, report)| matches!(report, TerminalReport::Note { .. }))
+        .count();
+    assert_eq!(notes, DEVICE_RECORDS_PER_WINDOW);
+    assert!(matches!(
+        reports.last(),
+        Some((_, TerminalReport::State { pane, .. })) if pane == "w1:p1"
+    ));
+    assert_eq!(lock(&proxy.shared.records).unwritten, 36);
+}
+
+/// A window writes the cap, and what it did not write is counted once:
+/// when the next window opens, or when the link's last holder lets go.
+#[test]
+fn a_record_window_counts_what_it_did_not_write_once() {
+    let opened = Instant::now();
+    let mut window = RecordWindow {
+        opened,
+        written: 0,
+        unwritten: 0,
+    };
+    let admitted = (0..DEVICE_RECORDS_PER_WINDOW + 36)
+        .filter(|_| window.admit(opened).0)
+        .count();
+    assert_eq!(admitted, DEVICE_RECORDS_PER_WINDOW);
+    assert_eq!(
+        window.admit(opened + DEVICE_RECORD_WINDOW),
+        (true, Some(36))
+    );
+    for _ in 0..DEVICE_RECORDS_PER_WINDOW + 5 {
+        window.admit(opened + DEVICE_RECORD_WINDOW);
+    }
+    assert_eq!(window.close(), Some(6));
+    assert_eq!(window.close(), None);
+}
+
 #[test]
 fn output_from_the_device_reaches_the_hub_decoded_and_named_by_device() {
     let (proxy, _link, heard) = proxy();

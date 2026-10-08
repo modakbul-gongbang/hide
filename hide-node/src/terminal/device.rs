@@ -685,8 +685,9 @@ struct ProxyShared {
 }
 
 /// The log records a device's lines may make in one second, its own
-/// diagnostics and the lines this side could not read: past it a record is
-/// counted, not written, so a device cannot rotate this machine's log away.
+/// diagnostics, its notes and errors, and the lines this side could not
+/// read: past it a record is counted, not written, so a device cannot rotate
+/// this machine's log away.
 pub(super) const DEVICE_RECORDS_PER_WINDOW: usize = 64;
 const DEVICE_RECORD_WINDOW: Duration = Duration::from_secs(1);
 
@@ -703,6 +704,37 @@ impl Default for RecordWindow {
             written: 0,
             unwritten: 0,
         }
+    }
+}
+
+impl RecordWindow {
+    /// Whether one more record may be written at `now`, and the count a
+    /// window that passed before it did not write.
+    fn admit(&mut self, now: Instant) -> (bool, Option<usize>) {
+        let passed = if now.saturating_duration_since(self.opened) >= DEVICE_RECORD_WINDOW {
+            let unwritten = std::mem::take(&mut self.unwritten);
+            *self = Self {
+                opened: now,
+                written: 0,
+                unwritten: 0,
+            };
+            (unwritten > 0).then_some(unwritten)
+        } else {
+            None
+        };
+        if self.written < DEVICE_RECORDS_PER_WINDOW {
+            self.written += 1;
+            (true, passed)
+        } else {
+            self.unwritten += 1;
+            (false, passed)
+        }
+    }
+
+    /// The count the open window has not written yet, taken once.
+    fn close(&mut self) -> Option<usize> {
+        let unwritten = std::mem::take(&mut self.unwritten);
+        (unwritten > 0).then_some(unwritten)
     }
 }
 
@@ -766,6 +798,16 @@ impl DeviceTerminals {
         state.lines.push_back(Waiting::Line(line));
         drop(state);
         self.shared.ready.notify_one();
+    }
+}
+
+impl Drop for ProxyShared {
+    fn drop(&mut self) {
+        // The last window's count, once nothing is left to open another:
+        // a flood that ends the link is still counted in the log.
+        if let Some(count) = lock(&self.records).close() {
+            self.log_records_unwritten(count);
+        }
     }
 }
 
@@ -929,33 +971,22 @@ impl ProxyShared {
     /// Whether one more record from this link's lines may be written now.
     /// The window that passed before it is logged with what it did not write.
     fn may_record(&self) -> bool {
-        let now = Instant::now();
-        let mut window = lock(&self.records);
-        if now.saturating_duration_since(window.opened) >= DEVICE_RECORD_WINDOW {
-            let unwritten = std::mem::take(&mut window.unwritten);
-            *window = RecordWindow {
-                opened: now,
-                written: 0,
-                unwritten: 0,
-            };
-            if unwritten > 0 {
-                crate::diagnostic!(json!({
-                    "component": "device_terminal",
-                    "kind": "terminal.device_records_unwritten",
-                    "device": self.device,
-                    "link": self.link,
-                    "count": unwritten,
-                    "cap": DEVICE_RECORDS_PER_WINDOW,
-                }));
-            }
+        let (admitted, passed) = lock(&self.records).admit(Instant::now());
+        if let Some(count) = passed {
+            self.log_records_unwritten(count);
         }
-        if window.written < DEVICE_RECORDS_PER_WINDOW {
-            window.written += 1;
-            true
-        } else {
-            window.unwritten += 1;
-            false
-        }
+        admitted
+    }
+
+    fn log_records_unwritten(&self, count: usize) {
+        crate::diagnostic!(json!({
+            "component": "device_terminal",
+            "kind": "terminal.device_records_unwritten",
+            "device": self.device,
+            "link": self.link,
+            "count": count,
+            "cap": DEVICE_RECORDS_PER_WINDOW,
+        }));
     }
 
     fn inbound(&self, line: &[u8]) {
@@ -1008,6 +1039,11 @@ impl ProxyShared {
                     },
                     report => report,
                 };
+                // A note is only a log record, so it counts against the
+                // same cap; a state or an input's outcome is never dropped.
+                if matches!(report, TerminalReport::Note { .. }) && !self.may_record() {
+                    return;
+                }
                 if let TerminalReport::State { pane, state } = &report {
                     let mut proxy = lock(&self.state);
                     // Only a pane the core attached keeps a state here.
