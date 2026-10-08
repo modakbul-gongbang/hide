@@ -51,6 +51,19 @@ struct Machine {
     checkout: PathBuf,
 }
 
+/// Writes the agent's payload to the guard and closes its input. A guard that
+/// has already decided (no pane, no checkout, a refused owner handshake) ends
+/// without reading its payload, and an agent writing to it meets a closed
+/// pipe whenever the guard wins that race (issue 827); what the agent
+/// observes is the guard's answer, not whether its write landed.
+fn send_payload(mut stdin: impl Write, payload: &str) {
+    match stdin.write_all(payload.as_bytes()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(error) => panic!("the payload could not be written to the guard: {error}"),
+    }
+}
+
 struct Run {
     stdout: String,
     stderr: String,
@@ -128,17 +141,7 @@ impl Machine {
         command.envs(extra.iter().copied());
         let started = Instant::now();
         let mut child = OwnedChild::spawn(&mut command).unwrap();
-        let mut stdin = child.take_stdin().unwrap();
-        // A guard that has already decided (no pane, no checkout) ends without
-        // reading its payload, and an agent writing to it meets a closed pipe
-        // whenever the guard wins that race; what the agent observes is the
-        // guard's answer, not whether its write landed.
-        match stdin.write_all(payload.as_bytes()) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
-            Err(error) => panic!("the payload could not be written to the guard: {error}"),
-        }
-        drop(stdin);
+        send_payload(child.take_stdin().unwrap(), payload);
         let output = child
             .capture_until(Instant::now() + Duration::from_secs(15), 64 * 1024)
             .expect("the guard ends within its bound");
@@ -480,12 +483,7 @@ fn a_failed_owner_handshake_never_ends_the_guard_with_a_refusal_code() {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(machine.payload(START).as_bytes())
-        .unwrap();
+    send_payload(child.stdin.take().unwrap(), &machine.payload(START));
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success(), "{:?}", output.status);
     assert_eq!(output.stdout, b"");
