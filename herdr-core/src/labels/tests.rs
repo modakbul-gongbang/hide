@@ -1589,7 +1589,23 @@ fn native_question_snapshot_is_current_without_ai_and_clears_after_answer() {
 fn a_failed_same_state_follow_up_forgets_structured_question_without_ai() {
     for unavailable in [true, false] {
         let harness = Harness::new();
-        let (mut worker, woken, source) = harness.worker(harness.store());
+        let disconnected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let channel_disconnected = Arc::clone(&disconnected);
+        let node: Arc<dyn crate::node_access::NodeLink> = Arc::new(hide_node::Local::new(Some(
+            harness.home.path().to_path_buf(),
+        )));
+        let source = Arc::new(CountingSource {
+            inner: NodeTranscripts::new(Box::new(move || {
+                if channel_disconnected.load(Ordering::SeqCst) {
+                    Err("device_helper_not_connected")
+                } else {
+                    Ok(Arc::clone(&node))
+                }
+            })),
+            reads: AtomicUsize::new(0),
+        });
+        let (mut worker, woken) =
+            harness.spawn(harness.store(), LOCAL_TARGET, "local.lock", source.clone());
         worker.set_summaries(false, Instant::now());
         let path = harness.session("question-follow-up", "native-question", &[]);
         let question = json!({"type":"assistant","sessionId":"native-question",
@@ -1621,6 +1637,9 @@ fn a_failed_same_state_follow_up_forgets_structured_question_without_ai() {
         let reads = source.reads.load(Ordering::SeqCst);
         while woken.try_recv().is_ok() {}
         if unavailable {
+            // A missing local file is a refused read, not a disconnected
+            // helper. Exercise the actual transport-unavailable retry path.
+            disconnected.store(true, Ordering::SeqCst);
             std::fs::remove_file(&path).unwrap();
         } else {
             let mut invalid = question.clone();
@@ -1642,6 +1661,7 @@ fn a_failed_same_state_follow_up_forgets_structured_question_without_ai() {
             "message":{"role":"user","content":[{"type":"tool_result",
             "tool_use_id":"question-call","content":"미리보기"}]}});
         std::fs::write(&path, format!("{question}\n{answer}\n")).unwrap();
+        disconnected.store(false, Ordering::SeqCst);
         let recovered = if unavailable {
             worker.tick(Instant::now() + Duration::from_secs(16));
             current
