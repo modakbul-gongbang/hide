@@ -342,7 +342,7 @@ In 직접 and 함께 a risk path always waits for a person.
 **Pausing a Factory.**
 `hide factory pause --factory` stops the Factory's starts, judgments and auto merges, and asks each running worker to sleep, which it does when its current turn ends; a request that arrives meanwhile goes to a person.
 A worker that reports `done` in that last turn is verified as usual, but its checks wait for the resume rather than failing.
-A Task verified while paused that a person must merge shows in `merge_waiting`, where `hide factory merge` takes it; one that would merge on its own waits for the resume, and nothing toward its merge is read meanwhile.
+A Task verified while paused that a person must merge, by its mode or a gate such as a failed check, goes through its usual merge checks to `merge_waiting`, where `hide factory merge` takes it; one that would merge on its own waits for the resume, and nothing toward its merge is read meanwhile.
 A Factory AI verdict asked before the pause still lands: an answer reaches the sleeping worker on resume, while a risk-path approval merges nothing and is asked again on resume, and a diagnosis is set aside.
 `hide factory resume --factory` wakes each sleeping worker with what was answered meanwhile, reviews the cards that arrived, runs the checks that waited, and asks again about a verified Task held only by a risk path unless main is broken.
 

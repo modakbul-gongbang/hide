@@ -1194,7 +1194,7 @@ fn a_task_reported_while_its_factory_is_paused_is_checked_on_resume_and_merges_o
 }
 
 #[test]
-fn a_task_verified_while_its_factory_is_paused_waits_for_a_person_s_merge_and_reads_nothing() {
+fn a_task_verified_while_its_factory_is_paused_goes_to_a_person_s_merge() {
     let mut h = Bench::new(false);
     let f = h.factory(false);
     let t = h.ready("Verified while paused", &[]);
@@ -1212,10 +1212,9 @@ fn a_task_verified_while_its_factory_is_paused_waits_for_a_person_s_merge_and_re
         TaskState::MergeWaiting,
         "a person can merge (B41)"
     );
-    assert_eq!(
-        h.world().premerge_calls,
-        premerge,
-        "nothing is read per tick"
+    assert!(
+        h.world().premerge_calls <= premerge + 1,
+        "its merge check runs once, not per tick"
     );
     let merged = h.op(Command::Merge { task: t.clone() });
     assert_eq!(merged["ok"], true, "{merged}");
@@ -1223,6 +1222,57 @@ fn a_task_verified_while_its_factory_is_paused_waits_for_a_person_s_merge_and_re
         h.state(&f, &t),
         TaskState::Landed | TaskState::Done
     ));
+}
+
+#[test]
+fn a_task_only_an_automatic_merge_would_take_waits_out_a_pause_without_reading_anything() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Auto while paused", &[]);
+    h.world().hold_judgments = true;
+    h.done(&f, &t);
+    h.op(Command::PauseFactory { project: None });
+    h.world().hold_judgments = false;
+    for _ in 0..3 {
+        h.engine.tick();
+    }
+    let premerge = h.world().premerge_calls;
+    for _ in 0..5 {
+        h.engine.tick();
+    }
+    assert_eq!(h.state(&f, &t), TaskState::Verifying);
+    assert_eq!(h.world().premerge_calls, premerge, "nothing read per tick");
+    h.op(Command::ResumeFactory { project: None });
+    for _ in 0..10 {
+        h.engine.tick();
+        if matches!(h.state(&f, &t), TaskState::Landed | TaskState::Done) {
+            break;
+        }
+    }
+    assert!(matches!(
+        h.state(&f, &t),
+        TaskState::Landed | TaskState::Done
+    ));
+}
+
+#[test]
+fn a_check_that_fails_during_a_pause_holds_the_task_for_a_person_with_its_gate() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Check fails while paused", &[]);
+    h.world().hold_judgments = true;
+    h.done(&f, &t);
+    h.op(Command::PauseFactory { project: None });
+    h.world().judgment_failure = Some("timeout".into());
+    h.world().hold_judgments = false;
+    tick_until_state(&mut h, &f, &t, TaskState::MergeWaiting);
+    assert!(
+        h.task(&f, &t).gates.contains(&Gate::CheckFailed),
+        "{:?}",
+        h.task(&f, &t).gates
+    );
+    let merged = h.op(Command::Merge { task: t.clone() });
+    assert_eq!(merged["ok"], true, "{merged}");
 }
 
 #[test]

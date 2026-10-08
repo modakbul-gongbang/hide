@@ -3573,19 +3573,38 @@ impl Engine {
             return;
         }
         let mode = task.merge_mode(&factory);
-        if factory.paused || (factory.main.broken && mode == MergeMode::Auto) {
-            // Auto merge is stopped while the Factory is paused (D-48) and
-            // until main is green again (B44, D-47): a person's gate still
-            // shows now, so a person can merge (B41), and nothing is read
-            // per tick.
-            let mut gates = self.person_gates(&factory, &task, mode);
+        // Gates an earlier pass or a check left: they stay until a person
+        // merges (B38, B67).
+        let kept: Vec<Gate> = task
+            .gates
+            .iter()
+            .copied()
+            .filter(|g| matches!(g, Gate::RiskPath | Gate::CheckFailed))
+            .collect();
+        if factory.main.broken && mode == MergeMode::Auto {
+            // Auto merge is stopped until main is green again (B44, D-47):
+            // a person's gate still shows now, and nothing is read per tick.
+            let mut gates = kept;
+            gates.extend(self.person_gates(&factory, &task, mode));
             if waits_on_answer(&task) {
                 gates.push(Gate::OpenQuestion);
             }
+            gates.dedup();
             if !gates.is_empty() {
                 self.with_task(factory_id, id, |task| task.gates = gates.clone());
                 self.set_state(factory_id, id, TaskState::MergeWaiting);
             }
+            return;
+        }
+        // A paused Factory merges nothing on its own (D-48): a Task only an
+        // automatic merge would take waits for the resume with nothing read
+        // per tick, and one a person merges goes on to merge waiting through
+        // the same checks as ever, so it can be merged meanwhile (B41).
+        if factory.paused
+            && kept.is_empty()
+            && self.person_gates(&factory, &task, mode).is_empty()
+            && !waits_on_answer(&task)
+        {
             return;
         }
         // Merge-tree and the quick check, in seconds (B38).
@@ -3659,8 +3678,9 @@ impl Engine {
             }
             return;
         }
-        if factory.main.broken {
-            // A manual Task always has its gate; nothing merges on red.
+        if factory.main.broken || factory.paused {
+            // A manual Task always has its gate; nothing merges on red, and
+            // a paused Factory merges nothing on its own (D-48).
             return;
         }
         let _ = self.merge_now(factory_id, id);
