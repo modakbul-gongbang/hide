@@ -182,7 +182,7 @@ The remote Workspace keeps the device-colored toolbar band and agent pane frame;
 Its web files are `web/src/WorkspaceScreen.tsx`, `web/src/TabBar.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, and `web/src/ExplorerTree.tsx`.
 
 Project Sessions is `Screen / Project Sessions`.
-It draws the Project Overview on its Sessions tab: the Overview's header over the provider-filtered session list with search, and the read-only detail pane.
+It draws the Project Overview on its Conversation history tab: the Overview's header over the provider-filtered session list with search, and the read-only detail pane.
 Its web files are `web/src/ProjectOverview.tsx` and `web/src/ProjectSessions.tsx`.
 
 Settings is `Screen / Settings`.
@@ -217,7 +217,7 @@ Its web files are `web/src/entry-menu.tsx` and the start panel under `web/src/`.
 Projects Sidebar is `Screen / Projects Sidebar`.
 It draws the sidebar that follows the device rail.
 The rail is its full-height left column with This Mac and each registered device as 32 tiles with no name under them (the laptop glyph or the device's monogram), and `+` directly under the last tile; the selected tile is ringed, one mark at a tile's top-right shows the most urgent state (the Needs You count, `9+` from ten, else a dot for unseen Done), Working has no mark, and an unreachable device dims its glyph and wears a cross at the bottom-right with no mark.
-The rest frame is This Mac in front: a header line with the device name, Add project and Search, the shared Overview row with its count and shortcut, then the `Projects | Agents` strip, the Needs You and Done groups, the Home row with the project count (`+` under the pointer, drawn beside it), the agents that belong to no project, and Projects.
+The rest frame is This Mac in front: a header line with the device name, Add project and Search, the shared Overview row with its count and shortcut, then the single sidebar's Needs You and Done groups, the Home row with the project count (`+` under the pointer, drawn beside it), the agents that belong to no project, and Projects.
 Five more frames draw the Agents tab (this device's agents by state with the three counts above, no device chip), a remote device in front with the `9+` pill and its Needs You past the cap (five rows and `More 7`), a device that is not connected (its name, `연결 안 됨` and one reconnect action, no tree), the one-device window (the rail with This Mac alone), and the rail hidden (the name with a chevron over the open device menu).
 In the list, pinned and activity-ordered projects contain checkout rows with their kind glyph, age and agent line, an opened checkout's agent rows, and both inactive folds.
 The shared Overview row owns selection on its page or modal; there is no per-project Overview child.
