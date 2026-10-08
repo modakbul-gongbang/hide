@@ -777,3 +777,97 @@ fn an_idle_service_has_nothing_due() {
     let _opened = harness.controlling("w1:p1");
     assert_eq!(harness.service.shared.lock().next_deadline(), None);
 }
+
+/// B5 on the failure path: a thousand keys into a pane this node has never
+/// heard of are each refused, and the core hears it once a window.
+#[test]
+fn a_key_flood_into_an_unknown_pane_is_reported_once_a_window() {
+    let harness = harness(RetryPolicy::Automatic);
+    let started = Instant::now();
+    for _ in 0..1_000 {
+        harness.key("w9:p9", b"k");
+    }
+    let refused = harness
+        .reports
+        .try_iter()
+        .filter(|report| matches!(report, TerminalReport::Error { .. }))
+        .count() as u64;
+    let windows = started.elapsed().as_secs() + 1;
+    assert!(
+        (1..=windows).contains(&refused),
+        "{refused} refusals in {windows} windows"
+    );
+}
+
+/// Two threads' reports reach the core in the order their work ran in the
+/// service, so a pane's older state never lands after a newer one.
+#[test]
+fn reports_reach_the_core_in_the_order_the_service_made_them() {
+    /// Holds the first report it is given until the test lets it go.
+    struct HeldSink {
+        first: Mutex<bool>,
+        entered: Mutex<Sender<()>>,
+        go: Mutex<Receiver<()>>,
+        heard: Mutex<Vec<String>>,
+    }
+    impl ReportSink for HeldSink {
+        fn report(&self, report: TerminalReport) {
+            let first = std::mem::replace(&mut *self.first.lock().unwrap(), false);
+            if first {
+                self.entered.lock().unwrap().send(()).unwrap();
+                let _ = self.go.lock().unwrap().recv_timeout(WAIT);
+            }
+            if let TerminalReport::State { pane, .. } = report {
+                self.heard.lock().unwrap().push(pane);
+            }
+        }
+    }
+    let (entered_tx, entered) = channel();
+    let (go_tx, go) = channel();
+    let sink = Arc::new(HeldSink {
+        first: Mutex::new(true),
+        entered: Mutex::new(entered_tx),
+        go: Mutex::new(go),
+        heard: Mutex::default(),
+    });
+    let (opened_tx, _opened) = channel();
+    let service = Arc::new(
+        Service::start(
+            Box::new(FakeAttacher {
+                opened: Mutex::new(opened_tx),
+                refuse: Mutex::new(None),
+            }),
+            Arc::new(Outputs::default()),
+            Arc::clone(&sink) as Arc<dyn ReportSink>,
+            RetryPolicy::Automatic,
+        )
+        .unwrap(),
+    );
+    let attach = |pane: &str| TerminalControl::Attach {
+        pane: pane.into(),
+        size: None,
+        manual: false,
+    };
+    let first = {
+        let service = Arc::clone(&service);
+        let control = attach("w1:p1");
+        thread::spawn(move || service.control(control))
+    };
+    entered.recv_timeout(WAIT).unwrap();
+    let (done_tx, done) = channel();
+    let second = {
+        let service = Arc::clone(&service);
+        let control = attach("w1:p2");
+        thread::spawn(move || {
+            service.control(control);
+            done_tx.send(()).unwrap();
+        })
+    };
+    // The second control has every chance to report before the first's
+    // report is let go.
+    let _ = done.recv_timeout(Duration::from_millis(200));
+    go_tx.send(()).unwrap();
+    first.join().unwrap();
+    second.join().unwrap();
+    assert_eq!(sink.heard.lock().unwrap().as_slice(), ["w1:p1", "w1:p2"]);
+}

@@ -297,7 +297,8 @@ pub trait TerminalNode: Send + Sync {
 }
 
 /// Where a node's reports go: the core, for this machine's node, or the
-/// device link, for a device's.
+/// device link, for a device's. A node reports under its own lock, so a
+/// sink must take the report at once and never call the node back.
 pub trait ReportSink: Send + Sync {
     fn report(&self, report: TerminalReport);
 }

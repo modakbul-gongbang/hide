@@ -16,9 +16,9 @@
 //!
 //! One lock guards the service. A key, a frame and a control each take it
 //! for a few map lookups; nothing under it waits on a process, a socket or
-//! the core. Reports leave after it is released; output is handed to the
-//! sink under it, so a pane's bytes keep their order, and the sink must
-//! return at once and never call back.
+//! the core. Output and reports are handed to their sinks under it, so a
+//! pane's bytes and its states keep their order, and each sink must return
+//! at once and never call back.
 
 pub mod device;
 mod input;
@@ -37,7 +37,7 @@ use hide_node_link::terminal::{
 };
 use serde_json::json;
 
-use self::input::{AttachmentHold, HeldChunk, InputFacts, KeyRoute, PaneHold, Requests};
+use self::input::{AttachmentHold, HeldChunk, InputFacts, KeyRoute, PaneHold, Refusals, Requests};
 pub use self::protocol::Mode;
 use self::protocol::SessionEvent;
 use self::session::Session;
@@ -180,9 +180,6 @@ struct Pane {
     first_frame_pending: bool,
     watch_frame: bool,
     reported: Option<PaneTerminalState>,
-    /// The last refusal reported for each kind, so a key flood into a pane
-    /// that cannot take it reports at most once a window.
-    refused: HashMap<&'static str, Instant>,
 }
 
 struct SpawnRequest {
@@ -211,6 +208,7 @@ struct Inner {
     spawns: Vec<SpawnRequest>,
     /// Something may now be due earlier than the clock's current wait.
     wake_clock: bool,
+    refusals: Refusals,
 }
 
 #[derive(Default)]
@@ -348,23 +346,24 @@ impl Shared {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Runs `work` under the lock, then sends its reports, starts its
-    /// attaches and wakes the clock when a deadline may have moved, all with
-    /// the lock released.
+    /// Runs `work` under the lock and sends its reports before the lock is
+    /// released, so two threads' reports reach the core in the order their
+    /// work ran and a pane's older state never lands after a newer one; then
+    /// starts its attaches and wakes the clock when a deadline may have
+    /// moved, with the lock released.
     fn run<T>(self: &Arc<Self>, work: impl FnOnce(&mut Inner, &Arc<Shared>) -> T) -> T {
-        let (value, reports, spawns, wake) = {
+        let (value, spawns, wake) = {
             let mut inner = self.lock();
             let value = work(&mut inner, self);
+            for report in inner.reports.drain(..) {
+                self.reports.report(report);
+            }
             (
                 value,
-                std::mem::take(&mut inner.reports),
                 std::mem::take(&mut inner.spawns),
                 std::mem::take(&mut inner.wake_clock),
             )
         };
-        for report in reports {
-            self.reports.report(report);
-        }
         for spawn in spawns {
             self.spawn(spawn);
         }
@@ -496,17 +495,12 @@ impl Inner {
         });
     }
 
-    /// A refusal of a key, at most once a window per pane and kind.
+    /// A refusal of a key, at most once a window per pane and kind, whether
+    /// this node knows the pane or not.
     fn refuse(&mut self, pane: &str, kind: &'static str, message: String, now: Instant) {
-        if let Some(entry) = self.panes.get_mut(pane) {
-            if entry.refused.get(kind).is_some_and(|last| {
-                now.saturating_duration_since(*last) < input::INPUT_REPORT_WINDOW
-            }) {
-                return;
-            }
-            entry.refused.insert(kind, now);
+        if self.refusals.report(pane, kind, now) {
+            self.error(pane, kind, message);
         }
-        self.error(pane, kind, message);
     }
 
     /// Reports the pane's state when it changed since the core last heard.

@@ -19,7 +19,7 @@
 //! holder and the byte count, never the content. So does each key held
 //! longer than [`HELD_INPUT_MAX_AGE`] when its pane could take it.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use hide_node_link::terminal::{
@@ -416,6 +416,27 @@ impl PaneHold {
                 "bytes": bytes,
             }));
         }
+    }
+}
+
+/// When each pane last had a key refused, by kind, so a key flood into a
+/// pane that cannot take it, known to this node or not, reports at most
+/// once a window. An entry is dropped once its window has passed, so the
+/// map holds only the refusals of the last window.
+#[derive(Default)]
+pub(super) struct Refusals(HashMap<(String, &'static str), Instant>);
+
+impl Refusals {
+    /// Whether a refusal of `kind` for `pane` is reported now.
+    pub(super) fn report(&mut self, pane: &str, kind: &'static str, now: Instant) -> bool {
+        self.0
+            .retain(|_, last| now.saturating_duration_since(*last) < INPUT_REPORT_WINDOW);
+        let key = (pane.to_owned(), kind);
+        if self.0.contains_key(&key) {
+            return false;
+        }
+        self.0.insert(key, now);
+        true
     }
 }
 
