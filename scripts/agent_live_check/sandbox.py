@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import stat
 import sys
 
 from .processes import OwnedProcesses
@@ -16,9 +17,27 @@ from .protection import ProtectionError, beneath, private_directory, write_priva
 
 
 def spellings(paths: list[Path]) -> list[Path]:
-    """Protect an entrypoint and its target, including both ancestor chains."""
-    return list(dict.fromkeys(candidate for path in paths
-                             for candidate in (Path(os.path.abspath(path)), path.resolve())))
+    """Protect every alias traversed, its endpoint and each ancestor chain."""
+    pending, seen = list(paths), {}
+    while pending:
+        path = pending.pop().absolute()
+        if path in seen:
+            continue
+        if len(seen) >= 256:
+            raise ProtectionError("control_path_aliases_over_budget")
+        seen[path] = None
+        resolved = path.resolve()
+        if resolved != path:
+            pending.append(resolved)
+        for node in (path, *path.parents):
+            try:
+                info = node.lstat()
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            if stat.S_ISLNK(info.st_mode):
+                target = node.parent / os.readlink(node)
+                pending.append(target / path.relative_to(node))
+    return list(seen)
 
 
 class WriteSandbox:
@@ -53,14 +72,14 @@ class WriteSandbox:
             value = marker.read_text().strip()
             if not value.startswith("gitdir: ") or "\n" in value:
                 raise ProtectionError("candidate_git_control_path_invalid")
-            directory = (checkout / value.removeprefix("gitdir: ")).resolve()
+            directory = checkout / value.removeprefix("gitdir: ")
             controls.append(directory)
             common = directory / "commondir"
             if common.is_file():
                 value = common.read_text().strip()
                 if not value or "\n" in value:
                     raise ProtectionError("candidate_git_common_path_invalid")
-                controls.append((directory / value).resolve())
+                controls.append(directory / value)
         controls = spellings(controls)
         allowed = [self.probe, self.temp, self.sockets]
         # The remote-unix grammar follows the installed system sandbox profiles.

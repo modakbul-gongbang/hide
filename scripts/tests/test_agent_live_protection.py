@@ -1110,7 +1110,10 @@ class NativeWriteProtection(unittest.TestCase):
             target.write_bytes(b"inert-original")
             entry = home / "bin/cli"
             entry.parent.mkdir()
-            entry.symlink_to(target)
+            intermediate = root / "intermediate/cli"
+            intermediate.parent.mkdir()
+            intermediate.symlink_to(target)
+            entry.symlink_to(intermediate)
             config = root / "custom-xdg/herdr"
             config.mkdir(parents=True)
             config_file = config / "config.json"
@@ -1126,7 +1129,7 @@ class NativeWriteProtection(unittest.TestCase):
                                                                  "XDG_CONFIG_HOME": str(config.parent)}),
                                        executables=[entry])
                 program = ("from pathlib import Path\n"
-                           f"for name in {[str(entry), str(endpoint), str(config_file)]!r}:\n"
+                           f"for name in {[str(entry), str(intermediate), str(endpoint), str(config_file)]!r}:\n"
                            " p=Path(name)\n"
                            " for operation in ('unlink','replace'):\n"
                            "  try:\n"
@@ -1138,7 +1141,7 @@ class NativeWriteProtection(unittest.TestCase):
                            f"try: Path({str(config_file)!r}).write_bytes(b'forbidden')\n"
                            "except PermissionError: pass\n"
                            "else: raise SystemExit(33)\n"
-                           f"for name in {[str(entry.parent), str(target.parent), str(config)]!r}:\n"
+                           f"for name in {[str(entry.parent), str(intermediate.parent), str(target.parent), str(config)]!r}:\n"
                            " p=Path(name); q=p.with_name(p.name+'.moved')\n"
                            " try: p.rename(q)\n"
                            " except PermissionError: pass\n"
@@ -1148,6 +1151,7 @@ class NativeWriteProtection(unittest.TestCase):
                                                env=dict(os.environ), check=False)
                 self.assertEqual(code, 0, error)
                 self.assertTrue(entry.is_symlink())
+                self.assertTrue(intermediate.is_symlink())
                 self.assertEqual(entry.resolve(), target)
                 self.assertEqual(target.read_bytes(), b"inert-original")
                 self.assertEqual(config_file.read_bytes(), b"original-routing")
@@ -1243,8 +1247,13 @@ class NativeWriteProtection(unittest.TestCase):
                 path.mkdir(mode=0o700)
             gitdir = root / "shared-git/worktrees/candidate"
             gitdir.mkdir(parents=True)
-            (checkout / ".git").write_text("gitdir: " + str(gitdir) + "\n")
-            (gitdir / "commondir").write_text("../..\n")
+            git_alias = root / "git-links/current"
+            common_alias = root / "common-links/current"
+            for path, target in ((git_alias, gitdir), (common_alias, root / "shared-git")):
+                path.parent.mkdir()
+                path.symlink_to(target, target_is_directory=True)
+            (checkout / ".git").write_text("gitdir: " + str(git_alias) + "\n")
+            (gitdir / "commondir").write_text(str(common_alias) + "\n")
             executable = root / "installed-cli"
             protected = home / "native/declared.json"
             controls = [run / "configuration-backup/0", run / "bin/wrapper", run / "evidence.json",
@@ -1268,7 +1277,12 @@ class NativeWriteProtection(unittest.TestCase):
                        f"    q=Path({str(sandbox.probe / 'replacement')!r}); q.write_bytes(b'forbidden'); q.replace(p)\n"
                        "  except PermissionError: pass\n"
                        "  else: raise SystemExit(31)\n"
-                       f"for name in {[str(path) for path in (run, checkout, root, protected.parent, home / '.hide', routing)]!r}:\n"
+                       f"for name in {[str(path) for path in (git_alias, common_alias)]!r}:\n"
+                       " p=Path(name)\n"
+                       " try: p.unlink()\n"
+                       " except PermissionError: pass\n"
+                       " else: raise SystemExit(34)\n"
+                       f"for name in {[str(path) for path in (run, checkout, root, protected.parent, home / '.hide', routing, git_alias.parent, common_alias.parent)]!r}:\n"
                        " p=Path(name); q=p.with_name(p.name+'.moved')\n"
                        " try: p.rename(q)\n"
                        " except PermissionError: pass\n"
@@ -1281,6 +1295,8 @@ class NativeWriteProtection(unittest.TestCase):
             self.assertEqual(code, 0, error)
             for path in controls:
                 self.assertEqual(path.read_bytes(), b"original-control")
+            self.assertTrue(git_alias.is_symlink())
+            self.assertTrue(common_alias.is_symlink())
             self.assertTrue((home / "native/session-env").is_dir())
             self.assertEqual((home / ".claude.json").read_bytes(), b"native-shared-state")
 
