@@ -1,6 +1,6 @@
 //! The pane bootstrap's words for process identity (an `i32` pid, a start as
 //! an optional number) over `hide-platform`, which answers each question for
-//! the system it runs on. hided and the workspace bridge on a device ask the
+//! the system it runs on. hided and a device's node (`panes`) ask the
 //! same questions through here.
 
 use std::path::{Path, PathBuf};
@@ -8,19 +8,11 @@ use std::time::Duration;
 
 use hide_herdr_client::{LocalSocketConnector, request_with_connector};
 use hide_platform::process;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const HERDR_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Which shell a pane runs, as its Herdr terminal and the shell's pid and
-/// start: the identity a bootstrap checks a caller against.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct PaneIdentity {
-    pub terminal_id: String,
-    pub shell_pid: i32,
-    pub shell_started: u64,
-}
+pub use hide_node_link::panes::PaneIdentity;
 
 /// Whether `pid` is `shell_pid` or one of its descendants.
 pub fn descends_from(pid: i32, shell_pid: i32) -> bool {

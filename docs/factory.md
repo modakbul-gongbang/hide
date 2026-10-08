@@ -21,7 +21,7 @@ Closing a Factory keeps its records, and creating a Factory for the same project
 
 | Owner | What it owns |
 | --- | --- |
-| `hide-factory` crate | Values (`model.rs`), the store (`store.rs`), the dependency graph (`dag.rs`), roles and permissions (`role.rs`), the command contract and its printing (`command.rs`), the judgment features (`judgment.rs`), the read model (`summary.rs`), the adapter traits (`adapters.rs`), the engine (`engine.rs`) and the real git, `gh` and verify adapters (`project.rs`, `exec.rs`, `verify.rs`). It does not know the runtime or Herdr. |
+| `hide-factory` crate | Values (`model.rs`), the store (`store.rs`), the dependency graph (`dag.rs`), roles and permissions (`role.rs`), the command contract and its printing (`command.rs`), the judgment features (`judgment.rs`), the read model (`summary.rs`), the adapter traits (`adapters.rs`), the engine (`engine.rs`) and the real git, `gh` and verify adapters (`project.rs`, `exec.rs`), which ask the core's own node to do the work (`hide_node_link::factory`, served by `hide-host/src/factory.rs`). It does not know the runtime or Herdr, and starts no process and reads no project file itself. |
 | Host thread in the core | `herdr-core/src/factory.rs`: the engine thread, its request queue, the worker port (spawn, letters, sleep, wake, worktree removal), the judgment thread and the notifier. `runtime/factory.rs` holds the few reads and requests that take the runtime lock for owned data. |
 | `hided` | The pane-capability `factory` request in `server.rs` (`ScopedRequest::Factory`) and the `hide factory` parser and printer in `factory_cli.rs`. |
 | `hide-kit` | `hide_kit::layout::{factory_store, factory_files}` name the store and its files folder. |

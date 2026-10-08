@@ -2340,7 +2340,7 @@ impl Runtime {
                 let device_id = payload.device_id.trim().to_owned();
                 if self.device_registration_exists(&device_id) {
                     self.close_device_host(&device_id, "retry requested");
-                    self.start_device_host(&device_id);
+                    self.retry_device_host_now(&device_id);
                 } else {
                     self.set_error(
                         "device.host.unknown_device",

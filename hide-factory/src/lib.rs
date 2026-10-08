@@ -20,7 +20,6 @@ pub mod project;
 pub mod role;
 pub mod store;
 pub mod summary;
-pub mod verify;
 
 pub use command::{Command, Refusal};
 pub use engine::{Engine, Inbound, Ports};

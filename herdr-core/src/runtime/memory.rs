@@ -899,7 +899,12 @@ mod scope_tests {
     #[test]
     fn session_detail_opens_before_memory_database_exists() {
         let temp = tempdir().unwrap();
-        let session_path = temp.path().join("session.jsonl");
+        let folder = temp
+            .path()
+            .join(hide_session::CLAUDE_SESSIONS)
+            .join("-project");
+        fs::create_dir_all(&folder).unwrap();
+        let session_path = folder.join("session.jsonl");
         fs::write(
             &session_path,
             concat!(
@@ -923,7 +928,7 @@ mod scope_tests {
         });
 
         let detail = load_session_detail(
-            &hide_node::Local::of_process(),
+            &hide_node::Local::new(Some(temp.path().to_path_buf())),
             &temp.path().join("missing.sqlite3"),
             "project-1",
             row,
@@ -1244,7 +1249,9 @@ mod scope_tests {
             assert!(context.contains("auth=\""));
             assert!(!context.contains("Project Memory ready 0"));
 
-            let locator = temp.path().join(format!("{provider}-empty.jsonl"));
+            let folder = hide_session::session_root(&home, agent).unwrap();
+            fs::create_dir_all(&folder).unwrap();
+            let locator = folder.join(format!("{provider}-empty.jsonl"));
             let transcript = match agent {
                 Agent::Claude => json!({
                     "type": "user",
@@ -1280,7 +1287,7 @@ mod scope_tests {
             let mut store = MemoryStore::open(&database).unwrap();
             update_hook_projection(
                 &mut store,
-                &hide_node::Local::of_process(),
+                &hide_node::Local::new(Some(home.clone())),
                 &project.id,
                 &session,
             )

@@ -15,6 +15,8 @@
 //!   `Ok(0)`.
 //! - A read timeout ends a read with `ErrorKind::TimedOut` once the time has
 //!   passed; it never returns early with no data.
+//! - A [`LocalStream::duplicate`] reads on one thread while the original
+//!   writes on another, and the bytes of each direction arrive whole.
 //! - [`ShutdownHandle::shutdown`] called from another thread ends a read
 //!   that is blocked, with `Ok(0)`; later reads return `Ok(0)` and later
 //!   writes fail with `BrokenPipe`.
@@ -164,6 +166,17 @@ impl LocalStream {
         sys::set_write_timeout(&self.shared, timeout)?;
         self.write_timeout.store(nanos, Ordering::Relaxed);
         Ok(())
+    }
+
+    /// A second handle on the same stream, so one thread reads while another
+    /// writes. A write timeout set through either applies to both; a read
+    /// timeout belongs to the handle it was set on.
+    pub fn duplicate(&self) -> Self {
+        Self {
+            shared: Arc::clone(&self.shared),
+            read_timeout: AtomicU64::new(self.read_timeout.load(Ordering::Relaxed)),
+            write_timeout: AtomicU64::new(self.write_timeout.load(Ordering::Relaxed)),
+        }
     }
 
     /// A handle another thread uses to end this stream's blocked reads.

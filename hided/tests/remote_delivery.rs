@@ -1,5 +1,5 @@
 //! Candidate CLI + pinned Herdr lane. It crosses actual pane ancestry, SSH,
-//! helper attestation, reverse forwarding and the durable mailbox.
+//! helper attestation over the node link and the durable mailbox.
 #![cfg(unix)]
 
 #[path = "support/remote_delivery/mod.rs"]
@@ -135,7 +135,7 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
             .run_in_pane(&hook(&fixture.hooks, "fixture-local-session"))?;
         ensure!(
             context(&parent.stdout)?.contains(&report_id),
-            "local parent did not receive the report sent over reverse forwarding"
+            "local parent did not receive the report sent over the node link"
         );
         wait_for("report confirmation stops watch", || {
             Ok((!fixture

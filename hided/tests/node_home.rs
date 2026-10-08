@@ -514,12 +514,12 @@ fn home_sync_round_trips_through_the_helper() {
     assert!(!Path::new("relative-home").exists());
 }
 
-/// One `home_sync` request answered by `hide-host-helper serve`, whose HOME is
+/// One `home_sync` request answered by `hided node serve`, whose HOME is
 /// `home` or absent.
 fn ask_helper(home: Option<&Path>, projects: &[String]) -> serde_json::Value {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_hide-host-helper"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hided"));
     command
-        .arg("serve")
+        .args(["node", "serve"])
         .env_remove("HOME")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());

@@ -6,12 +6,9 @@ publish = false
 
 # The file host contract: operations on an opened checkout root that Hide
 # performs on the machine that owns the files. hided and the core call it in
-# process for this machine; `hide-host-helper` serves the same functions over
-# an SSH exec channel on a registered device (PRD S5.5 D-05, D-20).
-
-[[bin]]
-name = "hide-host-helper"
-path = "src/bin/hide-host-helper.rs"
+# process for this machine; `hided node serve` serves the same functions over
+# an SSH exec channel on a registered device (PRD S5.5 D-05, D-20; PRD
+# core-host-node D-02).
 
 [dependencies]
 base64 = "=0.23.1"

@@ -44,7 +44,7 @@ They once did: an evidence tree reached 123 MB and carried a browser profile wit
 `docs/BUILD.md` owns the reasons; these are the rules.
 
 - No build directory is ever shared between worktrees: cargo names artifacts by workspace-relative path, so two checkouts sharing one read each other's build as fresh, and its lock serializes the parallel builds worktrees exist for.
-- The release binaries are `target/release/{hided,hide,hide-agent-hooks,hide-host-helper}` inside the worktree that built them; `desktop/scripts/package.mjs` reads that fixed path, so never redirect a release build with `CARGO_TARGET_DIR` or `--target-dir`.
+- The release binaries are `target/release/{hided,hide,hide-agent-hooks}` inside the worktree that built them; `desktop/scripts/package.mjs` reads that fixed path, so never redirect a release build with `CARGO_TARGET_DIR` or `--target-dir`.
 - Every build lands inside the worktree, cargo in `target/`, the web shell in `web/dist/`, the desktop host in `desktop/dist/` and the packaged app in `desktop/out/`, all ignored; `git worktree remove` is the whole cleanup, and nothing under `/tmp` belongs to a checkout.
 - `scripts/verify-cargo.sh` and `scripts/verify-web.sh` are the only Rust and web verification entrypoints; a check script calls them rather than cargo or pnpm directly.
 - Every script that calls cargo sources `scripts/toolchain-env.sh`, so an isolated HOME reuses the machine's toolchain; without it rustup installs a private 1.4 GB copy and exits 0.

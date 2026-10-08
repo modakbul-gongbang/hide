@@ -94,11 +94,11 @@ case "${1:-}" in
         # The binaries the packaged app ships; release hided embeds web/dist,
         # so `pnpm --dir web build` runs first (desktop/scripts/package.mjs).
         report_toolchain
-        exec cargo build --release --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
+        exec cargo build --release --locked -p hided --bins -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     cli)
         report_toolchain
-        exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
+        exec cargo build --locked -p hided --bins -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     *)
         printf 'usage: %s test [args...]|lint|fmt-check|release|cli|test-scoped|check|build|clippy|metadata|nextest [args...]\n' "$0" >&2

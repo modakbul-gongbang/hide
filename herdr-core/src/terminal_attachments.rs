@@ -6,29 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub(crate) use hide_node_link::attachments::{COMMIT_GRACE, MAX_FILES, MAX_PATH_BYTES};
+pub(crate) use hide_node_link::attachments::{
+    AttachmentFile, COMMIT_GRACE, MAX_FILES, MAX_PATH_BYTES, check_cancelled, valid_request_id,
+};
 pub(crate) const MAX_QUEUED_INPUT: usize = 64 * 1024;
-pub(crate) const MAX_STAGED_FILES: usize = 128;
-pub(crate) const MAX_STAGED_BYTES: u64 = 256 * 1024 * 1024;
-pub(crate) const STAGING_TTL_SECONDS: u64 = 24 * 60 * 60;
-
-#[derive(Clone, Debug)]
-pub(crate) struct AttachmentFile {
-    pub path: String,
-    pub name: String,
-    pub bytes: Vec<u8>,
-}
-
-pub(crate) fn valid_request_id(id: &str) -> bool {
-    id.len() == 36
-        && id.bytes().enumerate().all(|(index, byte)| {
-            if [8, 13, 18, 23].contains(&index) {
-                byte == b'-'
-            } else {
-                byte.is_ascii_hexdigit()
-            }
-        })
-}
 
 pub(crate) fn clipboard_root(state_path: &Path) -> PathBuf {
     state_path.with_file_name("TerminalClipboard")
@@ -36,14 +17,6 @@ pub(crate) fn clipboard_root(state_path: &Path) -> PathBuf {
 
 pub(crate) fn clipboard_path(state_path: &Path, request_id: &str) -> PathBuf {
     clipboard_root(state_path).join(format!("hide-{request_id}.png"))
-}
-
-pub(crate) fn check_cancelled(cancelled: &AtomicBool) -> Result<(), String> {
-    if cancelled.load(Ordering::Acquire) {
-        Err("File transfer was cancelled.".to_owned())
-    } else {
-        Ok(())
-    }
 }
 
 /// Reads the picked files on `node`, which asks after each file whether to
@@ -83,14 +56,25 @@ pub(crate) fn read_sources(
 /// Reading 40 MiB from a local disk takes well under a minute.
 const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
-pub(crate) fn paste_bytes(paths: &[String], bracketed: bool) -> Result<Vec<u8>, String> {
+/// The text a terminal receives for the staged files. A destination on a
+/// device is that device's path, spelled with `/` whatever system the core
+/// runs on; a local one is this machine's own.
+pub(crate) fn paste_bytes(
+    paths: &[String],
+    bracketed: bool,
+    on_device: bool,
+) -> Result<Vec<u8>, String> {
     if paths.is_empty() || paths.len() > MAX_FILES {
         return Err("Choose between 1 and 8 regular files.".to_owned());
     }
     let mut quoted = Vec::with_capacity(paths.len());
     for path in paths {
         if path.len() > MAX_PATH_BYTES
-            || !Path::new(path).is_absolute()
+            || !(if on_device {
+                hide_platform::path::is_wire_absolute(path)
+            } else {
+                Path::new(path).is_absolute()
+            })
             || path.chars().any(char::is_control)
         {
             return Err("The attachment destination is not a safe absolute path.".to_owned());
@@ -138,14 +122,27 @@ mod tests {
             "/tmp/a $HOME `echo` ".to_owned(),
         ];
         assert_eq!(
-            String::from_utf8(paste_bytes(&paths, true).unwrap()).unwrap(),
+            String::from_utf8(paste_bytes(&paths, true, true).unwrap()).unwrap(),
             "\u{1b}[200~\"/tmp/한글's.png\"\u{1b}[201~ \u{1b}[200~\"/tmp/a \\$HOME \\`echo\\` \"\u{1b}[201~"
         );
         assert_eq!(
-            paste_bytes(&["/tmp/image.png".to_owned()], false).unwrap(),
+            paste_bytes(&["/tmp/image.png".to_owned()], false, true).unwrap(),
             b"\"/tmp/image.png\" "
         );
-        assert!(paste_bytes(&["/tmp/a\ncommand".to_owned()], true).is_err());
+        assert!(paste_bytes(&["/tmp/a\ncommand".to_owned()], true, true).is_err());
+    }
+
+    /// A device's destination is judged by its `/` spelling and a local one
+    /// by this machine's rules, so a core on Windows still pastes a device's
+    /// staged file.
+    #[test]
+    fn a_destination_is_absolute_by_the_machine_that_holds_it() {
+        let local = std::env::temp_dir().join("image.png");
+        let local = local.to_str().unwrap().to_owned();
+        assert!(paste_bytes(&[local], false, false).is_ok());
+        assert!(paste_bytes(&["image.png".to_owned()], false, false).is_err());
+        assert!(paste_bytes(&["/home/example/image.png".to_owned()], false, true).is_ok());
+        assert!(paste_bytes(&["image.png".to_owned()], false, true).is_err());
     }
 
     #[test]

@@ -23,18 +23,13 @@ pub struct CoreOptions {
     #[serde(default)]
     pub herdr_bin_path: Option<String>,
     pub app_state_path: String,
-    /// The folder holding `hide-host-helper` builds for devices. Absent in a
-    /// shell that serves no device files, which
-    /// leaves every device's host `unsupported` with that reason.
-    #[serde(default)]
-    pub host_helper_dir: Option<String>,
     /// Where the helper is installed on devices; `~/` is the device account's
-    /// home. Absent means `remote::host::DEFAULT_HELPER_ROOT`.
+    /// home. Absent means `remote::DEFAULT_HELPER_ROOT`.
     #[serde(default)]
     pub host_helper_root: Option<String>,
     /// The folder on devices where `hide` is linked to the copy installed
     /// with the helper; `~/` is the device account's home. Absent means
-    /// `remote::host::DEFAULT_CLI_DIR`.
+    /// `remote::DEFAULT_CLI_DIR`.
     #[serde(default)]
     pub host_cli_dir: Option<String>,
     /// Where a shell that draws separate Agent and View areas keeps each
@@ -3258,35 +3253,7 @@ pub struct DeviceRegistration {
     pub host_consent: Option<HostConsent>,
 }
 
-/// What the operator allowed on a device: install and update Hide's helper
-/// and its `hide` command under `helper_root`, link `hide` in `cli_dir` when
-/// that name is free or already Hide's, run the helper only for the life of
-/// an SSH connection, and perform file and Git work inside registered
-/// checkouts, with trash moves and worktree removals still confirmed one by
-/// one. `contract` names that scope;
-/// a build whose scope differs asks again, and so does a device that answers
-/// with another identity than the one the consent was first used on.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct HostConsent {
-    pub contract: u32,
-    pub helper_root: String,
-    /// Absent in a consent given before contract 2, which never covered it.
-    #[serde(default)]
-    pub cli_dir: Option<String>,
-    pub granted_at_unix_ms: u64,
-    /// The account, address and host key the helper first ran on; bound on
-    /// the first connection after consent and never rewritten by one.
-    #[serde(default)]
-    pub identity: Option<HostIdentity>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct HostIdentity {
-    pub user: String,
-    pub hostname: String,
-    pub port: u16,
-    pub host_key_sha256: String,
-}
+pub use hide_node_link::device::HostConsent;
 
 pub(crate) fn default_accent_hex() -> String {
     "#B9FF66".to_owned()

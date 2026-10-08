@@ -136,7 +136,6 @@ fn env(dir: &Path, tailscale: &Path) -> Env {
         host_helper_root: None,
         host_cli_dir: None,
         pane_id: None,
-        workspace_bridge_dir: None,
         tailscale_bin: Some(tailscale.to_path_buf()),
         search_path: None,
     }

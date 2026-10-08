@@ -207,7 +207,7 @@ impl Fixture {
                 phase: hosts::HostPhase::Ready {
                     host: device.clone(),
                     platform: "macos aarch64".to_owned(),
-                    helper_path: "/fake/hide-host-helper".to_owned(),
+                    helper_path: "/fake/hided".to_owned(),
                 },
                 generation: 1,
             },
@@ -622,7 +622,7 @@ impl Fixture {
         hosts::HostPhase::Ready {
             host: self.device.clone(),
             platform: "macos aarch64".to_owned(),
-            helper_path: "/fake/hide-host-helper".to_owned(),
+            helper_path: "/fake/hided".to_owned(),
         }
     }
 
@@ -1296,7 +1296,7 @@ fn helper_ready(runtime: &mut Runtime, device: &Arc<FakeDevice>) {
     runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Ready {
         host: device.clone(),
         platform: "macos aarch64".to_owned(),
-        helper_path: "/fake/hide-host-helper".to_owned(),
+        helper_path: "/fake/hided".to_owned(),
     };
 }
 

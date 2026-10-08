@@ -4,11 +4,13 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use herdr_core::workspace_control::Action;
 use serde_json::{Value, json};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::ORIGIN;
@@ -17,7 +19,7 @@ use hide_platform::fs::private;
 use hide_platform::ipc::LocalStream;
 
 use crate::env::Env;
-use crate::pane_auth::Reference;
+use crate::pane_auth::{Reference, Route};
 use crate::state_file::SCHEMA_VERSION;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -173,13 +175,17 @@ fn read_bootstrap_answer(stream: &mut impl Read) -> Result<PathBuf, String> {
         .ok_or_else(|| "reference_unavailable".to_owned())
 }
 
-/// Asks each workspace bridge a remote daemon runs on this device
-/// (`hide_host::workspace_bridge`) for this pane's reference.
+/// Asks each node pane service on this device (`hide_host::panes`), one per
+/// daemon that has this device open, for this pane's reference.
 fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, String> {
-    let bridge_dir = env
-        .workspace_bridge_dir
-        .clone()
-        .unwrap_or_else(|| hide_kit::layout::workspace_bridges(&env.state_dir));
+    bootstrap_bridges(
+        &hide_kit::layout::workspace_bridges(&env.state_dir),
+        request,
+    )
+}
+
+fn bootstrap_bridges(bridge_dir: &Path, request: &Value) -> Result<Option<PathBuf>, String> {
+    let bridge_dir = bridge_dir.to_path_buf();
     let metadata = match fs::symlink_metadata(&bridge_dir) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -279,7 +285,11 @@ fn read_reference(path: &Path) -> Result<Reference, String> {
     if reference.token.len() != 64 || !reference.token.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("invalid_reference".to_owned());
     }
-    if reference.port == 0 || reference.origin_port == 0 {
+    let valid = match &reference.route {
+        Route::Daemon { port, origin_port } => *port != 0 && *origin_port != 0,
+        Route::Node { socket } => node_socket(socket).is_some(),
+    };
+    if !valid {
         return Err("invalid_reference".to_owned());
     }
     Ok(reference)
@@ -506,26 +516,120 @@ fn run_exchange_within(
     Ok(value)
 }
 
-pub(crate) type WorkspaceSocket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+/// The bytes under a Workspace socket: a loopback connection, or a stream
+/// through a device's node.
+pub(crate) trait Transport: AsyncRead + AsyncWrite + Send + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> Transport for T {}
+
+pub(crate) type WorkspaceSocket = tokio_tungstenite::WebSocketStream<Pin<Box<dyn Transport>>>;
+
+async fn connect(reference: &Reference) -> Result<WorkspaceSocket, String> {
+    let (request, transport): (_, Pin<Box<dyn Transport>>) = match &reference.route {
+        Route::Daemon { port, origin_port } => {
+            let mut request = format!("ws://127.0.0.1:{port}/ws")
+                .into_client_request()
+                .map_err(|_| "hide_unavailable".to_owned())?;
+            request.headers_mut().insert(
+                ORIGIN,
+                format!("http://127.0.0.1:{origin_port}")
+                    .parse()
+                    .map_err(|_| "hide_unavailable".to_owned())?,
+            );
+            let stream = tokio::net::TcpStream::connect(("127.0.0.1", *port))
+                .await
+                .map_err(|_| UNREACHABLE.to_owned())?;
+            (request, Box::pin(stream))
+        }
+        Route::Node { socket } => {
+            let socket = node_socket(socket).ok_or_else(|| "invalid_reference".to_owned())?;
+            // The link's route answers only `/ws`, and only for a credential
+            // the same node vouched for over the same link.
+            let request = "ws://node/ws"
+                .into_client_request()
+                .map_err(|_| "hide_unavailable".to_owned())?;
+            (request, Box::pin(node_stream(&socket)?))
+        }
+    };
+    let (socket, _) = tokio_tungstenite::client_async(request, transport)
+        .await
+        .map_err(|_| UNREACHABLE.to_owned())?;
+    Ok(socket)
+}
+
+/// The node socket a device reference names: an absolute path on this
+/// machine, or nothing.
+fn node_socket(wire: &str) -> Option<PathBuf> {
+    hide_platform::path::from_wire(wire)
+        .ok()
+        .filter(|path| path.is_absolute())
+}
+
+/// Opens a stream through this device's node to the daemon behind it, as an
+/// async stream. The node's local stream blocks, so two threads move its
+/// bytes through an in-memory pipe; each ends when its side does, and the
+/// first to end closes the node's stream, which ends the other.
+fn node_stream(socket: &Path) -> Result<tokio::io::DuplexStream, String> {
+    let stream = LocalStream::connect(socket).map_err(|_| UNREACHABLE.to_owned())?;
+    let _ = stream.set_write_timeout(Some(TIMEOUT));
+    stream
+        .set_read_timeout(None)
+        .map_err(|_| "hide_unavailable".to_owned())?;
+    let mut writer = stream.duplicate();
+    writeln!(writer, "{}", json!({"stream": true})).map_err(|_| UNREACHABLE.to_owned())?;
+    let (ours, theirs) = tokio::io::duplex(hide_node_link::panes::MAX_CHUNK);
+    let (mut outgoing, mut incoming) = tokio::io::split(theirs);
+    let runtime = tokio::runtime::Handle::current();
+    let reading = runtime.clone();
+    let reader_shutdown = stream.shutdown_handle();
+    let mut reader = stream;
+    std::thread::Builder::new()
+        .name("hide-node-stream-read".to_owned())
+        .spawn(move || {
+            let mut buffer = vec![0_u8; hide_node_link::panes::MAX_CHUNK];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => {
+                        if reading
+                            .block_on(incoming.write_all(&buffer[..read]))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+            reader_shutdown.shutdown();
+            let _ = reading.block_on(incoming.shutdown());
+        })
+        .map_err(|_| "hide_unavailable".to_owned())?;
+    let writer_shutdown = writer.shutdown_handle();
+    std::thread::Builder::new()
+        .name("hide-node-stream-write".to_owned())
+        .spawn(move || {
+            let mut buffer = vec![0_u8; hide_node_link::panes::MAX_CHUNK];
+            loop {
+                match runtime.block_on(outgoing.read(&mut buffer)) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => {
+                        if writer.write_all(&buffer[..read]).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+            writer_shutdown.shutdown();
+        })
+        .map_err(|_| "hide_unavailable".to_owned())?;
+    Ok(ours)
+}
 
 async fn exchange_response(
     reference: &Reference,
     payload: Value,
     request_id: &str,
 ) -> Result<(Value, WorkspaceSocket), String> {
-    let mut request = format!("ws://127.0.0.1:{}/ws", reference.port)
-        .into_client_request()
-        .map_err(|_| "hide_unavailable".to_owned())?;
-    request.headers_mut().insert(
-        ORIGIN,
-        format!("http://127.0.0.1:{}", reference.origin_port)
-            .parse()
-            .map_err(|_| "hide_unavailable".to_owned())?,
-    );
-    let (mut socket, _) = tokio_tungstenite::connect_async(request)
-        .await
-        .map_err(|_| UNREACHABLE.to_owned())?;
+    let mut socket = connect(reference).await?;
     socket
         .send(Message::Text(
             json!({"token":reference.token,"schema_version":SCHEMA_VERSION})
@@ -607,7 +711,13 @@ mod tests {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(0o600);
         fs::set_permissions(&path, permissions.clone()).unwrap();
-        assert_eq!(read_reference(&path).unwrap().port, 12345);
+        assert!(matches!(
+            read_reference(&path).unwrap().route,
+            Route::Daemon {
+                port: 12345,
+                origin_port: 12345
+            }
+        ));
         let link = directory.path().join("link.json");
         symlink(&path, &link).unwrap();
         assert!(matches!(read_reference(&link), Err(reason) if reason == "credential_expired"));
@@ -616,7 +726,7 @@ mod tests {
         assert!(matches!(read_reference(&path), Err(reason) if reason == "invalid_reference"));
     }
 
-    /// What the bridge writes to its exec channel, one line at a time.
+    /// What a node writes up its link, one line at a time.
     struct Lines(Vec<u8>, mpsc::Sender<String>);
 
     impl Write for Lines {
@@ -636,76 +746,105 @@ mod tests {
         }
     }
 
-    /// A device's bridge and a pane's `hide` meet over the system's local
-    /// stream: the bridge sees the caller's pid and asks the pane's Herdr
-    /// about it, and the end of its exec channel ends it.
-    #[test]
-    fn a_remote_bridge_answers_this_device_and_ends_with_its_channel() {
-        // A Unix socket path is limited to about a hundred bytes, and the
-        // bridge binds two folders below this one, so a long TMPDIR overflows it.
-        let directory = if cfg!(unix) {
+    /// A Unix socket path is limited to about a hundred bytes, and the node
+    /// binds two folders below this one, so a long TMPDIR overflows it.
+    fn short_dir() -> tempfile::TempDir {
+        if cfg!(unix) {
             tempfile::Builder::new().prefix("hb").tempdir_in("/tmp")
         } else {
             tempfile::Builder::new().prefix("hb").tempdir()
         }
-        .unwrap();
+        .unwrap()
+    }
+
+    fn next_event(lines: &mpsc::Receiver<String>) -> Value {
+        serde_json::from_str(&lines.recv_timeout(Duration::from_secs(10)).unwrap()).unwrap()
+    }
+
+    /// A device's node and a pane's `hide` meet over the system's local
+    /// stream: the node sees the caller's pid and asks the pane's Herdr about
+    /// it, and stopping the node removes it from this device.
+    #[test]
+    fn a_device_node_answers_this_device_until_it_stops() {
+        let directory = short_dir();
         let bridges = directory.path().join("bridges");
-        let (channel, mut daemon) = std::io::pipe().unwrap();
-        let (sent, lines) = mpsc::channel();
-        let init = json!({
-            "bridge_dir": hide_platform::path::to_wire(&bridges).unwrap(),
-            "herdr_socket": directory.path().join("no-herdr.sock"),
-            "port": 1, "origin_port": 2,
-        });
-        writeln!(daemon, "{init}").unwrap();
-        let (ended, bridge) = mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = ended.send(hide_host::workspace_bridge::serve(
-                BufReader::new(channel),
-                Lines(Vec::new(), sent),
-            ));
-        });
-        let ready = match lines.recv_timeout(Duration::from_secs(10)) {
-            Ok(line) => line,
-            // The bridge drops its output before it hands back its result,
-            // so wait for the result rather than read what is there now.
-            Err(_) => panic!(
-                "the bridge never became ready: {:?}",
-                bridge.recv_timeout(Duration::from_secs(1))
-            ),
-        };
-        let ready: Value = serde_json::from_str(&ready).unwrap();
-        assert_eq!(ready["type"], "ready");
-        // Both ends of the line read and write the wire spelling, which on
-        // Windows is the only one `from_wire` reads.
-        let socket = ready["socket"].as_str().unwrap();
-        assert!(
-            hide_platform::path::from_wire(socket)
-                .unwrap()
-                .starts_with(&bridges),
-            "{socket}"
-        );
-        let home = directory.path().to_str().unwrap().to_owned();
-        let bridge_dir = bridges.to_str().unwrap().to_owned();
-        let env = crate::env::load_from(|key| match key {
-            crate::env::HOME => Some(home.clone()),
-            crate::env::HIDE_WORKSPACE_BRIDGE_DIR => Some(bridge_dir.clone()),
-            _ => None,
-        })
-        .unwrap();
-        // No Herdr answers at the socket the bridge was given, so it cannot
-        // read the pane; it got that far only by seeing who called.
+        let herdr = directory.path().join("no-herdr.sock");
+        let (sent, _lines) = mpsc::channel();
+        let output = std::sync::Mutex::new(Lines(Vec::new(), sent));
+        let panes = hide_host::panes::Panes::new();
         let request = json!({"pane_id": "w1:p1", "nonce": "0".repeat(32)});
-        assert_eq!(
-            bootstrap_remote(&env, &request),
-            Err("pane_unavailable".to_owned())
-        );
-        drop(daemon);
-        bridge
-            .recv_timeout(Duration::from_secs(10))
-            .expect("the bridge ends with its channel")
+        std::thread::scope(|scope| {
+            let started = panes
+                .start(scope, &output, &bridges, herdr.to_str().unwrap())
+                .unwrap();
+            // Both ends read and write the wire spelling, which on Windows is
+            // the only one `from_wire` reads.
+            assert!(
+                node_socket(&started.socket).unwrap().starts_with(&bridges),
+                "{}",
+                started.socket
+            );
+            // No Herdr answers at the socket the node was given, so it cannot
+            // read the pane; it got that far only by seeing who called.
+            assert_eq!(
+                bootstrap_bridges(&bridges, &request),
+                Err("pane_unavailable".to_owned())
+            );
+            panes.stop();
+        });
+        panes.remove_folder();
+        assert_eq!(bootstrap_bridges(&bridges, &request), Ok(None));
+    }
+
+    /// A command's bytes cross the node both ways, the first of them sent
+    /// with the line that opens the stream, and the core closing the stream
+    /// ends it for the command.
+    #[test]
+    fn a_command_stream_crosses_the_node_both_ways() {
+        use base64::Engine as _;
+        let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+        let directory = short_dir();
+        let bridges = directory.path().join("bridges");
+        let herdr = directory.path().join("no-herdr.sock");
+        let (sent, lines) = mpsc::channel();
+        let output = std::sync::Mutex::new(Lines(Vec::new(), sent));
+        let panes = hide_host::panes::Panes::new();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
             .unwrap();
-        assert_eq!(bootstrap_remote(&env, &request), Ok(None));
+        std::thread::scope(|scope| {
+            let started = panes
+                .start(scope, &output, &bridges, herdr.to_str().unwrap())
+                .unwrap();
+            let socket = node_socket(&started.socket).unwrap();
+            runtime.block_on(async {
+                let mut stream = node_stream(&socket).unwrap();
+                stream.write_all(b"ping").await.unwrap();
+                let opened = next_event(&lines);
+                assert_eq!(opened["event"], "stream_open");
+                let id = opened["stream"].as_u64().unwrap();
+                let data = next_event(&lines);
+                assert_eq!(
+                    data,
+                    json!({"event":"stream_data","stream":id,"data":encode(b"ping")})
+                );
+                panes.write_stream(id, &encode(b"pong")).unwrap();
+                let mut answer = [0_u8; 4];
+                stream.read_exact(&mut answer).await.unwrap();
+                assert_eq!(&answer, b"pong");
+                panes.close_stream(id).unwrap();
+                let mut rest = Vec::new();
+                stream.read_to_end(&mut rest).await.unwrap();
+                assert!(rest.is_empty());
+                assert_eq!(
+                    next_event(&lines),
+                    json!({"event":"stream_closed","stream":id})
+                );
+            });
+            panes.stop();
+        });
+        panes.remove_folder();
     }
 
     #[test]
@@ -740,8 +879,10 @@ mod tests {
         let port = receiver.recv().unwrap();
         let reference = Reference {
             token: "a".repeat(64),
-            port,
-            origin_port: port,
+            route: Route::Daemon {
+                port,
+                origin_port: port,
+            },
         };
         let directory = tempfile::tempdir().unwrap();
         let answer = run_exchange(

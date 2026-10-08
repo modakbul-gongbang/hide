@@ -139,7 +139,7 @@ pub struct Placement {
 }
 
 /// The helper root and build folder of a helper at
-/// `<root>/<16 hex>/hide-host-helper`; any other helper, such as one a
+/// `<root>/<16 hex>/hided`; any other copy, such as one a
 /// developer started by hand, runs no kit.
 fn install_layout(executable: &Path) -> HostResult<(PathBuf, String)> {
     let refused = || {
@@ -412,7 +412,7 @@ mod tests {
     fn placed(dir: &Path, version: &str) -> Placement {
         let root = dir.join("host-helper");
         std::fs::create_dir_all(root.join(version)).unwrap();
-        std::fs::write(root.join(version).join("hide-host-helper"), b"helper").unwrap();
+        std::fs::write(root.join(version).join("hided"), b"helper").unwrap();
         Placement {
             root,
             version: version.to_owned(),
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn only_a_helper_in_a_build_folder_runs_the_kit() {
         let (root, version) = install_layout(Path::new(
-            "/home/me/.local/share/hide/host-helper/0123456789abcdef/hide-host-helper",
+            "/home/me/.local/share/hide/host-helper/0123456789abcdef/hided",
         ))
         .unwrap();
         assert_eq!(
@@ -432,8 +432,8 @@ mod tests {
         );
         assert_eq!(version, "0123456789abcdef");
         for elsewhere in [
-            "/work/hide/target/debug/hide-host-helper",
-            "/home/me/.local/share/hide/host-helper/current/hide-host-helper",
+            "/work/hide/target/debug/hided",
+            "/home/me/.local/share/hide/host-helper/current/hided",
             "/Applications/hide.app/Contents/Resources/hided",
         ] {
             let refused = install_layout(Path::new(elsewhere)).unwrap_err();
@@ -461,7 +461,7 @@ mod tests {
             Path::new("bbbbbbbbbbbbbbbb")
         ));
         assert!(!placement.root.join(&older.version).exists());
-        assert!(placement.root.join("current/hide-host-helper").is_file());
+        assert!(placement.root.join("current/hided").is_file());
         // Only build folders are Hide's to remove.
         assert!(placement.root.join("notes.txt").is_file());
     }

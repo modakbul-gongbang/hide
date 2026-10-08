@@ -12,6 +12,11 @@ pub use hide_project::git::BranchNote;
 /// refused, so the core asks in parts or reports the gap.
 pub const PATH_FACTS_LIMIT: usize = 4096;
 
+/// The most bytes of names and branch notes one `Call::PathFacts` answer
+/// carries; past it the node refuses the request as too large rather than
+/// build an answer that grows with every repository's config.
+pub const PATH_FACTS_ANSWER_LIMIT: usize = 16 * 1024 * 1024;
+
 /// The node's answer for the paths the core asked about.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PathFacts {

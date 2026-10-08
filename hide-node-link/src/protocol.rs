@@ -1,8 +1,11 @@
-//! The requests `hide-host-helper` answers, one JSON object per line.
+//! The requests a node answers (`hided node serve` on a device), one JSON
+//! object per line.
 //!
 //! A request is `{"id": n, "op": "...", ...}` and its answer is
 //! `{"id": n, "ok": ...}` or `{"id": n, "error": {"code", "message"}}`.
-//! Answers may arrive out of order; the id pairs them. Every root-bearing
+//! Answers may arrive out of order; the id pairs them. A long call may send
+//! reports first, each `{"progress": n, "report": ...}` ([`Progress`]), and
+//! a `cancel` request for it stops it. Every root-bearing
 //! request names the root's path and the identity the first `root_open`
 //! reported, so the helper refuses a checkout replaced between requests.
 
@@ -65,7 +68,14 @@ use crate::error::HostError;
 /// for every process under a pane's shell and names any still running (issue
 /// 707). A helper on 22 would refuse the first as unknown and answer without
 /// a name.
-pub const PROTOCOL_VERSION: u32 = 23;
+/// 24: the device runs this program in its node role (`hided node serve`)
+/// instead of `hide-host-helper`, so the payload carries `hided` (PRD
+/// core-host-node D-02); a device still running a helper answers Hello with
+/// 23 or less, is refused, and the next connection installs the new payload. Its
+/// panes ask for credentials and run `hide` commands over this link
+/// (`panes_start`, `pane_proof_answer`, `pane_inspect`, the stream calls and
+/// [`crate::panes::NodeEvent`]) instead of a separate bridge.
+pub const PROTOCOL_VERSION: u32 = 24;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -467,6 +477,139 @@ pub enum Call {
     SessionText {
         path: String,
     },
+    /// Starts this node's pane service for the Herdr at `herdr_socket`: the
+    /// bootstrap socket a device pane's `hide` asks on. Answered with
+    /// [`crate::panes::PanesStarted`]; asking again for the same Herdr
+    /// answers the same socket.
+    PanesStart {
+        herdr_socket: String,
+    },
+    /// The core's answer to the pane proof `request` the node sent up.
+    PaneProofAnswer {
+        request: u64,
+        answer: crate::panes::ProofAnswer,
+    },
+    /// `pane_id`'s identity now, read from this node's Herdr and kernel, so
+    /// the core can tell a credential's pane from a replaced one.
+    PaneInspect {
+        pane_id: String,
+    },
+    /// Base64 bytes for the `hide` command on `stream`; answered once they
+    /// are written to it.
+    StreamWrite {
+        stream: u64,
+        data: String,
+    },
+    /// Ends `stream` from the core's side.
+    StreamClose {
+        stream: u64,
+    },
+    /// Stops the reporting call `request`: its next report is answered with
+    /// false, and it answers as stopped. Answered at once, before any
+    /// waiting request, and a request that is no longer running is left
+    /// as it is.
+    Cancel {
+        request: u64,
+    },
+    /// The Software Factory's machine work on the core's own node
+    /// ([`crate::factory::FactoryCall`]). A git, `gh` or check run reports
+    /// while it runs, and a report answered with false stops it.
+    Factory {
+        call: crate::factory::FactoryCall,
+    },
+}
+
+impl Call {
+    /// Whether this request reports until it is told to stop rather than
+    /// finish (the Git watch). A link that drains stops these; any other
+    /// call, a clone included, settles to its own result.
+    pub fn runs_until_stopped(&self) -> bool {
+        matches!(self, Self::GitWatch { .. })
+    }
+
+    /// Whether a device's node answers this request. A device answers the
+    /// work on its own files, repositories, sessions, processes, kit and
+    /// panes; what acts with the operator's own logins (GitHub, the AI
+    /// providers and their usage), the files the operator picked on this
+    /// machine, and the Software Factory's work (D-01) are the core's own
+    /// node's, and a device refuses them unrun. The match names every
+    /// request, so a new one is decided here before it compiles.
+    pub fn answered_by_device(&self) -> bool {
+        match self {
+            Self::Hello
+            | Self::RootOpen { .. }
+            | Self::List { .. }
+            | Self::Stamps { .. }
+            | Self::Bytes { .. }
+            | Self::Index { .. }
+            | Self::OpenDocument { .. }
+            | Self::Revision { .. }
+            | Self::Save { .. }
+            | Self::Create { .. }
+            | Self::Rename { .. }
+            | Self::Move { .. }
+            | Self::Trash { .. }
+            | Self::Changes { .. }
+            | Self::Project { .. }
+            | Self::Worktrees { .. }
+            | Self::BranchCheck { .. }
+            | Self::Directory { .. }
+            | Self::Registrable { .. }
+            | Self::HomeSync { .. }
+            | Self::WorktreeRemove { .. }
+            | Self::WorktreeRemovalCheck { .. }
+            | Self::Kit { .. }
+            | Self::HookDiagnosis
+            | Self::WorktreesRegistered { .. }
+            | Self::IgnoredRepository { .. }
+            | Self::ProjectCreate { .. }
+            | Self::PathFacts { .. }
+            | Self::RealPaths { .. }
+            | Self::Repository { .. }
+            | Self::JudgeFolders { .. }
+            | Self::SetAsideFolder { .. }
+            | Self::WorktreeRemoveClean { .. }
+            | Self::DrainTrash { .. }
+            | Self::RepositoryClone { .. }
+            | Self::Git { .. }
+            | Self::TerminateGroup { .. }
+            | Self::AgentInstalled { .. }
+            | Self::ProcessStarts { .. }
+            | Self::ProcessDescendants { .. }
+            | Self::DiskUsage { .. }
+            | Self::ListeningPorts
+            | Self::VolumeFree { .. }
+            | Self::LabelTranscript { .. }
+            | Self::SessionActivity { .. }
+            | Self::LinkFiles { .. }
+            | Self::LinkRead { .. }
+            | Self::SessionIndexRead { .. }
+            | Self::SessionStamps { .. }
+            | Self::ProjectSessions { .. }
+            | Self::GitWatch { .. }
+            | Self::SessionStat { .. }
+            | Self::SessionChunk { .. }
+            | Self::SessionText { .. }
+            | Self::PanesStart { .. }
+            | Self::PaneProofAnswer { .. }
+            | Self::PaneInspect { .. }
+            | Self::StreamWrite { .. }
+            | Self::StreamClose { .. }
+            | Self::Cancel { .. } => true,
+            Self::AiAvailability { .. }
+            | Self::AiModels { .. }
+            | Self::AiExecute { .. }
+            | Self::AiMeasurement { .. }
+            | Self::AiRestart { .. }
+            | Self::AiRelease { .. }
+            | Self::CodexCredentials { .. }
+            | Self::CodexSessionUsage { .. }
+            | Self::ClaudeUsageText { .. }
+            | Self::Gh { .. }
+            | Self::ReadAttachments { .. }
+            | Self::Factory { .. } => false,
+        }
+    }
 }
 
 /// What a `kit` request does. `apply` and `reinstall` answer a
@@ -504,6 +647,14 @@ pub struct KitRemoved {
     pub kit: hide_kit::RemoveReport,
     /// The helper root and every build under it.
     pub helper_root: hide_kit::RemoveOutcome,
+}
+
+/// A report a running call sends before its answer, as its own line
+/// (`{"progress": id, "report": ...}`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Progress {
+    pub progress: u64,
+    pub report: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

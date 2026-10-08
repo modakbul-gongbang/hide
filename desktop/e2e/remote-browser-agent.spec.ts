@@ -1,5 +1,5 @@
 // `hide browser` from a device pane over the isolated SSH server: the device's
-// CLI reaches hided's relay through the reverse Workspace forward and reads
+// CLI reaches hided's relay through its node's link and reads
 // and drives the display the same way a local pane does, and fails with the
 // Workspace commands' own reason when no desktop is attached (PRD
 // hide-browser-cli B34, B40). Setup as in remote-workspace.spec.ts: the two
@@ -13,7 +13,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { deviceHome, proveDeviceHome, resetDeviceHome, writeSshConfig } from "./device-home";
+import { deviceBridges, deviceHome, proveDeviceHome, resetDeviceHome, writeSshConfig } from "./device-home";
 import { endChild, HIDE_CLI, hostLog, isolate, launch, test, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 300_000 });
@@ -26,7 +26,7 @@ function quote(value: string): string { return `'${value.replaceAll("'", "'\\''"
 async function deviceCli(remote: HerdrFixture, run: Isolated, bridge: string, args: string[], label: string): Promise<{ status: number; out: string }> {
   const out = path.join(remote.root, `${label}.out`), exit = path.join(remote.root, `${label}.exit`);
   const cli = path.join(run.env.HIDE_HOST_CLI_DIR!, "hide");
-  const command = `HIDE_WORKSPACE_BRIDGE_DIR=${quote(bridge)} HIDE_STATE_DIR=${quote(path.join(run.root, "remote-cli-state"))} ${[cli, ...args].map(quote).join(" ")} > ${quote(out)}; printf '%s' "$?" > ${quote(exit)}\n`;
+  const command = `HIDE_STATE_DIR=${quote(path.dirname(bridge))} ${[cli, ...args].map(quote).join(" ")} > ${quote(out)}; printf '%s' "$?" > ${quote(exit)}\n`;
   const sent = spawnSync(remote.bin, ["pane", "send-text", remote.panes[0]!, command], { env: remote.env, encoding: "utf8", timeout: 10_000 });
   expect(sent.status, sent.stderr).toBe(0);
   await expect.poll(() => fs.existsSync(exit), { timeout: 60_000 }).toBe(true);
@@ -40,12 +40,11 @@ test("hide browser from a device pane reads and clicks its page, and fails like 
   const local = await startHerdr({ agents: false });
   const remote = await startHerdr({ agents: false });
   const run = isolate(local, "ssh-browser");
-  const bridge = fs.mkdtempSync("/tmp/hide-wb-");
-  run.env.HIDE_WORKSPACE_BRIDGE_DIR = bridge;
   run.env.HIDE_HOST_HELPER_ROOT = path.join(run.root, "remote-helper");
   run.env.HIDE_HOST_CLI_DIR = path.join(run.root, "remote-bin");
   writeSshConfig(run.env.HOME!, ["isolated-workspace"]);
   const deviceAccount = deviceHome();
+  const bridge = deviceBridges(deviceAccount);
   proveDeviceHome(run.env, "isolated-workspace", deviceAccount);
   resetDeviceHome(deviceAccount);
   const daemonLog = path.join(run.root, "daemon.log");
@@ -108,6 +107,5 @@ test("hide browser from a device pane reads and clicks its page, and fails like 
     await new Promise<void>((resolve) => server.close(() => resolve()));
     run.cleanup();
     await endChild(daemon).finally(() => { remote.stop(); local.stop(); });
-    fs.rmSync(bridge, { recursive: true, force: true });
   }
 });

@@ -924,6 +924,7 @@ pub(crate) mod tests {
                 codex_home: None,
             },
             std::sync::Arc::new(hide_node::Local::new(Some(root.to_owned()))),
+            crate::node::test_devices(),
         );
         let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},

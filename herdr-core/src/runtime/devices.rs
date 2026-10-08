@@ -14,10 +14,10 @@ use crate::model::{
     DeviceRegistration, DeviceTestSnapshot, DeviceTestStageSnapshot, RemoteFileListSnapshot,
     RemoteStatusSnapshot,
 };
-use crate::remote::{CapabilityReport, CapabilityState, RusshRemoteClient, SshAlias};
+use crate::remote::{CapabilityReport, CapabilityState, DeviceTransport};
 
 pub(super) struct RemoteDeviceConnection {
-    pub(super) client: Arc<RusshRemoteClient>,
+    pub(super) transport: Arc<dyn DeviceTransport>,
     /// `None` when the coordinator could not be started; the status entry
     /// then carries why.
     sync: Option<session_sync::SessionSyncHandle>,
@@ -109,25 +109,16 @@ impl Runtime {
             let home_path = self.home_path.as_ref().ok_or_else(|| {
                 "HOME is unavailable, so the SSH config cannot be resolved".to_owned()
             })?;
-            // The row is what the operator reads, so it names the fix; the
-            // full staged diagnostic goes to the log below.
-            let alias = SshAlias::from_config_file(&home_path.join(".ssh/config"), &ssh_alias)
-                .map_err(|error| {
-                    format!(
-                        "SSH alias {ssh_alias} could not be read from ~/.ssh/config: {}",
-                        error.diagnostic().reason
-                    )
-                })?;
-            let client = Arc::new(
-                RusshRemoteClient::new(alias)
-                    .map_err(|error| error.to_string())?
-                    .with_herdr_socket(registration.herdr_socket_path.clone()),
-            );
-            let connector: Arc<dyn hide_herdr_client::ApiConnector> =
-                Arc::new(client.herdr_api_connector());
-            Ok::<_, String>((client, connector))
+            let transport = self.devices.transport(
+                home_path,
+                &device_id,
+                &ssh_alias,
+                registration.herdr_socket_path.clone(),
+            )?;
+            let connector = transport.herdr_api_connector();
+            Ok::<_, String>((transport, connector))
         })();
-        let (client, connector) = match started {
+        let (transport, connector) = match started {
             Ok(parts) => parts,
             Err(message) => {
                 crate::diagnostic!(serde_json::json!({
@@ -158,14 +149,11 @@ impl Runtime {
         ));
         self.install_remote_terminal(live::RemoteTerminalContext::new(
             device_id.clone(),
-            Arc::clone(&client),
+            Arc::clone(&transport),
             context.runtime.clone(),
             context.notifier.clone(),
         ));
-        self.install_remote_file_transport(
-            device_id.clone(),
-            RusshSftpTransport::new(Arc::clone(&client)),
-        );
+        self.install_remote_file_transport(device_id.clone(), Arc::clone(&transport));
         let sync_context = session_sync::SessionSyncContext::remote(
             device_id.clone(),
             registration.label.clone(),
@@ -192,7 +180,7 @@ impl Runtime {
         self.remote_connections.insert(
             device_id.clone(),
             RemoteDeviceConnection {
-                client: Arc::clone(&client),
+                transport,
                 sync,
                 test_in_flight: false,
             },
@@ -379,7 +367,7 @@ impl Runtime {
             );
             return true;
         };
-        let client = Arc::clone(&connection.client);
+        let transport = Arc::clone(&connection.transport);
         connection.test_in_flight = true;
         self.remote_device_tests.insert(
             device_id.to_owned(),
@@ -399,7 +387,10 @@ impl Runtime {
         let spawned = thread::Builder::new()
             .name(format!("herdr-core-device-test-{device_id}"))
             .spawn(move || {
-                let report = client.staged_capability_test("device-connection-test", false);
+                let report = transport.capability_test(
+                    "device-connection-test",
+                    &crate::remote::check_test_snapshot,
+                );
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };

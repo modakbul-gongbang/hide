@@ -27,6 +27,11 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    // The node role on a device reads no daemon environment and opens no
+    // state folder: it answers its link until the channel closes.
+    if args.first().is_some_and(|arg| arg == "node") {
+        return hided::node_cli::run(&args[1..]);
+    }
     if args.first().is_some_and(|arg| arg == "--open-helper") {
         // Only Unix supervises a file opener through this mode.
         #[cfg(unix)]

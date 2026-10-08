@@ -29,6 +29,11 @@ function assertTestHome(home: string): void {
   if (!fs.existsSync(path.join(home, MARKER))) throw new Error(`${home} has no ${MARKER}, so it is not declared a test HOME`);
 }
 
+/** The device's own state folder, where its node binds the socket a device pane's `hide` reaches the daemon through. */
+export const deviceState = (home: string) => path.join(home, ".hide", "state");
+/** The folder holding one `bridge-*` folder per daemon that has the device open. */
+export const deviceBridges = (home: string) => path.join(deviceState(home), "workspace-bridges");
+
 /** An SSH config and known_hosts under the run's local HOME, one host entry per alias for the isolated server. */
 export function writeSshConfig(localHome: string, aliases: string[]): void {
   const ssh = path.join(localHome, ".ssh");
@@ -97,8 +102,9 @@ export function seedAgentFiles(home: string): { claude: AgentSettings; codex: Ag
  * shared server off; `features disable` writes `fake-daemon`, which a spec
  * checks never appears on its own. The daemon answers while
  * `fake-daemon-running` exists (`startCodexDaemon`), and `daemon stop` removes
- * it. A machine whose PATH has a real Codex runs that one instead, against
- * this HOME's `.codex`.
+ * it and answers `stopped`, or `notRunning` when it was not running. A
+ * machine whose PATH has a real Codex runs that one instead, against this
+ * HOME's `.codex`.
  */
 function seedCodex(home: string): void {
   const bin = path.join(home, ".local", "bin");
@@ -113,7 +119,7 @@ function seedCodex(home: string): void {
     "  'features disable '*) echo false > \"$state\" ;;",
     "  'features enable '*) echo true > \"$state\" ;;",
     "  'app-server daemon version') [ -e \"$running\" ] || { echo 'Error: failed to connect' >&2; exit 1; }; echo '{\"status\":\"running\"}' ;;",
-    "  'app-server daemon stop') rm -f \"$running\" ;;",
+    "  'app-server daemon stop') [ -e \"$running\" ] || { echo '{\"status\":\"notRunning\"}'; exit 0; }; rm -f \"$running\"; echo '{\"status\":\"stopped\"}' ;;",
     "  *) exit 1 ;;",
     "esac",
     "",
@@ -153,9 +159,9 @@ export function stageBuild(root: string): string {
   const place = (source: string, target: string) => {
     try { fs.linkSync(source, target); } catch { fs.copyFileSync(source, target); fs.chmodSync(target, 0o755); }
   };
-  for (const name of ["hided", "hide", "hide-agent-hooks", "hide-host-helper"]) {
+  for (const name of ["hided", "hide", "hide-agent-hooks"]) {
     const binary = path.join(debug, name);
-    if (!fs.existsSync(binary)) throw new Error(`${binary} is missing: run \`cargo build -p hided -p hide-agent-hooks -p hide-host\``);
+    if (!fs.existsSync(binary)) throw new Error(`${binary} is missing: run \`cargo build -p hided -p hide-agent-hooks\``);
     place(binary, path.join(build, name));
   }
   return build;
