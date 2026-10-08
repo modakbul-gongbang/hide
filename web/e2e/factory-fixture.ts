@@ -166,7 +166,9 @@ if (request.state) {
   const invoke = async (pane: string, state?: "working" | "idle") => {
     fs.writeFileSync(command, JSON.stringify({ pane, session: sessionOf(stack.herdr, pane), state }));
     fs.rmSync(completed, { force: true });
-    stack.herdr.run(["pane", "send-text", pane, "!"]);
+    // Native send-text succeeds with empty stdout, unlike the JSON queries
+    // HerdrFixture.run reads. Keep this one bounded send on its private env.
+    execFileSync(stack.herdr.bin, ["pane", "send-text", pane, "!"], { env: stack.herdr.env, timeout: 10_000 });
     await expect.poll(() => fs.existsSync(completed) ? fs.readFileSync(completed, "utf8").trim() : null,
       { message: `owned question command completed in ${pane}`, timeout: 20_000 }).toBe("0");
   };
