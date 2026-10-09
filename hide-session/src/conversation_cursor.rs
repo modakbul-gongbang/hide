@@ -1,3 +1,5 @@
+use crate::turns::native::TOOL_MARK_LIMIT;
+use crate::turns::{NATIVE_ID_LIMIT_BYTES, ToolTurnMark, TurnMark, TurnMode};
 use crate::{
     Agent, AppendedBytes, ParsedSession, Result, SESSION_LINE_LIMIT_BYTES, SessionCursor,
     SessionError, SkipReason, parse_events_into,
@@ -79,11 +81,22 @@ impl ConversationCursor {
     }
 
     pub fn restore(checkpoint: ConversationCheckpoint) -> Self {
+        let mut cursor = SessionCursor::restore(checkpoint.cursor);
+        let (discarded_bytes, classifier) = match checkpoint.classifier {
+            // A scan an older build checkpointed kept no native ids, so it
+            // cannot say which call the record answered. Reread that record
+            // from its start rather than refuse it on every later read.
+            Some(scan) if !scan.native_ids => {
+                cursor.offset = cursor.offset.saturating_sub(checkpoint.discarded_bytes);
+                (0, None)
+            }
+            classifier => (checkpoint.discarded_bytes, classifier),
+        };
         Self {
-            cursor: SessionCursor::restore(checkpoint.cursor),
-            discarded_bytes: checkpoint.discarded_bytes,
+            cursor,
+            discarded_bytes,
             has_more: false,
-            classifier: checkpoint.classifier,
+            classifier,
             read_bytes: 0,
         }
     }
@@ -177,7 +190,7 @@ impl ConversationCursor {
                     // Continue a bounded structural scan across chunks. Only
                     // JSON discriminators survive a checkpoint, never bodies.
                     let mut scan = LargeRecord {
-                        user_turn_scanned: true,
+                        native_ids: true,
                         ..LargeRecord::default()
                     };
                     scan.feed(&pending)?;
@@ -204,13 +217,18 @@ impl ConversationCursor {
                 continue;
             }
             if discarded_bytes > 0 {
-                if !classifier.take().is_some_and(|scan| scan.tool_only(agent)) {
+                let Some(turn) = classifier.take().and_then(|scan| scan.discard(agent)) else {
                     return Err(SessionError::Capacity {
                         resource: "line_bytes",
                         limit: SESSION_LINE_LIMIT_BYTES as u64,
                     });
-                }
+                };
                 parsed.skipped(SkipReason::NonConversationCapacity);
+                match turn {
+                    Ok(Some(mark)) => parsed.turn_marks.push((line_start, mark)),
+                    Ok(None) => {}
+                    Err(reason) => parsed.skipped(reason),
+                }
                 discarded_bytes = 0;
                 continue;
             }
@@ -296,6 +314,8 @@ fn read_appended_file(
 // A bounded lexical/structural scan of an oversized provider envelope.
 // Key order and tool-output contents cannot decide whether a record is text.
 // The normal serde parser remains responsible for retained conversation JSON.
+// Only discriminators and the bounded native ids a turn mark needs are kept,
+// so a discarded record still answers or asks its call.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 struct LargeRecord {
     frames: Vec<JsonFrame>,
@@ -305,18 +325,34 @@ struct LargeRecord {
     content_array: bool,
     conversation: bool,
     invalid: bool,
-    // An older checkpoint retained none of the native-turn discriminators.
-    // Its already-discarded prefix cannot safely authorize another discard.
+    /// Scanned by a build that keeps native ids. A checkpoint without it is
+    /// reread from the record's start (`ConversationCursor::restore`).
+    #[serde(default)]
+    native_ids: bool,
+    /// Claude native tool blocks, in record order, bounded like a parsed
+    /// record's marks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<LargeTool>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    user_turn_scanned: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    user_turn: bool,
+    tool_capacity: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     payload_question: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    payload_call_id: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    payload_call: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    payload_turn: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    payload_mode: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     plan_item: bool,
+}
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LargeTool {
+    /// An `AskUserQuestion` call, with the id its block named.
+    Question(Option<String>),
+    /// A tool result naming the call it answers.
+    Result(String),
 }
 #[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq)]
 enum Scope {
@@ -341,8 +377,9 @@ struct JsonFrame {
     block_question: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     block_result: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    result_id: bool,
+    /// A block's `id` or `tool_use_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    call: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     plan_item: bool,
 }
@@ -353,6 +390,26 @@ struct JsonString {
     field: String,
     value: String,
     escaped: bool,
+}
+type Discard = std::result::Result<Option<TurnMark>, SkipReason>;
+/// The string values a turn mark needs from a discarded record.
+fn native_id(scope: Scope, field: &str) -> bool {
+    matches!(
+        (scope, field),
+        (Scope::Block, "id" | "tool_use_id")
+            | (
+                Scope::Payload,
+                "call_id" | "turn_id" | "collaboration_mode_kind"
+            )
+    )
+}
+/// A kept id is cut one byte past the native limit, so an id too long for a
+/// parsed record is too long here as well.
+fn bounded(id: Option<String>) -> std::result::Result<Option<String>, SkipReason> {
+    match id.filter(|id| !id.is_empty()) {
+        Some(id) if id.len() > NATIVE_ID_LIMIT_BYTES => Err(SkipReason::UserTurnCapacity),
+        id => Ok(id),
+    }
 }
 impl LargeRecord {
     fn value_scope(&self) -> Scope {
@@ -370,6 +427,7 @@ impl LargeRecord {
     fn feed(&mut self, bytes: &[u8]) -> Result<()> {
         for &byte in bytes {
             if let Some(token) = self.token.as_mut() {
+                let id = !token.key && native_id(token.scope, &token.field);
                 if token.escaped {
                     // Escaped discriminator spellings stay unknown, never
                     // incorrectly authorizing a discarded conversation.
@@ -379,6 +437,7 @@ impl LargeRecord {
                     token.escaped = false;
                 } else if byte == b'\\' {
                     self.invalid |= token.key
+                        || id
                         || token.field == "type"
                         || (token.field == "name"
                             && matches!(token.scope, Scope::Payload | Scope::Block));
@@ -387,14 +446,21 @@ impl LargeRecord {
                     let token = self.token.take().unwrap();
                     if token.key {
                         if let Some(frame) = self.frames.last_mut() {
-                            if frame.scope == Scope::Payload && token.value == "call_id" {
-                                self.payload_call_id = true;
-                            }
-                            if frame.scope == Scope::Block && token.value == "tool_use_id" {
-                                frame.result_id = true;
-                            }
                             frame.key = token.value;
                             frame.expecting_key = false;
+                        }
+                    } else if id {
+                        match token.scope {
+                            Scope::Block => {
+                                if let Some(frame) = self.frames.last_mut() {
+                                    frame.call = Some(token.value);
+                                }
+                            }
+                            _ => match token.field.as_str() {
+                                "call_id" => self.payload_call = Some(token.value),
+                                "turn_id" => self.payload_turn = Some(token.value),
+                                _ => self.payload_mode = Some(token.value),
+                            },
                         }
                     } else if token.field == "type" {
                         match token.scope {
@@ -430,6 +496,12 @@ impl LargeRecord {
                             }
                             _ => (),
                         }
+                    }
+                } else if id {
+                    // Native ids are ASCII; any other byte is not certified.
+                    self.invalid |= !byte.is_ascii();
+                    if token.value.len() <= NATIVE_ID_LIMIT_BYTES {
+                        token.value.push(byte as char);
                     }
                 } else if token.value.len() < 64
                     && (token.key || matches!(token.field.as_str(), "type" | "name"))
@@ -481,7 +553,7 @@ impl LargeRecord {
                         block_use: false,
                         block_question: false,
                         block_result: false,
-                        result_id: false,
+                        call: None,
                         plan_item,
                     });
                 }
@@ -490,8 +562,20 @@ impl LargeRecord {
                         self.invalid |= frame.object != (byte == b'}');
                         if frame.scope == Scope::Block {
                             self.conversation |= !frame.block_kind;
-                            self.user_turn |= (frame.block_use && frame.block_question)
-                                || (frame.block_result && frame.result_id);
+                            let tool = if frame.block_use && frame.block_question {
+                                Some(LargeTool::Question(frame.call))
+                            } else if frame.block_result {
+                                frame.call.map(LargeTool::Result)
+                            } else {
+                                None
+                            };
+                            if let Some(tool) = tool {
+                                if self.tools.len() == TOOL_MARK_LIMIT {
+                                    self.tool_capacity = true;
+                                } else {
+                                    self.tools.push(tool);
+                                }
+                            }
                         }
                     } else {
                         self.invalid = true;
@@ -512,34 +596,89 @@ impl LargeRecord {
         self.frames.is_empty() && self.token.is_none() && self.root_kind.is_empty()
     }
 
-    fn tool_only(self, agent: Agent) -> bool {
-        if !self.user_turn_scanned
-            || self.invalid
-            || !self.frames.is_empty()
-            || self.token.is_some()
-        {
-            return false;
+    /// Whether the record may be discarded, and the turn mark it carries,
+    /// as its parsed form would give it: `None` when only its body could
+    /// tell (conversation text, an unknown envelope), so the read fails
+    /// rather than lose it.
+    fn discard(self, agent: Agent) -> Option<Discard> {
+        if !self.native_ids || self.invalid || !self.frames.is_empty() || self.token.is_some() {
+            return None;
         }
         match agent {
-            Agent::OpenCode | Agent::Pi => false,
-            Agent::Codex => {
-                let native_turn = match (self.root_kind.as_str(), self.payload_kind.as_str()) {
-                    ("response_item", "function_call") => self.payload_question,
-                    ("response_item", "function_call_output") => self.payload_call_id,
-                    ("event_msg", "item_completed") => self.plan_item,
-                    ("event_msg", "task_started" | "task_complete" | "turn_aborted") => true,
-                    _ => false,
-                };
-                !native_turn
-                    && !self.root_kind.is_empty()
-                    && (self.root_kind != "response_item"
-                        || (!self.payload_kind.is_empty() && self.payload_kind != "message"))
-            }
-            Agent::Claude => match self.root_kind.as_str() {
-                "user" | "assistant" => self.content_array && !self.conversation && !self.user_turn,
-                "" | "ai-title" => false,
-                _ => true,
-            },
+            Agent::OpenCode | Agent::Pi => None,
+            Agent::Codex => self.codex(),
+            Agent::Claude => self.claude(),
         }
+    }
+
+    fn claude(self) -> Option<Discard> {
+        match self.root_kind.as_str() {
+            "user" | "assistant" if self.content_array && !self.conversation => {}
+            "user" | "assistant" | "" | "ai-title" => return None,
+            _ => return Some(Ok(None)),
+        }
+        if self.tool_capacity {
+            return Some(Err(SkipReason::UserTurnCapacity));
+        }
+        let mut marks = Vec::new();
+        for tool in self.tools {
+            let mark = match (self.root_kind.as_str(), tool) {
+                ("assistant", LargeTool::Question(call)) => match bounded(call) {
+                    Ok(Some(call)) => ToolTurnMark::Asked {
+                        call,
+                        content: None,
+                    },
+                    Ok(None) => return Some(Err(SkipReason::UserTurnInvalid)),
+                    Err(reason) => return Some(Err(reason)),
+                },
+                ("user", LargeTool::Result(call)) => match bounded(Some(call)) {
+                    Ok(Some(call)) => ToolTurnMark::Answered { call },
+                    Ok(None) => continue,
+                    Err(reason) => return Some(Err(reason)),
+                },
+                _ => continue,
+            };
+            marks.push(mark);
+        }
+        Some(Ok((!marks.is_empty()).then_some(TurnMark::Tools(marks))))
+    }
+
+    fn codex(self) -> Option<Discard> {
+        let turn = || bounded(self.payload_turn.clone());
+        let mark = match (self.root_kind.as_str(), self.payload_kind.as_str()) {
+            ("", _) | ("response_item", "" | "message") => return None,
+            ("response_item", "function_call") if self.payload_question => {
+                match bounded(self.payload_call.clone()) {
+                    Ok(Some(call)) => Ok(Some(TurnMark::Tools(vec![ToolTurnMark::Asked {
+                        call,
+                        content: None,
+                    }]))),
+                    Ok(None) => Err(SkipReason::UserTurnInvalid),
+                    Err(reason) => Err(reason),
+                }
+            }
+            ("response_item", "function_call_output") => {
+                bounded(self.payload_call.clone()).map(|call| {
+                    call.map(|call| TurnMark::Tools(vec![ToolTurnMark::Answered { call }]))
+                })
+            }
+            ("event_msg", "item_completed") if self.plan_item => {
+                turn().map(|turn| Some(TurnMark::Plan { turn }))
+            }
+            ("event_msg", "task_started") => turn().map(|turn| {
+                Some(TurnMark::Started {
+                    turn,
+                    mode: match self.payload_mode.as_deref() {
+                        Some("plan") => TurnMode::Plan,
+                        Some("default") => TurnMode::Other,
+                        _ => TurnMode::Unknown,
+                    },
+                })
+            }),
+            ("event_msg", "task_complete") => turn().map(|turn| Some(TurnMark::Completed { turn })),
+            ("event_msg", "turn_aborted") => turn().map(|turn| Some(TurnMark::Aborted { turn })),
+            _ => Ok(None),
+        };
+        Some(mark)
     }
 }
