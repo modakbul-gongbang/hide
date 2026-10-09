@@ -319,7 +319,7 @@ The zoom control names the panes it hides and unzooms the tab; the existing pane
 
 The core publishes at most one band: connection or sleep first, own demand next, the lead raised descendant next, then task state.
 An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, `외 N건` for the other asks under this root, and Open.
-Open goes to the raised descendant, or for a draft to the parent whose input holds it; `외 N건` opens the tree popover with the raised branches open, each raised row with its ask and Open.
+Open goes to the raised descendant, or for a draft to the parent whose input holds it, and is disabled with the connection reason beside it while that pane's device is not connected; `외 N건` opens the tree popover with the raised branches open, each raised row with its ask and Open.
 Fix is red, Result is success, and Review or Merge follow the PR tone.
 Task bands carry a reason and stable action age; they navigate only, with answers in the terminal and merges in the PR view.
 Working has a thin blue line; CI wait, waiting and idle have no band.
@@ -356,7 +356,7 @@ Folded, it wears its descendant mark, `! N` for raised descendants or else `● 
 Opened, its children follow most urgent first, joined to it by rails, and a child with children has its own chevron; grandchildren are one step further in, and a grandchild with children opens the tree popover from its chevron.
 Past five siblings the rest wait behind `N개 더`, which opens them in place.
 A tree row is one line with no branch line; a child on another device names that device on a second line, dimmed with `연결 안 됨` and not openable while it is not connected, and a child working in another worktree is not drawn again under that worktree.
-Each row with its own PRs carries one PR icon in the worst state's colour (failed red, pending amber, mergeable green, merged purple), whose hover lists each PR with its state and title and opens the PR panel.
+Each row with its own PRs carries one PR icon in the worst state's colour (failed red, pending amber, mergeable green, merged purple), dimmed while GitHub cannot be read; its hover shows the PR card for one PR, and for several lists each PR with its state and title, any of which opens, with the last read time while GitHub cannot be read.
 A request keeps its warning line until answered, dimmed after reading an AI question; an unread result line stays bright until read.
 Quiet detail lives in the tooltip, and no progress value is invented.
 Hover, focus, selection and the open popover change fill and ring without adding lines or moving adjacent rows.
@@ -972,7 +972,7 @@ Before the first snapshot arrives the Agents and Projects lists say they are con
 The Home row stands for the device's Home (see Home) at every device count (PRD home-device-rail D-13): the house glyph, `Home`, and `N projects`, the device's registered projects with its Home not among them (no count before the first snapshot), in the project row's height, font and focus ring.
 It opens the shared Overview at All projects by click, Enter or Space; the shared Overview row owns selection while that page is in front.
 Home is drawn before the device has a Home folder, since the count comes from the registrations.
-The agents running in the Home are its child rows, opened as an agent row opens, and a `+` shown under the pointer, `New tab in Home`, opens a new tab in the Home and brings its pane forward once it is listed; a refusal, such as a `~/hide` that is not Hide's, shows the core's reason in a caption under that Home row until the next start or a click on the row.
+The agents running in the Home are its child rows, drawn and opened as a checkout's tree is, and a `+` shown under the pointer, `New tab in Home`, opens a new tab in the Home and brings its pane forward once it is listed; a refusal, such as a `~/hide` that is not Hide's, shows the core's reason in a caption under that Home row until the next start or a click on the row.
 Every device's sidebar starts with its device title and the shared Overview row, followed by one project/checkout/root list with no mode strip.
 Overview shows its glyph, label, Needs You count and current shortcut; zero, an absent snapshot or a disconnected device hides the count.
 The toolbar icon has an accessible Overview name and count description, a Needs You dot above zero and a tooltip with its current shortcut.

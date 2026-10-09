@@ -17,7 +17,7 @@ import { Hint } from "./components/ui/tooltip";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
 import { DeviceRail } from "./components/device-rail";
-import { deviceConnected, frontDeviceId, frontTitle, homeProjectCount, railShown, sidebarBody } from "./devices";
+import { frontDeviceId, frontTitle, homeProjectCount, railShown, sidebarBody } from "./devices";
 import { badgeWords } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
@@ -431,11 +431,17 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
   const home = useShellStore((s) => contextHome(s.rest));
   const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   const focusRowPane = useFocusRowPane();
-  const roots = useMemo(() => home ? scopeOccurrences(home.agent_scope.sidebar_tree.rows, agents) : NO_HOME_AGENTS, [home, agents]);
+  // Home's roots draw their opened trees as a checkout's do (agent-hierarchy-screens B10).
+  const rows = useMemo(() => {
+    const visible = home?.agent_scope.sidebar_tree.visible_rows ?? [];
+    return scopeOccurrences(visible, agents).map((agent, index) => ({ agent, depth: visible[index]!.depth }));
+  }, [home, agents]);
+  const children = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, directChildren(agent, agents)])), [agents]);
   const menu = useAgentRowMenu(actions);
   const hints = useUiStore((s) => s.hint);
   const raisedOpen = useUiStore((s) => s.raisedOpen);
   const numbers = hints === "agents" ? sidebarAgentNumbers(useShellStore.getState(), raisedOpen) : null;
+  const tree: TreeContext = { agents, childrenOf: (agent) => children.get(agent.pane_id)!, focusRowPane, numberOf: numbers, actions, agentRowMenu: menu };
   const refusal = useUiStore((s) => (s.homeStart?.deviceId === deviceId ? s.homeStart.refusal : null));
   return (
     <li data-home={deviceId}>
@@ -485,30 +491,11 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
           {refusal}
         </p>
       )}
-      {roots.length > 0 ? (
-        <ul aria-label={t("sidebar.homeAgents")} data-home-agents="true">
-          {roots.map((agent) => (
-            <SidebarAgentRow
-              key={agent.id}
-              agent={agent}
-              device={null}
-              place={null}
-              depth={0}
-              selected={agent.pane_id === focusRowPane}
-              onOpen={actions.openAgent}
-              onOpenPullRequest={(url, external) => actions.openLink(url, external)}
-              inset={CHECKOUT_COLUMN}
-              number={numbers?.(agent.pane_id, "home") ?? null}
-              menu={menu}
-            />
-          ))}
-        </ul>
-      ) : null}
+      {rows.length > 0 ? <OpenAgentRows checkoutId="home" deviceId={deviceId} agentRows={rows} sleeping={NO_SLEEPERS} inset={CHECKOUT_COLUMN} context={tree} label={t("sidebar.homeAgents")} /> : null}
     </li>
   );
 });
 
-const NO_HOME_AGENTS: AgentRow[] = [];
 
 /**
  * The pane whose row stands for the focused pane while a Workspace is in front
@@ -681,6 +668,9 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
 const NO_IDS: string[] = [];
 
 /** What every row of the Projects list reads besides its own project. */
+/** What an opened tree reads from its list: a checkout's tree and Home's alike. */
+type TreeContext = Pick<ListContext, "agents" | "childrenOf" | "numberOf" | "focusRowPane" | "actions" | "agentRowMenu">;
+
 type ListContext = {
   agents: AgentRow[];
   childrenOf: (agent: AgentRow) => AgentRow[];
@@ -1417,12 +1407,14 @@ function PurposeLine({ purpose, origin, age, raisedFrom }: { purpose: string | n
  * joined by elbow rails. A grandchild's chevron opens the tree popover
  * rooted on it. A dormant conversation has no pane or numbered shortcut.
  */
-function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, context }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; context: ListContext }) {
+function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, context, label }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; context: TreeContext; label?: string }) {
   const { t } = useInterfaceTranslation();
   const [shownAll, setShownAll] = useState<ReadonlySet<string>>(NO_PANES);
   const lines = useMemo(() => sidebarTreeLines(agentRows, shownAll), [agentRows, shownAll]);
+  // Which devices are reachable now, as one value, so a reconnect redraws the rows that name one.
+  const reachable = useShellStore((s) => [localDeviceId(s.rest), ...(s.rest?.status?.remote ?? []).filter((row) => row.state === "connected").map((row) => row.target_id)].join("\n"));
   return (
-    <ul data-checkout-agents-open={checkoutId}>
+    <ul {...(label === undefined ? { "data-checkout-agents-open": checkoutId } : { "aria-label": label, "data-home-agents": "true" })}>
       {lines.map((line) => {
         if (line.kind === "more") {
           return (
@@ -1441,7 +1433,7 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, conte
         const hasChildren = context.childrenOf(agent).length > 0;
         const parentDevice = parent?.device_id ?? deviceId;
         const remote = depth > 0 && agent.device_id !== undefined && agent.device_id !== parentDevice
-          ? { label: agent.device_label ?? agent.device_id, reachable: deviceConnected(useShellStore.getState().rest, agent.device_id) }
+          ? { label: agent.device_label ?? agent.device_id, reachable: reachable.split("\n").includes(agent.device_id) }
           : null;
         const tree: SidebarTreeSlot = {
           place: line.place,

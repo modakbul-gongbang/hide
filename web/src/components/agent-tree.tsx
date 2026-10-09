@@ -7,7 +7,7 @@ import { requireInterfaceLanguage } from "../i18n/locale";
 import { cn } from "../lib/utils";
 import { catalogWorkspaces, type AgentPullRequest, type AgentRow, type PrState, type RaiseVerb, type SnapshotRest } from "../snapshot";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "./ui/dropdown-menu";
-import { Hint } from "./ui/tooltip";
+import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./ui/tooltip";
 
 // The parts every agent tree draws the same way (PRD agent-hierarchy-screens
 // D-37 to D-43): the verb a Needs You row starts with, a row's own PRs as a
@@ -168,13 +168,14 @@ function PrList({ agent, pulls, onOpen }: { agent: AgentRow; pulls: ReturnType<t
  */
 export function PrIcon({ agent, staleness, card }: { agent: AgentRow; staleness?: PrStaleness; card?: (icon: ReactNode) => ReactNode }) {
   const { t } = useInterfaceTranslation();
+  const staleLabel = useStaleLabel(staleness);
   const summary = agent.state.pr;
   if (!summary) return null;
   const Icon = summary.worst === "merged" ? GitMergeIcon : GitPullRequestIcon;
   const icon = (
     <span
       role="img"
-      aria-label={t(`agentSessions.pr.${summary.worst}`)}
+      aria-label={[t(`agentSessions.pr.${summary.worst}`), staleLabel].filter(Boolean).join(", ")}
       data-pr-icon={summary.worst}
       data-stale={staleness?.stale ? "true" : undefined}
       className={cn("inline-flex shrink-0 items-center", PR_ICON_TONE[summary.worst], staleness?.stale && "opacity-(--opacity-dimmed)")}
@@ -182,7 +183,42 @@ export function PrIcon({ agent, staleness, card }: { agent: AgentRow; staleness?
       <Icon aria-hidden="true" className="size-(--size-pr-icon)" />
     </span>
   );
-  return card ? <>{card(icon)}</> : icon;
+  if (card) return <>{card(icon)}</>;
+  // With no card of its own, a stale icon still says when GitHub was last read (B24).
+  return staleLabel ? <Hint label={staleLabel}>{icon}</Hint> : icon;
+}
+
+/**
+ * Under the pointer, each of a row's own PRs with its state and title, and
+ * when GitHub was last read if it cannot be read now (B23, B24). Choosing a
+ * PR opens it; the list stays open while the pointer moves into it.
+ */
+export function PrHoverList({ agent, staleness, onOpen, children }: { agent: AgentRow; staleness?: PrStaleness; onOpen: (pull: AgentPullRequest) => void; children: ReactNode }) {
+  const { t } = useInterfaceTranslation();
+  const staleLabel = useStaleLabel(staleness);
+  const { open, onOpenChange, triggerProps } = useHintOpen();
+  const pulls = ownPulls(agent);
+  return (
+    <Tooltip open={open} onOpenChange={onOpenChange} disableHoverableContent={false}>
+      <TooltipTrigger asChild {...triggerProps}>
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side="right" align="start" aria-label={t("agentSessions.pr.list", { name: agent.identity_label })} className="pointer-events-auto flex w-(--size-pr-popover) flex-col gap-xxs rounded-md p-xs text-left" data-pr-list={agent.pane_id}>
+        {pulls.map(({ pull, state }) => (
+          <button key={pull.url} type="button" onClick={() => onOpen(pull)} data-pr-list-item={pull.number} className="flex min-w-0 items-center gap-xs rounded-xs px-xs py-xxs text-left outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring">
+            <span className="flex shrink-0 items-center gap-xxs rounded-xs border border-border px-xs font-mono text-caption text-subtle-foreground">
+              #{pull.number}
+              <StateGlyph state={state} />
+            </span>
+            <span className="min-w-0 flex-1 truncate" title={pull.title}>
+              {pull.title}
+            </span>
+          </button>
+        ))}
+        {staleLabel ? <span className="px-xs text-caption text-muted-foreground">{staleLabel}</span> : null}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 /** The one mark a folded parent wears for its descendants (B17): `! N` raised, else `● N` working. */

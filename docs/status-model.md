@@ -207,9 +207,9 @@ The sidebar tree under an opened root is `agent_scope.sidebar_tree.visible_rows`
 The shell shows five siblings per parent and folds the rest behind `N개 더` (`web/src/sidebarTree.ts`).
 A grandchild's own children open in the tree popover instead of a third level.
 The tree popover (`web/src/components/agent-tree-popover.tsx`) opens from the pane header's tree button, a grandchild's chevron and an ask band's `외 N건`.
-Its head names the parent with its direct child count, and its body draws the same rows two levels deep with five siblings each; choosing a grandchild that has children re-roots the popover on it.
+Its head names the parent with its direct child count, and its body draws the same rows two levels deep with five siblings each, the children that finished and were read folded below them behind `끝난 자식 N`; choosing a grandchild that has children re-roots the popover on it.
 Arrows move, Right and Left open and fold a branch, Enter opens the agent's pane, and Escape closes it and returns focus to what opened it.
-Opened from an ask band it starts with the raised branches open and draws each raised row with its verb, what to do and Open.
+Opened from an ask band it starts with the raised branches open and draws each ask on the row it raised (`raised_pane_id`) with its verb, what to do and Open, which for a draft goes to the parent holding it.
 A pending or failed move shows at its footer with the retry rules of the relation, and the last line opens the Overview Agents graph.
 Disappearing children leave immediately and an empty popover closes.
 
@@ -603,9 +603,9 @@ Regression owners: `runtime::tests::session_state`, `request_view::tests`, and `
 A child rises when its letter is held by a blocked parent or operator draft, when three bells are exhausted and the parent is again eligible after thirty quiet seconds, when the letter becomes undelivered after sixty minutes, when the child's own pane is Herdr blocked, or when the first watch warning has had no parent response for sixty minutes.
 An idle or done parent still owns the child; only a closed parent pane or absent parent agent invokes the existing orphan-root rule.
 `escalation::lift` carries every raised descendant to its lineage root (PRD D-10, D-27) as a `RaisedAsk`: the verb, what to do, the agent named, the pane Open goes to, since when, the titles from the root and the checkout.
-The verb is Approval for a blocked child, Answer for an undelivered or unanswered letter, Confirm for an unanswered watch and Draft for a letter held by the parent's input, which names and opens that parent; a blocked parent stands for itself and adds no ask.
+The verb is Approval for a blocked child (Answer when it is blocked on a native question, with that question as what to do), Answer for an undelivered or unanswered letter, Confirm for an unanswered watch and Draft for a letter held by the parent's input, which names and opens that parent; a blocked parent stands for itself and adds no ask.
 An Answer also names the parent that has not received the letter.
-The root's asks are ordered by verb, then by age; the root enters Needs You and its second line is the lead ask, unless its own demand comes first.
+The root's asks are ordered by verb, then by age; the root enters Needs You and its second line is the lead ask, unless its own demand comes first, which an AI question the operator has read no longer is.
 The raised child keeps its own place in the tree, and no ancestor between it and the root changes group.
 Menu blocking uses Approval, a letter or question uses Answer, and an unanswered watch uses Stopped.
 The first three causes clear on receipt or a successful bell, menu blocking on answer, and watch escalation on response, cancellation or a new child activity episode.

@@ -15,8 +15,6 @@ export const agentSessionsEnglish = {
   "agentSessions.title": "Sessions",
   "agentSessions.allCheckouts": "All checkouts",
   "agentSessions.onlyCheckout": "{{checkout}} only",
-  "agentSessions.tag.answer": "Answer",
-  "agentSessions.tag.approval": "Approve",
   "agentSessions.tag.fix": "Fix",
   "agentSessions.tag.review": "Review",
   "agentSessions.tag.merge": "Merge",
@@ -43,7 +41,7 @@ export const agentSessionsEnglish = {
   "agentSessions.ask.draft": "My draft keeps the question from going through",
   "agentSessions.unreceived": "{{name}} has not received it for {{minutes}} min",
   "agentSessions.moreAsks": "+{{count}} more",
-  "agentSessions.waited": "waiting {{minutes}} min",
+  "agentSessions.waited": "{{verb}} waiting {{minutes}} min",
   "agentSessions.pr.count": "PR {{count}}",
   "agentSessions.pr.failed": "CI failed",
   "agentSessions.pr.pending": "CI running or review pending",
@@ -59,7 +57,6 @@ export const agentSessionsEnglish = {
   "agentSessions.tree.collapse": "Hide the children of {{name}}",
   "agentSessions.tree.raised": "{{count}} raised below",
   "agentSessions.tree.working": "{{count}} working below",
-  "agentSessions.tree.path": "From {{path}}",
 } as const;
 
 type Messages = Catalog<typeof agentSessionsEnglish>;
@@ -79,8 +76,6 @@ const ko: Messages = {
   "agentSessions.title": "세션",
   "agentSessions.allCheckouts": "모든 체크아웃",
   "agentSessions.onlyCheckout": "{{checkout}}만",
-  "agentSessions.tag.answer": "답하기",
-  "agentSessions.tag.approval": "승인",
   "agentSessions.tag.fix": "고치기",
   "agentSessions.tag.review": "리뷰",
   "agentSessions.tag.merge": "머지",
@@ -107,7 +102,7 @@ const ko: Messages = {
   "agentSessions.ask.draft": "내 입력 초안 때문에 질문이 못 감",
   "agentSessions.unreceived": "{{name}} {{minutes}}분째 못 받음",
   "agentSessions.moreAsks": "외 {{count}}건",
-  "agentSessions.waited": "{{minutes}}분째 대기",
+  "agentSessions.waited": "{{minutes}}분째 {{verb}} 대기",
   "agentSessions.pr.count": "PR {{count}}",
   "agentSessions.pr.failed": "CI 실패",
   "agentSessions.pr.pending": "CI 도는 중이나 리뷰 대기",
@@ -123,7 +118,6 @@ const ko: Messages = {
   "agentSessions.tree.collapse": "{{name}}의 자식 접기",
   "agentSessions.tree.raised": "아래 승격 {{count}}",
   "agentSessions.tree.working": "아래 일하는 중 {{count}}",
-  "agentSessions.tree.path": "{{path}}에서",
 };
 
 const zh: Messages = {
@@ -141,8 +135,6 @@ const zh: Messages = {
   "agentSessions.title": "会话",
   "agentSessions.allCheckouts": "所有检出",
   "agentSessions.onlyCheckout": "仅 {{checkout}}",
-  "agentSessions.tag.answer": "回答",
-  "agentSessions.tag.approval": "批准",
   "agentSessions.tag.fix": "修复",
   "agentSessions.tag.review": "审查",
   "agentSessions.tag.merge": "合并",
@@ -169,7 +161,7 @@ const zh: Messages = {
   "agentSessions.ask.draft": "我的输入草稿让问题无法送达",
   "agentSessions.unreceived": "{{name}} 已 {{minutes}} 分钟未收到",
   "agentSessions.moreAsks": "另 {{count}} 项",
-  "agentSessions.waited": "已等待 {{minutes}} 分钟",
+  "agentSessions.waited": "{{verb}} 已等待 {{minutes}} 分钟",
   "agentSessions.pr.count": "PR {{count}}",
   "agentSessions.pr.failed": "CI 失败",
   "agentSessions.pr.pending": "CI 运行中或等待审查",
@@ -185,7 +177,6 @@ const zh: Messages = {
   "agentSessions.tree.collapse": "收起 {{name}} 的子代理",
   "agentSessions.tree.raised": "下方上报 {{count}}",
   "agentSessions.tree.working": "下方工作中 {{count}}",
-  "agentSessions.tree.path": "来自 {{path}}",
 };
 
 const ja: Messages = {
@@ -203,8 +194,6 @@ const ja: Messages = {
   "agentSessions.title": "セッション",
   "agentSessions.allCheckouts": "すべてのチェックアウト",
   "agentSessions.onlyCheckout": "{{checkout}}のみ",
-  "agentSessions.tag.answer": "回答",
-  "agentSessions.tag.approval": "承認",
   "agentSessions.tag.fix": "修正",
   "agentSessions.tag.review": "レビュー",
   "agentSessions.tag.merge": "マージ",
@@ -231,7 +220,7 @@ const ja: Messages = {
   "agentSessions.ask.draft": "入力中の下書きで質問が届かない",
   "agentSessions.unreceived": "{{name}} が {{minutes}} 分間受け取っていない",
   "agentSessions.moreAsks": "他 {{count}} 件",
-  "agentSessions.waited": "{{minutes}} 分待機",
+  "agentSessions.waited": "{{verb}} {{minutes}} 分待機",
   "agentSessions.pr.count": "PR {{count}}",
   "agentSessions.pr.failed": "CI 失敗",
   "agentSessions.pr.pending": "CI 実行中またはレビュー待ち",
@@ -247,7 +236,6 @@ const ja: Messages = {
   "agentSessions.tree.collapse": "{{name}} の子を閉じる",
   "agentSessions.tree.raised": "下で昇格 {{count}}",
   "agentSessions.tree.working": "下で作業中 {{count}}",
-  "agentSessions.tree.path": "{{path}} から",
 };
 
 export const agentSessionsCatalogs = { en: agentSessionsEnglish, ko, "zh-CN": zh, ja } satisfies Catalogs<typeof agentSessionsEnglish>;

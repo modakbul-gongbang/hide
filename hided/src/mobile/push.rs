@@ -5,8 +5,8 @@
 //! `ring` for the curve, HMAC and AES-GCM and `ureq` over rustls for the
 //! POST: both are already in the build, and no other TLS stack is added.
 //!
-//! What is sent: one notification per root or escalated child entering Needs You
-//! or Done, as data: the task as
+//! What is sent: one notification per root entering Needs You or Done (a
+//! raised descendant reaches the phone as its lineage root), as data: the task as
 //! the title, the state (`needs_you` or `done`) and the project; never
 //! terminal content and never a sentence. The words for the state belong to
 //! the phone's language, so the phone page hands them to its service worker

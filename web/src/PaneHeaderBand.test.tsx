@@ -82,7 +82,7 @@ it("turns a missing core answer into a retryable timeout beside the move", async
   } finally { await unmount(); }
 });
 
-it("draws a raised ask as verb, what and who, with the descendant's path under the pointer", async () => {
+it("draws a raised ask as verb, what and who", async () => {
   const {container, unmount} = await mount();
   try {
     const band = container.querySelector("[data-pane-header-band=raised]")!;
@@ -90,6 +90,18 @@ it("draws a raised ask as verb, what and who, with the descendant's path under t
     expect(band.textContent).toContain("하위 검증 권한이 필요합니다");
     expect(band.querySelector("[data-pane-band-who=child]")?.textContent).toBe("자식 검증");
     expect(band.querySelector("[data-pane-band-more]")).toBeNull();
+  } finally { await unmount(); }
+});
+
+// B8: a raised descendant on a device that is not connected cannot be opened, and the band says why.
+it("blocks Open on a raised descendant whose device is not connected and says why", async () => {
+  const pane = "remote:mini:pane:w1:p2";
+  const band = header.band!;
+  const {container, unmount} = await mount({ ...header, band: { ...band, action: {kind: "child", pane_id: pane, label: "자식 검증"}, raised: { ...band.raised!, raised_pane_id: pane, pane_id: pane, open_pane_id: pane } } });
+  try {
+    await act(async () => useShellStore.setState({rest: {status: {pane_focus_request: null, remote: [{target_id: "mini", state: "disconnected", message: "Mac mini is not connected"}]}} as unknown as SnapshotRest}));
+    expect(container.querySelector<HTMLButtonElement>("[data-pane-band-open]")!.disabled).toBe(true);
+    expect(container.querySelector("[data-pane-band-unreachable]")?.textContent).toBe("Mac mini is not connected");
   } finally { await unmount(); }
 });
 

@@ -36,7 +36,7 @@ export function relationState(relation: Relation | null, outcome: PaneFocusReque
 }
 
 /** The step a Return goes back to: the parent, the step before this pane. */
-export function parentStep(pane: PaneRow): LineageStep | null {
+function parentStep(pane: PaneRow): LineageStep | null {
   const path = pane.lineage_path ?? [];
   return path.length >= 2 ? (path[path.length - 2] ?? null) : null;
 }

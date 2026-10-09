@@ -1,4 +1,4 @@
-import { ArrowRightIcon, ListTreeIcon } from "lucide-react";
+import { ArrowRightIcon, ChevronRightIcon, ListTreeIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { AgentMark } from "../AgentMark";
 import { markTone } from "../agentRow";
@@ -12,7 +12,7 @@ import { statusText } from "../agentStatus";
 import { useShellStore } from "../store";
 import { SIBLINGS_SHOWN } from "../sidebarTree";
 import { useUiStore } from "../ui";
-import { AskLine, DescendantMark, PrIcon, TreeChevron, TreeRails, treePlaces } from "./agent-tree";
+import { askWhat, AskLine, DescendantMark, PrIcon, prStaleness, TreeChevron, TreeRails, treePlaces } from "./agent-tree";
 import { DeviceChip } from "./device-chip";
 import { Elapsed } from "./elapsed";
 import { StatusMark } from "./status-mark";
@@ -32,7 +32,10 @@ export function childrenOf(parent: AgentRow, byPane: ReadonlyMap<string, AgentRo
 
 type Line =
   | { kind: "agent"; agent: AgentRow; depth: number; hasChildren: boolean; open: boolean }
-  | { kind: "more"; parent: string; depth: number; count: number };
+  | { kind: "more" | "finished"; parent: string; depth: number; count: number };
+
+/** A child that finished and was read waits folded below its siblings (B18, D-13). */
+const finishedAndRead = (row: AgentRow) => row.status_code === "done" && !row.unread;
 
 /**
  * The tree popover (PRD D-13, D-27, D-28, D-40; B6, B13, B18, B19): its head
@@ -72,9 +75,11 @@ export function AgentTreePopover({
   const [opening, setOpening] = useState<string | null>(null);
   const byPane = useMemo(() => new Map(agents.map((row) => [row.pane_id, row])), [agents]);
   const root = byPane.get(rootId) ?? parent;
-  const asks = useMemo(() => new Map((raised ? parent.raised ?? [] : []).map((ask) => [ask.pane_id, ask])), [raised, parent.raised]);
+  // Each ask is drawn on the row it raised: a draft names the parent holding it, yet sits on its own row.
+  const asks = useMemo(() => new Map((raised ? parent.raised ?? [] : []).map((ask) => [ask.raised_pane_id, ask])), [raised, parent.raised]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [shownAll, setShownAll] = useState<Set<string>>(() => new Set());
+  const [finishedShown, setFinishedShown] = useState<Set<string>>(() => new Set());
   const relation = useUiStore((state) => state.relation);
   const outcome = useShellStore((state) => state.rest?.status?.pane_focus_request);
   const tracked = relation?.sourcePaneId === parent.pane_id && relation.targetPaneId === opening ? relation : null;
@@ -90,7 +95,7 @@ export function AgentTreePopover({
     const start = new Set<string>();
     if (raised) {
       for (const ask of parent.raised ?? []) {
-        let at = byPane.get(ask.pane_id);
+        let at = byPane.get(ask.raised_pane_id);
         while (at?.lineage_parent_pane_id && at.lineage_parent_pane_id !== parent.pane_id) {
           start.add(at.lineage_parent_pane_id);
           at = byPane.get(at.lineage_parent_pane_id);
@@ -99,6 +104,7 @@ export function AgentTreePopover({
     }
     setExpanded(start);
     setShownAll(new Set());
+    setFinishedShown(new Set());
     setRootId(parent.pane_id);
     // Only on opening: a later snapshot keeps what the operator unfolded.
   }, [open]);
@@ -114,16 +120,20 @@ export function AgentTreePopover({
 
   const lines: Line[] = [];
   const walk = (of: AgentRow, depth: number) => {
-    const kids = childrenOf(of, byPane);
+    const siblings = childrenOf(of, byPane);
+    const kids = siblings.filter((kid) => !finishedAndRead(kid) || asks.has(kid.pane_id));
+    const finished = siblings.filter((kid) => !kids.includes(kid));
     const all = shownAll.has(of.pane_id);
-    const shown = all ? kids : kids.slice(0, SIBLINGS_SHOWN);
+    const shown = [...(all ? kids : kids.slice(0, SIBLINGS_SHOWN)), ...(finishedShown.has(of.pane_id) ? finished : [])];
     for (const kid of shown) {
       const hasChildren = (kid.lineage_child_pane_ids ?? []).some((id) => byPane.has(id));
       const isOpen = depth < 2 && hasChildren && expanded.has(kid.pane_id);
       lines.push({ kind: "agent", agent: kid, depth, hasChildren, open: isOpen });
       if (isOpen) walk(kid, depth + 1);
     }
-    if (shown.length < kids.length) lines.push({ kind: "more", parent: of.pane_id, depth, count: kids.length - shown.length });
+    const hidden = kids.length - Math.min(kids.length, all ? kids.length : SIBLINGS_SHOWN);
+    if (hidden > 0) lines.push({ kind: "more", parent: of.pane_id, depth, count: hidden });
+    if (finished.length > 0 && !finishedShown.has(of.pane_id)) lines.push({ kind: "finished", parent: of.pane_id, depth, count: finished.length });
   };
   walk(root, 1);
   const places = treePlaces(lines.map((line) => line.depth - 1));
@@ -192,11 +202,20 @@ export function AgentTreePopover({
           <CommandList>
             <CommandGroup>
               {lines.map((line, index) =>
-                line.kind === "more" ? (
-                  <CommandItem key={`more:${line.parent}`} value={`more:${line.parent}`} onSelect={() => setShownAll((before) => new Set(before).add(line.parent))} data-tree-more={line.count} className="gap-none text-subtle-foreground">
+                line.kind !== "agent" ? (
+                  <CommandItem
+                    key={`${line.kind}:${line.parent}`}
+                    value={`${line.kind}:${line.parent}`}
+                    onSelect={() => (line.kind === "more" ? setShownAll : setFinishedShown)((before) => new Set(before).add(line.parent))}
+                    {...(line.kind === "more" ? { "data-tree-more": line.count } : { "data-tree-finished": line.count })}
+                    className="gap-none text-subtle-foreground"
+                  >
                     <TreeRails place={places[index]!} />
-                    <TreeChevron name="" open={false} onToggle={() => setShownAll((before) => new Set(before).add(line.parent))} hangs={false} />
-                    <span className="pl-xs text-caption font-medium">{t("agentSessions.tree.more", { count: line.count })}</span>
+                    <TreeChevron name="" open={null} hangs={line.depth > 1} />
+                    <span className="flex items-center gap-xs pl-xxs text-caption font-medium">
+                      <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" />
+                      {t(line.kind === "more" ? "agentSessions.tree.more" : "agentSessions.tree.finished", { count: line.count })}
+                    </span>
                   </CommandItem>
                 ) : (
                   <TreeItem
@@ -278,6 +297,7 @@ function TreeItem({
   const unavailable = !deviceConnected(rest, device);
   const reason = unavailable ? rest?.status?.remote?.find((row) => row.target_id === device)?.message ?? t("devices.rail.notConnected") : null;
   const branch = child.state.branch_badge;
+  const staleness = prStaleness(rest, child);
   const minutes = ask?.since_unix_ms == null ? null : Math.max(0, Math.floor((Date.now() - ask.since_unix_ms) / 60_000));
   return (
     <CommandItem
@@ -287,7 +307,7 @@ function TreeItem({
       data-tree-pane={child.pane_id}
       data-agent-child={child.pane_id}
       data-depth={line.depth}
-      aria-label={[child.identity_label, child.agent_kind, statusText(t, child.status_code), deviceLabel && device !== parentDevice ? deviceLabel : null].filter(Boolean).join(", ")}
+      aria-label={[child.identity_label, child.agent_kind, statusText(t, child.status_code), ask ? `${t(`agentSessions.verb.${ask.verb}`)}: ${askWhat(t, ask.verb, ask.what)}` : null, deviceLabel && device !== parentDevice ? deviceLabel : null].filter(Boolean).join(", ")}
       className={cn("items-stretch gap-none py-none", ask && "ring-1 ring-inset ring-foreground")}
     >
       <TreeRails place={place} />
@@ -299,7 +319,7 @@ function TreeItem({
           <span className="min-w-0 flex-1 truncate text-foreground" title={child.identity_label}>
             {child.identity_label}
           </span>
-          <PrIcon agent={child} />
+          <PrIcon agent={child} staleness={staleness} />
           {line.hasChildren && !line.open ? <DescendantMark agent={child} /> : null}
           <Elapsed since={child.state.request_since} className="shrink-0 font-mono text-micro text-muted-foreground" />
         </span>
