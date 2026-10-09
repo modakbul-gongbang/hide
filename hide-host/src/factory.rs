@@ -642,7 +642,9 @@ fn project_file(project: &Path, relative: &str) -> HostResult<Option<String>> {
     let Some(inside) = inside.to_str() else {
         return Ok(None);
     };
-    if crate::worktrees::git(&root, &["ls-files", "--error-unmatch", "--", inside]).is_err() {
+    // A literal pathspec, so a name with glob characters matches only itself.
+    let pathspec = format!(":(literal){inside}");
+    if crate::worktrees::git(&root, &["ls-files", "--error-unmatch", "--", &pathspec]).is_err() {
         return Ok(None);
     }
     let Ok(file) = File::open(&file_path) else {
@@ -1052,6 +1054,8 @@ mod tests {
         std::fs::write(project.join(".gitignore"), ".env.local\n").unwrap();
         std::fs::write(project.join(".env.local"), "TOKEN=secret").unwrap();
         std::fs::write(project.join("notes.md"), "untracked").unwrap();
+        // Read as a pattern, this name would match the tracked src/lib.rs.
+        std::fs::write(project.join("src/*.rs"), "untracked").unwrap();
         git(project, &["add", "src/lib.rs", ".gitignore"]);
         assert_eq!(
             project_file(project, "src/lib.rs").unwrap().as_deref(),
@@ -1059,6 +1063,7 @@ mod tests {
         );
         assert_eq!(project_file(project, ".env.local").unwrap(), None);
         assert_eq!(project_file(project, "notes.md").unwrap(), None);
+        assert_eq!(project_file(project, "src/*.rs").unwrap(), None);
         assert_eq!(project_file(project, ".git/config").unwrap(), None);
         assert!(project_file(project, "../outside").is_err());
     }
