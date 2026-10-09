@@ -89,6 +89,9 @@ fn device_herdr(
                 "is_linked_worktree": true, "is_prunable": false, "label": "repo",
                 "open_workspace_id": "w2", "path": WORKTREE}
         }),
+        "pane.get" => json!({"type": "pane_info", "pane": {"workspace_id": "w2",
+            "tab_id": "w2:t1", "pane_id": "w2:p1", "terminal_id": "device-terminal",
+            "focused": false, "agent_status": "idle", "revision": 0}}),
         "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
             "pane_id": "w2:p1", "shell_pid": 4100, "foreground_process_group_id": 4100,
             "foreground_processes": [{"pid": 4100, "name": "zsh"}]}}),
@@ -315,6 +318,12 @@ fn a_delegated_spawn_makes_the_child_on_the_device_under_the_caller() {
     assert_eq!(record.actor.device_id, DEVICE);
     assert_eq!(record.actor.pane_id, "remote:mini:pane:w2:p1");
     assert_eq!(ledger.spawns[0].machine.as_deref(), Some(DEVICE));
+    // The spawn keeps the terminal its pane runs, which is what lets a later
+    // attempt tell that pane from another under the same id.
+    assert_eq!(
+        ledger.spawns[0].terminal.as_deref(),
+        Some("device-terminal")
+    );
     // The token goes to the device's pane and names the caller's machine.
     let tokens = spawner
         .herdr
