@@ -511,6 +511,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             terminals: Arc::clone(&core.terminals)
                 as Arc<dyn hide_node::terminal::device::DeviceSink>,
             grants: Arc::clone(&relay_grants),
+            attaching: attach::Attaching::default(),
         }),
         Arc::clone(&shutdown),
     ));

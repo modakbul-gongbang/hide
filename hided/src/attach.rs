@@ -21,7 +21,7 @@
 //! [`hide_node_link::panes::HEARTBEAT_LIMIT`], so neither a half-open SSH
 //! connection nor a stopped core leaves it running (B20).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -262,6 +262,31 @@ pub struct AttachService {
     pub panes: hide_node::ssh::PaneEventsSlot,
     pub terminals: Arc<dyn DeviceSink>,
     pub grants: Arc<RelayGrants>,
+    pub attaching: Attaching,
+}
+
+/// The nodes whose link is between the core's admission and its taking the
+/// link as the node's. A second attach of one meanwhile is refused as
+/// already linked, as it would be a moment later; without this both pass
+/// the admission, and one of them is told it was accepted and then dropped.
+#[derive(Default)]
+pub struct Attaching(Mutex<HashSet<String>>);
+
+impl Attaching {
+    /// Holds `node` until the guard goes, or `None` while another holds it.
+    fn hold(&self, node: &str) -> Option<AttachingNode<'_>> {
+        lock(&self.0)
+            .insert(node.to_owned())
+            .then(|| AttachingNode(self, node.to_owned()))
+    }
+}
+
+struct AttachingNode<'a>(&'a Attaching, String);
+
+impl Drop for AttachingNode<'_> {
+    fn drop(&mut self) {
+        lock(&self.0.0).remove(&self.1);
+    }
 }
 
 /// Takes nodes' links on `listener` until `shutdown`.
@@ -442,6 +467,10 @@ fn take_link(stream: LocalStream, service: &AttachService) {
         refuse(&mut writer, "other_build");
         return;
     }
+    let Some(_attaching) = service.attaching.hold(&node.node) else {
+        refuse(&mut writer, "already_linked");
+        return;
+    };
     if let Some(reason) = standing_refusal(service, &node.node) {
         refuse(&mut writer, &reason);
         return;
@@ -681,4 +710,22 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One node is attached by one link at a time: a second attach of it
+    /// is refused until the first is taken or fails, and another node is
+    /// never held up by it.
+    #[test]
+    fn a_node_is_attached_by_one_link_at_a_time() {
+        let attaching = Attaching::default();
+        let first = attaching.hold("node-a").expect("the first attach");
+        assert!(attaching.hold("node-a").is_none());
+        assert!(attaching.hold("node-b").is_some());
+        drop(first);
+        assert!(attaching.hold("node-a").is_some());
+    }
 }
