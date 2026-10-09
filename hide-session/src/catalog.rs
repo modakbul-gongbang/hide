@@ -206,6 +206,12 @@ impl SessionCatalog {
                 .cmp(&left.updated_at_unix_ms)
                 .then_with(|| left.id.cmp(&right.id))
         });
+        // A refusal is a row of the node's answer, under the same cap.
+        if sessions.len() + refusals.len() > SESSION_DISCOVERY_LIMIT {
+            return Err(SessionCatalogError::Capacity {
+                limit: SESSION_DISCOVERY_LIMIT,
+            });
+        }
         Ok(ProjectSessions { sessions, refusals })
     }
 
@@ -540,6 +546,20 @@ mod tests {
             assert_eq!(
                 read(&catalog),
                 (vec!["claude-1".to_owned()], refused("label_session_linked"))
+            );
+
+            // A folder Hide may not look into is no proof the database is gone.
+            use std::os::unix::fs::PermissionsExt;
+            let folder = database.parent().unwrap();
+            fs::set_permissions(folder, fs::Permissions::from_mode(0o000)).unwrap();
+            let denied = read(&catalog);
+            fs::set_permissions(folder, fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(
+                denied,
+                (
+                    vec!["claude-1".to_owned()],
+                    refused("opencode_db_unreadable")
+                )
             );
         }
     }

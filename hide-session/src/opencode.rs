@@ -89,8 +89,13 @@ pub(crate) fn database_path(home: &Path) -> PathBuf {
 /// file Hide reads is OpenCode's own, never one a link points elsewhere.
 pub(crate) fn open(home: &Path) -> Result<Connection, String> {
     let path = database_path(home);
-    let metadata =
-        std::fs::symlink_metadata(&path).map_err(|_| "session_file_missing".to_owned())?;
+    let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "session_file_missing".to_owned()
+        } else {
+            "opencode_db_unreadable".to_owned()
+        }
+    })?;
     if metadata.file_type().is_symlink() {
         return Err("label_session_linked".to_owned());
     }
@@ -352,9 +357,15 @@ pub(crate) fn catalog(
     visited: &mut usize,
     limit: usize,
 ) -> Result<Result<Vec<crate::ProjectSession>, String>, crate::SessionCatalogError> {
+    // Only an answer that the file is not there is no OpenCode; a folder
+    // Hide may not look into is a store it could not read.
+    if std::fs::symlink_metadata(database_path(home))
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    {
+        return Ok(Ok(Vec::new()));
+    }
     let connection = match open(home) {
         Ok(connection) => connection,
-        Err(reason) if reason == "session_file_missing" => return Ok(Ok(Vec::new())),
         Err(reason) => return Ok(Err(reason)),
     };
     let remaining = limit.saturating_sub(*visited);
