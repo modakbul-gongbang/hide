@@ -268,3 +268,90 @@ impl Drop for InboundTransport {
         self.link.close("the core let go of the node");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::time::Duration;
+
+    use hide_node_link::protocol::{MachineIdentity, Outcome, Request, Response};
+
+    use super::*;
+
+    /// A node that dialed in and answers its Hello as `protocol`, naming
+    /// `machine`; answers what the core read from it.
+    fn node_answering(
+        protocol: u32,
+        machine: &str,
+    ) -> (
+        hide_platform::ipc::LocalStream,
+        std::thread::JoinHandle<bool>,
+    ) {
+        let (core, node) = hide_platform::ipc::LocalStream::pair().unwrap();
+        let machine = machine.to_owned();
+        let answering = std::thread::spawn(move || {
+            node.set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let mut reader = BufReader::new(node.duplicate());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let request: Request = serde_json::from_str(&line).unwrap();
+            assert_eq!(request.call, Call::Hello);
+            let hello = Hello {
+                protocol,
+                version: "test".to_owned(),
+                os: "macos".to_owned(),
+                arch: "aarch64".to_owned(),
+                home: None,
+                machine_identity: MachineIdentity::Available { id: machine },
+                reader_features: None,
+            };
+            let response = Response {
+                id: request.id,
+                outcome: Outcome::Ok(serde_json::to_value(hello).unwrap()),
+            };
+            let mut writer = node;
+            writeln!(writer, "{}", serde_json::to_string(&response).unwrap()).unwrap();
+            // The core closes a link it refused: the node reads its end.
+            let mut rest = Vec::new();
+            reader.read_to_end(&mut rest).is_ok()
+        });
+        (core, answering)
+    }
+
+    fn inbound(node: &str) -> InboundNode {
+        InboundNode {
+            node: node.to_owned(),
+            label: "laptop".to_owned(),
+            herdr_socket: "/tmp/herdr.sock".to_owned(),
+        }
+    }
+
+    /// A node on the protocol before this one is refused at its Hello and
+    /// its link closed, so it is reinstalled rather than sent calls it does
+    /// not know (NodeLink 27).
+    #[test]
+    fn a_node_on_an_older_protocol_is_refused_and_its_link_closed() {
+        let (core, node) = node_answering(PROTOCOL_VERSION - 1, "node-a");
+        let refused = establish(inbound("node-a"), core, None, None)
+            .err()
+            .expect("an older node is refused");
+        assert!(
+            refused.contains(&format!("protocol {}", PROTOCOL_VERSION - 1)),
+            "{refused}"
+        );
+        assert!(node.join().unwrap(), "the refused link was not closed");
+    }
+
+    /// A node whose Hello names another machine than it dialed as is
+    /// refused, so a node id cannot be borrowed.
+    #[test]
+    fn a_node_whose_hello_names_another_machine_is_refused() {
+        let (core, node) = node_answering(PROTOCOL_VERSION, "node-b");
+        let refused = establish(inbound("node-a"), core, None, None)
+            .err()
+            .expect("a borrowed node id is refused");
+        assert!(refused.contains("another machine"), "{refused}");
+        assert!(node.join().unwrap(), "the refused link was not closed");
+    }
+}
