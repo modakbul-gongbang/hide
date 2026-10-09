@@ -1380,3 +1380,159 @@ fn a_login_child_gets_the_account_variables_and_nothing_else() {
         assert!(keys.iter().any(|key| key == needed), "{needed} {keys:?}");
     }
 }
+
+/// What `line_input` reads is the terminal a process controls: a pane's
+/// shell's, in the product. Each test makes its own pseudo-terminal and a
+/// session that controls it, so no test depends on the runner having one.
+#[cfg(unix)]
+mod line_input {
+    use std::fs::File;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::process::CommandExt;
+    use std::process::{Child, Command, Stdio};
+
+    use hide_platform::process::{LineInput, line_input};
+
+    use super::*;
+
+    /// The line discipline's own limit: `MAX_INPUT` in macOS's
+    /// `<sys/syslimits.h>`, `N_TTY_BUF_SIZE` in Linux's `n_tty`.
+    const LIMIT: usize = if cfg!(target_os = "macos") {
+        1024
+    } else {
+        4096
+    };
+
+    /// The terminal side a session reads from; its master stays open with it.
+    struct Terminal {
+        _master: File,
+        slave: File,
+    }
+
+    fn terminal() -> Terminal {
+        // SAFETY: plain calls on descriptors this test owns; `ptsname`'s
+        // buffer is read before anything else in the process could call it.
+        unsafe {
+            let master = libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY);
+            assert!(master >= 0, "{}", io_error());
+            let master = File::from_raw_fd(master);
+            assert_eq!(libc::grantpt(master.as_raw_fd()), 0, "{}", io_error());
+            assert_eq!(libc::unlockpt(master.as_raw_fd()), 0, "{}", io_error());
+            let name = libc::ptsname(master.as_raw_fd());
+            assert!(!name.is_null(), "{}", io_error());
+            let path = std::ffi::CStr::from_ptr(name).to_str().unwrap().to_owned();
+            let slave = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NOCTTY)
+                .open(path)
+                .unwrap();
+            Terminal {
+                _master: master,
+                slave,
+            }
+        }
+    }
+
+    fn io_error() -> std::io::Error {
+        std::io::Error::last_os_error()
+    }
+
+    /// A process the test ends however it returns.
+    struct Session(Child);
+
+    impl Drop for Session {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// `sleep` as the leader of a session that controls `terminal`, the way
+    /// a pane's shell controls its pane, or of one that controls none.
+    fn session(terminal: Option<&File>) -> Session {
+        let mut command = Command::new("sleep");
+        command.arg("30");
+        match terminal {
+            Some(terminal) => {
+                command
+                    .stdin(terminal.try_clone().unwrap())
+                    .stdout(terminal.try_clone().unwrap())
+                    .stderr(terminal.try_clone().unwrap());
+            }
+            None => {
+                command
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+            }
+        }
+        let controls = terminal.is_some();
+        // SAFETY: only async-signal-safe calls between fork and exec.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::setsid() < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if controls && libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        Session(command.spawn().unwrap())
+    }
+
+    fn set_canonical(terminal: &File, canonical: bool) {
+        // SAFETY: the descriptor is open and the structure valid for both calls.
+        unsafe {
+            let mut attributes: libc::termios = std::mem::zeroed();
+            assert_eq!(libc::tcgetattr(terminal.as_raw_fd(), &mut attributes), 0);
+            if canonical {
+                attributes.c_lflag |= libc::ICANON;
+            } else {
+                attributes.c_lflag &= !libc::ICANON;
+            }
+            assert_eq!(
+                libc::tcsetattr(terminal.as_raw_fd(), libc::TCSANOW, &attributes),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn a_terminal_holds_lines_until_its_reader_turns_canonical_mode_off() {
+        let _one = serial();
+        let terminal = terminal();
+        let shell = session(Some(&terminal.slave));
+        let pid = shell.0.id();
+        assert_eq!(line_input(pid).unwrap(), LineInput::Lines { limit: LIMIT });
+        // What a shell's line editor does when it starts to read.
+        set_canonical(&terminal.slave, false);
+        assert_eq!(line_input(pid).unwrap(), LineInput::Keys);
+        // And what it does again before it runs the line.
+        set_canonical(&terminal.slave, true);
+        assert_eq!(line_input(pid).unwrap(), LineInput::Lines { limit: LIMIT });
+    }
+
+    #[test]
+    fn a_process_that_controls_no_terminal_or_is_gone_has_no_line_input() {
+        let _one = serial();
+        let detached = session(None);
+        let error = line_input(detached.0.id()).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::NotFound, "{error}");
+        let mut ended = Command::new("true").spawn().unwrap();
+        let pid = ended.id();
+        ended.wait().unwrap();
+        let error = line_input(pid).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::NotFound, "{error}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_windows_console_enforces_no_line_length() {
+    use hide_platform::process::{LineInput, line_input};
+    assert_eq!(line_input(std::process::id()).unwrap(), LineInput::Console);
+}
