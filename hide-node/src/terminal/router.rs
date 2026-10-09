@@ -316,6 +316,22 @@ impl Router {
         node.control(TerminalControl::Focus { pane });
     }
 
+    /// Removes every device's terminals: each link's writer stops, and
+    /// nothing of a device's holds this router any longer. A device's node
+    /// reports to the router that holds it, so the two keep each other
+    /// alive until this runs; its owner calls it once the core that
+    /// installs devices is gone.
+    pub fn remove_every_device(&self) {
+        let devices = lock(&self.routes)
+            .devices
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for device in devices {
+            self.remove_device(&device);
+        }
+    }
+
     /// Tells a device which of its panes hold a sleeping agent or are
     /// closing.
     fn flags_to(routes: &Routes, device: &str, node: &dyn TerminalNode) {

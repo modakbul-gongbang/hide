@@ -497,6 +497,10 @@ impl CoreHandle {
         {
             let _ = thread.join();
         }
+        // The core that installs devices is gone: a device's terminals end,
+        // so the router, this machine's terminal service and its attach
+        // children end with this handle rather than with the process.
+        self.terminals.remove_every_device();
     }
 }
 
@@ -737,4 +741,86 @@ fn owner_loop(
         }
     }
     core.clear_on_change();
+}
+
+#[cfg(test)]
+impl CoreHandle {
+    /// A core with no Herdr and no registered checkout.
+    pub(crate) fn bare(directory: &std::path::Path) -> Self {
+        Self::spawn(
+            herdr_core::CoreOptions {
+                schema_version: crate::state_file::SCHEMA_VERSION,
+                home: None,
+                node_id: herdr_core::node::NodeId::parse("test-node").unwrap(),
+                herdr_socket_path: None,
+                herdr_bin_path: None,
+                app_state_path: directory.join("core-state.json").display().to_string(),
+                host_helper_root: None,
+                host_cli_dir: None,
+                workspace_views_path: None,
+                shortcut_import_path: None,
+                local_issues_path: None,
+            },
+            Default::default(),
+        )
+        .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use hide_node::terminal::device::{DeviceTerminals, LineLink, LineRefused};
+    use hide_node_link::terminal::{TerminalNode, TerminalRoutes};
+
+    use super::*;
+
+    /// A link that takes every line, and tells the test when its writer
+    /// let go of it.
+    struct Open {
+        _released: mpsc::Sender<()>,
+    }
+
+    impl LineLink for Open {
+        fn send_line(&self, _line: &[u8]) -> Result<(), LineRefused> {
+            Ok(())
+        }
+        fn end(&self, _reason: &str) {}
+    }
+
+    /// Dropping the core's handle while a device's terminals are linked
+    /// ends the terminal router, and with it this machine's terminal
+    /// service, its sessions and their attach children: a device's node
+    /// reports to the router that holds it, so the two kept each other.
+    #[test]
+    fn dropping_the_handle_with_a_device_linked_ends_its_terminals() {
+        let directory = tempfile::tempdir().unwrap();
+        let core = CoreHandle::bare(directory.path());
+        let (link, released) = mpsc::channel();
+        let device = DeviceTerminals::start(
+            "mini",
+            Arc::new(Open { _released: link }),
+            Arc::clone(&core.terminals) as Arc<dyn DeviceSink>,
+        )
+        .unwrap();
+        core.terminals
+            .install_device("mini", Arc::new(device) as Arc<dyn TerminalNode>);
+        let router = Arc::downgrade(&core.terminals);
+        drop(core);
+        // The link's writer ends once its device is removed.
+        assert_eq!(
+            released.recv_timeout(Duration::from_secs(5)),
+            Err(mpsc::RecvTimeoutError::Disconnected),
+            "the device's link writer outlived the core's handle"
+        );
+        let started = Instant::now();
+        while router.upgrade().is_some() {
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "the terminal router outlived the core's handle"
+            );
+            thread::yield_now();
+        }
+    }
 }
