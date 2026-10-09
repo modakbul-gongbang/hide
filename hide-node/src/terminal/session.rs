@@ -189,6 +189,20 @@ impl WriterCommand {
             Self::Release { .. } => 0,
         }
     }
+
+    /// The command never reached the writer. Its sender hears the refusal
+    /// itself, so a paste's [`Written`] is told nothing: it would run under
+    /// the service's lock, which its own callback takes.
+    fn refused(self, refusal: WriteRefused) -> Result<(), WriteRefused> {
+        if let Self::Line {
+            written: Some(written),
+            ..
+        } = self
+        {
+            written.disarm();
+        }
+        Err(refusal)
+    }
 }
 
 /// Why a session took no input.
@@ -286,7 +300,7 @@ impl Session {
     /// its lock, sends, so the check and the count cannot interleave.
     fn send(&self, command: WriterCommand) -> Result<(), WriteRefused> {
         let Some(writer) = self.writer.as_ref() else {
-            return Err(WriteRefused::Failed(format!(
+            return command.refused(WriteRefused::Failed(format!(
                 "Pane {} is read-only because another client owns terminal control",
                 self.pane_id
             )));
@@ -300,21 +314,14 @@ impl Session {
             || (waiting > 0 && waiting + cost > MAX_UNWRITTEN_INPUT_BYTES)
         {
             self.unwritten.overflowed.store(true, Ordering::Release);
-            return Err(WriteRefused::Full);
+            return command.refused(WriteRefused::Full);
         }
         self.unwritten.bytes.fetch_add(cost, Ordering::AcqRel);
-        writer.send(command).map_err(|SendError(command)| {
+        writer.send(command).or_else(|SendError(command)| {
             self.unwritten.bytes.fetch_sub(cost, Ordering::AcqRel);
-            // The caller hears this answer; a callback from here would run
-            // under the service's lock.
-            if let WriterCommand::Line {
-                written: Some(written),
-                ..
-            } = command
-            {
-                written.disarm();
-            }
-            WriteRefused::Failed("terminal control input channel is closed".to_owned())
+            command.refused(WriteRefused::Failed(
+                "terminal control input channel is closed".to_owned(),
+            ))
         })
     }
 
@@ -745,6 +752,83 @@ mod tests {
         }
         session.write(b"after").unwrap();
         drop(session);
+    }
+
+    /// A refused paste tells its caller, never its callback: the callback
+    /// takes the service's lock, which the caller holds while it writes. The
+    /// write runs on its own thread so a deadlock fails the test instead of
+    /// hanging it.
+    fn refused_without_its_callback(session: Session) {
+        let held = Arc::new(Mutex::new(()));
+        let (called, calls) = channel();
+        let (answered, answer) = channel();
+        let lock = Arc::clone(&held);
+        thread::spawn(move || {
+            let _service = held.lock().unwrap();
+            let refused = session
+                .write_then(
+                    b"'/tmp/a.png' ",
+                    Written::new(move |written| {
+                        let _service = lock.lock().unwrap();
+                        let _ = called.send(written);
+                    }),
+                )
+                .is_err();
+            let _ = answered.send(refused);
+            session
+        });
+        assert!(
+            answer
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the refused paste deadlocked on its own callback"),
+            "the paste was refused"
+        );
+        assert!(calls.try_recv().is_err(), "the callback heard a refusal");
+    }
+
+    #[test]
+    fn a_paste_refused_by_a_full_backlog_does_not_call_back_under_the_lock() {
+        let go = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let (session, _reader) = Session::start(
+            "fixture:p1",
+            1,
+            Mode::Control,
+            SessionParts {
+                reader: Box::new(std::io::empty()),
+                writer: Some(Box::new(Stalled {
+                    go: Arc::clone(&go),
+                    taken: Arc::default(),
+                })),
+                cleanup: Cleanup::None,
+            },
+            Box::new(|_| {}),
+        )
+        .unwrap();
+        session.write(b"x").unwrap();
+        assert!(matches!(
+            session.write(&vec![b'k'; MAX_UNWRITTEN_INPUT_BYTES]),
+            Err(WriteRefused::Full)
+        ));
+        refused_without_its_callback(session);
+        *go.0.lock().unwrap() = true;
+        go.1.notify_all();
+    }
+
+    #[test]
+    fn a_paste_into_a_read_only_session_does_not_call_back_under_the_lock() {
+        let (session, _reader) = Session::start(
+            "fixture:p1",
+            1,
+            Mode::Observe,
+            SessionParts {
+                reader: Box::new(std::io::empty()),
+                writer: None,
+                cleanup: Cleanup::None,
+            },
+            Box::new(|_| {}),
+        )
+        .unwrap();
+        refused_without_its_callback(session);
     }
 
     #[test]
