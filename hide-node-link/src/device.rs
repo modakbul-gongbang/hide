@@ -86,9 +86,10 @@ impl fmt::Display for RemoteDiagnostic {
     }
 }
 
-/// The operation of a dial that never reached the machine's SSH server: its
-/// TCP connection failed, or did not open in time. Every later step of a
-/// connection (the SSH handshake, the host key, the sign-in) has its own.
+/// The operation of a dial that never reached the machine's SSH server: the
+/// connection was refused, reset or not answered before the server presented
+/// its host key. Every later step (the host key, the sign-in, a channel) has
+/// its own.
 pub const DIAL_OPERATION: &str = "remote-dial";
 
 #[derive(Clone, Debug, Eq, PartialEq)]

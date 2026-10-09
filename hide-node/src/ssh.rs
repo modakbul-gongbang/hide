@@ -1538,9 +1538,18 @@ impl RusshRemoteClient {
             keepalive_interval: Some(Duration::from_secs(5)),
             ..client::Config::default()
         };
-        // Set once the TCP connection opened: a timeout before it is a dial
-        // that never reached the SSH server, one after it is not.
-        let reached = std::sync::atomic::AtomicBool::new(false);
+        // Whether the server presented its host key: a connection that ends
+        // before it (refused, reset before the SSH greeting, or no answer in
+        // time) is a dial that never reached an SSH server, as the node's
+        // port probe, which reads the greeting, also counts it.
+        let presented = Arc::clone(&handler.presented);
+        let reached_operation = || {
+            if presented.load(std::sync::atomic::Ordering::SeqCst) {
+                "remote-connect"
+            } else {
+                hide_node_link::device::DIAL_OPERATION
+            }
+        };
         tokio::time::timeout(SSH_OPERATION_TIMEOUT, async {
             let socket = TcpStream::connect((self.host.hostname.as_str(), self.host.port))
                 .await
@@ -1554,7 +1563,6 @@ impl RusshRemoteClient {
                         false,
                     )
                 })?;
-            reached.store(true, std::sync::atomic::Ordering::SeqCst);
             if config.nodelay {
                 socket.set_nodelay(true).map_err(|error| {
                     remote_error(
@@ -1602,7 +1610,7 @@ impl RusshRemoteClient {
                 .await
                 .map_err(|error| {
                     remote_error(
-                        "remote-connect",
+                        reached_operation(),
                         &self.host.host_id,
                         RemoteStage::Ssh,
                         error,
@@ -1616,16 +1624,11 @@ impl RusshRemoteClient {
         })
         .await
         .map_err(|_| {
-            let (operation, reason) = if reached.load(std::sync::atomic::Ordering::SeqCst) {
-                (
-                    "remote-connect",
-                    "SSH connection or authentication timed out",
-                )
+            let operation = reached_operation();
+            let reason = if operation == hide_node_link::device::DIAL_OPERATION {
+                "no SSH server answered in time"
             } else {
-                (
-                    hide_node_link::device::DIAL_OPERATION,
-                    "the SSH server's port did not answer in time",
-                )
+                "SSH connection or authentication timed out"
             };
             remote_error(
                 operation,
@@ -2048,6 +2051,9 @@ struct KnownHostHandler {
     /// Receives the SHA-256 fingerprint of a host key known_hosts accepted,
     /// the identity a device's helper consent is bound to.
     observed_key: Option<Arc<Mutex<Option<String>>>>,
+    /// Set once the server presented its host key: the dial reached an SSH
+    /// server, whatever is decided of the key.
+    presented: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl KnownHostHandler {
@@ -2057,6 +2063,7 @@ impl KnownHostHandler {
             port: host.port,
             known_hosts_file: host.known_hosts_file.clone(),
             observed_key: None,
+            presented: Arc::default(),
         }
     }
 
@@ -2073,6 +2080,8 @@ impl Handler for KnownHostHandler {
         &mut self,
         server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        self.presented
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         let public_key = server_public_key.public_key();
         // A changed key and an unknown one need different actions from the
         // operator, so they are named differently (PRD S5.5 B38); neither is
