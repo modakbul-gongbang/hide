@@ -2737,7 +2737,8 @@ impl Runtime {
                 .workspaces
                 .iter()
                 .find(|workspace| workspace.id == workspace_id && workspace.is_git)?;
-            self.is_inbound(&status.target_id)
+            self.link_origin(&status.target_id)
+                .is_some_and(LinkOrigin::reports_own_facts)
                 .then(|| (status.target_id.clone(), workspace.path.clone()))
         });
         if let Some((device, path)) = inbound {
@@ -2845,7 +2846,11 @@ impl Runtime {
         device_id: &str,
         github: crate::model::GithubSnapshot,
     ) -> bool {
-        if !self.is_inbound(device_id) || self.device_github.get(device_id) == Some(&github) {
+        if !self
+            .link_origin(device_id)
+            .is_some_and(LinkOrigin::reports_own_facts)
+            || self.device_github.get(device_id) == Some(&github)
+        {
             return false;
         }
         self.device_github.insert(device_id.to_owned(), github);
@@ -2910,7 +2915,11 @@ impl Runtime {
         device_id: &str,
         disk: Vec<crate::model::DiskUsageSnapshot>,
     ) -> bool {
-        if !self.is_inbound(device_id) || self.device_disk.get(device_id) == Some(&disk) {
+        if !self
+            .link_origin(device_id)
+            .is_some_and(LinkOrigin::reports_own_facts)
+            || self.device_disk.get(device_id) == Some(&disk)
+        {
             return false;
         }
         self.device_disk.insert(device_id.to_owned(), disk);

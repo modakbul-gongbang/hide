@@ -3,28 +3,30 @@
 //! operator's device actions do to it.
 
 use super::*;
-use crate::remote::{CapabilityReport, DeviceTransport, EstablishError, Established};
-use hide_node_link::device::{HostConsent, SnapshotCheck};
+use crate::remote::{Arrived, DeviceTransport};
 use std::sync::mpsc;
 
 const NODE: &str = "inbound-node-1";
 
-/// A node's link whose establishment waits until the test lets it go, and
-/// then fails, so the core's phase for it can be read at each step.
-struct HeldLink {
-    release: Mutex<Option<mpsc::Receiver<()>>>,
-}
+/// The transport of a node that dialed in, reaching no Herdr.
+struct HeldLink;
 
-impl HeldLink {
-    fn new() -> (Arc<Self>, mpsc::Sender<()>) {
-        let (release, wait) = mpsc::channel();
-        (
-            Arc::new(Self {
-                release: Mutex::new(Some(wait)),
-            }),
-            release,
-        )
-    }
+/// A node's link that stands until the test lets it go, and then ends, so
+/// the core's phase for it can be read at each step.
+fn held_link() -> (Arrived, mpsc::Sender<()>) {
+    let (release, wait) = mpsc::channel::<()>();
+    let arrived = Arrived {
+        transport: Arc::new(HeldLink),
+        node: super::device_kit::node_ready(
+            super::device_kit::KitDevice::answering(Err("not asked".to_owned())),
+            None,
+        ),
+        hear_close: Box::new(move |on_close| {
+            let _ = wait.recv_timeout(Duration::from_secs(10));
+            on_close("the test's link ended".to_owned());
+        }),
+    };
+    (arrived, release)
 }
 
 impl DeviceTransport for HeldLink {
@@ -36,46 +38,6 @@ impl DeviceTransport for HeldLink {
 
     fn cached_herdr_version(&self) -> Option<String> {
         None
-    }
-
-    fn capability_test(&self, operation_id: &str, _check: SnapshotCheck<'_>) -> CapabilityReport {
-        CapabilityReport::new(
-            operation_id,
-            crate::remote::RemoteHostIdentity {
-                host_id: NODE.to_owned(),
-                alias: String::new(),
-                hostname: NODE.to_owned(),
-                port: 0,
-            },
-        )
-    }
-
-    fn establish(
-        &self,
-        _consent: &HostConsent,
-        _retirement_projects: &[String],
-        _on_close: Box<dyn FnOnce(String) + Send + 'static>,
-    ) -> Result<Established, EstablishError> {
-        if let Some(wait) = self.release.lock().unwrap().take() {
-            let _ = wait.recv_timeout(Duration::from_secs(10));
-        }
-        Err(EstablishError::Helper("the test's link ended".to_owned()))
-    }
-
-    fn stage_attachments(
-        &self,
-        _request_id: &str,
-        _files: &[hide_node_link::attachments::AttachmentFile],
-        _cancelled: &std::sync::atomic::AtomicBool,
-    ) -> Result<Vec<String>, String> {
-        Err("not staged".to_owned())
-    }
-
-    fn remove_attachments(
-        &self,
-        _request_id: &str,
-        _files: &[hide_node_link::attachments::AttachmentFile],
-    ) {
     }
 
     fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
@@ -110,7 +72,7 @@ fn wait(shared: &Arc<Mutex<Runtime>>, what: &str, ready: impl Fn(&Runtime) -> bo
 #[test]
 fn a_node_s_first_link_registers_it_as_a_device_that_dials_in() {
     let shared = shared_runtime();
-    let (link, release) = HeldLink::new();
+    let (link, release) = held_link();
     shared
         .lock()
         .unwrap()
@@ -124,9 +86,8 @@ fn a_node_s_first_link_registers_it_as_a_device_that_dials_in() {
         .iter()
         .find(|registration| registration.id == NODE)
         .expect("the node is registered");
-    assert!(registration.inbound);
+    assert_eq!(registration.origin, crate::model::LinkOrigin::Inbound);
     assert_eq!(registration.label, "MacBook");
-    assert_eq!(registration.ssh_alias, None);
     assert_eq!(registration.host_consent, None);
     let row = runtime
         .snapshot()
@@ -148,7 +109,7 @@ fn a_node_s_first_link_registers_it_as_a_device_that_dials_in() {
 fn a_link_is_refused_for_this_machine_a_dialed_device_or_a_live_node() {
     let shared = shared_runtime();
     let own = shared.lock().unwrap().node.as_str().to_owned();
-    let (link, _release) = HeldLink::new();
+    let (link, _release) = held_link();
     assert_eq!(
         shared
             .lock()
@@ -166,7 +127,7 @@ fn a_link_is_refused_for_this_machine_a_dialed_device_or_a_live_node() {
         .lock()
         .unwrap()
         .dispatch_json(&serde_json::to_vec(&event).unwrap());
-    let (link, _release) = HeldLink::new();
+    let (link, _release) = held_link();
     assert_eq!(
         shared
             .lock()
@@ -175,16 +136,16 @@ fn a_link_is_refused_for_this_machine_a_dialed_device_or_a_live_node() {
         Err("dialed_device".to_owned())
     );
 
-    let (first, release_first) = HeldLink::new();
+    let (first, release_first) = held_link();
     shared
         .lock()
         .unwrap()
         .accept_inbound_node(NODE, "MacBook", first)
         .expect("the first link");
-    wait(&shared, "the first link connecting", |runtime| {
-        runtime.host_snapshot(NODE).state == "connecting"
+    wait(&shared, "the first link ready", |runtime| {
+        runtime.host_snapshot(NODE).state == "ready"
     });
-    let (second, _release) = HeldLink::new();
+    let (second, _release) = held_link();
     assert_eq!(
         shared
             .lock()
@@ -199,7 +160,7 @@ fn a_link_is_refused_for_this_machine_a_dialed_device_or_a_live_node() {
         .ui_state
         .device_registrations
         .iter()
-        .filter(|registration| registration.inbound)
+        .filter(|registration| registration.origin == crate::model::LinkOrigin::Inbound)
         .count();
     assert_eq!(registrations, 1);
     drop(release_first);
@@ -211,7 +172,7 @@ fn a_link_is_refused_for_this_machine_a_dialed_device_or_a_live_node() {
 #[test]
 fn the_core_never_redials_a_node_and_takes_its_next_link() {
     let shared = shared_runtime();
-    let (link, release) = HeldLink::new();
+    let (link, release) = held_link();
     shared
         .lock()
         .unwrap()
@@ -247,14 +208,14 @@ fn the_core_never_redials_a_node_and_takes_its_next_link() {
         assert!(runtime.node_link(NODE).is_err());
         assert!(!runtime.device_host_connecting(NODE));
     }
-    let (next, release) = HeldLink::new();
+    let (next, release) = held_link();
     shared
         .lock()
         .unwrap()
         .accept_inbound_node(NODE, "MacBook", next)
         .expect("the next link is taken");
-    wait(&shared, "the next link connecting", |runtime| {
-        runtime.host_snapshot(NODE).state == "connecting"
+    wait(&shared, "the next link ready", |runtime| {
+        runtime.host_snapshot(NODE).state == "ready"
     });
     drop(release);
 }
@@ -285,7 +246,7 @@ fn a_node_s_agents_are_reached_only_through_its_link() {
         let own = runtime.node.as_str().to_owned();
         assert!(runtime.delivery_connector(&own).is_some());
     }
-    let (link, release) = HeldLink::new();
+    let (link, release) = held_link();
     shared
         .lock()
         .unwrap()
@@ -312,7 +273,7 @@ fn a_node_s_agents_are_reached_only_through_its_link() {
 #[test]
 fn only_a_connected_node_that_dialed_in_is_a_linked_machine() {
     let shared = shared_runtime();
-    let (link, _release) = HeldLink::new();
+    let (link, _release) = held_link();
     shared
         .lock()
         .unwrap()
@@ -364,17 +325,16 @@ fn inbound_nodes_are_capped_and_their_labels_are_plain_text() {
                 .push(crate::model::DeviceRegistration {
                     id: format!("node-{index}"),
                     label: format!("node {index}"),
-                    ssh_alias: None,
+                    origin: crate::model::LinkOrigin::Inbound,
                     herdr_socket_path: None,
                     host_consent: None,
-                    inbound: true,
                 });
         }
         assert_eq!(runtime.inbound_refusal("node-new"), Some("nodes_full"));
         assert_eq!(runtime.inbound_refusal("node-3"), None);
     }
 
-    let (link, _release) = HeldLink::new();
+    let (link, _release) = held_link();
     let label = format!("\u{1b}[31m{}\n", "x".repeat(200));
     shared
         .lock()

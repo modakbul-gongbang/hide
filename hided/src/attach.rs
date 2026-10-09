@@ -524,30 +524,30 @@ fn take_link(stream: LocalStream, service: &AttachService) {
             sink: Arc::clone(&service.terminals),
         }),
     );
-    let transport = match established {
-        Ok(transport) => transport,
+    let (link, arrived) = match established {
+        Ok(established) => established,
         Err(message) => {
             service.grants.revoke(&relay_token);
             attach_failed(&node.node, &message);
             return;
         }
     };
-    service.grants.bind(&relay_token, transport.link().clone());
+    service.grants.bind(&relay_token, link.clone());
     // The grant goes with its link, so a link that ended holds nothing of
     // its connection in the table.
     {
         let grants = Arc::clone(&service.grants);
-        let closed = transport.link().closed();
+        let closed = link.closed();
         let token = relay_token.clone();
         tokio::runtime::Handle::current().spawn(async move {
             closed.await;
             grants.revoke(&token);
         });
     }
-    let link = transport.link().identity();
+    let link = link.identity();
     match service
         .core
-        .accept_inbound_node(&node.node, &node.label, transport)
+        .accept_inbound_node(&node.node, &node.label, arrived)
     {
         Ok(()) => herdr_core::diagnostic!(json!({
             "component": "node_link",

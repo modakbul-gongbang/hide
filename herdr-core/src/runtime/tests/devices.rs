@@ -634,8 +634,11 @@ fn a_device_id_holding_a_colon_is_refused_and_never_connected() {
             .push(crate::model::DeviceRegistration {
                 id: id.to_owned(),
                 label: id.to_owned(),
-                ssh_alias: Some(alias.to_owned()),
-                ..Default::default()
+                origin: crate::model::LinkOrigin::Dialed {
+                    ssh_alias: alias.to_owned(),
+                },
+                herdr_socket_path: None,
+                host_consent: None,
             });
     }
     runtime.rebuild_device_rows();

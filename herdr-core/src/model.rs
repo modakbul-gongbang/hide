@@ -3256,27 +3256,127 @@ pub struct WorkspaceRegistration {
     pub home: bool,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    try_from = "StoredDeviceRegistration",
+    into = "StoredDeviceRegistration"
+)]
 pub struct DeviceRegistration {
     pub id: String,
     pub label: String,
-    #[serde(default)]
-    pub ssh_alias: Option<String>,
+    pub origin: LinkOrigin,
     /// The Herdr socket on the device, for a host whose server does not
     /// listen at its default path; absent reads the host's default server.
-    #[serde(default)]
     pub herdr_socket_path: Option<String>,
     /// The operator's one consent for Hide's helper on this device (PRD S5.5
     /// D-20, D-23). Absent until given; a device registered before consent
     /// existed asks before its first file or Git use.
-    #[serde(default)]
     pub host_consent: Option<HostConsent>,
-    /// A machine whose node dials this core (PRD core-host-node-remote-core
-    /// D-04): the core never dials it, installs no kit on it and asks no
-    /// consent of it, since the operator's own SSH login opened its link
-    /// (D-10). Its id is its node id.
+}
+
+/// How a registered machine's link opens, and so what the core may do to
+/// it (PRD core-host-node-remote-core D-04, D-10).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LinkOrigin {
+    /// The core dials the machine over SSH under this alias.
+    Dialed { ssh_alias: String },
+    /// The machine's own node dials this core over the operator's SSH
+    /// login; its id is its node id.
+    Inbound,
+}
+
+impl LinkOrigin {
+    pub fn ssh_alias(&self) -> Option<&str> {
+        match self {
+            Self::Dialed { ssh_alias } => Some(ssh_alias),
+            Self::Inbound => None,
+        }
+    }
+
+    /// Whether the core brings a lost link back itself; a node that dials
+    /// in comes back only by dialing again.
+    pub fn core_redials(&self) -> bool {
+        matches!(self, Self::Dialed { .. })
+    }
+
+    /// Whether the core installs and keeps Hide's kit there; a node that
+    /// dials in is a machine with Hide's own install, whose kit its own
+    /// hided keeps.
+    pub fn takes_kit(&self) -> bool {
+        matches!(self, Self::Dialed { .. })
+    }
+
+    /// Whether the core's helper there waits for the operator's consent; a
+    /// node that dials in was allowed by the operator's own SSH login.
+    pub fn takes_consent(&self) -> bool {
+        matches!(self, Self::Dialed { .. })
+    }
+
+    /// Whether the machine's own node reports its facts (ports, disk,
+    /// GitHub) to the core, rather than the core reading them over a dial.
+    pub fn reports_own_facts(&self) -> bool {
+        matches!(self, Self::Inbound)
+    }
+}
+
+/// A registration as the store and the shell spell it: the alias of a
+/// device the core dials, or the flag of a node that dials in, never both.
+#[derive(Deserialize, Serialize)]
+struct StoredDeviceRegistration {
+    id: String,
+    label: String,
+    #[serde(default)]
+    ssh_alias: Option<String>,
+    #[serde(default)]
+    herdr_socket_path: Option<String>,
+    #[serde(default)]
+    host_consent: Option<HostConsent>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub inbound: bool,
+    inbound: bool,
+}
+
+impl TryFrom<StoredDeviceRegistration> for DeviceRegistration {
+    type Error = String;
+
+    fn try_from(stored: StoredDeviceRegistration) -> Result<Self, String> {
+        let origin = match (stored.ssh_alias, stored.inbound) {
+            (Some(ssh_alias), false) => LinkOrigin::Dialed { ssh_alias },
+            (None, true) => LinkOrigin::Inbound,
+            (Some(_), true) => {
+                return Err(format!(
+                    "device {} has both an SSH alias and a node that dials in",
+                    stored.id
+                ));
+            }
+            (None, false) => {
+                return Err(format!(
+                    "device {} has neither an SSH alias nor a node that dials in",
+                    stored.id
+                ));
+            }
+        };
+        Ok(Self {
+            id: stored.id,
+            label: stored.label,
+            origin,
+            herdr_socket_path: stored.herdr_socket_path,
+            host_consent: stored.host_consent,
+        })
+    }
+}
+
+impl From<DeviceRegistration> for StoredDeviceRegistration {
+    fn from(registration: DeviceRegistration) -> Self {
+        let inbound = matches!(registration.origin, LinkOrigin::Inbound);
+        Self {
+            id: registration.id,
+            label: registration.label,
+            ssh_alias: registration.origin.ssh_alias().map(str::to_owned),
+            herdr_socket_path: registration.herdr_socket_path,
+            host_consent: registration.host_consent,
+            inbound,
+        }
+    }
 }
 
 pub use hide_node_link::device::HostConsent;

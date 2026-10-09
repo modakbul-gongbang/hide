@@ -382,6 +382,7 @@ fn official_remote_terminal_session_fixture_probe() {
         )
         .expect("the device's node link is established");
     let terminals = established
+        .node
         .terminals
         .expect("the device's node started its terminal service");
     let (progress, heard_progress) = channel();
@@ -426,6 +427,6 @@ fn official_remote_terminal_session_fixture_probe() {
     wait_for(&heard_progress, "released", Duration::from_secs(5));
     eprintln!("pane states: {:?}", heard.states.lock().unwrap().as_slice());
     drop(terminals);
-    drop(established.host);
+    drop(established.node.host);
     let _ = closed.recv_timeout(Duration::from_secs(5));
 }

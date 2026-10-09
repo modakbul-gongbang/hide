@@ -80,16 +80,16 @@ use crate::live::{
 use crate::model::{
     AgentStatusCode, ArchiveDetailSnapshot, CheckoutSnapshot, CoreOptions, DEFAULT_PANE_TEXT_SCALE,
     DiagnosticSnapshot, Edited, EditorDocumentSnapshot, EditorTabKind, EditorTabSnapshot,
-    ExplorerOperationSnapshot, LastErrorSnapshot, OperatorFocusAck, PANE_TEXT_SCALE_STEP,
-    PaneFindOpened, PaneFindRoute, PaneFindSnapshot, PaneFocusRequestSnapshot, PaneForkSnapshot,
-    PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot,
-    PetSnapshot, RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot,
-    RightPanelSection, SCHEMA_VERSION, SessionRowSnapshot, SidebarAgentSnapshot, Snapshot,
-    StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalPaneSnapshot, UiStateSnapshot,
-    WorkspaceSnapshot, clamp_pane_text_scale,
+    ExplorerOperationSnapshot, LastErrorSnapshot, LinkOrigin, OperatorFocusAck,
+    PANE_TEXT_SCALE_STEP, PaneFindOpened, PaneFindRoute, PaneFindSnapshot,
+    PaneFocusRequestSnapshot, PaneForkSnapshot, PaneLayoutNodeSnapshot, PaneLayoutSnapshot,
+    PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, RemoteFileEntrySnapshot,
+    RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection, SCHEMA_VERSION,
+    SessionRowSnapshot, SidebarAgentSnapshot, Snapshot, StripTabKind, StripTabSnapshot, Surface,
+    TabSnapshot, TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
-use crate::remote::{DeviceConnector, DeviceTransport};
+use crate::remote::DeviceConnector;
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
 use crate::{environment, files, live, persistence, pet, session_sync, workspace};
 
@@ -1082,7 +1082,7 @@ pub struct Runtime {
     remote_connections: HashMap<String, devices::RemoteDeviceConnection>,
     /// The link each node that dialed this core brought, until its
     /// connection takes it (`inbound`).
-    inbound_transports: HashMap<String, Arc<dyn crate::remote::DeviceTransport>>,
+    inbound_arrivals: HashMap<String, crate::remote::Arrived>,
     /// Coordinators of removed devices, waiting for the FFI layer to join
     /// them off the runtime lock: a join under the lock would wait for a
     /// worker that is itself waiting for the lock.
@@ -1145,7 +1145,7 @@ pub struct Runtime {
     host_cli_dir: String,
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
-    remote_file_transports: HashMap<String, Arc<dyn DeviceTransport>>,
+    remote_file_transports: HashMap<String, devices::DeviceReach>,
     remote_control_requests: VecDeque<(String, String)>,
     /// Remote mutations waiting for a transport answer or fresh topology,
     /// keyed by target and request id.
@@ -1891,7 +1891,7 @@ impl Runtime {
             state_path,
             home_path: environment.home_path,
             remote_connections: HashMap::new(),
-            inbound_transports: HashMap::new(),
+            inbound_arrivals: HashMap::new(),
             retired_remote_syncs: Vec::new(),
             remote_device_tests: HashMap::new(),
             device_hosts: HashMap::new(),
@@ -2231,10 +2231,10 @@ impl Runtime {
             .map(RemoteControlContext::api_connector)
     }
 
-    pub fn install_remote_file_transport(
+    pub(crate) fn install_remote_file_transport(
         &mut self,
         target_id: impl Into<String>,
-        transport: Arc<dyn DeviceTransport>,
+        transport: devices::DeviceReach,
     ) {
         self.remote_file_transports
             .insert(target_id.into(), transport);

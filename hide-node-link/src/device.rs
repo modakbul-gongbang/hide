@@ -360,20 +360,41 @@ impl fmt::Display for EstablishError {
     }
 }
 
-/// A device's node, started and answering on its link.
-pub struct Established {
+/// A device's node answering on its link, however the link opened.
+pub struct NodeReady {
     pub host: std::sync::Arc<dyn crate::NodeLink>,
-    pub identity: HostIdentity,
     pub hello: crate::protocol::Hello,
+    /// The device's terminals inside this link, when its node started its
+    /// terminal service, or why it has none (its node speaks an older
+    /// protocol, or its Herdr could not be found).
+    pub terminals: Result<std::sync::Arc<dyn crate::terminal::TerminalNode>, String>,
+}
+
+/// A device the core dialed, its node started and answering: the node, the
+/// account and host key the dial reached, and what the install did.
+pub struct Established {
+    pub node: NodeReady,
+    pub identity: HostIdentity,
     /// The node was installed or replaced on this connection.
     pub installed: bool,
     pub helper_path: String,
     /// How the build's files reached the device on this connection.
     pub upload: Upload,
-    /// The device's terminals inside this link, when its node started its
-    /// terminal service, or why it has none (its node speaks an older
-    /// protocol, or its Herdr could not be found).
-    pub terminals: Result<std::sync::Arc<dyn crate::terminal::TerminalNode>, String>,
+}
+
+/// Hears why a link ended, once.
+pub type OnClose = Box<dyn FnOnce(String) + Send + 'static>;
+
+/// A node that dialed the core, as the core takes it (PRD
+/// core-host-node-remote-core D-04, D-10): its link is up and its node
+/// answering, so the core never dials it, installs nothing on it and asks
+/// no consent of it.
+pub struct Arrived {
+    pub transport: std::sync::Arc<dyn DeviceTransport>,
+    pub node: NodeReady,
+    /// Takes the handler the link's end is told to; told at once when the
+    /// link already ended.
+    pub hear_close: Box<dyn FnOnce(OnClose) + Send + 'static>,
 }
 
 /// What one connection's install did with the build's files: how many it
@@ -458,7 +479,7 @@ pub trait DeviceConnector: Send + Sync {
         node: &str,
         alias: &str,
         herdr_socket: Option<String>,
-    ) -> Result<std::sync::Arc<dyn DeviceTransport>, String>;
+    ) -> Result<std::sync::Arc<dyn DialedTransport>, String>;
 
     /// The concrete Host aliases of the SSH configuration of the account at
     /// `home` and where each leads, with the address of each of
@@ -479,13 +500,21 @@ pub trait DeviceConnector: Send + Sync {
 pub type SnapshotCheck<'a> =
     &'a (dyn Fn(&serde_json::Value, &str, &str) -> RemoteResult<u32> + Sync);
 
-/// One registered device as the core reaches it: its Herdr API, its node
-/// link, its terminal sessions and attachment staging, each over SSH.
+/// One registered device as the core reaches it, whichever way its link
+/// opened: its Herdr API over that link.
 pub trait DeviceTransport: Send + Sync {
     /// The device's Herdr API, over this transport.
     fn herdr_api_connector(&self) -> std::sync::Arc<dyn hide_herdr_client::ApiConnector>;
     /// The Herdr version the device reported last, if it has.
     fn cached_herdr_version(&self) -> Option<String>;
+    /// The concrete transport, for the shell that built it and reaches parts
+    /// the core does not use (browser and return-route forwards).
+    fn into_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync>;
+}
+
+/// A device the core dials over SSH: it tests the connection, installs and
+/// starts the device's node, and stages attachments there.
+pub trait DialedTransport: DeviceTransport {
     /// Probes each stage of a connection for the operator's test; `check`
     /// decodes the Herdr stage's snapshot.
     fn capability_test(&self, operation_id: &str, check: SnapshotCheck<'_>) -> CapabilityReport;
@@ -496,7 +525,7 @@ pub trait DeviceTransport: Send + Sync {
         &self,
         consent: &HostConsent,
         retirement_projects: &[String],
-        on_close: Box<dyn FnOnce(String) + Send + 'static>,
+        on_close: OnClose,
     ) -> Result<Established, EstablishError>;
     /// Stages `files` on the device under `request_id`; answers each one's
     /// path there.
@@ -508,9 +537,6 @@ pub trait DeviceTransport: Send + Sync {
     ) -> Result<Vec<String>, String>;
     /// Removes what `request_id` staged.
     fn remove_attachments(&self, request_id: &str, files: &[crate::attachments::AttachmentFile]);
-    /// The concrete transport, for the shell that built it and reaches parts
-    /// the core does not use (browser and return-route forwards).
-    fn into_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync>;
 }
 
 #[cfg(test)]

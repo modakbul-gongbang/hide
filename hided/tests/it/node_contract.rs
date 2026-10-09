@@ -18,7 +18,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use hide_node_link::device::{
-    DeviceConnector, DeviceTransport, HOST_CONSENT_CONTRACT, HostConsent,
+    DeviceConnector, DialedTransport, HOST_CONSENT_CONTRACT, HostConsent,
 };
 use hide_node_link::panes::{NodeEvent, ProofAnswer};
 use hide_node_link::protocol::{Call, RootOpened, RootRef};
@@ -57,7 +57,7 @@ struct Device {
     home: PathBuf,
     project: PathBuf,
     ssh: ssh_server::Ssh,
-    transport: Arc<dyn DeviceTransport>,
+    transport: Arc<dyn DialedTransport>,
     link: Arc<dyn NodeLink>,
     /// The device's state folder, where its node binds its pane socket.
     state: PathBuf,
@@ -275,11 +275,11 @@ impl Device {
             project,
             ssh,
             transport,
-            link: established.host,
+            link: established.node.host,
             state,
             events,
-            terminals: established.terminals.ok(),
-            hello: established.hello,
+            terminals: established.node.terminals.ok(),
+            hello: established.node.hello,
             helper_path: established.helper_path,
             local,
             current_packages: packages,
@@ -580,23 +580,24 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
         .establish(&consent, &[], Box::new(|_| {}))
         .unwrap();
     assert_eq!(
-        established.hello.protocol,
+        established.node.hello.protocol,
         hide_node_link::protocol::PROTOCOL_VERSION
     );
     assert!(established.installed);
     assert_ne!(established.helper_path, old_helper);
     assert_eq!(
-        established.host.reader_features(),
+        established.node.host.reader_features(),
         Some(&hide_node_link::sessions::ReaderFeatures::implemented())
     );
     assert!(
         established
+            .node
             .host
             .reader_features()
             .unwrap()
             .supports("omp", ReaderFeature::UserTurnContent)
     );
-    device.link = established.host;
+    device.link = established.node.host;
     device.link.close("retained-payload fixture ended");
 }
 
@@ -702,6 +703,7 @@ fn a_saturated_core_answers_busy_over_ssh_and_keeps_its_reader_usable() {
                 .transport
                 .establish(&consent, &[], Box::new(|_| {}))
                 .unwrap()
+                .node
                 .host,
         );
     }

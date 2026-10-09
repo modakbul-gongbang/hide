@@ -99,7 +99,7 @@ fn present<'de, D: serde::Deserializer<'de>>(
 
 pub use hide_node_link::device::{
     DEFAULT_CLI_DIR, DEFAULT_HELPER_ROOT, EstablishError, Established, HOST_CONSENT_CARRIED_FROM,
-    HOST_CONSENT_CONTRACT, Upload,
+    HOST_CONSENT_CONTRACT, NodeReady, Upload,
 };
 
 pub const MAX_RUNNING: usize = hide_host::serve::CONCURRENCY;
@@ -1083,13 +1083,15 @@ pub fn establish(
     };
     establish_stage(target, "ready", since);
     Ok(Established {
-        host: Arc::new(host),
+        node: NodeReady {
+            host: Arc::new(host),
+            hello,
+            terminals,
+        },
         identity,
-        hello,
         installed,
         helper_path,
         upload,
-        terminals,
     })
 }
 
@@ -3283,10 +3285,10 @@ mod probe {
             established.identity.describe(),
             established.installed,
             established.helper_path,
-            established.hello.os,
-            established.hello.arch
+            established.node.hello.os,
+            established.node.hello.arch
         );
-        let host = established.host;
+        let host = established.node.host;
         let timeout = Duration::from_secs(20);
         let root_path = format!("{fixture}/checkout");
         let opened: RootOpened = call_as(

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::model::DeviceRegistration;
-use crate::remote::DeviceTransport;
+use crate::remote::Arrived;
 
 /// The most nodes that dial this core it keeps registered: each is a
 /// device row the operator removes by hand, so a node whose identity keeps
@@ -20,10 +20,11 @@ pub(crate) const MAX_INBOUND_NODES: usize = 16;
 const MAX_LABEL_CHARS: usize = 64;
 
 impl Runtime {
-    /// Whether `device_id` is a node that dials this core.
-    pub(super) fn is_inbound(&self, device_id: &str) -> bool {
+    /// How the registered device `device_id`'s link opens; `None` for a
+    /// device that is not registered.
+    pub(super) fn link_origin(&self, device_id: &str) -> Option<&LinkOrigin> {
         self.device_registration(device_id)
-            .is_some_and(|registration| registration.inbound)
+            .map(|registration| &registration.origin)
     }
 
     /// Takes the link of the node `node` dialed in on, registering the node
@@ -34,7 +35,7 @@ impl Runtime {
         &mut self,
         node: &str,
         label: &str,
-        transport: Arc<dyn DeviceTransport>,
+        arrived: Arrived,
     ) -> Result<(), String> {
         if let Some(reason) = self.inbound_refusal(node) {
             crate::diagnostic!(serde_json::json!({
@@ -75,10 +76,9 @@ impl Runtime {
                 let registration = DeviceRegistration {
                     id: node.to_owned(),
                     label: label.to_owned(),
-                    ssh_alias: None,
+                    origin: LinkOrigin::Inbound,
                     herdr_socket_path: None,
                     host_consent: None,
-                    inbound: true,
                 };
                 self.snapshot
                     .ui_state
@@ -104,7 +104,7 @@ impl Runtime {
             "kind": "inbound.accepted",
             "target": node,
         }));
-        self.inbound_transports.insert(node.to_owned(), transport);
+        self.inbound_arrivals.insert(node.to_owned(), arrived);
         self.connect_remote_device(&registration);
         self.refresh_device_snapshots();
         Ok(())
@@ -125,11 +125,12 @@ impl Runtime {
             .ui_state
             .device_registrations
             .iter()
-            .any(|registration| registration.id == node && !registration.inbound)
-            || self
-                .device_machine_ids
-                .iter()
-                .any(|(device, machine)| machine == node && !self.is_inbound(device));
+            .any(|registration| {
+                registration.id == node && registration.origin != LinkOrigin::Inbound
+            })
+            || self.device_machine_ids.iter().any(|(device, machine)| {
+                machine == node && self.link_origin(device) != Some(&LinkOrigin::Inbound)
+            });
         if dialed {
             return Some("dialed_device");
         }
@@ -146,7 +147,7 @@ impl Runtime {
             .ui_state
             .device_registrations
             .iter()
-            .filter(|registration| registration.inbound);
+            .filter(|registration| registration.origin == LinkOrigin::Inbound);
         let mut count = 0;
         for registration in registered {
             if registration.id == node {
@@ -164,7 +165,7 @@ impl Runtime {
             .ui_state
             .device_registrations
             .iter()
-            .filter(|registration| registration.inbound)
+            .filter(|registration| registration.origin == LinkOrigin::Inbound)
             .filter(|registration| {
                 self.snapshot.status.remote.iter().any(|status| {
                     status.target_id == registration.id && status.state == "connected"
@@ -172,15 +173,6 @@ impl Runtime {
             })
             .map(|registration| registration.id.clone())
             .collect()
-    }
-
-    /// The link a node brought, for its connection to take; `None` until
-    /// the node dials.
-    pub(super) fn take_inbound_transport(
-        &mut self,
-        device_id: &str,
-    ) -> Option<Arc<dyn DeviceTransport>> {
-        self.inbound_transports.remove(device_id)
     }
 }
 

@@ -207,7 +207,7 @@ impl Fixture {
                 phase: hosts::HostPhase::Ready {
                     host: device.clone(),
                     platform: "macos aarch64".to_owned(),
-                    helper_path: "/fake/hided".to_owned(),
+                    helper_path: Some("/fake/hided".to_owned()),
                 },
                 generation: 1,
             },
@@ -622,7 +622,7 @@ impl Fixture {
         hosts::HostPhase::Ready {
             host: self.device.clone(),
             platform: "macos aarch64".to_owned(),
-            helper_path: "/fake/hided".to_owned(),
+            helper_path: Some("/fake/hided".to_owned()),
         }
     }
 
@@ -726,10 +726,11 @@ fn withdrawing_consent_drops_a_save_waiting_for_the_helper() {
             .push(crate::model::DeviceRegistration {
                 id: DEVICE.to_owned(),
                 label: DEVICE.to_owned(),
-                ssh_alias: Some(DEVICE.to_owned()),
+                origin: crate::model::LinkOrigin::Dialed {
+                    ssh_alias: DEVICE.to_owned(),
+                },
                 herdr_socket_path: None,
                 host_consent: None,
-                inbound: false,
             });
         runtime.set_host_consent(DEVICE, false);
     }
@@ -773,10 +774,11 @@ fn withdrawing_consent_lets_a_running_save_land() {
             .push(crate::model::DeviceRegistration {
                 id: DEVICE.to_owned(),
                 label: DEVICE.to_owned(),
-                ssh_alias: Some(DEVICE.to_owned()),
+                origin: crate::model::LinkOrigin::Dialed {
+                    ssh_alias: DEVICE.to_owned(),
+                },
                 herdr_socket_path: None,
                 host_consent: None,
-                inbound: false,
             });
         runtime.set_host_consent(DEVICE, false);
     }
@@ -1276,8 +1278,11 @@ fn studio_connecting(runtime: &mut Runtime) {
         .push(crate::model::DeviceRegistration {
             id: DEVICE.to_owned(),
             label: "studio".to_owned(),
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: DEVICE.to_owned(),
+            },
+            herdr_socket_path: None,
             host_consent,
-            ..Default::default()
         });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: DEVICE.to_owned(),
@@ -1298,7 +1303,7 @@ fn helper_ready(runtime: &mut Runtime, device: &Arc<FakeDevice>) {
     runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Ready {
         host: device.clone(),
         platform: "macos aarch64".to_owned(),
-        helper_path: "/fake/hided".to_owned(),
+        helper_path: Some("/fake/hided".to_owned()),
     };
 }
 

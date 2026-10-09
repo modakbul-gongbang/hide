@@ -2323,7 +2323,10 @@ impl Runtime {
             }
             Event::DeviceHostRetry(payload) => {
                 let device_id = payload.device_id.trim().to_owned();
-                if self.is_inbound(&device_id) {
+                if self
+                    .link_origin(&device_id)
+                    .is_some_and(|origin| !origin.core_redials())
+                {
                     self.set_error(
                         "device.host.inbound",
                         "This machine connects to the core itself; it reconnects when it can reach the core",
@@ -2395,10 +2398,11 @@ impl Runtime {
                 let registration = crate::model::DeviceRegistration {
                     id: id.clone(),
                     label,
-                    ssh_alias: Some(ssh_alias.clone()),
+                    origin: crate::model::LinkOrigin::Dialed {
+                        ssh_alias: ssh_alias.clone(),
+                    },
                     herdr_socket_path,
                     host_consent: payload.host_consent.then(|| self.new_host_consent()),
-                    inbound: false,
                 };
                 self.snapshot
                     .ui_state

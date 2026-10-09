@@ -37,10 +37,11 @@ fn registration(id: &str, label: &str, alias: &str) -> DeviceRegistration {
     DeviceRegistration {
         id: id.to_owned(),
         label: label.to_owned(),
-        ssh_alias: Some(alias.to_owned()),
+        origin: crate::model::LinkOrigin::Dialed {
+            ssh_alias: alias.to_owned(),
+        },
         herdr_socket_path: None,
         host_consent: None,
-        inbound: false,
     }
 }
 

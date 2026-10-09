@@ -747,7 +747,10 @@ impl Runtime {
     pub(super) fn queue_device_kit(&mut self, device_id: &str, job: KitJob) {
         // A node that dials this core is a machine with Hide's own install,
         // whose kit its own hided keeps.
-        if self.is_inbound(device_id) {
+        if self
+            .link_origin(device_id)
+            .is_some_and(|origin| !origin.takes_kit())
+        {
             return;
         }
         let merged = match self.device_kit_pending.remove(device_id) {
@@ -837,7 +840,7 @@ impl Runtime {
             }));
             Err(reason)
         };
-        if registration.inbound {
+        if !registration.origin.takes_kit() {
             return left("the machine keeps its own kit; it connects to the core itself");
         }
         if self.registration_sharing_account(registration).is_some() {

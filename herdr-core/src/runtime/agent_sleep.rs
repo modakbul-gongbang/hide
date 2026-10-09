@@ -753,7 +753,7 @@ impl Runtime {
     pub(super) fn sleep_machine(&self, device: &str) -> SleepMachine {
         if device == self.node.as_str() {
             SleepMachine::Core
-        } else if self.is_inbound(device) {
+        } else if self.link_origin(device) == Some(&LinkOrigin::Inbound) {
             SleepMachine::Node
         } else {
             SleepMachine::Device

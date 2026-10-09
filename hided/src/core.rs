@@ -81,7 +81,7 @@ enum Command {
     InboundNode {
         node: String,
         label: String,
-        transport: Arc<dyn herdr_core::remote::DeviceTransport>,
+        arrived: herdr_core::remote::Arrived,
         reply: Sender<Result<(), String>>,
     },
     BrowserRouteSource {
@@ -383,19 +383,19 @@ impl CoreHandle {
     }
 
     /// Hands the core the link of a node that dialed it. A refusal drops
-    /// the transport, which closes the link.
+    /// the arrived node, whose transport closes the link.
     pub fn accept_inbound_node(
         &self,
         node: &str,
         label: &str,
-        transport: Arc<dyn herdr_core::remote::DeviceTransport>,
+        arrived: herdr_core::remote::Arrived,
     ) -> Result<(), String> {
         let (reply, rx) = mpsc::channel();
         self.commands
             .send(Command::InboundNode {
                 node: node.to_owned(),
                 label: label.to_owned(),
-                transport,
+                arrived,
                 reply,
             })
             .map_err(|_| "core_unavailable".to_owned())?;
@@ -747,10 +747,10 @@ fn owner_loop(
             Command::InboundNode {
                 node,
                 label,
-                transport,
+                arrived,
                 reply,
             } => {
-                let _ = reply.send(core.accept_inbound_node(&node, &label, transport));
+                let _ = reply.send(core.accept_inbound_node(&node, &label, arrived));
             }
             Command::BrowserRouteSource {
                 device_id,

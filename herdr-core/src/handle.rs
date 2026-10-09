@@ -590,14 +590,14 @@ impl Core {
         &self,
         node: &str,
         label: &str,
-        transport: std::sync::Arc<dyn crate::remote::DeviceTransport>,
+        arrived: crate::remote::Arrived,
     ) -> Result<(), String> {
         if !check_owner_thread(self, "accept_inbound_node") {
             return Err("core_unavailable".to_owned());
         }
         let (accepted, retired_syncs) = {
             let mut runtime = lock_recover(&self.runtime);
-            let accepted = runtime.accept_inbound_node(node, label, transport);
+            let accepted = runtime.accept_inbound_node(node, label, arrived);
             (accepted, runtime.take_retired_remote_syncs())
         };
         drop(retired_syncs);

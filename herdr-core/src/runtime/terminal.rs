@@ -565,7 +565,10 @@ impl Runtime {
         device_id: &str,
         ports: crate::model::ListeningPortsSnapshot,
     ) -> bool {
-        if !self.is_inbound(device_id) {
+        if !self
+            .link_origin(device_id)
+            .is_some_and(LinkOrigin::reports_own_facts)
+        {
             return false;
         }
         if let Some(reason) = ports.unavailable_reason.as_deref() {

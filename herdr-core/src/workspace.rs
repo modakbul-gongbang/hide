@@ -61,16 +61,15 @@ pub fn devices(node: &NodeId, registrations: &[DeviceRegistration]) -> Vec<Devic
 
     for registration in registrations {
         if seen.insert(registration.id.clone()) {
-            let remote = registration.ssh_alias.is_some() || registration.inbound;
             result.push(DeviceSnapshot {
                 agent_scope: Default::default(),
                 id: registration.id.clone(),
                 label: registration.label.clone(),
-                kind: if remote { "remote" } else { "local" }.to_owned(),
-                state: if remote { "unavailable" } else { "available" }.to_owned(),
+                kind: "remote".to_owned(),
+                state: "unavailable".to_owned(),
                 message: None,
                 problem: None,
-                ssh_alias: registration.ssh_alias.clone(),
+                ssh_alias: registration.origin.ssh_alias().map(str::to_owned),
                 herdr_socket_path: registration.herdr_socket_path.clone(),
                 agent_count: 0,
                 test: None,

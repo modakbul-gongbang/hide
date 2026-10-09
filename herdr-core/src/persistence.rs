@@ -83,7 +83,11 @@ struct StoredUiState {
     focused_checkout_id: Option<String>,
     #[serde(default)]
     workspace_registrations: Vec<WorkspaceRegistration>,
-    #[serde(default)]
+    /// Read one by one, so a registration this build cannot place (an SSH
+    /// alias and a node that dials in together, or neither, as only a hand
+    /// edit writes) is dropped with a diagnostic instead of making the whole
+    /// store unreadable.
+    #[serde(default, deserialize_with = "readable_device_registrations")]
     device_registrations: Vec<DeviceRegistration>,
     #[serde(default = "default_accent_hex")]
     accent_hex: String,
@@ -226,6 +230,29 @@ pub fn read_native_app_shortcuts(path: &Path) -> NativeAppShortcuts {
         Ok(fields) => NativeAppShortcuts::Found(fields.shortcut_bindings),
         Err(_) => NativeAppShortcuts::Unreadable,
     }
+}
+
+fn readable_device_registrations<'de, D>(
+    deserializer: D,
+) -> Result<Vec<DeviceRegistration>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let values = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(values
+        .into_iter()
+        .filter_map(|value| match serde_json::from_value(value) {
+            Ok(registration) => Some(registration),
+            Err(error) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "ui_state",
+                    "kind": "device_registration.unreadable",
+                    "reason": error.to_string(),
+                }));
+                None
+            }
+        })
+        .collect())
 }
 
 /// Terminal sizes are kept beside the UI state rather than inside it: they
@@ -476,6 +503,58 @@ mod tests {
         assert_eq!(
             RightPanelSection::parse("git"),
             Some(RightPanelSection::Overview)
+        );
+    }
+
+    /// A registration keeps the shape stores were written in: a dialed
+    /// device by its alias, a node that dials in by its flag. One that names
+    /// both or neither is dropped alone and the rest of the store loads.
+    #[test]
+    fn device_registrations_load_by_how_their_link_opens() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("state.json");
+        save(
+            &path,
+            &UiStateSnapshot::default(),
+            &PaneTerminalSizes::new(),
+        )
+        .unwrap();
+        let mut persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let dialed = serde_json::json!({"id": "studio", "label": "studio", "ssh_alias": "studio-host", "herdr_socket_path": null, "host_consent": null});
+        let inbound = serde_json::json!({"id": "laptop", "label": "MacBook", "ssh_alias": null, "herdr_socket_path": null, "host_consent": null, "inbound": true});
+        persisted["device_registrations"] = serde_json::json!([
+            dialed,
+            inbound,
+            {"id": "both", "label": "both", "ssh_alias": "both-host", "inbound": true},
+            {"id": "neither", "label": "neither"},
+        ]);
+        persisted["expanded_agent_pane_ids"] = serde_json::json!(["parent"]);
+        fs::write(&path, serde_json::to_vec(&persisted).unwrap()).unwrap();
+
+        let (state, _, disposition) = load(&path);
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert_eq!(state.expanded_agent_pane_ids, ["parent"]);
+        let origins: Vec<_> = state
+            .device_registrations
+            .iter()
+            .map(|registration| (registration.id.as_str(), registration.origin.clone()))
+            .collect();
+        assert_eq!(
+            origins,
+            [
+                (
+                    "studio",
+                    crate::model::LinkOrigin::Dialed {
+                        ssh_alias: "studio-host".to_owned()
+                    }
+                ),
+                ("laptop", crate::model::LinkOrigin::Inbound),
+            ]
+        );
+        assert_eq!(
+            serde_json::to_value(&state.device_registrations).unwrap(),
+            serde_json::json!([dialed, inbound])
         );
     }
 

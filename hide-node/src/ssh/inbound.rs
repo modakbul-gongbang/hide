@@ -5,18 +5,15 @@
 //! terminals and its Herdr, so the credentials it vouches for are bound to
 //! this link's identity exactly as a dialed device's are, and end with it.
 //!
-//! The core never dials such a node: [`InboundTransport::establish`] hands
-//! over the link that is already up, once; a link that ended is replaced
-//! only by the node dialing again. Its Herdr is reached through the link
+//! The core never dials such a node: [`establish`] hands it the link that is
+//! already up as an [`Arrived`]; a link that ended is replaced only by the
+//! node dialing again. Its Herdr is reached through the link
 //! (`link_streams`), never through a socket on this machine.
 
 use std::sync::{Arc, Mutex};
 
 use hide_node_link::call_as;
-use hide_node_link::device::{
-    CapabilityReport, DeviceTransport, EstablishError, Established, HostConsent, HostIdentity,
-    RemoteHostIdentity, RemoteStage, SnapshotCheck, Upload,
-};
+use hide_node_link::device::{Arrived, DeviceTransport, NodeReady, OnClose};
 use hide_node_link::protocol::{Call, Hello, PROTOCOL_VERSION};
 use serde_json::json;
 
@@ -45,7 +42,7 @@ struct CloseSlot {
 enum CloseState {
     #[default]
     Waiting,
-    Heard(Box<dyn FnOnce(String) + Send + 'static>),
+    Heard(OnClose),
     Ended(String),
     Told,
 }
@@ -63,7 +60,7 @@ impl CloseSlot {
         }
     }
 
-    fn hear(&self, on_close: Box<dyn FnOnce(String) + Send + 'static>) {
+    fn hear(&self, on_close: OnClose) {
         let mut state = lock_recover(&self.state);
         match std::mem::replace(&mut *state, CloseState::Told) {
             CloseState::Ended(reason) => {
@@ -76,36 +73,24 @@ impl CloseSlot {
     }
 }
 
-/// A node that dialed this core, as the core reaches it.
-pub struct InboundTransport {
+/// A node that dialed this core, as the core reaches it: its Herdr through
+/// the link. Dropping it closes the link.
+struct InboundTransport {
     link: RemoteHost,
-    node: InboundNode,
-    established: Mutex<Option<Established>>,
-    closed: Arc<CloseSlot>,
-}
-
-impl InboundTransport {
-    /// The link, for what the shell binds to its identity (the screen relay's
-    /// grant) and closes with it.
-    pub fn link(&self) -> &RemoteHost {
-        &self.link
-    }
-
-    pub fn node(&self) -> &InboundNode {
-        &self.node
-    }
 }
 
 /// Starts the link of `node` over `stream`: Hello, then its pane and
-/// terminal services for its own Herdr. Refused when the node speaks
-/// another protocol or its Hello names another machine than it claimed.
-/// Blocking; run it off the runtime lock.
+/// terminal services for its own Herdr. Answers the link, for what the shell
+/// binds to its identity (the screen relay's grant), and the node as the
+/// core takes it. Refused when the node speaks another protocol or its Hello
+/// names another machine than it claimed. Blocking; run it off the runtime
+/// lock.
 pub fn establish(
     node: InboundNode,
     stream: hide_platform::ipc::LocalStream,
     panes: Option<PaneHook>,
     terminals: Option<TerminalHook>,
-) -> Result<Arc<InboundTransport>, String> {
+) -> Result<(RemoteHost, Arrived), String> {
     let closed = Arc::new(CloseSlot::default());
     let on_close = {
         let closed = Arc::clone(&closed);
@@ -169,26 +154,16 @@ pub fn establish(
         "link": link.identity(),
         "terminals": terminals.is_ok(),
     }));
-    let established = Established {
-        host: Arc::new(link.clone()),
-        identity: HostIdentity {
-            user: String::new(),
-            hostname: node.label.clone(),
-            port: 0,
-            host_key_sha256: String::new(),
+    let arrived = Arrived {
+        transport: Arc::new(InboundTransport { link: link.clone() }),
+        node: NodeReady {
+            host: Arc::new(link.clone()),
+            hello,
+            terminals,
         },
-        hello,
-        installed: false,
-        helper_path: String::new(),
-        upload: Upload::default(),
-        terminals,
+        hear_close: Box::new(move |on_close| closed.hear(on_close)),
     };
-    Ok(Arc::new(InboundTransport {
-        link,
-        node,
-        established: Mutex::new(Some(established)),
-        closed,
-    }))
+    Ok((link, arrived))
 }
 
 impl DeviceTransport for InboundTransport {
@@ -198,64 +173,6 @@ impl DeviceTransport for InboundTransport {
 
     fn cached_herdr_version(&self) -> Option<String> {
         None
-    }
-
-    /// A node that dialed in has no connection of the core's to test; its
-    /// row reports its link as it is.
-    fn capability_test(&self, operation_id: &str, _check: SnapshotCheck<'_>) -> CapabilityReport {
-        let mut report = CapabilityReport::new(
-            operation_id,
-            RemoteHostIdentity {
-                host_id: format!("inbound:{}", self.node.node),
-                alias: String::new(),
-                hostname: self.node.label.clone(),
-                port: 0,
-            },
-        );
-        report.fail(
-            RemoteStage::Ssh,
-            "This machine connects to the core itself; it is tested from its own side",
-            false,
-            false,
-        );
-        report
-    }
-
-    fn establish(
-        &self,
-        _consent: &HostConsent,
-        _retirement_projects: &[String],
-        on_close: Box<dyn FnOnce(String) + Send + 'static>,
-    ) -> Result<Established, EstablishError> {
-        let established = lock_recover(&self.established).take();
-        match established {
-            Some(established) => {
-                self.closed.hear(on_close);
-                Ok(established)
-            }
-            None => Err(EstablishError::Helper(
-                "This machine connects to the core itself; it reconnects when it can reach the core"
-                    .to_owned(),
-            )),
-        }
-    }
-
-    /// Files reach a pane of this machine from its own screen (D-06); a
-    /// window on another machine does not stage them here.
-    fn stage_attachments(
-        &self,
-        _request_id: &str,
-        _files: &[hide_node_link::attachments::AttachmentFile],
-        _cancelled: &std::sync::atomic::AtomicBool,
-    ) -> Result<Vec<String>, String> {
-        Err("A file reaches a pane of this machine from a window on this machine only".to_owned())
-    }
-
-    fn remove_attachments(
-        &self,
-        _request_id: &str,
-        _files: &[hide_node_link::attachments::AttachmentFile],
-    ) {
     }
 
     fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
