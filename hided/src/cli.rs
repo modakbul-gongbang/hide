@@ -124,11 +124,10 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
                 let words: Vec<&str> = iter.map(String::as_str).collect();
                 match words.as_slice() {
                     ["--session", session, "--runtime", runtime]
-                        if !session.is_empty() && session.len() <= 256
-                            && !session.chars().any(char::is_control)
+                        if herdr_core::delivery::valid_session(session)
                             && hide_agent_adapter::direct_ask_kind(runtime).is_some() =>
                         Ok(CommandKind::FactoryQuestionGuard { session: (*session).to_owned(), runtime: (*runtime).to_owned() }),
-                    _ => Err("usage: hide workspace factory-question-guard --session <id> --runtime <claude-code|codex|opencode>".into()),
+                    _ => Err("usage: hide workspace factory-question-guard --session <id> --runtime <claude-code|codex|opencode|omp>".into()),
                 }
             }
             Some("bootstrap") if iter.next().is_none() => Ok(CommandKind::WorkspaceBootstrap),
@@ -1024,15 +1023,21 @@ fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
 
 /// Moves the legacy default state folder into place before anything looks
 /// for a daemon (PRD hide-home-layout D-05). The daemon running from it is
-/// the one that answers its own `/health` as the pid its state names, the
-/// same rule that keeps a reused pid from ever being signalled.
+/// the process its state names, proven to be that daemon ([`proven_daemon`]),
+/// so a reused pid is never signalled.
 #[cfg(unix)]
 fn move_legacy_state(env: &Env) -> Result<(), String> {
     let Some(legacy) = env.legacy_state_dir.as_deref() else {
         return Ok(());
     };
     let moved = crate::state_move::move_legacy(legacy, &env.state_dir, |legacy| {
-        let Some((state, _)) = healthy_daemon_in(legacy) else {
+        let Some(state) = state_file::read_state(legacy)
+            .ok()
+            .flatten()
+            .and_then(|state| {
+                proven_daemon(state, |state| health_of(state, HEALTH_REQUEST).is_ok())
+            })
+        else {
             return Ok(None);
         };
         stop_daemon(legacy, &state)?;
@@ -1051,6 +1056,22 @@ fn move_legacy_state(env: &Env) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// `state` when its pid is still the daemon that recorded it. A state that
+/// recorded its daemon's process start is proven by the kernel's answer
+/// alone, so a daemon too busy to answer is still found; one an earlier
+/// build wrote without a start (before v0.3.0) is judged by liveness only,
+/// which a reused pid passes, so it is proven only when the daemon answers
+/// as itself (`answers`), and an answer that does not come leaves it
+/// unproven.
+#[cfg(unix)]
+fn proven_daemon(
+    state: DaemonState,
+    answers: impl FnOnce(&DaemonState) -> bool,
+) -> Option<DaemonState> {
+    let proven = still_the_daemon(&state) && (state.pid_started.is_some() || answers(&state));
+    proven.then_some(state)
 }
 
 fn open(env: &Env) -> Result<(), String> {
@@ -1422,6 +1443,13 @@ fn probe_daemon(
             state.pid
         ));
     }
+    let health = health_of(&state, timeout)?;
+    Ok((state, health))
+}
+
+/// The `/health` of the daemon `state` names, asked within `timeout`; an
+/// answer for another pid is a failure.
+fn health_of(state: &DaemonState, timeout: Duration) -> Result<serde_json::Value, String> {
     let health = health_json(state.port, timeout)
         .map_err(|error| format!("/health on port {}: {error}", state.port))?;
     let answered = health.get("pid").and_then(serde_json::Value::as_u64);
@@ -1431,7 +1459,7 @@ fn probe_daemon(
             state.port, state.pid
         ));
     }
-    Ok((state, health))
+    Ok(health)
 }
 
 /// The daemon's `/health`, asked in process: a forked `curl` exists only
@@ -1518,6 +1546,25 @@ mod tests {
         assert!(still_the_daemon(&recorded(stranger.id(), Some(real_start))));
         let _ = stranger.kill();
         let _ = stranger.wait();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_legacy_daemon_that_recorded_its_start_is_proven_without_an_answer() {
+        let me = std::process::id();
+        let start = process::start_time(me).unwrap();
+        let unasked = |_: &DaemonState| -> bool { panic!("a recorded start needs no answer") };
+        assert!(
+            proven_daemon(recorded(me, Some(start)), unasked).is_some(),
+            "a daemon too busy to answer /health is still the daemon its start names"
+        );
+        assert!(
+            proven_daemon(recorded(me, Some(start.wrapping_add(1))), unasked).is_none(),
+            "a pid another process reused is not the daemon"
+        );
+        // A state from before v0.3.0 recorded no start: only an answer proves it.
+        assert!(proven_daemon(recorded(me, None), |_| true).is_some());
+        assert!(proven_daemon(recorded(me, None), |_| false).is_none());
     }
 
     #[test]
@@ -1624,7 +1671,7 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         };
-        for runtime in ["claude-code", "codex", "opencode"] {
+        for runtime in ["claude-code", "codex", "opencode", "omp"] {
             assert_eq!(
                 parse(&[
                     "hide",

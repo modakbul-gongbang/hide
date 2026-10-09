@@ -47,10 +47,16 @@ impl NodeLink for Node {
     }
 }
 
-fn agent_row(session: bool) -> Value {
+fn agent_row(session: bool, shows: bool) -> Value {
     let mut row = json!({"pane_id": "w2:p1", "workspace_id": "w2", "tab_id": "w2:t1",
         "terminal_id": "device-terminal", "revision": 1, "focused": false,
         "agent_status": "idle", "agent": "codex", "name": "worker"});
+    if !shows {
+        // Herdr holds the name for the start, and no agent ever showed.
+        row.as_object_mut().unwrap().remove("agent");
+        row["launch_pending"] = json!(true);
+        return row;
+    }
     if session {
         row["agent_session"] = json!({"source": "herdr:codex", "agent": "codex",
             "kind": "id", "value": "device-child-session"});
@@ -59,8 +65,12 @@ fn agent_row(session: bool) -> Value {
 }
 
 /// The device's Herdr: no worktree yet, one created on request, an agent that
-/// exists once it is started.
-fn device_herdr(started: Arc<AtomicBool>, identified: Arc<AtomicBool>) -> FakeHerdr {
+/// exists once it is started, unless `shows` is false.
+fn device_herdr(
+    started: Arc<AtomicBool>,
+    identified: Arc<AtomicBool>,
+    shows: Arc<AtomicBool>,
+) -> FakeHerdr {
     FakeHerdr::start("remote-spawn", move |method, _| match method {
         "worktree.list" => json!({"type": "worktree_list", "source": {
             "repo_key": "/srv/repo/.git", "repo_name": "repo",
@@ -84,10 +94,10 @@ fn device_herdr(started: Arc<AtomicBool>, identified: Arc<AtomicBool>) -> FakeHe
             "foreground_processes": [{"pid": 4100, "name": "zsh"}]}}),
         "agent.start" => {
             started.store(true, Ordering::SeqCst);
-            json!({"type": "agent_started", "argv": [], "agent": agent_row(false)})
+            json!({"type": "agent_started", "argv": [], "agent": agent_row(false, true)})
         }
         "agent.list" => json!({"type": "agent_list", "agents": if started.load(Ordering::SeqCst) {
-            vec![agent_row(identified.load(Ordering::SeqCst))]
+            vec![agent_row(identified.load(Ordering::SeqCst), shows.load(Ordering::SeqCst))]
         } else {
             Vec::new()
         }}),
@@ -104,6 +114,8 @@ struct Spawner {
     node: Arc<Node>,
     /// Whether the device's agent has reported its native session yet.
     identified: Arc<AtomicBool>,
+    /// Whether the device's agent shows at all once its start is typed.
+    shows: Arc<AtomicBool>,
     herdr: FakeHerdr,
     path: PathBuf,
     _worker: Worker,
@@ -132,7 +144,8 @@ fn spawner() -> Spawner {
         .observe_delivery(crate::node::TEST_NODE, &payload, None, None);
     let started = Arc::new(AtomicBool::new(false));
     let identified = Arc::new(AtomicBool::new(true));
-    let herdr = device_herdr(started, identified.clone());
+    let shows = Arc::new(AtomicBool::new(true));
+    let herdr = device_herdr(started, identified.clone(), shows.clone());
     let node = Arc::new(Node {
         repository: AtomicBool::new(true),
         installed: AtomicBool::new(true),
@@ -233,6 +246,7 @@ fn spawner() -> Spawner {
         actor,
         node,
         identified,
+        shows,
         herdr,
         path,
         _worker: worker,
@@ -444,6 +458,27 @@ fn a_spawn_that_stopped_after_its_pane_resumes_without_the_device_checks() {
         spawner.ledger().spawns[0].child.as_deref(),
         answer["id"].as_str()
     );
+}
+
+/// A start Herdr typed whose agent never showed leaves the name held in
+/// the pane with the shell back at its prompt. Asking the same intent again
+/// answers that the agent did not start, and types nothing again: a retry is
+/// a new intent, whose spawn closes this pane.
+#[test]
+fn the_same_intent_after_a_start_that_never_showed_its_agent_types_nothing_again() {
+    let spawner = spawner();
+    spawner.shows.store(false, Ordering::SeqCst);
+    let error = spawner
+        .spawn(Some("here"), Some(DEVICE), "unseen")
+        .expect_err("the agent never showed");
+    assert_eq!(error, "native_identity_unavailable");
+    let error = spawner
+        .spawn(Some("here"), Some(DEVICE), "unseen")
+        .expect_err("the same intent does not start again");
+    assert_eq!(error, "agent_not_started");
+    let methods = spawner.herdr.methods();
+    assert_eq!(count(&methods, "agent.start"), 1, "{methods:?}");
+    assert_eq!(count(&methods, "worktree.create"), 1, "{methods:?}");
 }
 
 fn count(methods: &[String], name: &str) -> usize {

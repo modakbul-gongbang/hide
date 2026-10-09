@@ -269,6 +269,18 @@ pub(crate) fn pi_line(item: &Value, offset: u64, links: &mut LinkAccumulator) {
     }
 }
 
+/// Grok keeps its owner and cwd in `summary.json`, which the link reader
+/// proves beside the file; a record says only when the session was active.
+pub(crate) fn grok_line(item: &Value, _offset: u64, links: &mut LinkAccumulator) {
+    let at = item
+        .pointer("/params/_meta/agentTimestampMs")
+        .and_then(Value::as_u64)
+        .map_or_else(|| crate::timestamp_ms(item.get("timestamp")), Ok);
+    if let Ok(at) = at {
+        links.activity(at);
+    }
+}
+
 /// Codex: what one record says about links.
 pub(crate) fn codex_line(item: &Value, _offset: u64, links: &mut LinkAccumulator) {
     links.sidechain_line = links.facts.subagent;
@@ -404,11 +416,16 @@ pub fn candidates(
         &mut visited,
     )?;
     opencode_candidates(home, window, &mut found)?;
-    if let Ok(pi_root) = crate::pi::root(home) {
+    for agent in [crate::Agent::Pi, crate::Agent::Omp] {
+        if let Ok(root) = crate::native_file::root(home, agent) {
+            walk(&root, agent, 1, window, &mut found, &mut visited)?;
+        }
+    }
+    if let Ok(root) = crate::native_file::root(home, crate::Agent::Grok) {
         walk(
-            &pi_root,
-            crate::Agent::Pi,
-            1,
+            &root,
+            crate::Agent::Grok,
+            2,
             window,
             &mut found,
             &mut visited,
@@ -467,6 +484,7 @@ fn walk(
             || path
                 .extension()
                 .is_none_or(|extension| extension != "jsonl")
+            || (agent == crate::Agent::Grok && crate::grok::group_of(&path).is_none())
         {
             continue;
         }
@@ -594,8 +612,8 @@ fn read_one(home: &std::path::Path, request: &ReadRequest) -> ReadAnswer {
         crate::ConversationCursor::new,
         crate::ConversationCursor::restore,
     );
-    let pi_before = if request.agent == crate::Agent::Pi {
-        match crate::pi::header(&path).and_then(|header| {
+    let pi_before = if request.agent.requires_native_file_proof() {
+        match crate::native_file::header(request.agent, &path).and_then(|header| {
             crate::confirm_session_file(
                 home,
                 request.agent,

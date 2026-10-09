@@ -312,6 +312,21 @@ fn shown(worker: &LabelWorker, agent: &ObservedAgent) -> Option<AgentLabel> {
     payload.agents.remove(0).label
 }
 
+fn shown_facts(
+    worker: &LabelWorker,
+    agent: &ObservedAgent,
+) -> Option<crate::request_view::RowFacts> {
+    let (kind, value) = agent.reference.clone().unwrap();
+    let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents": [{
+        "pane_id": agent.pane_id, "agent": agent.agent, "agent_status": agent.status,
+        "state_change_seq": agent.state_change_seq,
+        "agent_session": {"kind": kind, "value": value},
+    }]}))
+    .unwrap();
+    worker.overlay().apply(&mut payload);
+    payload.agents.remove(0).facts
+}
+
 fn task(label: Option<AgentLabel>) -> Option<String> {
     label.and_then(|label| label.task)
 }
@@ -984,6 +999,8 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
             std::sync::Arc::new(hide_node::Local::of_process()),
             None,
             crate::node::test_devices(),
+            crate::node::test_terminals().0,
+            crate::node::test_terminals().1,
         )
         .is_none(),
         "a relative home names no account folder"
@@ -993,6 +1010,8 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
         std::sync::Arc::new(hide_node::Local::new(Some(home.path().to_path_buf()))),
         None,
         crate::node::test_devices(),
+        crate::node::test_terminals().0,
+        crate::node::test_terminals().1,
     )
     .expect("a core starts");
     drop(core);
@@ -1490,26 +1509,172 @@ fn waits(worker: &LabelWorker, agent: &ObservedAgent) -> (Option<Waiting>, Optio
 }
 
 #[test]
-fn a_failed_pi_reread_revokes_same_reference_authority_until_a_fresh_native_proof() {
+fn an_omp_title_and_question_refresh_without_state_changes_or_repeated_analysis() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let cwd = hide_platform::fs::identity::canonical(harness.home.path()).unwrap();
+    let folder = crate::fixture::native_session_folder(harness.home.path(), "omp", &cwd);
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("native.jsonl");
+    let slot = |title: &str, source: &str| {
+        let mut value = json!({"type":"title", "v":1, "title":title, "source":source,
+            "updatedAt":"2026-10-03T01:00:00Z", "pad":""});
+        let padding = 255 - value.to_string().len();
+        value["pad"] = Value::String(" ".repeat(padding));
+        format!("{value}\n")
+    };
+    let original = format!(
+        "{}{}\n{}\n{}\n",
+        slot("First title", "auto"),
+        json!({"type":"session", "version":3, "id":"native-omp", "cwd":cwd}),
+        json!({"type":"message", "timestamp":"2026-10-03T01:00:00Z",
+            "message":{"role":"user", "content":"Review the native title"}}),
+        json!({"type":"message", "timestamp":"2026-10-03T01:00:00.100Z",
+            "message":{"role":"assistant", "content":[{"type":"text","text":"Reviewed"}], "stopReason":"stop"}})
+    );
+    std::fs::write(&path, &original).unwrap();
+    let current = ObservedAgent {
+        agent: Some("omp".into()),
+        cwd: Some(cwd.display().to_string()),
+        ..agent(&path, "idle", 1)
+    };
+    observe(&mut worker, &current);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        shown_facts(&worker, &current)
+            .unwrap()
+            .native_title
+            .as_deref(),
+        Some("First title")
+    );
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+    worker.tick(Instant::now() + Duration::from_secs(1));
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1, "no per-tick reread");
+
+    use std::io::Write;
+    for (title, source_kind, expected) in [
+        ("Fresh title", "user", Some("Fresh title")),
+        ("", "auto", None),
+    ] {
+        let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.write_all(slot(title, source_kind).as_bytes()).unwrap();
+        drop(file);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            original.len() as u64
+        );
+        worker.tick(Instant::now() + Duration::from_secs(4));
+        settle(&mut worker, &woken);
+        assert_eq!(
+            shown_facts(&worker, &current)
+                .unwrap()
+                .native_title
+                .as_deref(),
+            expected
+        );
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    writeln!(file, "{}", json!({"type":"message", "timestamp":"2026-10-03T01:00:01Z", "message":{
+        "role":"assistant", "content":[{"type":"toolCall", "id":"ask-a", "name":"ask",
+            "arguments":{"questions":[{"id":"q", "question":"어느 쪽인가요?", "options":[{"label":"첫째"},{"label":"둘째"}]}]}}]
+    }})).unwrap();
+    worker.tick(Instant::now() + Duration::from_secs(4));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        shown_facts(&worker, &current)
+            .unwrap()
+            .user_turn
+            .unwrap()
+            .content
+            .unwrap()
+            .text(),
+        "어느 쪽인가요?"
+    );
+    writeln!(file, "{}", json!({"type":"message", "timestamp":"2026-10-03T01:00:02Z", "message":{
+        "role":"toolResult", "toolCallId":"ask-a", "isError":true, "content":[{"type":"text", "text":"Answered"}]
+    }})).unwrap();
+    drop(file);
+    worker.tick(Instant::now() + Duration::from_secs(4));
+    settle(&mut worker, &woken);
+    assert!(shown_facts(&worker, &current).unwrap().user_turn.is_none());
+
+    std::fs::remove_file(&path).unwrap();
+    worker.tick(Instant::now() + Duration::from_secs(4));
+    settle(&mut worker, &woken);
+    assert!(
+        shown_facts(&worker, &current).is_none(),
+        "removed source retained authority"
+    );
+    std::fs::write(&path, original).unwrap();
+    worker.tick(Instant::now() + Duration::from_secs(16));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        shown_facts(&worker, &current)
+            .unwrap()
+            .native_title
+            .as_deref(),
+        Some("First title")
+    );
+    assert_eq!(harness.backend.calls(), 0);
+    harness.backend.answer("Native title review", "done", "");
+    worker.set_summaries(true, Instant::now());
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 1);
+    let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+    file.write_all(slot("Fresh title", "user").as_bytes())
+        .unwrap();
+    drop(file);
+    worker.tick(Instant::now() + Duration::from_secs(4));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        shown_facts(&worker, &current)
+            .unwrap()
+            .native_title
+            .as_deref(),
+        Some("Fresh title")
+    );
+    worker.tick(Instant::now() + Duration::from_secs(4));
+    settle(&mut worker, &woken);
+    assert_eq!(
+        harness.backend.calls(),
+        1,
+        "metadata rereads repeated the same analysis"
+    );
+}
+
+#[test]
+fn a_failed_native_reread_revokes_same_reference_authority_until_a_fresh_native_proof() {
+    for kind in ["pi", "omp"] {
+        failed_native_reread(kind);
+    }
+}
+
+fn failed_native_reread(kind: &str) {
     let harness = Harness::new();
     let (mut worker, woken, _) = harness.worker(harness.store());
     worker.set_summaries(false, Instant::now());
     let cwd = hide_platform::fs::identity::canonical(harness.home.path()).unwrap();
-    let folder = harness.home.path().join(".pi/agent/sessions").join(format!(
-        "--{}--",
-        cwd.to_string_lossy()
-            .trim_start_matches(['/', '\\'])
-            .replace(['/', '\\', ':'], "-")
-    ));
+    let folder = crate::fixture::native_session_folder(harness.home.path(), kind, &cwd);
     std::fs::create_dir_all(&folder).unwrap();
     let path = folder.join("native.jsonl");
-    let original = format!(
+    let mut original = format!(
         "{}\n{}\n",
-        json!({"type":"session", "version":3, "id":"native-pi", "cwd":cwd}),
+        json!({"type":"session", "version":3, "id":"native-pi", "cwd":cwd,
+            "title":"Native title", "titleSource":"user"}),
         json!({"type":"session_info", "name":"Native Pi title"})
     );
+    if kind == "omp" {
+        original.push_str(&format!("{}\n", json!({"type":"message", "message":{
+            "role":"assistant", "content":[{"type":"toolCall", "id":"ask-a", "name":"ask",
+                "arguments":{"questions":[{"id":"q", "question":"어느 쪽인가요?", "options":[{"label":"첫째"},{"label":"둘째"}]}]}}]
+        }})));
+    }
     let mut current = ObservedAgent {
-        agent: Some("pi".into()),
+        agent: Some(kind.into()),
         cwd: Some(cwd.display().to_string()),
         ..agent(&path, "idle", 1)
     };
@@ -1536,6 +1701,11 @@ fn a_failed_pi_reread_revokes_same_reference_authority_until_a_fresh_native_proo
                 .as_deref(),
             Some("native-pi")
         );
+        if kind == "omp" {
+            let fact = facts(&worker, &current).unwrap().user_turn.unwrap();
+            assert_eq!(fact.kind, hide_session::turns::UserTurnKind::Question);
+            assert_eq!(fact.content.unwrap().text(), "어느 쪽인가요?");
+        }
         let alias = folder.join("alias.jsonl");
         match failure {
             "missing" => std::fs::remove_file(&path).unwrap(),

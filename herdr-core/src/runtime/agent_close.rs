@@ -147,6 +147,8 @@ impl Runtime {
         }
         let request = self.close_operations[key].request.clone();
         self.panes_closing.extend(operation.pane_ids);
+        // The node refuses keys for a closing pane from now on.
+        self.sync_terminal_intents();
         if let Err(message) = live::spawn_close_capture(context, request) {
             self.fail_close_operation(key, message);
         }

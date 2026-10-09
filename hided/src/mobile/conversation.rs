@@ -54,6 +54,39 @@ pub struct Message {
     pub text: String,
     pub truncated: bool,
     pub at_ms: u64,
+    /// The native message this record is a part of (Grok writes a prompt's
+    /// blocks and an answer's text runs as separate records).
+    #[serde(skip)]
+    part: Option<String>,
+}
+
+impl Message {
+    fn continued_by(&self, next: &Self) -> bool {
+        self.part.is_some() && self.part == next.part && self.who == next.who
+    }
+}
+
+/// Join consecutive records of one native message into the first one.
+fn join(messages: Vec<Message>) -> Vec<Message> {
+    let mut joined: Vec<Message> = Vec::with_capacity(messages.len());
+    for message in messages {
+        match joined.last_mut() {
+            Some(last) if last.continued_by(&message) => {
+                if !last.truncated {
+                    last.text
+                        .push_str(if last.who == "agent" { "\n\n" } else { "\n" });
+                    last.text.push_str(&message.text);
+                    if let Some((cut, _)) = last.text.char_indices().nth(MESSAGE_CHARS) {
+                        last.text.truncate(cut);
+                        last.truncated = true;
+                    }
+                    last.truncated |= message.truncated;
+                }
+            }
+            _ => joined.push(message),
+        }
+    }
+    joined
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -119,9 +152,11 @@ pub struct Transcript {
     /// The file's length at the last read, so an idle poll reads nothing.
     length: u64,
     proof: Option<NativeProof>,
+    /// The newest message the phone holds, which an append may continue.
+    newest: Option<Message>,
 }
 
-/// The phone retains no native authority beyond its source. Every Pi page,
+/// The phone retains no native authority beyond its source. Every native page,
 /// poll (including idle) and cloned pager proves that same source again.
 #[derive(Clone, Debug)]
 struct NativeProof {
@@ -152,7 +187,7 @@ impl NativeProof {
     }
 
     fn new(home: &Path, source: &Source, path: &Path) -> Result<Option<Self>, SessionError> {
-        if source.agent != Agent::Pi {
+        if !source.agent.requires_native_file_proof() {
             return Ok(None);
         }
         let confirmed = Self::confirm(home, source, path)?;
@@ -225,6 +260,7 @@ impl Transcript {
                 end,
                 length,
                 proof,
+                newest: page.messages.last().cloned(),
             },
             page,
         ))
@@ -291,11 +327,22 @@ impl Transcript {
             }
             end = Some(chunk.start_offset);
         }
+        let messages = join(messages);
+        // A record that continues the message the phone already holds
+        // changes that message: read the newest page anew.
+        if let (Some(newest), Some(first)) = (&self.newest, messages.first())
+            && newest.continued_by(first)
+        {
+            return Ok(Tail::Reset);
+        }
         if let Some(proof) = proof {
             self.proof = Some(proof.require_same(&self.path)?);
         }
         self.length = length;
         self.end = newest_end.unwrap_or(self.end);
+        if let Some(last) = messages.last() {
+            self.newest = Some(last.clone());
+        }
         Ok(Tail::Messages(messages))
     }
 }
@@ -341,7 +388,7 @@ fn page_before(path: &Path, agent: Agent, end: Option<u64>) -> Result<(Page, u64
         read += chunk.end_offset - chunk.start_offset;
         let mut found = messages_in(agent, &chunk.contents, chunk.start_offset);
         found.append(&mut messages);
-        messages = found;
+        messages = join(found);
         if let Some(keep) = page_start(&messages) {
             messages.drain(..keep);
             break messages.first().map(|message| message.id);
@@ -403,6 +450,7 @@ fn messages_in(agent: Agent, contents: &str, start_offset: u64) -> Vec<Message> 
                 text,
                 truncated,
                 at_ms: event.at_unix_ms,
+                part: event.part().map(str::to_owned),
             })
         })
         .collect()
@@ -527,6 +575,7 @@ mod tests {
             end,
             length,
             proof: None,
+            newest: None,
         };
         assert_eq!(open.poll().unwrap(), Tail::Messages(Vec::new()));
         let mut file = std::fs::OpenOptions::new()
@@ -561,19 +610,38 @@ mod tests {
         assert_eq!(page.messages[0].text.chars().count(), MESSAGE_CHARS);
     }
 
-    fn pi_transcript() -> (tempfile::TempDir, PathBuf, Source) {
+    fn native_transcript(agent: Agent) -> (tempfile::TempDir, PathBuf, Source) {
         let home = tempfile::tempdir().unwrap();
         let cwd = home.path().join("checkout");
         std::fs::create_dir(&cwd).unwrap();
         let cwd = std::fs::canonicalize(cwd).unwrap();
-        let encoded = cwd
-            .to_string_lossy()
-            .trim_start_matches(['/', '\\'])
-            .replace(['/', '\\', ':'], "-");
+        let (root, bucket) = match agent {
+            Agent::Pi => (
+                ".pi/agent/sessions",
+                format!(
+                    "--{}--",
+                    cwd.to_string_lossy()
+                        .trim_start_matches(['/', '\\'])
+                        .replace(['/', '\\', ':'], "-")
+                ),
+            ),
+            Agent::Omp => {
+                let temporary = std::env::temp_dir().canonicalize().unwrap();
+                let relative = cwd.strip_prefix(temporary).unwrap();
+                (
+                    ".omp/agent/sessions",
+                    format!(
+                        "-tmp-{}",
+                        relative.to_string_lossy().replace(['/', '\\', ':'], "-")
+                    ),
+                )
+            }
+            _ => unreachable!("native-file fixture"),
+        };
         let path = home
             .path()
-            .join(".pi/agent/sessions")
-            .join(format!("--{encoded}--"))
+            .join(root)
+            .join(bucket)
             .join("timestamp_native-phone.jsonl");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut file = std::fs::File::create(&path).unwrap();
@@ -582,16 +650,132 @@ mod tests {
             writeln!(file, "{}", serde_json::json!({"type":"message","id":format!("entry-{index}"),"parentId":null,"timestamp":"2026-10-03T01:00:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hidden"},{"type":"text","text":format!("답변 {index}")}],"stopReason":"stop"}})).unwrap();
         }
         let source = Source {
-            agent: Agent::Pi,
+            agent,
             identity: SessionIdentity::path(&path),
             cwd: Some(cwd.display().to_string()),
         };
         (home, path, source)
     }
 
+    /// Grok's session folder, its id-owning summary and `records` as its
+    /// conversation, each `(kind, prompt or turn, text)`.
+    fn grok_transcript(records: &[(&str, &str, &str)]) -> (tempfile::TempDir, PathBuf, Source) {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().join("checkout");
+        std::fs::create_dir(&cwd).unwrap();
+        let cwd = std::fs::canonicalize(cwd).unwrap();
+        let group: String = cwd
+            .to_str()
+            .unwrap()
+            .bytes()
+            .map(|byte| {
+                if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+                    (byte as char).to_string()
+                } else {
+                    format!("%{byte:02X}")
+                }
+            })
+            .collect();
+        let id = "0199b000-0000-7000-8000-0000000000aa";
+        let folder = home.path().join(".grok/sessions").join(group).join(id);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("summary.json"),
+            serde_json::json!({"info":{"id":id,"cwd":cwd},"session_summary":"","created_at":"2026-10-03T01:00:00Z",
+                "updated_at":"2026-10-03T01:00:00Z","num_messages":0,"current_model_id":"grok-build"})
+            .to_string(),
+        )
+        .unwrap();
+        let path = folder.join("updates.jsonl");
+        std::fs::File::create(&path).unwrap();
+        grok_append(&path, records);
+        let source = Source {
+            agent: Agent::Grok,
+            identity: SessionIdentity::id(id),
+            cwd: Some(cwd.display().to_string()),
+        };
+        (home, path, source)
+    }
+
+    fn grok_append(path: &Path, records: &[(&str, &str, &str)]) {
+        let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        for (kind, part, text) in records {
+            let (update, meta) = match *kind {
+                "user" => (
+                    serde_json::json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":text},
+                        "_meta":{"promptIndex":part.parse::<u64>().unwrap()}}),
+                    serde_json::json!({"agentTimestampMs":1_790_989_200_000_u64}),
+                ),
+                "agent" => (
+                    serde_json::json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":text}}),
+                    serde_json::json!({"agentTimestampMs":1_790_989_200_000_u64,"promptId":part}),
+                ),
+                _ => (
+                    serde_json::json!({"sessionUpdate":"tool_call_update","toolCallId":text,"status":"completed",
+                        "content":[{"type":"content","content":{"type":"text","text":"hidden tool output"}}]}),
+                    serde_json::json!({"agentTimestampMs":1_790_989_200_000_u64,"promptId":part}),
+                ),
+            };
+            writeln!(
+                file,
+                "{}",
+                serde_json::json!({"timestamp":1_790_989_200_u64,"method":"session/update",
+                "params":{"sessionId":"x","update":update,"_meta":meta}})
+            )
+            .unwrap();
+        }
+    }
+
     #[test]
-    fn pi_phone_pages_native_message_units_and_only_appends_new_messages() {
-        let (home, path, source) = pi_transcript();
+    fn grok_phone_shows_a_turns_answer_runs_as_one_message_and_resets_on_a_continuation() {
+        let mut records = Vec::new();
+        let prompts: Vec<String> = (0..40).map(|index| index.to_string()).collect();
+        let turns: Vec<String> = (0..40).map(|index| format!("p-{index}")).collect();
+        let answers: Vec<String> = (0..40).map(|index| format!("답변 {index}")).collect();
+        for index in 0..40 {
+            records.push(("user", prompts[index].as_str(), "요청"));
+            records.push(("agent", turns[index].as_str(), answers[index].as_str()));
+            records.push(("tool", turns[index].as_str(), "call"));
+            records.push(("agent", turns[index].as_str(), "이어서"));
+        }
+        let (home, path, source) = grok_transcript(&records);
+        let (mut transcript, page) = Transcript::open(home.path(), "pane", source).unwrap();
+        assert_eq!(page.messages.len(), PAGE_MESSAGES);
+        assert_eq!(texts(&page.messages).last(), Some(&"답변 39\n\n이어서"));
+        assert_eq!(texts(&page.messages)[page.messages.len() - 2], "요청");
+        let older = transcript.pager().before(page.before.unwrap()).unwrap();
+        assert!(texts(&older.messages).contains(&"답변 10\n\n이어서"));
+
+        grok_append(
+            &path,
+            &[("user", "40", "새 요청"), ("agent", "p-40", "새 답")],
+        );
+        let Tail::Messages(appended) = transcript.poll().unwrap() else {
+            panic!("a new turn is appended");
+        };
+        assert_eq!(texts(&appended), ["새 요청", "새 답"]);
+        grok_append(
+            &path,
+            &[("tool", "p-40", "call-2"), ("agent", "p-40", "마저")],
+        );
+        assert_eq!(
+            transcript.poll().unwrap(),
+            Tail::Reset,
+            "the held answer grew, so the phone takes the page anew"
+        );
+        let (_, page) = Transcript::open(home.path(), "pane", transcript.source().clone()).unwrap();
+        assert_eq!(texts(&page.messages).last(), Some(&"새 답\n\n마저"));
+    }
+
+    #[test]
+    fn native_phone_pages_native_message_units_and_only_appends_new_messages() {
+        for agent in [Agent::Pi, Agent::Omp] {
+            native_phone_pages(agent);
+        }
+    }
+
+    fn native_phone_pages(agent: Agent) {
+        let (home, path, source) = native_transcript(agent);
         let (mut transcript, page) = Transcript::open(home.path(), "pane", source).unwrap();
         assert_eq!(texts(&page.messages).first(), Some(&"답변 40"));
         assert_eq!(texts(&page.messages).last(), Some(&"답변 69"));
@@ -614,8 +798,14 @@ mod tests {
     }
 
     #[test]
-    fn pi_idle_poll_and_cloned_pager_reject_rebound_native_owner() {
-        let (home, path, source) = pi_transcript();
+    fn native_idle_poll_and_cloned_pager_reject_rebound_native_owner() {
+        for agent in [Agent::Pi, Agent::Omp] {
+            native_rebound_phone(agent);
+        }
+    }
+
+    fn native_rebound_phone(agent: Agent) {
+        let (home, path, source) = native_transcript(agent);
         let (mut transcript, page) = Transcript::open(home.path(), "pane", source).unwrap();
         let pager = transcript.pager();
         let original = std::fs::read_to_string(&path).unwrap();
@@ -630,8 +820,14 @@ mod tests {
     }
 
     #[test]
-    fn pi_same_owner_same_length_edit_resets_phone_and_invalidates_old_pager() {
-        let (home, path, source) = pi_transcript();
+    fn native_same_owner_same_length_edit_resets_phone_and_invalidates_old_pager() {
+        for agent in [Agent::Pi, Agent::Omp] {
+            native_rewritten_phone(agent);
+        }
+    }
+
+    fn native_rewritten_phone(agent: Agent) {
+        let (home, path, source) = native_transcript(agent);
         let (mut transcript, page) = Transcript::open(home.path(), "pane", source).unwrap();
         let pager = transcript.pager();
         let original = std::fs::read_to_string(&path).unwrap();

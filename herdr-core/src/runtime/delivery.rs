@@ -301,9 +301,17 @@ impl Runtime {
     /// own session, a phone reply, or the pane entering work proves the
     /// composer was sent.
     pub(crate) fn note_delivery_key(&mut self, pane_id: &str) {
+        self.note_delivery_key_at(pane_id, unix_milliseconds());
+    }
+
+    /// [`Runtime::note_delivery_key`] for a key its node saw typed at
+    /// `at_unix_ms`: the node reports a burst's keys once, with the time of
+    /// its last, so the quiet period counts from that key (PRD
+    /// core-host-node-terminal D-13, B7).
+    pub(crate) fn note_delivery_key_at(&mut self, pane_id: &str, at_unix_ms: u64) {
         self.reopen_resolved_session(pane_id);
         if let Some(observation) = self.delivery_observations.get_mut(pane_id) {
-            observation.last_input_at_unix_ms = unix_milliseconds();
+            observation.last_input_at_unix_ms = observation.last_input_at_unix_ms.max(at_unix_ms);
         }
     }
 
@@ -385,7 +393,7 @@ impl Runtime {
             ..
         } = &command
         {
-            if !crate::delivery::valid_key(session) {
+            if !crate::delivery::valid_session(session) {
                 return Err("session_invalid".into());
             }
             if crate::wire::session_digest(session) == actor.session {
@@ -819,12 +827,20 @@ impl Runtime {
                     .ok_or("machine_identity_unavailable")?,
             )
         };
+        let node = if on_node {
+            Some(self.own_node())
+        } else {
+            self.ready_device_channels()
+                .into_iter()
+                .find_map(|(ready, node)| (ready == device).then_some(node))
+        };
         Ok(CoordinationContext {
             connector,
             host_scope: scope,
             machine,
             codex: self.codex_daemon(device),
             on_node,
+            node,
         })
     }
 }
@@ -883,6 +899,10 @@ pub(crate) struct CoordinationContext {
     pub(crate) codex: crate::codex_launch::CodexDaemon,
     /// The machine is the core's own node, whose Herdr the core reaches directly.
     pub(crate) on_node: bool,
+    /// The machine's node, which a start with a long line asks whether the
+    /// pane's shell is reading; none for a device whose helper is not
+    /// connected now, since a spawn starts no helper.
+    pub(crate) node: Option<Arc<dyn crate::node_access::NodeLink>>,
 }
 
 #[cfg(test)]
@@ -892,6 +912,7 @@ pub(crate) mod tests {
     use crate::handle::ChangeNotifier;
     use crate::model::{CoreOptions, SCHEMA_VERSION};
     use crate::sidebar::SessionSnapshotPayload;
+    use hide_node_link::terminal::TerminalReport;
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
@@ -1125,21 +1146,12 @@ pub(crate) mod tests {
         let observation = observation.clone();
         runtime.live = Some(crate::live::LiveContext {
             socket_path: herdr.socket_path().to_path_buf(),
-            herdr_bin: None,
             runtime: std::sync::Weak::new(),
             notifier: ChangeNotifier::noop(),
             api_connector: Arc::new(herdr.connector()),
             node: Arc::new(hide_node::Local::of_process()),
         });
         observation
-    }
-
-    fn key_event(pane: &str, bytes: &[u8]) -> Vec<u8> {
-        serde_json::to_vec(&json!({
-            "schema_version": SCHEMA_VERSION, "kind": "key",
-            "payload": {"pane_id": pane, "bytes_base64": crate::live::encode_base64(bytes)},
-        }))
-        .unwrap()
     }
 
     fn observe_recipient_status(runtime: &mut Runtime, status: &str, sequence: u64) {
@@ -1202,9 +1214,11 @@ pub(crate) mod tests {
 
         // `/model` and Enter: the picker is open and Herdr reads the pane
         // `done`, so the bell must keep holding on a draft.
-        for keys in [&b"/model"[..], b"\x1b", b"\x1b\r", b"\r"] {
-            guard.dispatch_json(&key_event("recipient", keys));
-            assert_eq!(written(&mut guard), (true, false, false), "{keys:?}");
+        // The node reports `/model`, Esc and Esc-Return as typing and the
+        // Return as a submit; none of them is a delivery submit.
+        for submitted in [false, false, false, true] {
+            crate::runtime::tests::typed_into(&mut guard, "recipient", submitted);
+            assert_eq!(written(&mut guard), (true, false, false), "{submitted}");
         }
         let observation = guard.delivery_observations.get_mut("recipient").unwrap();
         observation.last_input_at_unix_ms = unix_milliseconds().saturating_sub(120_000);
@@ -1231,6 +1245,186 @@ pub(crate) mod tests {
             .unwrap(),
         );
         assert_eq!(written(&mut guard), (true, true, false));
+    }
+
+    /// A key's report as the pane's node sends it.
+    fn key_report(pane: &str, at_unix_ms: u64, submitted: bool) -> TerminalReport {
+        TerminalReport::Input {
+            pane: pane.to_owned(),
+            at_unix_ms,
+            submitted,
+            focus: false,
+        }
+    }
+
+    /// PRD core-host-node-terminal B5: a node reports a key without waiting
+    /// for the runtime lock, however long it is held, and a key into the
+    /// pane the keyboard is already in publishes nothing.
+    #[test]
+    fn keys_are_reported_while_the_runtime_lock_is_held_and_publish_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        let (channel, reports) = crate::terminal_reports::terminal_reports();
+        let pump = crate::terminal_reports::ReportPump::spawn(
+            reports,
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+        )
+        .unwrap();
+        let mut guard = runtime.lock().unwrap();
+        observe_recipient_status(&mut guard, "idle", 2);
+        clocks(&mut guard, "recipient", true);
+        let (sent, done) = std::sync::mpsc::channel();
+        let node = std::thread::spawn(move || {
+            for at in 1..=10_000 {
+                hide_node_link::terminal::ReportSink::report(
+                    &channel,
+                    key_report("recipient", at, false),
+                );
+            }
+            sent.send(()).unwrap();
+        });
+        // Every report went out while this test still holds the lock.
+        done.recv_timeout(Duration::from_secs(30))
+            .expect("a report waited for the runtime lock");
+        node.join().unwrap();
+        assert_eq!(clocks(&mut guard, "recipient", false), (0, 0, 0));
+        drop(guard);
+        drop(pump);
+        let mut guard = runtime.lock().unwrap();
+        assert_eq!(clocks(&mut guard, "recipient", false).0, 10_000);
+        // A screen's key names the pane it was typed into: the first one
+        // moves the keyboard there, and the rest, Enter included, change
+        // nothing a screen draws.
+        let typed = |at, submitted| TerminalReport::Input {
+            pane: "recipient".to_owned(),
+            at_unix_ms: at,
+            submitted,
+            focus: true,
+        };
+        assert!(guard.ingest_terminal_reports(vec![typed(10_001, false)]));
+        assert!(!guard.ingest_terminal_reports(vec![typed(10_002, false)]));
+        assert!(!guard.ingest_terminal_reports(vec![typed(10_003, true)]));
+    }
+
+    /// A runtime lock held long enough to fill the report queue loses no
+    /// pane's state: past the limit a report takes the place of the waiting
+    /// one about the same pane, so the core still ends at the node's last
+    /// word and the last key's time. The queue fills before its pump starts,
+    /// as it does behind a held lock.
+    #[test]
+    fn reports_past_the_waiting_limit_keep_a_panes_last_state_and_key() {
+        use hide_node_link::terminal::{PaneTerminalState, ReportSink};
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        {
+            let mut guard = runtime.lock().unwrap();
+            observe_recipient_status(&mut guard, "idle", 2);
+            clocks(&mut guard, "recipient", true);
+        }
+        let (channel, reports) = crate::terminal_reports::terminal_reports();
+        let state = |state: &str| TerminalReport::State {
+            pane: "recipient".to_owned(),
+            state: PaneTerminalState {
+                state: state.to_owned(),
+                mode: Some("control".to_owned()),
+                generation: 2,
+                attempt: 1,
+                message: None,
+                exit_category: None,
+                retry_decision: "none".to_owned(),
+                last_attempt_at_unix_ms: None,
+            },
+        };
+        for at in 1..=20_000 {
+            channel.report(key_report("recipient", at, false));
+        }
+        channel.report(state("controlling"));
+        for at in 20_001..=20_100 {
+            channel.report(key_report("recipient", at, false));
+        }
+        channel.report(state("closing"));
+        let pump = crate::terminal_reports::ReportPump::spawn(
+            reports,
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+        )
+        .unwrap();
+        drop(pump);
+        let mut guard = runtime.lock().unwrap();
+        assert_eq!(
+            guard
+                .terminal_states
+                .get("recipient")
+                .map(|state| state.state.as_str()),
+            Some("closing")
+        );
+        assert_eq!(clocks(&mut guard, "recipient", false).0, 20_100);
+    }
+
+    /// PRD core-host-node-terminal B7: the node reports the first key after
+    /// a quiet pane at once and folds the keys behind it into one report a
+    /// second later, so a letter that arrives inside that second is held
+    /// like one that arrives after it.
+    #[test]
+    fn a_letter_right_after_the_first_key_on_a_quiet_pane_is_held() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        observe_recipient_status(&mut guard, "idle", 2);
+        let observation = guard.delivery_observations.get_mut("recipient").unwrap();
+        let long_ago = unix_milliseconds().saturating_sub(120_000);
+        observation.last_input_at_unix_ms = long_ago;
+        observation.last_submit_at_unix_ms = long_ago;
+        observation.status_changed_at_unix_ms = long_ago;
+        observation.entered_working_at_unix_ms = long_ago;
+        let judge = |runtime: &Runtime, now: u64| {
+            crate::delivery::doorbell::judge(&runtime.delivery_observations["recipient"], now)
+        };
+        assert_eq!(judge(&guard, unix_milliseconds()), Ok(()));
+
+        // The first key after the quiet spell is reported as it is typed.
+        let first = unix_milliseconds();
+        guard.ingest_terminal_reports(vec![key_report("recipient", first, false)]);
+        // A second key 200 ms later waits at the node; a letter at 500 ms
+        // finds the pane typed into a moment ago and a draft on it.
+        assert_eq!(
+            judge(&guard, first + 500),
+            Err(crate::delivery::doorbell::Hold::Draft)
+        );
+        // The folded report lands a second after the first key, and the
+        // draft still holds the letter once the pane is quiet again.
+        guard.ingest_terminal_reports(vec![key_report("recipient", first + 200, false)]);
+        assert_eq!(
+            judge(&guard, first + 60_000),
+            Err(crate::delivery::doorbell::Hold::Draft)
+        );
+    }
+
+    /// A key's time comes from another clock: one far ahead of the core's
+    /// counts as typed now, so the submit after it ends the draft instead
+    /// of the pane holding every letter forever.
+    #[test]
+    fn a_key_from_a_clock_ahead_counts_as_typed_now() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        observe_recipient_status(&mut guard, "idle", 2);
+        guard.ingest_terminal_reports(vec![key_report("recipient", u64::MAX, false)]);
+        let typed = guard.delivery_observations["recipient"].last_input_at_unix_ms;
+        assert!(typed <= unix_milliseconds(), "{typed}");
+        guard
+            .delivery_observations
+            .get_mut("recipient")
+            .unwrap()
+            .last_submit_at_unix_ms = unix_milliseconds();
+        assert_eq!(
+            crate::delivery::doorbell::judge(
+                &guard.delivery_observations["recipient"],
+                unix_milliseconds() + 120_000
+            ),
+            Ok(())
+        );
     }
 
     #[test]
@@ -1598,7 +1792,7 @@ pub(crate) mod tests {
             bell: false,
             session: Some(session),
         };
-        // An id past the key bound is refused before it is hashed under the lock.
+        // An id past the session bound is refused before it is hashed under the lock.
         assert_eq!(
             guard
                 .prepare_delivery(
@@ -1606,7 +1800,7 @@ pub(crate) mod tests {
                     "recipient",
                     &context,
                     None,
-                    pull("x".repeat(257))
+                    pull("x".repeat(crate::delivery::SESSION_LIMIT + 1))
                 )
                 .err()
                 .as_deref(),

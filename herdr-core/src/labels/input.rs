@@ -3,7 +3,7 @@
 //!
 //! Herdr's input calls carry no sender, so who wrote a person's message in a
 //! conversation is decided from what Hide itself saw: the desktop's and a
-//! device pane's keyboard (`Event::Key`) and the phone's reply
+//! device pane's keyboard (the node's input report) and the phone's reply
 //! (`pane_input_submitted`). Only the moment of a submit is kept, never what
 //! was typed. The runtime records under its own lock; the label workers read
 //! from their coordinator threads; this record has its own small lock, taken
@@ -105,73 +105,10 @@ fn label_key(node: &str, pane_id: &str) -> (String, String) {
     }
 }
 
-/// [`submits`] for the base64 a key event carries, decoded on the stack: the
-/// keyboard path allocates nothing for it.
-pub(crate) fn key_submits(bytes_base64: &str) -> bool {
-    use base64::Engine as _;
-    let mut bytes = [0_u8; TYPED_BURST + 3];
-    if bytes_base64.len() > (TYPED_BURST / 3 + 1) * 4 {
-        return false;
-    }
-    base64::engine::general_purpose::STANDARD
-        .decode_slice(bytes_base64, &mut bytes)
-        .is_ok_and(|length| submits(&bytes[..length]))
-}
-
-/// The longest chunk looked at; anything longer is a paste.
-const TYPED_BURST: usize = 64;
-
-/// Whether keyboard bytes submit what was typed: a carriage return that is
-/// not part of an escape sequence (`ESC CR` is a newline in Claude Code) and
-/// not inside a bracketed paste. A chunk longer than any typed burst is a
-/// paste and is not looked at.
-pub(crate) fn submits(bytes: &[u8]) -> bool {
-    const PASTE_START: &[u8] = b"\x1b[200~";
-    const PASTE_END: &[u8] = b"\x1b[201~";
-    if bytes.len() > TYPED_BURST {
-        return false;
-    }
-    let mut pasting = false;
-    let mut index = 0;
-    while index < bytes.len() {
-        let rest = &bytes[index..];
-        if rest.starts_with(PASTE_START) {
-            pasting = true;
-            index += PASTE_START.len();
-            continue;
-        }
-        if rest.starts_with(PASTE_END) {
-            pasting = false;
-            index += PASTE_END.len();
-            continue;
-        }
-        if bytes[index] == b'\r' && !pasting && (index == 0 || bytes[index - 1] != 0x1b) {
-            return true;
-        }
-        index += 1;
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::labels::store::LOCAL_TARGET;
-
-    #[test]
-    fn only_a_typed_return_is_a_submit() {
-        assert!(submits(b"\r"));
-        assert!(submits(b"yes\r"));
-        assert!(!submits(b"\x1b\r"), "a newline in Claude Code");
-        assert!(!submits(b"\x1b[200~line one\rline two\x1b[201~"));
-        assert!(submits(b"\x1b[200~pasted\x1b[201~\r"));
-        assert!(!submits(b"abc"));
-        assert!(!submits(format!("{}\r", "a".repeat(80)).as_bytes()));
-        assert!(key_submits(&crate::live::encode_base64(b"\r")));
-        assert!(!key_submits(&crate::live::encode_base64(b"\x1b\r")));
-        assert!(!key_submits(&crate::live::encode_base64(&[b'\r'; 200])));
-        assert!(!key_submits("not base64!"));
-    }
 
     #[test]
     fn a_device_pane_is_kept_under_its_worker_and_every_bound_holds() {

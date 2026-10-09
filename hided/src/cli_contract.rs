@@ -28,6 +28,10 @@ pub enum Input {
     /// An id, name or intent: non-empty, at most 256 bytes, without control
     /// characters, not starting with `-`.
     Key,
+    /// A native session id or session file path: non-empty, at most
+    /// `herdr_core::delivery::SESSION_LIMIT` bytes, without control
+    /// characters, not starting with `-`.
+    Session,
     /// A letter body: not blank, at most `BODY_LIMIT` bytes.
     Body,
     /// A watch approval: not blank, at most 256 bytes, without control
@@ -43,6 +47,7 @@ impl Input {
         match self {
             Text => "text",
             Key => "key",
+            Session => "session",
             Body => "body",
             Approval => "approval",
             Unsigned => "unsigned",
@@ -127,7 +132,7 @@ const fn spec(
     }
 }
 
-use Input::{Approval, Body, Key, OneOf, Text, Unsigned};
+use Input::{Approval, Body, Key, OneOf, Session, Text, Unsigned};
 
 const ID: &[Arg] = &[Arg {
     name: "id",
@@ -222,6 +227,7 @@ pub const COMMANDS: &[Spec] = &[
             "repository_unavailable",
             "agent_not_installed",
             "intent_conflict",
+            "agent_not_started",
         ],
     },
     spec(
@@ -247,7 +253,7 @@ pub const COMMANDS: &[Spec] = &[
     spec(
         &["inbox", "--hook"],
         &[],
-        &[switch("--bell"), optional("--session", Key)],
+        &[switch("--bell"), optional("--session", Session)],
         &["intake"],
     ),
     Spec {
@@ -367,6 +373,10 @@ fn body() -> Value {
         "value_types": {
             "text": "non-empty, no control characters, does not start with --",
             "key": "non-empty, at most 256 bytes, no control characters, does not start with -",
+            "session": format!(
+                "non-empty, at most {} bytes, no control characters, does not start with -",
+                herdr_core::delivery::SESSION_LIMIT
+            ),
             "body": format!("not blank, at most {BODY_LIMIT} bytes"),
             "approval": "not blank, at most 256 bytes, no control characters",
             "unsigned": "a decimal integer from 0 to 18446744073709551615",
@@ -437,6 +447,7 @@ mod tests {
         let (taken, refused) = match value {
             Text => ("some text", "--x"),
             Key => ("k1", "-x"),
+            Session => ("/sessions/a.jsonl", "-x"),
             Body => ("multi\nline body", " "),
             Approval => ("approved by the lead", " "),
             Unsigned => ("1", "-1"),

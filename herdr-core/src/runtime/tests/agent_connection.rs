@@ -191,10 +191,10 @@ fn an_agent_hide_cannot_hear_is_never_given_a_count() {
     runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
     feed(
         &mut runtime,
-        &[("w1:p1", "grok", false), ("w1:p2", "claude", true)],
+        &[("w1:p1", "cursor", false), ("w1:p2", "claude", true)],
     );
 
-    assert_eq!(sessions_of(&runtime, "grok"), None, "B19");
+    assert_eq!(sessions_of(&runtime, "cursor"), None, "B19");
     assert_eq!(connection_of(&runtime, "w1:p1"), None);
     // An on agent with no session is "Ready": a count of zero, not an absent one.
     assert_eq!(sessions_of(&runtime, "codex"), Some(0));
@@ -256,7 +256,6 @@ fn with_live(runtime: &mut Runtime) {
         .into_owned();
     runtime.live = Some(crate::live::LiveContext {
         socket_path: socket.clone().into(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket)),
@@ -777,6 +776,7 @@ fn a_reopen_through_the_worker_waits_for_herdr_to_release_the_name() {
     use serde_json::json;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+    const SESSION_ID: &str = "11111111-1111-4111-8111-111111111111";
     let mut child = process::OwnedChild::spawn(std::process::Command::new("/bin/sleep").arg("60"))
         .expect("sleep starts");
     let pid = child.id();
@@ -784,7 +784,7 @@ fn a_reopen_through_the_worker_waits_for_herdr_to_release_the_name() {
     let gone_flag = Arc::clone(&exited);
     let starts = Arc::new(AtomicUsize::new(0));
     let attempts = Arc::clone(&starts);
-    let herdr = FakeHerdr::start_with_errors("runtime-reopen-name", move |method, _| {
+    let herdr = FakeHerdr::start_with_errors("runtime-reopen-name", move |method, params| {
         let info = |shell: u32, foreground: u32| {
             json!({"type": "pane_process_info", "process_info": {
                 "pane_id": "w1:p2", "shell_pid": shell, "foreground_process_group_id": foreground,
@@ -802,14 +802,20 @@ fn a_reopen_through_the_worker_waits_for_herdr_to_release_the_name() {
                 let gone = !process::is_alive(pid) || gone_flag.load(Ordering::SeqCst);
                 Ok(info(shell, if gone { shell } else { pid }))
             }
-            "agent.start" if attempts.fetch_add(1, Ordering::SeqCst) < 2 => Err((
-                "agent_name_taken".into(),
-                "agent name agent-w1:p2 is already used".into(),
-            )),
-            "agent.start" => Ok(json!({"type": "agent_started", "argv": [], "agent": {
-                "pane_id": "w1:p2", "tab_id": "w1:t1", "workspace_id": "w1",
-                "terminal_id": "term_1", "agent_status": "idle", "focused": false, "revision": 1
-            }})),
+            "agent.start" => {
+                assert_eq!(params["args"], json!(["--resume", SESSION_ID]));
+                if attempts.fetch_add(1, Ordering::SeqCst) < 2 {
+                    Err((
+                        "agent_name_taken".into(),
+                        "agent name agent-w1:p2 is already used".into(),
+                    ))
+                } else {
+                    Ok(json!({"type": "agent_started", "argv": [], "agent": {
+                        "pane_id": "w1:p2", "tab_id": "w1:t1", "workspace_id": "w1",
+                        "terminal_id": "term_1", "agent_status": "idle", "focused": false, "revision": 1
+                    }}))
+                }
+            }
             other => panic!("unexpected {other}"),
         }
     });
@@ -821,10 +827,11 @@ fn a_reopen_through_the_worker_waits_for_herdr_to_release_the_name() {
     let mut runtime = runtime();
     kit_rows(&mut runtime, None);
     runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
-    feed(
-        &mut runtime,
-        &[("w1:p1", "claude", true), ("w1:p2", "claude", false)],
-    );
+    let mut payload = session(&[("w1:p1", "claude", true), ("w1:p2", "claude", false)]);
+    payload["agents"][1]["agent_session"]["value"] = json!(SESSION_ID);
+    runtime.ingest_session(Ok(
+        crate::sidebar::owned_label_fixture(payload).expect("native session fixture")
+    ));
     // The reopen starts in the pane's own folder, which must exist.
     for pane in runtime
         .snapshot
@@ -842,7 +849,6 @@ fn a_reopen_through_the_worker_waits_for_herdr_to_release_the_name() {
         let mut runtime = shared.lock().unwrap();
         runtime.live = Some(crate::live::LiveContext {
             socket_path: herdr.socket_path().to_path_buf(),
-            herdr_bin: None,
             runtime: Arc::downgrade(&shared),
             notifier: crate::handle::ChangeNotifier::noop(),
             api_connector: Arc::new(herdr.connector()),

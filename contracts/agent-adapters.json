@@ -56,7 +56,7 @@
     "install_url": "https://github.com/xai-org/grok-build",
     "logo_id": "grok",
     "can_start": true,
-    "can_resume": false,
+    "can_resume": true,
     "efforts": [],
     "can_pick_model": false,
     "sidebar_mark": null,
@@ -92,7 +92,7 @@
     "efforts": [],
     "can_pick_model": false,
     "sidebar_mark": null,
-    "hook_kind": null
+    "hook_kind": "extension"
   },
   {
     "id": "omp",
@@ -104,11 +104,11 @@
     "install_url": "https://omp.sh/docs/quickstart",
     "logo_id": "omp",
     "can_start": true,
-    "can_resume": false,
+    "can_resume": true,
     "efforts": [],
     "can_pick_model": false,
     "sidebar_mark": null,
-    "hook_kind": null
+    "hook_kind": "extension"
   },
   {
     "id": "cursor",

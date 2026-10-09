@@ -154,7 +154,7 @@ fn an_unchanged_front_writes_nothing() {
 
     for _ in 0..3 {
         runtime.sync_workspace_view();
-        let _ = runtime.snapshot_delta_payload(0, 0);
+        let _ = runtime.snapshot_delta_payload(0);
     }
 
     assert!(!runtime.state_path.exists());

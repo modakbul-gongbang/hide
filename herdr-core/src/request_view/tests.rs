@@ -113,9 +113,11 @@ fn a_rows_verb_follows_its_demand_its_activity_and_its_pull_requests() {
         ("failed", "idle"),
         ("ready", "idle"),
         ("ci", "idle"),
+        ("stopped", "idle"),
         ("finished", "done"),
         ("quiet", "idle"),
     ]);
+    rows[5].row_facts.as_mut().unwrap().end = Some(crate::labels::analysis::LabelEnd::Unfinished);
     let github = github(vec![
         pull_request(
             1,
@@ -156,8 +158,26 @@ fn a_rows_verb_follows_its_demand_its_activity_and_its_pull_requests() {
             RequestVerb::Fix,
             RequestVerb::Review,
             RequestVerb::Waiting,
+            RequestVerb::Stopped,
             RequestVerb::Result,
             RequestVerb::Idle,
+        ]
+    );
+    // My turn keeps only what waits for the operator to move; a failed
+    // check, an unfinished turn and an unread result rest with their tag.
+    use crate::agent_state::sessions::Group;
+    let groups: Vec<_> = rows.iter().map(|row| row.state.session.group).collect();
+    assert_eq!(
+        groups,
+        [
+            Group::MyTurn,
+            Group::InProgress,
+            Group::Resting,
+            Group::ReviewMerge,
+            Group::InProgress,
+            Group::Resting,
+            Group::Resting,
+            Group::Resting,
         ]
     );
 }
@@ -168,6 +188,8 @@ fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder()
     let mut rows = rows(&[
         ("approval", "blocked"),
         ("question", "idle"),
+        ("native-question", "blocked"),
+        ("menu-with-question", "blocked"),
         ("read-question", "idle"),
         ("read-with-ci", "idle"),
         ("working-with-ci", "working"),
@@ -178,6 +200,15 @@ fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder()
             row.demand = "question".into();
         }
         row.unread = row.pane_id == "question";
+        if row.pane_id == "native-question" {
+            row.user_turn = Some(hide_session::turns::UserTurnFact {
+                kind: hide_session::turns::UserTurnKind::Question,
+                content: None,
+            });
+        }
+        if row.pane_id == "menu-with-question" {
+            row.unread = true;
+        }
     }
     run(
         &mut rows,
@@ -211,6 +242,9 @@ fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder()
         [
             ("approval", Group::MyTurn, Some(Tag::Approval)),
             ("question", Group::MyTurn, Some(Tag::Answer)),
+            // Native unanswered questions remain held after being read.
+            ("native-question", Group::MyTurn, Some(Tag::Answer)),
+            ("menu-with-question", Group::MyTurn, Some(Tag::Approval)),
             ("read-question", Group::Resting, Some(Tag::Idle)),
             // The question holder already owns PR 1, so another row cannot also fix it.
             ("read-with-ci", Group::Resting, Some(Tag::Idle)),
@@ -231,7 +265,7 @@ fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder()
     assert_eq!(
         rows[1].state.session,
         crate::agent_state::sessions::Row {
-            group: Group::MyTurn,
+            group: Group::Resting,
             tag: Some(Tag::Fix),
         },
         "reading an AI question skips only the demand rung, not its PR duty"

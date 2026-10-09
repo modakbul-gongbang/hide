@@ -62,6 +62,31 @@ pub(crate) struct WorkerTextSources {
 const LINEAGE_LIMIT: usize = 16;
 
 impl Runtime {
+    pub(crate) fn factory_start_control(&self) -> Result<crate::factory::StartControl, String> {
+        Ok(crate::factory::StartControl {
+            connector: self
+                .live
+                .as_ref()
+                .ok_or("herdr_unavailable")?
+                .api_connector
+                .clone(),
+            node: self.own_node(),
+            generation: self.live_generation,
+        })
+    }
+
+    pub(crate) fn factory_start_control_current(
+        &self,
+        control: &crate::factory::StartControl,
+    ) -> bool {
+        self.live_generation == control.generation
+            && self
+                .live
+                .as_ref()
+                .is_some_and(|live| std::sync::Arc::ptr_eq(&live.api_connector, &control.connector))
+            && std::sync::Arc::ptr_eq(&self.own_node(), &control.node)
+    }
+
     pub(crate) fn set_factory_screen_port(&mut self, port: crate::factory::ScreenPort) {
         self.factory_screen = Some(port);
     }
@@ -249,7 +274,7 @@ impl Runtime {
             .map_err(|_| "factory_guard_context_changed")?
             .context;
         if context != *expected
-            || !crate::delivery::valid_key(session)
+            || !crate::delivery::valid_session(session)
             || !crate::delivery::valid_key(terminal_id)
         {
             return Err("factory_guard_context_changed".into());
@@ -554,9 +579,18 @@ impl Runtime {
             .snapshot
             .ui_state
             .agent_sleep
-            .records
-            .contains_key(pane)
+            .dormant
+            .values()
+            .any(|record| record.old_pane_id == pane)
         {
+            return Err("agent_cannot_sleep");
+        }
+        if let Some(record) = self.snapshot.ui_state.agent_sleep.records.get(pane) {
+            if !hide_factory::model::Runtime::parse(&record.kind)
+                .is_some_and(|runtime| runtime.sleeps())
+            {
+                return Err("agent_cannot_sleep");
+            }
             return Ok(true);
         }
         let Some(agent) = self
@@ -568,6 +602,11 @@ impl Runtime {
         else {
             return Err("This pane has no agent");
         };
+        if !hide_factory::model::Runtime::parse(&agent.agent_kind)
+            .is_some_and(|runtime| runtime.sleeps())
+        {
+            return Err("agent_cannot_sleep");
+        }
         match crate::agent_sleep::sleep_refusal(agent) {
             None => {}
             Some("This agent is working") | Some("Hide cannot tell what this agent is doing") => {
@@ -580,6 +619,40 @@ impl Runtime {
         }
         self.request_agent_sleep(pane);
         Ok(true)
+    }
+
+    /// Factory has no fresh-pane/coordination identity binding for dormant
+    /// workers. A restored WorkerRef's asleep flag is not the sole authority.
+    /// Remove this guard with #857's fresh-execution identity binding.
+    pub(crate) fn factory_worker_resume_allowed(
+        &self,
+        worker: &hide_factory::model::WorkerRef,
+    ) -> Result<(), &'static str> {
+        if worker.asleep && !worker.runtime.sleeps() {
+            return Err("agent_cannot_sleep");
+        }
+        if let Some(pane) = &worker.pane
+            && (self
+                .snapshot
+                .ui_state
+                .agent_sleep
+                .dormant
+                .values()
+                .any(|record| record.old_pane_id == *pane)
+                || self
+                    .snapshot
+                    .ui_state
+                    .agent_sleep
+                    .records
+                    .get(pane)
+                    .is_some_and(|record| {
+                        !hide_factory::model::Runtime::parse(&record.kind)
+                            .is_some_and(|runtime| runtime.sleeps())
+                    }))
+        {
+            return Err("agent_cannot_sleep");
+        }
+        Ok(())
     }
 
     /// Wakes a sleeping worker in the same pane and session (B27, B54).
@@ -820,6 +893,40 @@ mod tests {
                 .is_err(),
             "an ended ledger by itself proves nothing about the replacement"
         );
+    }
+
+    #[test]
+    fn a_question_caller_named_by_a_deep_session_file_is_the_panes_own() {
+        // Pi and omp name a session by its file, which a deep checkout makes
+        // longer than 256 bytes (PRD pi-omp-extension D-05).
+        let root = tempfile::tempdir().unwrap();
+        let herdr = crate::fake_herdr::FakeHerdr::start("question-deep-session", |method, _| {
+            panic!("in-memory authority checks must not call {method}")
+        });
+        let (runtime, _, _, _) = crate::runtime::delivery::tests::fixture(root.path());
+        let mut runtime = runtime.lock().unwrap();
+        let deep = format!(
+            "/fixture-home/.omp/agent/sessions/-{}-/2026-10-08T20-05-41-366Z_01a11d1f.jsonl",
+            "deep-checkout-segment".repeat(12)
+        );
+        assert!(deep.len() > 256);
+        let observed =
+            crate::runtime::delivery::tests::recipient_at_rest(&mut runtime, &deep, &herdr);
+        let context = crate::runtime::delivery::tests::authority(&observed.actor).context;
+        let caller = |runtime: &mut Runtime, session: &str| {
+            runtime.factory_question_caller(
+                crate::node::TEST_NODE,
+                "recipient",
+                &context,
+                session,
+                "codex",
+                "terminal-1",
+            )
+        };
+        assert!(caller(&mut runtime, &deep).is_ok());
+        let past = "x".repeat(crate::delivery::SESSION_LIMIT + 1);
+        assert!(matches!(caller(&mut runtime, &past),
+            Err(reason) if reason == "factory_guard_context_changed"));
     }
 
     #[test]
@@ -1108,6 +1215,40 @@ mod tests {
         assert!(!gone.closing);
         runtime.panes_closing.insert("quiet".into());
         assert!(runtime.factory_worker_probe("quiet").closing);
+    }
+
+    #[test]
+    fn factory_sleep_refuses_close_pane_agents_without_changing_the_live_row() {
+        for kind in ["pi", "omp"] {
+            let mut runtime = crate::runtime::tests::live_runtime();
+            let mut row = worker_row("worker", kind, "none", "stopped");
+            row.session_id = Some("11111111-2222-3333-4444-555555555555".into());
+            row.row_facts = Some(Default::default());
+            runtime.snapshot.navigator.agents = vec![row];
+            let before = serde_json::to_value(runtime.snapshot()).unwrap();
+            assert_eq!(runtime.factory_sleep("worker"), Err("agent_cannot_sleep"));
+            assert_eq!(serde_json::to_value(runtime.snapshot()).unwrap(), before);
+            assert!(runtime.panes_closing.is_empty());
+            assert!(runtime.snapshot.ui_state.agent_sleep.dormant.is_empty());
+            assert!(runtime.snapshot.ui_state.agent_sleep.records.is_empty());
+            assert!(runtime.factory_worker_probe("worker").present);
+        }
+    }
+
+    #[test]
+    fn factory_sleep_still_uses_the_same_pane_for_claude_and_codex() {
+        for kind in ["claude", "codex"] {
+            let mut runtime = crate::runtime::tests::live_runtime();
+            let mut row = worker_row("worker", kind, "none", "stopped");
+            row.session_id = Some("11111111-2222-3333-4444-555555555555".into());
+            runtime.snapshot.navigator.agents = vec![row];
+            assert_eq!(runtime.factory_sleep("worker"), Ok(true));
+            let record = &runtime.snapshot.ui_state.agent_sleep.records["worker"];
+            assert_eq!(record.kind, kind);
+            assert_eq!(record.phase, crate::agent_sleep::SleepPhase::Ending);
+            assert!(runtime.snapshot.ui_state.agent_sleep.dormant.is_empty());
+            assert!(runtime.panes_closing.is_empty());
+        }
     }
 
     #[test]

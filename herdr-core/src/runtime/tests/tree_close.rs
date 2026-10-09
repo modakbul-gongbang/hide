@@ -131,7 +131,6 @@ const EVERY: [&str; 5] = ["w1:p1", "w1:p2", "w1:p3", "w1:p4", "w5:p5"];
 fn tree_runtime(status: &[(&str, &str)]) -> Runtime {
     let mut runtime = runtime();
     runtime.restore_hint_pending = false;
-    runtime.suppress_terminal_session_workers = true;
     let socket_path = std::env::temp_dir()
         .join(format!(
             "herdr-core-tree-close-{}-{}.sock",
@@ -142,7 +141,6 @@ fn tree_runtime(status: &[(&str, &str)]) -> Runtime {
         .into_owned();
     runtime.live = Some(live::LiveContext {
         socket_path: socket_path.clone().into(),
-        herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),

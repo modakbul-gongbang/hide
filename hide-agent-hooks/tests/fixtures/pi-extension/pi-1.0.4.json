@@ -1,0 +1,391 @@
+{
+  "host": "pi 1.0.4",
+  "captured": "2026-10-09, a private HOME and agent folder, a local fake OpenAI-compatible model, the capture extension in the PR's run notes",
+  "samples": {
+    "session_start": {
+      "event": {
+        "type": "session_start",
+        "reason": "startup"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "input": {
+      "event": {
+        "type": "input",
+        "text": "run TOOL please",
+        "source": "interactive"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "before_agent_start": {
+      "event": {
+        "type": "before_agent_start",
+        "prompt": "run TOOL please",
+        "systemPrompt": "[omitted]",
+        "systemPromptOptions": "[omitted]"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "agent_start": {
+      "event": {
+        "type": "agent_start"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "turn_start": {
+      "event": {
+        "type": "turn_start",
+        "turnIndex": 0,
+        "timestamp": 1791489811798
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "message_start.system": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "system"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "message_end.system": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "system"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "message_start.user": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "user"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "message_end.user": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "user"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "message_start.custom": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "custom",
+          "customType": "hide-capture",
+          "display": false
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "message_end.custom": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "custom",
+          "customType": "hide-capture",
+          "display": false
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "message_start.assistant": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "assistant"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "message_end.assistant": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "tool_execution_start.bash": {
+      "event": {
+        "type": "tool_execution_start",
+        "toolCallId": "call_1",
+        "toolName": "bash",
+        "args": {
+          "command": "echo hide-sample"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "tool_call.bash": {
+      "event": {
+        "type": "tool_call",
+        "toolName": "bash",
+        "toolCallId": "call_1",
+        "input": {
+          "command": "echo hide-sample"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "tool_result.bash": {
+      "event": {
+        "type": "tool_result",
+        "toolName": "bash",
+        "toolCallId": "call_1",
+        "input": {
+          "command": "echo hide-sample"
+        },
+        "isError": false
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "tool_execution_end.bash": {
+      "event": {
+        "type": "tool_execution_end",
+        "toolCallId": "call_1",
+        "toolName": "bash",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "hide-sample\n"
+            }
+          ],
+          "structuredContent": {
+            "output": "hide-sample\n",
+            "truncated": false,
+            "exit_code": 0,
+            "wall_time_seconds": 0
+          }
+        },
+        "isError": false
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "message_start.toolResult": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "toolResult"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "message_end.toolResult": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "toolResult"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "turn_end.assistant": {
+      "event": {
+        "type": "turn_end",
+        "message": {
+          "role": "assistant"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "agent_end": {
+      "event": {
+        "type": "agent_end",
+        "messages": "[omitted]"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "agent_settled": {
+      "event": {
+        "type": "agent_settled"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    },
+    "session_shutdown": {
+      "event": {
+        "type": "session_shutdown",
+        "reason": "quit"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": null,
+        "sessionFile": "/fixture-home/.pi/agent/sessions/-fixture-home-work-/2026-10-08T20-03-31-693Z_01a11d1d-24ec-71fa-b8b3-f6f22cffab12.jsonl",
+        "sessionId": "01a11d1d-24ec-71fa-b8b3-f6f22cffab12"
+      }
+    }
+  },
+  "sequence": [
+    "prompt:session_start",
+    "prompt:input",
+    "prompt:before_agent_start",
+    "prompt:agent_start",
+    "prompt:turn_start",
+    "prompt:message_start(system)",
+    "prompt:message_end(system)",
+    "prompt:message_start(user)",
+    "prompt:message_end(user)",
+    "prompt:message_start(custom)",
+    "prompt:message_end(custom)",
+    "prompt:message_start(assistant)",
+    "prompt:message_end(assistant)",
+    "prompt:tool_execution_start(bash)",
+    "prompt:tool_call(bash)",
+    "prompt:tool_result(bash)",
+    "prompt:tool_execution_end(bash)",
+    "prompt:message_start(toolResult)",
+    "prompt:message_end(toolResult)",
+    "prompt:turn_end(assistant)",
+    "prompt:turn_start",
+    "prompt:message_start(assistant)",
+    "prompt:message_end(assistant)",
+    "prompt:turn_end(assistant)",
+    "prompt:agent_end",
+    "prompt:agent_settled",
+    "prompt:session_shutdown"
+  ]
+}

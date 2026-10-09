@@ -11,7 +11,11 @@ use std::path::Path;
 /// A compact, path-free token that consumers can compare with Herdr's current
 /// native reference. Unsupported or unreported references prove nothing.
 pub fn label_reference_token(provider: &str, kind: &str, value: &str) -> Option<String> {
-    let provider = Agent::from_kind(provider)?.as_str();
+    reference_token(Agent::from_kind(provider)?, kind, value)
+}
+
+fn reference_token(agent: Agent, kind: &str, value: &str) -> Option<String> {
+    let provider = agent.as_str();
     if !matches!(kind, "id" | "path")
         || value.trim().is_empty()
         || value.chars().any(char::is_control)
@@ -77,9 +81,11 @@ fn deserialize_native_id<'de, D: serde::Deserializer<'de>>(
     Ok(id)
 }
 
-/// Bounded native ID syntax. This validates spelling, never ownership.
+/// Bounded native ID syntax, safe as a separate CLI value rather than a flag.
+/// This validates spelling, never ownership.
 pub fn valid_native_id(id: &str) -> bool {
     !id.is_empty()
+        && !id.starts_with('-')
         && id.len() <= crate::turns::NATIVE_ID_LIMIT_BYTES
         && id != "."
         && id != ".."
@@ -99,8 +105,9 @@ pub fn confirm_label_session(
     confirm_metadata(agent, path, reported_id, None, None)
 }
 
-/// Shared file proof for consumers, including idle/paged reads. Pi additionally
-/// requires its exact checkout and refuses every linked entry under home.
+/// Shared file proof for consumers, including idle/paged reads. Pi, omp and
+/// Grok additionally require their exact checkout and refuse every linked
+/// entry under home.
 pub fn confirm_session_file(
     home: &Path,
     agent: Agent,
@@ -134,7 +141,7 @@ fn confirm_metadata(
     if !metadata.is_file() {
         return Err(anyhow!("label_session_not_regular"));
     }
-    if agent == Agent::Pi
+    if agent.requires_native_file_proof()
         && hide_platform::fs::identity::link_count(&file)
             .map_err(|_| anyhow!("label_session_stat_failed"))?
             != 1
@@ -143,87 +150,80 @@ fn confirm_metadata(
     }
     let mut reader = BufReader::new(file.take(SESSION_INCREMENT_READ_LIMIT_BYTES));
     let mut native_id = None;
-    loop {
-        let mut line = Vec::new();
-        Read::by_ref(&mut reader)
-            .take((SESSION_LINE_LIMIT_BYTES + 1) as u64)
-            .read_until(b'\n', &mut line)
-            .map_err(|_| anyhow!("label_session_metadata_read_failed"))?;
-        if line.len() > SESSION_LINE_LIMIT_BYTES {
-            return Err(anyhow!("label_session_metadata_line_capacity"));
-        }
-        if line.last() != Some(&b'\n') {
-            break;
-        }
-        let Ok(record) = serde_json::from_slice::<serde_json::Value>(&line) else {
-            if agent == Agent::Pi {
-                return Err(anyhow!("label_session_metadata_unconfirmed"));
-            }
-            continue;
+    if agent.requires_native_file_proof() {
+        let mut remaining = SESSION_INCREMENT_READ_LIMIT_BYTES;
+        let header = if agent == Agent::Grok {
+            crate::native_file::header(agent, path)?
+        } else {
+            crate::native_file::header_from_reader(agent, &mut reader, &mut remaining)?
         };
-        if agent == Agent::Pi {
-            if record["type"] != "session" || record["version"] != 3 {
-                return Err(anyhow!("label_session_metadata_unconfirmed"));
-            }
-            let expected = cwd.ok_or_else(|| anyhow!("label_session_cwd_unconfirmed"))?;
-            let native = record["cwd"]
-                .as_str()
-                .ok_or_else(|| anyhow!("label_session_cwd_unconfirmed"))?;
-            if !Path::new(native).is_absolute() || native.chars().any(char::is_control) {
-                return Err(anyhow!("label_session_cwd_unconfirmed"));
-            }
-            let expected = hide_platform::fs::identity::canonical(Path::new(expected))
-                .map_err(|_| anyhow!("label_session_cwd_unconfirmed"))?;
-            let native = hide_platform::fs::identity::canonical(Path::new(native))
-                .map_err(|_| anyhow!("label_session_cwd_unconfirmed"))?;
-            if native != expected {
-                return Err(anyhow!("label_session_cwd_mismatch"));
-            }
-            let home = home.ok_or_else(|| anyhow!("label_session_outside_roots"))?;
-            let native_directory = crate::pi::default_directory(home, &native);
-            let actual_directory = path
-                .parent()
-                .and_then(|parent| hide_platform::fs::identity::canonical(parent).ok());
-            if actual_directory.is_none()
-                || hide_platform::fs::identity::canonical(&native_directory).ok()
-                    != actual_directory
-            {
-                return Err(anyhow!("label_session_default_directory_required"));
-            }
-            if record["id"].as_str().is_none() {
-                return Err(anyhow!("label_session_id_invalid"));
-            }
+        let expected = cwd.ok_or_else(|| anyhow!("label_session_cwd_unconfirmed"))?;
+        let expected = hide_platform::fs::identity::canonical(Path::new(expected))
+            .map_err(|_| anyhow!("label_session_cwd_unconfirmed"))?;
+        let native = hide_platform::fs::identity::canonical(&header.cwd)
+            .map_err(|_| anyhow!("label_session_cwd_unconfirmed"))?;
+        if native != expected {
+            return Err(anyhow!("label_session_cwd_mismatch"));
         }
-        let id = match agent {
-            Agent::Pi => record["id"].as_str(),
-            Agent::Codex if record["type"] == "session_meta" => record["payload"]["id"].as_str(),
-            Agent::Claude if matches!(record["type"].as_str(), Some("user" | "assistant")) => {
-                record["sessionId"].as_str()
+        let home = home.ok_or_else(|| anyhow!("label_session_outside_roots"))?;
+        let native_directory = crate::native_file::default_directory(home, agent, &native)?;
+        let actual_directory = crate::native_file::directory_of(agent, path)
+            .and_then(|parent| hide_platform::fs::identity::canonical(parent).ok());
+        if actual_directory.is_none()
+            || hide_platform::fs::identity::canonical(&native_directory).ok() != actual_directory
+        {
+            return Err(anyhow!("label_session_default_directory_required"));
+        }
+        native_id = Some(header.id);
+    } else {
+        loop {
+            let mut line = Vec::new();
+            Read::by_ref(&mut reader)
+                .take((SESSION_LINE_LIMIT_BYTES + 1) as u64)
+                .read_until(b'\n', &mut line)
+                .map_err(|_| anyhow!("label_session_metadata_read_failed"))?;
+            if line.len() > SESSION_LINE_LIMIT_BYTES {
+                return Err(anyhow!("label_session_metadata_line_capacity"));
             }
-            _ => None,
-        };
-        if let Some(id) = id {
-            native_id = Some(id.to_owned());
-            break;
+            if line.last() != Some(&b'\n') {
+                break;
+            }
+            let Ok(record) = serde_json::from_slice::<serde_json::Value>(&line) else {
+                continue;
+            };
+            let id = match agent {
+                Agent::Codex if record["type"] == "session_meta" => {
+                    record["payload"]["id"].as_str()
+                }
+                Agent::Claude if matches!(record["type"].as_str(), Some("user" | "assistant")) => {
+                    record["sessionId"].as_str()
+                }
+                _ => None,
+            };
+            if let Some(id) = id {
+                native_id = Some(id.to_owned());
+                break;
+            }
         }
     }
     let id = native_id.ok_or_else(|| anyhow!("label_session_metadata_unconfirmed"))?;
     if !valid_native_id(&id) {
         return Err(anyhow!("label_session_id_invalid"));
     }
-    if agent == Agent::Pi && id.ends_with(".jsonl") {
+    if agent.requires_native_file_proof() && id.ends_with(".jsonl") {
         return Err(anyhow!("label_session_id_unresumable"));
     }
     if reported_id.is_some_and(|reported| reported != id) {
         return Err(anyhow!("label_session_id_mismatch"));
     }
-    let owner = label_reference_token(agent.as_str(), "id", &id)
-        .ok_or_else(|| anyhow!("label_session_id_invalid"))?;
+    let owner =
+        reference_token(agent, "id", &id).ok_or_else(|| anyhow!("label_session_id_invalid"))?;
     let physical = FileIdentity::from_metadata(&metadata);
     Ok(ConfirmedLabelSession {
         owner,
         native_session_id: Some(id),
-        source_path: (agent == Agent::Pi)
+        source_path: agent
+            .requires_native_file_proof()
             .then(|| {
                 path.to_str()
                     .filter(|path| valid_source_path(path))
@@ -247,7 +247,7 @@ pub fn read_session_file<T>(
     expected: Option<&SessionReadScope>,
     read: impl FnOnce() -> std::result::Result<T, String>,
 ) -> std::result::Result<T, String> {
-    if agent != Agent::Pi {
+    if !agent.requires_native_file_proof() {
         return read();
     }
     let expected = expected.ok_or_else(|| "label_session_scope_required".to_owned())?;
@@ -305,7 +305,9 @@ mod tests {
                 Agent::Claude => {
                     serde_json::json!({"type":"user","sessionId":"native-a","message":{"role":"user","content":"content must not identify the owner"}})
                 }
-                Agent::Pi | Agent::OpenCode => unreachable!("legacy metadata fixtures"),
+                Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
+                    unreachable!("legacy metadata fixtures")
+                }
             };
             fs::write(&path, format!("{metadata}\n")).unwrap();
             let id = confirm_label_session(agent, &path, Some("native-a")).unwrap();

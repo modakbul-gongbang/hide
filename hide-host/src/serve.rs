@@ -18,7 +18,7 @@ use crate::protocol::{
 };
 use crate::root::{Root, relative_path};
 use crate::{bytes, document, git, index, list, mutate, save, worktrees};
-use hide_node_link::process::ProcessStart;
+use hide_node_link::process::{LineInput, ProcessStart};
 
 /// Requests the helper works on at once; the core also admits at most this
 /// many per device, so the helper never queues behind itself.
@@ -34,11 +34,44 @@ const QUEUED: usize = 32;
 /// carries at most the 16 MiB editable size, as JSON-escaped text.
 const MAX_REQUEST_BYTES: usize = 40 * 1024 * 1024;
 
-pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
-    serve_in(input, output, Env::of_process())
+/// A node's terminal service as this loop reaches it. The service lives in
+/// `hide-node`, which depends on this crate, so the node role hands it in
+/// (PRD core-host-node-terminal D-18): terminal lines from the core go to
+/// [`Terminals::line`] as they are read, never behind a request, and the
+/// service's own lines go out between the answers.
+pub trait Terminals: Send + Sync {
+    /// Starts the service for the Herdr at `herdr_socket`; starting it again
+    /// while it runs changes nothing.
+    fn start(&self, herdr_socket: &str) -> Result<(), String>;
+    /// One terminal line from the core, its newline removed.
+    fn line(&self, line: &[u8]);
+    /// The next line to send up, newline included, waiting for one; `None`
+    /// once [`Terminals::stop`] was called.
+    fn next_up(&self) -> Option<Vec<u8>>;
+    /// The link is gone: every session ends and [`Terminals::next_up`]
+    /// answers `None`.
+    fn stop(&self);
 }
 
-fn serve_in(input: impl BufRead, output: impl Write + Send, env: Env) -> io::Result<()> {
+pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
+    serve_in(input, output, Env::of_process(), None)
+}
+
+/// [`serve`] with the node's terminal service.
+pub fn serve_with_terminals(
+    input: impl BufRead,
+    output: impl Write + Send,
+    terminals: &dyn Terminals,
+) -> io::Result<()> {
+    serve_in(input, output, Env::of_process(), Some(terminals))
+}
+
+fn serve_in(
+    input: impl BufRead,
+    output: impl Write + Send,
+    env: Env,
+    terminals: Option<&dyn Terminals>,
+) -> io::Result<()> {
     let output = Mutex::new(output);
     // The calls handed to a worker and not yet answered, each with whether
     // it was asked to stop; the reader enters one before handing it over, so
@@ -56,6 +89,19 @@ fn serve_in(input: impl BufRead, output: impl Write + Send, env: Env) -> io::Res
     // one has stopped, the next request's send fails and the helper exits.
     let receiver = Arc::new(Mutex::new(receiver));
     let result = std::thread::scope(|scope| {
+        if let Some(terminals) = terminals {
+            let output = &output;
+            scope.spawn(move || {
+                // One line per turn of the output lock, so an answer waits
+                // behind at most one terminal line.
+                while let Some(line) = terminals.next_up() {
+                    if write_raw(output, &line).is_err() {
+                        terminals.stop();
+                        return;
+                    }
+                }
+            });
+        }
         for _ in 0..CONCURRENCY {
             let receiver = Arc::clone(&receiver);
             let output = &output;
@@ -80,6 +126,16 @@ fn serve_in(input: impl BufRead, output: impl Write + Send, env: Env) -> io::Res
                                 .start(scope, output, bridges, &herdr_socket)
                                 .and_then(to_value),
                             Err(error) => Err(HostError::new(ErrorCode::Io, error.to_string())),
+                        },
+                        Call::TerminalsStart { herdr_socket } => match terminals {
+                            Some(terminals) => terminals
+                                .start(&herdr_socket)
+                                .map(|()| Value::Null)
+                                .map_err(|message| HostError::new(ErrorCode::Io, message)),
+                            None => Err(HostError::new(
+                                ErrorCode::Unsupported,
+                                "This node runs no terminal service",
+                            )),
                         },
                         Call::PaneProofAnswer { request, answer } => {
                             panes.answer_proof(request, answer)
@@ -114,8 +170,13 @@ fn serve_in(input: impl BufRead, output: impl Write + Send, env: Env) -> io::Res
             });
         }
         drop(receiver);
-        let result = read_requests(input, &sender, &output, &running);
+        let result = read_requests(input, &sender, &output, &running, terminals);
         drop(sender);
+        // The connection is gone: the terminal sessions end with it, so no
+        // attach child outlives the link that asked for it (D-20, B20).
+        if let Some(terminals) = terminals {
+            terminals.stop();
+        }
         // The connection is gone: a kit step still running ends its child
         // rather than keep the helper alive after it, and the pane service
         // ends its listener and streams so the scope can close.
@@ -132,6 +193,7 @@ fn read_requests(
     sender: &mpsc::SyncSender<Request>,
     output: &Mutex<impl Write>,
     running: &Mutex<HashMap<u64, bool>>,
+    terminals: Option<&dyn Terminals>,
 ) -> io::Result<()> {
     let mut line = Vec::new();
     loop {
@@ -149,6 +211,15 @@ fn read_requests(
                 io::ErrorKind::InvalidData,
                 "request line too long",
             ));
+        }
+        if line.starts_with(hide_node_link::terminal::TERMINAL_LINE_PREFIX) {
+            // A node without the service never answered `terminals_start`,
+            // so the core sends it no terminal line; one that arrives anyway
+            // has no pane to reach.
+            if let Some(terminals) = terminals {
+                terminals.line(line.trim_ascii_end());
+            }
+            continue;
         }
         let request: Request = match serde_json::from_slice(&line) {
             Ok(request) => request,
@@ -238,6 +309,14 @@ fn write_line(output: &Mutex<impl Write>, line: &impl serde::Serialize) -> io::R
     output.flush()
 }
 
+fn write_raw(output: &Mutex<impl Write>, line: &[u8]) -> io::Result<()> {
+    let mut output = output
+        .lock()
+        .map_err(|_| io::Error::other("helper output lock poisoned"))?;
+    output.write_all(line)?;
+    output.flush()
+}
+
 fn to_value(value: impl serde::Serialize) -> HostResult<Value> {
     serde_json::to_value(value).map_err(|error| {
         HostError::new(
@@ -297,16 +376,19 @@ fn session_read<T: serde::Serialize>(
     let path = session_file(env, &SESSION_FILE_AGENTS, path)?;
     let home = env.home("sessions_home_unavailable")?;
     let home = Path::new(&home);
-    let agent =
-        if hide_session::inside_session_root(home, &[hide_session::Agent::Pi], &path).is_ok() {
-            hide_session::Agent::Pi
-        } else {
-            hide_session::Agent::Claude
-        };
+    let agent = session_file_agent(home, &path)?;
     to_value(
         hide_session::read_session_file(home, agent, &path, scope, || read(&path))
             .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
     )
+}
+
+fn session_file_agent(home: &Path, path: &Path) -> HostResult<hide_session::Agent> {
+    SESSION_FILE_AGENTS
+        .iter()
+        .copied()
+        .find(|agent| hide_session::inside_session_root(home, &[*agent], path).is_ok())
+        .ok_or_else(|| HostError::new(ErrorCode::OutsideRoot, "session_outside_roots"))
 }
 
 fn project_facts(path: &str) -> HostResult<hide_project::ProjectFacts> {
@@ -674,6 +756,10 @@ pub fn handle_with_progress(
             crate::attachments::read_sources(&paths, &mut |index| progress(Value::from(index)))
                 .map_err(|reason| HostError::new(ErrorCode::InvalidPath, reason))?,
         ),
+        Call::RemoveClipboard { path } => to_value(
+            crate::attachments::remove_clipboard(Path::new(&path))
+                .map_err(|reason| HostError::new(ErrorCode::InvalidPath, reason))?,
+        ),
         Call::AgentInstalled { name } => {
             to_value(hide_ai::resolve_binary(Path::new(&name)).is_some())
         }
@@ -716,6 +802,27 @@ pub fn handle_with_progress(
                     format!("the processes under {pid} could not be read: {error}"),
                 )
             })?)
+        }
+        Call::LineInput { pid } => {
+            use hide_platform::process::LineInput as Read;
+            let input = hide_platform::process::line_input(pid).map_err(|error| {
+                let code = match error.kind() {
+                    io::ErrorKind::NotFound => ErrorCode::NotFound,
+                    io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
+                    _ => ErrorCode::Io,
+                };
+                HostError::new(
+                    code,
+                    format!("the terminal of process {pid} could not be read: {error}"),
+                )
+            })?;
+            to_value(match input {
+                Read::Keys => LineInput::Keys,
+                Read::Lines { limit } => LineInput::Lines {
+                    limit: u32::try_from(limit).unwrap_or(u32::MAX),
+                },
+                Read::Console => LineInput::Console,
+            })
         }
         Call::DiskUsage { paths, shared_git } => {
             let request = crate::disk::DiskRequest {
@@ -801,17 +908,7 @@ pub fn handle_with_progress(
                             path,
                         )
                         .ok()?;
-                        let agent = if hide_session::inside_session_root(
-                            Path::new(&home),
-                            &[hide_session::Agent::Pi],
-                            &path,
-                        )
-                        .is_ok()
-                        {
-                            hide_session::Agent::Pi
-                        } else {
-                            hide_session::Agent::Claude
-                        };
+                        let agent = session_file_agent(Path::new(&home), &path).ok()?;
                         let scope = scopes
                             .as_ref()
                             .and_then(|scopes| scopes.get(index))
@@ -848,6 +945,7 @@ pub fn handle_with_progress(
             crate::sessions::chunk(path, checkpoint).map_err(|e| e.to_string())
         }),
         Call::PanesStart { .. }
+        | Call::TerminalsStart { .. }
         | Call::PaneProofAnswer { .. }
         | Call::PaneInspect { .. }
         | Call::StreamWrite { .. }
@@ -1092,15 +1190,39 @@ mod tests {
     }
 
     #[test]
-    fn queued_pi_archive_search_memory_and_stamps_refuse_a_replaced_catalog_owner() {
+    fn queued_native_archive_search_memory_and_stamps_refuse_a_replaced_catalog_owner() {
+        for agent in [hide_session::Agent::Pi, hide_session::Agent::Omp] {
+            queued_native_catalog_owner(agent);
+        }
+    }
+
+    fn queued_native_catalog_owner(agent: hide_session::Agent) {
         let home = tempfile::tempdir().unwrap();
         let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
-        let folder = home.path().join(".pi/agent/sessions").join(format!(
-            "--{}--",
-            cwd.to_string_lossy()
-                .trim_start_matches(['/', '\\'])
-                .replace(['/', '\\', ':'], "-")
-        ));
+        let (root, bucket) = match agent {
+            hide_session::Agent::Pi => (
+                ".pi/agent/sessions",
+                format!(
+                    "--{}--",
+                    cwd.to_string_lossy()
+                        .trim_start_matches(['/', '\\'])
+                        .replace(['/', '\\', ':'], "-")
+                ),
+            ),
+            hide_session::Agent::Omp => {
+                let temporary = std::env::temp_dir().canonicalize().unwrap();
+                let relative = cwd.strip_prefix(temporary).unwrap();
+                (
+                    ".omp/agent/sessions",
+                    format!(
+                        "-tmp-{}",
+                        relative.to_string_lossy().replace(['/', '\\', ':'], "-")
+                    ),
+                )
+            }
+            _ => unreachable!("native-file fixture"),
+        };
+        let folder = home.path().join(root).join(bucket);
         std::fs::create_dir_all(&folder).unwrap();
         let path = folder.join("native.jsonl");
         let env = Env::standalone(Some(home.path().to_path_buf()));
@@ -1124,7 +1246,7 @@ mod tests {
                     checkpoint: None,
                 },
                 Call::SessionIndexRead {
-                    agent: hide_session::Agent::Pi,
+                    agent,
                     path: path.display().to_string(),
                     scope: Some(scope.clone()),
                     saved: None,
@@ -1236,7 +1358,12 @@ mod tests {
                 stop: Arc::default(),
                 ..Env::of_process()
             };
-            let _ = done.send(serve_in(io::BufReader::new(theirs), Lines(written), env));
+            let _ = done.send(serve_in(
+                io::BufReader::new(theirs),
+                Lines(written),
+                env,
+                None,
+            ));
         });
         let mut text = String::new();
         let mut next = || {
@@ -1327,7 +1454,7 @@ mod tests {
                 stop: Arc::default(),
                 ..Env::of_process()
             };
-            let _ = done.send(serve_in(io::BufReader::new(theirs), output, env));
+            let _ = done.send(serve_in(io::BufReader::new(theirs), output, env, None));
         });
         input.write_all(&line(7, watch())).unwrap();
         input.write_all(&line(7, watch())).unwrap();

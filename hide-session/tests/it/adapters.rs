@@ -50,7 +50,9 @@ fn home(agent: Agent) -> tempfile::TempDir {
             &fixtures().join("codex-0.160.0"),
             &home.path().join(".codex"),
         ),
-        Agent::Pi => unreachable!("Pi fixtures bind their cwd to an owned checkout"),
+        Agent::Grok | Agent::Pi | Agent::Omp => {
+            unreachable!("Native file fixtures bind their cwd to an owned checkout")
+        }
         Agent::OpenCode => {
             let folder = home.path().join(".local/share/opencode");
             std::fs::create_dir_all(&folder).unwrap();
@@ -70,7 +72,9 @@ fn request(agent: Agent) -> LabelTranscriptRequest {
     let id = match agent {
         Agent::Claude => "a1b2c3d4-0000-4000-8000-000000000001",
         Agent::Codex => "0199a000-0000-7000-8000-000000000002",
+        Agent::Grok => GROK_ID,
         Agent::Pi => "pi-native-a",
+        Agent::Omp => "omp-native-a",
         Agent::OpenCode => "ses_0a1b2c3d4e5f60718293a4b5c6",
     };
     LabelTranscriptRequest {
@@ -359,6 +363,1154 @@ fn every_agent_reads_to_the_same_facts() {
         assert!(
             sighted(&transcript, 99).is_none(),
             "{agent:?}: a reply's mention is not a tool's output"
+        );
+    }
+}
+
+mod omp {
+    use super::*;
+    use serde_json::json;
+    use std::fs;
+    use std::io::{Seek, SeekFrom, Write};
+
+    struct Native {
+        home: tempfile::TempDir,
+        path: PathBuf,
+        request: LabelTranscriptRequest,
+    }
+
+    impl Native {
+        fn new() -> Self {
+            Self::with_checkout("checkout")
+        }
+
+        fn with_checkout(name: &str) -> Self {
+            let home = tempfile::tempdir().unwrap();
+            let cwd = home.path().join(name);
+            fs::create_dir(&cwd).unwrap();
+            let cwd = cwd.canonicalize().unwrap();
+            // Upstream session-paths checks the system temporary root first,
+            // even though this fixture checkout is also inside its home.
+            let temp = std::env::temp_dir().canonicalize().unwrap();
+            let relative = cwd.strip_prefix(temp).unwrap().to_string_lossy();
+            let bucket = format!("-tmp-{}", relative.replace(['/', '\\', ':'], "-"));
+            let path = home
+                .path()
+                .join(".omp/agent/sessions")
+                .join(bucket)
+                .join("date_omp-native-a.jsonl");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let fixture = fs::read_to_string(fixtures().join("omp-18.7.0/session.jsonl")).unwrap();
+            let mut records: Vec<serde_json::Value> = fixture
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            records[1]["cwd"] = json!(cwd);
+            records[1]["parentSession"] = json!("/outside/opaque-fork-parent.jsonl");
+            fs::write(
+                &path,
+                records.iter().map(|v| format!("{v}\n")).collect::<String>(),
+            )
+            .unwrap();
+            let mut request = request(Agent::Omp);
+            request.cwd = Some(cwd.display().to_string());
+            Self {
+                home,
+                path,
+                request,
+            }
+        }
+
+        fn read(&self) -> Result<LabelTranscript, String> {
+            read(self.home.path(), &self.request)
+        }
+        fn resume(&mut self, answer: &LabelTranscript) {
+            self.request.checkpoint = Some(answer.checkpoint.clone());
+            self.request.turns = answer.turns.clone();
+        }
+        fn append(&self, record: serde_json::Value) {
+            writeln!(
+                fs::OpenOptions::new()
+                    .append(true)
+                    .open(&self.path)
+                    .unwrap(),
+                "{record}"
+            )
+            .unwrap();
+        }
+        fn title(&self, text: &str, source: &str) {
+            let mut slot = json!({"type":"title","v":1,"title":text,"source":source,"updatedAt":"2026-10-03T02:00:00Z","pad":""});
+            slot["pad"] = json!(" ".repeat(256 - slot.to_string().len() - 1));
+            let line = format!("{slot}\n");
+            assert_eq!(line.len(), 256);
+            let mut file = fs::OpenOptions::new().write(true).open(&self.path).unwrap();
+            file.seek(SeekFrom::Start(0)).unwrap();
+            file.write_all(line.as_bytes()).unwrap();
+        }
+    }
+
+    #[test]
+    fn physical_title_changes_at_eof_clear_stale_names_without_replaying_events() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        assert_eq!(first.custom_title.as_deref(), Some("요청 보기 만들기"));
+        assert_eq!(first.title.as_deref(), Some(""));
+        assert_eq!(first.events.len(), 4);
+        assert_eq!(
+            first.events[0].text,
+            "요청 보기를 만들어줘\n긴 요청의 둘째 줄"
+        );
+        assert_eq!(first.events[0].at_unix_ms, START);
+        assert_eq!(sighted(&first, 12).unwrap().at_unix_ms, START + 30_000);
+        assert!(sighted(&first, 99).is_none());
+        assert!(first.subagents.is_empty());
+        let offset = first.checkpoint.offset();
+        let bytes = fs::metadata(&native.path).unwrap().len();
+        native.resume(&first);
+        for (name, source, automatic, manual) in
+            [("새 제목", "auto", "새 제목", ""), ("", "user", "", "")]
+        {
+            native.title(name, source);
+            let next = native.read().unwrap();
+            assert!(next.events.is_empty());
+            assert_eq!(next.checkpoint.offset(), offset);
+            assert_eq!(next.title.as_deref(), Some(automatic));
+            assert_eq!(next.custom_title.as_deref(), Some(manual));
+            assert_eq!(fs::metadata(&native.path).unwrap().len(), bytes);
+            native.resume(&next);
+        }
+    }
+
+    #[test]
+    fn native_ask_waits_with_choices_and_only_correlated_answers_clear_it() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        native.append(json!({"type":"message","timestamp":"2026-10-03T02:00:01Z","message":{"role":"assistant","content":[{"type":"toolCall","name":"ask","id":"q-1","arguments":{"questions":[{"id":"policy","question":"어느 쪽으로 할까요?","header":"선택","options":[{"label":"계속","description":"계속 진행"},{"label":"중단"}],"multi":false,"recommended":0}]}}]}}));
+        let asked = native.read().unwrap();
+        let fact = asked.turns.as_ref().unwrap().user_turn().unwrap();
+        assert_eq!(fact.kind, hide_session::turns::UserTurnKind::Question);
+        let content = fact.content.unwrap();
+        assert_eq!(content.text(), "어느 쪽으로 할까요?");
+        assert_eq!(content.choices(), ["계속", "중단"]);
+        assert!(asked.events.is_empty());
+        native.resume(&asked);
+        for (call, waiting) in [("unrelated", Waiting::Question), ("q-1", Waiting::Nothing)] {
+            native.append(json!({"type":"message","timestamp":"2026-10-03T02:00:02Z","message":{"role":"toolResult","toolCallId":call,"toolName":"ask","isError":true,"content":[{"type":"text","text":"aborted"}]}}));
+            native.title("同時の名前", "auto");
+            let answered = native.read().unwrap();
+            assert_eq!(answered.turns.as_ref().unwrap().waiting(), Some(waiting));
+            assert!(answered.events.is_empty());
+            assert_eq!(answered.title.as_deref(), Some("同時の名前"));
+            native.resume(&answered);
+        }
+    }
+
+    #[test]
+    fn legacy_current_header_wins_over_audit_and_nested_children_never_enter_root_catalog() {
+        let native = Native::new();
+        let body = fs::read_to_string(&native.path).unwrap();
+        fs::write(&native.path, body.split_once('\n').unwrap().1).unwrap();
+        let legacy = native.read().unwrap();
+        assert_eq!(legacy.title.as_deref(), Some("stale header"));
+        assert_eq!(legacy.custom_title.as_deref(), Some(""));
+        let artifacts = native.path.with_extension("").join("subagents");
+        fs::create_dir_all(&artifacts).unwrap();
+        fs::write(
+            artifacts.join("child.jsonl"),
+            fs::read_to_string(&native.path)
+                .unwrap()
+                .replace("omp-native-a", "child-native"),
+        )
+        .unwrap();
+        let project =
+            hide_project::resolve(Path::new(native.request.cwd.as_deref().unwrap()), "local")
+                .unwrap();
+        let catalog = hide_session::SessionCatalog::new(native.home.path(), "local")
+            .project_sessions(&project)
+            .unwrap();
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].agent, Agent::Omp);
+        assert_eq!(catalog[0].id, "omp-native-a");
+        assert_eq!(catalog[0].title.as_deref(), Some("stale header"));
+        let linked = hide_session::links::read(
+            native.home.path(),
+            &[hide_session::links::ReadRequest {
+                agent: Agent::Omp,
+                path: native.path.display().to_string(),
+                checkpoint: None,
+            }],
+        )
+        .remove(0);
+        assert!(linked.error.is_none());
+        assert_eq!(linked.facts.session_id.as_deref(), Some("omp-native-a"));
+        assert_eq!(linked.facts.prs.len(), 1);
+        assert_eq!(linked.facts.prs[0].number, 12);
+        assert!(native.read().unwrap().subagents.is_empty());
+    }
+
+    #[test]
+    fn exact_identity_and_default_route_refuse_filename_aliases_before_effects() {
+        let mut native = Native::new();
+        let by_id = native.read().unwrap();
+        native.request.reference_kind = "path".into();
+        native.request.reference_value = native.path.display().to_string();
+        let by_path = native.read().unwrap();
+        assert_eq!(by_id.confirmed.owner, by_path.confirmed.owner);
+        let action = hide_session::session_activity::SessionActivityRequest {
+            agent: Agent::Omp,
+            reference_kind: "path".into(),
+            reference_value: native.path.display().to_string(),
+            cwd: native.request.cwd.clone(),
+            exact_route: true,
+            expected_id: Some("omp-native-a".into()),
+        };
+        assert!(hide_session::session_activity::read(native.home.path(), &action).is_ok());
+        let sibling = native
+            .path
+            .parent()
+            .unwrap()
+            .join("OMP-NATIVE-A-alias.jsonl");
+        let other = fs::read_to_string(&native.path)
+            .unwrap()
+            .replace("omp-native-a", "other-owner");
+        fs::write(&sibling, other).unwrap();
+        assert_eq!(
+            hide_session::session_activity::read(native.home.path(), &action).unwrap_err(),
+            "session_route_ambiguous"
+        );
+        assert!(native.read().is_ok(), "ambiguity is action-local");
+        fs::remove_file(sibling).unwrap();
+        assert!(hide_session::session_activity::read(native.home.path(), &action).is_ok());
+        native.request.cwd = Some(native.home.path().display().to_string());
+        assert!(native.read().is_err());
+    }
+
+    #[test]
+    fn option_like_native_ids_never_authorize_a_resume_or_fork() {
+        let mut native = Native::new();
+        native.request.reference_kind = "path".into();
+        native.request.reference_value = native.path.display().to_string();
+        let source = fs::read_to_string(&native.path).unwrap();
+        for id in ["-", "--", "--no-session", "--yolo", "-r"] {
+            // omp's optional-value --resume parser treats these as flags,
+            // not its selector (args.ts, pinned 18.7.0); --fork requires a value.
+            fs::write(&native.path, source.replace("omp-native-a", id)).unwrap();
+            let action = hide_session::session_activity::SessionActivityRequest {
+                agent: Agent::Omp,
+                reference_kind: "path".into(),
+                reference_value: native.path.display().to_string(),
+                cwd: native.request.cwd.clone(),
+                exact_route: true,
+                expected_id: Some(id.into()),
+            };
+            assert!(
+                hide_session::session_activity::read(native.home.path(), &action).is_err(),
+                "a native flag cannot become a session selector: {id}"
+            );
+        }
+        fs::write(&native.path, source).unwrap();
+        assert!(native.read().is_ok());
+    }
+
+    #[test]
+    fn native_preprocessing_inputs_refuse_effects_without_mutating_the_selected_source() {
+        use sha2::{Digest, Sha256};
+        // Pinned native regex replaces each invalid run separately from an
+        // adjacent literal '-'; the expected readable names are native facts.
+        for (checkout, readable) in [
+            ("repo-한글x", "repo--x"),
+            ("checkout", "checkout"),
+            ("repo한글-x", "repo--x"),
+            ("한글", "project"),
+        ] {
+            let native = Native::with_checkout(checkout);
+            let source = fs::read(&native.path).unwrap();
+            let alias_source = String::from_utf8(source.clone())
+                .unwrap()
+                .replace("omp-native-a", "different-native-owner");
+            let cwd = Path::new(native.request.cwd.as_deref().unwrap());
+            let root = native.home.path().join(".omp/agent/sessions");
+            let action = hide_session::session_activity::SessionActivityRequest {
+                agent: Agent::Omp,
+                reference_kind: "path".into(),
+                reference_value: native.path.display().to_string(),
+                cwd: native.request.cwd.clone(),
+                exact_route: true,
+                expected_id: Some("omp-native-a".into()),
+            };
+            let check = || hide_session::session_activity::read(native.home.path(), &action);
+            assert!(check().is_ok());
+            // These names come from upstream session-paths/session-listing, not
+            // Hide's policy helpers: native startup moves/promotes their aliases.
+            let absolute = format!(
+                "--{}--",
+                cwd.to_str()
+                    .unwrap()
+                    .trim_start_matches(['/', '\\'])
+                    .replace(['/', '\\', ':'], "-")
+            );
+            let hashed = format!(
+                "tmp-{readable}-{:x}",
+                Sha256::digest(cwd.to_str().unwrap().replace('\\', "/").as_bytes())
+            );
+            let old_home = format!(
+                "--{}-{}--",
+                native
+                    .home
+                    .path()
+                    .to_str()
+                    .unwrap()
+                    .trim_start_matches(['/', '\\'])
+                    .replace(['/', '\\', ':'], "-"),
+                native
+                    .path
+                    .parent()
+                    .unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .strip_prefix('-')
+                    .unwrap()
+            );
+            // Root-wide home migration runs before cwd legacy migration. This
+            // entry first creates the absent absolute alias, then merges into
+            // the selected default bucket during the same native startup.
+            let old_absolute = format!(
+                "--{}-{}--",
+                native
+                    .home
+                    .path()
+                    .to_str()
+                    .unwrap()
+                    .trim_start_matches(['/', '\\'])
+                    .replace(['/', '\\', ':'], "-"),
+                absolute.strip_prefix('-').unwrap()
+            );
+            for bucket in [
+                absolute,
+                format!("-{checkout}"),
+                hashed,
+                old_home,
+                old_absolute,
+            ] {
+                let migrated = root.join(&bucket);
+                fs::create_dir(&migrated).unwrap();
+                let alias = migrated.join("date_omp-native-a-newer.jsonl");
+                fs::write(&alias, &alias_source).unwrap();
+                assert_eq!(
+                    check().map(|_| ()),
+                    Err("session_route_requires_native_migration".to_owned()),
+                    "{checkout}: {bucket}"
+                );
+                assert!(native.read().is_ok(), "migration refusal is action-only");
+                assert_eq!(fs::read(&native.path).unwrap(), source);
+                assert!(alias.exists(), "Hide must not perform the native migration");
+                fs::remove_dir_all(migrated).unwrap();
+                assert!(check().is_ok(), "a resolved migration restores the route");
+            }
+            let backup = native
+                .path
+                .with_file_name("date_omp-native-a-newer.jsonl.123.bak");
+            fs::write(&backup, &alias_source).unwrap();
+            assert_eq!(
+                check().unwrap_err(),
+                "session_route_requires_native_recovery"
+            );
+            assert!(backup.exists(), "Hide must not promote the native backup");
+            assert!(native.read().is_ok());
+            assert_eq!(fs::read(&native.path).unwrap(), source);
+            fs::remove_file(backup).unwrap();
+            assert!(check().is_ok());
+        }
+    }
+
+    #[test]
+    fn native_unicode_filename_aliases_never_pass_an_ascii_route_audit() {
+        let native = Native::new();
+        let source = fs::read_to_string(&native.path)
+            .unwrap()
+            .replace("omp-native-a", "knative");
+        fs::write(&native.path, &source).unwrap();
+        let action = hide_session::session_activity::SessionActivityRequest {
+            agent: Agent::Omp,
+            reference_kind: "path".into(),
+            reference_value: native.path.display().to_string(),
+            cwd: native.request.cwd.clone(),
+            exact_route: true,
+            expected_id: Some("knative".into()),
+        };
+        let check = || hide_session::session_activity::read(native.home.path(), &action);
+        assert!(check().is_ok());
+        for name in ["Knative.jsonl", "date_Knative.jsonl"] {
+            // ECMAScript lowercases Kelvin sign to ASCII k. Native OMP
+            // matches both the entire filename and the final '_' suffix.
+            let alias = native.path.with_file_name(name);
+            fs::write(&alias, source.replace("knative", "other-owner")).unwrap();
+            assert!(check().is_err(), "native Unicode alias must refuse: {name}");
+            fs::remove_file(alias).unwrap();
+            assert!(check().is_ok());
+        }
+    }
+
+    #[test]
+    fn a_dotdot_named_temp_child_uses_the_natives_absolute_bucket() {
+        let mut native = Native::new();
+        let checkout = tempfile::Builder::new()
+            .prefix("..omp-route-")
+            .tempdir()
+            .unwrap();
+        let cwd = checkout.path().canonicalize().unwrap();
+        let temp = std::env::temp_dir().canonicalize().unwrap();
+        let relative = cwd.strip_prefix(temp).unwrap().to_str().unwrap();
+        assert!(relative.starts_with(".."));
+        // Upstream isRelativeWithin rejects even this ordinary child name.
+        let root = native.home.path().join(".omp/agent/sessions");
+        let wrong = root
+            .join(format!("-tmp-{relative}"))
+            .join("date_omp-native-a.jsonl");
+        let correct = root
+            .join(format!(
+                "--{}--",
+                cwd.to_str()
+                    .unwrap()
+                    .trim_start_matches(['/', '\\'])
+                    .replace(['/', '\\', ':'], "-")
+            ))
+            .join("date_omp-native-a.jsonl");
+        let source = fs::read_to_string(&native.path).unwrap().replace(
+            native.request.cwd.as_deref().unwrap(),
+            cwd.to_str().unwrap(),
+        );
+        for path in [&wrong, &correct] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, &source).unwrap();
+        }
+        native.request.cwd = Some(cwd.display().to_string());
+        native.request.reference_kind = "path".into();
+        native.request.reference_value = wrong.display().to_string();
+        assert!(
+            native.read().is_err(),
+            "the relative bucket is not a native route"
+        );
+        native.request.reference_value = correct.display().to_string();
+        assert!(native.read().is_ok());
+        let action = hide_session::session_activity::SessionActivityRequest {
+            agent: Agent::Omp,
+            reference_kind: "path".into(),
+            reference_value: correct.display().to_string(),
+            cwd: native.request.cwd.clone(),
+            exact_route: true,
+            expected_id: Some("omp-native-a".into()),
+        };
+        assert!(hide_session::session_activity::read(native.home.path(), &action).is_ok());
+    }
+}
+
+const GROK_ID: &str = "0199b000-0000-7000-8000-000000000003";
+
+mod grok {
+    use super::*;
+    use hide_session::turns::UserTurnKind;
+    use hide_session::{SessionCatalog, SessionIdentity, SessionLocator};
+    use serde_json::json;
+    use std::fs;
+    use std::io::Write;
+
+    struct Native {
+        home: tempfile::TempDir,
+        cwd: PathBuf,
+        path: PathBuf,
+        request: LabelTranscriptRequest,
+    }
+
+    /// The native group name: every byte but `A-Za-z0-9-_.~` as `%XX`.
+    fn group(cwd: &Path) -> String {
+        cwd.to_str()
+            .unwrap()
+            .bytes()
+            .map(|byte| {
+                if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+                    (byte as char).to_string()
+                } else {
+                    format!("%{byte:02X}")
+                }
+            })
+            .collect()
+    }
+
+    impl Native {
+        fn new() -> Self {
+            let home = tempfile::tempdir().unwrap();
+            let cwd = home.path().join("checkout 1");
+            fs::create_dir(&cwd).unwrap();
+            let cwd = fs::canonicalize(cwd).unwrap();
+            let folder = home
+                .path()
+                .join(".grok/sessions")
+                .join(group(&cwd))
+                .join(GROK_ID);
+            fs::create_dir_all(&folder).unwrap();
+            let fixture = fixtures().join("grok-1.0.46");
+            fs::copy(fixture.join("updates.jsonl"), folder.join("updates.jsonl")).unwrap();
+            let native = Self {
+                path: folder.join("updates.jsonl"),
+                request: LabelTranscriptRequest {
+                    cwd: Some(cwd.display().to_string()),
+                    ..request(Agent::Grok)
+                },
+                home,
+                cwd,
+            };
+            native.summary(|_| {});
+            native
+        }
+
+        fn folder(&self) -> &Path {
+            self.path.parent().unwrap()
+        }
+
+        /// Grok rewrites `summary.json` whole and renames it into place.
+        fn summary(&self, change: impl FnOnce(&mut serde_json::Value)) {
+            let mut summary: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(fixtures().join("grok-1.0.46/summary.json")).unwrap(),
+            )
+            .unwrap();
+            summary["info"]["cwd"] = json!(self.cwd);
+            change(&mut summary);
+            let temporary = self.folder().join("summary.json.tmp");
+            fs::write(&temporary, serde_json::to_vec_pretty(&summary).unwrap()).unwrap();
+            fs::rename(temporary, self.folder().join("summary.json")).unwrap();
+        }
+
+        fn read(&self) -> Result<LabelTranscript, String> {
+            read(self.home.path(), &self.request)
+        }
+
+        /// The label store keeps a checkpoint as JSON, so each read resumes
+        /// from one that went through it, even inside an oversized record.
+        fn resume(&mut self, answer: &LabelTranscript) {
+            let stored = serde_json::to_string(&answer.checkpoint).unwrap();
+            self.request.checkpoint = Some(serde_json::from_str(&stored).unwrap());
+            self.request.turns = answer.turns.clone();
+        }
+
+        fn append(&self, update: serde_json::Value, meta: serde_json::Value) {
+            let method = if update["sessionUpdate"] == "turn_completed" {
+                "_x.ai/session/update"
+            } else {
+                "session/update"
+            };
+            let mut params_meta = json!({"eventId":"e","agentTimestampMs": START + 200_000});
+            params_meta
+                .as_object_mut()
+                .unwrap()
+                .extend(meta.as_object().unwrap().clone());
+            let record = json!({"timestamp": (START + 200_000) / 1000, "method": method,
+                "params": {"sessionId": GROK_ID, "update": update, "_meta": params_meta}});
+            writeln!(
+                fs::OpenOptions::new()
+                    .append(true)
+                    .open(&self.path)
+                    .unwrap(),
+                "{record}"
+            )
+            .unwrap();
+        }
+
+        fn route(&self, cwd: &Path) -> Result<(), String> {
+            self.route_by("id", GROK_ID, cwd, None)
+        }
+
+        fn route_by(
+            &self,
+            kind: &str,
+            value: &str,
+            cwd: &Path,
+            expected_id: Option<&str>,
+        ) -> Result<(), String> {
+            hide_session::session_activity::read(
+                self.home.path(),
+                &hide_session::session_activity::SessionActivityRequest {
+                    agent: Agent::Grok,
+                    reference_kind: kind.into(),
+                    reference_value: value.into(),
+                    cwd: cwd.to_str().map(str::to_owned),
+                    exact_route: true,
+                    expected_id: expected_id.map(str::to_owned),
+                },
+            )
+            .map(|_| ())
+        }
+    }
+
+    fn user_turn(answer: &LabelTranscript) -> Option<hide_session::turns::UserTurnFact> {
+        answer.turns.as_ref().unwrap().user_turn()
+    }
+
+    #[test]
+    fn native_history_has_the_shared_conversation_facts_with_split_records_joined() {
+        let native = Native::new();
+        let transcript = native.read().unwrap();
+        assert_eq!(transcript.title.as_deref(), Some("요청 보기 만들기"));
+        assert_eq!(transcript.custom_title.as_deref(), Some(""));
+        let people: Vec<_> = transcript
+            .events
+            .iter()
+            .filter(|event| event.kind == LabelEventKind::Human)
+            .collect();
+        assert_eq!(people.len(), 3, "Grok's own wake is no one's request");
+        assert_eq!(people[0].text, "요청 보기를 만들어줘\n긴 요청의 둘째 줄");
+        assert_eq!(people[0].at_unix_ms, START);
+        assert_eq!(people[1].sender.as_deref(), Some("ci-lead"));
+        assert_eq!((people[2].text.as_str(), people[2].images), ("", 1));
+        let replies: Vec<_> = transcript
+            .events
+            .iter()
+            .filter(|event| event.kind == LabelEventKind::Assistant)
+            .collect();
+        assert_eq!(replies.len(), 1, "a turn's text runs are one answer");
+        assert_eq!(
+            replies[0].text,
+            "PR을 열었습니다: https://github.com/acme/app/pull/12\n\n예전 것은 https://github.com/acme/app/pull/99 입니다"
+        );
+        assert_eq!(replies[0].at_unix_ms, START + 129_000);
+        assert_eq!(sighted(&transcript, 12).unwrap().at_unix_ms, START + 30_000);
+        assert!(sighted(&transcript, 99).is_none());
+        assert_eq!(
+            transcript.confirmed.native_session_id.as_deref(),
+            Some(GROK_ID)
+        );
+        assert_eq!(user_turn(&transcript), None);
+        assert_eq!(
+            transcript.turns.as_ref().unwrap().waiting(),
+            Some(Waiting::Nothing)
+        );
+        assert!(transcript.subagents.is_empty());
+    }
+
+    #[test]
+    fn the_blocks_of_one_prompt_appended_after_a_read_are_one_message() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        let block = |content: serde_json::Value| {
+            json!({"sessionUpdate":"user_message_chunk","content":content,
+                "_meta":{"modelId":"grok-build","promptIndex":4}})
+        };
+        native.append(
+            block(json!({"type":"text","text":"이 화면을 봐줘"})),
+            json!({}),
+        );
+        native.append(
+            block(json!({"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"})),
+            json!({}),
+        );
+        let next = native.read().unwrap();
+        assert_eq!(next.events.len(), 1);
+        assert_eq!(
+            (next.events[0].text.as_str(), next.events[0].images),
+            ("이 화면을 봐줘", 1)
+        );
+        let mut whole =
+            hide_session::parse_events(Agent::Grok, &fs::read_to_string(&native.path).unwrap());
+        assert_eq!(whole.events.len(), 8, "one event per native record");
+        whole.coalesce();
+        assert_eq!(
+            whole
+                .events
+                .iter()
+                .filter(|event| event.kind == hide_session::EventKind::Human)
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn an_unanswered_question_waits_with_its_choices_until_its_tool_call_ends() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        native.append(
+            json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"배포해줘"},
+                "_meta":{"promptIndex":4}}),
+            json!({}),
+        );
+        let input = json!({"questions":[{"question":"배포 대상을 골라주세요",
+            "options":[{"label":"미리보기","description":"preview"},{"label":"운영"}],"multi_select":false}]});
+        native.append(
+            json!({"sessionUpdate":"tool_call","toolCallId":"call-ask","title":"ask_user_question",
+                "rawInput":input,"_meta":{"x.ai/tool":{"version":1,"name":"ask_user_question","kind":"ask_user"}}}),
+            json!({"promptId":"p-4"}),
+        );
+        native.append(
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"call-ask","title":"Ask: 배포 대상을 골라주세요",
+                "kind":"other","rawInput":input,"_meta":{"x.ai/tool":{"version":1,"name":"ask_user_question","kind":"ask_user"}}}),
+            json!({"promptId":"p-4"}),
+        );
+        let asked = native.read().unwrap();
+        let fact = user_turn(&asked).unwrap();
+        assert_eq!(fact.kind, UserTurnKind::Question);
+        let content = fact.content.unwrap();
+        assert_eq!(content.text(), "배포 대상을 골라주세요");
+        assert_eq!(content.choices(), ["미리보기", "운영"]);
+        native.resume(&asked);
+        native.append(
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"call-ask","status":"completed",
+                "content":[{"type":"content","content":{"type":"text","text":"미리보기"}}]}),
+            json!({"promptId":"p-4"}),
+        );
+        let answered = native.read().unwrap();
+        assert_eq!(user_turn(&answered), None);
+        assert!(answered.events.is_empty(), "an answer is no message");
+
+        native.resume(&answered);
+        native.append(
+            json!({"sessionUpdate":"tool_call","toolCallId":"call-ask-2","title":"ask_user_question",
+                "rawInput":input,"_meta":{"x.ai/tool":{"kind":"ask_user"}}}),
+            json!({"promptId":"p-4"}),
+        );
+        let again = native.read().unwrap();
+        assert_eq!(user_turn(&again).unwrap().kind, UserTurnKind::Question);
+        native.resume(&again);
+        native.append(
+            json!({"sessionUpdate":"turn_completed","prompt_id":"p-4","stop_reason":"cancelled"}),
+            json!({}),
+        );
+        let cancelled = native.read().unwrap();
+        assert_eq!(user_turn(&cancelled), None, "a cancelled turn asks nothing");
+        assert_eq!(cancelled.events[0].kind, LabelEventKind::Interrupted);
+    }
+
+    /// Grok writes a pasted image inline and a tool's output twice, so a
+    /// record over the line cap is ordinary: it is read without its body,
+    /// across as many polls as it takes, and a question still waits.
+    #[test]
+    fn a_record_over_the_line_cap_keeps_its_turn_without_its_body() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        let block = |index: u64, content: serde_json::Value| {
+            json!({"sessionUpdate":"user_message_chunk","content":content,
+                "_meta":{"modelId":"grok-build","promptIndex":index}})
+        };
+        native.append(
+            block(4, json!({"type":"text","text":"이 화면을 봐줘"})),
+            json!({}),
+        );
+        native.append(
+            block(
+                4,
+                json!({"type":"image","data":"A".repeat(1536 * 1024),"mimeType":"image/png"}),
+            ),
+            json!({}),
+        );
+        native.append(
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"call-read","status":"completed",
+                "content":[{"type":"content","content":{"type":"text",
+                    "text":format!("{} https://github.com/acme/app/pull/77", "x".repeat(300 * 1024))}}]}),
+            json!({"promptId":"p-4"}),
+        );
+        native.append(
+            json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"다 봤습니다"}}),
+            json!({"promptId":"p-4"}),
+        );
+        native.append(
+            json!({"sessionUpdate":"turn_completed","prompt_id":"p-4","stop_reason":"end_turn"}),
+            json!({}),
+        );
+        let mut events = Vec::new();
+        let mut reasons = std::collections::BTreeMap::new();
+        let mut polls = 0;
+        let last = loop {
+            let next = native.read().unwrap();
+            polls += 1;
+            events.extend(
+                next.events
+                    .iter()
+                    .map(|event| (event.kind, event.text.clone(), event.images)),
+            );
+            for (reason, count) in &next.skipped_reasons {
+                *reasons.entry(reason.clone()).or_insert(0) += count;
+            }
+            native.resume(&next);
+            if !next.has_more {
+                break next;
+            }
+        };
+        assert!(polls > 1, "the image spans more than one poll");
+        // Blocks are joined within one poll; a poll boundary between them
+        // leaves two events, which the phone joins again when it pages.
+        assert_eq!(
+            events,
+            [
+                (LabelEventKind::Human, "이 화면을 봐줘".to_owned(), 0),
+                (LabelEventKind::Human, String::new(), 1),
+                (LabelEventKind::Assistant, "다 봤습니다".to_owned(), 0),
+            ]
+        );
+        assert_eq!(reasons.get("body_capacity"), Some(&2));
+        assert!(sighted(&last, 77).is_none(), "a dropped body is never read");
+        assert_eq!(
+            last.turns.as_ref().unwrap().waiting(),
+            Some(Waiting::Nothing)
+        );
+
+        // A prompt whose own text is over the cap still starts its turn,
+        // which answers the question left before it.
+        native.append(
+            json!({"sessionUpdate":"tool_call","toolCallId":"call-ask","title":"ask_user_question",
+                "rawInput":{"questions":[{"question":"계속할까요?","options":[]}]},
+                "_meta":{"x.ai/tool":{"kind":"ask_user"}}}),
+            json!({"promptId":"p-4"}),
+        );
+        let asked = native.read().unwrap();
+        assert_eq!(user_turn(&asked).unwrap().kind, UserTurnKind::Question);
+        native.resume(&asked);
+        native.append(
+            block(5, json!({"type":"text","text":"y".repeat(300 * 1024)})),
+            json!({}),
+        );
+        let long = native.read().unwrap();
+        assert!(long.events.is_empty(), "no text is invented");
+        assert_eq!(user_turn(&long), None, "the typed turn answered it");
+        // A whole-file read keeps the same records without their bodies.
+        let mut whole =
+            hide_session::parse_events(Agent::Grok, &fs::read_to_string(&native.path).unwrap());
+        whole.coalesce();
+        assert!(whole.events.iter().any(|event| {
+            event.kind == hide_session::EventKind::Human
+                && (event.text.as_str(), event.images) == ("이 화면을 봐줘", 1)
+        }));
+
+        // A question whose body is over the cap still waits, without
+        // content, and its answer clears it.
+        native.resume(&long);
+        native.append(
+            json!({"sessionUpdate":"tool_call","toolCallId":"call-big","title":"ask_user_question",
+                "rawInput":{"questions":[{"question":"z".repeat(300 * 1024),"options":[]}]},
+                "_meta":{"x.ai/tool":{"kind":"ask_user"}}}),
+            json!({"promptId":"p-5"}),
+        );
+        let asked = native.read().unwrap();
+        let fact = user_turn(&asked).unwrap();
+        assert_eq!((fact.kind, fact.content), (UserTurnKind::Question, None));
+        native.resume(&asked);
+        native.append(
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"call-big","status":"completed",
+                "content":[{"type":"content","content":{"type":"text","text":"네"}}]}),
+            json!({"promptId":"p-5"}),
+        );
+        assert_eq!(user_turn(&native.read().unwrap()), None);
+    }
+
+    #[test]
+    fn plan_approval_follows_plan_mode_state_and_carries_the_plan_text() {
+        let mut native = Native::new();
+        let folder = native.folder().to_path_buf();
+        let plan_mode = |awaiting: bool, state: &str| {
+            fs::write(
+                folder.join("plan_mode.json"),
+                serde_json::to_vec_pretty(&json!({"state":state,"was_previously_active":true,
+                    "reminder_count":0,"pending_exit_reminder":false,"awaiting_plan_approval":awaiting}))
+                .unwrap(),
+            )
+            .unwrap();
+        };
+        plan_mode(false, "Active");
+        fs::write(
+            native.folder().join("plan.md"),
+            "## 계획\n요청 보기를 나눈다\n",
+        )
+        .unwrap();
+        let planning = native.read().unwrap();
+        assert_eq!(
+            user_turn(&planning),
+            None,
+            "a plan being written is no wait"
+        );
+        native.resume(&planning);
+
+        plan_mode(true, "Active");
+        let waiting = native.read().unwrap();
+        assert!(
+            waiting.events.is_empty(),
+            "the state is read, no record replayed"
+        );
+        let fact = user_turn(&waiting).unwrap();
+        assert_eq!(fact.kind, UserTurnKind::PlanApproval);
+        assert_eq!(fact.content.unwrap().text(), "## 계획\n요청 보기를 나눈다");
+        native.resume(&waiting);
+
+        let long = "가".repeat(4_000);
+        fs::write(native.folder().join("plan.md"), &long).unwrap();
+        let bounded = user_turn(&native.read().unwrap()).unwrap().content.unwrap();
+        assert!(bounded.truncated());
+        assert!(long.starts_with(bounded.text()));
+
+        plan_mode(false, "Inactive");
+        assert_eq!(user_turn(&native.read().unwrap()), None);
+        fs::write(
+            native.folder().join("plan_mode.json"),
+            "{\"awaiting_plan_approval\":\"yes\"",
+        )
+        .unwrap();
+        assert!(
+            native.read().is_err(),
+            "an unreadable state is refused, never guessed"
+        );
+    }
+
+    #[test]
+    fn current_titles_come_from_the_summary_and_a_cleared_rename_revokes_them() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        native.summary(|summary| {
+            summary["generated_title"] = json!("새 이름");
+            summary["title_is_manual"] = json!(true);
+        });
+        let renamed = native.read().unwrap();
+        assert!(renamed.events.is_empty());
+        assert_eq!(
+            (renamed.title.as_deref(), renamed.custom_title.as_deref()),
+            (Some(""), Some("새 이름"))
+        );
+        native.resume(&renamed);
+        native.summary(|summary| {
+            summary.as_object_mut().unwrap().remove("generated_title");
+        });
+        let cleared = native.read().unwrap();
+        assert_eq!(
+            (cleared.title.as_deref(), cleared.custom_title.as_deref()),
+            (Some(""), Some(""))
+        );
+    }
+
+    #[test]
+    fn id_and_path_prove_one_owner_and_a_wrong_checkout_folder_or_kind_is_refused() {
+        let mut native = Native::new();
+        let by_id = native.read().unwrap();
+        native.request.reference_kind = "path".into();
+        native.request.reference_value = native.path.display().to_string();
+        let by_path = native.read().unwrap();
+        assert_eq!(by_path.confirmed.owner, by_id.confirmed.owner);
+        let other = native.home.path().join("other");
+        fs::create_dir(&other).unwrap();
+        native.request.cwd = Some(other.display().to_string());
+        assert!(native.read().is_err());
+        assert_eq!(
+            hide_session::confirm_session_file(
+                native.home.path(),
+                Agent::Grok,
+                &native.path,
+                None,
+                other.to_str()
+            )
+            .unwrap_err()
+            .to_string(),
+            "label_session_cwd_mismatch"
+        );
+        native.request.cwd = Some(native.cwd.display().to_string());
+
+        let confirm = |path: &Path| {
+            hide_session::confirm_session_file(
+                native.home.path(),
+                Agent::Grok,
+                path,
+                None,
+                native.cwd.to_str(),
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        };
+        // The same files in another group or under another id's folder.
+        let moved = native
+            .home
+            .path()
+            .join(".grok/sessions/%2Felsewhere")
+            .join(GROK_ID);
+        fs::create_dir_all(&moved).unwrap();
+        for name in ["updates.jsonl", "summary.json"] {
+            fs::copy(native.folder().join(name), moved.join(name)).unwrap();
+        }
+        assert_eq!(
+            confirm(&moved.join("updates.jsonl")).unwrap_err(),
+            "label_session_default_directory_required"
+        );
+        let renamed = native
+            .folder()
+            .with_file_name("0199b000-0000-7000-8000-00000000000f");
+        fs::create_dir(&renamed).unwrap();
+        for name in ["updates.jsonl", "summary.json"] {
+            fs::copy(native.folder().join(name), renamed.join(name)).unwrap();
+        }
+        assert_eq!(
+            confirm(&renamed.join("updates.jsonl")).unwrap_err(),
+            "label_session_id_mismatch"
+        );
+        let outside = native.home.path().join("updates.jsonl");
+        fs::copy(&native.path, &outside).unwrap();
+        assert!(confirm(&outside).is_err());
+
+        for kind in ["subagent", "subagent_fork", "headless"] {
+            native.summary(|summary| summary["session_kind"] = json!(kind));
+            assert_eq!(confirm(&native.path).unwrap_err(), "label_session_not_root");
+        }
+        native.summary(|_| {});
+        #[cfg(unix)]
+        {
+            let summary = native.folder().join("summary.json");
+            let target = native.home.path().join("planted.json");
+            fs::rename(&summary, &target).unwrap();
+            std::os::unix::fs::symlink(&target, &summary).unwrap();
+            assert_eq!(confirm(&native.path).unwrap_err(), "label_session_linked");
+        }
+    }
+
+    #[test]
+    fn resume_is_routed_only_from_the_sessions_own_checkout_group() {
+        let native = Native::new();
+        assert_eq!(native.route(&native.cwd), Ok(()));
+        let other = native.home.path().join("other");
+        fs::create_dir(&other).unwrap();
+        assert!(native.route(&other).is_err());
+        // A fork or wake names the proven file, as the label overlay hands it.
+        let file = native.path.to_str().unwrap();
+        assert_eq!(
+            native.route_by("path", file, &native.cwd, Some(GROK_ID)),
+            Ok(())
+        );
+        assert!(
+            native
+                .route_by("path", file, &other, Some(GROK_ID))
+                .is_err()
+        );
+        assert!(
+            native
+                .route_by(
+                    "path",
+                    file,
+                    &native.cwd,
+                    Some("0199b000-0000-7000-8000-0000000000aa")
+                )
+                .is_err()
+        );
+        let located = SessionLocator::new(native.home.path())
+            .locate(
+                "pane",
+                Agent::Grok,
+                Some(&SessionIdentity::id(GROK_ID)),
+                native.cwd.to_str(),
+            )
+            .unwrap();
+        assert_eq!(located, native.path);
+        assert!(
+            SessionLocator::new(native.home.path())
+                .locate(
+                    "pane",
+                    Agent::Grok,
+                    Some(&SessionIdentity::id("0199b000-0000-7000-8000-0000000000aa")),
+                    native.cwd.to_str()
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn catalog_and_link_reads_list_only_root_conversations() {
+        let native = Native::new();
+        let child = native
+            .folder()
+            .with_file_name("0199b000-0000-7000-8000-0000000000c1");
+        fs::create_dir(&child).unwrap();
+        fs::copy(&native.path, child.join("updates.jsonl")).unwrap();
+        let mut summary: serde_json::Value =
+            serde_json::from_slice(&fs::read(native.folder().join("summary.json")).unwrap())
+                .unwrap();
+        summary["info"]["id"] = json!("0199b000-0000-7000-8000-0000000000c1");
+        summary["session_kind"] = json!("subagent");
+        fs::write(child.join("summary.json"), summary.to_string()).unwrap();
+        let project = hide_project::resolve(&native.cwd, "local").unwrap();
+        let sessions = SessionCatalog::new(native.home.path(), "local")
+            .project_sessions(&project)
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, GROK_ID);
+        assert_eq!(sessions[0].agent, Agent::Grok);
+        assert_eq!(sessions[0].title.as_deref(), Some("요청 보기 만들기"));
+        assert_eq!(
+            sessions[0].first_human_request.as_deref(),
+            Some("요청 보기를 만들어줘 긴 요청의 둘째 줄")
+        );
+        let answer = hide_session::links::read(
+            native.home.path(),
+            &[hide_session::links::ReadRequest {
+                agent: Agent::Grok,
+                path: native.path.display().to_string(),
+                checkpoint: None,
+            }],
+        )
+        .remove(0);
+        assert!(answer.error.is_none());
+        assert_eq!(answer.facts.session_id.as_deref(), Some(GROK_ID));
+        assert_eq!(answer.facts.prs.len(), 1);
+        let candidates = hide_session::links::candidates(native.home.path(), 0, None).unwrap();
+        let grok: Vec<_> = candidates
+            .iter()
+            .filter(|candidate| candidate.agent == Agent::Grok)
+            .collect();
+        let root = fs::canonicalize(&native.path).unwrap();
+        assert!(grok.iter().any(|candidate| candidate.path == root));
+        assert!(
+            grok.iter()
+                .all(|candidate| candidate.path.ends_with("updates.jsonl"))
+        );
+    }
+
+    #[test]
+    fn a_torn_record_waits_and_replacement_or_truncation_starts_over_without_duplicates() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        let torn = r#"{"timestamp":1790989400,"method":"session/update","params":{"sessionId":"x","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"반"#;
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&native.path)
+            .unwrap()
+            .write_all(torn.as_bytes())
+            .unwrap();
+        let waiting = native.read().unwrap();
+        assert!(waiting.events.is_empty());
+        native.resume(&waiting);
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&native.path)
+            .unwrap()
+            .write_all(
+                "쯤\"}},\"_meta\":{\"promptId\":\"p-5\",\"agentTimestampMs\":1790989400000}}}\n"
+                    .as_bytes(),
+            )
+            .unwrap();
+        let completed = native.read().unwrap();
+        assert_eq!(completed.events.len(), 1);
+        assert_eq!(completed.events[0].text, "반쯤");
+        native.resume(&completed);
+
+        let body = fs::read(&native.path).unwrap();
+        let temporary = native.folder().join("updates.tmp");
+        fs::write(&temporary, &body).unwrap();
+        fs::rename(&temporary, &native.path).unwrap();
+        let replaced = native.read().unwrap();
+        assert_eq!(replaced.rescanned.as_deref(), Some("replaced"));
+        assert_eq!(
+            replaced
+                .events
+                .iter()
+                .filter(|event| event.kind == LabelEventKind::Human)
+                .count(),
+            3
         );
     }
 }

@@ -105,6 +105,10 @@ def guardian_after_workspace(self,args,**kwargs):
    child=next(child for child,output,label in self.servers if label=='herdr')
    self.owner.end(child)
    raise
+ if os.environ.get('LIVE_CHECK_FIXTURE_CASE')=='integrity-native-error' and args[:2]==['agent','start'] and args[2].endswith('-rest'):
+  # The case is the integration read in this scene's finalization, after the
+  # integrity loss; ending the scene here skips its observation windows.
+  raise ProcessError('fixture_rest_scene_not_observed')
  result=original_command(self,args,**kwargs)
  if os.environ.get('LIVE_CHECK_FIXTURE_CASE') in integration_cases and args[:2]==['agent','start']:
   self.integration_pane=args[args.index('--pane')+1]

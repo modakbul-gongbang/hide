@@ -177,7 +177,10 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
     const togglesBefore = sent.get("checkout_agents_toggle") ?? 0;
     await primaryToggle.click();
-    await expect.poll(() => sent.get("checkout_agents_toggle") ?? 0).toBe(togglesBefore + 1);
+    // The fold is the core's: the row closes when its snapshot arrives, not on
+    // the click, and the rest geometry is measured on the closed row.
+    await expect(primaryToggle).toHaveAttribute("aria-expanded", "false");
+    expect(sent.get("checkout_agents_toggle") ?? 0).toBe(togglesBefore + 1);
     const primaryMenu = page.getByRole("menu", { name: "main actions" });
     const beforeLooking = new Map(sent);
     await rest(page);

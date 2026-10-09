@@ -1,4 +1,5 @@
 import type { StoredBuffer } from "./buffers";
+import type { TerminalFrame } from "./generated/hided-ws";
 import { create } from "zustand";
 import type { ConnectionState } from "./connection";
 import { frontDeviceId, localDeviceId } from "./devices";
@@ -26,11 +27,8 @@ export function focusedPaneOf(rest: SnapshotRest): string | null {
   return rest.terminal?.pane_id ?? rest.focused?.pane_id ?? null;
 }
 
-export type TerminalChunk = {
-  pane_id: string;
-  sequence: number;
-  bytes_base64: string;
-};
+/** One pane's output in a `terminal` frame, from the screen-side hub. */
+export type TerminalChunk = TerminalFrame["chunks"][number];
 
 /** `inode` is the entry's own identity in a checkout listing, which a trash of the row confirms: decimal text, because a number would round a 64-bit id. */
 export type DirectoryEntry = { name: string; path: string; is_directory: boolean; inode?: string };
@@ -85,6 +83,7 @@ export type Frame = {
   payload?: {
     revision?: number;
     terminal_sequence?: number;
+    terminal_epoch?: string;
     rest?: SnapshotRest;
     editor?: EditorSnapshot | null;
     changes?: ChangesSnapshot | null;
@@ -130,7 +129,10 @@ type Store = {
   /** Settings > Mobile as the daemon reports it (`mobile` frame); null until the first one. */
   mobile: MobileState | null;
   revision: number;
-  terminalSequence: number;
+  /** The hub's cursor after the last `terminal` frame; null after a whole snapshot until the hub names the new one. */
+  terminalSequence: number | null;
+  /** The epoch of the hub that gave `terminalSequence`: a cursor resumes only on that hub. */
+  terminalEpoch: string | null;
   /** The core's rest section, structurally shared across frames (`share.ts`). */
   rest: SnapshotRest | null;
   /**
@@ -291,7 +293,8 @@ export const useShellStore = create<Store>((set, get) => ({
   daemon: null,
   mobile: null,
   revision: 0,
-  terminalSequence: 0,
+  terminalSequence: null,
+  terminalEpoch: null,
   rest: null,
   editor: null,
   changes: null,
@@ -526,10 +529,20 @@ export const useShellStore = create<Store>((set, get) => ({
       get().noteDiagnostic(`hided error: ${frame.message ?? "unknown"}`);
       return [];
     }
-    const chunks = payload.chunks ?? [];
+    // Pane output comes from the hub beside the core's frames, never inside them.
+    if (frame.type === "terminal") {
+      set({
+        terminalSequence: payload.terminal_sequence ?? get().terminalSequence,
+        terminalEpoch: payload.terminal_epoch ?? get().terminalEpoch,
+      });
+      return payload.chunks ?? [];
+    }
     const cursors = {
       revision: frame.type === "snapshot" ? (payload.revision ?? get().revision) : Math.max(payload.revision ?? 0, get().revision),
-      terminalSequence: payload.terminal_sequence ?? get().terminalSequence,
+      // A whole snapshot resets every terminal, so the old cursor names
+      // output those terminals no longer hold.
+      terminalSequence: frame.type === "snapshot" ? null : get().terminalSequence,
+      terminalEpoch: frame.type === "snapshot" ? null : get().terminalEpoch,
       find: payload.find ? share(get().find, payload.find) : get().find,
     };
     if (frame.type === "snapshot" || payload.rest) {
@@ -572,6 +585,6 @@ export const useShellStore = create<Store>((set, get) => ({
     } else {
       set(cursors);
     }
-    return chunks;
+    return [];
   },
 }));

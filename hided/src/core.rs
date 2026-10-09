@@ -9,7 +9,14 @@ use herdr_core::workspace_control::{
     Action, ActionMaterial, ActionPreparation, ActionResult, Context, Query, QueryResult, Refusal,
 };
 use herdr_core::{Core, CoreOptions};
+use hide_node::terminal::device::DeviceSink;
+use hide_node::terminal::router::Router;
+use hide_node::terminal::{
+    Attacher, LocalAttacher, Mode, OutputSink, ReportSink, RetryPolicy, Service, SessionParts,
+};
 use tokio::sync::broadcast;
+
+use crate::terminal_hub::TerminalHub;
 
 pub struct SnapshotReply {
     pub bytes: Vec<u8>,
@@ -100,7 +107,6 @@ enum Command {
     },
     Snapshot {
         have_revision: u64,
-        have_terminal_sequence: u64,
         reply: Sender<Result<SnapshotReply, String>>,
     },
     Shutdown,
@@ -111,6 +117,11 @@ pub struct CoreHandle {
     node: herdr_core::node::NodeId,
     commands: Sender<Command>,
     pub notify: broadcast::Sender<()>,
+    /// Every node's terminals: a screen's keys and views go here directly,
+    /// never through the core (PRD core-host-node-terminal D-05).
+    pub terminals: Arc<Router>,
+    /// The output every node's terminals produce, as each screen reads it.
+    pub hub: Arc<TerminalHub>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -234,9 +245,34 @@ impl CoreHandle {
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
         let (notify_tx, _) = broadcast::channel(32);
         let notify_for_thread = notify_tx.clone();
+        let (reports, terminal_reports) = herdr_core::terminal_reports::terminal_reports();
+        let reports: Arc<dyn ReportSink> = Arc::new(reports);
+        let hub = TerminalHub::new();
+        let local = Service::start(
+            local_attacher(&options),
+            Arc::clone(&hub) as Arc<dyn OutputSink>,
+            Arc::clone(&reports),
+            RetryPolicy::Automatic,
+        )
+        .map_err(|error| format!("terminal service failed to start: {error}"))?;
+        let terminals = Arc::new(Router::new(
+            Arc::new(local),
+            Arc::clone(&hub) as Arc<dyn OutputSink>,
+            reports,
+        ));
+        let routes = Arc::clone(&terminals);
         let thread = thread::Builder::new()
             .name("hided-core".into())
-            .spawn(move || owner_loop(options, panes, command_rx, ready_tx, notify_for_thread))
+            .spawn(move || {
+                owner_loop(
+                    options,
+                    panes,
+                    (routes, terminal_reports),
+                    command_rx,
+                    ready_tx,
+                    notify_for_thread,
+                )
+            })
             .map_err(|error| format!("core owner thread failed to start: {error}"))?;
         ready_rx
             .recv()
@@ -245,6 +281,8 @@ impl CoreHandle {
             node,
             commands: command_tx,
             notify: notify_tx,
+            terminals,
+            hub,
             thread: Mutex::new(Some(thread)),
         })
     }
@@ -440,16 +478,11 @@ impl CoreHandle {
         })?
     }
 
-    pub fn snapshot(
-        &self,
-        have_revision: u64,
-        have_terminal_sequence: u64,
-    ) -> Result<SnapshotReply, String> {
+    pub fn snapshot(&self, have_revision: u64) -> Result<SnapshotReply, String> {
         let (reply, rx) = mpsc::channel();
         self.commands
             .send(Command::Snapshot {
                 have_revision,
-                have_terminal_sequence,
                 reply,
             })
             .map_err(|_| "core owner thread is gone".to_owned())?;
@@ -464,6 +497,10 @@ impl CoreHandle {
         {
             let _ = thread.join();
         }
+        // The core that installs devices is gone: a device's terminals end,
+        // so the router, this machine's terminal service and its attach
+        // children end with this handle rather than with the process.
+        self.terminals.remove_every_device();
     }
 }
 
@@ -473,9 +510,32 @@ impl Drop for CoreHandle {
     }
 }
 
+/// This machine's Herdr, through the official `herdr terminal session`
+/// client. A daemon with no Herdr server has no panes of its own, and an
+/// attach says so.
+fn local_attacher(options: &CoreOptions) -> Box<dyn Attacher> {
+    struct NoHerdr;
+    impl Attacher for NoHerdr {
+        fn open(&self, _: &str, _: Mode, _: u16, _: u16) -> Result<SessionParts, String> {
+            Err("This daemon runs without a Herdr server".to_owned())
+        }
+    }
+    match options.herdr_socket_path.as_deref() {
+        Some(socket) => Box::new(LocalAttacher::new(
+            options
+                .herdr_bin_path
+                .as_deref()
+                .map(std::path::PathBuf::from),
+            std::path::PathBuf::from(socket),
+        )),
+        None => Box::new(NoHerdr),
+    }
+}
+
 fn owner_loop(
     options: CoreOptions,
     panes: hide_node::ssh::PaneEventsSlot,
+    (terminals, terminal_reports): (Arc<Router>, herdr_core::terminal_reports::TerminalReports),
     commands: Receiver<Command>,
     ready: Sender<Result<(), String>>,
     notify: broadcast::Sender<()>,
@@ -510,12 +570,15 @@ fn owner_loop(
             .ok()
             .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf)),
     )
-    .with_pane_events(panes);
+    .with_pane_events(panes)
+    .with_terminals(Arc::clone(&terminals) as Arc<dyn DeviceSink>);
     let Some(core) = Core::create(
         options,
         std::sync::Arc::new(own_node),
         own_herdr,
         std::sync::Arc::new(devices),
+        terminals,
+        terminal_reports,
     ) else {
         let _ = ready.send(Err(
             "herdr-core create failed (check schema_version and paths)".to_owned(),
@@ -669,14 +732,95 @@ fn owner_loop(
             }
             Command::Snapshot {
                 have_revision,
-                have_terminal_sequence,
                 reply,
             } => {
-                let bytes = core.snapshot_delta(have_revision, have_terminal_sequence);
+                let bytes = core.snapshot_delta(have_revision);
                 let _ = reply.send(Ok(SnapshotReply { bytes }));
             }
             Command::Shutdown => break,
         }
     }
     core.clear_on_change();
+}
+
+#[cfg(test)]
+impl CoreHandle {
+    /// A core with no Herdr and no registered checkout.
+    pub(crate) fn bare(directory: &std::path::Path) -> Self {
+        Self::spawn(
+            herdr_core::CoreOptions {
+                schema_version: crate::state_file::SCHEMA_VERSION,
+                home: None,
+                node_id: herdr_core::node::NodeId::parse("test-node").unwrap(),
+                herdr_socket_path: None,
+                herdr_bin_path: None,
+                app_state_path: directory.join("core-state.json").display().to_string(),
+                host_helper_root: None,
+                host_cli_dir: None,
+                workspace_views_path: None,
+                shortcut_import_path: None,
+                local_issues_path: None,
+            },
+            Default::default(),
+        )
+        .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use hide_node::terminal::device::{DeviceTerminals, LineLink, LineRefused};
+    use hide_node_link::terminal::{TerminalNode, TerminalRoutes};
+
+    use super::*;
+
+    /// A link that takes every line, and tells the test when its writer
+    /// let go of it.
+    struct Open {
+        _released: mpsc::Sender<()>,
+    }
+
+    impl LineLink for Open {
+        fn send_line(&self, _line: &[u8]) -> Result<(), LineRefused> {
+            Ok(())
+        }
+        fn end(&self, _reason: &str) {}
+    }
+
+    /// Dropping the core's handle while a device's terminals are linked
+    /// ends the terminal router, and with it this machine's terminal
+    /// service, its sessions and their attach children: a device's node
+    /// reports to the router that holds it, so the two kept each other.
+    #[test]
+    fn dropping_the_handle_with_a_device_linked_ends_its_terminals() {
+        let directory = tempfile::tempdir().unwrap();
+        let core = CoreHandle::bare(directory.path());
+        let (link, released) = mpsc::channel();
+        let device = DeviceTerminals::start(
+            "mini",
+            Arc::new(Open { _released: link }),
+            Arc::clone(&core.terminals) as Arc<dyn DeviceSink>,
+        )
+        .unwrap();
+        core.terminals
+            .install_device("mini", Arc::new(device) as Arc<dyn TerminalNode>);
+        let router = Arc::downgrade(&core.terminals);
+        drop(core);
+        // The link's writer ends once its device is removed.
+        assert_eq!(
+            released.recv_timeout(Duration::from_secs(5)),
+            Err(mpsc::RecvTimeoutError::Disconnected),
+            "the device's link writer outlived the core's handle"
+        );
+        let started = Instant::now();
+        while router.upgrade().is_some() {
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "the terminal router outlived the core's handle"
+            );
+            thread::yield_now();
+        }
+    }
 }

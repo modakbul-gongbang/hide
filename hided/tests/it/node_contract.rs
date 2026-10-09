@@ -63,6 +63,8 @@ struct Device {
     state: PathBuf,
     /// What the link's pane events told this process.
     events: Arc<Events>,
+    /// The device's terminals, when its connector carries them.
+    terminals: Option<Arc<dyn hide_node_link::terminal::TerminalNode>>,
     hello: hide_node_link::protocol::Hello,
     helper_path: String,
     local: PathBuf,
@@ -140,11 +142,12 @@ impl Device {
     }
 
     fn start_with_pane_events(pane_events: Option<Arc<dyn hide_node::ssh::PaneEvents>>) -> Self {
-        Self::start_with_packages(pane_events, None)
+        Self::start_with(pane_events, None, None)
     }
 
-    fn start_with_packages(
+    fn start_with(
         pane_events: Option<Arc<dyn hide_node::ssh::PaneEvents>>,
+        terminals: Option<Arc<dyn hide_node::terminal::device::DeviceSink>>,
         retained_packages: Option<PathBuf>,
     ) -> Self {
         // Socket paths below this folder must fit a Unix socket address.
@@ -245,12 +248,16 @@ impl Device {
         let events = Arc::new(Events::default());
         let slot: hide_node::ssh::PaneEventsSlot = Arc::default();
         let _ = slot.set(pane_events.unwrap_or_else(|| events.clone()));
-        let transport = hide_node::ssh::Connector::new(Some(
+        let mut connector = hide_node::ssh::Connector::new(Some(
             retained_packages.unwrap_or_else(|| packages.clone()),
         ))
-        .with_pane_events(slot)
-        .transport(&local, "contract-node", ALIAS, None)
-        .unwrap();
+        .with_pane_events(slot);
+        if let Some(sink) = terminals {
+            connector = connector.with_terminals(sink);
+        }
+        let transport = connector
+            .transport(&local, "contract-node", ALIAS, None)
+            .unwrap();
         let consent = HostConsent {
             contract: HOST_CONSENT_CONTRACT,
             helper_root: "~/helper".to_owned(),
@@ -271,6 +278,7 @@ impl Device {
             link: established.host,
             state,
             events,
+            terminals: established.terminals.ok(),
             hello: established.hello,
             helper_path: established.helper_path,
             local,
@@ -312,15 +320,29 @@ fn authenticated_node_advertises_only_its_compiled_readers() {
             .unwrap()
             .supports("pi", ReaderFeature::Turns)
     );
-    for agent in ["omp", "grok", "cursor"] {
-        assert!(
-            !device
-                .link
-                .reader_features()
-                .unwrap()
-                .supports(agent, ReaderFeature::Conversation)
-        );
+    for agent in ["omp", "grok"] {
+        for feature in [
+            ReaderFeature::Conversation,
+            ReaderFeature::Turns,
+            ReaderFeature::UserTurnContent,
+        ] {
+            assert!(
+                device
+                    .link
+                    .reader_features()
+                    .unwrap()
+                    .supports(agent, feature),
+                "{agent}: {feature:?}"
+            );
+        }
     }
+    assert!(
+        !device
+            .link
+            .reader_features()
+            .unwrap()
+            .supports("cursor", ReaderFeature::Conversation)
+    );
 }
 
 // This test-only input names a retained release payload directory. It is
@@ -344,9 +366,16 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
         !bytes.starts_with(b"#!"),
         "retained helper must be the real binary"
     );
-    let mut device = Device::start_with_packages(None, Some(retained));
+    let mut device = Device::start_with(
+        None,
+        Some(Arc::new(HeardTerminals::default())),
+        Some(retained),
+    );
     assert_eq!(device.hello.protocol, 24);
     assert!(device.hello.reader_features.is_none());
+    // The audited 24 node keeps its legacy features only: it has no terminal
+    // service, so it is never asked to start one.
+    assert!(device.terminals.is_none());
     let old_helper = device.helper_path.clone();
 
     let fixtures =
@@ -486,6 +515,25 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
                 .supports(provider, ReaderFeature::Identity)
         );
     }
+    let refused: Result<LabelTranscript, _> = call_as(
+        device.link.as_ref(),
+        Call::LabelTranscript {
+            request: LabelTranscriptRequest {
+                agent: Agent::Omp,
+                reference_kind: "id".into(),
+                reference_value: "native-omp".into(),
+                cwd: Some("/work/app".into()),
+                checkpoint: None,
+                subagents: Default::default(),
+                turns: None,
+            },
+        },
+        TIMEOUT,
+    );
+    assert!(
+        refused.is_err(),
+        "an actual protocol24 helper cannot read omp"
+    );
     let project: RootOpened = call_as(
         device.link.as_ref(),
         Call::RootOpen {
@@ -526,6 +574,13 @@ fn a_retained_protocol24_node_keeps_legacy_readers_then_upgrades_normally() {
     assert_eq!(
         established.host.reader_features(),
         Some(&hide_node_link::sessions::ReaderFeatures::implemented())
+    );
+    assert!(
+        established
+            .host
+            .reader_features()
+            .unwrap()
+            .supports("omp", ReaderFeature::UserTurnContent)
     );
     device.link = established.host;
     device.link.close("retained-payload fixture ended");
@@ -845,6 +900,67 @@ fn a_device_s_channels_share_its_one_connection() {
     // Closing the link ends its node and leaves the connection to the rest.
     device.link.close("contract");
     device.transport.herdr_api_connector().connect().unwrap();
+    assert_eq!(device.ssh.accepted(), 1);
+}
+
+/// What a device's terminals sent up its link: each pane's reports.
+#[derive(Default)]
+struct HeardTerminals {
+    reports: std::sync::Mutex<Vec<hide_node_link::terminal::TerminalReport>>,
+    arrived: std::sync::Condvar,
+}
+
+impl hide_node::terminal::device::DeviceSink for HeardTerminals {
+    fn output(&self, _device: &str, _pane: &str, _bytes: &[u8], _full: bool) {}
+
+    fn report(&self, _device: &str, report: hide_node_link::terminal::TerminalReport) {
+        self.reports.lock().unwrap().push(report);
+        self.arrived.notify_all();
+    }
+}
+
+/// B16: a device's panes' terminals ride its one connection. Attaching
+/// several of its panes opens no connection of their own, and each pane's
+/// word comes back up the same link.
+#[test]
+fn a_device_s_terminals_ride_its_one_connection() {
+    use hide_node_link::terminal::{GridSize, TerminalControl, TerminalReport};
+    let heard = Arc::new(HeardTerminals::default());
+    let device = Device::start_with(None, Some(heard.clone()), None);
+    let terminals = device
+        .terminals
+        .clone()
+        .expect("the device's node runs a terminal service");
+    let panes = (1..=5)
+        .map(|index| format!("w1:p{index}"))
+        .collect::<Vec<_>>();
+    for pane in &panes {
+        terminals.control(TerminalControl::Attach {
+            pane: pane.clone(),
+            size: Some(GridSize { rows: 24, cols: 80 }),
+            manual: false,
+        });
+    }
+    let reports = heard.reports.lock().unwrap();
+    let (reports, _) = heard
+        .arrived
+        .wait_timeout_while(reports, TIMEOUT, |reports| {
+            !panes.iter().all(|pane| {
+                reports.iter().any(|report| {
+                    matches!(report, TerminalReport::State { pane: reported, .. } if reported == pane)
+                })
+            })
+        })
+        .unwrap();
+    for pane in &panes {
+        assert!(
+            reports.iter().any(|report| {
+                matches!(report, TerminalReport::State { pane: reported, .. } if reported == pane)
+            }),
+            "{pane} reported nothing: {reports:?}"
+        );
+    }
+    drop(reports);
     assert_eq!(device.ssh.accepted(), 1);
 }
 

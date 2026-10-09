@@ -3633,7 +3633,7 @@ impl Runtime {
                         );
                         self.op_timings
                             .learn(&timing_id, Some(tab_id), Some(pane_id.as_str()));
-                        self.op_timings.await_frame(&timing_id, &pane_id, false);
+                        self.await_op_frame(&timing_id, &pane_id, false);
                     }
                     (Some(_), _) => self.op_timings.finish(&timing_id, "device"),
                     (None, None) => self.op_timings.finish(&timing_id, "no_tab"),
@@ -4403,8 +4403,20 @@ impl Runtime {
             resume_reference: launch.and_then(|launch| launch.resume_reference.clone()),
             resume_scope: launch
                 .filter(|launch| {
-                    operation.agent_kind.as_deref() == Some("pi")
-                        && launch.args.first().map(String::as_str) == Some("--session")
+                    operation
+                        .agent_kind
+                        .as_deref()
+                        .and_then(hide_session::Agent::from_kind)
+                        .is_some_and(hide_session::Agent::requires_native_file_proof)
+                        && operation
+                            .agent_kind
+                            .as_deref()
+                            .and_then(hide_agent_adapter::adapter)
+                            .and_then(|adapter| adapter.resume)
+                            .is_some_and(|dialect| {
+                                launch.args.first().map(String::as_str)
+                                    == Some(dialect.resume_flag())
+                            })
                 })
                 .and_then(|launch| {
                     Some(hide_session::SessionReadScope {
@@ -4629,7 +4641,7 @@ impl Runtime {
                         created_pane_id.as_deref(),
                     );
                     if let Some(pane_id) = created_pane_id.as_deref() {
-                        self.op_timings.await_frame(id, pane_id, false);
+                        self.await_op_frame(id, pane_id, false);
                     }
                 }
                 Ok(_) => {}

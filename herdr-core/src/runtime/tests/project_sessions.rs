@@ -624,7 +624,7 @@ fn the_project_sessions_section_rides_the_wire_only_once_a_project_is_named() {
     let fixture = fixture();
     let shared = shared(&fixture);
     let wire = |have: u64| {
-        let payload = shared.lock().unwrap().snapshot_delta_payload(have, 0);
+        let payload = shared.lock().unwrap().snapshot_delta_payload(have);
         let json: serde_json::Value =
             serde_json::from_slice(&serialize_snapshot_delta(&payload).unwrap()).unwrap();
         (payload.revision, json)
@@ -911,10 +911,10 @@ fn real_project_replacement_clears_search_delta_and_rejects_late_old_answer() {
     };
     r.snapshot.session_search = Some(answer.clone());
     let generation = r.search_generation;
-    let before = r.snapshot_delta_payload(0, 0);
+    let before = r.snapshot_delta_payload(0);
     r.refresh_project_sessions(None, &workspace_id(&f.alpha));
     assert!(!r.ingest_search(generation, answer));
-    let delta = r.snapshot_delta_payload(before.revision, 0);
+    let delta = r.snapshot_delta_payload(before.revision);
     let cleared = delta.session_search.as_ref().unwrap();
     assert!(cleared.workspace_id.is_empty() && cleared.page.hits.is_empty());
     assert_eq!(

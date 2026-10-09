@@ -579,7 +579,6 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
 fn context_for_fixture(runtime: &Arc<Mutex<Runtime>>, socket_path: &Path) -> SessionSyncContext {
     let live = LiveContext {
         socket_path: socket_path.to_path_buf(),
-        herdr_bin: None,
         runtime: Arc::downgrade(runtime),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(socket_path)),
@@ -1500,6 +1499,56 @@ fn a_focus_announced_before_its_tab_and_pane_applies_when_they_arrive() {
         )
         .expect_err("unknown workspace");
     assert_eq!(error.state(), "malformed");
+}
+
+/// A tab's pane and layout can reach the stream before its `tab_created`
+/// (CI, issues 754 and 756). Both wait for the tab, in either mode: dropped,
+/// they left the tab waiting for a layout that had already come, and its
+/// workspace never published another change.
+#[test]
+fn a_pane_and_layout_announced_before_their_tab_apply_when_it_arrives() {
+    let created = two_tab_snapshot();
+    for mode in [ApplyMode::Reconcile, ApplyMode::Strict] {
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        let events = [
+            event(
+                "pane_created",
+                json!({"type": "pane_created", "pane": created["panes"][1]}),
+            ),
+            event(
+                "layout_updated",
+                json!({"type": "layout_updated", "layout": created["layouts"][1]}),
+            ),
+            event(
+                "tab_created",
+                json!({"type": "tab_created", "tab": created["tabs"][1]}),
+            ),
+        ];
+        for (index, next) in events.into_iter().enumerate() {
+            replica
+                .apply(next, mode)
+                .unwrap_or_else(|error| panic!("{mode:?} event {index}: {error:?}"));
+        }
+        assert!(replica.ready_to_publish(), "{mode:?}");
+        let projected = replica.project();
+        let tabs: Vec<_> = projected
+            .tabs
+            .iter()
+            .map(|tab| tab.tab_id.as_str())
+            .collect();
+        assert_eq!(tabs, ["w1:t1", "w1:t2"], "{mode:?}");
+        assert!(
+            projected.panes.iter().any(|pane| pane.pane_id == "w1:p2"),
+            "{mode:?}"
+        );
+        assert!(
+            projected
+                .layouts
+                .iter()
+                .any(|layout| layout.tab_id == "w1:t2"),
+            "{mode:?}"
+        );
+    }
 }
 
 /// A held focus is Herdr's focus of an earlier moment; a focus Herdr applies

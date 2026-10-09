@@ -1433,7 +1433,8 @@
                 "machine_unavailable",
                 "repository_unavailable",
                 "agent_not_installed",
-                "intent_conflict"
+                "intent_conflict",
+                "agent_not_started"
             ],
             "repeats_at_most": null,
             "rest": "the agent's own arguments"
@@ -1598,7 +1599,7 @@
                     "required": false,
                     "requires": [],
                     "value": {
-                        "type": "key"
+                        "type": "session"
                     }
                 }
             ],
@@ -1736,7 +1737,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:b0759ca1374df712b0de93061334cb7662b30dab37c49b1553a2b777cad0c99a",
+    "digest": "sha256:df4acf17ab7ebce4c7debf3e0fa6f3fc116669d7136184e82cbe4c38c34eab4f",
     "envelopes": {
         "agent": {
             "answer": "value",
@@ -1765,6 +1766,7 @@
         "body": "not blank, at most 16384 bytes",
         "key": "non-empty, at most 256 bytes, no control characters, does not start with -",
         "one_of": "one of the listed values",
+        "session": "non-empty, at most 4096 bytes, no control characters, does not start with -",
         "text": "non-empty, no control characters, does not start with --",
         "unsigned": "a decimal integer from 0 to 18446744073709551615"
     }

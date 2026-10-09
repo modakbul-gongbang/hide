@@ -13,6 +13,7 @@ mod letter_origin;
 mod lossless_install;
 mod opencode_helper;
 mod opencode_plugin;
+mod pi_extension;
 mod programs;
 mod spawn_guard;
 #[path = "../../../hide-platform/tests/it/stand_ins.rs"]

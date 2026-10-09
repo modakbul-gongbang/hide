@@ -106,6 +106,12 @@ impl Runtime {
             });
         }
         let started = (|| {
+            // A registration from before ids were checked, or one a shell
+            // wrote into the UI state, is refused here too: its panes' ids
+            // would overlap another device's.
+            if !hide_node_link::terminal::device_id_is_unambiguous(&device_id) {
+                return Err("This device's id contains \":\", so its panes cannot be told apart from another device's; remove it and register it under another id".to_owned());
+            }
             let home_path = self.home_path.as_ref().ok_or_else(|| {
                 "HOME is unavailable, so the SSH config cannot be resolved".to_owned()
             })?;
@@ -144,12 +150,6 @@ impl Runtime {
         self.install_remote_control(live::RemoteControlContext::new(
             device_id.clone(),
             Arc::clone(&connector),
-            context.runtime.clone(),
-            context.notifier.clone(),
-        ));
-        self.install_remote_terminal(live::RemoteTerminalContext::new(
-            device_id.clone(),
-            Arc::clone(&transport),
             context.runtime.clone(),
             context.notifier.clone(),
         ));
@@ -215,10 +215,11 @@ impl Runtime {
         identity_changed | self.refresh_agent_lineage()
     }
 
-    /// Forgets everything the core holds for a device: its coordinator,
-    /// transports, status entry, pending operations and projected panes. The
-    /// coordinator is joined later, off the lock, by whoever drains
-    /// `take_retired_remote_syncs`.
+    /// Forgets what the core holds for a device's connection: its
+    /// coordinator, transports, status entry, pending operations and
+    /// projected panes. What its helper answered about its directories stays
+    /// (`forget_device_catalog`). The coordinator is joined later, off the
+    /// lock, by whoever drains `take_retired_remote_syncs`.
     pub(super) fn disconnect_remote_device(&mut self, device_id: &str) {
         self.device_machine_ids.remove(device_id);
         self.forget_device_host(device_id);
@@ -228,7 +229,7 @@ impl Runtime {
             self.retired_remote_syncs.push(sync);
         }
         self.remote_controls.remove(device_id);
-        self.remote_terminals.remove(device_id);
+        self.terminals.remove_device(device_id);
         self.remote_file_transports.remove(device_id);
         self.remote_connection_generations.remove(device_id);
         self.remote_operations

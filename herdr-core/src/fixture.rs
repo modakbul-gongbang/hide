@@ -2,6 +2,71 @@ use serde::{Deserialize, Serialize};
 
 pub const FIXTURE_PREFIX: &str = "herdr-ide-verify-";
 
+/// Synthetic fixtures live below the canonical OS temp directory. These
+/// bucket spellings come from Pi 1.0.4 and omp 18.7.0, independently of the
+/// product's locator, so a wrong locator cannot move the expected fixture.
+#[cfg(test)]
+pub(crate) fn native_session_folder(
+    home: &std::path::Path,
+    kind: &str,
+    cwd: &std::path::Path,
+) -> std::path::PathBuf {
+    let encode = |path: &std::path::Path| {
+        path.to_string_lossy()
+            .trim_start_matches(['/', '\\'])
+            .replace(['/', '\\', ':'], "-")
+    };
+    let bucket = match kind {
+        "pi" => format!("--{}--", encode(cwd)),
+        "omp" => {
+            let temporary = std::env::temp_dir().canonicalize().unwrap();
+            let relative = cwd.strip_prefix(temporary).unwrap();
+            if relative.as_os_str().is_empty() {
+                "-tmp".into()
+            } else {
+                format!("-tmp-{}", encode(relative))
+            }
+        }
+        _ => panic!("not a native-file fixture"),
+    };
+    home.join(format!(".{kind}/agent/sessions")).join(bucket)
+}
+
+/// A Grok 1.0.46 session folder with its id-owning summary and an empty
+/// conversation, at the group Grok names by URL-encoding the cwd.
+#[cfg(test)]
+pub(crate) fn grok_session(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    id: &str,
+) -> std::path::PathBuf {
+    let group: String = cwd
+        .to_str()
+        .unwrap()
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+                (byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect();
+    let folder = home.join(".grok/sessions").join(group).join(id);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("summary.json"),
+        serde_json::json!({"info": {"id": id, "cwd": cwd}, "session_summary": "",
+            "created_at": "2026-10-03T01:00:00Z", "updated_at": "2026-10-03T01:00:00Z",
+            "num_messages": 0, "current_model_id": "grok-build"})
+        .to_string(),
+    )
+    .unwrap();
+    let conversation = folder.join("updates.jsonl");
+    std::fs::write(&conversation, "").unwrap();
+    conversation
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FixturePlan {
     pub workspace_name: String,

@@ -79,7 +79,18 @@ use crate::error::HostError;
 /// 25: Hello carries exact independently implemented reader features. A
 /// matching protocol does not grant a reader, and an authenticated 24 link
 /// retains only its audited legacy features until normal payload replacement.
-pub const PROTOCOL_VERSION: u32 = 25;
+/// 26: the device's panes' terminals flow inside this link (PRD
+/// core-host-node-terminal D-10, D-18): `terminals_start` starts the node's
+/// terminal service and [`crate::terminal::TerminalLine`]s carry controls,
+/// keys and output both ways. A node on 25 would read those lines as
+/// unreadable requests, so it is refused at Hello and reinstalled; the
+/// audited 24 link keeps its legacy features and starts no terminals.
+/// 27: `line_input` answers how a pane shell's terminal takes typed input,
+/// so a start waits for the shell's line editor before it types a line the
+/// terminal could cut. A node on 26 would refuse it as unknown, and a long
+/// first prompt could not start on that device, so it is refused at Hello and
+/// reinstalled.
+pub const PROTOCOL_VERSION: u32 = 27;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -368,6 +379,12 @@ pub enum Call {
     ReadAttachments {
         paths: Vec<String>,
     },
+    /// Removes the clipboard image a paste left at `path`
+    /// (`attachments::is_clipboard_path`, refused otherwise); a file already
+    /// gone is not an error.
+    RemoveClipboard {
+        path: String,
+    },
     /// `SIGTERM` to every member of the process group `leader` leads: a
     /// pane's foreground job, ended for agent sleep. A group of 1 or less is
     /// refused unsent, since kill(-0) and kill(-1) reach far more.
@@ -387,6 +404,12 @@ pub enum Call {
     /// Every process under `pid`, parents before children, as a list of
     /// pids; one that has ended, or has no children, has none.
     ProcessDescendants {
+        pid: u32,
+    },
+    /// How the terminal `pid` controls takes typed input now
+    /// (`process::LineInput`), read before a pane's shell is given a line its
+    /// terminal could cut.
+    LineInput {
         pid: u32,
     },
     /// Measures each of `paths` (`disk::DiskUsage`), reporting each one as
@@ -498,6 +521,12 @@ pub enum Call {
     PanesStart {
         herdr_socket: String,
     },
+    /// Starts this node's terminal service for the Herdr at `herdr_socket`:
+    /// from then on the link's terminal lines reach it. Asking again while
+    /// it runs changes nothing.
+    TerminalsStart {
+        herdr_socket: String,
+    },
     /// The core's answer to the pane proof `request` the node sent up.
     PaneProofAnswer {
         request: u64,
@@ -590,6 +619,7 @@ impl Call {
             | Self::AgentInstalled { .. }
             | Self::ProcessStarts { .. }
             | Self::ProcessDescendants { .. }
+            | Self::LineInput { .. }
             | Self::DiskUsage { .. }
             | Self::ListeningPorts
             | Self::VolumeFree { .. }
@@ -605,6 +635,7 @@ impl Call {
             | Self::SessionChunk { .. }
             | Self::SessionText { .. }
             | Self::PanesStart { .. }
+            | Self::TerminalsStart { .. }
             | Self::PaneProofAnswer { .. }
             | Self::PaneInspect { .. }
             | Self::StreamWrite { .. }
@@ -621,6 +652,7 @@ impl Call {
             | Self::ClaudeUsageText { .. }
             | Self::Gh { .. }
             | Self::ReadAttachments { .. }
+            | Self::RemoveClipboard { .. }
             | Self::Factory { .. } => false,
         }
     }
@@ -697,8 +729,9 @@ pub struct Hello {
     /// Read once when this connection starts; a failure leaves lineage
     /// unresolved without making the file helper unavailable.
     pub machine_identity: MachineIdentity,
-    /// Absent on protocol24. Missing or invalid facts on protocol25 grant
-    /// no reader; files, Git and unrelated node operations remain available.
+    /// Absent on protocol24. Missing or invalid facts on the current
+    /// protocol grant no reader; files, Git and unrelated node operations
+    /// remain available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reader_features: Option<crate::sessions::ReaderFeatures>,
 }

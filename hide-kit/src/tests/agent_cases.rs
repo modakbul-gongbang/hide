@@ -747,7 +747,8 @@ fn cursor_gets_the_guidance_hook_with_the_switch_and_loses_it_with_it() {
 }
 
 #[test]
-fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_partial() {
+fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_and_cursor_are_partial()
+ {
     use crate::agents::Feature::{self, *};
     // The expected rows come from the PRDs and the hook research, not from
     // the table: what Hide does for each agent in this build (D-10, B18;
@@ -758,8 +759,9 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
     // session-start hook's output). The session-reader common contract B1/B6
     // enables starts for the five agents besides Claude Code and Codex
     // without enabling their future reader/sleep/fork features. The complete
-    // Pi slice adds native title and exact sleep/fork without changing its
-    // Basic collaboration grade.
+    // Pi and OMP slices add native title and exact sleep/fork beside the
+    // accepted extension's collaboration features (reader B1/B2/B3/B14, D13);
+    // the Grok slice adds the same to its hook features and Grok stays Basic.
     let opencode = [
         Skill,
         Guidance,
@@ -770,21 +772,52 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
         HerdrIntegration,
         Start,
     ];
+    // pi-omp-extension D-08, D-10: Pi and omp take letters and are refused a
+    // launch through Hide's extension; only omp runs subagents, and no bell
+    // rings for either. Their session readers add sleep, fork and titles.
+    let pi = [
+        Skill,
+        Guidance,
+        Letters,
+        SpawnGuard,
+        HerdrIntegration,
+        Sleep,
+        Fork,
+        Start,
+        Titles,
+    ];
+    let omp = [
+        Skill,
+        Guidance,
+        Letters,
+        Subagents,
+        SpawnGuard,
+        HerdrIntegration,
+        Sleep,
+        Fork,
+        Start,
+        Titles,
+    ];
     let expected: [(&str, &[Feature], bool); 7] = [
         ("claude-code", &Feature::ALL, false),
         ("codex", &Feature::ALL, false),
         (
             "grok",
-            &[Skill, Subagents, SpawnGuard, HerdrIntegration, Start],
+            &[
+                Skill,
+                Subagents,
+                SpawnGuard,
+                HerdrIntegration,
+                Sleep,
+                Fork,
+                Start,
+                Titles,
+            ],
             true,
         ),
         ("opencode", &opencode, false),
-        (
-            "pi",
-            &[Skill, HerdrIntegration, Sleep, Fork, Start, Titles],
-            true,
-        ),
-        ("omp", &[Skill, HerdrIntegration, Start], true),
+        ("pi", &pi, false),
+        ("omp", &omp, false),
         (
             "cursor",
             &[
@@ -817,7 +850,8 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
 
 #[test]
 fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
-    // Letters and Memory come from the six-event hook or OpenCode's plugin,
+    // Letters and Memory come from the six-event hook or a script file of
+    // Hide's (OpenCode's plugin, Pi's and omp's extension),
     // which the hook crate speaks a dialect for; the subagent count and the
     // spawn guard also come from Grok's and Cursor's own hook files. An agent
     // claiming them without a hook would be a popover that says more than
@@ -838,26 +872,38 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
             .count()
     );
     for row in ADAPTERS {
-        let instrumented = matches!(row.hook, HookSupport::Part(_) | HookSupport::Plugin);
+        let instrumented = matches!(row.hook, HookSupport::Part(_) | HookSupport::Plugin(_));
         assert_eq!(
             row.supports(crate::agents::Feature::Letters),
             instrumented,
             "{}",
             row.id
         );
+        // Memory needs the hook too, and its own declaration (Pi's and omp's
+        // Memory waits).
+        let declared = hide_agent_adapter::adapter(row.id).unwrap();
         assert_eq!(
             row.supports(crate::agents::Feature::Memory),
-            instrumented,
-            "{}",
+            instrumented && declared.memory.is_some(),
+            "{}: memory",
             row.id
         );
+        // The subagent count and the spawn guard need any hook of Hide's,
+        // including Grok's and Cursor's own hook files, and each its own
+        // declaration (Pi runs no subagents).
         let hook = !matches!(row.hook, HookSupport::None);
-        for feature in [
-            crate::agents::Feature::Subagents,
-            crate::agents::Feature::SpawnGuard,
-        ] {
-            assert_eq!(row.supports(feature), hook, "{}: {feature:?}", row.id);
-        }
+        assert_eq!(
+            row.supports(crate::agents::Feature::Subagents),
+            hook && declared.subagent_counts.is_some(),
+            "{}: subagents",
+            row.id
+        );
+        assert_eq!(
+            row.supports(crate::agents::Feature::SpawnGuard),
+            hook && declared.spawn_guard.is_some(),
+            "{}: spawn guard",
+            row.id
+        );
     }
 }
 
@@ -955,7 +1001,7 @@ fn grok_without_its_own_folder_gets_no_folder_and_its_row_says_why() {
 }
 
 fn opencode_plugin(fixture: &Fixture) -> PathBuf {
-    hide_agent_hooks::opencode::plugin_path(fixture.home())
+    hide_agent_hooks::opencode::PLUGIN.path(fixture.home())
 }
 
 #[cfg(unix)]
@@ -977,7 +1023,7 @@ fn opencode_switched_on_gets_hides_plugin_beside_herdrs_and_reads_installed() {
     assert_eq!(hook.location.as_deref(), opencode_plugin(&fixture).to_str());
     assert_eq!(
         std::fs::read_to_string(opencode_plugin(&fixture)).unwrap(),
-        hide_agent_hooks::opencode::plugin_text(&fixture.target.kit_dir.join("hide-agent-hooks"))
+        hide_agent_hooks::opencode::PLUGIN.text(&fixture.target.kit_dir.join("hide-agent-hooks"))
     );
     assert_eq!(std::fs::read(&herdr).unwrap(), b"herdr's plugin");
     assert!(

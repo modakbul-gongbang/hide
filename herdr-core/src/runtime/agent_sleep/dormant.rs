@@ -147,7 +147,8 @@ impl Runtime {
                     && agent.session_id.as_deref() == Some(record.native_session_id.as_str())
                     && agent.state_change_seq == record.old_state_change_seq
                     && agent.row_facts.is_some()
-                    && (hide_agent_adapter::canonical_kind(&record.kind) != "pi"
+                    && (!hide_session::Agent::from_kind(&record.kind)
+                        .is_some_and(hide_session::Agent::requires_native_file_proof)
                         || agent
                             .row_facts
                             .as_ref()

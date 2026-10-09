@@ -1101,7 +1101,7 @@ mod tests {
     fn bootstrap_retries_do_not_fill_the_registry_when_no_client_claims() {
         let directory = tempfile::tempdir().unwrap();
         let registry = Registry::new(directory.path()).unwrap();
-        let core = bare_core(directory.path());
+        let core = CoreHandle::bare(directory.path());
         let pid = std::process::id() as i32;
         let attestation = Attestation {
             pane_id: "pane".to_owned(),
@@ -1185,34 +1185,12 @@ mod tests {
         assert_eq!(registry.entries.lock().unwrap().len(), 2);
     }
 
-    /// A core with no Herdr and no registered checkout, so every bootstrap
-    /// answer below comes from the attestation path itself.
-    fn bare_core(directory: &Path) -> CoreHandle {
-        CoreHandle::spawn(
-            herdr_core::CoreOptions {
-                schema_version: crate::state_file::SCHEMA_VERSION,
-                home: None,
-                node_id: herdr_core::node::NodeId::parse("test-node").unwrap(),
-                herdr_socket_path: None,
-                herdr_bin_path: None,
-                app_state_path: directory.join("core-state.json").display().to_string(),
-                host_helper_root: None,
-                host_cli_dir: None,
-                workspace_views_path: None,
-                shortcut_import_path: None,
-                local_issues_path: None,
-            },
-            Default::default(),
-        )
-        .unwrap()
-    }
-
     // Windows cannot read a process's working directory (`cwd_of`).
     #[cfg(unix)]
     #[test]
     fn bootstrap_without_a_herdr_socket_still_reaches_the_checkout_fallback() {
         let directory = tempfile::tempdir().unwrap();
-        let core = bare_core(directory.path());
+        let core = CoreHandle::bare(directory.path());
         let peer = std::process::id() as i32;
         let request = |pane_id: &str| BootstrapRequest {
             pane_id: pane_id.to_owned(),
@@ -1264,7 +1242,7 @@ mod tests {
     fn sweep_drops_a_checkout_capability_whose_checkout_no_longer_resolves() {
         let directory = tempfile::tempdir().unwrap();
         let registry = Registry::new(directory.path()).unwrap();
-        let core = bare_core(directory.path());
+        let core = CoreHandle::bare(directory.path());
         let pid = std::process::id() as i32;
         let gone = checkout_attestation(&format!("{:032x}", 3), "/srv/gone");
         let (path, created) = registry
@@ -1324,7 +1302,7 @@ mod tests {
         let capability = registry.get(&reference.token).unwrap();
         assert_eq!(capability.pane_id, checkout_caller_id(&first, "/checkout"));
         assert_eq!(capability.context.checkout_path, "/checkout");
-        let core = bare_core(directory.path());
+        let core = CoreHandle::bare(directory.path());
         assert!(capability.question_guard_source_matches(None));
         assert!(
             !capability

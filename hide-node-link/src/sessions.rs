@@ -285,7 +285,8 @@ mod reader_tests {
         );
         for malformed in ["null", "{}", "42"] {
             let wire = format!(
-                r#"{{"protocol":25,"version":"fixture","os":"linux","arch":"x86_64","home":null,"machine_identity":{{"state":"unavailable","reason":"fixture"}},"reader_features":{malformed}}}"#
+                r#"{{"protocol":{},"version":"fixture","os":"linux","arch":"x86_64","home":null,"machine_identity":{{"state":"unavailable","reason":"fixture"}},"reader_features":{malformed}}}"#,
+                crate::protocol::PROTOCOL_VERSION
             );
             let hello: crate::protocol::Hello = serde_json::from_str(&wire).unwrap();
             assert!(!hello.readers().supports("claude", ReaderFeature::Labels));
@@ -325,9 +326,61 @@ mod reader_tests {
         for feature in [ReaderFeature::Turns, ReaderFeature::UserTurnContent] {
             assert!(!facts.supports("pi", feature));
         }
-        for provider in ["omp", "grok", "cursor"] {
-            assert!(!facts.supports(provider, ReaderFeature::Identity));
+        assert!(!facts.supports("cursor", ReaderFeature::Identity));
+    }
+
+    #[test]
+    fn omp_has_its_native_reader_and_question_content_only_on_a_current_helper() {
+        let facts = ReaderFeatures::implemented();
+        for feature in [
+            ReaderFeature::Identity,
+            ReaderFeature::Labels,
+            ReaderFeature::Titles,
+            ReaderFeature::Conversation,
+            ReaderFeature::Search,
+            ReaderFeature::Memory,
+            ReaderFeature::Links,
+            ReaderFeature::Activity,
+            ReaderFeature::Turns,
+            ReaderFeature::UserTurnContent,
+        ] {
+            assert!(facts.supports("omp", feature), "{feature:?}");
+            assert!(!ReaderFeatures::protocol24().supports("omp", feature));
         }
+        // A Pi-only intermediate protocol25 helper grants no omp operation.
+        let earlier: ReaderFeatures = serde_json::from_str(
+            r#"[{"provider":"pi","features":["identity","activity","conversation"]}]"#,
+        )
+        .unwrap();
+        assert!(earlier.supports("pi", ReaderFeature::Identity));
+        assert!(!earlier.supports("omp", ReaderFeature::Identity));
+    }
+
+    #[test]
+    fn grok_has_its_native_reader_and_waits_only_on_a_helper_that_implements_it() {
+        let facts = ReaderFeatures::implemented();
+        for feature in [
+            ReaderFeature::Identity,
+            ReaderFeature::Labels,
+            ReaderFeature::Titles,
+            ReaderFeature::Conversation,
+            ReaderFeature::Search,
+            ReaderFeature::Memory,
+            ReaderFeature::Links,
+            ReaderFeature::Activity,
+            ReaderFeature::Turns,
+            ReaderFeature::UserTurnContent,
+        ] {
+            assert!(facts.supports("grok", feature), "{feature:?}");
+            assert!(!ReaderFeatures::protocol24().supports("grok", feature));
+        }
+        // A protocol25 helper built before this reader grants no Grok read.
+        let earlier: ReaderFeatures = serde_json::from_str(
+            r#"[{"provider":"pi","features":["identity"]},{"provider":"omp","features":["identity","turns"]}]"#,
+        )
+        .unwrap();
+        assert!(earlier.supports("omp", ReaderFeature::Identity));
+        assert!(!earlier.supports("grok", ReaderFeature::Identity));
     }
 }
 

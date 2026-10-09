@@ -1164,6 +1164,26 @@ pub(crate) fn agent_start_params(
     })
 }
 
+/// The most bytes the pinned Herdr types into the pane's shell for
+/// `agent.start` with `params`: the kind's program, then each argument
+/// quoted for a POSIX shell (`'…'`, a `'` inside written `'\''`; PowerShell
+/// quoting is shorter), separated by spaces, inside bracketed-paste markers
+/// when the shell asked for them, then Enter. `FRAMING_BYTES` covers the
+/// program name, the markers and the Enter.
+pub(crate) fn agent_start_line_bytes(params: &Value) -> usize {
+    const FRAMING_BYTES: usize = 64;
+    let args = params["args"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    FRAMING_BYTES
+        + args
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|arg| 1 + 2 + arg.len() + 3 * arg.matches('\'').count())
+            .sum::<usize>()
+}
+
 /// A split that creates the pane a fork will run in. Unlike the operator's
 /// own split it does not take focus: the operator forked the pane they are
 /// reading, and taking focus away from it would undo that.
@@ -1873,67 +1893,6 @@ fn remote_ids(
     }
     Ok(ids)
 }
-pub(crate) fn terminal_input_line(bytes: &[u8]) -> Result<String, String> {
-    let mut line = serde_json::to_string(&json!({
-        "type": "terminal.input",
-        "bytes": crate::live::encode_base64(bytes),
-    }))
-    .map_err(|error| format!("terminal input could not be encoded: {error}"))?;
-    line.push('\n');
-    Ok(line)
-}
-
-/// A wheel carries the pointer's cell and modifiers because Herdr uses them
-/// when the application tracks the mouse. Coordinates are zero-based.
-pub(crate) fn terminal_scroll_line(
-    direction: &str,
-    lines: u16,
-    column: Option<u16>,
-    row: Option<u16>,
-    modifiers: u8,
-) -> Result<String, String> {
-    if !matches!(direction, "up" | "down") {
-        return Err(format!(
-            "terminal scroll direction is not up or down: {direction}"
-        ));
-    }
-    if lines == 0 {
-        return Err("terminal scroll needs at least one line".to_owned());
-    }
-    let mut line = serde_json::to_string(&json!({
-        "type": "terminal.scroll",
-        "direction": direction,
-        "lines": lines,
-        "source": "wheel",
-        "column": column,
-        "row": row,
-        "modifiers": modifiers,
-    }))
-    .map_err(|error| format!("terminal scroll could not be encoded: {error}"))?;
-    line.push('\n');
-    Ok(line)
-}
-
-pub(crate) fn terminal_resize_line(rows: u16, cols: u16) -> Result<String, String> {
-    if rows == 0 || cols == 0 {
-        return Err("terminal dimensions must be positive".to_owned());
-    }
-    let mut line = serde_json::to_string(&json!({
-        "type": "terminal.resize",
-        "cols": cols,
-        "rows": rows,
-        "cell_width_px": 0,
-        "cell_height_px": 0,
-    }))
-    .map_err(|error| format!("terminal resize could not be encoded: {error}"))?;
-    line.push('\n');
-    Ok(line)
-}
-
-pub(crate) fn terminal_release_line() -> String {
-    "{\"type\":\"terminal.release\"}\n".to_owned()
-}
-
 #[cfg(test)]
 pub(crate) fn checked_response_fixture(id: &Value, result: Value) -> Value {
     let value = json!({"id": id, "result": result});
