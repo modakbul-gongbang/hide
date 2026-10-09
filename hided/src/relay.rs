@@ -19,7 +19,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket};
 use hide_node::ssh::RemoteHost;
@@ -38,8 +37,6 @@ pub const TAP_CAP_BYTES: usize = 4 * 1024 * 1024;
 const MESSAGE_ITEMS: usize = 256;
 /// The text after which a relay message takes no more items.
 const MESSAGE_BYTES: usize = 1024 * 1024;
-/// How often a relay looks whether its node's link still stands.
-const LINK_CHECK: Duration = Duration::from_secs(1);
 /// The longest line a node's terminals relay may send: a paste goes up as
 /// one key, as large as a screen of this machine may send one.
 const MAX_DOWN_LINE: usize = 16 * 1024 * 1024;
@@ -443,17 +440,6 @@ impl RelayRequests {
     }
 }
 
-/// Resolves when `link` has ended.
-pub async fn link_ended(link: &RemoteHost) {
-    let mut check = tokio::time::interval(LINK_CHECK);
-    loop {
-        check.tick().await;
-        if link.closed_reason().is_some() {
-            return;
-        }
-    }
-}
-
 /// Serves one linked node's terminals relay until the node closes it or its
 /// link ends: every pane's output but the node's own goes down it, and the
 /// node's keys and redraws for those panes come up it.
@@ -509,7 +495,7 @@ pub async fn serve_terminals(
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break "node_closed",
                 Some(Ok(_)) => {}
             },
-            () = link_ended(&link) => break "link_ended",
+            _ = link.closed() => break "link_ended",
         }
     };
     tap.close();

@@ -160,9 +160,20 @@ pub fn bind(state_dir: &Path) -> Result<(BootstrapListener, PathBuf), String> {
 
 /// The screen relay grants this core handed to linked nodes, each bound to
 /// the link it was handed out on and ending with it (D-10).
-#[derive(Default)]
 pub struct RelayGrants {
     grants: Mutex<HashMap<String, Grant>>,
+    /// Moves on every bind and revoke, waking whoever waits for a grant to
+    /// be bound ([`RelayGrants::admit`]).
+    changed: tokio::sync::watch::Sender<u64>,
+}
+
+impl Default for RelayGrants {
+    fn default() -> Self {
+        Self {
+            grants: Mutex::default(),
+            changed: tokio::sync::watch::Sender::new(0),
+        }
+    }
 }
 
 struct Grant {
@@ -211,10 +222,12 @@ impl RelayGrants {
         if let Some(grant) = lock(&self.grants).get_mut(token) {
             grant.link = Some(link);
         }
+        self.changed.send_modify(|count| *count += 1);
     }
 
     fn revoke(&self, token: &str) {
         lock(&self.grants).remove(token);
+        self.changed.send_modify(|count| *count += 1);
     }
 
     /// The node and link `token` was granted on, waiting up to
@@ -222,6 +235,8 @@ impl RelayGrants {
     /// the node's screens may ask before the core finished taking its link.
     pub async fn admit(&self, token: &str) -> Option<Admitted> {
         let deadline = tokio::time::Instant::now() + GRANT_BIND_WAIT;
+        // Subscribed before the look, so a bind between the two still wakes it.
+        let mut changed = self.changed.subscribe();
         loop {
             {
                 let grants = lock(&self.grants);
@@ -231,10 +246,10 @@ impl RelayGrants {
                     return self.valid(token);
                 }
             }
-            if tokio::time::Instant::now() >= deadline {
-                return None;
+            match tokio::time::timeout_at(deadline, changed.changed()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) | Err(_) => return None,
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 
@@ -522,10 +537,10 @@ fn take_link(stream: LocalStream, service: &AttachService) {
     // its connection in the table.
     {
         let grants = Arc::clone(&service.grants);
-        let link = transport.link().clone();
+        let closed = transport.link().closed();
         let token = relay_token.clone();
         tokio::runtime::Handle::current().spawn(async move {
-            crate::relay::link_ended(&link).await;
+            closed.await;
             grants.revoke(&token);
         });
     }

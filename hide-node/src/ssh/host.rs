@@ -468,7 +468,9 @@ struct Inner {
     _session_channel: Option<tokio::sync::OwnedSemaphorePermit>,
     writer: tokio::sync::Mutex<Pin<Box<dyn AsyncWrite + Send>>>,
     pending: Mutex<HashMap<u64, Waiting>>,
-    closed: Mutex<Option<String>>,
+    /// Why the connection ended, once it has; waiters subscribe to it
+    /// rather than ask again ([`RemoteHost::closed`]).
+    closed: tokio::sync::watch::Sender<Option<String>>,
     gate: Gate,
     /// Admission for link control, which never waits behind machine calls.
     control_gate: Gate,
@@ -548,7 +550,7 @@ impl RemoteHost {
                 _session_channel: None,
                 writer: tokio::sync::Mutex::new(writer),
                 pending: Mutex::new(HashMap::new()),
-                closed: Mutex::new(None),
+                closed: tokio::sync::watch::Sender::new(None),
                 gate: Gate::new(MAX_RUNNING),
                 control_gate: Gate::new(MAX_CONTROL_RUNNING),
                 next_id: AtomicU64::new(1),
@@ -571,7 +573,20 @@ impl RemoteHost {
 
     /// Why the connection ended, once it has.
     pub fn closed_reason(&self) -> Option<String> {
-        lock_recover(&self.inner.closed).clone()
+        self.inner.closed.borrow().clone()
+    }
+
+    /// Resolves with why the connection ended, as soon as it has. Holds no
+    /// clone of the link, so waiting never keeps it alive.
+    pub fn closed(&self) -> impl std::future::Future<Output = String> + Send + 'static {
+        let mut closed = self.inner.closed.subscribe();
+        async move {
+            match closed.wait_for(Option::is_some).await {
+                Ok(reason) => reason.clone().unwrap_or_default(),
+                // Every clone of the link was dropped.
+                Err(_) => "the link was dropped".to_owned(),
+            }
+        }
     }
 
     /// Ends the link; the helper exits when its channel closes. Requests
@@ -920,11 +935,13 @@ impl NodeLink for RemoteHost {
 }
 
 fn mark_closed(inner: &Inner, reason: String) {
-    let mut closed = lock_recover(&inner.closed);
-    if closed.is_none() {
+    inner.closed.send_if_modified(|closed| {
+        if closed.is_some() {
+            return false;
+        }
         *closed = Some(reason.clone());
-    }
-    drop(closed);
+        true
+    });
     // Dropping the senders wakes every waiting request as disconnected.
     lock_recover(&inner.pending).clear();
     inner.streams.end_all();
@@ -2216,7 +2233,7 @@ fn start_reader(
         _session_channel: session_channel,
         writer: tokio::sync::Mutex::new(writer),
         pending: Mutex::new(HashMap::new()),
-        closed: Mutex::new(None),
+        closed: tokio::sync::watch::Sender::new(None),
         gate: Gate::new(MAX_RUNNING),
         control_gate: Gate::new(MAX_CONTROL_RUNNING),
         next_id: AtomicU64::new(1),
@@ -2472,6 +2489,31 @@ mod tests {
     /// A device's terminal line past its cap ends the link, and an answer
     /// keeps its own, larger cap: a device's node is another machine's
     /// program.
+    /// Waiting for a link's end is told the reason as soon as the link
+    /// closes, and that the link is gone once every clone was dropped,
+    /// with no look again in between.
+    #[test]
+    fn a_link_s_end_wakes_its_waiters_at_once() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("a runtime");
+        let link = RemoteHost::detached("ssh:ending");
+        let closed = link.closed();
+        link.close("this Hide closed the link");
+        let reason = runtime
+            .block_on(async { tokio::time::timeout(Duration::from_millis(100), closed).await })
+            .expect("woken at once");
+        assert_eq!(reason, "this Hide closed the link");
+        let dropped = RemoteHost::detached("ssh:dropped");
+        let closed = dropped.closed();
+        drop(dropped);
+        let reason = runtime
+            .block_on(async { tokio::time::timeout(Duration::from_millis(100), closed).await })
+            .expect("woken at once");
+        assert_eq!(reason, "the link was dropped");
+    }
+
     #[test]
     fn a_terminal_line_past_its_cap_ends_the_link_and_an_answer_keeps_its_own() {
         use hide_node_link::terminal::{MAX_TERMINAL_LINE_BYTES, TERMINAL_LINE_PREFIX};

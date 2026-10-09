@@ -1092,7 +1092,9 @@ async fn screen_loop(
             }
             () = async {
                 match &link {
-                    Some(link) => crate::relay::link_ended(link).await,
+                    Some(link) => {
+                        link.closed().await;
+                    }
                     None => std::future::pending().await,
                 }
             } => break,
