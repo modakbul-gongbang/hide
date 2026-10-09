@@ -583,11 +583,6 @@ impl LargeLine {
         Ok(())
     }
 
-    /// No JSON structure has been seen, so appending cannot make one.
-    pub(crate) fn unclassifiable_prefix(&self) -> bool {
-        self.frames.is_empty() && self.string.is_none() && self.kept.is_empty()
-    }
-
     /// The record without its bodies, or `None` when it cannot be read
     /// that way: an unfinished or malformed line or an unknown update.
     pub(crate) fn reduced(mut self) -> Option<String> {

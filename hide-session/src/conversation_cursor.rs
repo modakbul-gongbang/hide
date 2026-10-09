@@ -208,7 +208,7 @@ impl ConversationCursor {
             if discarded_bytes > 0 {
                 discarded_bytes += fragment.len() as u64;
                 if let Some(classifier) = classifier.as_mut() {
-                    classifier.feed(fragment)?;
+                    classifier.feed(fragment);
                 }
             } else {
                 let retained = fragment.len().min(SESSION_LINE_LIMIT_BYTES - pending.len());
@@ -221,25 +221,12 @@ impl ConversationCursor {
                         grok: (agent == Agent::Grok).then(Default::default),
                         ..LargeRecord::default()
                     };
-                    scan.feed(&pending)?;
-                    scan.feed(&fragment[retained..])?;
+                    scan.feed(&pending);
+                    scan.feed(&fragment[retained..]);
                     classifier = Some(Box::new(scan));
                     discarded_bytes = pending.len() as u64 + (fragment.len() - retained) as u64;
                     pending.clear();
                 }
-            }
-            // A torn JSON envelope may resume until its provider structure
-            // is known. A non-JSON prefix cannot become a discardable tool
-            // record by appending bytes and fails at the existing line cap.
-            if discarded_bytes > 0
-                && classifier
-                    .as_ref()
-                    .is_some_and(|scan| scan.unclassifiable_prefix())
-            {
-                return Err(SessionError::Capacity {
-                    resource: "line_bytes",
-                    limit: SESSION_LINE_LIMIT_BYTES as u64,
-                });
             }
             if !complete {
                 continue;
@@ -249,25 +236,25 @@ impl ConversationCursor {
                 discarded_bytes = 0;
                 if agent == Agent::Grok {
                     // The record still counts, without its bodies.
-                    let Some(line) = scan
+                    if let Some(line) = scan
+                        .filter(|scan| !scan.invalid)
                         .and_then(|scan| scan.grok)
                         .and_then(|grok| grok.reduced())
-                    else {
-                        return Err(SessionError::Capacity {
-                            resource: "line_bytes",
-                            limit: SESSION_LINE_LIMIT_BYTES as u64,
-                        });
-                    };
-                    parsed.skipped(SkipReason::BodyCapacity);
-                    pending = line.into_bytes();
+                    {
+                        parsed.skipped(SkipReason::BodyCapacity);
+                        pending = line.into_bytes();
+                    } else {
+                        let (reason, turn) = LargeRecord::unreadable();
+                        parsed.skipped(reason);
+                        if let Ok(Some(mark)) = turn {
+                            parsed.turn_marks.push((line_start, mark));
+                        }
+                        continue;
+                    }
                 } else {
-                    let Some(turn) = scan.and_then(|scan| (*scan).discard(agent)) else {
-                        return Err(SessionError::Capacity {
-                            resource: "line_bytes",
-                            limit: SESSION_LINE_LIMIT_BYTES as u64,
-                        });
-                    };
-                    parsed.skipped(SkipReason::NonConversationCapacity);
+                    let (reason, turn) =
+                        scan.map_or_else(LargeRecord::unreadable, |scan| (*scan).discard(agent));
+                    parsed.skipped(reason);
                     match turn {
                         Ok(Some(mark)) => parsed.turn_marks.push((line_start, mark)),
                         Ok(None) => {}
@@ -513,6 +500,9 @@ struct LargeRecord {
     payload_mode: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     plan_item: bool,
+    /// Open brackets past the 64 frames kept, matched by their closers.
+    #[serde(default)]
+    overflow: u32,
     /// Grok's oversized records are read without their bodies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     grok: Option<Box<crate::grok::LargeLine>>,
@@ -595,10 +585,14 @@ impl LargeRecord {
             },
         }
     }
-    fn feed(&mut self, bytes: &[u8]) -> Result<()> {
+    fn feed(&mut self, bytes: &[u8]) {
         if let Some(grok) = self.grok.as_mut() {
-            // Grok's scan alone decides a Grok record.
-            return grok.feed(bytes);
+            // Grok's scan alone decides a Grok record; one it cannot follow
+            // is unreadable.
+            if !self.invalid && grok.feed(bytes).is_err() {
+                self.invalid = true;
+            }
+            return;
         }
         for &byte in bytes {
             if let Some(token) = self.token.as_mut() {
@@ -704,10 +698,9 @@ impl LargeRecord {
                 }
                 b'{' | b'[' => {
                     if self.frames.len() >= 64 {
-                        return Err(SessionError::Capacity {
-                            resource: "json_depth",
-                            limit: 64,
-                        });
+                        self.overflow = self.overflow.saturating_add(1);
+                        self.invalid = true;
+                        continue;
                     }
                     let scope = self.value_scope();
                     let plan_item = self
@@ -733,7 +726,9 @@ impl LargeRecord {
                     });
                 }
                 b'}' | b']' => {
-                    if let Some(frame) = self.frames.pop() {
+                    if self.overflow > 0 {
+                        self.overflow -= 1;
+                    } else if let Some(frame) = self.frames.pop() {
                         self.invalid |= frame.object != (byte == b'}');
                         if frame.scope == Scope::Block {
                             self.conversation |= !frame.block_kind;
@@ -765,39 +760,51 @@ impl LargeRecord {
                 _ => (),
             }
         }
-        Ok(())
-    }
-    fn unclassifiable_prefix(&self) -> bool {
-        match &self.grok {
-            Some(grok) => grok.unclassifiable_prefix(),
-            None => self.frames.is_empty() && self.token.is_none() && self.root_kind.is_empty(),
-        }
     }
 
-    /// Whether the record may be discarded, and the turn mark it carries,
-    /// as its parsed form would give it: `None` when only its body could
-    /// tell (conversation text, an unknown envelope), so the read fails
-    /// rather than lose it.
-    fn discard(self, agent: Agent) -> Option<Discard> {
+    /// A record whose structure no bounded scan certifies: what its turn
+    /// waits for is not known until the next turn starts or a person writes.
+    fn unreadable() -> (SkipReason, Discard) {
+        (
+            SkipReason::ConversationCapacity,
+            Ok(Some(TurnMark::Unreadable)),
+        )
+    }
+
+    /// The record's skip reason and the turn marks its parsed form would
+    /// give. A record the scan certifies keeps its tool marks and loses its
+    /// text (`conversation_capacity` when it had any). The marks only text
+    /// gives (a person's message, an interruption) clear or end a wait and
+    /// never start one, so losing them can hold a bell but never ring one
+    /// into a menu. Any other record is unreadable rather than a read
+    /// failure, so one record never stops every later read of the session.
+    fn discard(self, agent: Agent) -> (SkipReason, Discard) {
         if !self.native_ids || self.invalid || !self.frames.is_empty() || self.token.is_some() {
-            return None;
+            return Self::unreadable();
         }
-        match agent {
+        let turn = match agent {
             // Grok's oversized records are read by its own scan.
             Agent::OpenCode | Agent::Grok | Agent::Pi | Agent::Omp => None,
             Agent::Codex => self.codex(),
             Agent::Claude => self.claude(),
-        }
+        };
+        turn.unwrap_or_else(Self::unreadable)
     }
 
-    fn claude(self) -> Option<Discard> {
-        match self.root_kind.as_str() {
-            "user" | "assistant" if self.content_array && !self.conversation => {}
-            "user" | "assistant" | "" | "ai-title" => return None,
-            _ => return Some(Ok(None)),
-        }
+    fn claude(self) -> Option<(SkipReason, Discard)> {
+        let lost = match self.root_kind.as_str() {
+            "user" | "assistant" => self.conversation || !self.content_array,
+            "ai-title" => true,
+            "" => return None,
+            _ => return Some((SkipReason::NonConversationCapacity, Ok(None))),
+        };
+        let reason = if lost {
+            SkipReason::ConversationCapacity
+        } else {
+            SkipReason::NonConversationCapacity
+        };
         if self.tool_capacity {
-            return Some(Err(SkipReason::UserTurnCapacity));
+            return Some((reason, Err(SkipReason::UserTurnCapacity)));
         }
         let mut marks = Vec::new();
         for tool in self.tools {
@@ -807,25 +814,33 @@ impl LargeRecord {
                         call,
                         content: None,
                     },
-                    Ok(None) => return Some(Err(SkipReason::UserTurnInvalid)),
-                    Err(reason) => return Some(Err(reason)),
+                    Ok(None) => return Some((reason, Err(SkipReason::UserTurnInvalid))),
+                    Err(invalid) => return Some((reason, Err(invalid))),
                 },
                 ("user", LargeTool::Result(call)) => match bounded(Some(call)) {
                     Ok(Some(call)) => ToolTurnMark::Answered { call },
                     Ok(None) => continue,
-                    Err(reason) => return Some(Err(reason)),
+                    Err(invalid) => return Some((reason, Err(invalid))),
                 },
                 _ => continue,
             };
             marks.push(mark);
         }
-        Some(Ok((!marks.is_empty()).then_some(TurnMark::Tools(marks))))
+        Some((
+            reason,
+            Ok((!marks.is_empty()).then_some(TurnMark::Tools(marks))),
+        ))
     }
 
-    fn codex(self) -> Option<Discard> {
+    /// A Codex message carries no turn mark of its own: its turn's start
+    /// record comes before it.
+    fn codex(self) -> Option<(SkipReason, Discard)> {
         let turn = || bounded(self.payload_turn.clone());
         let mark = match (self.root_kind.as_str(), self.payload_kind.as_str()) {
-            ("", _) | ("response_item", "" | "message") => return None,
+            ("", _) | ("response_item", "") => return None,
+            ("response_item", "message") => {
+                return Some((SkipReason::ConversationCapacity, Ok(None)));
+            }
             ("response_item", "function_call") if self.payload_question => {
                 match bounded(self.payload_call.clone()) {
                     Ok(Some(call)) => Ok(Some(TurnMark::Tools(vec![ToolTurnMark::Asked {
@@ -858,6 +873,6 @@ impl LargeRecord {
             ("event_msg", "turn_aborted") => turn().map(|turn| Some(TurnMark::Aborted { turn })),
             _ => Ok(None),
         };
-        Some(mark)
+        Some((SkipReason::NonConversationCapacity, mark))
     }
 }
