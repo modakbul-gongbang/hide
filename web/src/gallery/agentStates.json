@@ -1,7 +1,7 @@
 {
   "panes": {
     "tn1": 0,
-    "a1": 1,
+    "a1": 13,
     "a1c1": 2,
     "a1c2": 3,
     "a2": 4,
@@ -42,7 +42,15 @@
     "worker-436": 11,
     "worker-437": 11,
     "worker-415:child-1": 12,
-    "worker-415:child-2": 12
+    "worker-415:child-2": 12,
+    "a1c3": 14,
+    "a1g1": 15,
+    "a1g2": 16,
+    "a1c4": 17,
+    "a1c6": 18,
+    "a1c7": 19,
+    "a1c5": 20,
+    "a1c8": 20
   },
   "presets": [
     {
@@ -301,7 +309,7 @@
         "unfinished": false
       },
       "ask": null,
-      "tree_rank": 1,
+      "tree_rank": 0,
       "pr": null
     },
     {
@@ -591,6 +599,406 @@
       "edge": "flow",
       "search_tone": "working",
       "subtree": "working",
+      "link": "idle",
+      "descendant_asking": 0,
+      "verb": "idle",
+      "request_todo": false,
+      "request_since": null,
+      "session": {
+        "group": "idle",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 3,
+      "pr": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": true,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": true,
+      "waits_on_children": true,
+      "chip_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "working",
+      "attention_rank": 3,
+      "graph_rank": 1,
+      "graph_chip": "working",
+      "graph_resting": false,
+      "link_rank": 1,
+      "edge": "flow",
+      "search_tone": "working",
+      "subtree": "working",
+      "link": "working",
+      "descendant_asking": 0,
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null,
+      "session": {
+        "group": "working",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 1,
+      "pr": {
+        "count": 1,
+        "worst": "mergeable",
+        "worst_count": 1,
+        "pulls": [
+          {
+            "index": 0,
+            "state": "mergeable"
+          }
+        ]
+      }
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": false,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": true,
+      "waits_on_children": true,
+      "chip_tone": {
+        "kind": "subtle",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "working",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "delegating",
+      "attention_rank": 3,
+      "graph_rank": 2,
+      "graph_chip": "working",
+      "graph_resting": false,
+      "link_rank": 1,
+      "edge": "wait",
+      "search_tone": "muted",
+      "subtree": "quiet",
+      "link": "working",
+      "descendant_asking": 1,
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null,
+      "session": {
+        "group": "working",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 0,
+      "pr": {
+        "count": 1,
+        "worst": "failed",
+        "worst_count": 1,
+        "pulls": [
+          {
+            "index": 0,
+            "state": "failed"
+          }
+        ]
+      }
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": false,
+      "title_emphasized": false,
+      "selection_emphasizes_title": false,
+      "asking": true,
+      "working": true,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "warning",
+        "read": true
+      },
+      "mark_tone": {
+        "kind": "warning",
+        "read": true
+      },
+      "line": {
+        "text": "",
+        "mode": "request",
+        "tone": {
+          "kind": "warning",
+          "read": true
+        }
+      },
+      "branch_badge": null,
+      "bucket": "working",
+      "attention_rank": 3,
+      "graph_rank": 0,
+      "graph_chip": "working",
+      "graph_resting": false,
+      "link_rank": 0,
+      "edge": "ask",
+      "search_tone": "attention",
+      "subtree": "waiting",
+      "link": "approval",
+      "descendant_asking": 0,
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null,
+      "session": {
+        "group": "working",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 0,
+      "pr": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": false,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": false,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "success",
+        "read": true
+      },
+      "mark_tone": {
+        "kind": "success",
+        "read": true
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "resting",
+      "attention_rank": 4,
+      "graph_rank": 3,
+      "graph_chip": "resting",
+      "graph_resting": true,
+      "link_rank": 2,
+      "edge": "rest",
+      "search_tone": "muted",
+      "subtree": "quiet",
+      "link": "idle",
+      "descendant_asking": 0,
+      "verb": "idle",
+      "request_todo": false,
+      "request_since": null,
+      "session": {
+        "group": "idle",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 3,
+      "pr": null
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": false,
+      "title_emphasized": false,
+      "selection_emphasizes_title": false,
+      "asking": true,
+      "working": true,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "warning",
+        "read": true
+      },
+      "mark_tone": {
+        "kind": "warning",
+        "read": true
+      },
+      "line": {
+        "text": "",
+        "mode": "request",
+        "tone": {
+          "kind": "warning",
+          "read": true
+        }
+      },
+      "branch_badge": null,
+      "bucket": "working",
+      "attention_rank": 3,
+      "graph_rank": 0,
+      "graph_chip": "working",
+      "graph_resting": false,
+      "link_rank": 0,
+      "edge": "ask",
+      "search_tone": "attention",
+      "subtree": "waiting",
+      "link": "question",
+      "descendant_asking": 0,
+      "verb": "working",
+      "request_todo": false,
+      "request_since": null,
+      "session": {
+        "group": "working",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 0,
+      "pr": {
+        "count": 1,
+        "worst": "pending",
+        "worst_count": 1,
+        "pulls": [
+          {
+            "index": 0,
+            "state": "pending"
+          }
+        ]
+      }
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": false,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": false,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "success",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "success",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "turn",
+      "attention_rank": 2,
+      "graph_rank": 0,
+      "graph_chip": "turn",
+      "graph_resting": false,
+      "link_rank": 2,
+      "edge": "rest",
+      "search_tone": "done",
+      "subtree": "quiet",
+      "link": "idle",
+      "descendant_asking": 0,
+      "verb": "idle",
+      "request_todo": false,
+      "request_since": null,
+      "session": {
+        "group": "idle",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 2,
+      "pr": {
+        "count": 1,
+        "worst": "mergeable",
+        "worst_count": 1,
+        "pulls": [
+          {
+            "index": 0,
+            "state": "mergeable"
+          }
+        ]
+      }
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": false,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": false,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "subtle",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "subtle",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "resting",
+      "attention_rank": 4,
+      "graph_rank": 3,
+      "graph_chip": "resting",
+      "graph_resting": true,
+      "link_rank": 2,
+      "edge": "rest",
+      "search_tone": "muted",
+      "subtree": "quiet",
+      "link": "idle",
+      "descendant_asking": 0,
+      "verb": "idle",
+      "request_todo": false,
+      "request_since": null,
+      "session": {
+        "group": "idle",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 3,
+      "pr": {
+        "count": 1,
+        "worst": "merged",
+        "worst_count": 1,
+        "pulls": [
+          {
+            "index": 0,
+            "state": "merged"
+          }
+        ]
+      }
+    },
+    {
+      "attention": false,
+      "needs_you": false,
+      "root": false,
+      "title_emphasized": false,
+      "selection_emphasizes_title": true,
+      "asking": false,
+      "working": false,
+      "waits_on_children": false,
+      "chip_tone": {
+        "kind": "subtle",
+        "read": false
+      },
+      "mark_tone": {
+        "kind": "subtle",
+        "read": false
+      },
+      "line": null,
+      "branch_badge": null,
+      "bucket": "resting",
+      "attention_rank": 4,
+      "graph_rank": 3,
+      "graph_chip": "resting",
+      "graph_resting": true,
+      "link_rank": 2,
+      "edge": "rest",
+      "search_tone": "muted",
+      "subtree": "quiet",
       "link": "idle",
       "descendant_asking": 0,
       "verb": "idle",

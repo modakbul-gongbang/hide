@@ -194,6 +194,21 @@ function workspace(id: string, extra: Partial<Workspace> & Pick<Workspace, "chec
   };
 }
 
+/** a1's children in the order the core lists them; the sidebar ranks them most urgent first. */
+const A1_CHILDREN = ["a1c1", "a1c2", "a1c3", "a1c4", "a1c5", "a1c6", "a1c7", "a1c8"];
+
+type PullState = "failed" | "pending" | "mergeable" | "merged";
+
+/** One PR the row holds the duty of (D-39); its summary is the pane's state preset in agentStates.json. */
+function ownPull(number: number, title: string, state: PullState): Pick<AgentRow, "request"> {
+  return {
+    request: {
+      verb: "working", verb_since_unix_ms: 0, line: undefined, request: null, later_by: null, reply: null,
+      pull_requests: [{ number, title, url: `https://example.invalid/herdr-ide/pull/${number}`, badge: state === "merged" ? "merged" : "open", checks: state === "failed" ? "failed" : state === "pending" ? "pending" : "passing", review: state === "pending" ? "review_required" : "approved", head_branch: `agents/${number}`, closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: state === "merged" ? 0 : null }],
+    },
+  };
+}
+
 /** Fourteen settled worktrees behind herdr-ide's `Inactive 14`; `feat/ui` is where a1's first child works. */
 const INACTIVE = ["feat/ui", ...Array.from({ length: 13 }, (_, index) => `chore/cleanup-${index + 1}`)];
 
@@ -212,9 +227,11 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       status_code: "working",
       activity: "working",
       elapsed: "1m",
-      lineage_child_pane_ids: ["a1c1", "a1c2"],
+      lineage_child_pane_ids: A1_CHILDREN,
       lineage_collapsed: !unfolded("a1"),
-      descendant_counts: { error: 0, approval: 0, question: 0, working: 1, done: 0 },
+      descendant_counts: { error: 0, approval: 1, question: 1, working: 1, done: 1 },
+      descendant_mark: { kind: "raised", count: 1 },
+      ...ownPull(140, "사이드바 트리 행", "mergeable"),
     }),
     agent({
       pane_id: "a1c1",
@@ -275,9 +292,39 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
   ];
 
   if (devices !== "one") agents.push(...HOME_AGENTS[content]);
+  // The rest of a1's tree the sheet draws (PRD agent-hierarchy-screens B11, B12, B22): a child waiting
+  // on a raised grandchild, an asking child, PR icons in each state, and three behind `3개 더`. They come
+  // after every listed row so the scope fixture's list indices stay put.
+  agents.push(
+    agent({
+      pane_id: "a1c3",
+      identity_label: "P8 읽기 전용 준비",
+      agent_kind: "codex",
+      group: "working",
+      symbol: "○",
+      status_code: "waiting",
+      activity: "stopped",
+      elapsed: "19h",
+      delegated: true,
+      waiting_on_descendants: true,
+      lineage_parent_pane_id: "a1",
+      lineage_depth: 1,
+      lineage_child_pane_ids: ["a1g1", "a1g2"],
+      lineage_collapsed: false,
+      descendant_mark: { kind: "raised", count: 1 },
+      ...ownPull(811, "읽기 전용 준비", "failed"),
+    }),
+    agent({ pane_id: "a1g1", identity_label: "테스트 작성", agent_kind: "codex", group: "working", symbol: "!", status_code: "approval", demand: "approval", elapsed: "12m", delegated: true, lineage_parent_pane_id: "a1c3", lineage_depth: 2 }),
+    agent({ pane_id: "a1g2", identity_label: "문서 정리", agent_kind: "codex", group: "seen", symbol: "✓", status_code: "done", activity: "stopped", elapsed: "40m", delegated: true, lineage_parent_pane_id: "a1c3", lineage_depth: 2 }),
+    agent({ pane_id: "a1c4", identity_label: "P7 Pi·omp 재우기", group: "working", symbol: "?", status_code: "question", demand: "question", elapsed: "1h", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1, ...ownPull(838, "Pi·omp 재우기", "pending") }),
+    agent({ pane_id: "a1c5", identity_label: "미전달 편지 승격 해제", group: "seen", symbol: "○", status_code: "idle", elapsed: "5h", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1 }),
+    agent({ pane_id: "a1c6", identity_label: "P6 OpenCode 세션 리더", group: "seen", symbol: "✓", status_code: "done", activity: "stopped", elapsed: "7m", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1, ...ownPull(842, "OpenCode 세션 리더", "mergeable") }),
+    agent({ pane_id: "a1c7", identity_label: "P5 큰 도구 결과 읽기", group: "seen", symbol: "○", status_code: "idle", elapsed: "1h", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1, ...ownPull(830, "큰 도구 결과 읽기", "merged") }),
+    agent({ pane_id: "a1c8", identity_label: "문서 링크 점검", group: "seen", symbol: "○", status_code: "idle", elapsed: "3h", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1 }),
+  );
 
   const herdrCheckouts: Checkout[] = [
-    checkout({ id: "herdr-ide:main", workspace: "herdr-ide", branch: "main", primary: true, age: 10, purpose: "사이드바 가독성 개선", panes: ["a1", "a1c2", "a2", "a2c1", "a2c2", "a3"], marks: { question: 2, working: 3, idle: 1 } }, now),
+    checkout({ id: "herdr-ide:main", workspace: "herdr-ide", branch: "main", primary: true, age: 10, purpose: "사이드바 가독성 개선", panes: ["a1", ...A1_CHILDREN.filter((pane) => pane !== "a1c1"), "a1g1", "a1g2", "a2", "a2c1", "a2c2", "a3"], marks: { question: 2, working: 3, idle: 1 } }, now),
     checkout({ id: "herdr-ide:155", workspace: "herdr-ide", branch: "quick/155-browser-display", age: 40 * 60, purpose: issueTitle(155, "browser display (WebContentsView)"), panes: ["q1"], marks: { question: 1 } }, now),
     checkout({ id: "herdr-ide:154", workspace: "herdr-ide", branch: "quick/154-search-palette", age: 3600, purpose: issueTitle(154, "⌘K search palette UI"), panes: ["q2"], marks: { done: 1 }, pr: { number: 154, title: "Search palette", badge: "open", is_draft: true } }, now),
     checkout({ id: "herdr-ide:electron", workspace: "herdr-ide", branch: "electron-shortcut-bindings", age: 2 * 3600, purpose: "Electron desktop host for the web shell", panes: ["e1"], marks: { working: 1 }, pr: { number: 149, title: "Electron host", badge: "open", is_draft: false } }, now),

@@ -114,7 +114,7 @@
     "file": "design/hide-screens.pen",
     "sheet": "screen-projects-sidebar",
     "scene": "projects-sidebar",
-    "selector": "nav[data-sidebar]",
+    "selector": "nav[data-sidebar] > .sidebar-header-container",
     "frames": [
       {
         "node": "psb-sidebar-l",

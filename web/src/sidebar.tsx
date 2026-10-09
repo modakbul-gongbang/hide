@@ -1429,8 +1429,9 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, conte
             <li key={`more:${line.parent}`} className="flex items-stretch rounded-sm pr-xs hover:bg-accent" style={{ paddingLeft: `calc(${inset} - var(--size-lineage-chevron) - var(--spacing-xs))` }}>
               <TreeRails place={line.place} />
               <TreeChevron name="" open={null} hangs />
-              <button type="button" data-tree-more={line.count} className="min-w-0 flex-1 truncate py-xs pl-xs text-left text-caption text-subtle-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" onClick={() => setShownAll((before) => new Set(before).add(line.parent))}>
-                {t("agentSessions.tree.more", { count: line.count })}
+              <button type="button" data-tree-more={line.count} className="flex min-w-0 flex-1 items-center gap-xs py-xs pl-xxs text-left text-caption text-subtle-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" onClick={() => setShownAll((before) => new Set(before).add(line.parent))}>
+                <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" />
+                <span className="min-w-0 truncate">{t("agentSessions.tree.more", { count: line.count })}</span>
               </button>
             </li>
           );
