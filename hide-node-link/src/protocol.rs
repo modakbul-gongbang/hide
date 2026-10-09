@@ -605,6 +605,24 @@ impl Call {
         matches!(self, Self::GitWatch { .. })
     }
 
+    /// Whether this request is link control rather than machine work: a
+    /// greeting, a pane's proof answer or stream, or a Herdr stream. Each
+    /// finishes at once on the node, so both ends run them in a lane of
+    /// their own, and four slow machine calls (a port scan, a disk walk)
+    /// never hold a pane's reply or a Herdr write behind them.
+    pub fn is_control(&self) -> bool {
+        matches!(
+            self,
+            Self::Hello
+                | Self::PaneProofAnswer { .. }
+                | Self::StreamWrite { .. }
+                | Self::StreamClose { .. }
+                | Self::HerdrOpen { .. }
+                | Self::HerdrWrite { .. }
+                | Self::HerdrClose { .. }
+        )
+    }
+
     /// Whether a device's node answers this request. A device answers the
     /// work on its own files, repositories, sessions, processes, kit and
     /// panes; what acts with the operator's own logins (GitHub, the AI

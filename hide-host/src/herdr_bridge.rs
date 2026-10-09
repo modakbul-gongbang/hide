@@ -23,6 +23,9 @@ use serde_json::Value;
 use crate::error::{ErrorCode, HostError, HostResult};
 use crate::panes::write_event;
 
+/// How long one write to the node's Herdr may take.
+const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 struct Open {
     writer: LocalStream,
     shutdown: ShutdownHandle,
@@ -51,19 +54,24 @@ impl HerdrBridge {
         output: &'scope Mutex<W>,
         stream: u64,
     ) -> HostResult<Value> {
-        let mut streams = lock(&self.streams);
-        if streams.contains_key(&stream) {
-            return Err(HostError::new(
-                ErrorCode::InvalidRequest,
-                "A Herdr stream with this id is still open",
-            ));
-        }
-        if streams.len() >= MAX_HERDR_STREAMS {
-            return Err(HostError::new(
-                ErrorCode::Busy,
-                format!("The node already has {MAX_HERDR_STREAMS} Herdr streams open"),
-            ));
-        }
+        let admitted = |streams: &HashMap<u64, Open>| {
+            if streams.contains_key(&stream) {
+                return Err(HostError::new(
+                    ErrorCode::InvalidRequest,
+                    "A Herdr stream with this id is still open",
+                ));
+            }
+            if streams.len() >= MAX_HERDR_STREAMS {
+                return Err(HostError::new(
+                    ErrorCode::Busy,
+                    format!("The node already has {MAX_HERDR_STREAMS} Herdr streams open"),
+                ));
+            }
+            Ok(())
+        };
+        admitted(&lock(&self.streams))?;
+        // Connected outside the table's lock, so a Herdr slow to accept
+        // holds only this open, never another stream's write or close.
         let connection = LocalStream::connect(&self.socket).map_err(|error| {
             let code = if error.kind() == io::ErrorKind::NotFound {
                 ErrorCode::NotFound
@@ -72,15 +80,26 @@ impl HerdrBridge {
             };
             HostError::new(code, format!("The node's Herdr did not answer: {error}"))
         })?;
+        // A Herdr that stops reading fails the write rather than hold a
+        // worker of the link's control lane.
+        connection
+            .set_write_timeout(Some(WRITE_TIMEOUT))
+            .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?;
         let mut reader = connection.duplicate();
-        streams.insert(
-            stream,
-            Open {
-                shutdown: connection.shutdown_handle(),
-                writer: connection,
-            },
-        );
-        drop(streams);
+        {
+            let mut streams = lock(&self.streams);
+            if let Err(error) = admitted(&streams) {
+                connection.shutdown_handle().shutdown();
+                return Err(error);
+            }
+            streams.insert(
+                stream,
+                Open {
+                    shutdown: connection.shutdown_handle(),
+                    writer: connection,
+                },
+            );
+        }
         scope.spawn(move || {
             let mut buffer = vec![0_u8; MAX_CHUNK];
             let reason = loop {

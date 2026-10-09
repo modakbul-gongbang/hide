@@ -101,6 +101,9 @@ pub use hide_node_link::device::{
 };
 
 pub const MAX_RUNNING: usize = hide_host::serve::CONCURRENCY;
+/// Link control requests ([`Call::is_control`]) running at once, beside
+/// the machine calls: the node answers them on workers of their own.
+pub const MAX_CONTROL_RUNNING: usize = hide_host::serve::CONTROL_CONCURRENCY;
 pub const MAX_QUEUED: usize = 32;
 
 /// This program, which a device runs in its node role (`hided node serve`,
@@ -346,10 +349,12 @@ impl fmt::Debug for RemoteHost {
 /// Admission to one helper connection: four running and thirty-two waiting
 /// requests (PRD S5.5 D-15). Once the connection is draining or closed it
 /// admits nothing new, and a request still waiting is refused rather than
-/// sent, because nothing went out for it (B52).
+/// sent, because nothing went out for it (B52). A link has two: one for
+/// machine calls and one for link control (`Call::is_control`).
 struct Gate {
     state: Mutex<Admission>,
     changed: Condvar,
+    running: usize,
 }
 
 struct Admission {
@@ -359,7 +364,7 @@ struct Admission {
 }
 
 impl Gate {
-    fn new() -> Self {
+    fn new(running: usize) -> Self {
         Self {
             state: Mutex::new(Admission {
                 running: 0,
@@ -367,6 +372,7 @@ impl Gate {
                 stopped: None,
             }),
             changed: Condvar::new(),
+            running,
         }
     }
 
@@ -375,7 +381,7 @@ impl Gate {
         if let Some(reason) = &admission.stopped {
             return Err(LinkError::NotConnected(reason.clone()));
         }
-        if admission.running < MAX_RUNNING {
+        if admission.running < self.running {
             admission.running += 1;
             return Ok(());
         }
@@ -392,7 +398,7 @@ impl Gate {
                 self.changed.notify_all();
                 return Err(LinkError::NotConnected(reason));
             }
-            if admission.running < MAX_RUNNING {
+            if admission.running < self.running {
                 break;
             }
             let now = Instant::now();
@@ -462,6 +468,8 @@ struct Inner {
     pending: Mutex<HashMap<u64, Waiting>>,
     closed: Mutex<Option<String>>,
     gate: Gate,
+    /// Admission for link control, which never waits behind machine calls.
+    control_gate: Gate,
     next_id: AtomicU64,
     /// Checkout roots this connection has opened, pinned to the directory
     /// they named then.
@@ -481,6 +489,22 @@ struct Inner {
 impl Drop for Inner {
     fn drop(&mut self) {
         self.closing.notify_one();
+    }
+}
+
+impl Inner {
+    fn gate_for(&self, call: &Call) -> &Gate {
+        if call.is_control() {
+            &self.control_gate
+        } else {
+            &self.gate
+        }
+    }
+
+    /// Admits nothing more on either lane; the first reason given is kept.
+    fn stop_gates(&self, reason: &str) {
+        self.gate.stop(reason);
+        self.control_gate.stop(reason);
     }
 }
 
@@ -521,7 +545,8 @@ impl RemoteHost {
                 writer: tokio::sync::Mutex::new(writer),
                 pending: Mutex::new(HashMap::new()),
                 closed: Mutex::new(None),
-                gate: Gate::new(),
+                gate: Gate::new(MAX_RUNNING),
+                control_gate: Gate::new(MAX_CONTROL_RUNNING),
                 next_id: AtomicU64::new(1),
                 roots: Mutex::new(HashMap::new()),
                 terminals: std::sync::OnceLock::new(),
@@ -555,9 +580,10 @@ impl RemoteHost {
     /// not be called from inside an async context.
     pub fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         hide_node_link::link::check_reader_call(self, &call)?;
-        self.inner.gate.admit(timeout)?;
+        let gate = self.inner.gate_for(&call);
+        gate.admit(timeout)?;
         let result = self.send_and_wait(call, timeout, None);
-        self.inner.gate.release();
+        gate.release();
         result
     }
 
@@ -571,9 +597,10 @@ impl RemoteHost {
         progress: &mut dyn FnMut(serde_json::Value) -> bool,
     ) -> Result<LinkAnswer, LinkError> {
         hide_node_link::link::check_reader_call(self, &call)?;
-        self.inner.gate.admit(timeout)?;
+        let gate = self.inner.gate_for(&call);
+        gate.admit(timeout)?;
         let result = self.send_and_wait(call, timeout, Some(progress));
-        self.inner.gate.release();
+        gate.release();
         result
     }
 
@@ -818,7 +845,7 @@ impl NodeLink for RemoteHost {
         };
         // Nothing new goes out from here, whoever still holds the channel;
         // a request waiting for a slot is refused, since nothing was sent.
-        self.inner.gate.stop(reason);
+        self.inner.stop_gates(reason);
         let drained = reason.to_owned();
         let spawned = std::thread::Builder::new()
             .name("remote-host-drain".into())
@@ -836,7 +863,9 @@ impl NodeLink for RemoteHost {
                 }
                 // Admitted requests are bounded by their own timeouts; this
                 // bound only keeps a wedged count from holding the link open.
-                host.inner.gate.wait_idle(Instant::now() + DRAIN_BOUND);
+                let deadline = Instant::now() + DRAIN_BOUND;
+                host.inner.gate.wait_idle(deadline);
+                host.inner.control_gate.wait_idle(deadline);
                 host.close(&drained);
             });
         if let Err(error) = spawned {
@@ -884,7 +913,7 @@ fn mark_closed(inner: &Inner, reason: String) {
     // Dropping the senders wakes every waiting request as disconnected.
     lock_recover(&inner.pending).clear();
     inner.herdr.end_all();
-    inner.gate.stop(&reason);
+    inner.stop_gates(&reason);
 }
 
 /// Connects, checks consent against the device that answered, installs the
@@ -2161,7 +2190,8 @@ fn start_reader(
         writer: tokio::sync::Mutex::new(writer),
         pending: Mutex::new(HashMap::new()),
         closed: Mutex::new(None),
-        gate: Gate::new(),
+        gate: Gate::new(MAX_RUNNING),
+        control_gate: Gate::new(MAX_CONTROL_RUNNING),
         next_id: AtomicU64::new(1),
         roots: Mutex::new(HashMap::new()),
         terminals: std::sync::OnceLock::new(),
@@ -2588,7 +2618,7 @@ mod tests {
     #[test]
     #[allow(clippy::disallowed_methods)] // a window in which the idle wait must not end: no state reports an event that has not happened
     fn a_draining_connection_refuses_new_and_waiting_requests_and_waits_for_running_ones() {
-        let gate = Arc::new(Gate::new());
+        let gate = Arc::new(Gate::new(MAX_RUNNING));
         for _ in 0..MAX_RUNNING {
             assert!(gate.admit(Duration::from_secs(1)).is_ok());
         }

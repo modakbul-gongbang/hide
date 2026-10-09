@@ -34,10 +34,15 @@ enum Piece {
     Ended(String),
 }
 
-/// The Herdr streams open on one link, by the id the core gave each.
+/// The Herdr streams open on one link, by the id the core gave each. A
+/// stream this side gave up (its reader fell behind, or the node sent what
+/// is not base64) keeps its entry, with no sender, until its owner drops
+/// it and the node is told to close it; only the node ending a stream
+/// removes its entry unasked. So every stream the node holds is one the
+/// cap counts, and none is left open on the node unseen.
 #[derive(Default)]
 pub(super) struct HerdrStreams {
-    open: Mutex<HashMap<u64, mpsc::SyncSender<Piece>>>,
+    open: Mutex<HashMap<u64, Option<mpsc::SyncSender<Piece>>>>,
     next: AtomicU64,
 }
 
@@ -46,17 +51,18 @@ impl HerdrStreams {
     /// fallen [`MAX_HERDR_PENDING`] chunks behind loses its stream.
     pub(super) fn data(&self, target: &str, stream: u64, data: &str) {
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else {
-            self.end(stream, "the node sent a Herdr chunk that is not base64");
+            self.give_up(stream, "the node sent a Herdr chunk that is not base64");
             return;
         };
         let mut open = lock_recover(&self.open);
-        let Some(sender) = open.get(&stream) else {
+        let Some(Some(sender)) = open.get(&stream) else {
             return;
         };
         match sender.try_send(Piece::Data(bytes)) {
             Ok(()) => {}
             Err(mpsc::TrySendError::Full(_)) => {
-                let sender = open.remove(&stream);
+                // The reader finds the queue's end after what it holds.
+                open.insert(stream, None);
                 drop(open);
                 crate::diagnostic!(json!({
                     "component": "remote_host",
@@ -65,20 +71,27 @@ impl HerdrStreams {
                     "stream": stream,
                     "cap": MAX_HERDR_PENDING,
                 }));
-                if let Some(sender) = sender {
-                    // The reader finds the queue's end after what it holds.
-                    drop(sender);
-                }
             }
             Err(mpsc::TrySendError::Disconnected(_)) => {
-                open.remove(&stream);
+                open.insert(stream, None);
             }
         }
     }
 
-    /// The node ended `stream`, or the core gave it up.
+    /// This side stops reading `stream`: its reader reads `reason` as the
+    /// end, and the entry stays until the reader's owner closes it.
+    fn give_up(&self, stream: u64, reason: &str) {
+        let mut open = lock_recover(&self.open);
+        if let Some(entry) = open.get_mut(&stream)
+            && let Some(sender) = entry.take()
+        {
+            let _ = sender.try_send(Piece::Ended(reason.to_owned()));
+        }
+    }
+
+    /// The node ended `stream`; nothing is left open there to close.
     pub(super) fn end(&self, stream: u64, reason: &str) {
-        if let Some(sender) = lock_recover(&self.open).remove(&stream) {
+        if let Some(Some(sender)) = lock_recover(&self.open).remove(&stream) {
             let _ = sender.try_send(Piece::Ended(reason.to_owned()));
         }
     }
@@ -136,13 +149,20 @@ impl ApiConnector for LinkHerdrConnector {
                     "the node's link already carries {MAX_HERDR_STREAMS} Herdr streams"
                 )));
             }
-            open.insert(stream, sender);
+            open.insert(stream, Some(sender));
         }
         if let Err(error) = self
             .link
             .call(Call::HerdrOpen { stream }, HERDR_CALL_TIMEOUT)
         {
-            lock_recover(&streams.open).remove(&stream);
+            // An open whose answer never came may have opened the stream on
+            // the node, so it is told to close; one refused or never sent
+            // left nothing there.
+            if matches!(error, hide_node_link::LinkError::Unknown(_)) {
+                close_stream(&self.link, stream);
+            } else {
+                lock_recover(&streams.open).remove(&stream);
+            }
             let message = format!("the node's Herdr could not be reached: {error}");
             return Err(match &error {
                 hide_node_link::LinkError::Refused(refusal)
@@ -343,7 +363,9 @@ fn close_stream(link: &RemoteHost, stream: u64) {
     let Some(sender) = open else {
         return;
     };
-    let _ = sender.try_send(Piece::Ended("closed by this side".to_owned()));
+    if let Some(sender) = sender {
+        let _ = sender.try_send(Piece::Ended("closed by this side".to_owned()));
+    }
     if link.closed_reason().is_some() {
         return;
     }
@@ -458,6 +480,89 @@ mod tests {
         assert!(refused.to_string().contains("already carries"), "{refused}");
         open.pop();
         connector.connect().expect("room after a close");
+    }
+
+    /// A stream this side gives up, its reader fallen behind, is closed on
+    /// the node once its owner drops it, so it takes none of the node's
+    /// stream slots after: a full set of streams opens again (R2).
+    #[test]
+    fn a_stream_given_up_for_a_slow_reader_is_closed_on_the_node() {
+        let folder = tempfile::tempdir().unwrap();
+        let link = linked_node(echo_herdr(folder.path()));
+        let connector = link.herdr_connector();
+        let given_up = connector.connect().expect("a stream");
+        // The node's chunks for it, past what its reader holds.
+        let chunk = base64::engine::general_purpose::STANDARD.encode(b"x");
+        for _ in 0..=MAX_HERDR_PENDING {
+            link.inner.herdr.data("inbound:test", 1, &chunk);
+        }
+        drop(given_up);
+        let open: Vec<_> = (0..MAX_HERDR_STREAMS)
+            .map(|index| {
+                connector
+                    .connect()
+                    .unwrap_or_else(|error| panic!("stream {index} was refused: {error}"))
+            })
+            .collect();
+        assert_eq!(open.len(), MAX_HERDR_STREAMS);
+    }
+
+    /// Every machine call slot held by a call that runs until stopped: a
+    /// Herdr stream still opens, writes and reads at once, since link
+    /// control has its own lane at both ends (R4).
+    #[test]
+    fn herdr_streams_do_not_wait_behind_machine_calls() {
+        let folder = tempfile::tempdir().unwrap();
+        let common = folder.path().join("common");
+        std::fs::create_dir_all(common.join("refs/heads")).unwrap();
+        let link = linked_node(echo_herdr(folder.path()));
+        let (reported, reports) = mpsc::channel();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watches: Vec<_> = (0..crate::ssh::host::MAX_RUNNING)
+            .map(|_| {
+                let link = link.clone();
+                let common = common.to_string_lossy().into_owned();
+                let reported = reported.clone();
+                let stop = Arc::clone(&stop);
+                std::thread::spawn(move || {
+                    let _ = link.call_with_progress(
+                        Call::GitWatch {
+                            common_dirs: vec![common],
+                        },
+                        Duration::from_secs(60),
+                        &mut |_| {
+                            let _ = reported.send(());
+                            !stop.load(Ordering::SeqCst)
+                        },
+                    );
+                })
+            })
+            .collect();
+        for _ in 0..crate::ssh::host::MAX_RUNNING {
+            reports
+                .recv_timeout(Duration::from_secs(20))
+                .expect("a watch that reports");
+        }
+        let started = Instant::now();
+        let mut stream = link.herdr_connector().connect().expect("a stream");
+        stream.write_all(b"{\"id\":\"c\"}\n").unwrap();
+        assert_eq!(
+            stream
+                .read_line_with_timeout(Duration::from_secs(10))
+                .unwrap(),
+            "{\"id\":\"c\"}\n"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "the stream waited {:?} behind machine calls",
+            started.elapsed()
+        );
+        stop.store(true, Ordering::SeqCst);
+        // A watch reports again on a change; the link ending ends the rest.
+        link.close("test finished");
+        for watch in watches {
+            watch.join().unwrap();
+        }
     }
 
     /// The link ending ends every stream on it: a blocked reader reads the

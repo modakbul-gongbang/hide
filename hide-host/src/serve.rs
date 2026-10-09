@@ -24,6 +24,12 @@ use hide_node_link::process::ProcessStart;
 /// many per device, so the helper never queues behind itself.
 pub const CONCURRENCY: usize = 4;
 
+/// Link control requests (`Call::is_control`: a greeting, a pane's proof
+/// answer or stream, a Herdr stream) the helper works on at once, on
+/// workers of their own, so they never wait behind machine calls; the core
+/// admits as many.
+pub const CONTROL_CONCURRENCY: usize = 4;
+
 /// Requests waiting for a worker. The core admits at most [`CONCURRENCY`]
 /// at once, so this fills only behind calls the core stopped waiting for; a
 /// request past it is answered busy, and the reader never waits, so a cancel
@@ -172,10 +178,13 @@ fn serve_in(
         hide_kit::layout::workspace_bridges(&hide_kit::layout::state_dir_from_process(&home))
     });
     let (sender, receiver) = mpsc::sync_channel::<Request>(QUEUED);
-    // Only the workers hold the receiver. A worker stops when its answer
+    let (control_sender, control_receiver) = mpsc::sync_channel::<Request>(QUEUED);
+    // Only the workers hold the receivers. A worker stops when its answer
     // cannot be written, which means the SSH channel is gone; once the last
-    // one has stopped, the next request's send fails and the helper exits.
+    // one of a lane has stopped, the next request's send fails and the
+    // helper exits.
     let receiver = Arc::new(Mutex::new(receiver));
+    let control_receiver = Arc::new(Mutex::new(control_receiver));
     let result = std::thread::scope(|scope| {
         if let Some(terminals) = terminals {
             let output = &output;
@@ -190,8 +199,10 @@ fn serve_in(
                 }
             });
         }
-        for _ in 0..CONCURRENCY {
-            let receiver = Arc::clone(&receiver);
+        let lanes = std::iter::repeat_n(&receiver, CONCURRENCY)
+            .chain(std::iter::repeat_n(&control_receiver, CONTROL_CONCURRENCY));
+        for receiver in lanes {
+            let receiver = Arc::clone(receiver);
             let output = &output;
             let panes = &panes;
             let bridges = &bridges;
@@ -305,6 +316,7 @@ fn serve_in(
             });
         }
         drop(receiver);
+        drop(control_receiver);
         if heartbeat {
             let output = &output;
             let input_ended = &input_ended;
@@ -324,10 +336,17 @@ fn serve_in(
                 }
             });
         }
-        let result = read_requests(input, &sender, &output, &running, terminals);
+        let result = read_requests(
+            input,
+            [&sender, &control_sender],
+            &output,
+            &running,
+            terminals,
+        );
         *lock(&input_ended.0) = true;
         input_ended.1.notify_all();
         drop(sender);
+        drop(control_sender);
         // The connection is gone: the terminal sessions end with it, so no
         // attach child outlives the link that asked for it (D-20, B20).
         if let Some(terminals) = terminals {
@@ -366,9 +385,10 @@ fn no_herdr_bridge() -> HostError {
     )
 }
 
+/// Reads requests and hands each to its lane: `[machine, control]`.
 fn read_requests(
     mut input: impl BufRead,
-    sender: &mpsc::SyncSender<Request>,
+    [sender, control_sender]: [&mpsc::SyncSender<Request>; 2],
     output: &Mutex<impl Write>,
     running: &Mutex<HashMap<u64, bool>>,
     terminals: Option<&dyn Terminals>,
@@ -451,7 +471,12 @@ fn read_requests(
             continue;
         }
         lock(running).insert(id, false);
-        match sender.try_send(request) {
+        let lane = if request.call.is_control() {
+            control_sender
+        } else {
+            sender
+        };
+        match lane.try_send(request) {
             Ok(()) => {}
             Err(mpsc::TrySendError::Full(_)) => {
                 lock(running).remove(&id);
@@ -1573,8 +1598,11 @@ mod tests {
                 reported.insert(progress.progress);
             }
         }
+        // A machine call, so it queues behind the watches (a greeting is
+        // link control and runs in its own lane).
+        let machine = || Call::RealPaths { paths: Vec::new() };
         for id in 0..=QUEUED as u64 {
-            input.write_all(&line(100 + id, Call::Hello)).unwrap();
+            input.write_all(&line(100 + id, machine())).unwrap();
         }
         for request in 1..=CONCURRENCY as u64 {
             input
@@ -1613,6 +1641,85 @@ mod tests {
                     .any(|(answered, code)| *answered == id && *code != Some(ErrorCode::Busy)),
                 "request {id} was not answered: {answers:?}"
             );
+        }
+    }
+
+    /// Every machine worker held by a call that reports until stopped: link
+    /// control (a greeting, a Herdr stream, a pane's proof answer) is still
+    /// answered at once, from its own lane.
+    #[cfg(unix)]
+    #[test]
+    fn link_control_is_answered_while_every_machine_worker_is_held() {
+        use std::os::unix::net::UnixStream;
+        struct Lines(mpsc::Sender<Vec<u8>>);
+        impl Write for Lines {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                let _ = self.0.send(bytes.to_vec());
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let common = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(common.path().join("refs/heads")).unwrap();
+        let line = |id: u64, call: Call| {
+            let mut line = serde_json::to_vec(&Request { id, call }).unwrap();
+            line.push(b'\n');
+            line
+        };
+        let (mut input, theirs) = UnixStream::pair().unwrap();
+        let (written, lines) = mpsc::channel();
+        std::thread::spawn(move || {
+            let env = Env {
+                stop: Arc::default(),
+                ..Env::of_process()
+            };
+            let _ = serve_in(
+                io::BufReader::new(theirs),
+                Lines(written),
+                env,
+                Services::none(),
+            );
+        });
+        for id in 1..=CONCURRENCY as u64 {
+            let watch = Call::GitWatch {
+                common_dirs: vec![common.path().to_string_lossy().into_owned()],
+            };
+            input.write_all(&line(id, watch)).unwrap();
+        }
+        let mut reported = std::collections::BTreeSet::new();
+        while reported.len() < CONCURRENCY {
+            let bytes = lines
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the helper went quiet");
+            for progress in std::str::from_utf8(&bytes)
+                .unwrap()
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Progress>(line).ok())
+            {
+                reported.insert(progress.progress);
+            }
+        }
+        input.write_all(&line(100, Call::Hello)).unwrap();
+        let answered = loop {
+            let bytes = lines
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the greeting waited behind the machine workers");
+            if let Some(answer) = std::str::from_utf8(&bytes)
+                .unwrap()
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Response>(line).ok())
+                .find(|answer| answer.id == 100)
+            {
+                break answer;
+            }
+        };
+        assert!(matches!(answered.outcome, Outcome::Ok(_)));
+        for request in 1..=CONCURRENCY as u64 {
+            input
+                .write_all(&line(200 + request, Call::Cancel { request }))
+                .unwrap();
         }
     }
 
