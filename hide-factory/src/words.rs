@@ -241,6 +241,42 @@ pub fn judgment_language_rule(language: Language) -> String {
     )
 }
 
+/// A decision Factory AI made that the engine records in its own words,
+/// shown on the Task page as Factory AI's (B36).
+#[derive(Clone, Copy, Debug)]
+pub enum Decided<'a> {
+    /// Factory AI's fix for a wrong card was applied.
+    CardFixed { title: &'a str },
+    /// Factory AI made a new Task from the request.
+    NewTask { id: &'a str, title: &'a str },
+    /// Factory AI approved merging a change to a risk path.
+    RiskMerge,
+}
+
+pub fn decided(language: Language, decision: Decided<'_>) -> String {
+    use Language::*;
+    match decision {
+        Decided::CardFixed { title } => match language {
+            English => format!("Card fixed: {title}"),
+            Korean => format!("카드 고침: {title}"),
+            SimplifiedChinese => format!("已修改卡片：{title}"),
+            Japanese => format!("カードを修正: {title}"),
+        },
+        Decided::NewTask { id, title } => match language {
+            English => format!("New Task {id}: {title}"),
+            Korean => format!("새 Task {id}: {title}"),
+            SimplifiedChinese => format!("新 Task {id}：{title}"),
+            Japanese => format!("新しい Task {id}: {title}"),
+        },
+        Decided::RiskMerge => match language {
+            English => "Approved merging a change to a risk path".into(),
+            Korean => "위험 경로 변경의 머지를 승인함".into(),
+            SimplifiedChinese => "已批准合并涉及风险路径的更改".into(),
+            Japanese => "リスクのあるパスの変更のマージを承認".into(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -21,7 +21,7 @@ use crate::judgment::{
 };
 use crate::model::*;
 use crate::role::Role;
-use crate::words::Language;
+use crate::words::{self, Language};
 
 /// Failure classes of a call the provider never received, not counted
 /// against the daily cap (D-34): the engine's full queue and Hide AI's
@@ -474,7 +474,10 @@ impl Engine {
                     task.scope_approved = true;
                 });
                 (
-                    format!("카드 고침: {}", card.title),
+                    words::decided(
+                        self.language(),
+                        words::Decided::CardFixed { title: &card.title },
+                    ),
                     format!(
                         "Factory: 카드가 고쳐졌습니다. 새 카드로 진행하세요.\n새 카드:\n{}",
                         super::card_text(&card)
@@ -518,7 +521,13 @@ impl Engine {
                     "이 Task는 지금 범위로 계속하세요."
                 };
                 (
-                    format!("새 Task {new_id}: {}", card.title),
+                    words::decided(
+                        self.language(),
+                        words::Decided::NewTask {
+                            id: &new_id,
+                            title: &card.title,
+                        },
+                    ),
                     format!(
                         "Factory: 새 Task {new_id}({})를 만들었습니다. {after}",
                         card.title
@@ -1278,13 +1287,14 @@ impl Engine {
         match self.manual_merge(&Role::Engine, factory, id) {
             Ok(_) => {
                 let now = self.now();
+                let language = self.language();
                 let reason = judgment::cut(&reason, TEXT_LIMIT);
                 self.with_task(factory, id, |t| {
                     t.decisions.push(
                         DecisionRecord {
                             reason: Some(reason.clone()),
                             ..DecisionRecord::new(
-                                "risk-path merge approved".into(),
+                                words::decided(language, words::Decided::RiskMerge),
                                 OBSERVER.into(),
                                 now,
                             )
