@@ -138,19 +138,19 @@ impl Attacher for FakeAttacher {
 pub(super) struct Outputs {
     written: Mutex<Vec<(String, Vec<u8>, bool)>>,
     forgotten: Mutex<Vec<String>>,
-    /// The pane whose next output the sink panics on.
-    panic_on: Mutex<Option<String>>,
+    /// The pane whose next output the sink panics on, told first.
+    panic_on: Mutex<Option<(String, Sender<()>)>>,
 }
 
 impl OutputSink for Outputs {
     fn output(&self, pane: &str, bytes: &[u8], full: bool) {
-        if self
+        let panicking = self
             .panic_on
             .lock()
             .unwrap()
-            .take_if(|panicking| panicking == pane)
-            .is_some()
-        {
+            .take_if(|(panicking, _)| panicking == pane);
+        if let Some((_, told)) = panicking {
+            let _ = told.send(());
             panic!("the sink failed on {pane}");
         }
         self.written
@@ -568,16 +568,12 @@ fn a_sink_that_panics_on_one_output_does_not_stop_the_others() {
     let harness = harness(RetryPolicy::Automatic);
     let first = harness.controlling("w1:p1");
     let second = harness.controlling("w1:p2");
-    *harness.outputs.panic_on.lock().unwrap() = Some("w1:p1".into());
+    let (told, panicked) = channel();
+    *harness.outputs.panic_on.lock().unwrap() = Some(("w1:p1".into(), told));
     first.frame(SIZE, true, b"lost");
-    let started = Instant::now();
-    while harness.outputs.panic_on.lock().unwrap().is_some() {
-        assert!(
-            started.elapsed() < WAIT,
-            "the sink was never handed the output"
-        );
-        thread::sleep(Duration::from_millis(5));
-    }
+    panicked
+        .recv_timeout(WAIT)
+        .expect("the sink was handed the output");
     second.frame(SIZE, true, b"kept");
     let written = harness.wait_written(1);
     assert_eq!(written[0].0, "w1:p2");
