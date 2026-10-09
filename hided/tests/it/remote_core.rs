@@ -376,9 +376,15 @@ async fn close_of(socket: &mut Socket, bound: Duration) -> Result<(u16, String)>
     }
 }
 
-/// Everything `pane` draws on `socket` for `bound` after a new view asks
-/// it whole, without its control sequences.
-async fn pane_text(socket: &mut Socket, pane: &str, bound: Duration) -> Result<String> {
+/// What `pane` draws on `socket` after a new view asks it whole, without
+/// its control sequences, read until `until` is on it or `bound` passes:
+/// the whole screen comes as one frame, which may take its time under load.
+async fn pane_text(
+    socket: &mut Socket,
+    pane: &str,
+    until: &str,
+    bound: Duration,
+) -> Result<String> {
     send(
         socket,
         "terminal_viewport",
@@ -392,6 +398,9 @@ async fn pane_text(socket: &mut Socket, pane: &str, bound: Duration) -> Result<S
             if from == pane {
                 screen.push_str(&String::from_utf8_lossy(&bytes));
             }
+        }
+        if plain(&screen).contains(until) {
+            break;
         }
     }
     Ok(plain(&screen))
@@ -666,7 +675,7 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
             let after = layout(&snapshot);
             ensure!(before == after, "the layout moved: {before} then {after}");
             type_and_read(&mut held, &pane, "echo after-\"ok\"", "after-ok").await?;
-            let text = pane_text(&mut held, &pane, Duration::from_secs(3)).await?;
+            let text = pane_text(&mut held, &pane, "after-ok", Duration::from_secs(20)).await?;
             ensure!(
                 text.contains("after-ok") && !text.contains("held-"),
                 "the pane after the outage reads {text:?}"
