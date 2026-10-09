@@ -157,6 +157,11 @@ test("A new tab in a linked worktree with no workspace opens one bound to it, na
     // D-14: the workspace Hide opened is named as the sidebar names the checkout.
     await expect.poll(() => boundTo(linked)[0].label, { timeout: 10_000 }).toBe("feature");
     expect(tabCount(herdr, owner.workspace_id)).toBe(1);
+    // Herdr has the tab before the page draws it: the page then makes the
+    // checkout current and moves its row out of the empty fold, which closes
+    // a menu open on the old row. The next menu is opened on the moved row.
+    await expect(feature.locator("[data-checkout]")).toHaveAttribute("aria-current", "true");
+    await expect(project.getByRole("button", { name: /^No agents/ })).toHaveCount(0);
 
     await newTabHere();
     await expect.poll(() => tabCount(herdr, owner.workspace_id), { timeout: 20_000 }).toBe(2);
