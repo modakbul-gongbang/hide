@@ -310,6 +310,17 @@ fn pi_and_omp_memory_receipts_are_signed_for_the_hosts_session_id_and_opencodes_
         assert!(verifies(&id), "{agent}: signed for the host's id");
         assert!(!verifies(&file), "{agent}: never for the session file");
 
+        // Once the start capsule is written, the prompt asks for the prompt
+        // capsule, which is no session start.
+        let answer = machine.run_as(
+            agent,
+            "prompt",
+            &json!({"session_id": file, "native_session": id, "prompt": "Fix it", "cwd": project,
+                "first": true, "memory_first": false, "version": version}),
+            true,
+        );
+        assert_eq!(answer["memory_start"], json!(false), "{agent}");
+
         // An id that would read as an option is no session: no Memory, the letters still ride.
         let answer = machine.run_as(
             agent,
@@ -325,6 +336,18 @@ fn pi_and_omp_memory_receipts_are_signed_for_the_hosts_session_id_and_opencodes_
             "{agent}"
         );
     }
+
+    // With Memory off no capsule is given, so the extension asks again.
+    store.set_enabled(&project_id, false, true).unwrap();
+    let answer = machine.run_as(
+        "pi",
+        "prompt",
+        &json!({"session_id": "/home/sessions/-work-/off.jsonl", "native_session": "01a11d1d-off",
+            "prompt": "Fix it", "cwd": project, "first": true, "memory_first": true, "version": version}),
+        true,
+    );
+    assert_eq!(answer["memory_start"], json!(false));
+    store.set_enabled(&project_id, true, true).unwrap();
 
     let answer = machine.run(
         "prompt",

@@ -237,7 +237,7 @@ It names the session by its file, as Herdr's integration does, which a deep chec
 Each handler calls `hide-agent-hooks <pi|omp> <start|prompt|confirm|tool|subagents>` with one JSON object on stdin, which carries the extension's version, and one answered on stdout; the helper always exits 0, a failure answers `{}`, and a version this build does not write also answers `{}`, so a file another build left does nothing until the kit replaces it.
 
 - `session_start` and `session_switch` read the session guidance once, as OpenCode's plugin does at load; a read that failed is asked again by the next prompt.
-- `before_agent_start` returns one custom message for the prompt, wrapped in `<system-reminder>`: the guidance until a message that carried it has been written, then the Project Memory capsule under Claude Code's rules (one session-start capsule per session, tracked apart from the guidance so it is neither repeated nor held back by it, then a prompt capsule on each later prompt), then the pane's waiting letters ([docs/delivery.md](delivery.md)).
+- `before_agent_start` returns one custom message for the prompt, wrapped in `<system-reminder>`: the guidance until a message that carried it has been written, then the Project Memory capsule under Claude Code's rules (a session-start capsule, asked for on each prompt until one is given and the message carrying it is written, tracked apart from the guidance so it is neither repeated nor held back by it, then a prompt capsule on each later prompt; unlike Claude Code's one `SessionStart`, a session whose first prompt found Memory off or busy gets its start capsule once Memory answers), then the pane's waiting letters ([docs/delivery.md](delivery.md)).
   Letters know the session by its file and Memory by the host's own session id (`sessionManager.getSessionId()`), which is what Pi's and omp's session reader keys a receipt by; the extension sends both.
   The message is `display: false`, so the host keeps it off the screen and out of the title while the model reads it, and a letter cannot close Hide's reminder tags.
   Its `details` carry a fresh id per attempt, because omp can prepare one submission more than once and keeps only the attempt it delivers.
@@ -246,7 +246,7 @@ Each handler calls `hide-agent-hooks <pi|omp> <start|prompt|confirm|tool|subagen
   Pi has no question tool, so its Factory question is the Hide command's alone.
 - In omp, `before_subagent_spawn` counts a subagent as working from its dispatch (its spawn key is the subagent's id), and that subagent's own `agent_start` and `agent_end` move it between working and done; the counts go to Herdr as the other hooks report theirs, zero when the session starts and again at each turn's end.
 
-The budgets, the cap of eight running helpers and the `plugin` diagnostic cause are OpenCode's plugin's.
+The budgets, the cap of eight running helpers and the `plugin` diagnostic cause are OpenCode's plugin's; the `plugin` cause also records a prompt whose host gave no usable session id for Memory.
 Both hosts wait on a handler far longer (omp blocks the tool call after 30 seconds), so the extension enforces them: past the budget the helper is killed, the prompt goes on unchanged and the tool call runs.
 Every callback catches its own error, since a throw from a timer callback ends an omp session.
 No bell rings for Pi or omp: on 2026-10-07 their resume pickers read `done`, as OpenCode's did, so their letters ride the next prompt ([docs/delivery.md](delivery.md#safe-intake-and-manual-fallback)).
