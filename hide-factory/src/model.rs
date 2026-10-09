@@ -326,37 +326,26 @@ impl GithubBlock {
 /// The most bytes a command a person copies may have.
 pub const COPY_COMMAND_LIMIT: usize = 400;
 
-/// A command a person is shown to copy, when it is one: one line with no
-/// control or invisible characters and no longer than
-/// [`COPY_COMMAND_LIMIT`]. A diagnosis writes it from facts a worker can
-/// shape, and the copy button writes it as it is, so a second line hidden
-/// from the screen, a cut marker, or a character that reorders or hides what
-/// is drawn would make the pasted text differ from the shown one.
+/// A command a person is shown to copy, when it is one: one line no longer
+/// than [`COPY_COMMAND_LIMIT`] made only of characters drawn as themselves.
+/// A diagnosis writes it from facts a worker can shape, and the copy button
+/// writes it as it is, so a second line hidden from the screen, a cut
+/// marker, or a character drawn as nothing, as a space a shell does not
+/// split on, or as a change of direction would make the pasted text differ
+/// from the shown one.
 pub fn copyable_command(text: &str) -> Option<&str> {
     let text = text.trim();
-    (!text.is_empty()
-        && text.len() <= COPY_COMMAND_LIMIT
-        && !text.chars().any(|c| c.is_control() || drawn_otherwise(c)))
-    .then_some(text)
+    (!text.is_empty() && text.len() <= COPY_COMMAND_LIMIT && text.chars().all(drawn_as_itself))
+        .then_some(text)
 }
 
-/// The format characters and separators Unicode draws as nothing or as a
-/// change of direction: soft hyphen, bidirectional marks, embeddings,
-/// overrides and isolates, zero-width spaces and joiners, the word joiner
-/// and invisible operators, the byte-order mark, interlinear annotation and
-/// the line and paragraph separators.
-fn drawn_otherwise(c: char) -> bool {
-    matches!(
-        c,
-        '\u{AD}'
-            | '\u{61C}'
-            | '\u{180E}'
-            | '\u{200B}'..='\u{200F}'
-            | '\u{2028}'..='\u{202E}'
-            | '\u{2060}'..='\u{206F}'
-            | '\u{FEFF}'
-            | '\u{FFF9}'..='\u{FFFB}'
-    )
+/// The plain space, printable ASCII, and letters and digits of any script
+/// except the Hangul fillers, which are letters drawn as nothing. Everything
+/// else, punctuation outside ASCII included, is refused on the safe side.
+fn drawn_as_itself(c: char) -> bool {
+    c == ' '
+        || c.is_ascii_graphic()
+        || (c.is_alphanumeric() && !matches!(c, '\u{115F}' | '\u{1160}' | '\u{3164}' | '\u{FFA0}'))
 }
 
 /// A GitHub token scope as gh names one: lowercase words joined by `_` or
@@ -2219,6 +2208,13 @@ mod summary_tests {
             "\u{FEFF}gh auth login",
             "one\u{2028}two",
             "one\ntwo",
+            "rm\u{E0020}x",
+            "ls\u{FE0F} a",
+            "ls \u{3164}",
+            "ls\u{2800}a",
+            "rm\u{00A0}-rf",
+            "ls\u{3000}a",
+            "a\u{034F}b",
         ] {
             assert_eq!(copyable_command(hidden), None, "{hidden:?}");
         }
