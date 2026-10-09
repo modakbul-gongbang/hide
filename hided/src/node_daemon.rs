@@ -63,6 +63,7 @@ use crate::node_pages::NodePages;
 use crate::node_role::{LiveLink, NodeIdentity, NodeRole, Phase};
 use crate::node_uploads::{Handled, ScreenUploads};
 use crate::placement::Placement;
+use crate::screen_event::{self, Kind};
 use crate::server::{
     CloseReason, FIRST_FRAME_TIMEOUT, Handshake, RELAY_GRANT_HEADER, check_origin, refuse,
     terminal_key,
@@ -781,14 +782,22 @@ async fn attached(
                 };
                 match message {
                     Message::Text(text) => {
-                        if let Some((event, opened)) = own_file(state, &link, &text) {
+                        let routed = screen_event::read(&text, TAKEN_HERE);
+                        let routed = routed.as_ref().map(|routed| (routed.kind, &routed.event));
+                        if let Some((Kind::FileBytes, event)) = routed
+                            && let Some(opened) = own_file(state, &link, event)
+                        {
                             *local_reads += 1;
-                            if crate::server::send_opened_file_bytes(socket, &event, opened).await.is_err() {
+                            if crate::server::send_opened_file_bytes(socket, event, opened).await.is_err() {
                                 return ScreenEnd::Left;
                             }
                             continue;
                         }
-                        match uploads.text(&text).await {
+                        let handled = match routed {
+                            Some((kind, event)) => uploads.event(kind, event, &text).await,
+                            None => Handled::NotUpload,
+                        };
+                        match handled {
                             Handled::NotUpload => {}
                             Handled::Answer(frames) => {
                                 for frame in frames {
@@ -807,7 +816,8 @@ async fn attached(
                                 continue;
                             }
                         }
-                        if let Some(reply) = take_terminal_event(state, connection, &text) {
+                        if let Some((Kind::Key, event)) = routed {
+                            let reply = take_terminal_key(state, connection, event);
                             match reply {
                                 Ok(Some(pane)) => {
                                     if let Some(notice) = told.notice(&pane, Instant::now())
@@ -1109,26 +1119,30 @@ fn resume(first: FrameStart, handshake: &Handshake) -> Resume {
     }
 }
 
+/// The kinds of a screen's events this daemon takes before the core: a read
+/// of a file here, an upload, and a key.
+const TAKEN_HERE: &[Kind] = &[
+    Kind::FileBytes,
+    Kind::AttachmentStage,
+    Kind::AttachmentCancel,
+    Kind::AttachmentCommit,
+    Kind::Key,
+];
+
 /// A screen's read of a file of this machine, under a checkout the core
-/// opened here (PRD core-host-node-remote-core B4, D-05): the event and the
-/// file, opened under its root, or the refusal. `None` for any other event,
-/// and for a path under no root the core opened here, which the core
+/// opened here (PRD core-host-node-remote-core B4, D-05): the file, opened
+/// under its root, or the refusal. `None` for a read of another machine's
+/// file, and for a path under no root the core opened here, which the core
 /// answers as it answers any device's.
 fn own_file(
     state: &NodeState,
     link: &LiveLink,
-    text: &str,
-) -> Option<(Value, crate::server::OpenedFile)> {
-    if !text.contains(r#""kind":"file_bytes""#) {
-        return None;
-    }
-    let event: Value = serde_json::from_str(text).ok()?;
+    event: &Value,
+) -> Option<crate::server::OpenedFile> {
     let device = event
         .pointer("/payload/device_id")
         .and_then(Value::as_str)?;
-    if event.get("kind").and_then(Value::as_str) != Some("file_bytes")
-        || state.boundary.node() != device
-    {
+    if state.boundary.node() != device {
         return None;
     }
     state.boundary.set_roots(
@@ -1145,7 +1159,7 @@ fn own_file(
     let path = event.pointer("/payload/path").and_then(Value::as_str)?;
     match state.boundary.open_file(path) {
         Err(Refusal::OutsideCheckout) => None,
-        opened => Some((event, opened)),
+        opened => Some(opened),
     }
 }
 
@@ -1189,33 +1203,24 @@ impl InputNotices {
     }
 }
 
-/// A screen's key, taken here; `None` for every other event, which goes to
-/// the core. A key into a pane answers that pane. A view goes to the core
-/// too, which decides the grid every screen's view of a pane is drawn at
-/// (`pane_sizes`) and sends it to the pane's node.
-fn take_terminal_event(
+/// A screen's key, taken here; every other event goes to the core. A key
+/// into a pane answers that pane. A view goes to the core too, which decides
+/// the grid every screen's view of a pane is drawn at (`pane_sizes`) and
+/// sends it to the pane's node.
+fn take_terminal_key(
     state: &NodeState,
     connection: u64,
-    text: &str,
-) -> Option<Result<Option<String>, String>> {
-    // A key names its kind first; anything else is not parsed.
-    if !text.contains(r#""kind":"key""#) {
-        return None;
-    }
-    let event: Value = serde_json::from_str(text).ok()?;
-    match event.get("kind").and_then(Value::as_str) {
-        Some("key") => Some(terminal_key(&event).and_then(|(target, bytes)| {
-            let typed = match &target {
-                KeyTarget::Pane(pane) => Some(pane.clone()),
-                KeyTarget::Request(_) => None,
-            };
-            state
-                .terminals
-                .key(connection, target, bytes, crate::server::unix_ms_now())?;
-            Ok(typed)
-        })),
-        _ => None,
-    }
+    event: &Value,
+) -> Result<Option<String>, String> {
+    let (target, bytes) = terminal_key(event)?;
+    let typed = match &target {
+        KeyTarget::Pane(pane) => Some(pane.clone()),
+        KeyTarget::Request(_) => None,
+    };
+    state
+        .terminals
+        .key(connection, target, bytes, crate::server::unix_ms_now())?;
+    Ok(typed)
 }
 
 /// Keeps one terminals relay to the core for each live link: the core's

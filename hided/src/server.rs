@@ -24,6 +24,7 @@ use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
 use crate::index::{IndexAnswer, IndexService};
 use crate::pane_auth::Registry;
+use crate::screen_event::{self, Kind};
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 use crate::terminal_hub::Resume;
 use crate::watch::WatchService;
@@ -1170,16 +1171,22 @@ async fn screen_loop(
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        if relay.is_some() && relay_input(&state, connection, &text) {
-                            continue;
-                        }
-                        if let Some(relay) = &relay
-                            && let Some(refused) = relay_attachment(&state, connection, &relay.node, &text)
-                        {
-                            if let Some(refused) = refused
-                                && socket.send(Message::Text(refused.to_string().into())).await.is_err()
-                            {
-                                break;
+                        let routed = relay
+                            .as_ref()
+                            .and_then(|relay| Some((relay, screen_event::read(&text, RELAY_TAKES)?)));
+                        if let Some((relay, routed)) = routed {
+                            match routed.kind {
+                                Kind::TerminalInput => {
+                                    screen_input(&state, connection, &payload_str(&routed.event, "pane_id"));
+                                }
+                                _ => {
+                                    let refused = relay_attachment(&state, connection, &relay.node, &routed.event, &text);
+                                    if let Some(refused) = refused
+                                        && socket.send(Message::Text(refused.to_string().into())).await.is_err()
+                                    {
+                                        break;
+                                    }
+                                }
                             }
                             continue;
                         }
@@ -3226,59 +3233,39 @@ fn screen_input(state: &AppState, connection: u64, pane: &str) {
     }
 }
 
-/// A screen relay's notice that its screen sent a pane input this daemon
-/// does not see (a node's own pane, typed on its machine): taken here and
-/// never passed to the core. `false` for any other event.
-fn relay_input(state: &AppState, connection: u64, text: &str) -> bool {
-    if !text.contains(r#""kind":"terminal_input""#) {
-        return false;
-    }
-    let Ok(event) = serde_json::from_str::<Value>(text) else {
-        return false;
-    };
-    if event.get("kind").and_then(Value::as_str) != Some("terminal_input") {
-        return false;
-    }
-    screen_input(state, connection, &payload_str(&event, "pane_id"));
-    true
-}
+/// What a screen relay takes before the core: its screen's notice that it
+/// sent a pane input this daemon does not see (a node's own pane, typed on
+/// its machine), which is never passed to the core, and the files that
+/// screen staged on its own machine.
+const RELAY_TAKES: &[Kind] = &[Kind::TerminalInput, Kind::TerminalAttachment];
 
 /// A file a linked node's screen staged on its own machine for one of that
 /// machine's panes (`node_uploads`): the core pastes the node's paths into
-/// the pane and the bytes never come here. `None` for any other frame;
-/// otherwise whether it was refused, with the error frame the screen gets.
-/// Only the relay of the node that staged the files may name them, and only
-/// for its own panes.
+/// the pane and the bytes never come here. Answers the error frame the
+/// screen gets when it is refused. Only the relay of the node that staged
+/// the files may name them, and only for its own panes.
 fn relay_attachment(
     state: &AppState,
     connection: u64,
     node: &str,
+    event: &Value,
     text: &str,
-) -> Option<Option<Value>> {
-    if !text.contains(r#""kind":"terminal_attachment""#) {
-        return None;
-    }
-    let event = serde_json::from_str::<Value>(text).ok()?;
-    if event.get("kind").and_then(Value::as_str) != Some("terminal_attachment") {
-        return None;
-    }
-    let pane = payload_str(&event, "pane_id");
+) -> Option<Value> {
+    let pane = payload_str(event, "pane_id");
     let own = event.pointer("/payload/staged_on").and_then(Value::as_str) == Some(node)
         && pane.starts_with(&hide_node_link::terminal::device_pane_prefix(node));
     if !own {
-        return Some(rejected("terminal_attachment"));
+        return rejected("terminal_attachment");
     }
     screen_input(state, connection, &pane);
-    Some(
-        state
-            .core
-            .dispatch(text.as_bytes().to_vec())
-            .err()
-            .map(|error| {
-                log_snapshot_failure("attachment", &error);
-                attachment_refused(&payload_str(&event, "request_id"), "forward_failed")
-            }),
-    )
+    state
+        .core
+        .dispatch(text.as_bytes().to_vec())
+        .err()
+        .map(|error| {
+            log_snapshot_failure("attachment", &error);
+            attachment_refused(&payload_str(event, "request_id"), "forward_failed")
+        })
 }
 
 /// Views and sizes `pane` at `size`, as the screen that now sizes it would:

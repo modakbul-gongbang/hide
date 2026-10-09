@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite;
 
 use crate::attachments::Attachments;
+use crate::screen_event::Kind;
 use crate::state_file::SCHEMA_VERSION;
 
 /// The bytes one replayed chunk carries, as the web shell sends them.
@@ -67,14 +68,10 @@ impl ScreenUploads {
         }
     }
 
-    /// Takes a text frame that is part of an upload.
-    pub async fn text(&mut self, text: &str) -> Handled {
-        if !text.contains(r#""kind":"attachment_"#) {
-            return Handled::NotUpload;
-        }
-        let Ok(event) = serde_json::from_str::<Value>(text) else {
-            return Handled::NotUpload;
-        };
+    /// Takes a screen's event that is part of an upload; `text` is the
+    /// event as the screen wrote it, which a commit for a pane of another
+    /// machine sends on.
+    pub async fn event(&mut self, kind: Kind, event: &Value, text: &str) -> Handled {
         let field = |name: &str| {
             event
                 .pointer(&format!("/payload/{name}"))
@@ -82,8 +79,8 @@ impl ScreenUploads {
                 .unwrap_or_default()
                 .to_owned()
         };
-        match event.get("kind").and_then(Value::as_str) {
-            Some("attachment_stage") => {
+        match kind {
+            Kind::AttachmentStage => {
                 let request_id = field("request_id");
                 let stage = Stage {
                     name: field("name"),
@@ -114,13 +111,13 @@ impl ScreenUploads {
                 self.stages.insert(request_id, stage);
                 Handled::Answer(Vec::new())
             }
-            Some("attachment_cancel") => {
+            Kind::AttachmentCancel => {
                 let request_id = field("request_id");
                 self.forget(&request_id);
                 self.store.discard(&request_id);
                 Handled::Answer(Vec::new())
             }
-            Some("attachment_commit") => self.commit(&event, text).await,
+            Kind::AttachmentCommit => self.commit(event, text).await,
             _ => Handled::NotUpload,
         }
     }
@@ -323,6 +320,22 @@ mod tests {
     use super::*;
 
     const BATCH: &str = "01234567-0123-0123-0123-0123456789ab";
+
+    impl ScreenUploads {
+        /// A screen's frame as the node's daemon hands it over.
+        async fn text(&mut self, text: &str) -> Handled {
+            let taken = [
+                Kind::AttachmentStage,
+                Kind::AttachmentCancel,
+                Kind::AttachmentCommit,
+                Kind::Key,
+            ];
+            match crate::screen_event::read(text, &taken) {
+                Some(routed) => self.event(routed.kind, &routed.event, text).await,
+                None => Handled::NotUpload,
+            }
+        }
+    }
 
     fn stage(id: &str, size: usize, clipboard: bool) -> String {
         json!({"schema_version": 2, "kind": "attachment_stage",
