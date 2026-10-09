@@ -1076,8 +1076,9 @@ mod tests {
             {"pane_id":"child", "state_change_seq":1, "agent_status":"blocked", "spawned_from_pane_id":"working"}
         ])))
         .agents;
-        // No input reports an error today (labels-in-hided D-06); the row
-        // is set on the axis so the summary's rule for it stays covered.
+        // The label's `blocked` end is what sets this demand in the product;
+        // the row is set on the axis here so the summary's rule for it stays
+        // covered without a label.
         let error = agents.iter_mut().find(|a| a.pane_id == "error").unwrap();
         error.demand = "error".to_owned();
         error.unread = false;

@@ -270,7 +270,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             "waiting"
         } else if activity == "working" {
             "working"
-        } else if agent.unread && agent.symbol == "✓" {
+        } else if agent.unread && (agent.symbol == "✓" || agent.symbol == "\u{25d0}") {
             "unread"
         } else {
             "quiet"
