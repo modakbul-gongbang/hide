@@ -239,6 +239,9 @@ impl Fixture {
         ensure!(self.daemon.is_none(), "the core's hided already runs");
         let state = self.core_state.join("hided.json");
         let socket = self.core_state.join("node-attach-socket");
+        // A core started again finds its predecessor's record still there;
+        // every bind records a new token, so a changed record is this core's.
+        let stale = fs::read(&socket).ok();
         match fs::remove_file(&state) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
             _ => {}
@@ -264,7 +267,10 @@ impl Fixture {
             .as_str()
             .context("core token")?
             .to_owned();
-        wait_for("core attach socket", || Ok(socket.exists().then_some(())))?;
+        wait_for("core attach socket", || {
+            let record = fs::read(&socket).ok();
+            Ok((record.is_some() && record != stale).then_some(()))
+        })?;
         Ok(())
     }
 
