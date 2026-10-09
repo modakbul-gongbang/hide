@@ -384,6 +384,34 @@ it("shows a done Task's criteria met, names what the verification count counts, 
   expect(decisions.querySelector("[data-factory-cut]")).not.toBeNull();
 });
 
+it("reads the goal as the Markdown it is written in, keeping its lines", async () => {
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  const goal = "## What hide does today\n\nPi closes its pane.\n\n## What it should do instead\n\n- wake in a new pane\n- keep its letters";
+  await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: { ...detail("running", []), goal } } }));
+  const shown = container.querySelector("[data-factory-goal] [data-markdown-text]")!;
+  expect(shown).not.toBeNull();
+  const lines = [...shown.querySelectorAll(".cm-line")].map((line) => line.textContent);
+  expect(lines).toContain("Pi closes its pane.");
+  expect(lines.filter((line) => line?.includes("keep its letters"))).toHaveLength(1);
+  expect(lines.length).toBeGreaterThanOrEqual(8);
+});
+
+it("opens a decision whose question the engine shortened to the whole question in place", async () => {
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  const whole = "Unrelated finding: a session path over 256 bytes keeps a Pi worker from starting, so the Factory retries it for ever";
+  const question = { id: "Q17", origin: "engine", kind: { kind: "notice" }, text: whole, suggestion: "", default_action: null, deadline: null, asked_at: NOW, choices: ["ok"], answer: { text: "ok", chose: "ok", relayed_by: "screen", at: NOW }, letter: null };
+  const page = { ...detail("running", []), questions: [question], decisions: [{ at: NOW, by: "screen", text: `${whole.slice(0, 40)}\n[cut 80 bytes] -> ok` }] } as unknown as TaskDetail;
+  await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: page } }));
+  const row = container.querySelector("[data-factory-decisions]")!;
+  expect(row.textContent).not.toContain("for ever");
+  expect(row.querySelector("[data-factory-cut]")).not.toBeNull();
+  await act(async () => row.querySelector<HTMLButtonElement>("[data-factory-decision-whole]")!.click());
+  expect(row.textContent).toContain(`${whole} -> ok`);
+  expect(row.querySelector("[data-factory-cut]")).toBeNull();
+  await act(async () => row.querySelector<HTMLButtonElement>("[data-factory-decision-whole]")!.click());
+  expect(row.textContent).not.toContain("for ever");
+});
+
 it("numbers attempts as the engine gives them and shows a cancelled run as cancelled, not running", async () => {
   const { container } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
   const attempt = (number: number, outcome: string) => ({ number, stage: "task", started_at: NOW, outcome, check: null, link: null, log_tail: null });

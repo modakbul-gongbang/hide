@@ -4,7 +4,7 @@
 // and lay out what the engine gave, never decide a state of their own.
 
 import { layerDependencies, transitiveReduction, type LayeredGraph } from "../projectBoard";
-import type { CardView, Column, FactorySummary, FactoryView, Flow, InboxItem } from "./model";
+import type { CardView, Column, DecisionRecord, FactorySummary, FactoryView, Flow, InboxItem, Question } from "./model";
 
 /** The Factories the project filter keeps; a closed Factory leaves the screen. */
 export function shownFactories(summary: FactorySummary, factory: string | null): FactoryView[] {
@@ -123,4 +123,28 @@ const CUT_MARK = /\n?\[cut \d+ bytes\]/g;
 
 export function splitAtCuts(text: string): string[] {
   return text.split(CUT_MARK);
+}
+
+/** The shortest start of a question a shortened decision still names, so a few common words never match another question. */
+const QUESTION_START = 8;
+
+/**
+ * A decision the engine recorded as a shortened question and its answer
+ * (`<question, cut> -> <answer>`, after a prefix such as a reversal's), read
+ * whole: the question answered in the same step put back in place of its
+ * shortened start. Null when the text was not shortened there or no question
+ * answered at that moment begins with the shortened part.
+ */
+export function wholeDecision(decision: DecisionRecord, questions: Question[]): string | null {
+  const mark = new RegExp(CUT_MARK.source).exec(decision.text);
+  if (!mark) return null;
+  const head = decision.text.slice(0, mark.index);
+  const rest = decision.text.slice(mark.index + mark[0].length);
+  for (const question of questions) {
+    if (question.answer?.at !== decision.at) continue;
+    for (let start = 0; head.length - start >= QUESTION_START; start++) {
+      if (question.text.startsWith(head.slice(start))) return head.slice(0, start) + question.text + rest;
+    }
+  }
+  return null;
 }

@@ -4,14 +4,17 @@
 // viewer's preview. The language pack loads lazily, as a document's does; the
 // text stands plain until it arrives.
 
-import { Compartment, EditorState } from "@codemirror/state";
+import { Compartment, EditorState, Prec } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { useEffect, useRef } from "react";
 import { languageLoader } from "./editor/languages";
 import { markdownLive } from "./editor/markdownLivePlugin";
 import { baseTheme, liveTheme } from "./editor/theme";
 
-// The chrome sets the editor's monospace on `.cm-content`; prose outranks it.
+// The chrome sets the editor's monospace on `.cm-content` and the card's
+// background; prose outranks both, so the text sits on whatever surface holds
+// it (a Task page's background as well as an issue panel's card). A theme
+// listed later loses to an earlier one, hence the precedence.
 const prose = EditorView.theme({
   "&": { backgroundColor: "transparent", height: "auto" },
   "&.cm-editor .cm-content": { fontFamily: "var(--font-sans)", fontSize: "var(--text-body)", lineHeight: "1.5", padding: "0" },
@@ -29,7 +32,7 @@ export function MarkdownText({ text }: { text: string }) {
       parent,
       state: EditorState.create({
         doc: text,
-        extensions: [baseTheme(), liveTheme, prose, language.of([]), markdownLive({ reveal: false }), EditorView.lineWrapping, EditorState.readOnly.of(true), EditorView.editable.of(false)],
+        extensions: [baseTheme(), liveTheme, Prec.highest(prose), language.of([]), markdownLive({ reveal: false }), EditorView.lineWrapping, EditorState.readOnly.of(true), EditorView.editable.of(false)],
       }),
     });
     let live = true;

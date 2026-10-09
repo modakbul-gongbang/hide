@@ -81,6 +81,12 @@ function card(spec: CardSpec, now: number): CardView {
   };
 }
 
+/** The long set's Task page goal: an issue body in Markdown, with headings, a list and line breaks. */
+const LONG_GOAL = "## 이 기능이 필요한 일\n\nIssues 보드에서 카드를 찾을 때 최근에 바뀐 것부터 봅니다.\n\n## 지금 hide가 하는 일\n\n보드는 issue 번호순으로만 놓입니다.\n정렬을 바꿀 방법이 없습니다.\n\n## 대신 해야 할 일\n\n- 정렬 메뉴에서 최근 수정순, 번호순, 만든 순을 고른다\n- 고른 정렬은 다섯 열 모두에 같이 적용된다\n\n## 결정이 있는 곳\n\n`web/src/IssuesBoard.tsx`와 core의 `ui_state`입니다.";
+
+/** The long set's shortened notice: the engine keeps its first 200 bytes in the decision record. */
+const LONG_NOTICE = "감시: 정렬 Task와 저장 Task가 같은 ui_state 키를 서로 다르게 바꾸고 있습니다. 두 PR이 모두 머지되면 나중에 머지된 쪽이 앞의 정렬 값을 덮어씁니다. (할 일: 두 Task 중 하나에 다른 하나를 선행으로 걸고, 저장 Task가 정렬 Task의 키 이름을 따르게 하세요)";
+
 /** The long set: a long Korean title and a long issue number, to try the cards' and rows' wrapping. */
 const LONG_TITLE = "Task 상세 API 응답 형식을 정하고 기존 snapshot 필드와 겹치는 이름을 정리하면서 한글과 English가 섞인 아주 긴 제목이 카드 안에서 두 줄로 줄어드는지 확인하는 작업";
 
@@ -498,7 +504,7 @@ function referenceScene(content: SceneContent, now: number): FactorySceneFixture
       card: found,
       factory: factory.id,
       project: factory.project,
-      goal: running ? "Issues 보드에서 정렬을 고를 수 있다." : `${found.title}을 끝낸다.`,
+      goal: running ? (long ? LONG_GOAL : "Issues 보드에서 정렬을 고를 수 있다.") : `${found.title}을 끝낸다.`,
       criteria: running ? ["정렬 메뉴에서 최근 수정순 · 번호순 · 만든 순을 고른다", "고른 정렬로 다섯 열의 카드 순서가 바뀐다", "web e2e가 세 정렬을 모두 확인한다"] : ["변경이 테스트로 확인된다"],
       out_of_scope: running ? ["List view 정렬", `정렬 상태 저장 (${issue(415)})`] : [],
       before: [],
@@ -506,8 +512,23 @@ function referenceScene(content: SceneContent, now: number): FactorySceneFixture
       attachments: [],
       pr: running ? { number: 563, url: "https://example.invalid/pull/563", head: "412-board-sort", by_factory: true, open: true } : null,
       verification: running ? "1/3" : "0/3",
-      attempts: running ? [{ number: 1, stage: "task", started_at: now - 30 * MINUTE, outcome: "failed", check: "web-e2e", link: "https://example.invalid/runs/1", log_tail: "1 failed: sort menu keeps the previous order" }] : [],
-      decisions: running
+      attempts: running
+        ? [
+            { number: 1, stage: "task", started_at: now - 30 * MINUTE, outcome: "failed", check: "web-e2e", link: "https://example.invalid/runs/1", log_tail: "1 failed: sort menu keeps the previous order" },
+            ...(long
+              ? [
+                  { number: 2, stage: "task" as const, started_at: now - 20 * MINUTE, outcome: "cancelled" as const, check: null, link: "https://example.invalid/pull/563", log_tail: null },
+                  { number: 3, stage: "task" as const, started_at: now - 5 * MINUTE, outcome: "running" as const, check: null, link: "https://example.invalid/pull/563", log_tail: null },
+                ]
+              : []),
+          ]
+        : [],
+      decisions: running && long
+        ? [
+            { text: "정렬 값은 URL이 아니라 ui_state에 둔다", by: "worker", at: now - 2 * HOUR },
+            { text: `${LONG_NOTICE.slice(0, 60)}\n[cut 180 bytes] -> ok`, by: "screen", at: now - HOUR },
+          ]
+        : running
         ? [
             { text: "정렬 값은 URL이 아니라 ui_state에 둔다", by: "worker", at: now - 2 * HOUR },
             { text: "보드 e2e fixture 정렬 고정", by: "worker", at: now - HOUR },
@@ -515,6 +536,8 @@ function referenceScene(content: SceneContent, now: number): FactorySceneFixture
         : [],
       questions: found.needs_person && found.state === "blocked"
         ? [{ id: "q-blocking", origin: "worker", kind: { kind: "blocking" }, text: inbox[0]!.text, suggestion: "WS snapshot에 합치기", default_action: null, deadline: null, asked_at: now - 3 * DAY, choices: ["REST 엔드포인트"], answer: null, letter: null }]
+        : running && long
+          ? [{ id: "q-notice", origin: "engine", kind: { kind: "notice" }, text: LONG_NOTICE, suggestion: "", default_action: null, deadline: null, asked_at: now - 2 * HOUR, choices: ["ok"], answer: { text: "ok", chose: "ok", relayed_by: "screen", at: now - HOUR }, letter: null }]
         : running
           ? [{ id: "q-default", origin: "worker", kind: { kind: "default" }, text: "보드를 처음 열 때 정렬 기본값은?", suggestion: "최근 수정순", default_action: "최근 수정순으로 진행", deadline: now + 21 * HOUR, asked_at: now - 3 * HOUR, choices: ["번호순", "만든 순"], answer: null, letter: null }]
           : [],
