@@ -358,6 +358,42 @@ fn retrying_a_connected_device_is_refused() {
     assert_eq!(diagnostic_count(&runtime, "device.retry"), 0);
 }
 
+/// A node's word that a key moved the keyboard counts only for a pane the
+/// core projects: a pane a device names that the core never showed, or a
+/// pane no layout holds, moves nothing and is not projected for it.
+#[test]
+fn an_input_report_for_a_pane_the_core_does_not_project_moves_nothing() {
+    let mut runtime = runtime();
+    assert!(register_device(&mut runtime, "studio", "studio-host"));
+    runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
+        workspace_id: "w1".to_owned(),
+        tab_id: "w1:t1".to_owned(),
+        focused_pane_id: "w1:p1".to_owned(),
+        zoomed: false,
+        root: PaneLayoutNodeSnapshot::Pane {
+            pane_id: "w1:p1".to_owned(),
+        },
+    }];
+    runtime.snapshot.terminal.pane_id = Some("w1:p1".to_owned());
+    runtime.snapshot.focused.pane_id = Some("w1:p1".to_owned());
+    for invented in ["remote:studio:pane:w9:p404", "w7:p7"] {
+        assert!(!typed_into(&mut runtime, invented, true), "{invented}");
+        assert!(
+            !runtime
+                .snapshot()
+                .terminal
+                .panes
+                .iter()
+                .any(|pane| pane.pane_id == invented)
+        );
+    }
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w1:p1")
+    );
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
+}
+
 /// Typing into a remote pane makes it the terminal pane. Selecting this
 /// machine again hands the keyboard back to the local selection at once, so a
 /// split or a zoom sent before the next local session event names a local
@@ -378,13 +414,8 @@ fn returning_to_this_machine_gives_the_keyboard_back_to_the_local_pane() {
     runtime.snapshot.ui_state.selected_pane_id = Some("w1:p1".to_owned());
     runtime.snapshot.terminal.pane_id = Some("w1:p1".to_owned());
     assert!(dispatch_device(&mut runtime, "focus_device", "studio"));
-    let key = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "key",
-        "payload": { "pane_id": "remote:studio:pane:w9:p1", "bytes_base64": "YQ==" }
-    }))
-    .unwrap();
-    assert!(runtime.dispatch_json(&key));
+    runtime.ensure_terminal_pane("remote:studio:pane:w9:p1");
+    assert!(typed_into(&mut runtime, "remote:studio:pane:w9:p1", false));
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
         Some("remote:studio:pane:w9:p1")
@@ -563,4 +594,75 @@ fn a_refused_device_registration_is_logged_with_its_reason() {
         .expect("refusal logged");
     assert_eq!(refusal["error_kind"], "device.duplicate");
     assert_eq!(refusal["message"], "Device studio is already registered");
+}
+
+/// A device id holding `:` could hold `:pane:` or end in `:pane`, and one
+/// device's pane ids would read as another's (`remote:x:pane:pane:w1` as
+/// `x`'s): registering one is refused with `device.invalid`, and one already
+/// in the UI state is never connected, logged with its id and reason and
+/// shown as unavailable, while the devices beside it still connect.
+#[test]
+fn a_device_id_holding_a_colon_is_refused_and_never_connected() {
+    let mut runtime = runtime();
+    assert!(register_device(&mut runtime, "x", "x-host"));
+    for id in ["x:pane", "x:pane:b"] {
+        let (_, records) = crate::diagnostics::capture(|| {
+            assert!(register_device(&mut runtime, id, "b-host"));
+        });
+        assert!(
+            records
+                .iter()
+                .any(|record| record["kind"] == "error.reported"
+                    && record["error_kind"] == "device.invalid"),
+            "{id}"
+        );
+    }
+    assert!(
+        runtime
+            .snapshot()
+            .ui_state
+            .device_registrations
+            .iter()
+            .all(|device| !device.id.contains(':'))
+    );
+
+    for (id, alias) in [("x:pane", "b-host"), ("studio", "studio-host")] {
+        runtime
+            .snapshot
+            .ui_state
+            .device_registrations
+            .push(crate::model::DeviceRegistration {
+                id: id.to_owned(),
+                label: id.to_owned(),
+                ssh_alias: Some(alias.to_owned()),
+                ..Default::default()
+            });
+    }
+    runtime.rebuild_device_rows();
+    let (_, records) = crate::diagnostics::capture(|| {
+        runtime.connect_registered_devices();
+    });
+    assert!(records.iter().any(|record| {
+        record["kind"] == "device.connect_failed"
+            && record["target"] == "x:pane"
+            && record["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("contains \":\""))
+    }));
+    assert!(!runtime.remote_connections.contains_key("x:pane"));
+    let row = device(&runtime, "x:pane");
+    assert_eq!(row.state, "unavailable");
+    assert!(
+        row.message
+            .as_deref()
+            .is_some_and(|message| message.contains("contains \":\"")),
+        "{:?}",
+        row.message
+    );
+    // Beside it a device is tried as any other: in this harness, as far as
+    // the missing HOME a freshly registered device also reaches.
+    assert_eq!(
+        device(&runtime, "studio").message.as_deref(),
+        Some("HOME is unavailable, so the SSH config cannot be resolved")
+    );
 }

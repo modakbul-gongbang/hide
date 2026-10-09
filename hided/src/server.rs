@@ -25,8 +25,11 @@ use crate::core::CoreHandle;
 use crate::index::{IndexAnswer, IndexService};
 use crate::pane_auth::Registry;
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
+use crate::terminal_hub::Resume;
 use crate::watch::WatchService;
+use base64::Engine as _;
 use hide_node::opener::OpenHandler;
+use hide_node_link::terminal::{GridSize, KeyTarget, MAX_PANE_ID_BYTES, TerminalNode};
 
 const FALLBACK_INDEX: &str = include_str!("../fallback-ui/index.html");
 
@@ -120,7 +123,11 @@ struct Handshake {
     schema_version: u32,
     client_kind: Option<String>,
     have_revision: Option<u64>,
+    /// The last `terminal` frame's cursor the client applied, which resumes
+    /// every pane's output from the terminal hub that gave it.
     have_terminal_sequence: Option<u64>,
+    /// The epoch of the hub that gave the cursor.
+    have_terminal_epoch: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -762,11 +769,10 @@ async fn client_loop(
     if desktop {
         state.desktop_renderers.fetch_add(1, Ordering::SeqCst);
     }
-    // A reconnecting client resumes from the cursors it last applied, so the
+    // A reconnecting client resumes from the cursor it last applied, so the
     // first frame carries only what changed while it was away; a fresh client
     // (cursor 0) gets the whole state.
     let mut have_revision = handshake.have_revision.unwrap_or(0);
-    let mut have_sequence = handshake.have_terminal_sequence.unwrap_or(0);
     let mut notify = state.core.notify.subscribe();
     // A change in a watched folder is announced on this socket beside the
     // snapshot stream; the client re-reads the one folder it names (B2).
@@ -804,13 +810,27 @@ async fn client_loop(
             return;
         }
     }
-    if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
-        .await
-        .is_err()
-    {
+    let Ok(first) = send_snapshot(&mut socket, &state, &mut have_revision).await else {
         client_gone(&state, connection, renderer, desktop);
         return;
-    }
+    };
+    // Terminal output reaches the client beside its snapshots, from the hub
+    // (PRD core-host-node-terminal D-11). A client that kept its terminals
+    // across a reconnect resumes every pane from its cursor, or is drawn
+    // again whole when it names none; one that got a whole snapshot draws
+    // each pane from the full frame its view asks for.
+    let terminals = state.core.hub.connect(
+        match (
+            first,
+            handshake.have_terminal_sequence,
+            handshake.have_terminal_epoch,
+        ) {
+            (FrameKind::Snapshot, _, _) => Resume::Fresh,
+            (FrameKind::Delta, Some(cursor), Some(epoch)) => Resume::After { epoch, cursor },
+            // A cursor without the hub it came from is not trusted.
+            (FrameKind::Delta, _, _) => Resume::Redraw,
+        },
+    );
     loop {
         tokio::select! {
             changed = notify.recv() => {
@@ -819,9 +839,20 @@ async fn client_loop(
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
-                if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
-                    .await
-                    .is_err()
+                match send_snapshot(&mut socket, &state, &mut have_revision).await {
+                    // A whole snapshot resets the client's terminals too.
+                    Ok(FrameKind::Snapshot) => terminals.restart(),
+                    Ok(FrameKind::Delta) => {}
+                    Err(()) => break,
+                }
+            }
+            () = terminals.ready() => {
+                let (frame, redraws) = terminals.take();
+                for pane in redraws {
+                    state.core.terminals.redraw(&pane);
+                }
+                if let Some(frame) = frame
+                    && socket.send(Message::Text(frame.text.into())).await.is_err()
                 {
                     break;
                 }
@@ -1596,6 +1627,19 @@ fn handle_client_text(
         }
         Some("ai_settings") => {
             return handle_ai_settings(state, event, connection);
+        }
+        // Keys and views go to the pane's node beside the core, which hears
+        // only what the node reports of them (PRD core-host-node-terminal
+        // D-05).
+        Some("key") => {
+            let (target, bytes) = terminal_key(&event)?;
+            state.core.terminals.key(target, bytes, unix_ms_now());
+            return Ok(ClientAction::Replies(Vec::new()));
+        }
+        Some("terminal_viewport") => {
+            let (pane, size, new_view) = terminal_view(&event)?;
+            state.core.terminals.view(&pane, size, new_view);
+            return Ok(ClientAction::Replies(Vec::new()));
         }
         Some("request_view") => {
             let Some(observing) = event
@@ -2739,6 +2783,68 @@ fn device_root_known(
         || (roots_current(roots) && boundary.is_device_root(device, root))
 }
 
+/// A `key` event's target, a pane or a creation request (exactly one), and
+/// its bytes.
+fn terminal_key(event: &Value) -> Result<(KeyTarget, Vec<u8>), String> {
+    let field = |name: &str| {
+        event
+            .pointer(&format!("/payload/{name}"))
+            .and_then(Value::as_str)
+    };
+    let named = |id: &str| !id.is_empty() && id.len() <= MAX_PANE_ID_BYTES;
+    let target = match (field("pane_id"), field("pending_request")) {
+        (Some(pane), None) if named(pane) => KeyTarget::Pane(pane.to_owned()),
+        (None, Some(request)) if named(request) => KeyTarget::Request(request.to_owned()),
+        _ => {
+            return Err(format!(
+                "key needs exactly one of pane_id and pending_request, of at most {MAX_PANE_ID_BYTES} bytes"
+            ));
+        }
+    };
+    let bytes = field("bytes_base64")
+        .ok_or_else(|| "key.bytes_base64 must be a string".to_owned())
+        .and_then(|data| {
+            base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .map_err(|error| format!("key.bytes_base64: {error}"))
+        })?;
+    Ok((target, bytes))
+}
+
+/// A `terminal_viewport` event: the pane, the grid its view draws at, and
+/// whether the view has nothing drawn yet.
+fn terminal_view(event: &Value) -> Result<(String, GridSize, bool), String> {
+    let pane = payload_str(event, "pane_id");
+    let dimension = |name: &str| {
+        event
+            .pointer(&format!("/payload/{name}"))
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .filter(|value| *value > 0)
+    };
+    let (Some(rows), Some(cols)) = (dimension("rows"), dimension("cols")) else {
+        return Err("terminal_viewport needs positive rows and cols".to_owned());
+    };
+    if pane.is_empty() || pane.len() > MAX_PANE_ID_BYTES {
+        return Err(format!(
+            "terminal_viewport.pane_id must be a string of at most {MAX_PANE_ID_BYTES} bytes"
+        ));
+    }
+    let new_view = event
+        .pointer("/payload/new_view")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    Ok((pane, GridSize { rows, cols }, new_view))
+}
+
+fn unix_ms_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
 /// The path a client sent, as written; a field the event omits reads as empty
 /// and is refused like any other empty path.
 fn payload_str(event: &Value, field: &str) -> String {
@@ -3052,31 +3158,27 @@ pub enum FrameKind {
     Delta,
 }
 
-/// Classifies the frame a read from `have_revision`/`have_sequence` produced.
+/// Classifies the frame a read from `have_revision` produced.
 ///
-/// `None` means the core could not serve the cursor the client sent: it
-/// dropped terminal chunks the client never saw, or the client's revision is
-/// ahead of the core's (the daemon restarted), which the core answers as a
-/// fresh reader. Either way the client state is not one a delta can be
-/// applied to, and the caller re-reads from zero and sends a snapshot.
-pub fn classify_frame(
-    have_revision: u64,
-    payload_revision: Option<u64>,
-    chunks_dropped: bool,
-) -> Option<FrameKind> {
+/// `None` means the core could not serve the cursor the client sent: the
+/// client's revision is ahead of the core's (the daemon restarted), which
+/// the core answers as a fresh reader. The client state is not one a delta
+/// can be applied to, and the caller re-reads from zero and sends a
+/// snapshot.
+pub fn classify_frame(have_revision: u64, payload_revision: Option<u64>) -> Option<FrameKind> {
     if have_revision == 0 {
         return Some(FrameKind::Snapshot);
     }
-    if chunks_dropped || payload_revision.is_some_and(|revision| revision < have_revision) {
+    if payload_revision.is_some_and(|revision| revision < have_revision) {
         return None;
     }
     Some(FrameKind::Delta)
 }
 
-async fn read_delta(state: &AppState, have_revision: u64, have_sequence: u64) -> Result<Value, ()> {
+async fn read_delta(state: &AppState, have_revision: u64) -> Result<Value, ()> {
     let snapshot = state
         .core
-        .snapshot(have_revision, have_sequence)
+        .snapshot(have_revision)
         .map_err(|error| log_snapshot_failure("core", &error))?;
     if snapshot.bytes.is_empty() {
         log_snapshot_failure("empty", "the core returned no bytes");
@@ -3104,28 +3206,20 @@ async fn send_snapshot(
     socket: &mut WebSocket,
     state: &AppState,
     have_revision: &mut u64,
-    have_sequence: &mut u64,
-) -> Result<(), ()> {
-    let mut payload = read_delta(state, *have_revision, *have_sequence).await?;
+) -> Result<FrameKind, ()> {
+    let mut payload = read_delta(state, *have_revision).await?;
     let kind = match classify_frame(
         *have_revision,
         payload.get("revision").and_then(Value::as_u64),
-        payload
-            .get("chunks_dropped")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
     ) {
         Some(kind) => kind,
         None => {
-            payload = read_delta(state, 0, 0).await?;
+            payload = read_delta(state, 0).await?;
             FrameKind::Snapshot
         }
     };
     if let Some(revision) = payload.get("revision").and_then(Value::as_u64) {
         *have_revision = revision;
-    }
-    if let Some(sequence) = payload.get("terminal_sequence").and_then(Value::as_u64) {
-        *have_sequence = sequence;
     }
     let envelope = json!({
         "type": match kind {
@@ -3138,7 +3232,7 @@ async fn send_snapshot(
         .send(Message::Text(envelope.to_string().into()))
         .await
         .map_err(|_| ())?;
-    Ok(())
+    Ok(kind)
 }
 
 /// Counts a window in or out, and tells the core when the first arrives or
@@ -3354,6 +3448,28 @@ pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {
 mod tests {
     use super::*;
 
+    /// A pane id a screen sends straight to a node is refused past the
+    /// longest a device pane's id can be, so a client cannot fill a node's
+    /// capped pane entries with ids of any length.
+    #[test]
+    fn a_key_or_view_naming_a_pane_id_past_its_length_is_refused() {
+        let longest = format!("remote:{}:pane:w1:p1", "d".repeat(256));
+        let too_long = format!("w1:{}", "p".repeat(600));
+        let key = |pane: &str, field: &str| {
+            terminal_key(&json!({"type": "key", "payload": {field: pane, "bytes_base64": "eA=="}}))
+        };
+        let view = |pane: &str| {
+            terminal_view(&json!({"type": "terminal_viewport", "payload": {
+                "pane_id": pane, "rows": 24, "cols": 80,
+            }}))
+        };
+        assert!(key(&longest, "pane_id").is_ok());
+        assert!(view(&longest).is_ok());
+        assert!(key(&too_long, "pane_id").is_err());
+        assert!(key(&too_long, "pending_request").is_err());
+        assert!(view(&too_long).is_err());
+    }
+
     /// Every runtime with a question tool of its own reaches the guard, the
     /// ones with none or an unconfirmed one do not, and a session may be a
     /// deep session file.
@@ -3478,20 +3594,14 @@ mod tests {
 
     #[test]
     fn a_fresh_client_gets_a_snapshot_and_a_resumed_one_a_delta() {
-        assert_eq!(classify_frame(0, Some(7), false), Some(FrameKind::Snapshot));
-        assert_eq!(classify_frame(0, Some(7), true), Some(FrameKind::Snapshot));
-        assert_eq!(classify_frame(7, Some(7), false), Some(FrameKind::Delta));
-        assert_eq!(classify_frame(5, Some(7), false), Some(FrameKind::Delta));
+        assert_eq!(classify_frame(0, Some(7)), Some(FrameKind::Snapshot));
+        assert_eq!(classify_frame(7, Some(7)), Some(FrameKind::Delta));
+        assert_eq!(classify_frame(5, Some(7)), Some(FrameKind::Delta));
     }
 
     #[test]
     fn a_gap_makes_the_server_start_over() {
-        assert_eq!(classify_frame(7, Some(7), true), None, "dropped chunks");
-        assert_eq!(
-            classify_frame(9, Some(7), false),
-            None,
-            "revision from the future"
-        );
+        assert_eq!(classify_frame(9, Some(7)), None, "revision from the future");
     }
 
     #[test]

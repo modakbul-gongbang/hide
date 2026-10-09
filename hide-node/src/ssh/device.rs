@@ -2,13 +2,12 @@
 //! the account's SSH configuration and keys reaches each registered device
 //! with it, and the core sees only the traits.
 
-use super::host::{self, HelperPackages, PaneEventsSlot, PaneHook};
+use super::host::{self, HelperPackages, PaneEventsSlot, PaneHook, TerminalHook};
 use super::hosts::{Resolve, ssh_g};
 use super::*;
 use hide_node_link::attachments::AttachmentFile;
 use hide_node_link::device::{
     DeviceConnector, DeviceTransport, EstablishError, Established, HostConsent, SshHostListing,
-    TerminalSessionParts,
 };
 
 /// Opens the SSH transport to a device by alias. It carries this build's
@@ -21,6 +20,9 @@ pub struct Connector {
     /// Where each device's pane events go; none for a connector whose
     /// devices' panes do not reach this process.
     panes: Option<PaneEventsSlot>,
+    /// Where each device's terminals' output and reports go; none for a
+    /// connector whose devices' terminals do not reach this process.
+    terminals: Option<Arc<dyn crate::terminal::device::DeviceSink>>,
 }
 
 impl Connector {
@@ -31,7 +33,15 @@ impl Connector {
             packages: HelperPackages::new(helper_dir),
             resolve: ssh_g(PathBuf::from("ssh")),
             panes: None,
+            terminals: None,
         }
+    }
+
+    /// Each device's panes' terminals flow inside its node link, and their
+    /// output and reports go to `sink`.
+    pub fn with_terminals(mut self, sink: Arc<dyn crate::terminal::device::DeviceSink>) -> Self {
+        self.terminals = Some(sink);
+        self
     }
 
     /// Each device's node serves its panes' `hide` over its link, and what
@@ -82,6 +92,10 @@ impl DeviceConnector for Connector {
                 node: node.to_owned(),
                 events,
             }),
+            terminals: self.terminals.clone().map(|sink| TerminalHook {
+                node: node.to_owned(),
+                sink,
+            }),
         }))
     }
 
@@ -95,6 +109,7 @@ pub struct SshDevice {
     client: Arc<RusshRemoteClient>,
     packages: HelperPackages,
     panes: Option<PaneHook>,
+    terminals: Option<TerminalHook>,
 }
 
 impl SshDevice {
@@ -129,20 +144,9 @@ impl DeviceTransport for SshDevice {
             consent,
             retirement_projects,
             self.panes.clone(),
+            self.terminals.clone(),
             on_close,
         )
-    }
-
-    fn open_terminal_session(
-        &self,
-        pane_id: &str,
-        mode: &str,
-        rows: u16,
-        cols: u16,
-    ) -> RemoteResult<TerminalSessionParts> {
-        self.client
-            .open_terminal_session(pane_id, mode, rows, cols)
-            .map(RemoteTerminalProcess::into_parts)
     }
 
     fn stage_attachments(

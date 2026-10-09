@@ -21,7 +21,31 @@ pub fn install(sink: fn(serde_json::Value)) -> bool {
     SINK.set(sink).is_ok()
 }
 
+#[cfg(test)]
+thread_local! {
+    static CAPTURED: std::cell::RefCell<Option<Vec<serde_json::Value>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `body` and returns, beside its result, every record it emitted on
+/// this thread; the records still reach the sink.
+#[cfg(test)]
+pub(crate) fn capture<T>(body: impl FnOnce() -> T) -> (T, Vec<serde_json::Value>) {
+    CAPTURED.with(|captured| *captured.borrow_mut() = Some(Vec::new()));
+    let value = body();
+    let records = CAPTURED
+        .with(|captured| captured.borrow_mut().take())
+        .unwrap_or_default();
+    (value, records)
+}
+
 pub fn emit(record: serde_json::Value) {
+    #[cfg(test)]
+    CAPTURED.with(|captured| {
+        if let Some(records) = captured.borrow_mut().as_mut() {
+            records.push(record.clone());
+        }
+    });
     match SINK.get() {
         Some(sink) => sink(record),
         None => eprintln!("{record}"),

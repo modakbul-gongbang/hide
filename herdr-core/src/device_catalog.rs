@@ -39,8 +39,8 @@ pub(crate) enum Fact {
     Refused(String),
 }
 
-/// The helper's answers for one device, kept for the life of its helper
-/// connection; a new connection asks again.
+/// The helper's answers for one device. A new connection asks about every
+/// directory again, and an answer replaces what was known only when it comes.
 #[derive(Debug, Default)]
 pub(crate) struct DeviceFacts {
     pub(crate) facts: BTreeMap<String, Fact>,
@@ -48,6 +48,9 @@ pub(crate) struct DeviceFacts {
     pub(crate) in_flight: Option<u64>,
     /// Why the helper cannot be asked now, if it cannot.
     pub(crate) unavailable: Option<String>,
+    /// The next request asks about the directories already answered too,
+    /// because a new connection has not confirmed them.
+    pub(crate) reread: bool,
 }
 
 impl DeviceFacts {
@@ -622,6 +625,9 @@ pub(crate) struct DeviceWorktrees {
     /// Asked again while a read ran; one more read follows it.
     pub again: bool,
     pub unavailable: Option<String>,
+    /// The next read covers every repository, because a new connection has
+    /// not confirmed what the last one listed.
+    pub reread: bool,
 }
 
 /// The Git repositories a device's grouped session shows, by main worktree.

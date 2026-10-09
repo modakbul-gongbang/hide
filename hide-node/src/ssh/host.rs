@@ -314,6 +314,14 @@ pub struct PaneHook {
     pub events: PaneEventsSlot,
 }
 
+/// Which device a link serves and where its terminals' output and reports
+/// go on this side.
+#[derive(Clone)]
+pub struct TerminalHook {
+    pub node: String,
+    pub sink: Arc<dyn crate::terminal::device::DeviceSink>,
+}
+
 /// A live helper connection. Cloning shares it; the SSH connection ends when
 /// the last clone is dropped or [`RemoteHost::close`] is called.
 #[derive(Clone)]
@@ -452,6 +460,9 @@ struct Inner {
     /// Checkout roots this connection has opened, pinned to the directory
     /// they named then.
     roots: Mutex<HashMap<String, hide_node_link::RootIdentity>>,
+    /// Where the node's terminal lines go once its terminal service started
+    /// on this link (`crate::terminal::device`).
+    terminals: std::sync::OnceLock<crate::terminal::device::LineHandler>,
     readers: std::sync::OnceLock<hide_node_link::sessions::ReaderFeatures>,
 }
 
@@ -503,6 +514,7 @@ impl RemoteHost {
                 gate: Gate::new(),
                 next_id: AtomicU64::new(1),
                 roots: Mutex::new(HashMap::new()),
+                terminals: std::sync::OnceLock::new(),
                 readers: std::sync::OnceLock::new(),
             }),
         }
@@ -666,8 +678,25 @@ impl RemoteHost {
             }
         };
         line.push(b'\n');
-        if let Some(reason) = self.closed_reason() {
+        let written = self.write_line(&line, timeout, cancels);
+        if written.is_err() {
             lock_recover(&inner.pending).remove(&id);
+        }
+        written
+    }
+
+    /// Hands what the node's terminal service sends on this link to
+    /// `terminals`; a link takes one handler for its life.
+    pub fn take_terminal_lines(&self, terminals: crate::terminal::device::LineHandler) -> bool {
+        self.inner.terminals.set(terminals).is_ok()
+    }
+
+    /// Writes one whole line, which carries its newline. A line that was
+    /// started and not finished ends the connection, since the node would
+    /// read the next line as its tail.
+    fn write_line(&self, line: &[u8], timeout: Duration, cancels: bool) -> Result<(), LinkError> {
+        let inner = &self.inner;
+        if let Some(reason) = self.closed_reason() {
             return Err(LinkError::NotConnected(reason));
         }
         // Waiting behind another request's write sends nothing, so running
@@ -685,40 +714,50 @@ impl RemoteHost {
                 return Err(LinkError::NotConnected(reason));
             }
             Ok(tokio::time::timeout_at(deadline, async {
-                writer.write_all(&line).await?;
+                writer.write_all(line).await?;
                 writer.flush().await
             })
             .await)
-        });
-        let written = match written {
-            Ok(written) => written,
-            Err(unsent) => {
-                lock_recover(&inner.pending).remove(&id);
-                return Err(unsent);
-            }
-        };
+        })?;
         match written {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => Ok(()),
             // A write that failed or timed out may have sent part of the
             // line, and the next request would be read as its tail, so the
             // connection ends here; the next use reconnects.
             Ok(Err(error)) => {
-                lock_recover(&inner.pending).remove(&id);
                 self.close("a request could not be written to the device helper");
-                return Err(LinkError::Unknown(format!(
+                Err(LinkError::Unknown(format!(
                     "The connection to the device failed while the request was sent ({error}); its result is unknown"
-                )));
+                )))
             }
             Err(_) => {
-                lock_recover(&inner.pending).remove(&id);
                 self.close("a request was not accepted by the device helper in time");
-                return Err(LinkError::Unknown(
+                Err(LinkError::Unknown(
                     "The device did not accept the request in time; its result is unknown"
                         .to_owned(),
-                ));
+                ))
             }
         }
-        Ok(())
+    }
+}
+
+/// How long one terminal line may wait for the link's writer, after which
+/// it is written again, and how long its write may take before the link is
+/// ended as stalled.
+const TERMINAL_LINE_TIMEOUT: Duration = Duration::from_secs(30);
+
+impl crate::terminal::device::LineLink for RemoteHost {
+    fn send_line(&self, line: &[u8]) -> Result<(), crate::terminal::device::LineRefused> {
+        use crate::terminal::device::LineRefused;
+        self.write_line(line, TERMINAL_LINE_TIMEOUT, false)
+            .map_err(|error| match error {
+                LinkError::Busy => LineRefused::Busy,
+                error => LineRefused::Ended(error.to_string()),
+            })
+    }
+
+    fn end(&self, reason: &str) {
+        self.close(reason);
     }
 }
 
@@ -826,6 +865,7 @@ pub fn establish(
     consent: &HostConsent,
     retirement_projects: &[String],
     panes: Option<PaneHook>,
+    terminals: Option<TerminalHook>,
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> Result<Established, EstablishError> {
     let since = Instant::now();
@@ -927,6 +967,29 @@ pub fn establish(
         establish_stage(target, "panes", since);
         start_panes(client, &host);
     }
+    let terminals = match terminals {
+        None => Err("this process takes no device terminals".to_owned()),
+        Some(hook) => {
+            establish_stage(target, "terminals", since);
+            // The audited 24 link keeps its legacy features only: its node
+            // has no terminal service, so it is never asked to start one.
+            if hello.protocol == PROTOCOL_VERSION {
+                start_terminals(client, &host, hook)
+            } else {
+                let reason = format!(
+                    "the device's helper speaks protocol {}, which carries no terminals",
+                    hello.protocol
+                );
+                crate::diagnostic!(json!({
+                    "component": "remote_host",
+                    "kind": "host.terminals_unstarted",
+                    "target": target,
+                    "reason": reason,
+                }));
+                Err(reason)
+            }
+        }
+    };
     establish_stage(target, "ready", since);
     Ok(Established {
         host: Arc::new(host),
@@ -935,6 +998,78 @@ pub fn establish(
         installed,
         helper_path,
         upload,
+        terminals,
+    })
+}
+
+/// Starts the node's terminal service for the device's Herdr and the writer
+/// that carries the core's side of it, so the device's panes' terminals
+/// flow inside this link (PRD core-host-node-terminal D-10). A device whose
+/// Herdr cannot be found has none; its panes read unavailable and the
+/// reason goes to the log.
+fn start_terminals(
+    client: &RusshRemoteClient,
+    host: &RemoteHost,
+    hook: TerminalHook,
+) -> Result<Arc<dyn hide_node_link::terminal::TerminalNode>, String> {
+    let started = client
+        .herdr_socket_path()
+        .map_err(|error| error.to_string())
+        .and_then(|herdr_socket| {
+            host.call(Call::TerminalsStart { herdr_socket }, HELLO_TIMEOUT)
+                .map_err(|error| error.to_string())
+        })
+        .and_then(|_| {
+            crate::terminal::device::DeviceTerminals::start(
+                &hook.node,
+                Arc::new(host.clone()),
+                hook.sink,
+            )
+            .map_err(|error| format!("the terminal writer could not start: {error}"))
+        });
+    match started {
+        Ok(terminals) => {
+            host.take_terminal_lines(terminals.inbound());
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.terminals_started",
+                "target": host.inner.target,
+                "link": terminals.link(),
+            }));
+            Ok(Arc::new(terminals))
+        }
+        Err(reason) => {
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.terminals_unstarted",
+                "target": host.inner.target,
+                "reason": reason,
+            }));
+            Err(reason)
+        }
+    }
+}
+
+/// Why a line the device helper sent, whole or still arriving, is longer
+/// than any the protocol allows: a terminal line past
+/// [`hide_node_link::terminal::MAX_TERMINAL_LINE_BYTES`], an answer past
+/// [`MAX_ANSWER_BYTES`]. The helper's lines are untrusted input, so such a
+/// line ends the connection rather than this process's memory.
+fn overlong_line(line: &[u8]) -> Option<String> {
+    use hide_node_link::terminal::{MAX_TERMINAL_LINE_BYTES, TERMINAL_LINE_PREFIX};
+    if line.starts_with(TERMINAL_LINE_PREFIX) {
+        return (line.len() > MAX_TERMINAL_LINE_BYTES).then(|| {
+            format!(
+                "the device helper sent a terminal line longer than {} MiB",
+                MAX_TERMINAL_LINE_BYTES / (1024 * 1024)
+            )
+        });
+    }
+    (line.len() > MAX_ANSWER_BYTES).then(|| {
+        format!(
+            "the device helper sent an answer longer than {} MiB",
+            MAX_ANSWER_BYTES / (1024 * 1024)
+        )
     })
 }
 
@@ -1774,6 +1909,7 @@ fn spawn_host(
         gate: Gate::new(),
         next_id: AtomicU64::new(1),
         roots: Mutex::new(HashMap::new()),
+        terminals: std::sync::OnceLock::new(),
         readers: std::sync::OnceLock::new(),
     });
     let reader = Arc::downgrade(&inner);
@@ -1785,7 +1921,7 @@ fn spawn_host(
         // answer arriving in many chunks is scanned once.
         let mut scanned = 0;
         let mut stderr: Vec<u8> = Vec::new();
-        let reason = loop {
+        let reason = 'read: loop {
             let message = tokio::select! {
                 message = channel.wait() => message,
                 () = closing.notified() => break "this Hide closed the link".to_owned(),
@@ -1798,6 +1934,21 @@ fn spawn_host(
                         scanned = 0;
                         let line: Vec<u8> = buffer.drain(..=end).collect();
                         let Some(inner) = reader.upgrade() else { return };
+                        if let Some(reason) = overlong_line(&line) {
+                            break 'read reason;
+                        }
+                        if line.starts_with(hide_node_link::terminal::TERMINAL_LINE_PREFIX) {
+                            match inner.terminals.get() {
+                                Some(terminals) => terminals(&line),
+                                None => crate::diagnostic!(json!({
+                                    "component": "remote_host",
+                                    "kind": "host.terminal_line_unheard",
+                                    "target": inner.target,
+                                    "bytes": line.len(),
+                                })),
+                            }
+                            continue;
+                        }
                         if line.starts_with(b"{\"event\":") {
                             deliver_event(&inner, panes.as_ref(), &line);
                             continue;
@@ -1848,14 +1999,8 @@ fn spawn_host(
                         }
                     }
                     scanned = buffer.len();
-                    // The helper's answers are untrusted input: a line that
-                    // outgrows every answer the protocol allows ends the
-                    // connection rather than this process's memory.
-                    if buffer.len() > MAX_ANSWER_BYTES {
-                        break format!(
-                            "the device helper sent an answer longer than {} MiB",
-                            MAX_ANSWER_BYTES / (1024 * 1024)
-                        );
+                    if let Some(reason) = overlong_line(&buffer) {
+                        break reason;
                     }
                 }
                 Some(ChannelMsg::ExtendedData { data, .. }) => {
@@ -1976,6 +2121,24 @@ fn deliver_event(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+
+    /// A device's terminal line past its cap ends the link, and an answer
+    /// keeps its own, larger cap: a device's node is another machine's
+    /// program.
+    #[test]
+    fn a_terminal_line_past_its_cap_ends_the_link_and_an_answer_keeps_its_own() {
+        use hide_node_link::terminal::{MAX_TERMINAL_LINE_BYTES, TERMINAL_LINE_PREFIX};
+        let mut line = TERMINAL_LINE_PREFIX.to_vec();
+        line.resize(MAX_TERMINAL_LINE_BYTES, b'a');
+        assert_eq!(overlong_line(&line), None);
+        line.push(b'a');
+        assert!(
+            overlong_line(&line)
+                .is_some_and(|reason| reason.contains("terminal line longer than 8 MiB"))
+        );
+        let answer = vec![b'a'; MAX_TERMINAL_LINE_BYTES + 1];
+        assert_eq!(overlong_line(&answer), None);
+    }
 
     #[derive(Default)]
     struct Heard(Mutex<Vec<(String, NodeEvent)>>);
@@ -2148,6 +2311,7 @@ mod tests {
         );
         assert_eq!(helper_protocol_refusal(&hello(PROTOCOL_VERSION)), None);
         assert_eq!(helper_protocol_refusal(&hello(24)), None);
+        assert!(helper_protocol_refusal(&hello(PROTOCOL_VERSION - 1)).is_some());
         assert!(helper_protocol_refusal(&hello(PROTOCOL_VERSION + 1)).is_some());
     }
 
@@ -2658,6 +2822,7 @@ mod probe {
             &packages,
             &consent,
             &[],
+            None,
             None,
             Box::new(move |reason| {
                 let _ = seen.send(reason);

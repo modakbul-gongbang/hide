@@ -579,7 +579,6 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
 fn context_for_fixture(runtime: &Arc<Mutex<Runtime>>, socket_path: &Path) -> SessionSyncContext {
     let live = LiveContext {
         socket_path: socket_path.to_path_buf(),
-        herdr_bin: None,
         runtime: Arc::downgrade(runtime),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(socket_path)),

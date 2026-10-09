@@ -3,8 +3,8 @@
 //! The runtime keeps each device's session as Herdr reported it and derives
 //! the published one from it and the facts the device's helper has answered.
 //! The facts are asked on a worker with the runtime lock released, once per
-//! directory for the life of a helper connection; a new directory in the
-//! session, or a new helper connection, asks again.
+//! directory; a new directory in the session, or a new helper connection,
+//! asks again. They are kept while the device is, up to a cap.
 
 use super::*;
 use crate::device_catalog::{self, DeviceFacts, Fact};
@@ -13,6 +13,10 @@ use hide_project::ProjectFacts;
 use std::time::Duration;
 
 const FACTS_TIMEOUT: Duration = Duration::from_secs(15);
+/// The directories, and the repositories, a device's answers are kept for.
+/// They live as long as the device, so a pane back in a folder it left is
+/// grouped at once; past this only what its session still shows is kept.
+pub(super) const MAX_KNOWN_PATHS: usize = 1024;
 
 type FactAnswers = Vec<(String, Fact)>;
 
@@ -311,7 +315,7 @@ impl Runtime {
         let known = self.device_facts.get(target);
         // One request at a time; and a helper that could not be reached is
         // not asked again on every session sync, only when a connection is
-        // established (`reset_device_facts`).
+        // established (`reread_device_facts`).
         if known.is_some_and(|facts| facts.in_flight.is_some() || facts.unavailable.is_some()) {
             return self.refresh_device_catalog(target);
         }
@@ -322,11 +326,32 @@ impl Runtime {
             .iter()
             .filter(|registration| registration.device_id == target)
             .map(|registration| registration.path.clone());
-        let missing = device_catalog::needed_paths(raw)
+        let needed = device_catalog::needed_paths(raw)
             .into_iter()
             .chain(registered)
-            .filter(|path| known.is_none_or(|facts| !facts.facts.contains_key(path)))
+            .collect::<BTreeSet<_>>();
+        let missing = needed
+            .iter()
+            .filter(|path| {
+                known.is_none_or(|facts| facts.reread || !facts.facts.contains_key(*path))
+            })
+            .cloned()
             .collect::<Vec<_>>();
+        if let Some(entry) = self.device_facts.get_mut(target)
+            && entry.facts.len() > MAX_KNOWN_PATHS
+        {
+            let known = entry.facts.len();
+            entry.facts.retain(|path, _| needed.contains(path));
+            if entry.facts.len() < known {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "device_catalog",
+                    "kind": "catalog.facts_pruned",
+                    "target": target,
+                    "known": known,
+                    "kept": entry.facts.len(),
+                }));
+            }
+        }
         if missing.is_empty() {
             return self.refresh_device_catalog(target);
         }
@@ -350,6 +375,7 @@ impl Runtime {
         let entry = self.device_facts.entry(target.to_owned()).or_default();
         entry.in_flight = Some(generation);
         entry.unavailable = None;
+        entry.reread = false;
         crate::diagnostic!(serde_json::json!({
             "component": "device_catalog",
             "kind": "catalog.facts_requested",
@@ -443,6 +469,20 @@ impl Runtime {
         };
         let roots = device_catalog::git_roots(session);
         let entry = self.device_worktrees.entry(target.to_owned()).or_default();
+        if entry.projects.len() > MAX_KNOWN_PATHS {
+            let known = entry.projects.len();
+            entry.projects.retain(|root, _| roots.contains(root));
+            if entry.projects.len() < known {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "device_catalog",
+                    "kind": "catalog.worktrees_pruned",
+                    "target": target,
+                    "known": known,
+                    "kept": entry.projects.len(),
+                }));
+            }
+        }
+        let all = all || entry.reread;
         if entry.in_flight.is_some() {
             entry.again |= all || roots.iter().any(|root| !entry.projects.contains_key(root));
             return false;
@@ -461,6 +501,7 @@ impl Runtime {
         let entry = self.device_worktrees.entry(target.to_owned()).or_default();
         entry.in_flight = Some(generation);
         entry.again = false;
+        entry.reread = false;
         let Some(context) = self.worker_context.clone() else {
             let (answers, failure) = ask_worktrees(channel.as_ref(), &wanted);
             return self.ingest_device_worktrees(target, generation, answers, failure);
@@ -487,6 +528,7 @@ impl Runtime {
         if let Err(error) = spawned {
             let entry = self.device_worktrees.entry(target.to_owned()).or_default();
             entry.in_flight = None;
+            entry.reread |= all;
             entry.unavailable = Some(format!("The worktree reader could not start: {error}"));
         }
         false
@@ -537,20 +579,48 @@ impl Runtime {
     }
 
     /// A new helper connection answers afresh: a branch or a checkout may
-    /// have moved while none was connected.
-    pub(super) fn reset_device_facts(&mut self, target: &str) -> bool {
-        self.device_facts.remove(target);
-        self.device_worktrees.remove(target);
-        self.request_device_facts(target)
+    /// have moved while none was connected. What the last connection
+    /// answered stays until the new answer replaces it, so the device's
+    /// panes keep their checkout across a reconnect: a pane's `hide` command
+    /// is bound to its checkout when it starts and refused if that changed
+    /// before it ran, and a regrouping that would undo itself a moment later
+    /// is no change. An answer the old connection still owes is dropped.
+    pub(super) fn reread_device_facts(&mut self, target: &str) -> bool {
+        if let Some(entry) = self.device_facts.get_mut(target) {
+            entry.in_flight = None;
+            entry.unavailable = None;
+            entry.reread = true;
+        }
+        if let Some(entry) = self.device_worktrees.get_mut(target) {
+            entry.in_flight = None;
+            entry.unavailable = None;
+            entry.again = false;
+            entry.reread = true;
+        }
+        // Each read runs once the device's session is here to name what it
+        // reads, whichever of the two arrives first.
+        let changed = self.request_device_facts(target);
+        changed | self.request_device_worktrees(target, true)
     }
 
+    /// Forgets what the device's Herdr reported and the tabs Hide created
+    /// there. What its helper answered about its directories stays: a Retry
+    /// connects to the same device again, and that connection asks again
+    /// (`reread_device_facts`), so meanwhile the device's panes keep their
+    /// checkouts. Removing the device, or a helper answering as another
+    /// machine, forgets those answers too (`forget_device_directories`).
     pub(super) fn forget_device_catalog(&mut self, target: &str) {
         self.device_raw_sessions.remove(target);
         self.device_recent_tabs.remove(target);
-        self.device_facts.remove(target);
-        self.device_worktrees.remove(target);
         self.created_device_tabs
             .retain(|(owner, _), _| owner != target);
+    }
+
+    /// The device was removed, or another machine answers its address:
+    /// nothing its helper answered is kept.
+    pub(super) fn forget_device_directories(&mut self, target: &str) {
+        self.device_facts.remove(target);
+        self.device_worktrees.remove(target);
     }
 }
 

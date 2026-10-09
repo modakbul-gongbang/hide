@@ -1,7 +1,8 @@
 //! `hided node`: this program in its node role on a registered device,
 //! started by the core over the stdin and stdout of an SSH exec channel
 //! (PRD core-host-node D-02). `serve` answers the node contract until the
-//! channel closes, its panes' credentials and commands included.
+//! channel closes, its panes' credentials and commands and its terminals
+//! included.
 
 use std::ffi::OsString;
 use std::io::{self, BufReader};
@@ -26,8 +27,15 @@ pub fn run(args: &[OsString]) -> Result<(), String> {
         .collect::<Result<_, _>>()?;
     match words.as_slice() {
         ["serve"] => {
+            // The link that started this node is where its records are read:
+            // a device's own stderr reaches no log.
+            hide_node::diagnostics::install(hide_node::terminal::device::forward_diagnostic);
             let input = BufReader::new(io::stdin().lock());
-            hide_host::serve::serve(input, io::stdout()).map_err(|error| error.to_string())
+            // The node's terminals ride the same link (PRD
+            // core-host-node-terminal D-18).
+            let terminals = hide_node::terminal::device::NodeTerminals::new();
+            hide_host::serve::serve_with_terminals(input, io::stdout(), &terminals)
+                .map_err(|error| error.to_string())
         }
         ["--version"] => {
             println!("{}", version_line());

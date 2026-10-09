@@ -10,8 +10,13 @@ export async function connectPage(cdpPort, requireProbe = true) {
   });
   let nextId = 1;
   const pending = new Map();
+  const listeners = new Map();
   ws.addEventListener("message", (event) => {
     const message = JSON.parse(String(event.data));
+    if (message.method) {
+      for (const listener of listeners.get(message.method) ?? []) listener(message.params);
+      return;
+    }
     const waiter = pending.get(message.id);
     if (!waiter) return;
     pending.delete(message.id);
@@ -29,6 +34,10 @@ export async function connectPage(cdpPort, requireProbe = true) {
     if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
     return result.result.value;
   };
+  /** Calls `listener` with each event `method` sends until the page closes. */
+  const on = (method, listener) => {
+    listeners.set(method, [...(listeners.get(method) ?? []), listener]);
+  };
   await send("Runtime.enable");
-  return { send, evaluate, close: () => ws.close() };
+  return { send, evaluate, on, close: () => ws.close() };
 }
