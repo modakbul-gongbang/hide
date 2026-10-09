@@ -3,7 +3,7 @@ import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate, useInterfaceTranslation } from "./i18n/client";
 import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, HouseIcon, Loader2Icon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { StatusMark } from "./components/status-mark";
 import { markTone } from "./agentRow";
 import { useFactoryTurnCount } from "./factory/hooks";
@@ -48,13 +48,14 @@ import {
 import { hostBridge, revealHost } from "./host";
 import { commandLabel } from "./shortcutLabels";
 import type { Digit } from "./shortcuts";
-import { contextAgents, contextHome, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
+import { contextAgents, contextAllWorkspaces, contextHome, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type InactiveProjectGroup, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { useUiStore } from "./ui";
 import { useOverviewCount } from "./Overview";
+import { revealSidebarFocus, sidebarFocusPane, sidebarPanes } from "./sidebarFocus";
 
 function herdrRowLabel(state: string | null, t: TFunction<"translation">): string | null {
   if (state === "unconfigured" || state === "socket_missing") return t("sidebar.herdrSocketMissing");
@@ -425,10 +426,9 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
   const deviceId = useShellStore((s) => frontDeviceId(s.rest));
   const count = useShellStore((s) => (s.rest === null ? null : homeProjectCount(s.rest, deviceId)));
   const selected = false;
-  const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
   const home = useShellStore((s) => contextHome(s.rest));
   const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
-  const focusedPaneId = useShellStore((s) => s.focusedPaneId);
+  const focusRowPane = useFocusRowPane();
   const roots = useMemo(() => home ? scopeOccurrences(home.agent_scope.sidebar_tree.rows, agents) : NO_HOME_AGENTS, [home, agents]);
   const menu = useAgentRowMenu(actions);
   const hints = useUiStore((s) => s.hint);
@@ -496,7 +496,7 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
                 depth={0}
                 descendants={children.length}
                 childRows={children}
-                selected={workspaceScreen && agent.pane_id === focusedPaneId}
+                selected={agent.pane_id === focusRowPane}
                 onOpen={actions.openAgent}
                 onOpenChild={(id) => actions.followRelation(agent.pane_id, id, agents.find((child) => child.pane_id === id)!.identity_label)}
                 onAll={() => actions.openAgentsOverview()}
@@ -513,6 +513,20 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
 });
 
 const NO_HOME_AGENTS: AgentRow[] = [];
+
+/**
+ * The pane whose row stands for the focused pane while a Workspace is in front
+ * (`sidebarFocusPane` over every row the list can draw), or null.
+ */
+function useFocusRowPane(): string | null {
+  const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
+  const focusedPaneId = useShellStore((s) => s.focusedPaneId);
+  const workspaces = useShellStore((s) => contextAllWorkspaces(s.rest));
+  const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
+  const scope = useShellStore((s) => deviceScope(s.rest, frontDeviceId(s.rest)));
+  const drawn = useMemo(() => sidebarPanes(workspaces, scope), [workspaces, scope]);
+  return useMemo(() => (workspaceScreen ? sidebarFocusPane(focusedPaneId, agents, drawn) : null), [workspaceScreen, focusedPaneId, agents, drawn]);
+}
 
 /** A selected device the core cannot read: its name, why, and the one way to try again, with the last tree left out (PRD home-device-rail B8, B9). */
 function DisconnectedDevice({ actions }: { actions: Actions }) {
@@ -588,7 +602,16 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const frontScope = useShellStore((s) => deviceScope(s.rest, frontId));
   const openCheckouts = useShellStore((s) => s.rest?.ui_state?.session_collapsed_checkout_ids ?? NO_IDS);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
+  const focusRowPane = useFocusRowPane();
   const workspaceVisible = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
+  const focusedProjectId = workspaceVisible ? (workspaces.find((workspace) => workspace.checkouts.some((checkout) => checkout.id === focusedCheckoutId))?.id ?? null) : null;
+  const list = useRef<HTMLUListElement>(null);
+  // The focus's row is brought into view when the focus moves, before the frame
+  // is painted, and never on a snapshot that keeps it, so a list the operator
+  // scrolled stays where they left it.
+  useLayoutEffect(() => {
+    if (workspaceVisible && list.current) revealSidebarFocus(list.current);
+  }, [loaded, workspaceVisible, focusedCheckoutId, focusedPaneId]);
   const catalogState = useShellStore((s) => catalogLineOf(s.rest, t)?.state ?? null);
   const catalogText = useShellStore((s) => catalogLineOf(s.rest, t)?.text ?? null);
   const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
@@ -615,7 +638,8 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
     placeOf,
     numberOf: numberOfPane,
     focusedCheckoutId,
-    focusedPaneId,
+    focusedProjectId,
+    focusRowPane,
     workspaceScreen: workspaceVisible,
     openCheckouts,
     disclosure: true,
@@ -624,7 +648,7 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   };
   if (!loaded) return <ListLoading />;
   return (
-    <ul className="min-h-0 flex-1 overflow-auto px-xs" data-project-list="true">
+    <ul ref={list} className="min-h-0 flex-1 overflow-auto px-xs" data-project-list="true">
       {catalogLine ? (
         <li role="status" className="px-md py-xs text-caption text-muted-foreground" data-device-catalog={catalogLine.state}>
           {catalogLine.text}
@@ -663,7 +687,10 @@ type ListContext = {
   /** The number an ⌥ hold shows on an agent's raised row (checkout null) or tree row, while one shows. */
   numberOf: ((paneId: string, checkoutId: string | null) => Digit | null) | null;
   focusedCheckoutId: string | null;
-  focusedPaneId: string | null;
+  /** The project holding the focused checkout while a Workspace is in front, or null. */
+  focusedProjectId: string | null;
+  /** The pane whose row stands for the focused pane (`useFocusRowPane`). */
+  focusRowPane: string | null;
   /** A Workspace is in front, so the focused checkout and agent are the scope shown. */
   workspaceScreen: boolean;
   /** The project whose Overview is in front. */
@@ -711,6 +738,7 @@ const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: Pro
           count={row.count}
           expanded={row.group.expanded}
           level="project"
+          current={!row.group.expanded && context.focusedProjectId !== null && row.group.project_ids.includes(context.focusedProjectId)}
           onToggle={() => context.actions.toggleInactiveProjects(row.group.device_id)}
           data-inactive-projects={row.group.device_id}
         />
@@ -771,7 +799,7 @@ function RaisedAgentRow({ listed: { agent, device }, context }: { listed: Listed
       depth={0}
       descendants={children.length}
       childRows={children}
-      selected={context.workspaceScreen && agent.pane_id === context.focusedPaneId}
+      selected={agent.pane_id === context.focusRowPane}
       onOpen={context.actions.openAgent}
       onOpenChild={(id) => context.actions.followRelation(agent.pane_id, id, children.find((child) => child.pane_id === id)!.identity_label)}
       onAll={() => context.actions.openAgentsOverview()}
@@ -813,12 +841,16 @@ function RowEnd({ children }: { children: ReactNode }) {
   return <span className="flex shrink-0 items-center gap-xs">{children}</span>;
 }
 
-/** One disclosure for both inactive folds, the project level's and the checkout level's; its chevron stands in the fold slot. */
+/**
+ * One disclosure for both inactive folds, the project level's and the checkout level's; its chevron stands in the fold slot.
+ * It is `current` while it hides the focused checkout, and carries the selection for it.
+ */
 function FoldRow({
   label,
   count,
   expanded,
   level,
+  current = false,
   onToggle,
   ...data
 }: {
@@ -826,6 +858,7 @@ function FoldRow({
   count: number;
   expanded: boolean;
   level: "project" | "checkout";
+  current?: boolean;
   onToggle: () => void;
 } & Record<`data-${string}`, string>) {
   const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
@@ -833,7 +866,11 @@ function FoldRow({
     <button
       type="button"
       aria-expanded={expanded}
-      className="flex min-h-(--size-control-lg) w-full items-center gap-sm rounded-sm pr-xs text-left text-caption font-medium text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+      aria-current={current ? "true" : undefined}
+      className={cn(
+        "flex min-h-(--size-control-lg) w-full items-center gap-sm rounded-sm pr-xs text-left text-caption font-medium outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+        current ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent",
+      )}
       style={{ paddingLeft: level === "project" ? PROJECT_COLUMN : CHECKOUT_COLUMN }}
       onClick={onToggle}
       {...data}
@@ -894,6 +931,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   const ProjectIcon = workspace.is_git ? FolderGit2Icon : FolderIcon;
   const target = projectCheckout(workspace, useShellStore.getState().rest?.ui_state?.recent_checkouts);
   const marks = projectMarks(workspace);
+  const hiding = focusFold(workspace, context.workspaceScreen ? context.focusedCheckoutId : null, expanded);
   const checkoutRow = (checkout: Checkout) => (
     <CheckoutRowView
       key={checkout.id}
@@ -914,12 +952,13 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
         data-project-menu={workspace.id}
       >
         <div
-          className="flex min-h-(--size-project-row) w-full items-center gap-xs rounded-sm pr-xs hover:bg-accent"
+          className={cn("flex min-h-(--size-project-row) w-full items-center gap-xs rounded-sm pr-xs", hiding === "project" ? "bg-secondary" : "hover:bg-accent")}
           style={{ paddingLeft: PROJECT_COLUMN }}
         >
           <button
             type="button"
             data-project-row={workspace.id}
+            aria-current={hiding === "project" ? "true" : undefined}
             aria-label={[workspace.label, badgeWords(marks, t)].filter(Boolean).join(", ")}
             className="flex min-w-0 flex-1 self-stretch items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
             onClick={() => actions.openProject(workspace, projectRowExpansion(workspace, target, context.workspaceScreen ? context.focusedCheckoutId : null, disclosure))}
@@ -946,7 +985,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
           {active.map(checkoutRow)}
           {(workspace.session_folds?.empty.length ?? 0) > 0 ? <li>
             <FoldRow label={[t("agentSessions.emptyWorktrees"), workspace.session_folds!.open_prs > 0 ? t("agentSessions.openPrs", { count: workspace.session_folds!.open_prs }) : null].filter(Boolean).join(" · ")}
-              count={workspace.session_folds!.empty.length} expanded={workspace.session_folds!.empty_open} level="checkout"
+              count={workspace.session_folds!.empty.length} expanded={workspace.session_folds!.empty_open} level="checkout" current={hiding === "empty"}
               onToggle={() => actions.toggleSessionFold(workspace.id)} data-empty-worktrees={workspace.id} />
             {workspace.session_folds!.empty_open ? <ul>{workspace.checkouts.filter((checkout) => workspace.session_folds!.empty.includes(checkout.id)).map(checkoutRow)}</ul> : null}
           </li> : null}
@@ -957,6 +996,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
                 count={inactive.length}
                 expanded={workspace.inactive_checkouts.expanded}
                 level="checkout"
+                current={hiding === "inactive"}
                 onToggle={() => actions.toggleInactiveCheckouts(workspace.path)}
                 data-inactive-checkouts={workspace.path}
               />
@@ -971,13 +1011,31 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
 
 const NO_BOARD_ROWS: BoardRow[] = [];
 
+/**
+ * The row of this project that carries the focused checkout's selection while
+ * a fold hides that checkout's own row: the folded project's row, or the
+ * empty-worktree or Inactive fold that holds it. Null while the checkout's row
+ * is drawn, or the checkout is another project's or under the cleanup fold.
+ */
+function focusFold(workspace: Workspace, checkoutId: string | null, expanded: boolean): "project" | "empty" | "inactive" | null {
+  if (checkoutId === null || !workspace.checkouts.some((checkout) => checkout.id === checkoutId)) return null;
+  const folds = workspace.session_folds;
+  if (folds?.cleanup.includes(checkoutId)) return null;
+  if (!expanded) return "project";
+  const inactive = workspace.inactive_checkouts.checkout_ids.includes(checkoutId);
+  const empty = folds?.empty.includes(checkoutId) ?? false;
+  if ((!inactive && !empty) || (inactive && workspace.inactive_checkouts.expanded) || (empty && folds!.empty_open)) return null;
+  return empty ? "empty" : "inactive";
+}
+
 function CleanupRows({ workspaces, context, deviceId }: { workspaces: Workspace[]; context: ListContext; deviceId: string }) {
   const { t } = useInterfaceTranslation();
   const rows = workspaces.flatMap((workspace) => workspace.checkouts.filter((checkout) => workspace.session_folds?.cleanup.includes(checkout.id)).map((checkout) => ({ workspace, checkout })));
   if (rows.length === 0) return null;
   const expanded = rows[0]!.workspace.session_folds!.cleanup_open;
+  const current = !expanded && context.workspaceScreen && rows.some(({ checkout }) => checkout.id === context.focusedCheckoutId);
   return <li data-session-cleanup={deviceId}>
-    <FoldRow label={t("agentSessions.cleanup")} count={rows.length} expanded={expanded} level="project" onToggle={() => context.actions.toggleSessionFold(`cleanup/${deviceId}`)} />
+    <FoldRow label={t("agentSessions.cleanup")} count={rows.length} expanded={expanded} level="project" current={current} onToggle={() => context.actions.toggleSessionFold(`cleanup/${deviceId}`)} />
     {expanded ? <ul>{rows.map(({ workspace, checkout }) => <CheckoutRowView key={checkout.id} workspace={workspace} checkout={checkout}
       agentRows={checkoutAgentRows(workspace, context.agents, "sidebar").get(checkout.id) ?? NO_BOARD_ROWS}
       focused={context.workspaceScreen && context.focusedCheckoutId === checkout.id} context={context} />)}</ul> : null}
@@ -1373,7 +1431,7 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, conte
             depth={row.depth}
             descendants={children.length}
             childRows={children}
-            selected={context.workspaceScreen && row.agent.pane_id === context.focusedPaneId}
+            selected={row.agent.pane_id === context.focusRowPane}
             onOpen={context.actions.openAgent}
             onOpenChild={(id) => context.actions.followRelation(row.agent.pane_id, id, children.find((child) => child.pane_id === id)!.identity_label)}
             onAll={() => context.actions.openAgentsOverview()}
