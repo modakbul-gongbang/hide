@@ -113,9 +113,11 @@ fn a_rows_verb_follows_its_demand_its_activity_and_its_pull_requests() {
         ("failed", "idle"),
         ("ready", "idle"),
         ("ci", "idle"),
+        ("stopped", "idle"),
         ("finished", "done"),
         ("quiet", "idle"),
     ]);
+    rows[5].row_facts.as_mut().unwrap().end = Some(crate::labels::analysis::LabelEnd::Unfinished);
     let github = github(vec![
         pull_request(
             1,
@@ -156,8 +158,26 @@ fn a_rows_verb_follows_its_demand_its_activity_and_its_pull_requests() {
             RequestVerb::Fix,
             RequestVerb::Review,
             RequestVerb::Waiting,
+            RequestVerb::Stopped,
             RequestVerb::Result,
             RequestVerb::Idle,
+        ]
+    );
+    // My turn keeps only what waits for the operator to move; a failed
+    // check, an unfinished turn and an unread result rest with their tag.
+    use crate::agent_state::sessions::Group;
+    let groups: Vec<_> = rows.iter().map(|row| row.state.session.group).collect();
+    assert_eq!(
+        groups,
+        [
+            Group::MyTurn,
+            Group::InProgress,
+            Group::Resting,
+            Group::ReviewMerge,
+            Group::InProgress,
+            Group::Resting,
+            Group::Resting,
+            Group::Resting,
         ]
     );
 }
@@ -231,7 +251,7 @@ fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder()
     assert_eq!(
         rows[1].state.session,
         crate::agent_state::sessions::Row {
-            group: Group::MyTurn,
+            group: Group::Resting,
             tag: Some(Tag::Fix),
         },
         "reading an AI question skips only the demand rung, not its PR duty"
