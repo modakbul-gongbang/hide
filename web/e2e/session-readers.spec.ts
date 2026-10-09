@@ -3,6 +3,7 @@
 import { expect, test, type BrowserContext } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { CURSOR_ID, CURSOR_GOAL, GROK_ID, GROK_PLAN, GROK_TITLE, OMP_ID, OMP_TITLE, OMP_UPDATED_TITLE, PI_ID, PI_TITLE, appendOmpQuestion, prepareNativeWriter, reportNativeWriter, setGrokPlanApproval, updateOmpTitle } from "./session-reader-fixture";
@@ -32,7 +33,7 @@ test(`${kind} ${kind === "cursor" ? "generated goal" : "native title"} and durab
     herdr.run(["agent", "start", `${kind}-reader`, "--kind", kind, "--pane", sourcePane]);
     await expect.poll(() => fs.existsSync(session)).toBe(true);
     reportNativeWriter(herdr, kind, sourcePane, session);
-    daemon = await startHided(herdr, `${kind}-reader`, herdr.env.HOME);
+    daemon = await startHided(herdr, `${kind}-reader`, herdr.env.HOME, kind === "cursor" ? { CURSOR_CONFIG_DIR: undefined, XDG_CONFIG_HOME: undefined } : {});
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator("[data-checkout]").first().click();
     const row = page.locator(`nav[data-sidebar] [data-checkout-agents-open] [data-pane="${sourcePane}"]`);
@@ -104,11 +105,68 @@ test(`${kind} ${kind === "cursor" ? "generated goal" : "native title"} and durab
 });
 }
 
+for (const refusal of ["override", "duplicate"] as const) {
+test(`Cursor ${refusal} root refuses Sleep before closing its live pane`, async ({ page }) => {
+  const herdr = await startHerdr({ agents: false });
+  let daemon: Daemon | null = null;
+  try {
+    const pane = herdr.panes[0];
+    const session = prepareNativeWriter(herdr, "cursor");
+    herdr.run(["agent", "start", "cursor-root", "--kind", "cursor", "--pane", pane]);
+    await expect.poll(() => fs.existsSync(session)).toBe(true);
+    reportNativeWriter(herdr, "cursor", pane, session);
+    const alternate = path.join(herdr.env.HOME, "alternate-config");
+    const other = path.join(alternate, "cursor", "chats", path.basename(path.dirname(path.dirname(session))), CURSOR_ID);
+    fs.cpSync(path.dirname(session), other, { recursive: true });
+    const copied = new DatabaseSync(path.join(other, "store.db"));
+    try {
+      const metadata = copied.prepare("SELECT value FROM meta WHERE key='0'").get() as { value: string };
+      const native = JSON.parse(Buffer.from(metadata.value, "hex").toString()) as { latestRootBlobId: string };
+      const graph = JSON.parse(fs.readFileSync(path.resolve("../hide-session/tests/fixtures/cursor-2026.10.01/browser-graph.json"), "utf8")) as { roots: { append: string } };
+      native.latestRootBlobId = graph.roots.append;
+      copied.prepare("UPDATE meta SET value=? WHERE key='0'").run(Buffer.from(JSON.stringify(native)).toString("hex"));
+    } finally { copied.close(); }
+    const before = fs.readFileSync(session);
+    const otherBefore = fs.readFileSync(path.join(other, "store.db"));
+    expect(otherBefore).not.toEqual(before);
+    const launches = path.join(herdr.root, "cursor-launches.jsonl");
+    const starts = fs.readFileSync(launches, "utf8");
+    const env = refusal === "override"
+      ? { CURSOR_CONFIG_DIR: path.join(alternate, "cursor"), XDG_CONFIG_HOME: undefined }
+      : { CURSOR_CONFIG_DIR: path.join(herdr.env.HOME, ".cursor"), XDG_CONFIG_HOME: alternate };
+    daemon = await startHided(herdr, `cursor-root-${refusal}`, herdr.env.HOME, env);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await page.locator("[data-checkout]").first().click();
+    const row = page.locator(`nav[data-sidebar] [data-checkout-agents-open] [data-pane="${pane}"]`);
+    await expect(row).toContainText(CURSOR_GOAL, { timeout: 30_000 });
+    await row.click();
+    await page.locator(`[data-pane-menu="${pane}"]`).click();
+    await expect(page.locator('[data-menu-item="sleep_agent"]')).toBeEnabled({ timeout: 20_000 });
+    await page.locator('[data-menu-item="sleep_agent"]').click();
+    const reason = refusal === "duplicate" ? "cursor_launch_root_ambiguous" : "cursor_launch_root_unsupported";
+    await expect.poll(() => fs.readFileSync(path.join(daemon!.stateDir, "Logs", "core.jsonl"), "utf8")).toContain(`"reason":"${reason}"`);
+    await expect.poll(() => fs.readFileSync(path.join(daemon!.stateDir, "Logs", "core.jsonl"), "utf8")).toContain('"error_kind":"agent_sleep.failed"');
+    await expect(row).toContainText(CURSOR_GOAL);
+    await expect(page.locator('[data-sleeping-session]')).toHaveCount(0);
+    expect(JSON.stringify(herdr.run(["pane", "list"]))).toContain(`"pane_id":"${pane}"`);
+    expect(fs.readFileSync(launches, "utf8")).toEqual(starts);
+    expect(fs.readFileSync(session)).toEqual(before);
+    expect(fs.readFileSync(path.join(other, "store.db"))).toEqual(otherBefore);
+    await screenshot(page, `cursor-${refusal}-sleep-refusal`);
+  } catch (error) {
+    throw afterCleanup(afterCleanup(error, () => daemon?.stop()), () => herdr.stop());
+  }
+  try { daemon?.stop(); } catch (error) { throw afterCleanup(error, () => herdr.stop()); }
+  herdr.stop();
+});
+}
+
 test("Cursor phone reads native message units and omits an unrecorded time", async ({ browser, page }) => {
   const herdr = await startHerdr({ agents: false });
   const tailscale = new FakeTailscale();
   let daemon: Daemon | null = null;
   let phoneContext: BrowserContext | undefined;
+  const errors: unknown[] = [];
   try {
     tailscale.ready();
     tailscale.install();
@@ -142,12 +200,10 @@ test("Cursor phone reads native message units and omits an unrecorded time", asy
     await expect(phone.locator('[data-phone-message="agent"] time')).toHaveAttribute("datetime", "2026-10-03T01:01:00.000Z");
     await expect(phone.locator("[data-phone-older]")).toHaveCount(0);
     await screenshot(phone, "cursor-phone-native-units-time");
-  } finally {
-    const errors: unknown[] = [];
-    try { await phoneContext?.close(); } catch (error) { errors.push(error); }
-    try { daemon?.stop(); } catch (error) { errors.push(error); }
-    try { herdr.stop(); } catch (error) { errors.push(error); }
-    try { tailscale.remove(); } catch (error) { errors.push(error); }
-    if (errors.length) throw new AggregateError(errors, "Cursor phone fixture cleanup failed");
-  }
+  } catch (error) { errors.push(error); }
+  try { await phoneContext?.close(); } catch (error) { errors.push(error); }
+  try { daemon?.stop(); } catch (error) { errors.push(error); }
+  try { herdr.stop(); } catch (error) { errors.push(error); }
+  try { tailscale.remove(); } catch (error) { errors.push(error); }
+  if (errors.length) throw new AggregateError(errors, "Cursor phone fixture or cleanup failed");
 });

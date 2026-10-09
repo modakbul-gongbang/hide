@@ -1110,7 +1110,114 @@ pub(crate) fn confirm_route(home: &Path, path: &Path, id: &str, cwd: &Path) -> R
         cwd.to_str()
             .ok_or_else(|| invalid("cursor_cwd_unconfirmed"))?,
     )?;
+    confirm_known_roots(home, id)?;
     Ok(())
+}
+
+// This is an action-only ambiguity audit, not an execution-environment
+// certificate. Never open another root's SQLite store or admit it as a source.
+fn confirm_known_roots(home: &Path, id: &str) -> Result<()> {
+    let roots = crate::environment::cursor_roots().map_err(invalid)?;
+    let default = home.join(".cursor");
+    let default_real = hide_platform::fs::identity::canonical(&default)
+        .map_err(|_| invalid("cursor_launch_root_unconfirmed"))?;
+    let selected = roots
+        .config
+        .as_ref()
+        .or(roots.xdg.as_ref())
+        .unwrap_or(&default);
+    if hide_platform::fs::identity::canonical(selected)
+        .ok()
+        .as_ref()
+        != Some(&default_real)
+    {
+        return Err(invalid("cursor_launch_root_unsupported"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut budget = crate::DiscoveryBudget::default();
+    let mut owners = 0;
+    for root in [Some(&default), roots.config.as_ref(), roots.xdg.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        let real = match hide_platform::fs::identity::canonical(root) {
+            Ok(real) => real,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Err(invalid("cursor_launch_root_unconfirmed")),
+        };
+        if seen.insert(real.clone()) && root_contains(&real, id, &mut budget)? {
+            owners += 1;
+            if owners > 1 {
+                return Err(invalid("cursor_launch_root_ambiguous"));
+            }
+        }
+    }
+    if owners != 1 {
+        return Err(invalid("cursor_launch_root_unconfirmed"));
+    }
+    Ok(())
+}
+
+fn root_contains(root: &Path, id: &str, budget: &mut crate::DiscoveryBudget) -> Result<bool> {
+    let chats = root.join("chats");
+    if !chats
+        .try_exists()
+        .map_err(|_| invalid("cursor_launch_root_unconfirmed"))?
+    {
+        return Ok(false);
+    }
+    let mut opened = Vec::new();
+    let fence = |path: &Path,
+                 opened: &mut Vec<(PathBuf, std::fs::File, FileMark)>,
+                 budget: &mut crate::DiscoveryBudget|
+     -> Result<()> {
+        budget.directory()?;
+        crate::native_file::checked_path_under(root, "", path)
+            .map_err(|_| invalid("cursor_launch_root_unconfirmed"))?;
+        let folder = hide_platform::fs::open_dir_nofollow(path)
+            .map_err(|_| invalid("cursor_launch_root_unconfirmed"))?;
+        let before = mark_handle(&folder)?;
+        opened.push((path.to_owned(), folder, before));
+        Ok(())
+    };
+    fence(root, &mut opened, budget)?;
+    fence(&chats, &mut opened, budget)?;
+    let mut found = false;
+    for bucket in crate::read_directory(&chats, budget).map_err(|error| match error {
+        SessionError::Capacity { .. } => error,
+        _ => invalid("cursor_launch_root_unconfirmed"),
+    })? {
+        if !bucket
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name.len() == 32
+                    && name
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+        {
+            continue;
+        }
+        fence(&bucket, &mut opened, budget)?;
+        let candidate = bucket.join(id);
+        if candidate
+            .try_exists()
+            .map_err(|_| invalid("cursor_launch_root_unconfirmed"))?
+        {
+            fence(&candidate, &mut opened, budget)?;
+            found = true;
+            break;
+        }
+    }
+    for (path, handle, before) in opened {
+        let current = hide_platform::fs::open_dir_nofollow(&path)
+            .map_err(|_| invalid("cursor_launch_root_unconfirmed"))?;
+        if mark_handle(&handle)? != before || mark_handle(&current)? != before {
+            return Err(invalid("cursor_launch_root_changed"));
+        }
+    }
+    Ok(found)
 }
 
 pub(crate) fn locate(

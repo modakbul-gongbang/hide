@@ -593,6 +593,140 @@ fn wal_reader_role() {
 }
 
 #[test]
+fn known_native_roots_refuse_distinct_history_with_the_same_uuid() {
+    let fixture = Fixture::new();
+    let alternate = fixture.home.path().join("alternate");
+    let alternate_session = alternate
+        .join("cursor/chats")
+        .join(
+            fixture
+                .path
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .file_name()
+                .unwrap(),
+        )
+        .join(ID)
+        .join("store.db");
+    std::fs::create_dir_all(alternate_session.parent().unwrap()).unwrap();
+    // The UUID is the same; the conversation is deliberately different.
+    fixture.root("append");
+    std::fs::copy(&fixture.path, &alternate_session).unwrap();
+    std::fs::copy(
+        fixture.path.with_file_name("meta.json"),
+        alternate_session.with_file_name("meta.json"),
+    )
+    .unwrap();
+    fixture.root("first");
+    let before = std::fs::read(&fixture.path).unwrap();
+    let other_before = std::fs::read(&alternate_session).unwrap();
+    assert_ne!(before, other_before);
+    for (case, config, xdg, expected) in [
+        ("default", None, None, "allowed"),
+        (
+            "custom",
+            Some(alternate.join("cursor")),
+            None,
+            "cursor_launch_root_unsupported",
+        ),
+        (
+            "xdg",
+            None,
+            Some(alternate.clone()),
+            "cursor_launch_root_unsupported",
+        ),
+        (
+            "ambiguous",
+            Some(fixture.home.path().join(".cursor")),
+            Some(alternate.clone()),
+            "cursor_launch_root_ambiguous",
+        ),
+        (
+            "invalid",
+            Some(PathBuf::from("relative")),
+            None,
+            "cursor_launch_environment_invalid",
+        ),
+    ] {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "cursor::root_route_reader_role", "--nocapture"])
+            .env("CURSOR_ROUTE_READER_FIXTURE", fixture.home.path())
+            .env("CURSOR_ROUTE_READER_EXPECTED", expected)
+            .env_remove("CURSOR_CONFIG_DIR")
+            .env_remove("XDG_CONFIG_HOME");
+        if let Some(config) = config {
+            command.env("CURSOR_CONFIG_DIR", config);
+        }
+        if let Some(xdg) = xdg {
+            command.env("XDG_CONFIG_HOME", xdg);
+        }
+        let result = hide_platform::process::run_to_end(
+            &mut command,
+            std::time::Duration::from_secs(30),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(
+            result.code,
+            Some(0),
+            "{case}: {} {}",
+            result.stdout,
+            result.stderr
+        );
+        assert!(
+            result.stdout.contains("native root route checked"),
+            "{case}"
+        );
+        assert_eq!(std::fs::read(&fixture.path).unwrap(), before, "{case}");
+        assert_eq!(
+            std::fs::read(&alternate_session).unwrap(),
+            other_before,
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn root_route_reader_role() {
+    let Some(home) = std::env::var_os("CURSOR_ROUTE_READER_FIXTURE").map(PathBuf::from) else {
+        return;
+    };
+    let expected = std::env::var("CURSOR_ROUTE_READER_EXPECTED").unwrap();
+    let cwd = home.join("project");
+    let request = hide_session::session_activity::SessionActivityRequest {
+        agent: hide_session::Agent::Cursor,
+        reference_kind: "id".into(),
+        reference_value: ID.into(),
+        cwd: Some(cwd.to_str().unwrap().into()),
+        exact_route: true,
+        expected_id: Some(ID.into()),
+    };
+    let activity = hide_session::session_activity::read(&home, &request);
+    if expected == "allowed" {
+        assert!(activity.unwrap().bytes > 0);
+    } else {
+        assert_eq!(
+            activity.unwrap_err(),
+            format!("session_checkpoint_invalid:{expected}")
+        );
+        // Refusing lifecycle effects must not discard ordinary default-root reads.
+        let read_only = hide_session::session_activity::read(
+            &home,
+            &hide_session::session_activity::SessionActivityRequest {
+                exact_route: false,
+                ..request
+            },
+        )
+        .unwrap();
+        assert!(read_only.bytes > 0);
+    }
+    println!("native root route checked");
+}
+
+#[test]
 fn closed_checkpointed_wal_store_does_not_create_companions() {
     let fixture = Fixture::new();
     let writer = Connection::open(&fixture.path).unwrap();

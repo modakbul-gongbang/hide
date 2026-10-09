@@ -495,6 +495,7 @@ pub enum KitPlace {
 
 impl Env {
     pub fn of_process() -> Self {
+        hide_session::environment::initialize();
         Self {
             home: std::env::var_os("HOME").map(PathBuf::from),
             kit: KitPlace::Installed,
@@ -507,6 +508,7 @@ impl Env {
     /// A node of its own, answering for `home`: it installs no kit and keeps
     /// its own AI backends, which end when the last copy of it is dropped.
     pub fn standalone(home: Option<PathBuf>) -> Self {
+        hide_session::environment::initialize();
         Self {
             home,
             kit: KitPlace::Standalone,

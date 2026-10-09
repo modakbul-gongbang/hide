@@ -29,6 +29,7 @@ mod catalog;
 mod conversation_cursor;
 pub mod cursor;
 mod envelope;
+pub mod environment;
 mod grok;
 mod label_owner;
 pub mod label_transcript;
