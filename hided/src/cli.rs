@@ -834,9 +834,18 @@ fn browser_open(
         Err(reason) => {
             // Opening already applied. Endpoint discovery cannot recast it as
             // a failed action and tempt a caller to create the page again.
+            let next_action = if reason == "browser_control_elsewhere" {
+                // The only window showing it is on another machine: its
+                // endpoints are that machine's loopback, its page commands
+                // reach it through Hide.
+                format!("Run hide browser snapshot {display_id} and the other page commands")
+            } else {
+                format!(
+                    "Run hide browser connect --display {display_id} after the desktop window reconnects"
+                )
+            };
             answer["result"]["browser_control"] = serde_json::json!({
-                "state":"unavailable","reason":reason,
-                "next_action":format!("Run hide browser connect --display {display_id} after the desktop window reconnects")
+                "state":"unavailable","reason":reason,"next_action":next_action
             });
         }
     }

@@ -2687,7 +2687,9 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
             ensure!(
                 opened["ok"] == true
                     && opened["result"]["browser_control"]["reason"] == "browser_control_elsewhere"
-                    && opened["result"]["browser_control"]["next_action"].is_string(),
+                    && opened["result"]["browser_control"]["next_action"]
+                        .as_str()
+                        .is_some_and(|next| next.contains(&format!("hide browser snapshot {}", opened["result"]["view_id"].as_str().unwrap_or("?")))),
                 "the core pane's page: {opened}"
             );
             let core_display = opened["result"]["view_id"].as_str().context("display")?.to_owned();
