@@ -1210,7 +1210,10 @@ impl Engine {
             ai: None,
             language: Language::English,
         };
-        if let Err(reason) = self.submit_observer(factory, id, judgment, Purpose::RiskMerge) {
+        let purpose = Purpose::RiskMerge {
+            attempt: task.attempts.len(),
+        };
+        if let Err(reason) = self.submit_observer(factory, id, judgment, purpose) {
             self.record(
                 factory,
                 Some(id),
@@ -1220,7 +1223,13 @@ impl Engine {
         }
     }
 
-    pub(super) fn apply_risk_merge(&mut self, factory: &str, id: &str, outcome: &JudgmentOutcome) {
+    pub(super) fn apply_risk_merge(
+        &mut self,
+        factory: &str,
+        id: &str,
+        attempt: usize,
+        outcome: &JudgmentOutcome,
+    ) {
         let Some(task) = self.task(factory, id).cloned() else {
             return;
         };
@@ -1252,8 +1261,12 @@ impl Engine {
             );
             return;
         }
-        // A person merged, or the Task moved, first.
-        if task.state != TaskState::MergeWaiting || task.gates != [Gate::RiskPath] {
+        // A person merged, or the Task moved, first; an approval of an
+        // earlier verification is not one of the change verified now.
+        if task.state != TaskState::MergeWaiting
+            || task.gates != [Gate::RiskPath]
+            || task.attempts.len() != attempt
+        {
             self.record(
                 factory,
                 Some(id),

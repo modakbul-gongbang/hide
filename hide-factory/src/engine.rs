@@ -359,8 +359,11 @@ enum Purpose {
     },
     /// The Observer reading a worker resting without a report (D-23).
     Diagnose,
-    /// The Observer deciding a risk-path merge (D-21).
-    RiskMerge,
+    /// The Observer deciding a risk-path merge (D-21), for the verification
+    /// attempt it was shown.
+    RiskMerge {
+        attempt: usize,
+    },
 }
 
 type Reply = Result<Value, Refusal>;
@@ -5450,7 +5453,7 @@ impl Engine {
             );
             if matches!(
                 purpose,
-                Purpose::Classify { .. } | Purpose::Diagnose | Purpose::RiskMerge
+                Purpose::Classify { .. } | Purpose::Diagnose | Purpose::RiskMerge { .. }
             ) && let JudgmentOutcome::Failed { reason } = &answer.outcome
             {
                 // A call the provider never received is not counted (D-34).
@@ -5556,8 +5559,8 @@ impl Engine {
                 (outcome, Purpose::Diagnose, Some(task)) => {
                     self.apply_worker_diagnosis(&factory, &task, outcome)
                 }
-                (outcome, Purpose::RiskMerge, Some(task)) => {
-                    self.apply_risk_merge(&factory, &task, outcome)
+                (outcome, Purpose::RiskMerge { attempt }, Some(task)) => {
+                    self.apply_risk_merge(&factory, &task, attempt, outcome)
                 }
                 (JudgmentOutcome::Failed { reason }, purpose, task) => {
                     // A watch or diagnosis that fails changes no Task (B69).

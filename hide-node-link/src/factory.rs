@@ -343,7 +343,11 @@ impl FactoryGit {
                 &format!("HEAD:refs/heads/{}", branch_name(branch)?),
             ]),
             Self::DiffNumstat { base } => owned(&["diff", "--numstat", &range(base)?]),
-            Self::DiffNames { base } => owned(&["diff", "--name-only", &range(base)?]),
+            // A rename lists both its paths, so moving a file out of a risk
+            // path still touches it.
+            Self::DiffNames { base } => {
+                owned(&["diff", "--name-only", "--no-renames", &range(base)?])
+            }
             Self::DiffPatch { base } => owned(&["diff", "--stat", "--patch", &range(base)?]),
             Self::MergeTree { base } => owned(&[
                 "merge-tree",
@@ -925,7 +929,7 @@ mod tests {
             }
             .args()
             .unwrap(),
-            ["diff", "--name-only", "origin/main...HEAD"]
+            ["diff", "--name-only", "--no-renames", "origin/main...HEAD"]
         );
         assert_eq!(
             FactoryGh::PrMerge {
