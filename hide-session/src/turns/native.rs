@@ -191,7 +191,10 @@ pub(crate) fn opencode_part(part: &Value) -> Result<Option<ToolTurnMark>, SkipRe
     }
     let call = id(part.get("callID"))?.ok_or(SkipReason::UserTurnInvalid)?;
     match part.pointer("/state/status").and_then(Value::as_str) {
-        Some("pending" | "running") => Ok(Some(ToolTurnMark::Asked {
+        // OpenCode is still streaming the call's input: nothing has been put
+        // to the operator yet, and the running state that follows asks it.
+        Some("pending") => Ok(None),
+        Some("running") => Ok(Some(ToolTurnMark::Asked {
             call,
             content: part.pointer("/state/input").and_then(question_content),
         })),

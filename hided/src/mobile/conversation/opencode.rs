@@ -108,6 +108,7 @@ impl Session {
         &self,
         end: Option<u64>,
     ) -> Result<(Page, Option<ConversationCheckpoint>), SessionError> {
+        let newest = end.is_none();
         let mut end = match end {
             Some(end) => end,
             None => {
@@ -125,6 +126,14 @@ impl Session {
         let mut reads = 0;
         let before = 'page: loop {
             let start = end.saturating_sub(PAGE_MESSAGES as u64);
+            // The newest window reads on to where the session ends now, so a
+            // message written after the count is on the page, not skipped
+            // by the poll that continues from where this read stopped.
+            let bound = if newest && reached.is_none() {
+                u64::MAX
+            } else {
+                end
+            };
             let mut checkpoint = self.checkpoint_at(start)?;
             let mut found = Vec::new();
             loop {
@@ -140,9 +149,9 @@ impl Session {
                 }
                 reads += 1;
                 let transcript = self.read(&checkpoint)?.ok_or_else(changed)?;
-                found.extend(messages_in(&transcript, end));
+                found.extend(messages_in(&transcript, bound));
                 checkpoint = transcript.checkpoint;
-                if !transcript.has_more || checkpoint.offset() >= end {
+                if !transcript.has_more || checkpoint.offset() >= bound {
                     break;
                 }
             }

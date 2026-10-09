@@ -460,6 +460,38 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_opencode_database_leaves_the_other_agents_sessions_listed() {
+        let root = tempdir().unwrap();
+        let home = root.path().join("home");
+        let project_root = root.path().join("project");
+        fs::create_dir_all(home.join(".claude/projects/p")).unwrap();
+        fs::create_dir_all(home.join(".local/share/opencode")).unwrap();
+        fs::create_dir_all(&project_root).unwrap();
+        let project = hide_project::resolve(&project_root, "local").unwrap();
+        fs::write(
+            home.join(".claude/projects/p/claude-1.jsonl"),
+            format!("{{\"type\":\"user\",\"cwd\":{},\"timestamp\":\"2026-09-21T01:00:00Z\",\"origin\":{{\"kind\":\"human\"}},\"message\":{{\"role\":\"user\",\"content\":\"alpha request\"}}}}\n", serde_json::to_string(&project_root).unwrap()),
+        ).unwrap();
+        fs::write(
+            home.join(".local/share/opencode/opencode.db"),
+            "not a database",
+        )
+        .unwrap();
+
+        let sessions = SessionCatalog::new(&home, "local")
+            .project_sessions(&project)
+            .unwrap();
+
+        assert_eq!(
+            sessions
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>(),
+            ["claude-1"]
+        );
+    }
+
+    #[test]
     fn claude_catalog_skips_a_malformed_line_before_the_cwd_record() {
         let root = tempdir().unwrap();
         let home = root.path().join("home");

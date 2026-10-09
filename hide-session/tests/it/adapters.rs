@@ -1696,6 +1696,8 @@ fn opencode_question(writer: &rusqlite::Connection, message: &str, at: u64, stat
         ]
     }]});
     let state = match status {
+        // OpenCode streams the call's input before it runs it.
+        "pending" => serde_json::json!({"status": "pending", "input": {}, "raw": ""}),
         "running" => {
             serde_json::json!({"status": "running", "input": input, "time": {"start": at}})
         }
@@ -1765,6 +1767,55 @@ fn an_opencode_question_waits_with_its_text_and_choices_until_it_is_answered() {
         Some(Waiting::Nothing)
     );
     assert!(answered.turns.as_ref().unwrap().user_turn().is_none());
+}
+
+#[test]
+fn a_pending_opencode_question_is_asked_with_its_choices_once_it_runs() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
+    opencode_assistant(&writer, "msg_07", START + 400_000, false);
+    opencode_question(&writer, "msg_07", START + 400_100, "pending");
+    let streaming = read(home.path(), &opencode_continued(&first)).unwrap();
+    assert_eq!(
+        streaming.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Nothing)
+    );
+    opencode_question(&writer, "msg_07", START + 400_100, "running");
+    let asking = read(home.path(), &opencode_continued(&streaming)).unwrap();
+    let fact = asking.turns.as_ref().unwrap().user_turn().unwrap();
+    let content = serde_json::to_value(fact.content.unwrap())
+        .unwrap()
+        .to_string();
+    assert!(content.contains("release"), "{content}");
+}
+
+#[test]
+fn more_opencode_questions_than_the_cap_refuse_the_read_rather_than_miss_one() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    opencode_assistant(&writer, "msg_07", START + 400_000, false);
+    let part = serde_json::json!({"type": "tool", "tool": "question", "callID": "call_q",
+        "state": {"status": "running", "input": {"questions": []}, "time": {"start": START}}});
+    for index in 0..=hide_session::turns::QUESTION_CALL_LIMIT {
+        let mut part = part.clone();
+        part["callID"] = serde_json::json!(format!("call_q{index}"));
+        writer
+            .execute(
+                "INSERT INTO part VALUES (?1, 'msg_07', ?2, ?3, ?3, ?4)",
+                rusqlite::params![
+                    format!("prt_q{index:02}"),
+                    OPENCODE_ROOT,
+                    START + 400_100 + index as u64,
+                    part.to_string()
+                ],
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        read(home.path(), &request(Agent::OpenCode)).unwrap_err(),
+        "user_turn_capacity"
+    );
 }
 
 #[test]
@@ -1864,6 +1915,40 @@ fn a_linked_opencode_database_is_refused() {
     assert_eq!(
         read(home.path(), &request(Agent::OpenCode)).unwrap_err(),
         "label_session_linked"
+    );
+}
+
+#[test]
+fn a_skipped_opencode_message_still_witnesses_where_a_read_ended() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    // A message too large to load ends the session: its id still witnesses it.
+    writer
+        .execute(
+            "INSERT INTO message VALUES ('msg_07', ?1, ?2, ?2, ?3)",
+            rusqlite::params![
+                OPENCODE_ROOT,
+                START + 140_000,
+                format!(
+                    r#"{{"role":"user","time":{{"created":{}}},"pad":"{}"}}"#,
+                    START + 140_000,
+                    "x".repeat(70 * 1024)
+                )
+            ],
+        )
+        .unwrap();
+    let whole = read_whole(home.path(), Agent::OpenCode);
+    assert!(whole.skipped_reasons.contains_key("message_capacity"));
+    let held =
+        hide_session::opencode::holds(home.path(), OPENCODE_ROOT, "/work/app", &whole.checkpoint);
+    assert!(held.is_ok(), "{held:?}");
+    // Once that message is gone the same checkpoint no longer holds.
+    writer
+        .execute("DELETE FROM message WHERE id = 'msg_07'", [])
+        .unwrap();
+    assert!(
+        hide_session::opencode::holds(home.path(), OPENCODE_ROOT, "/work/app", &whole.checkpoint)
+            .is_err()
     );
 }
 

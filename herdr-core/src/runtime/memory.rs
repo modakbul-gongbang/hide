@@ -1455,6 +1455,52 @@ mod scope_tests {
     }
 
     #[test]
+    fn an_opencode_session_in_the_project_does_not_pause_memory_analysis() {
+        let temp = tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project_root = temp.path().join("project");
+        fs::create_dir_all(&project_root).unwrap();
+        let project_root = fs::canonicalize(project_root).unwrap();
+        let checkout = project_root.display().to_string();
+        crate::fixture::opencode_database(&home, &[("ses_root", None, checkout.as_str())]);
+        let folder = home.join(hide_session::CLAUDE_SESSIONS).join("-project");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(
+            folder.join("claude-session.jsonl"),
+            format!(
+                "{}\n",
+                serde_json::json!({"type":"user","sessionId":"claude-session","cwd":checkout,
+                    "timestamp":"2026-09-18T00:00:00Z","origin":{"kind":"human"},
+                    "message":{"role":"user","content":"analyze me"}})
+            ),
+        )
+        .unwrap();
+        let node: std::sync::Arc<dyn crate::node_access::NodeLink> =
+            std::sync::Arc::new(hide_node::Local::new(Some(home.clone())));
+        let mut seen = Vec::new();
+        let outcome = super::analyze_project(
+            &crate::node::NodeId::parse(&hook_node()).unwrap(),
+            node.as_ref(),
+            &crate::ai::memory_router(&node, &Default::default()),
+            &home.join("memory.sqlite3"),
+            &checkout,
+            &hide_ai::CancelToken::new(),
+            |snapshot| seen.push(snapshot),
+        );
+
+        // Only the Claude session is Memory's to read; OpenCode's receipts
+        // ride its label read, and its row neither fails nor pauses the pass.
+        assert_eq!(seen.first().map(|snapshot| snapshot.discovered), Some(1));
+        assert!(
+            seen.iter()
+                .chain(outcome.analysis.as_ref())
+                .all(|snapshot| snapshot.state != "paused" && snapshot.failed == 0),
+            "{seen:?} {:?}",
+            outcome.analysis
+        );
+    }
+
+    #[test]
     fn empty_session_start_projection_unblocks_later_prompt_memory_for_both_providers() {
         let temp = tempdir().unwrap();
         let home = temp.path().join("home");
@@ -1704,7 +1750,19 @@ fn analyze_project_inner(
 ) -> Result<MemoryMutationOutcome, AnalysisFailure> {
     let identity =
         project_identity(sessions_node, node, checkout_path).map_err(AnalysisFailure::Local)?;
-    let sessions = project_sessions(sessions_node, &identity).map_err(AnalysisFailure::Local)?;
+    // Memory reads its own pass only from agents whose sessions this build has
+    // a Memory reader for; OpenCode's receipts ride its label read instead.
+    let readers = hide_node_link::sessions::ReaderFeatures::implemented();
+    let sessions = project_sessions(sessions_node, &identity)
+        .map_err(AnalysisFailure::Local)?
+        .into_iter()
+        .filter(|session| {
+            readers.supports(
+                session.agent.as_str(),
+                hide_node_link::sessions::ReaderFeature::Memory,
+            )
+        })
+        .collect::<Vec<_>>();
     let discovered = sessions.len();
     let mut store =
         MemoryStore::open(database).map_err(|error| AnalysisFailure::Local(error.to_string()))?;

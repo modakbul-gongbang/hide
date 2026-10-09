@@ -106,7 +106,12 @@ test("OpenCode's root session titles its row, waits on its question and wakes by
     const sleeping = page.locator("[data-sleeping-session]");
     await expect(sleeping).toContainText(OPENCODE_TITLE, { timeout: 30_000 });
     await expect.poll(() => JSON.stringify(herdr.run(["pane", "list"]))).not.toContain(`"pane_id":"${sourcePane}"`);
-    const digest = () => crypto.createHash("sha256").update(fs.readFileSync(database)).digest("hex");
+    // OpenCode's database and its write-ahead log: a write lands in either.
+    const digest = () => {
+      const hash = crypto.createHash("sha256").update(fs.readFileSync(database));
+      if (fs.existsSync(`${database}-wal`)) hash.update(fs.readFileSync(`${database}-wal`));
+      return hash.digest("hex");
+    };
     const prior = digest();
     await sleeping.getByRole("button", { name: "Wake agent" }).click();
     await expect.poll(launches, { timeout: 30_000 }).toContainEqual(["-s", OPENCODE_ID]);
