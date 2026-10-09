@@ -187,12 +187,13 @@ static int native_session(int argc, char **argv) {
   if (strcmp(base, "pi") == 0 || strcmp(base, "pi.exe") == 0) { kind = "pi"; resume_flag = "--session"; }
   else if (strcmp(base, "omp") == 0 || strcmp(base, "omp.exe") == 0) { kind = "omp"; resume_flag = "--resume"; }
   else if (strcmp(base, "grok") == 0 || strcmp(base, "grok.exe") == 0) { kind = "grok"; resume_flag = "--resume"; }
+  else if (strcmp(base, "cursor-agent") == 0 || strcmp(base, "cursor-agent.exe") == 0) { kind = "cursor"; resume_flag = "--resume"; }
   else return 0;
   const char *root = getenv("HIDE_E2E_ROOT");
   if (!root) return 0;
   char config[4096], destination[4096], seed[4096], launches[4096];
   if (snprintf(config, sizeof config, "%s/%s-session-path.config", root, kind) >= (int)sizeof config ||
-      snprintf(seed, sizeof seed, "%s/%s-session-seed.jsonl", root, kind) >= (int)sizeof seed ||
+      snprintf(seed, sizeof seed, "%s/%s-session-seed.%s", root, kind, strcmp(kind, "cursor") == 0 ? "db" : "jsonl") >= (int)sizeof seed ||
       snprintf(launches, sizeof launches, "%s/%s-launches.jsonl", root, kind) >= (int)sizeof launches) return 1;
   FILE *file = fopen(config, "rb");
   if (!file) return errno == ENOENT ? 0 : 1;
@@ -208,13 +209,14 @@ static int native_session(int argc, char **argv) {
     fclose(file);
   } else {
     if (copy_seed(seed, destination)) return 1;
-    if (strcmp(kind, "grok") == 0) {
+    if (strcmp(kind, "grok") == 0 || strcmp(kind, "cursor") == 0) {
       char summary_seed[4096], summary[4096];
       const char *folder_end = strrchr(destination, '/'), *native_end = strrchr(destination, '\\');
       if (native_end && (!folder_end || native_end > folder_end)) folder_end = native_end;
       if (!folder_end) return 1;
-      if (snprintf(summary_seed, sizeof summary_seed, "%s/grok-summary-seed.json", root) >= (int)sizeof summary_seed ||
-          snprintf(summary, sizeof summary, "%.*s/summary.json", (int)(folder_end - destination), destination) >= (int)sizeof summary) return 1;
+      const char *sidecar = strcmp(kind, "cursor") == 0 ? "meta" : "summary";
+      if (snprintf(summary_seed, sizeof summary_seed, "%s/%s-%s-seed.json", root, kind, sidecar) >= (int)sizeof summary_seed ||
+          snprintf(summary, sizeof summary, "%.*s/%s.json", (int)(folder_end - destination), destination, sidecar) >= (int)sizeof summary) return 1;
       if (copy_seed(summary_seed, summary)) return 1;
     }
   }

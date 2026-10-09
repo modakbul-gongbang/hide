@@ -982,7 +982,7 @@ impl LabelWorker {
         if self
             .panes
             .get(pane_id)
-            .is_some_and(|pane| pane.agent.requires_native_file_proof())
+            .is_some_and(|pane| pane.agent.requires_native_proof())
         {
             let changed = self.records.get(pane_id).is_some_and(|record| {
                 record.owner.is_some()
@@ -1274,8 +1274,10 @@ impl LabelWorker {
 }
 
 fn provider(kind: Option<&str>) -> Option<Agent> {
-    hide_agent_adapter::adapter(kind?)?
+    let adapter = hide_agent_adapter::adapter(kind?)?;
+    adapter
         .titles
+        .or(adapter.conversation)
         .map(Agent::from_format)
 }
 

@@ -218,3 +218,41 @@ pub(crate) fn codex(item: &Value) -> Mark {
     };
     Ok(mark)
 }
+
+/// OpenCode 1.18.30 keeps a `question` tool call as one part whose state
+/// moves from `pending`/`running` while it asks to `completed` (answered) or
+/// `error` (dismissed or aborted). Its input has Claude's question shape.
+pub(crate) fn opencode_part(part: &Value) -> Result<Option<ToolTurnMark>, SkipReason> {
+    if part.get("type").and_then(Value::as_str) != Some("tool")
+        || part.get("tool").and_then(Value::as_str) != Some("question")
+    {
+        return Ok(None);
+    }
+    let call = id(part.get("callID"))?.ok_or(SkipReason::UserTurnInvalid)?;
+    match part.pointer("/state/status").and_then(Value::as_str) {
+        // OpenCode is still streaming the call's input: nothing has been put
+        // to the operator yet, and the running state that follows asks it.
+        Some("pending") => Ok(None),
+        Some("running") => Ok(Some(ToolTurnMark::Asked {
+            call,
+            content: part.pointer("/state/input").and_then(question_content),
+        })),
+        Some("completed" | "error") => Ok(Some(ToolTurnMark::Answered { call })),
+        _ => Err(SkipReason::UserTurnInvalid),
+    }
+}
+
+/// The question marks of one OpenCode message's parts, bounded like a
+/// native record's tool marks.
+pub(crate) fn opencode_marks(parts: &[Value]) -> Result<Vec<ToolTurnMark>, SkipReason> {
+    let mut marks = Vec::new();
+    for part in parts {
+        if let Some(mark) = opencode_part(part)? {
+            if marks.len() == TOOL_MARK_LIMIT {
+                return Err(SkipReason::UserTurnCapacity);
+            }
+            marks.push(mark);
+        }
+    }
+    Ok(marks)
+}

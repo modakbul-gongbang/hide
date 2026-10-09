@@ -1670,6 +1670,16 @@ pub(crate) fn pane_resize_changed(value: Value) -> Result<bool, String> {
         _ => Err(missing.into()),
     }
 }
+/// The terminal a `pane.get` answer runs in its pane. Herdr gives every
+/// terminal it starts a new id, a restored one included, while a pane id can
+/// be handed out again, so this is what tells a pane from a later one.
+pub(crate) fn pane_terminal(value: Value) -> Result<String, String> {
+    let missing = "pane.get response is missing pane.terminal_id";
+    match response(value, missing)? {
+        res::ResponseResult::PaneInfo { pane } => nonempty_id(pane.terminal_id, missing),
+        _ => Err(missing.into()),
+    }
+}
 pub(crate) fn split_pane(value: Value) -> Result<String, String> {
     let missing = "pane.split response is missing pane.pane_id";
     match response(value, missing)? {

@@ -3362,23 +3362,33 @@ impl Runtime {
                 return true;
             }
         };
-        let native_file = agent_kind
+        // A natively proven resume names the reference its proof reads:
+        // OpenCode's session id itself, a file reader's source file.
+        let proof = agent_kind
             .as_deref()
             .and_then(hide_session::Agent::from_kind)
-            .is_some_and(hide_session::Agent::requires_native_file_proof);
-        let resume_reference = if native_file && resume.is_some() {
-            let Some(path) = payload.resume_session_path.as_ref().filter(|path| {
-                !path.is_empty() && path.len() <= 4096 && !path.chars().any(char::is_control)
-            }) else {
-                self.set_request_error("agent_start.invalid_resume", "The selected session has no confirmed source file. Refresh its record before retrying.", false, request_id.as_deref());
-                return true;
-            };
-            Some(crate::sidebar::SessionAgentSessionPayload {
-                kind: "path".into(),
-                value: path.clone(),
-            })
-        } else {
-            None
+            .filter(|agent| agent.requires_native_proof());
+        let resume_reference = match proof.filter(|_| resume.is_some()) {
+            Some(agent) if agent.proof_reference_kind() == "id" => payload
+                .resume_session_id
+                .clone()
+                .map(|id| crate::sidebar::SessionAgentSessionPayload {
+                    kind: "id".into(),
+                    value: id,
+                }),
+            Some(_) => {
+                let Some(path) = payload.resume_session_path.as_ref().filter(|path| {
+                    !path.is_empty() && path.len() <= 4096 && !path.chars().any(char::is_control)
+                }) else {
+                    self.set_request_error("agent_start.invalid_resume", "The selected session has no confirmed source file. Refresh its record before retrying.", false, request_id.as_deref());
+                    return true;
+                };
+                Some(crate::sidebar::SessionAgentSessionPayload {
+                    kind: "path".into(),
+                    value: path.clone(),
+                })
+            }
+            None => None,
         };
         let id = match self.begin_task_operation(
             "agent_start",
@@ -3415,7 +3425,7 @@ impl Runtime {
             resume_scope: payload
                 .resume_session_id
                 .as_ref()
-                .filter(|_| native_file)
+                .filter(|_| proof.is_some())
                 .map(|id| hide_session::SessionReadScope {
                     id: id.clone(),
                     cwd: checkout_path.clone(),
@@ -3855,9 +3865,9 @@ fn pull_request_times(
 /// that is not one plain token: it reaches the agent's command line, where
 /// one that began with `-` would read as an option.
 fn resume_session_arguments(kind: &str, session_id: &str) -> Option<Vec<String>> {
-    let native_file = hide_session::Agent::from_kind(kind)
-        .is_some_and(hide_session::Agent::requires_native_file_proof);
-    let plain = if native_file {
+    let proven = hide_session::Agent::from_kind(kind)
+        .is_some_and(hide_session::Agent::requires_native_proof);
+    let plain = if proven {
         hide_session::valid_native_id(session_id) && !session_id.ends_with(".jsonl")
     } else {
         session_id

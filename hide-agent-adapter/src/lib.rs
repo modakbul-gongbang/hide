@@ -123,6 +123,7 @@ pub enum SessionFormat {
     Grok,
     Pi,
     Omp,
+    Cursor,
     OpenCode,
 }
 
@@ -134,14 +135,25 @@ impl SessionFormat {
             Self::Grok => AgentId::Grok.adapter(),
             Self::Pi => AgentId::Pi.adapter(),
             Self::Omp => AgentId::Omp.adapter(),
+            Self::Cursor => AgentId::Cursor.adapter(),
             Self::OpenCode => AgentId::OpenCode.adapter(),
         }
     }
 
     pub const fn reports_turns(self) -> bool {
-        matches!(self, Self::Claude | Self::Codex | Self::Grok | Self::Omp)
+        matches!(
+            self,
+            Self::Claude | Self::Codex | Self::Grok | Self::Omp | Self::OpenCode
+        )
     }
     pub const fn has_session_file(self) -> bool {
+        matches!(
+            self,
+            Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp | Self::Cursor
+        )
+    }
+
+    pub const fn is_jsonl(self) -> bool {
         matches!(
             self,
             Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp
@@ -151,7 +163,34 @@ impl SessionFormat {
     /// Native file metadata and the default CLI resolver must agree before
     /// a transcript can authorize a read or a lifecycle effect.
     pub const fn requires_native_file_proof(self) -> bool {
-        matches!(self, Self::Grok | Self::Pi | Self::Omp)
+        matches!(self, Self::Grok | Self::Pi | Self::Omp | Self::Cursor)
+    }
+
+    /// The native reader proves the session's owner and checkout before a
+    /// lifecycle effect (wake, fork, resume) uses its id, and Herdr's
+    /// reported id alone grants none of them: every native-file reader, and
+    /// OpenCode's database reader.
+    pub const fn requires_native_proof(self) -> bool {
+        self.requires_native_file_proof() || matches!(self, Self::OpenCode)
+    }
+
+    /// The reported reference a native proof takes: OpenCode names a session
+    /// by its id in OpenCode's database, a file reader by the file's path.
+    pub const fn proof_reference_kind(self) -> &'static str {
+        match self {
+            Self::OpenCode => "id",
+            Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp | Self::Cursor => "path",
+        }
+    }
+
+    /// The native reader answers a session's modification time and size.
+    pub const fn reports_activity(self) -> bool {
+        self.has_session_file() || matches!(self, Self::OpenCode)
+    }
+
+    /// The native reader feeds the project session catalog and body search.
+    pub const fn searchable(self) -> bool {
+        self.has_session_file() || matches!(self, Self::OpenCode)
     }
 }
 
@@ -517,9 +556,9 @@ impl AgentAdapter {
             Feature::Sleep => self.sleep.is_some(),
             Feature::Fork => self.fork.is_some(),
             Feature::Start => self.start.is_some(),
-            // OpenCode's existing label reader is not the session features
-            // offered by Settings; keep that established distinction.
-            Feature::Titles => self.conversation.is_some() && self.titles.is_some(),
+            // A label reader alone is not the session features offered by
+            // Settings: titles count once the conversation is read.
+            Feature::Titles => self.conversation.is_some(),
         }
     }
 

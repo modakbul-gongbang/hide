@@ -715,14 +715,17 @@ fn read_opencode(home: &std::path::Path, request: &ReadRequest, answer: &mut Rea
         subagents: Default::default(),
         turns: None,
     };
-    let transcript = match crate::opencode::read(home, &label) {
-        Ok(transcript) => transcript,
-        Err(code) => {
-            answer.error = Some(code);
-            return;
-        }
-    };
-    let (directory, parent) = opencode_session(home, id).unwrap_or_default();
+    // A link line is each session as its own row records it, a subagent's
+    // child session included; it never joins the root's conversation.
+    let (transcript, proven) =
+        match crate::opencode::read_as(home, &label, crate::opencode::Owner::Recorded) {
+            Ok(read) => read,
+            Err(code) => {
+                answer.error = Some(code);
+                return;
+            }
+        };
+    let (directory, parent) = (proven.directory, proven.parent);
     let mut links = LinkAccumulator::default();
     links.facts.session_id = Some(parent.clone().unwrap_or_else(|| id.to_owned()));
     links.facts.subagent = parent.is_some();
@@ -754,20 +757,4 @@ fn read_opencode(home: &std::path::Path, request: &ReadRequest, answer: &mut Rea
     answer.has_more = transcript.has_more;
     answer.checkpoint = Some(transcript.checkpoint);
     answer.facts = links.finish();
-}
-
-fn opencode_session(home: &std::path::Path, id: &str) -> Option<(Option<String>, Option<String>)> {
-    let connection = rusqlite::Connection::open_with_flags(
-        crate::opencode::database_path(home),
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .ok()?;
-    let _ = connection.busy_timeout(std::time::Duration::from_millis(50));
-    connection
-        .query_row(
-            "SELECT directory, parent_id FROM session WHERE id = ?1",
-            rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .ok()
 }

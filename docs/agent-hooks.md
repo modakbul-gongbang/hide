@@ -430,10 +430,13 @@ Its popover groups the feature table into Herdr basics, session reading and mult
 | `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no | no | no | no |
 | `herdr_integration` | always: every supported agent has a Herdr target | yes | yes | yes | yes | yes | yes |
 | `start` | its launch declaration | yes | yes | yes | yes | yes | yes |
-| `sleep`, `fork`, `titles` | their independent conversation and title declarations | yes | no | yes | yes | yes | no |
+| `sleep` | its Sleep declaration | yes | yes | yes | yes | yes | yes |
+| `fork` | its Fork declaration | yes | yes | yes | yes | yes | no |
+| `titles` | its conversation declaration enables generated labels | yes | yes | yes | yes | yes | yes |
 
-Claude Code, Codex, Grok, Pi and omp are the agents whose session files Hide reads for these features, so only they get a per-agent session count, and the count is per machine and only of the sessions running now: one number of open panes holding an awake agent, never an accumulation of warnings.
-OpenCode retains its existing title reader without gaining session-file, sleep, fork or conversation features.
+Claude Code, Codex, Grok, Pi, omp and Cursor are the agents whose session files Hide reads for these features, so only they get a per-agent session count, and the count is per machine and only of the sessions running now: one number of open panes holding an awake agent, never an accumulation of warnings.
+OpenCode's sessions live in its database rather than in session files, so it has no session count; its database reader gives it titles, sleep, fork and its conversation ([ARCHITECTURE.md](ARCHITECTURE.md)).
+Cursor's Titles feature is a generated goal; its native store supplies no title, structured wait, tool-output PR fact or Memory extraction.
 `herdr-core/src/runtime/tests/agent_features.rs` ties each flag to the gate in the core that decides it (`runtime_of`, `sleeps_kind`, `ForkableAgent`, `AGENT_KINDS`, `conversation_agent_kind`), so a flag cannot say yes where the core says no, and holds each row's Herdr target to the kind Herdr reports its panes as.
 
 An agent is a row only when its documentation confirms where it reads skills and the name of the program it installs.

@@ -313,18 +313,7 @@ pub fn resume_arguments(agent: &ClosedAgent) -> Option<Vec<String>> {
         return None;
     }
     let dialect = hide_agent_adapter::adapter(&agent.kind)?.resume?;
-    match dialect {
-        hide_agent_adapter::LaunchDialect::Claude
-        | hide_agent_adapter::LaunchDialect::Codex
-        | hide_agent_adapter::LaunchDialect::Grok
-        | hide_agent_adapter::LaunchDialect::Pi
-        | hide_agent_adapter::LaunchDialect::Omp => {
-            Some(vec![dialect.resume_flag().into(), session_id.clone()])
-        }
-        hide_agent_adapter::LaunchDialect::OpenCode | hide_agent_adapter::LaunchDialect::Cursor => {
-            None
-        }
-    }
+    Some(vec![dialect.resume_flag().into(), session_id.clone()])
 }
 
 #[cfg(test)]
@@ -417,6 +406,21 @@ mod tests {
                 .is_none()
             );
         }
+        assert_eq!(
+            resume_arguments(&ClosedAgent {
+                kind: "opencode".into(),
+                session_id: Some("ses_native".into()),
+            }),
+            Some(vec!["-s".to_owned(), "ses_native".to_owned()])
+        );
+        assert!(
+            resume_arguments(&ClosedAgent {
+                kind: "opencode".into(),
+                session_id: Some("--fork".into()),
+            })
+            .is_none(),
+            "a flag-shaped id never reaches the command line"
+        );
         assert_eq!(
             resume_arguments(&ClosedAgent {
                 kind: "claude".into(),

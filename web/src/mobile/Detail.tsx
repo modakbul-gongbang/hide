@@ -203,7 +203,7 @@ function ConversationLog({ conversation }: { conversation: Conversation }) {
 /** Memoized: a message never changes once it arrived, so its Markdown is parsed once. */
 const MessageItem = memo(function MessageItem({ message, timed }: { message: ConversationMessage; timed: boolean }) {
   const { t } = useInterfaceTranslation();
-  const time = timed ? (
+  const time = timed && message.at_ms > 0 ? (
     <time dateTime={new Date(message.at_ms).toISOString()} className="block pt-xs text-right font-mono text-body text-muted-foreground">
       {messageTime(message.at_ms)}
     </time>

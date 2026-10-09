@@ -67,6 +67,50 @@ pub(crate) fn grok_session(
     conversation
 }
 
+/// The pinned Cursor CLI's ordinary route and independently encoded graph.
+/// The fixture owns its writer; production readers never create these files.
+#[cfg(test)]
+pub(crate) fn cursor_session(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    id: &str,
+) -> std::path::PathBuf {
+    let bucket = format!("{:x}", md5::compute(cwd.to_str().unwrap().as_bytes()));
+    let folder = home.join(".cursor/chats").join(bucket).join(id);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("meta.json"),
+        serde_json::json!({"schemaVersion":1,"cwd":cwd,"createdAtMs":1790989200000u64,
+            "hasConversation":true,"isSubagent":false})
+        .to_string(),
+    )
+    .unwrap();
+    let graph: serde_json::Value = serde_json::from_str(include_str!(
+        "../../hide-session/tests/fixtures/cursor-2026.10.01/graph.json"
+    ))
+    .unwrap();
+    let database = folder.join("store.db");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    connection.execute_batch("PRAGMA user_version=1; CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE blobs(id TEXT PRIMARY KEY,data BLOB);").unwrap();
+    let meta = serde_json::json!({"agentId":id,"latestRootBlobId":graph["roots"]["first"],"createdAt":1790989200000u64});
+    connection
+        .execute(
+            "INSERT INTO meta VALUES('0',?1)",
+            [hex::encode(meta.to_string())],
+        )
+        .unwrap();
+    for (key, value) in graph["blobs"].as_object().unwrap() {
+        connection
+            .execute(
+                "INSERT INTO blobs VALUES(?1,?2)",
+                rusqlite::params![key, hex::decode(value.as_str().unwrap()).unwrap()],
+            )
+            .unwrap();
+    }
+    drop(connection);
+    database
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FixturePlan {
     pub workspace_name: String,
@@ -194,6 +238,61 @@ fn validate_fixture_cwd(cwd: &str) -> Result<(), String> {
         return Err("Fixture cwd may contain lowercase ASCII, digits, and hyphens only".to_owned());
     }
     Ok(())
+}
+
+/// An OpenCode 1.18.30 database in `home` holding `sessions` as
+/// `(id, parent_id, directory)`, each with one operator message: the shape
+/// its own `session`, `message` and `part` tables have.
+#[cfg(test)]
+pub(crate) fn opencode_database(home: &std::path::Path, sessions: &[(&str, Option<&str>, &str)]) {
+    let folder = home.join(".local/share/opencode");
+    std::fs::create_dir_all(&folder).unwrap();
+    let database = rusqlite::Connection::open(folder.join("opencode.db")).unwrap();
+    database
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS session (id text PRIMARY KEY, project_id text NOT NULL, \
+             parent_id text, slug text NOT NULL, directory text NOT NULL, title text NOT NULL, \
+             version text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL);
+             CREATE TABLE IF NOT EXISTS message (id text PRIMARY KEY, session_id text NOT NULL, \
+             time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
+             CREATE TABLE IF NOT EXISTS part (id text PRIMARY KEY, message_id text NOT NULL, \
+             session_id text NOT NULL, time_created integer NOT NULL, \
+             time_updated integer NOT NULL, data text NOT NULL);",
+        )
+        .unwrap();
+    for (index, (id, parent, directory)) in sessions.iter().enumerate() {
+        let at = 1_790_989_200_000_i64 + index as i64;
+        database
+            .execute(
+                "INSERT INTO session VALUES (?1, 'prj_1', ?2, 'slug', ?3, 'OpenCode title', \
+                 '1.18.30', ?4, ?4)",
+                rusqlite::params![id, parent, directory, at],
+            )
+            .unwrap();
+        database
+            .execute(
+                "INSERT INTO message VALUES (?1, ?2, ?3, ?3, ?4)",
+                rusqlite::params![
+                    format!("msg_{id}"),
+                    id,
+                    at,
+                    format!(r#"{{"role":"user","time":{{"created":{at}}}}}"#)
+                ],
+            )
+            .unwrap();
+        database
+            .execute(
+                "INSERT INTO part VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+                rusqlite::params![
+                    format!("prt_{id}"),
+                    format!("msg_{id}"),
+                    id,
+                    at,
+                    r#"{"type":"text","text":"OpenCode request"}"#
+                ],
+            )
+            .unwrap();
+    }
 }
 
 #[cfg(test)]

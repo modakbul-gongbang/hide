@@ -106,7 +106,7 @@ Demand has these sources:
 
 - A question is the core's label verdict on the agent's last message (`label.question`, see Task identity below).
   It exists only while the label is proven for the pane's current session, and it ends when the agent starts working again or a turn ran between two looks at a stopped agent, so a question never outlives the turn that asked it.
-- A native unanswered Claude `AskUserQuestion`, Codex `request_user_input`, Grok `ask_user_question` or omp `ask` is a question even with summaries off.
+- A native unanswered Claude `AskUserQuestion`, Codex `request_user_input`, Grok `ask_user_question`, omp `ask` or OpenCode `question` is a question even with summaries off.
   A Grok session whose `plan_mode.json` is `Active` and awaiting plan approval is a plan approval, with `plan.md` as its bounded content, until that file says otherwise.
   The current-session/current-state read carries the optional `user_turn` row fact, with `kind: question|plan_approval` and optional `content: {text, choices, truncated}`.
   Text is capped at 8 KiB, choices at eight and each choice at 256 UTF-8 bytes; cuts preserve character boundaries and set `truncated`.
@@ -506,6 +506,8 @@ The provider fallback reads the shared adapter's sidebar label or canonical Herd
 `sidebar.rs` applies the shared adapter's title priority: Claude Code and Codex keep generated `goal`, then proven native title, then provider.
 Grok, OpenCode, Pi and omp use proven native/manual title, then generated goal, then provider.
 Cursor has no native title authority and uses generated goal, then provider.
+Its ordinary SQLite chat graph supplies recorded human and assistant text under the same native ID and checkout proof, while its sidecar title and database name remain outside that authority.
+Injected native user records, tool output, shell turns and child graphs supply no root request, structured wait or PR sighting; absent event times stay unknown and recorded times have minute precision.
 A declared priority grants no reader capability; a build that cannot read that provider receives no native title.
 The session adapter gives a manual title priority over the native automatic title.
 Pi 1.0.4's `session_info.name` is a proven native/manual title, and its latest explicit empty name clears the old native name before the generated-goal/provider fallback is applied.
@@ -521,12 +523,14 @@ Its unanswered `ask_user_question` calls supply exact bounded text and option la
 A Grok subagent, headless or hidden session is no pane's root, so it supplies no title, question or conversation.
 Before an omp resume or fork, Hide refuses option-like IDs, non-ASCII filenames with uncertain native case matching, and pending native directory migration or orphaned backup recovery.
 These action-only checks never move or repair a history; read-only labels and conversations retain their own proof, and the native CLI must resolve the pending maintenance before a fresh route can be admitted.
+OpenCode 1.18.30's session `title` is a proven native title of its root session only; a subagent's child session never names the root row.
+OpenCode's `question` tool part supplies the question's text and choices while it is pending or running, and its completed or errored state clears it; the asking message stays unfinished while OpenCode waits, and the read folds it without settling it, so the answer clears the wait on a later read.
 The agent's own title rides the same proof as the label: it is laid on the row only while the pane's reference proves the session it was read from.
 The Herdr workspace label is never a name: it is whatever the workspace was called when it was opened, and one workspace can hold agents for several checkouts.
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
 Nothing publishes a session `name`, reads Codex's first human turn as a title, or renames an agent or tab.
 
-The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v6`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
+The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp, Cursor or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v6`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
 How the turn ended is asked only once the agent has stopped: the call at a turn's start names the goal and the line and leaves the end `working`, and the call at its end picks the word by whose move is next, `question` (the operator's), `waiting` (something other than a pull request still running: a background test, build, CI run or another agent), `unfinished` (nobody's, with the work left undone) or `done` (nobody's, with the work finished), taking the first in that order that fits.
 A turn that started or handed off work that still runs is `waiting`, even when the turn itself only reported progress or answered something, unless it asks the operator; its line says what it waits for.
 `LabelOverlay::apply` lays that label onto an agent just before the runtime projects it, as `task` (the goal), `expected_reply` (the line when the turn ended on a question), `progress` (the line otherwise) and `question` (a question end on an agent that is not running), and `sidebar.rs::project_agent` reads those four.
