@@ -796,9 +796,8 @@ function buildAgentGraphBox(tokens) {
           disabled(text(`${p}-glyph`, '?', {fill: '$--warning', mono: true, size: '$--text-caption'})),
           // Blocked is a filled triangle with its notch cut out, stopped a ring with its left half filled; both are shapes, as the web draws them.
           frame(`${p}-blocked`, 'Blocked', {width: MARK, height: MARK, layout: 'none', enabled: false}, [
-            {type: 'polygon', polygonCount: 3, cornerRadius: 1, id: `${p}-blocked-tri`, x: 2, y: 2.5, name: 'Triangle', fill: '$--warning', width: DOT + 3, height: DOT + 2},
-            {type: 'rectangle', id: `${p}-blocked-bar`, x: 6.4, y: 5.4, name: 'Notch bar', fill: '$--card', width: 1.2, height: 3},
-            {type: 'rectangle', id: `${p}-blocked-dot`, x: 6.4, y: 9, name: 'Notch dot', fill: '$--card', width: 1.2, height: 1.2},
+            // The exclamation is a hole in the path (opposite winding), as the web cuts it out with evenodd.
+            {type: 'path', id: `${p}-blocked-shape`, name: 'Triangle with notch', x: 0, y: 0, width: MARK, height: MARK, viewBox: [0, 0, 12, 12], geometry: 'M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z', fill: '$--warning'},
           ]),
           frame(`${p}-stopped`, 'Stopped', {width: MARK, height: MARK, layout: 'none', enabled: false}, [
             {type: 'ellipse', id: `${p}-stopped-ring`, x: 3.5, y: 3.5, name: 'Ring', width: DOT, height: DOT, stroke: '$--subtle-foreground', strokeWidth: HAIR, strokeAlignment: 'inner'},
