@@ -289,7 +289,7 @@ fn pi_and_omp_memory_receipts_are_signed_for_the_hosts_session_id_and_opencodes_
     let (project, project_id, store) = memory_project(&machine);
     let version = hide_agent_hooks::pi_extension::VERSION;
     for agent in ["pi", "omp"] {
-        let file = format!("/home/sessions/-work-/2026-10-09T00-00-00-000Z_{agent}.jsonl");
+        let file = format!("/sessions/-work-/2026-10-09T00-00-00-000Z_{agent}.jsonl");
         let id = format!("01a11d1d-{agent}");
         let answer = machine.run_as(
             agent,
@@ -342,7 +342,7 @@ fn pi_and_omp_memory_receipts_are_signed_for_the_hosts_session_id_and_opencodes_
     let answer = machine.run_as(
         "pi",
         "prompt",
-        &json!({"session_id": "/home/sessions/-work-/off.jsonl", "native_session": "01a11d1d-off",
+        &json!({"session_id": "/sessions/-work-/off.jsonl", "native_session": "01a11d1d-off",
             "prompt": "Fix it", "cwd": project, "first": true, "memory_first": true, "version": version}),
         true,
     );
