@@ -432,6 +432,51 @@ impl Projects {
     }
 }
 
+/// The most files an intake review reads from a card.
+const NAMED_PATH_LIMIT: usize = 8;
+
+/// Repository paths a card names: a word with a `/` or a file extension,
+/// without spaces, quotes or a scheme.
+fn named_paths(card: &Card) -> Vec<String> {
+    let text = std::iter::once(card.goal.as_str())
+        .chain(card.criteria.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut paths: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        let word = word.trim_matches(|c: char| "`'\"()[]{}<>,;:.!?".contains(c));
+        let word = word.split(':').next().unwrap_or(word);
+        let looks_like_path = (word.contains('/')
+            || word.rsplit_once('.').is_some_and(|(stem, ext)| {
+                !stem.is_empty()
+                    && (1..=5).contains(&ext.len())
+                    && ext.chars().all(|c| c.is_ascii_alphanumeric())
+            }))
+            && !word.contains("://")
+            && !word.starts_with('/')
+            && !word.split('/').any(|part| part == "..")
+            && word.chars().any(|c| c.is_ascii_alphabetic());
+        if looks_like_path && !paths.iter().any(|p| p == word) {
+            paths.push(word.to_owned());
+        }
+        if paths.len() >= NAMED_PATH_LIMIT {
+            break;
+        }
+    }
+    paths
+}
+
+/// A search for issues and pull requests that look like this title: its
+/// longer words, at most six.
+fn search_words(title: &str) -> Option<String> {
+    let words: Vec<&str> = title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.chars().count() >= 3)
+        .take(6)
+        .collect();
+    (!words.is_empty()).then(|| words.join(" "))
+}
+
 fn verify_id(task: &Task, stage: &str) -> String {
     format!(
         "{}:{}:{}:{}",
@@ -585,6 +630,7 @@ impl TaskSource for SharedProjects {
                         repo,
                         title: task.card.title.clone(),
                         body: body.to_owned(),
+                        unlabelled: false,
                     },
                 )?;
                 number_from_url(&url)
@@ -592,6 +638,121 @@ impl TaskSource for SharedProjects {
                     .ok_or_else(|| Failure::task("github.issue_create", "gh answered no issue URL"))
             }
         }
+    }
+
+    fn create_follow_up(
+        &mut self,
+        factory: &Factory,
+        title: &str,
+        body: &str,
+        marker: &str,
+        labelled: bool,
+    ) -> Result<IssueRef, Failure> {
+        let mut this = self.lock();
+        match factory.source {
+            SourceKind::Local => {
+                let number = this.issues.create(&factory.project, title, body, marker)?;
+                Ok(IssueRef::Local { number })
+            }
+            SourceKind::Github => {
+                let repo = write_repo(factory)?;
+                let found = this.gh_json(
+                    "github.issue_find",
+                    FactoryGh::IssueFind {
+                        repo: repo.clone(),
+                        marker: marker.to_owned(),
+                    },
+                )?;
+                if let Some(number) = found
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|issue| issue["body"].as_str().is_some_and(|b| b.contains(marker)))
+                    .and_then(|issue| issue["number"].as_u64())
+                {
+                    return Ok(IssueRef::Github { number });
+                }
+                let url = this.gh(
+                    "github.follow_up",
+                    FactoryGh::IssueCreate {
+                        repo,
+                        title: title.to_owned(),
+                        body: body.to_owned(),
+                        unlabelled: !labelled,
+                    },
+                )?;
+                number_from_url(&url)
+                    .map(|number| IssueRef::Github { number })
+                    .ok_or_else(|| Failure::task("github.follow_up", "gh answered no issue URL"))
+            }
+        }
+    }
+
+    fn intake_facts(&mut self, factory: &Factory, card: &Card) -> IntakeFacts {
+        let mut this = self.lock();
+        let mut facts = IntakeFacts::default();
+        for path in named_paths(card) {
+            let text = this.machine.call::<Option<String>>(
+                "intake.file",
+                FactoryCall::ProjectFile {
+                    project: factory.project.clone(),
+                    path: path.clone(),
+                },
+            );
+            if let Ok(Some(text)) = text {
+                facts.files.push(FileFact { path, text });
+            }
+        }
+        // What cannot be read is left out: the review assumes and says so.
+        if factory.source == SourceKind::Github
+            && let Ok(repo) = repo(factory)
+            && let Some(query) = search_words(&card.title)
+        {
+            for (kind, command) in [
+                (
+                    "issue",
+                    FactoryGh::IssueSearch {
+                        repo: repo.clone(),
+                        query: query.clone(),
+                    },
+                ),
+                ("pull_request", FactoryGh::PrSearch { repo, query }),
+            ] {
+                let Ok(found) = this.gh_json("intake.related", command) else {
+                    continue;
+                };
+                for item in found.as_array().into_iter().flatten() {
+                    let Some(number) = item["number"].as_u64() else {
+                        continue;
+                    };
+                    facts.related.push(RelatedItem {
+                        kind: kind.to_owned(),
+                        number,
+                        title: item["title"].as_str().unwrap_or_default().to_owned(),
+                        state: item["state"].as_str().unwrap_or_default().to_owned(),
+                        url: item["url"].as_str().unwrap_or_default().to_owned(),
+                    });
+                }
+            }
+        }
+        facts
+    }
+
+    fn check_access(&mut self, factory: &Factory) -> Result<(), Failure> {
+        if factory.source != SourceKind::Github {
+            return Ok(());
+        }
+        let repo = repo(factory)?;
+        let mut this = self.lock();
+        this.gh_json("github.access", FactoryGh::User)?;
+        this.gh_json(
+            "github.access",
+            FactoryGh::IssueSearch {
+                repo,
+                query: "is:issue".into(),
+            },
+        )?;
+        Ok(())
     }
 
     fn label_issue(&mut self, factory: &Factory, issue: &IssueRef) -> Result<(), Failure> {

@@ -24,7 +24,10 @@ use crate::store::{Event, Record, Store, StoreError, sha256_hex};
 use crate::summary::{self, FactorySummary};
 use crate::words::{self, Language};
 
+mod access;
+mod follow_up;
 mod observer;
+mod recovery;
 
 /// The world the engine acts on.
 pub struct Ports {
@@ -101,6 +104,10 @@ const PUBLISH_RETRY_MS: u64 = 60_000;
 const PUBLISH_PENDING: &str = "publish_pending";
 /// A reported Task whose checks wait for its paused Factory to resume (D-48).
 const CHECKS_DEFERRED: &str = "checks_deferred";
+/// The choice that runs a failed intake review again.
+pub const RETRY_REVIEW: &str = "retry-review";
+/// The choice that starts a Task from its card as written, without a review (B5).
+pub const START_AS_IS: &str = "start-as-is";
 
 /// What one attempt to start or resume a Task's worker came to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,6 +183,102 @@ impl FailureKind {
     }
 }
 
+/// A question as its asker writes it (D-33): the sentence, what it holds
+/// up, the choices with what each leads to, the recommended one, and a
+/// default with its deadline.
+pub(crate) struct NewQuestion {
+    origin: QuestionOrigin,
+    kind: QuestionKind,
+    text: String,
+    suggestion: String,
+    default_action: Option<String>,
+    deadline: Option<UnixMs>,
+    choices: Vec<String>,
+    letter: Option<String>,
+    stopped: Option<String>,
+    outcomes: Vec<ChoiceOutcome>,
+    evidence: Vec<String>,
+    /// Already sorted by the diagnosis that raised it; not sent again.
+    sorted: bool,
+}
+
+impl NewQuestion {
+    pub(crate) fn new(
+        origin: QuestionOrigin,
+        kind: QuestionKind,
+        text: impl Into<String>,
+        suggestion: impl Into<String>,
+    ) -> Self {
+        Self {
+            origin,
+            kind,
+            text: text.into(),
+            suggestion: suggestion.into(),
+            default_action: None,
+            deadline: None,
+            choices: Vec::new(),
+            letter: None,
+            stopped: None,
+            outcomes: Vec::new(),
+            evidence: Vec::new(),
+            sorted: false,
+        }
+    }
+
+    /// A question a judgment proposed, in the same form.
+    pub(crate) fn proposed(
+        origin: QuestionOrigin,
+        kind: QuestionKind,
+        question: &judgment::ProposedQuestion,
+    ) -> Self {
+        Self {
+            default_action: question.default_action.clone(),
+            choices: question.choices.clone(),
+            stopped: question.stopped.clone(),
+            outcomes: question.outcomes.clone(),
+            ..Self::new(
+                origin,
+                kind,
+                question.text.clone(),
+                question.suggestion.clone(),
+            )
+        }
+    }
+
+    pub(crate) fn default_action(mut self, action: impl Into<String>) -> Self {
+        self.default_action = Some(action.into());
+        self
+    }
+
+    pub(crate) fn deadline(mut self, deadline: UnixMs) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    pub(crate) fn choices(mut self, choices: &[&str]) -> Self {
+        self.choices = choices.iter().map(|choice| (*choice).to_owned()).collect();
+        self
+    }
+
+    pub(crate) fn letter(mut self, letter: Option<String>) -> Self {
+        self.letter = letter;
+        self
+    }
+
+    pub(crate) fn sorted(mut self) -> Self {
+        self.sorted = true;
+        self
+    }
+
+    pub(crate) fn evidence(mut self, evidence: impl Into<String>) -> Self {
+        let evidence = evidence.into();
+        if !evidence.trim().is_empty() {
+            self.evidence.push(evidence);
+        }
+        self
+    }
+}
+
 pub struct Engine {
     store: Store,
     ports: Ports,
@@ -212,8 +315,10 @@ pub struct Engine {
     env_failures: Vec<FailureNote>,
     /// New starts halted by a cascade until this time (B60).
     halt_until: Option<UnixMs>,
-    env_problem_since: Option<UnixMs>,
-    env_diagnosed: bool,
+    /// The Factory whose cascade set `halt_until`.
+    halt_factory: Option<String>,
+    /// When each blocked Factory's GitHub access was last checked again.
+    access_checked_at: BTreeMap<String, UnixMs>,
     hold_checked_at: Option<UnixMs>,
     hold_reason: Option<EnvHold>,
     /// A runtime unavailable until its usage resets (B58).
@@ -241,7 +346,10 @@ enum Purpose {
     Watch {
         read_at: UnixMs,
     },
-    Env,
+    /// The next step for one hold of the recovery schedule (D-44).
+    Recovery {
+        key: HoldKey,
+    },
     /// The Observer sorting one decision request (D-14).
     Classify {
         question: String,
@@ -286,8 +394,8 @@ impl Engine {
             processed_order: Vec::new(),
             env_failures: Vec::new(),
             halt_until: None,
-            env_problem_since: None,
-            env_diagnosed: false,
+            halt_factory: None,
+            access_checked_at: BTreeMap::new(),
             hold_checked_at: None,
             hold_reason: None,
             runtime_blocked: BTreeMap::new(),
@@ -365,7 +473,7 @@ impl Engine {
             .map(|f| (f.id.clone(), f.main.merges_since_green.clone()))
             .collect();
         for (factory, merges) in cut {
-            engine.revert_needs_person(&factory, "hided가 다시 시작해 복구가 끊겼습니다", &merges);
+            engine.revert_needs_person(&factory, words::RecoveryStop::Restarted, &merges);
         }
         Ok(engine)
     }
@@ -680,37 +788,28 @@ impl Engine {
         format!("Q{}", self.question_seq)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn add_question(
-        &mut self,
-        factory: &str,
-        id: &str,
-        origin: QuestionOrigin,
-        kind: QuestionKind,
-        text: &str,
-        suggestion: &str,
-        default_action: Option<String>,
-        deadline: Option<UnixMs>,
-        choices: Vec<String>,
-        letter: Option<String>,
-    ) -> String {
+    /// Adds a question and sends it to Factory AI first, whatever raised
+    /// it; the mode table decides whether it answers or a person does
+    /// (D-03, D-27).
+    fn add_question(&mut self, factory: &str, id: &str, new: NewQuestion) -> String {
         let question_id = self.next_question_id();
         let now = self.now();
         let question = Question {
             id: question_id.clone(),
-            origin,
-            kind,
-            text: judgment::cut(text, TEXT_LIMIT),
-            suggestion: judgment::cut(suggestion, TEXT_LIMIT),
-            default_action,
-            deadline,
+            origin: new.origin,
+            kind: new.kind,
+            text: judgment::cut(&new.text, TEXT_LIMIT),
+            suggestion: judgment::cut(&new.suggestion, TEXT_LIMIT),
+            default_action: new.default_action,
+            deadline: new.deadline,
             asked_at: now,
-            choices,
+            choices: new.choices,
             answer: None,
-            letter,
+            letter: new.letter,
             routing: None,
-            notice: None,
-            refers_to: None,
+            stopped: new.stopped,
+            outcomes: new.outcomes,
+            evidence: new.evidence,
         };
         self.with_task(factory, id, |task| task.questions.push(question));
         self.record(
@@ -719,22 +818,30 @@ impl Engine {
             "question.added",
             json!({"question": question_id}),
         );
+        if !new.sorted {
+            self.route_request(factory, id, &question_id);
+        }
         question_id
     }
 
-    fn notice(&mut self, factory: &str, id: &str, text: &str) {
-        self.add_question(
-            factory,
-            id,
-            QuestionOrigin::Engine,
-            QuestionKind::Notice,
-            text,
-            "",
-            None,
-            None,
-            vec!["ok".into()],
-            None,
-        );
+    /// The operator's language, read when a sentence is composed (D-37).
+    fn language(&mut self) -> Language {
+        self.ports.environment.language()
+    }
+
+    /// Appends a line to a Task's activity log (D-35).
+    fn log_task(&mut self, factory: &str, id: &str, event: ActivityEvent) {
+        let now = self.now();
+        self.with_task(factory, id, |task| task.log(now, event));
+    }
+
+    /// Appends a line to a Factory's activity log (D-32).
+    fn log_factory(&mut self, factory: &str, task: Option<&str>, event: ActivityEvent) {
+        let now = self.now();
+        if let Some(f) = self.factories.get_mut(factory) {
+            f.log(now, task, event);
+        }
+        self.save_factory(factory);
     }
 
     fn running_count(&self) -> u32 {
@@ -829,9 +936,17 @@ impl Engine {
             }
             Command::Inbox => {
                 let summary = self.summary();
-                Ok(
-                    json!({"count": summary.my_turn, "notices": summary.notices, "items": summary.inbox}),
-                )
+                Ok(json!({"count": summary.my_turn, "items": summary.inbox}))
+            }
+            Command::Answer {
+                task,
+                decision: Some(decision),
+                choice,
+                text,
+                ..
+            } => {
+                let (factory, id) = self.resolve(role, &task)?;
+                self.override_decision(role, &factory, &id, &decision, choice, text)
             }
             Command::Answer {
                 task,
@@ -839,6 +954,7 @@ impl Engine {
                 choice,
                 text,
                 change,
+                decision: None,
             } => {
                 let (factory, id) = self.resolve(role, &task)?;
                 self.answer(
@@ -904,25 +1020,27 @@ impl Engine {
                 )
             }
             Command::Done {
+                result,
+                changed,
+                verified,
+                unverified,
                 summary,
                 breaking,
-                letter,
+                raw,
             } => {
                 let (factory, id) = self.own_task(role)?;
-                self.done(&factory, &id, summary, breaking, letter)
+                let report = worker_report(result, changed, verified, unverified, summary, raw)?;
+                self.done(&factory, &id, report, breaking)
             }
             Command::Decide { text } => {
                 let (factory, id) = self.own_task(role)?;
                 let by = role.relayed_by();
                 let now = self.now();
                 self.with_task(&factory, &id, |task| {
-                    task.decisions.push(DecisionRecord {
-                        text: judgment::cut(&text, TEXT_LIMIT),
-                        by,
-                        at: now,
-                        kind: None,
-                        reason: None,
-                    })
+                    task.decisions.push(
+                        DecisionRecord::new(judgment::cut(&text, TEXT_LIMIT), by, now)
+                            .with_source(DecisionSource::Worker),
+                    )
                 });
                 Ok(json!({"message": "decision recorded"}))
             }
@@ -947,8 +1065,14 @@ impl Engine {
             Command::Resume { task } => {
                 let (factory, id) = self.resolve(role, &task)?;
                 self.allowed(&factory, &id, "resume")?;
-                // A person starting it again gives back the automatic restart (D-25).
-                self.with_task(&factory, &id, |task| task.auto_restarts = 0);
+                // A person starting it again gives back the automatic restart
+                // (D-25); a pane they closed is one of their items (D-45).
+                self.with_task(&factory, &id, |task| {
+                    task.auto_restarts = 0;
+                    if task.pause_reason == Some(PauseReason::PaneClosed) {
+                        task.person_items += 1;
+                    }
+                });
                 self.set_state(&factory, &id, TaskState::Waiting);
                 Ok(self.task_answer(&factory, &id, "resumes when a slot is free"))
             }
@@ -970,25 +1094,13 @@ impl Engine {
                 self.resume_factory(&factory);
                 Ok(json!({"message": "resumed: workers continue in their worktrees"}))
             }
-            Command::AckNotices { project } => {
-                // "모두 확인" is one action: without a project it clears
-                // every Factory's notices, a closed one's too, since the
-                // inbox shows them all (D-43).
-                let factories: Vec<String> = match project.as_deref() {
-                    Some(project) => vec![self.factory_id(Some(project))?],
-                    None => self.factories.keys().cloned().collect(),
-                };
-                if factories.is_empty() {
-                    return Err(refuse(
-                        "factory_not_found",
-                        "Create one with hide factory init <project>",
-                    ));
-                }
-                let cleared: usize = factories
-                    .iter()
-                    .map(|factory| self.ack_notices(factory, role))
-                    .sum();
-                Ok(json!({"message": "notices cleared", "cleared": cleared}))
+            Command::FollowUp {
+                task,
+                discovery,
+                choice,
+            } => self.follow_up(role, &task, &discovery, choice),
+            Command::Resolve { project, item } => {
+                self.resolve_item(role, project.as_deref(), &item)
             }
             Command::Worker { task, worker } => {
                 let (factory, id) = self.resolve(role, &task)?;
@@ -1003,6 +1115,9 @@ impl Engine {
                     task.auto_restarts = 0;
                     task.recovery = None;
                     task.diagnosis = None;
+                    // A stopped Task a person starts again is one item they
+                    // moved (D-45).
+                    task.person_items += 1;
                     for question in task.questions.iter_mut().filter(|q| q.open()) {
                         if matches!(question.kind, QuestionKind::Action) {
                             question.answer = Some(Answer {
@@ -1038,14 +1153,12 @@ impl Engine {
                 let by = role.relayed_by();
                 let now = self.now();
                 self.with_task(&factory, &id, |task| {
-                    task.decisions.push(DecisionRecord {
-                        text: format!("수정 요청: {}", judgment::cut(&comment, TEXT_LIMIT)),
-                        by,
-                        at: now,
-                        kind: None,
-                        reason: None,
-                    });
+                    task.decisions.push(
+                        DecisionRecord::new(judgment::cut(&comment, TEXT_LIMIT), by, now)
+                            .with_source(DecisionSource::RequestChanges),
+                    );
                     task.gates.clear();
+                    task.person_items += 1;
                 });
                 self.set_state(&factory, &id, TaskState::Running);
                 self.wake(&factory, &id, &format!(
@@ -1428,6 +1541,11 @@ impl Engine {
                 repo,
                 at: now,
             }),
+            activity: Vec::new(),
+            github_block: None,
+            holds: Vec::new(),
+            commands: Vec::new(),
+            next_command: 0,
         };
         if let Err(failure) = self.ports.source.prepare(&factory) {
             return Err(self.github_refusal(&failure, "init"));
@@ -1713,18 +1831,17 @@ impl Engine {
             .insert(id.clone(), task);
         self.save(&factory_id, &id);
         self.record(&factory_id, Some(&id), "task.added", json!({"via": "add"}));
+        // The producer's open decisions are its own questions (B6).
         for decision in input.open_decisions.iter().filter(|d| !d.trim().is_empty()) {
             self.add_question(
                 &factory_id,
                 &id,
-                QuestionOrigin::Engine,
-                QuestionKind::Intake,
-                &format!("열린 결정: {decision}"),
-                "결정을 적어 주세요",
-                None,
-                None,
-                Vec::new(),
-                None,
+                NewQuestion::new(
+                    QuestionOrigin::Engine,
+                    QuestionKind::Intake,
+                    decision.as_str(),
+                    "",
+                ),
             );
         }
         self.request_review(&factory_id, &id, now);
@@ -1810,19 +1927,21 @@ impl Engine {
                     });
                 }
             });
+            let language = self.language();
             self.add_question(
                 factory_id,
                 id,
-                QuestionOrigin::Engine,
-                QuestionKind::ScopeChange {
-                    change: Some(Box::new(CardChange { card, attachment })),
-                },
-                "실행 중에 카드나 PRD가 바뀌었습니다. 새 범위를 승인할까요?",
-                "approve",
-                Some("지금 범위로 진행".into()),
-                Some(now + factory.config.question_deadline_ms),
-                vec!["approve".into(), "reject".into()],
-                None,
+                NewQuestion::new(
+                    QuestionOrigin::Engine,
+                    QuestionKind::ScopeChange {
+                        change: Some(Box::new(CardChange { card, attachment })),
+                    },
+                    words::asked(language, words::Asked::CardChanged),
+                    "approve",
+                )
+                .default_action("reject")
+                .deadline(now + factory.config.question_deadline_ms)
+                .choices(&["approve", "reject"]),
             );
             return Ok(self.add_answer(factory_id, id));
         }
@@ -1873,14 +1992,12 @@ impl Engine {
             self.add_question(
                 factory_id,
                 id,
-                QuestionOrigin::Engine,
-                QuestionKind::Intake,
-                &format!("열린 결정: {decision}"),
-                "결정을 적어 주세요",
-                None,
-                None,
-                Vec::new(),
-                None,
+                NewQuestion::new(
+                    QuestionOrigin::Engine,
+                    QuestionKind::Intake,
+                    decision.as_str(),
+                    "",
+                ),
             );
         }
         self.record(factory_id, Some(id), "task.updated", json!({"via": "add"}));
@@ -1902,11 +2019,7 @@ impl Engine {
                 },
                 _,
             ) => "split",
-            (ReviewState::Done { .. }, _)
-                if task
-                    .open_questions()
-                    .any(|q| !matches!(q.kind, QuestionKind::Notice)) =>
-            {
+            (ReviewState::Done { .. }, _) if task.open_questions().next().is_some() => {
                 "needs_answers"
             }
             (ReviewState::Done { .. }, _) => "ready",
@@ -1914,7 +2027,6 @@ impl Engine {
         };
         let questions: Vec<Value> = task
             .open_questions()
-            .filter(|q| !matches!(q.kind, QuestionKind::Notice))
             .map(
                 |q| json!({"id": q.id, "text": q.text, "suggestion": q.suggestion, "kind": q.kind}),
             )
@@ -1988,6 +2100,12 @@ impl Engine {
             files: repo_files,
             guide,
         } = self.ports.source.repo_context(&project);
+        // What the repository and GitHub say is read before the review
+        // asks anything (D-02); GitHub is not asked while it refuses.
+        let facts = match self.factories.get(factory).cloned() {
+            Some(f) if f.github_block.is_none() => self.ports.source.intake_facts(&f, &task.card),
+            _ => Default::default(),
+        };
         let judgment_id = format!(
             "{factory}:{id}:intake:{}",
             sha256_hex(
@@ -2015,6 +2133,7 @@ impl Engine {
             task: Some(id.to_owned()),
             priority: Priority::Intake,
             input: JudgmentInput::IntakeReview {
+                facts,
                 card: task.card.clone(),
                 attachment,
                 other_tasks,
@@ -2049,6 +2168,7 @@ impl Engine {
                     instruction,
                     card: task.card.clone(),
                     diff: None,
+                    decisions: decision_lines(&task),
                 },
                 ai: None,
                 language: Language::English,
@@ -2076,28 +2196,33 @@ impl Engine {
             json!({"reason": reason}),
         );
         let already = self.task(factory, id).is_some_and(|task| {
-            task.open_questions()
-                .any(|q| q.text.starts_with("검토를 하지 못했습니다"))
+            task.open_questions().any(|q| {
+                matches!(q.kind, QuestionKind::Action)
+                    && q.choices.iter().any(|c| c == RETRY_REVIEW)
+            })
         });
         if !already {
             // Hide AI off, or no agent chosen to run it, refuses every
-            // judgment as `disabled`; fixing a provider would not help.
-            let text = if reason == "disabled" {
-                "검토를 하지 못했습니다. Settings › Hide AI에서 Hide AI를 켜고 Runs on을 고른 뒤 다시 검토하세요."
-            } else {
-                "검토를 하지 못했습니다. Settings › Hide AI에서 provider를 고친 뒤 다시 검토하세요."
-            };
+            // judgment as `disabled`; fixing a provider would not help. The
+            // card can also start as written (B5).
+            let language = self.language();
+            let text = words::asked(
+                language,
+                words::Asked::ReviewFailed {
+                    disabled: reason == "disabled",
+                },
+            );
             self.add_question(
                 factory,
                 id,
-                QuestionOrigin::Engine,
-                QuestionKind::Action,
-                text,
-                "retry-review",
-                None,
-                None,
-                vec!["retry-review".into(), "cancel".into()],
-                None,
+                NewQuestion::new(
+                    QuestionOrigin::Engine,
+                    QuestionKind::Action,
+                    text,
+                    RETRY_REVIEW,
+                )
+                .choices(&[RETRY_REVIEW, START_AS_IS, "cancel"])
+                .evidence(judgment::cut(reason, 200)),
             );
         }
         self.pending_to_producer(factory, id);
@@ -2147,9 +2272,34 @@ impl Engine {
             .worker
             .clone()
             .filter(|pick| choice > 1 && pick.index < choice);
+        let now = self.now();
         self.with_task(factory, id, |task| {
             if pick.is_some() {
                 task.ai_pick = pick;
+            }
+            // The review completes only what is empty: criteria a person or
+            // the issue's checkboxes gave stay as they are, and the goal is
+            // never rewritten (B2).
+            if task.card.criteria.is_empty() {
+                task.card.criteria = verdict.criteria.clone();
+            }
+            if task.card.out_of_scope.is_empty() {
+                task.card.out_of_scope = verdict.out_of_scope.clone();
+            }
+            // What it could not confirm it assumes, as Factory AI's
+            // decisions a person can change (B3).
+            for assumption in &verdict.assumptions {
+                task.decisions.push(
+                    DecisionRecord {
+                        reason: Some(judgment::cut(&assumption.reason, TEXT_LIMIT)),
+                        ..DecisionRecord::new(
+                            judgment::cut(&assumption.text, TEXT_LIMIT),
+                            OBSERVER.to_owned(),
+                            now,
+                        )
+                    }
+                    .with_source(DecisionSource::Assumption),
+                );
             }
             if task.card.summary.is_none() {
                 task.card.summary = Some(
@@ -2162,7 +2312,15 @@ impl Engine {
                 );
             }
         });
-        let now = self.now();
+        for assumption in &verdict.assumptions {
+            self.log_task(
+                factory,
+                id,
+                ActivityEvent::AiDecision {
+                    text: judgment::cut(&assumption.text, TEXT_LIMIT),
+                },
+            );
+        }
         // A worker's claim is not the fit: only a review that says the card
         // fits its enabled scope lets it start without a person (B30).
         if let Some(task) = self.task(factory, id).cloned()
@@ -2174,36 +2332,33 @@ impl Engine {
                 .unwrap_or_else(|| task.autonomy.clone().unwrap_or_default());
             self.with_task(factory, id, |task| task.autonomy = None);
             self.record(factory, Some(id), "review.outside_scope", json!({}));
+            let language = self.language();
+            let text = words::asked(
+                language,
+                words::Asked::OutsideScope {
+                    scope: &judgment::cut(&scope, 200),
+                },
+            );
             self.add_question(
                 factory,
                 id,
-                QuestionOrigin::Review,
-                QuestionKind::Intake,
-                &format!(
-                    "worker가 자율 처리 범위 '{}'로 제안한 Task인데 검토가 범위에 맞다고 보지 않았습니다. 사람이 승인하면 진행합니다.",
-                    judgment::cut(&scope, 200)
-                ),
-                "진행",
-                None,
-                None,
-                Vec::new(),
-                None,
+                NewQuestion::new(
+                    QuestionOrigin::Review,
+                    QuestionKind::Intake,
+                    text,
+                    "approve",
+                )
+                .choices(&["approve", "cancel"]),
             );
             result = ReviewResult::NeedsAnswers;
         }
-        // The review only adds (D-02, B8): questions, dependencies, flags.
+        // What is left is a permission or a product judgment, and Factory AI
+        // sees it first like every other question (B4).
         for question in &verdict.questions {
             self.add_question(
                 factory,
                 id,
-                QuestionOrigin::Review,
-                QuestionKind::Intake,
-                &question.text,
-                &question.suggestion,
-                question.default_action.clone(),
-                None,
-                Vec::new(),
-                None,
+                NewQuestion::proposed(QuestionOrigin::Review, QuestionKind::Intake, question),
             );
         }
         let candidates: Vec<String> = verdict
@@ -2240,19 +2395,25 @@ impl Engine {
             });
         }
         if !verdict.split.is_empty() {
+            let language = self.language();
+            let text = words::asked(
+                language,
+                words::Asked::Split {
+                    pieces: verdict.split.len(),
+                },
+            );
             self.add_question(
                 factory,
                 id,
-                QuestionOrigin::Review,
-                QuestionKind::Split {
-                    pieces: verdict.split.clone(),
-                },
-                &format!("이 Task를 {}개로 쪼갤까요?", verdict.split.len()),
-                "split",
-                None,
-                None,
-                vec!["split".into(), "proceed".into()],
-                None,
+                NewQuestion::new(
+                    QuestionOrigin::Review,
+                    QuestionKind::Split {
+                        pieces: verdict.split.clone(),
+                    },
+                    text,
+                    "split",
+                )
+                .choices(&["split", "proceed"]),
             );
         }
         self.with_task(factory, id, |task| {
@@ -2276,15 +2437,23 @@ impl Engine {
         };
         if task.state != TaskState::Drafting
             || !matches!(task.review, ReviewState::Done { .. })
-            || task
-                .open_questions()
-                .any(|q| !matches!(q.kind, QuestionKind::Notice))
+            || task.open_questions().next().is_some()
         {
             return;
         }
         let Some(factory) = self.factories.get(factory_id).cloned() else {
             return;
         };
+        // GitHub refuses the Factory now: the issue waits for its access.
+        if factory.source == SourceKind::Github
+            && factory.github_block.is_some()
+            && (task.issue.is_none() || !task.writes.contains("label"))
+        {
+            if !task.permission_wait {
+                self.with_task(factory_id, id, |t| t.permission_wait = true);
+            }
+            return;
+        }
         // Ready creates the issue (B13); a Task added from an issue gets the label.
         let key = "issue";
         if task.issue.is_none() {
@@ -2458,13 +2627,23 @@ impl Engine {
                     }
                 }
             }
-            task.decisions.push(DecisionRecord {
-                text: format!("{} -> {}", judgment::cut(&target.text, 200), answer.text),
-                by: relayed_by.clone(),
-                at: now,
-                kind: observer.as_ref().map(|(kind, _)| *kind),
-                reason: observer.as_ref().map(|(_, reason)| reason.clone()),
-            });
+            task.decisions.push(
+                DecisionRecord {
+                    kind: observer.as_ref().map(|(kind, _)| *kind),
+                    reason: observer.as_ref().map(|(_, reason)| reason.clone()),
+                    question: Some(target.id.clone()),
+                    ..DecisionRecord::new(
+                        format!("{} -> {}", judgment::cut(&target.text, 200), answer.text),
+                        relayed_by.clone(),
+                        now,
+                    )
+                }
+                .with_source(DecisionSource::Answer),
+            );
+            if observer.is_none() {
+                // An answer a person gave is one item they moved (D-45).
+                task.person_items += 1;
+            }
         });
         self.record(
             factory,
@@ -2474,7 +2653,9 @@ impl Engine {
         );
         let decision = chosen.as_deref().unwrap_or(text.as_str()).to_owned();
         match &target.kind {
-            QuestionKind::ConfirmCard if decision == "cancel" => self.cancel(factory, id),
+            QuestionKind::ConfirmCard | QuestionKind::Intake if decision == "cancel" => {
+                self.cancel(factory, id)
+            }
             QuestionKind::Intake | QuestionKind::ConfirmCard => self.maybe_ready(factory, id),
             QuestionKind::Split { pieces } => {
                 if decision == "split" || decision == target.suggestion {
@@ -2561,17 +2742,13 @@ impl Engine {
                     self.set_state(factory, id, TaskState::Waiting);
                 }
             }
-            QuestionKind::NewTaskCap => {
-                match decision.as_str() {
-                    "continue" => {
-                        self.with_task(factory, id, |task| task.new_task_cap_extended = true);
-                        self.set_state(factory, id, TaskState::Waiting);
-                    }
-                    _ => {
-                        self.notice(factory, id, "새 Task를 더 만들지 않고 멈춘 상태로 둡니다. 다시 시도하거나 취소하세요.");
-                    }
+            QuestionKind::NewTaskCap => match decision.as_str() {
+                "continue" => {
+                    self.with_task(factory, id, |task| task.new_task_cap_extended = true);
+                    self.set_state(factory, id, TaskState::Waiting);
                 }
-            }
+                _ => self.record(factory, Some(id), "new_task_cap.kept", json!({})),
+            },
             QuestionKind::ProposedTask { draft, discovery } => {
                 if decision == "approve" {
                     let new_id = self.create_child(factory, id, (**draft).clone(), None);
@@ -2587,9 +2764,19 @@ impl Engine {
                 }
             }
             QuestionKind::Action => match decision.as_str() {
-                "retry-review" => {
+                RETRY_REVIEW => {
                     self.with_task(factory, id, |task| task.review = ReviewState::Pending);
                     self.request_review(factory, id, now);
+                }
+                START_AS_IS => {
+                    // The card as written, from the issue body and its
+                    // checkboxes (B5).
+                    self.with_task(factory, id, |task| {
+                        task.review = ReviewState::Done {
+                            result: ReviewResult::Ready,
+                        }
+                    });
+                    self.maybe_ready(factory, id);
                 }
                 "retry" if task.state == TaskState::Stopped => {
                     self.with_task(factory, id, |task| {
@@ -2625,29 +2812,6 @@ impl Engine {
                 }
                 _ => {}
             },
-            QuestionKind::Proposal { command, .. } => {
-                // A person runs a proposed command themselves; the Factory
-                // runs only its typed recovery actions, once approved (B61,
-                // D-54).
-                self.record(
-                    factory,
-                    Some(id),
-                    "proposal.answered",
-                    json!({"decision": decision}),
-                );
-                if decision == "approve"
-                    && let Some(action) = RecoveryAction::ALL
-                        .into_iter()
-                        .find(|action| action.as_str() == command)
-                {
-                    self.run_recovery(factory, action);
-                }
-            }
-            QuestionKind::Notice => {
-                if task.state == TaskState::Done {
-                    self.with_task(factory, id, |task| task.seen = true);
-                }
-            }
         }
     }
 
@@ -2820,9 +2984,13 @@ impl Engine {
         let now = self.now();
         let deadline = now + hours * HOUR_MS;
         let blocking = default_action.is_none();
-        let question = self.add_question(
-            factory,
-            id,
+        self.with_task(factory, id, |task| task.last_report_at = Some(now));
+        if blocking {
+            // A question it cannot work past releases the slot and sleeps (B27).
+            self.put_to_sleep(factory, id);
+            self.set_state(factory, id, TaskState::Blocked);
+        }
+        let mut question = NewQuestion::new(
             QuestionOrigin::Worker,
             if blocking {
                 QuestionKind::Blocking
@@ -2831,19 +2999,13 @@ impl Engine {
             },
             text,
             suggestion,
-            default_action.clone(),
-            Some(deadline),
-            choices,
-            letter,
-        );
-        self.with_task(factory, id, |task| task.last_report_at = Some(now));
-        if blocking {
-            // A question it cannot work past releases the slot and sleeps (B27).
-            self.put_to_sleep(factory, id);
-            self.set_state(factory, id, TaskState::Blocked);
-        }
+        )
+        .deadline(deadline)
+        .letter(letter);
+        question.default_action = default_action.clone();
+        question.choices = choices;
         // The Observer sorts it; the mode decides who answers (D-14).
-        self.route_request(factory, id, &question);
+        let question = self.add_question(factory, id, question);
         if blocking {
             return Ok(
                 json!({"message": "blocked: the Task waits for the answer; your session is woken with it", "question": question}),
@@ -2901,6 +3063,9 @@ impl Engine {
                 text: judgment::cut(text, TEXT_LIMIT),
                 at: now,
                 task: None,
+                // An unrelated finding waits in the follow-up list for a
+                // person to pick what becomes of it (B17).
+                follow_up: (class == DiscoveryClass::Unrelated).then(|| FollowUp::open(now)),
             });
             task.last_report_at = Some(now);
         });
@@ -2914,37 +3079,51 @@ impl Engine {
             }
             DiscoveryClass::Decision => {
                 self.with_task(factory, id, |task| {
-                    task.decisions.push(DecisionRecord {
-                        text: judgment::cut(text, TEXT_LIMIT),
-                        by: format!("worker:{id}"),
-                        at: now,
-                        kind: None,
-                        reason: None,
-                    })
+                    task.decisions.push(
+                        DecisionRecord::new(
+                            judgment::cut(text, TEXT_LIMIT),
+                            format!("worker:{id}"),
+                            now,
+                        )
+                        .with_source(DecisionSource::Worker),
+                    )
                 });
                 Ok(json!({"message": "decision recorded", "discovery": discovery_id}))
             }
             DiscoveryClass::ScopeChange => {
+                let language = self.language();
+                let text = words::asked(language, words::Asked::ScopeChange { text });
                 let question = self.add_question(
                     factory,
                     id,
-                    QuestionOrigin::Worker,
-                    QuestionKind::ScopeChange { change: None },
-                    &format!("범위 변경: {text}"),
-                    "approve",
-                    Some("범위를 넓히지 않고 진행".into()),
-                    Some(now + deadline),
-                    vec!["approve".into(), "reject".into()],
-                    letter,
+                    NewQuestion::new(
+                        QuestionOrigin::Worker,
+                        QuestionKind::ScopeChange { change: None },
+                        text,
+                        "approve",
+                    )
+                    .default_action("reject")
+                    .deadline(now + deadline)
+                    .choices(&["approve", "reject"])
+                    .letter(letter),
                 );
                 Ok(
                     json!({"message": "continue within the current scope; a person decides the wider scope", "question": question}),
                 )
             }
             DiscoveryClass::Unrelated => {
-                let notice = words::unrelated_notice(self.ports.environment.language(), text);
-                self.notice(factory, id, &notice);
-                Ok(json!({"message": "sent to the person's inbox", "discovery": discovery_id}))
+                self.log_task(
+                    factory,
+                    id,
+                    ActivityEvent::FollowUp {
+                        discovery: discovery_id.clone(),
+                        state: FollowUpState::Open,
+                        issue: None,
+                    },
+                );
+                Ok(
+                    json!({"message": "kept as a follow-up candidate; continue with this Task", "discovery": discovery_id}),
+                )
             }
             DiscoveryClass::Prerequisite => {
                 // Depth 1: a Task a worker proposed cannot propose (B30).
@@ -2984,20 +3163,27 @@ impl Engine {
                         )
                     }
                     None => {
+                        let language = self.language();
+                        let text = words::asked(
+                            language,
+                            words::Asked::ProposedTask {
+                                title: &draft.title,
+                            },
+                        );
                         self.add_question(
                             factory,
                             id,
-                            QuestionOrigin::Worker,
-                            QuestionKind::ProposedTask {
-                                draft: Box::new(draft.clone()),
-                                discovery: Some(discovery_id.clone()),
-                            },
-                            &format!("새 Task 제안: {}", draft.title),
-                            "approve",
-                            None,
-                            None,
-                            vec!["approve".into(), "reject".into()],
-                            letter,
+                            NewQuestion::new(
+                                QuestionOrigin::Worker,
+                                QuestionKind::ProposedTask {
+                                    draft: Box::new(draft.clone()),
+                                    discovery: Some(discovery_id.clone()),
+                                },
+                                text,
+                                "approve",
+                            )
+                            .choices(&["approve", "reject"])
+                            .letter(letter),
                         );
                         (None, "proposed; a person approves before it is drafted")
                     }
@@ -3016,19 +3202,18 @@ impl Engine {
                     self.with_task(factory, id, |task| task.stop = Some(StopReason::NewTaskCap));
                     self.set_state(factory, id, TaskState::Stopped);
                     self.with_task(factory, id, |task| task.stop = Some(StopReason::NewTaskCap));
+                    let language = self.language();
+                    let text = words::asked(language, words::Asked::NewTaskCap { limit });
                     self.add_question(
                         factory,
                         id,
-                        QuestionOrigin::Engine,
-                        QuestionKind::NewTaskCap,
-                        &format!(
-                            "새 Task가 {limit}개 생겼습니다. 쪼갤까요 / 계속할까요 / 멈출까요"
-                        ),
-                        "split",
-                        None,
-                        None,
-                        vec!["split".into(), "continue".into(), "stop".into()],
-                        None,
+                        NewQuestion::new(
+                            QuestionOrigin::Engine,
+                            QuestionKind::NewTaskCap,
+                            text,
+                            "split",
+                        )
+                        .choices(&["split", "continue", "stop"]),
                     );
                 }
                 Ok(json!({"message": message, "task": created, "discovery": discovery_id}))
@@ -3036,14 +3221,9 @@ impl Engine {
         }
     }
 
-    fn done(
-        &mut self,
-        factory_id: &str,
-        id: &str,
-        summary_text: Option<String>,
-        breaking: bool,
-        letter: Option<String>,
-    ) -> Reply {
+    /// The worker's report in four parts (B34): kept as the Task's report
+    /// and a line of its activity, never as a decision (B30).
+    fn done(&mut self, factory_id: &str, id: &str, report: WorkerReport, breaking: bool) -> Reply {
         let task = self
             .task(factory_id, id)
             .cloned()
@@ -3064,20 +3244,10 @@ impl Engine {
         self.with_task(factory_id, id, |task| {
             task.last_report_at = Some(now);
             task.breaking |= breaking;
-            let full = task.questions.len() + task.decisions.len() + task.discoveries.len()
-                >= REPORT_LIMIT;
-            if let Some(text) = summary_text.as_ref().filter(|_| !full) {
-                task.decisions.push(DecisionRecord {
-                    text: format!("done: {}", judgment::cut(text, TEXT_LIMIT)),
-                    by: format!("worker:{id}"),
-                    at: now,
-                    kind: None,
-                    reason: None,
-                });
-            }
+            task.report = Some(report.clone());
             task.gates.clear();
+            task.log(now, ActivityEvent::Report { report });
         });
-        let _ = letter;
         self.put_to_sleep(factory_id, id);
         self.set_state(factory_id, id, TaskState::Verifying);
         if factory.source == SourceKind::Github {
@@ -3103,6 +3273,15 @@ impl Engine {
         if self.publish_retry.get(&key).is_some_and(|at| *at > now) {
             return;
         }
+        if self.github_blocked(factory_id) {
+            if self
+                .task(factory_id, id)
+                .is_some_and(|t| !t.permission_wait)
+            {
+                self.with_task(factory_id, id, |t| t.permission_wait = true);
+            }
+            return;
+        }
         let (Some(factory), Some(task)) = (
             self.factories.get(factory_id).cloned(),
             self.task(factory_id, id).cloned(),
@@ -3119,12 +3298,23 @@ impl Engine {
                     let own = task.pr.as_ref().is_some_and(|own| {
                         own.by_factory && pr.as_ref().is_some_and(|pr| pr.number == own.number)
                     });
+                    let before = task.pr.as_ref().map(|pr| pr.number);
                     task.pr = pr.map(|pr| PullRequest {
                         by_factory: pr.by_factory || own,
                         ..pr
                     });
                     task.writes.insert("pr".into());
                     task.writes.remove(PUBLISH_PENDING);
+                    task.permission_wait = false;
+                    if let Some(pr) = task.pr.clone().filter(|pr| Some(pr.number) != before) {
+                        task.log(
+                            now,
+                            ActivityEvent::PullRequest {
+                                number: pr.number,
+                                url: pr.url,
+                            },
+                        );
+                    }
                 });
                 self.publish_retry.remove(&key);
                 self.publish_refusals.remove(&key);
@@ -3226,7 +3416,7 @@ impl Engine {
             }
         };
         let mut count = 0;
-        let decisions = task.decisions.iter().map(|d| d.text.clone()).collect();
+        let decisions = decision_lines(&task);
         let attempt = task.attempts.len();
         let drift = Judgment {
             id: format!("{factory}:{id}:drift:{attempt}"),
@@ -3267,6 +3457,7 @@ impl Engine {
                     instruction: check.instruction.clone(),
                     card: task.card.clone(),
                     diff: Some(diff.clone()),
+                    decisions: decision_lines(&task),
                 },
                 ai: None,
                 language: Language::English,
@@ -3299,38 +3490,19 @@ impl Engine {
     }
 
     /// `holds_merge` is true for the drift and after-done checks; a
-    /// periodic check on a running Task only asks and flags (B67).
+    /// periodic check on a running Task only asks, flags or sends a fix by
+    /// letter (B67). Each answers pass, send back or questions, with a
+    /// verdict per criterion (D-28).
     fn apply_finding(&mut self, factory: &str, id: &str, value: &Value, holds_merge: bool) {
         let finding = match judgment::parse_finding(value) {
             Ok(finding) => finding,
             Err(reason) if holds_merge => return self.check_failed(factory, id, &reason),
             Err(_) => return,
         };
-        // A failing answer with nothing to ask or flag still holds the merge
-        // for a person.
-        if holds_merge && !finding.pass && finding.questions.is_empty() && finding.flags.is_empty()
-        {
-            return self.check_failed(factory, id, "failed with nothing to ask");
-        }
-        let now = self.now();
-        let deadline = self
-            .factories
-            .get(factory)
-            .map_or(24 * HOUR_MS, |f| f.config.question_deadline_ms);
-        for question in &finding.questions {
-            // The Task stays verifying; the worker is not woken (D-44).
-            self.add_question(
-                factory,
-                id,
-                QuestionOrigin::Check,
-                QuestionKind::Default,
-                &question.text,
-                &question.suggestion,
-                question.default_action.clone(),
-                Some(now + deadline),
-                Vec::new(),
-                None,
-            );
+        if !finding.criteria.is_empty() {
+            self.with_task(factory, id, |task| {
+                task.criteria_check = finding.criteria.clone();
+            });
         }
         self.with_task(factory, id, |task| {
             for flag in &finding.flags {
@@ -3340,6 +3512,76 @@ impl Engine {
                 task.flags.push(flag.clone());
             }
         });
+        if let judgment::FindingVerdict::SendBack { fix } = &finding.verdict {
+            return self.send_back(factory, id, fix, holds_merge);
+        }
+        let now = self.now();
+        let deadline = self
+            .factories
+            .get(factory)
+            .map_or(24 * HOUR_MS, |f| f.config.question_deadline_ms);
+        for question in &finding.questions {
+            // The Task stays verifying; the worker is not woken (D-44).
+            let mut new =
+                NewQuestion::proposed(QuestionOrigin::Check, QuestionKind::Default, question)
+                    .deadline(now + deadline);
+            if new.default_action.is_none() {
+                new.default_action = Some(question.suggestion.clone());
+            }
+            self.add_question(factory, id, new);
+        }
+    }
+
+    /// A check sent the work back (B8, B9): Factory AI's decision on the
+    /// record, the verification stopped, and the worker told what to fix.
+    /// It counts toward the verification failure limit.
+    fn send_back(&mut self, factory: &str, id: &str, fix: &str, holds_merge: bool) {
+        let Some(task) = self.task(factory, id).cloned() else {
+            return;
+        };
+        let fix = judgment::cut(fix, TEXT_LIMIT);
+        if !holds_merge {
+            // A periodic check on a running Task only writes to the worker.
+            if task.state == TaskState::Running {
+                self.wake(factory, id, &format!("Factory: {fix}"));
+            }
+            return;
+        }
+        // Only the verification it judged is sent back; a check answering
+        // after the Task moved on changes nothing.
+        if task.state != TaskState::Verifying {
+            self.record(factory, Some(id), "check.send_back_late", json!({}));
+            return;
+        }
+        let now = self.now();
+        let limit = self
+            .factories
+            .get(factory)
+            .map_or(3, |f| f.config.verify_failure_limit);
+        self.with_task(factory, id, |task| {
+            task.failures += 1;
+            task.decisions.push(
+                DecisionRecord::new(fix.clone(), OBSERVER.to_owned(), now)
+                    .with_source(DecisionSource::SendBack),
+            );
+            task.log(now, ActivityEvent::SentBack { text: fix.clone() });
+            task.writes.remove("premerge_passed");
+        });
+        self.cancel_verification(factory, id);
+        self.checks_running
+            .remove(&(factory.to_owned(), id.to_owned()));
+        let failures = self.task(factory, id).map_or(0, |t| t.failures);
+        if failures >= limit {
+            return self.verify_limit_reached(factory, id, failures, None);
+        }
+        self.set_state(factory, id, TaskState::Running);
+        self.wake(
+            factory,
+            id,
+            &format!(
+                "Factory: the check sent the work back ({failures}/{limit}).\n{fix}\nFix it inside the card, then report again with hide factory done."
+            ),
+        );
     }
 
     // ------------------------------------------------------------ verification
@@ -3456,6 +3698,37 @@ impl Engine {
                 "verify.finished",
                 json!({"stage": format!("{stage:?}"), "outcome": outcome}),
             );
+            let (result, check, link) = match &outcome {
+                AttemptOutcome::Passed => (Some(VerificationOutcome::Passed), None, None),
+                AttemptOutcome::Failed { check, link } => (
+                    Some(VerificationOutcome::Failed),
+                    Some(check.clone()),
+                    Some(link.clone()),
+                ),
+                AttemptOutcome::Environment { check, .. } => (
+                    Some(VerificationOutcome::Environment),
+                    Some(check.clone()),
+                    None,
+                ),
+                AttemptOutcome::Cancelled => (None, None, None),
+            };
+            if let Some(result) = result {
+                let number = self
+                    .task(&factory_id, &id)
+                    .and_then(|t| t.attempts.last())
+                    .map_or(0, |a| a.number);
+                self.log_task(
+                    &factory_id,
+                    &id,
+                    ActivityEvent::Verification {
+                        number,
+                        ci: matches!(factory.config.verification, Verification::Ci { .. }),
+                        outcome: result,
+                        check: check.map(|check| judgment::cut(&check, 300)),
+                        link: link.filter(|link| !link.is_empty()),
+                    },
+                );
+            }
             match outcome {
                 AttemptOutcome::Passed => {
                     self.with_task(&factory_id, &id, |task| task.environment_failures = 0);
@@ -3498,32 +3771,50 @@ impl Engine {
             return;
         }
         if failures >= limit {
-            let last = self
-                .task(factory, id)
-                .and_then(|t| {
-                    t.decisions
-                        .iter()
-                        .rev()
-                        .find(|d| d.text.starts_with("done:"))
-                        .map(|d| d.text.clone())
-                })
-                .unwrap_or_default();
-            self.with_task(factory, id, |task| {
-                task.stop = Some(StopReason::VerifyFailed)
-            });
-            self.set_state(factory, id, TaskState::Stopped);
-            self.with_task(factory, id, |task| {
-                task.stop = Some(StopReason::VerifyFailed)
-            });
-            self.add_question(factory, id, QuestionOrigin::Engine, QuestionKind::Action,
-                &format!("검증이 {failures}번 실패했습니다: {check} ({link}). worker의 마지막 설명: {last}"),
-                "retry", None, None, vec!["retry".into(), "cancel".into()], None);
-            return;
+            let evidence = format!("{check} {link}");
+            return self.verify_limit_reached(factory, id, failures, Some(evidence));
         }
         self.set_state(factory, id, TaskState::Running);
         self.wake(factory, id, &format!(
             "Factory: 검증 실패 ({failures}/{limit}): {check}\n로그: {link}\n범위 안에서 고쳐서 다시 hide factory done 하세요. 범위 밖이 필요하면 hide factory propose 또는 ask 로 보고하세요."
         ));
+    }
+
+    /// Verification failed, or was sent back, as often as the limit allows:
+    /// the Task stops and a person picks retry or cancel (B9).
+    fn verify_limit_reached(
+        &mut self,
+        factory: &str,
+        id: &str,
+        failures: u32,
+        evidence: Option<String>,
+    ) {
+        self.with_task(factory, id, |task| {
+            task.stop = Some(StopReason::VerifyFailed)
+        });
+        self.set_state(factory, id, TaskState::Stopped);
+        self.with_task(factory, id, |task| {
+            task.stop = Some(StopReason::VerifyFailed)
+        });
+        let language = self.language();
+        let mut question = NewQuestion::new(
+            QuestionOrigin::Engine,
+            QuestionKind::Action,
+            words::asked(language, words::Asked::VerifyFailed { failures }),
+            "retry",
+        )
+        .choices(&["retry", "cancel"]);
+        if let Some(result) = self
+            .task(factory, id)
+            .and_then(|t| t.report.as_ref())
+            .map(|report| report.result.clone())
+        {
+            question = question.evidence(result);
+        }
+        if let Some(evidence) = evidence {
+            question = question.evidence(evidence);
+        }
+        self.add_question(factory, id, question);
     }
 
     // ------------------------------------------------------------------- merge
@@ -3891,7 +4182,7 @@ impl Engine {
         }
     }
 
-    fn manual_merge(&mut self, _role: &Role, factory_id: &str, id: &str) -> Reply {
+    fn manual_merge(&mut self, role: &Role, factory_id: &str, id: &str) -> Reply {
         let factory = self
             .factories
             .get(factory_id)
@@ -3934,9 +4225,15 @@ impl Engine {
             }
         }
         match self.merge_now(factory_id, id) {
-            Ok(sha) => Ok(
-                json!({"message": "merged", "sha": sha, "task": self.task_answer(factory_id, id, "")["task"]}),
-            ),
+            Ok(sha) => {
+                // A merge a person approved is one item they moved (D-45).
+                if matches!(role, Role::Operator { .. }) {
+                    self.with_task(factory_id, id, |task| task.person_items += 1);
+                }
+                Ok(
+                    json!({"message": "merged", "sha": sha, "task": self.task_answer(factory_id, id, "")["task"]}),
+                )
+            }
             Err(failure) => Err(refuse(
                 "merge_failed",
                 format!("{}: {}", failure.stage, judgment::cut(&failure.detail, 300)),
@@ -4045,14 +4342,19 @@ impl Engine {
                 .and_then(|t| t.worker.as_ref())
                 .map(|w| w.worktree.clone())
         {
-            self.once_notice(
-                factory_id,
-                id,
-                &format!(
-                    "worktree를 지우지 못했습니다: {worktree} ({}). 남은 변경을 확인한 뒤 직접 지우세요.",
-                    judgment::cut(&failure.detail, 200)
-                ),
-            );
+            let detail = judgment::cut(&failure.detail, 200);
+            let logged = self.task(factory_id, id).is_some_and(|t| {
+                t.activity.iter().any(|entry| {
+                    matches!(&entry.event, ActivityEvent::CleanupKept { worktree: w, .. } if *w == worktree)
+                })
+            });
+            if !logged {
+                self.log_task(
+                    factory_id,
+                    id,
+                    ActivityEvent::CleanupKept { worktree, detail },
+                );
+            }
         }
     }
 
@@ -4089,17 +4391,26 @@ impl Engine {
             // The draft waits for a person's confirmation like a labelled
             // issue's card (D-48).
             let fix = self.new_task(factory_id, card, None, None);
+            let language = self.language();
             self.add_question(
                 factory_id,
                 &fix,
-                QuestionOrigin::Engine,
-                QuestionKind::ConfirmCard,
-                &format!("main 깨짐: Factory 밖 push({sha})로 검증이 실패해 자동 머지를 멈췄습니다. 수정 Task 초안을 확인해 주세요. {link}"),
-                "confirm",
-                None,
-                None,
-                vec!["confirm".into(), "cancel".into()],
-                None,
+                NewQuestion::new(
+                    QuestionOrigin::Engine,
+                    QuestionKind::ConfirmCard,
+                    words::asked(language, words::Asked::MainFix),
+                    "confirm",
+                )
+                .choices(&["confirm", "cancel"])
+                .evidence(link),
+            );
+            self.log_factory(
+                factory_id,
+                Some(&fix),
+                ActivityEvent::MainBroken {
+                    by_factory: false,
+                    link: Some(link.to_owned()).filter(|link| !link.is_empty()),
+                },
             );
             let now = self.now();
             self.request_review(factory_id, &fix, now);
@@ -4112,9 +4423,16 @@ impl Engine {
             .last()
             .map(|m| m.task.clone())
             .unwrap_or_default();
-        if !anchor.is_empty() {
-            self.notice(factory_id, &anchor, &format!("main 깨짐: Factory 머지 뒤 main 검증이 실패했습니다. 자동 머지를 멈추고 원인 머지를 찾습니다. {link}"));
-        }
+        self.log_factory(
+            factory_id,
+            Some(&anchor)
+                .filter(|anchor| !anchor.is_empty())
+                .map(String::as_str),
+            ActivityEvent::MainBroken {
+                by_factory: true,
+                link: Some(link.to_owned()).filter(|link| !link.is_empty()),
+            },
+        );
         self.set_recovery(factory_id, Some(RevertPhase::Bisecting { index: 0 }));
         self.watch_due(factory_id, true);
         self.drive_revert(factory_id);
@@ -4175,11 +4493,7 @@ impl Engine {
                         Ok(MainCheck::None) | Err(_) => break,
                     }
                 }
-                self.revert_needs_person(
-                    factory_id,
-                    "원인 머지를 하나로 정하지 못했습니다",
-                    &merges,
-                );
+                self.revert_needs_person(factory_id, words::RecoveryStop::NoCause, &merges);
             }
             RevertPhase::Reverting { revert, task } => {
                 match self.ports.merge.revert_check(&factory, &revert) {
@@ -4215,7 +4529,7 @@ impl Engine {
                                 let merges = factory.main.merges_since_green.clone();
                                 self.revert_needs_person(
                                     factory_id,
-                                    "revert를 머지하지 못했습니다",
+                                    words::RecoveryStop::RevertNotMerged,
                                     &merges,
                                 );
                             }
@@ -4225,7 +4539,7 @@ impl Engine {
                         let merges = factory.main.merges_since_green.clone();
                         self.revert_needs_person(
                             factory_id,
-                            "revert의 검증이 실패했습니다",
+                            words::RecoveryStop::RevertRed,
                             &merges,
                         );
                     }
@@ -4243,7 +4557,7 @@ impl Engine {
             .and_then(|t| t.merge_sha.clone())
         else {
             let merges = factory.main.merges_since_green.clone();
-            return self.revert_needs_person(factory_id, "되돌릴 머지를 찾지 못했습니다", &merges);
+            return self.revert_needs_person(factory_id, words::RecoveryStop::NoMerge, &merges);
         };
         let Some(target) = self.task(factory_id, task).cloned() else {
             return;
@@ -4271,7 +4585,7 @@ impl Engine {
             Err(failure) => {
                 self.external_failure(factory_id, Some(task), &failure);
                 let merges = factory.main.merges_since_green.clone();
-                self.revert_needs_person(factory_id, "revert를 만들지 못했습니다", &merges);
+                self.revert_needs_person(factory_id, words::RecoveryStop::RevertNotMade, &merges);
             }
         }
     }
@@ -4296,7 +4610,12 @@ impl Engine {
         }
     }
 
-    fn revert_needs_person(&mut self, factory_id: &str, why: &str, merges: &[LandedMerge]) {
+    fn revert_needs_person(
+        &mut self,
+        factory_id: &str,
+        why: words::RecoveryStop,
+        merges: &[LandedMerge],
+    ) {
         if let Some(f) = self.factories.get_mut(factory_id) {
             f.main.needs_person = true;
         }
@@ -4307,25 +4626,23 @@ impl Engine {
         let mut choices = vec!["retry-revert".to_owned()];
         choices.extend(merges.iter().map(|m| format!("revert {}", m.task)));
         choices.push("resume-auto".into());
-        let list: Vec<String> = merges
-            .iter()
-            .map(|m| format!("{} {}", m.task, &m.sha[..m.sha.len().min(8)]))
-            .collect();
-        self.add_question(
-            factory_id,
-            &anchor,
+        let language = self.language();
+        let mut question = NewQuestion::new(
             QuestionOrigin::Engine,
             QuestionKind::Action,
-            &format!(
-                "main 깨짐 복구를 멈췄습니다: {why}. 후보 머지: {}",
-                list.join(", ")
-            ),
+            words::asked(language, words::Asked::MainRecovery { why }),
             "retry-revert",
-            None,
-            None,
-            choices,
-            None,
         );
+        question.choices = choices;
+        // The candidate merges are its evidence, not its sentence (B22).
+        for merge in merges {
+            question = question.evidence(format!(
+                "{} {}",
+                merge.task,
+                &merge.sha[..merge.sha.len().min(8)]
+            ));
+        }
+        self.add_question(factory_id, &anchor, question);
     }
 
     // ----------------------------------------------------------------- control
@@ -5074,7 +5391,8 @@ impl Engine {
             self.watch_due(factory, false);
         }
         self.start_tasks();
-        self.environment_recovery();
+        self.recovery_tick();
+        self.access_tick();
         self.retention();
     }
 
@@ -5178,18 +5496,15 @@ impl Engine {
                         JudgmentOutcome::Answered { value } if drafting => {
                             // An intake check only adds questions to the draft.
                             if let Ok(finding) = judgment::parse_finding(value) {
-                                for question in finding.questions {
+                                for question in &finding.questions {
                                     self.add_question(
                                         &factory,
                                         &task,
-                                        QuestionOrigin::Check,
-                                        QuestionKind::Intake,
-                                        &question.text,
-                                        &question.suggestion,
-                                        question.default_action,
-                                        None,
-                                        Vec::new(),
-                                        None,
+                                        NewQuestion::proposed(
+                                            QuestionOrigin::Check,
+                                            QuestionKind::Intake,
+                                            question,
+                                        ),
                                     );
                                 }
                             }
@@ -5218,8 +5533,8 @@ impl Engine {
                 (JudgmentOutcome::Answered { value }, Purpose::Watch { read_at }, _) => {
                     self.apply_watch(&factory, value, read_at)
                 }
-                (JudgmentOutcome::Answered { value }, Purpose::Env, _) => {
-                    self.apply_diagnosis(&factory, value)
+                (outcome, Purpose::Recovery { key }, _) => {
+                    self.apply_recovery(&factory, &key, outcome)
                 }
                 (outcome, Purpose::Classify { question }, Some(task)) => {
                     self.apply_classification(&factory, &task, &question, outcome)
@@ -5417,7 +5732,6 @@ impl Engine {
             }
         }
         if let Some(reason) = self.hold_reason {
-            self.env_problem_since.get_or_insert(now);
             for task in &candidates {
                 if task.held_code != Some(reason) {
                     self.with_task(&task.factory, &task.id, |t| {
@@ -5605,6 +5919,10 @@ impl Engine {
                         t.last_report_at = None;
                         t.recovery = None;
                         t.woken_at = Some(now);
+                        t.start_waiting = false;
+                        if restart {
+                            t.log(now, ActivityEvent::Started { resumed: true });
+                        }
                     });
                     if restart {
                         self.record(
@@ -5660,6 +5978,11 @@ impl Engine {
                         t.launched = Some(launched);
                         t.recovery = None;
                         t.woken_at = Some(now);
+                        t.start_waiting = false;
+                        // The first worker start is where the label-to-start
+                        // time ends (D-45).
+                        t.first_started_at.get_or_insert(now);
+                        t.log(now, ActivityEvent::Started { resumed: false });
                     });
                     self.record(
                         factory_id,
@@ -5718,16 +6041,12 @@ impl Engine {
         };
         let again = failure.again_in_ms.unwrap_or(START_RETRY_MS);
         self.starting.insert(key, (first, now + again));
-        if now.saturating_sub(first) >= START_NOTICE_MS {
-            let name = self
-                .task(factory, id)
-                .map(|t| worker_name(&self.factories[factory], t))
-                .unwrap_or_default();
-            self.once_notice(
-                factory,
-                id,
-                &format!("worker {name}가 시작되지 않았습니다. 그 pane에서 신뢰·로그인 같은 확인 화면이 기다리는지 보세요."),
-            );
+        if now.saturating_sub(first) >= START_NOTICE_MS
+            && self.task(factory, id).is_some_and(|t| !t.start_waiting)
+        {
+            // A person's to-do until the worker shows a session or they
+            // say they looked (B20).
+            self.with_task(factory, id, |t| t.start_waiting = true);
         }
     }
 
@@ -5739,6 +6058,9 @@ impl Engine {
             .factories
             .values()
             .filter(|f| !f.closed)
+            // A blocked sign-in or permission is asked nothing until it is
+            // back (D-46).
+            .filter(|f| f.github_block.is_none())
             .filter(|f| {
                 f.outside_read_at
                     .is_none_or(|at| now.saturating_sub(at) >= f.config.outside_read_ms)
@@ -5811,6 +6133,14 @@ impl Engine {
                             "outside.merged",
                             json!({"pr": pr}),
                         );
+                        self.log_task(
+                            factory_id,
+                            &task.id,
+                            ActivityEvent::Outside {
+                                what: OutsideChange::PrMerged,
+                                link: Some(url.clone()),
+                            },
+                        );
                         self.cancel_verification(factory_id, &task.id);
                         self.follow_outside(factory_id, &task);
                         self.set_state(factory_id, &task.id, TaskState::Done);
@@ -5825,7 +6155,14 @@ impl Engine {
                         self.cancel_verification(factory_id, &task.id);
                         self.follow_outside(factory_id, &task);
                         self.set_state(factory_id, &task.id, TaskState::Outside);
-                        self.notice(factory_id, &task.id, &format!("밖의 PR이 이 Task의 issue를 닫습니다: {url}. worker를 멈췄고 worktree는 7일 남습니다. 되살리려면 hide factory revive {}", task.display_id()));
+                        self.log_task(
+                            factory_id,
+                            &task.id,
+                            ActivityEvent::Outside {
+                                what: OutsideChange::ClosingPr,
+                                link: Some(url),
+                            },
+                        );
                     }
                     _ => {
                         self.follow_outside(factory_id, &task);
@@ -5851,16 +6188,26 @@ impl Engine {
                     return;
                 }
                 self.cancel(factory_id, &task.id);
-                self.notice(factory_id, &task.id, "issue가 PR 없이 닫혔거나 factory 라벨이 빠져 Task를 취소했습니다. 7일 동안 되살릴 수 있습니다.");
+                self.log_task(
+                    factory_id,
+                    &task.id,
+                    ActivityEvent::Outside {
+                        what: OutsideChange::IssueClosed,
+                        link: None,
+                    },
+                );
             }
             OutsideEvent::IssueReopened { issue } => {
                 if let Some(task) = self.task_for_issue(factory_id, &issue)
                     && task.state == TaskState::Done
                 {
-                    self.notice(
+                    self.log_task(
                         factory_id,
                         &task.id,
-                        "완료한 Task의 issue가 다시 열렸습니다. 자동으로 다시 넣지 않았습니다.",
+                        ActivityEvent::Outside {
+                            what: OutsideChange::IssueReopened,
+                            link: None,
+                        },
                     );
                 }
             }
@@ -5898,17 +6245,19 @@ impl Engine {
                             .as_ref()
                             .map_or(24 * HOUR_MS, |f| f.config.question_deadline_ms);
                         let now = self.now();
+                        let language = self.language();
                         self.add_question(
                             factory_id,
                             &task.id,
-                            QuestionOrigin::Engine,
-                            QuestionKind::ScopeChange { change: None },
-                            "사람이 issue 본문을 고쳤습니다. 새 범위를 승인할까요?",
-                            "approve",
-                            Some("지금 범위로 진행".into()),
-                            Some(now + deadline),
-                            vec!["approve".into(), "reject".into()],
-                            None,
+                            NewQuestion::new(
+                                QuestionOrigin::Engine,
+                                QuestionKind::ScopeChange { change: None },
+                                words::asked(language, words::Asked::IssueEdited),
+                                "approve",
+                            )
+                            .default_action("reject")
+                            .deadline(now + deadline)
+                            .choices(&["approve", "reject"]),
                         );
                     }
                     _ => {}
@@ -5920,40 +6269,40 @@ impl Engine {
                 {
                     return;
                 }
-                // The label path: the review drafts the card from the body and
-                // a person confirms it (B15, D-48); the body is not touched.
-                let card = Card {
-                    title: judgment::cut(&title, TITLE_LIMIT),
-                    goal: judgment::cut(&body, TEXT_LIMIT),
-                    criteria: extract_criteria(&body),
-                    ..Card::default()
-                };
-                let id = self.new_task(factory_id, card, None, None);
-                self.with_task(factory_id, &id, |t| {
-                    t.issue = Some(issue.clone());
-                    t.label_path = true;
-                    t.writes.insert("label".into());
-                    t.source_body_hash = Some(crate::store::body_hash(&body));
-                });
-                self.add_question(
-                    factory_id,
-                    &id,
-                    QuestionOrigin::Engine,
-                    QuestionKind::ConfirmCard,
-                    "라벨로 들어온 Task입니다. 카드 초안을 확인해 주세요.",
-                    "confirm",
-                    None,
-                    None,
-                    vec!["confirm".into(), "cancel".into()],
-                    None,
-                );
-                let now = self.now();
-                self.request_review(factory_id, &id, now);
+                self.labeled_task(factory_id, issue, &title, &body);
             }
             OutsideEvent::OutsidePush { sha } => {
                 self.record(factory_id, None, "outside.push", json!({"sha": sha}));
             }
         }
+    }
+
+    /// The label means start (B1): the review completes the card from the
+    /// issue and the Task waits for a slot when nothing is left open; the
+    /// body is not touched.
+    fn labeled_task(
+        &mut self,
+        factory_id: &str,
+        issue: IssueRef,
+        title: &str,
+        body: &str,
+    ) -> String {
+        let card = Card {
+            title: judgment::cut(title, TITLE_LIMIT),
+            goal: judgment::cut(body, TEXT_LIMIT),
+            criteria: extract_criteria(body),
+            ..Card::default()
+        };
+        let id = self.new_task(factory_id, card, None, None);
+        self.with_task(factory_id, &id, |t| {
+            t.issue = Some(issue);
+            t.label_path = true;
+            t.writes.insert("label".into());
+            t.source_body_hash = Some(crate::store::body_hash(body));
+        });
+        let now = self.now();
+        self.request_review(factory_id, &id, now);
+        id
     }
 
     /// Reads main's head and its verification for pushes the Factory did not
@@ -6092,20 +6441,11 @@ impl Engine {
             });
             self.set_state(factory, id, TaskState::Stopped);
             self.with_task(factory, id, |task| {
-                task.stop = Some(StopReason::EnvironmentRepeated)
+                task.stop = Some(StopReason::EnvironmentRepeated);
+                task.stop_detail = Some(judgment::cut(stage, 300));
             });
-            self.add_question(
-                factory,
-                id,
-                QuestionOrigin::Engine,
-                QuestionKind::Action,
-                &format!("같은 환경 실패가 이 Task에서만 3번 반복되었습니다 ({stage})."),
-                "retry",
-                None,
-                None,
-                vec!["retry".into(), "cancel".into()],
-                None,
-            );
+            // The recovery schedule restarts it; a person sees it only once
+            // the schedule ran out (D-44).
             return;
         }
         self.external_failure(factory, Some(id), failure);
@@ -6175,7 +6515,7 @@ impl Engine {
             !(note.kind == FailureKind::Task && note.factory == factory && note.stage == stage)
         });
         self.halt_until = Some(now + CASCADE_WINDOW_MS);
-        self.env_problem_since.get_or_insert(now);
+        self.halt_factory = Some(factory.to_owned());
         self.record(
             factory,
             None,
@@ -6199,10 +6539,6 @@ impl Engine {
         );
         let now = self.now();
         let Some(signal) = failure.signal else { return };
-        self.env_problem_since.get_or_insert(now);
-        let anchor = task
-            .map(str::to_owned)
-            .or_else(|| self.tasks_of(factory).last().map(|t| t.id.clone()));
         match signal {
             EnvSignal::GithubRateLimit | EnvSignal::GithubServer | EnvSignal::Network => {
                 let (attempts, _) = self.github_backoff.get(factory).copied().unwrap_or((0, 0));
@@ -6210,35 +6546,13 @@ impl Engine {
                 self.github_backoff
                     .insert(factory.to_owned(), (attempts + 1, now + wait));
             }
-            EnvSignal::GithubAuth => {
-                if let Some(anchor) = anchor {
-                    self.once_notice(
-                        factory,
-                        &anchor,
-                        "GitHub 로그인이 풀렸습니다. gh auth login 으로 다시 로그인하세요.",
-                    );
-                }
-            }
-            EnvSignal::GithubForbidden => {
-                if let Some(anchor) = anchor {
-                    let scope = failure
-                        .missing_scope
-                        .clone()
-                        .unwrap_or_else(|| "repo".into());
-                    self.once_notice(
-                        factory,
-                        &anchor,
-                        &format!(
-                            "GitHub 권한이 모자라 {}을 하지 않았습니다. gh auth refresh -s {scope}",
-                            failure.stage
-                        ),
-                    );
-                }
+            EnvSignal::GithubAuth | EnvSignal::GithubForbidden => {
+                self.github_blocked_by(factory, task, failure, signal == EnvSignal::GithubForbidden)
             }
             EnvSignal::DiskFull => {
                 self.hold_reason = Some(EnvHold::DiskFull);
                 self.hold_checked_at = Some(now);
-                self.remove_finished_worktrees(None);
+                self.disk_full();
             }
             EnvSignal::OutOfMemory => {
                 if let Some(task) = task
@@ -6279,19 +6593,10 @@ impl Engine {
         }
     }
 
-    fn once_notice(&mut self, factory: &str, id: &str, text: &str) {
-        let exists = self
-            .task(factory, id)
-            .is_some_and(|t| t.open_questions().any(|q| q.text == text));
-        if !exists {
-            self.notice(factory, id, text);
-        }
-    }
-
     /// D-54 ①: only worktrees of finished Tasks and of cancelled Tasks past
     /// their keep period (B62), of one Factory or, below the disk floor, of
     /// every Factory.
-    fn remove_finished_worktrees(&mut self, only: Option<&str>) {
+    fn remove_finished_worktrees(&mut self, only: Option<&str>) -> Vec<String> {
         let now = self.now();
         let targets: Vec<(String, String, WorkerRef)> = self
             .all_tasks()
@@ -6313,6 +6618,7 @@ impl Engine {
                     .map(|w| (t.factory.clone(), t.id.clone(), w))
             })
             .collect();
+        let mut removed = Vec::new();
         for (factory, id, worker) in targets {
             let removal = match self.task(&factory, &id).is_some_and(kept_for_revive) {
                 true => Removal::Discarded,
@@ -6322,201 +6628,14 @@ impl Engine {
                 Ok(()) => {
                     self.with_task(&factory, &id, |t| t.purged = true);
                     self.record(&factory, Some(&id), "cleanup.worktree", json!({}));
+                    if let Some(task) = self.task(&factory, &id) {
+                        removed.push(task.display_id());
+                    }
                 }
                 Err(failure) => self.cleanup_failed(&factory, &id, &failure),
             }
         }
-    }
-
-    fn environment_recovery(&mut self) {
-        let now = self.now();
-        let Some(since) = self.env_problem_since else {
-            return;
-        };
-        let still = self.hold_reason.is_some() || self.halt_until.is_some_and(|u| u > now);
-        if !still {
-            self.env_problem_since = None;
-            self.env_diagnosed = false;
-            return;
-        }
-        if self.env_diagnosed || now.saturating_sub(since) < CASCADE_WINDOW_MS {
-            return;
-        }
-        // Not cleared in 30 minutes: a judgment diagnoses (B61).
-        let Some(factory) = self.factories.values().find(|f| !f.closed).cloned() else {
-            return;
-        };
-        self.env_diagnosed = true;
-        let facts = json!({
-            "hold": self.hold_reason.map(EnvHold::label),
-            "halted": self.halt_until.is_some_and(|u| u > now),
-            "recent_failures": self.env_failures.iter().map(|note| json!({"task": note.task, "stage": note.stage, "kind": note.kind.as_str()})).collect::<Vec<_>>(),
-            "disk_free": self.ports.environment.disk_free(&factory.project),
-        });
-        let judgment = Judgment {
-            id: format!("{}:env:{now}", factory.id),
-            factory: factory.id.clone(),
-            task: None,
-            priority: Priority::Factory,
-            input: JudgmentInput::EnvDiagnosis {
-                facts,
-                actions: RecoveryAction::ALL.to_vec(),
-            },
-            ai: None,
-            language: Language::English,
-        };
-        if self.submit_judgment(judgment.clone()).is_ok() {
-            self.judgments
-                .insert(judgment.id, (factory.id.clone(), None, Purpose::Env));
-        }
-    }
-
-    /// One action of the closed list (D-54), on this Factory's Tasks only.
-    fn run_recovery(&mut self, factory: &str, action: RecoveryAction) {
-        self.record(
-            factory,
-            None,
-            "recovery.run",
-            json!({"action": action.as_str()}),
-        );
-        match action {
-            RecoveryAction::RemoveFinishedWorktrees => {
-                self.remove_finished_worktrees(Some(factory));
-            }
-            // The start hold is the machine's (disk, memory): reading it again
-            // is not one Factory's to keep.
-            RecoveryAction::RetryReadsAndReconnect => {
-                self.github_backoff.remove(factory);
-                self.hold_reason = None;
-            }
-            // A Task the environment stopped starts its worker again in the
-            // same worktree and session (B54).
-            RecoveryAction::RestartWorker => {
-                let stopped: Vec<String> = self
-                    .tasks_of(factory)
-                    .filter(|t| t.state == TaskState::Stopped)
-                    .filter(|t| {
-                        matches!(
-                            t.stop,
-                            Some(
-                                StopReason::WorkerStart
-                                    | StopReason::EnvironmentRepeated
-                                    | StopReason::NoReport
-                                    | StopReason::Stalled
-                            )
-                        )
-                    })
-                    .map(|t| t.id.clone())
-                    .collect();
-                for id in stopped {
-                    self.with_task(factory, &id, |task| task.environment_failures = 0);
-                    self.record(factory, Some(&id), "recovery.restart_worker", json!({}));
-                    self.set_state(factory, &id, TaskState::Waiting);
-                }
-            }
-            // A running worker waiting on input is asked to sleep and woken
-            // in the same session with a note to carry on. Herdr does not put
-            // an agent waiting for a person to sleep, so for such an agent the
-            // note waits for its next prompt.
-            RecoveryAction::SleepWakeWorker => {
-                let stuck: Vec<(String, WorkerRef)> = self
-                    .tasks_of(factory)
-                    .filter(|t| t.state == TaskState::Running)
-                    .filter_map(|t| t.worker.clone().map(|w| (t.id.clone(), w)))
-                    .collect();
-                for (id, worker) in stuck {
-                    if self.ports.workers.status(&worker) != WorkerStatus::Blocked {
-                        continue;
-                    }
-                    self.record(factory, Some(&id), "recovery.sleep_wake_worker", json!({}));
-                    self.put_to_sleep(factory, &id);
-                    self.wake(
-                        factory,
-                        &id,
-                        "Factory: 환경 복구로 다시 깨웠습니다. 하던 일을 이어가고 끝나면 hide factory done 하세요.",
-                    );
-                }
-            }
-            // New starts of an unpinned Task leave the Factory's default
-            // runtime for an hour, while the other one is not limited.
-            RecoveryAction::SwitchRuntime => {
-                let Some(candidates) = self.factories.get(factory).map(|f| f.config.candidates())
-                else {
-                    return;
-                };
-                let runtime = candidates[0].agent;
-                let now = self.now();
-                // Only when another candidate's agent can take the starts.
-                if !candidates.iter().any(|c| {
-                    c.agent != runtime
-                        && self
-                            .runtime_blocked
-                            .get(&c.agent)
-                            .is_none_or(|until| *until <= now)
-                }) {
-                    return;
-                }
-                let until = now + HOUR_MS;
-                let entry = self.runtime_blocked.entry(runtime).or_insert(until);
-                *entry = (*entry).max(until);
-            }
-        }
-    }
-
-    fn apply_diagnosis(&mut self, factory: &str, value: &Value) {
-        let Ok(diagnosis) = judgment::parse_env(value) else {
-            return;
-        };
-        let enabled = self
-            .factories
-            .get(factory)
-            .map(|f| f.config.recovery.clone())
-            .unwrap_or_default();
-        let anchor = self.tasks_of(factory).last().map(|t| t.id.clone());
-        let language = self.ports.environment.language();
-        match diagnosis.action {
-            Some(action) if enabled.contains(&action) => {
-                self.run_recovery(factory, action);
-            }
-            Some(action) => {
-                if let Some(anchor) = anchor {
-                    self.add_question(
-                        factory,
-                        &anchor,
-                        QuestionOrigin::Engine,
-                        QuestionKind::Proposal {
-                            command: action.as_str().into(),
-                            impact: diagnosis.cause.clone(),
-                        },
-                        &words::recovery_proposal(language, &diagnosis.cause, action),
-                        "approve",
-                        None,
-                        None,
-                        vec!["approve".into(), "dismiss".into()],
-                        None,
-                    );
-                }
-            }
-            None => {
-                if let (Some(anchor), Some((command, impact))) = (anchor, diagnosis.proposal) {
-                    self.add_question(
-                        factory,
-                        &anchor,
-                        QuestionOrigin::Engine,
-                        QuestionKind::Proposal {
-                            command: command.clone(),
-                            impact: impact.clone(),
-                        },
-                        &words::command_proposal(language, &diagnosis.cause, &command, &impact),
-                        "run it yourself",
-                        None,
-                        None,
-                        vec!["done".into(), "dismiss".into()],
-                        None,
-                    );
-                }
-            }
-        }
+        removed
     }
 
     // -------------------------------------------------------------------- watch
@@ -6581,12 +6700,12 @@ impl Engine {
         if checks.is_empty() {
             return;
         }
-        let running: Vec<(String, Card)> = self
+        let running: Vec<(String, Card, Vec<String>)> = self
             .tasks_of(&factory.id)
             .filter(|t| t.state == TaskState::Running)
-            .map(|t| (t.id.clone(), t.card.clone()))
+            .map(|t| (t.id.clone(), t.card.clone(), decision_lines(t)))
             .collect();
-        for (id, card) in running {
+        for (id, card, decisions) in running {
             for (index, instruction) in checks.iter().enumerate() {
                 let judgment = Judgment {
                     id: format!("{}:{id}:periodic:{index}:{now}", factory.id),
@@ -6597,6 +6716,7 @@ impl Engine {
                         instruction: instruction.clone(),
                         card: card.clone(),
                         diff: None,
+                        decisions: decisions.clone(),
                     },
                     ai: None,
                     language: Language::English,
@@ -6619,6 +6739,9 @@ impl Engine {
         }
     }
 
+    /// A watch warning is never a person's item (B11): an enabled action
+    /// of the closed list runs, within the daily cap, and everything else is
+    /// a line of the Factory's activity.
     fn apply_watch(&mut self, factory_id: &str, value: &Value, read_at: UnixMs) {
         let Ok(warnings) = judgment::parse_watch(value) else {
             return;
@@ -6626,96 +6749,54 @@ impl Engine {
         let now = self.now();
         let today = now / DAY_MS;
         for warning in warnings {
-            let Some(action) = warning.action.clone() else {
-                // No action to take: the log only (B69).
-                self.record(
-                    factory_id,
-                    warning.task.as_deref(),
-                    "watch.logged",
-                    json!({}),
-                );
-                continue;
-            };
-            let (limit, sent) = {
-                let Some(f) = self.factories.get_mut(factory_id) else {
-                    return;
-                };
-                if f.watch_day != today {
-                    f.watch_day = today;
-                    f.watch_sent_today = 0;
-                }
-                (f.config.watch_daily_limit, f.watch_sent_today)
-            };
-            if sent >= limit {
-                self.record(factory_id, None, "watch.capped", json!({}));
-                continue;
-            }
-            let anchor = match &warning.task {
-                // A warning about a Task this Factory does not have is about
-                // nothing a person can act on here.
+            let task = match &warning.task {
                 Some(reference) => match self.resolve_within(Some(factory_id), reference) {
                     Ok((_, id)) => Some(id),
-                    Err(_) => {
-                        self.record(
-                            factory_id,
-                            None,
-                            "watch.logged",
-                            json!({"unresolved": true}),
-                        );
-                        continue;
-                    }
+                    Err(_) => None,
                 },
-                None => self.tasks_of(factory_id).last().map(|t| t.id.clone()),
+                None => None,
             };
-            let Some(anchor) = anchor else { continue };
             // The board was read before the judgment answered; a Task that
             // moved since is no longer what the warning describes.
-            if warning.task.is_some()
-                && self
-                    .task(factory_id, &anchor)
+            let stale = task.as_deref().is_some_and(|id| {
+                self.task(factory_id, id)
                     .is_some_and(|t| t.state_since > read_at)
-            {
-                self.record(
-                    factory_id,
-                    Some(&anchor),
-                    "watch.logged",
-                    json!({"stale": true}),
-                );
-                continue;
+            });
+            let enabled = warning.action.filter(|action| {
+                self.factories
+                    .get(factory_id)
+                    .is_some_and(|f| f.config.recovery.contains(action))
+            });
+            let action = match enabled {
+                Some(action) if !stale => {
+                    let Some(f) = self.factories.get_mut(factory_id) else {
+                        return;
+                    };
+                    if f.watch_day != today {
+                        f.watch_day = today;
+                        f.watch_sent_today = 0;
+                    }
+                    if f.watch_sent_today < f.config.watch_daily_limit {
+                        f.watch_sent_today += 1;
+                        Some(action)
+                    } else {
+                        self.record(factory_id, None, "watch.capped", json!({}));
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(action) = action {
+                self.run_recovery(factory_id, action, task.as_deref());
             }
-            // A Task already waiting on a person is in the inbox; a warning
-            // about it would say the same thing twice (design #13).
-            if warning.task.is_some()
-                && self
-                    .task(factory_id, &anchor)
-                    .is_some_and(|t| t.open_questions().next().is_some())
-            {
-                self.record(
-                    factory_id,
-                    Some(&anchor),
-                    "watch.logged",
-                    json!({"already_open": true}),
-                );
-                continue;
-            }
-            let notice =
-                words::watch_notice(self.ports.environment.language(), &warning.text, &action);
-            self.add_question(
+            self.log_factory(
                 factory_id,
-                &anchor,
-                QuestionOrigin::Engine,
-                QuestionKind::Notice,
-                &notice,
-                &action,
-                None,
-                None,
-                vec!["ok".into()],
-                None,
+                task.as_deref(),
+                ActivityEvent::Watch {
+                    text: judgment::cut(&warning.text, TEXT_LIMIT),
+                    action,
+                },
             );
-            if let Some(f) = self.factories.get_mut(factory_id) {
-                f.watch_sent_today += 1;
-            }
-            self.save_factory(factory_id);
         }
     }
 
@@ -6775,7 +6856,7 @@ fn waits_on_answer(task: &Task) -> bool {
     task.open_questions().any(|q| {
         !matches!(
             q.kind,
-            QuestionKind::Notice | QuestionKind::Default | QuestionKind::ScopeChange { .. }
+            QuestionKind::Default | QuestionKind::ScopeChange { .. }
         )
     })
 }
@@ -6789,6 +6870,20 @@ fn kept_for_revive(task: &Task) -> bool {
         TaskState::Done => task.cancelled_at.is_some(),
         _ => false,
     }
+}
+
+/// The most recorded decisions a judgment carries.
+const DECISIONS_SENT: usize = 50;
+
+/// A Task's recorded decisions as a judgment reads them, newest last, each
+/// with who made it (D-07, D-16).
+fn decision_lines(task: &Task) -> Vec<String> {
+    let skip = task.decisions.len().saturating_sub(DECISIONS_SENT);
+    task.decisions
+        .iter()
+        .skip(skip)
+        .map(|d| format!("{}: {}", d.by, judgment::cut(&d.text, 600)))
+        .collect()
 }
 
 fn with_letter(command: Command, letter: &str) -> Option<Command> {
@@ -6837,13 +6932,7 @@ fn with_letter(command: Command, letter: &str) -> Option<Command> {
             reclassify,
             letter,
         },
-        Command::Done {
-            summary, breaking, ..
-        } => Command::Done {
-            summary,
-            breaking,
-            letter,
-        },
+        done @ Command::Done { .. } => done,
         Command::Decide { text } => Command::Decide { text },
         Command::Dep {
             task,
@@ -6855,6 +6944,42 @@ fn with_letter(command: Command, letter: &str) -> Option<Command> {
             remove: false,
         },
         _ => return None,
+    })
+}
+
+/// A report's four parts as `done` takes them (B34). The retired
+/// `--summary` is refused with the parts that replace it.
+fn worker_report(
+    result: Option<String>,
+    changed: Vec<String>,
+    verified: Vec<String>,
+    unverified: Vec<String>,
+    summary: Option<String>,
+    raw: Option<String>,
+) -> Result<WorkerReport, Refusal> {
+    const PARTS: &str = "Report with hide factory done --result '<one line>' [--changed <what changed>]... [--verified <what you checked>]... [--unverified <what you could not check>]...";
+    if summary.is_some() {
+        return Err(refuse("summary_replaced", PARTS));
+    }
+    let result = result
+        .map(|result| result.trim().to_owned())
+        .filter(|result| !result.is_empty())
+        .ok_or_else(|| refuse("result_required", PARTS))?;
+    let list = |items: Vec<String>| -> Vec<String> {
+        items
+            .into_iter()
+            .map(|item| item.trim().to_owned())
+            .filter(|item| !item.is_empty())
+            .take(LIST_LIMIT)
+            .map(|item| judgment::cut(&item, TEXT_LIMIT))
+            .collect()
+    };
+    Ok(WorkerReport {
+        result: judgment::cut(&result, TITLE_LIMIT * 2),
+        changed: list(changed),
+        verified: list(verified),
+        unverified: list(unverified),
+        raw,
     })
 }
 
@@ -6880,10 +7005,19 @@ fn plain_letter(letter: &Inbound) -> Option<Command> {
             letter: Some(letter.id.clone()),
             choices: Vec::new(),
         }),
+        // A harness that reports by letter only: the first line is the
+        // result, and the body is kept as it was written.
         "report" => Some(Command::Done {
-            summary: Some(judgment::cut(body, TEXT_LIMIT)),
+            result: body
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .map(str::to_owned),
+            changed: Vec::new(),
+            verified: Vec::new(),
+            unverified: Vec::new(),
+            summary: None,
             breaking: false,
-            letter: Some(letter.id.clone()),
+            raw: Some(judgment::cut(body, TEXT_LIMIT)),
         }),
         _ => None,
     }
@@ -6996,17 +7130,28 @@ pub struct Caller<'a> {
 
 pub fn pr_body(task: &Task, factory: &Factory) -> String {
     let mut body = issue_body(task, factory);
+    // A worker wrote these: in a code block, a "Fixes #N" in them is text,
+    // never a closing reference to another Task's issue (D-33).
+    if let Some(report) = &task.report {
+        let mut text = format!("{}\n", report.result);
+        for (label, items) in [
+            ("changed", &report.changed),
+            ("verified", &report.verified),
+            ("unverified", &report.unverified),
+        ] {
+            for item in items {
+                text.push_str(&format!("{label}: {item}\n"));
+            }
+        }
+        body.push_str(&fenced("작업자 보고", &text));
+    }
     if !task.decisions.is_empty() {
-        // A worker wrote these: in a code block, a "Fixes #N" in them is
-        // text, never a closing reference to another Task's issue (D-33).
         let text: String = task
             .decisions
             .iter()
             .map(|decision| format!("- {}\n", decision.text))
             .collect();
-        let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
-        let fence = "`".repeat(longest.max(2) + 1);
-        body.push_str(&format!("\n## 결정 기록\n{fence}text\n{text}{fence}\n"));
+        body.push_str(&fenced("결정 기록", &text));
     }
     match &task.issue {
         Some(IssueRef::Github { number }) => body.push_str(&format!("\nCloses #{number}\n")),
@@ -7014,6 +7159,13 @@ pub fn pr_body(task: &Task, factory: &Factory) -> String {
         None => {}
     }
     body
+}
+
+/// A section whose text sits in a fence longer than any it contains.
+fn fenced(title: &str, text: &str) -> String {
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest.max(2) + 1);
+    format!("\n## {title}\n{fence}text\n{text}{fence}\n")
 }
 
 fn worker_name(factory: &Factory, task: &Task) -> String {
@@ -7068,6 +7220,16 @@ pub fn worker_prompt(
     for attachment in &task.attachments {
         prompt.push_str(&format!("\n첨부 (읽기 전용): {}\n", attachment.path));
     }
+    // The card's decisions bind the work: what the review assumed and how
+    // each question was answered (B35).
+    let decisions = decision_lines(task);
+    if !decisions.is_empty() {
+        prompt
+            .push_str("\n결정 기록 (이대로 진행하고, 결정이 요구한 확인을 끝낸 뒤 done 하세요):\n");
+        for line in decisions {
+            prompt.push_str(&format!("- {line}\n"));
+        }
+    }
     if let Some(harness) = &factory.config.harness {
         prompt.push_str(&format!(
             "\n일하는 방식 ({}):\n{}\n",
@@ -7088,7 +7250,8 @@ pub fn worker_prompt(
 pub const REPORTING_RULES: &str = "
 Factory 보고 규약 (반드시 지키세요):
 - 이 worktree의 branch에 커밋하세요. main에 직접 push하거나 머지하지 마세요. 검증과 머지는 Factory가 합니다.
-- 끝나면: hide factory done --summary '<무엇을 했는지>' [--breaking]  (바로 '검증 중'이 오면 차례를 끝내세요. 결과는 편지로 옵니다)
+- 결정 기록대로 끝까지 하고, 결정이 요구한 확인을 끝낸 뒤 보고하세요.
+- 끝나면: hide factory done --result '<한 줄 결과>' [--changed '<바뀐 것>']... [--verified '<확인한 것>']... [--unverified '<확인 못 한 것>']... [--breaking]  (바로 '검증 중'이 오면 차례를 끝내세요. 결과는 편지로 옵니다)
 - 사람에게 화면으로 묻지 마세요. 물을 것은 모두 아래 ask나 block으로 보내세요. 화면의 질문은 아무도 읽지 않습니다.
 - 기본 행동으로 계속할 수 있는 질문: hide factory ask --question '<질문>' --suggestion '<제안>' --default '<그동안 할 행동>' --deadline-hours 24 [--choice '<선택지>']...
 - 답 없이는 진행할 수 없는 질문: hide factory block --question '<질문>' --suggestion '<제안>' --deadline-hours 24 [--choice '<선택지>']...  (차례를 끝내세요)

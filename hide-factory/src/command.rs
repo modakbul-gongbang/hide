@@ -67,6 +67,10 @@ pub enum Command {
         /// and lost changes nothing.
         #[serde(default)]
         change: bool,
+        /// Replaces one of Factory AI's decisions by its id, `R<n>` (B28):
+        /// an answer, an intake assumption or a send-back.
+        #[serde(default)]
+        decision: Option<String>,
     },
     Ask {
         text: String,
@@ -97,10 +101,24 @@ pub enum Command {
         reclassify: Option<String>,
         letter: Option<String>,
     },
+    /// The worker's report in four parts (B34).
     Done {
+        /// One line: what came of the work.
+        #[serde(default)]
+        result: Option<String>,
+        #[serde(default)]
+        changed: Vec<String>,
+        #[serde(default)]
+        verified: Vec<String>,
+        #[serde(default)]
+        unverified: Vec<String>,
+        /// Retired: refused with the parts that replace it.
+        #[serde(default)]
         summary: Option<String>,
         breaking: bool,
-        letter: Option<String>,
+        /// The body of a report that came as a plain letter.
+        #[serde(default)]
+        raw: Option<String>,
     },
     Decide {
         text: String,
@@ -135,9 +153,17 @@ pub enum Command {
     ResumeFactory {
         project: Option<String>,
     },
-    /// Clears every notice of a Factory in one action (D-43).
-    AckNotices {
+    /// What becomes of a follow-up candidate (D-31).
+    FollowUp {
+        task: String,
+        discovery: String,
+        choice: FollowUpChoice,
+    },
+    /// A to-do's single button (B16, B23, B33): `github`, `C<n>`,
+    /// `start:<task>` or `hold:<name>`.
+    Resolve {
         project: Option<String>,
+        item: String,
     },
     /// Pins a Task's worker candidate by its number, 1 first; `None` lets
     /// the review's pick decide again (D-41).
@@ -169,6 +195,16 @@ pub enum Command {
     },
 }
 
+/// A follow-up candidate becomes an issue without the factory label, a
+/// labelled issue the Factory starts, or nothing (D-31).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowUpChoice {
+    Issue,
+    Factory,
+    Discard,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VerificationChoice {
@@ -190,8 +226,10 @@ impl Command {
             Self::Dep { remove: true, .. } | Self::Priority { .. } | Self::Worker { .. } => {
                 Permission::Loosen
             }
-            Self::Init { .. } | Self::Add { .. } | Self::Check { .. } => Permission::Intake,
-            Self::Answer { .. } | Self::AckNotices { .. } => Permission::Answer,
+            Self::Init { .. } | Self::Add { .. } | Self::Check { .. } | Self::FollowUp { .. } => {
+                Permission::Intake
+            }
+            Self::Answer { .. } | Self::Resolve { .. } => Permission::Answer,
             Self::Merge { .. } | Self::RequestChanges { .. } => Permission::Merge,
             Self::Pause { .. }
             | Self::Resume { .. }
@@ -227,7 +265,8 @@ impl Command {
             Self::Retry { .. } => "retry",
             Self::PauseFactory { .. } => "pause-factory",
             Self::ResumeFactory { .. } => "resume-factory",
-            Self::AckNotices { .. } => "ack-notices",
+            Self::FollowUp { .. } => "follow-up",
+            Self::Resolve { .. } => "resolve",
             Self::Worker { .. } => "worker",
             Self::Merge { .. } => "merge",
             Self::RequestChanges { .. } => "request-changes",
@@ -281,10 +320,11 @@ hide factory status [--project <path>]
 hide factory show <task>
 hide factory inbox
 hide factory answer <task> [--question <id>] [--choose suggestion|default|<choice>] [--text <answer>] [--change]
+hide factory answer <task> --decision <R<n>> [--choose <choice>] [--text <answer>]
 hide factory ask --question <text> --suggestion <text> --default <action> [--choice <text>]... [--deadline-hours <n>]
 hide factory block --question <text> --suggestion <text> [--choice <text>]... [--deadline-hours <n>]
 hide factory propose --class in-scope|decision|scope-change|prerequisite|unrelated --text <text> [--title <t> --goal <g> --criterion <c>...] [--autonomy <scope>] [--reclassify <discovery>]
-hide factory done [--summary <text>] [--breaking]
+hide factory done --result <one line> [--changed <text>]... [--verified <text>]... [--unverified <text>]... [--breaking]
 hide factory decide --text <decision>
 hide factory config [--project <path>] [--set <key>=<value>]...
 hide factory priority <task> <n>
@@ -292,7 +332,8 @@ hide factory dep add|remove <task> --on <task>
 hide factory pause|resume|retry|merge|cancel|revive <task>
 hide factory pause|resume --factory [--project <path>]
 hide factory worker <task> <n>|auto
-hide factory ack-notices [--project <path>]
+hide factory follow-up <task> <discovery> issue|factory|discard
+hide factory resolve github|C<n>|start:<task>|hold:<name> [--project <path>]
 hide factory request-changes <task> --comment <text>
 hide factory check --at intake|after-done|periodic --instruction <text> [--project <path>]
 hide factory close [--project <path>]

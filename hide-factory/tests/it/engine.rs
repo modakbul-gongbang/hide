@@ -331,7 +331,24 @@ fn a_review_refused_because_hide_ai_is_off_says_to_turn_it_on_once() {
         .map(|q| q.text.clone())
         .collect();
     assert_eq!(questions.len(), 1, "{questions:?}");
-    assert!(questions[0].contains("Hide AI를 켜고"), "{questions:?}");
+    assert!(questions[0].contains("Hide AI가 꺼져"), "{questions:?}");
+    // The second choice starts the card as written (B5).
+    let question = open_question(&h, &f, &id);
+    assert_eq!(
+        question.choices,
+        vec!["retry-review", "start-as-is", "cancel"],
+        "Hide AI on, the issue as written, or not at all"
+    );
+    let started = h.op(Command::Answer {
+        task: id.clone(),
+        question: Some(question.id),
+        choice: Some("start-as-is".into()),
+        text: None,
+        change: false,
+        decision: None,
+    });
+    assert_eq!(started["ok"], true, "{started}");
+    assert_ne!(h.state(&f, &id), TaskState::Drafting);
 }
 
 #[test]
@@ -368,7 +385,7 @@ fn a_review_that_cannot_run_keeps_the_task_drafting_and_asks_for_the_provider() 
         inbox["items"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("Settings › Hide AI"),
+            .contains("AI 제공자"),
         "{inbox}"
     );
 
@@ -380,6 +397,7 @@ fn a_review_that_cannot_run_keeps_the_task_drafting_and_asks_for_the_provider() 
         choice: Some("retry-review".into()),
         text: None,
         change: false,
+        decision: None,
     });
     h.engine.tick();
     assert_ne!(h.state(&f, &id), TaskState::Drafting);
@@ -419,6 +437,7 @@ fn review_questions_hold_the_task_until_answered_and_re_adding_is_idempotent() {
         choice: Some("suggestion".into()),
         text: None,
         change: false,
+        decision: None,
     });
     assert_eq!(h.task(&f, &id).issue, Some(IssueRef::Local { number: 1 }));
     assert_ne!(h.state(&f, &id), TaskState::Drafting);
@@ -534,6 +553,7 @@ fn a_prd_changed_while_running_becomes_the_task_s_only_once_approved() {
         choice: Some("approve".into()),
         text: None,
         change: false,
+        decision: None,
     });
     let after = h.task(&f, &t);
     assert_eq!(after.card.goal, "Make Spec work the v2 way");
@@ -794,6 +814,7 @@ fn a_different_answer_before_the_deadline_sends_the_worker_back() {
         choice: None,
         text: Some("use --quick".into()),
         change: false,
+        decision: None,
     });
     assert_eq!(h.state(&f, &t), TaskState::Running);
     assert!(
@@ -906,6 +927,7 @@ fn a_blocking_question_releases_the_slot_and_the_answer_wakes_the_same_session()
         choice: Some("suggestion".into()),
         text: None,
         change: false,
+        decision: None,
     });
     assert_eq!(h.state(&f, &blocked), TaskState::Waiting);
     h.done(&f, &other);
@@ -957,6 +979,8 @@ fn verification_fails_count_toward_the_limit_and_then_stop_the_task() {
         (TaskState::Stopped, Some(StopReason::VerifyFailed))
     );
     assert_eq!(card_json(&h, &t)["stop"], "verify_failed");
+    // Factory AI sees the question first; retrying is a person's (D-27).
+    h.engine.tick();
     let inbox = h.op(Command::Inbox);
     let stopped = inbox["items"]
         .as_array()
@@ -1269,15 +1293,7 @@ fn a_worker_s_reports_stop_at_the_cap() {
         hide_factory::engine::REPORT_LIMIT
     );
     // The worker can still finish; its summary is not stored past the cap.
-    let done = h.as_worker(
-        &f,
-        &t,
-        Command::Done {
-            summary: Some("all of it".into()),
-            breaking: false,
-            letter: None,
-        },
-    );
+    let done = h.as_worker(&f, &t, report("all of it"));
     assert_eq!(done["state"], "verifying", "{done}");
     assert_eq!(
         h.task(&f, &t).decisions.len(),
@@ -1360,6 +1376,7 @@ fn a_caller_binds_through_a_claimed_pane_or_an_ancestor_s_pane_and_a_cut_lineage
             choice: None,
             text: Some("yes".into()),
             change: false,
+            decision: None,
         },
     ] {
         let refused = h.engine.caller_role(&cut, &command).unwrap_err();
@@ -1394,6 +1411,7 @@ fn a_worker_cannot_act_as_a_person() {
             choice: None,
             text: Some("x".into()),
             change: false,
+            decision: None,
         },
         Command::Config {
             project: None,
@@ -1405,11 +1423,7 @@ fn a_worker_cannot_act_as_a_person() {
         assert_eq!(refused["reason"], "role_not_allowed", "{refused}");
     }
     // An operator has no Task of its own to report on.
-    let refused = h.op(Command::Done {
-        summary: None,
-        breaking: false,
-        letter: None,
-    });
+    let refused = h.op(report("all of it"));
     assert_eq!(refused["reason"], "role_not_allowed");
 }
 
@@ -1445,6 +1459,7 @@ fn a_proposed_task_waits_for_a_person_and_its_worker_cannot_propose() {
         choice: Some("approve".into()),
         text: None,
         change: false,
+        decision: None,
     });
     let child = h
         .engine
@@ -1552,6 +1567,7 @@ fn a_proposal_the_review_finds_outside_its_scope_waits_for_a_person() {
         choice: Some("suggestion".into()),
         text: None,
         change: false,
+        decision: None,
     });
     tick_until(&mut h, &f, &child, TaskState::Running);
 }
@@ -1832,9 +1848,13 @@ fn human_gates_hold_an_auto_task_in_merge_waiting() {
         &f,
         &b,
         Command::Done {
+            result: Some("breaking".into()),
+            changed: Vec::new(),
+            verified: Vec::new(),
+            unverified: Vec::new(),
             summary: None,
             breaking: true,
-            letter: None,
+            raw: None,
         },
     );
     tick_until(&mut h, &f, &t, TaskState::MergeWaiting);
@@ -2408,11 +2428,13 @@ fn a_finished_task_s_leftovers_keep_its_worktree_for_a_person() {
     );
     drop(world);
     assert!(!h.task(&f, &dirty).purged);
-    let notice = h
+    let kept = h
         .task(&f, &dirty)
-        .open_questions()
-        .any(|q| q.text.contains("worktree를 지우지 못했습니다"));
-    assert!(notice, "a person is told");
+        .activity
+        .iter()
+        .filter(|entry| matches!(entry.event, ActivityEvent::CleanupKept { .. }))
+        .count();
+    assert_eq!(kept, 1, "the Task's activity says it was kept, once");
     assert!(
         h.engine
             .events(&f, Some(&dirty), 50)
@@ -2494,7 +2516,7 @@ fn a_task_waiting_long_on_a_person_keeps_its_worktree_after_an_outside_pull_requ
 }
 
 #[test]
-fn an_issue_closed_without_a_pull_request_cancels_and_a_label_creates_a_draft() {
+fn an_issue_closed_without_a_pull_request_cancels_and_a_label_starts_a_task() {
     let mut h = Bench::new(true);
     let f = github_factory(&mut h, MergeMode::Auto);
     let t = h.ready("Closed", &[]);
@@ -2517,20 +2539,21 @@ fn an_issue_closed_without_a_pull_request_cancels_and_a_label_creates_a_draft() 
         .find(|task| task.card.title == "From label")
         .unwrap()
         .clone();
-    assert_eq!(
-        labelled.state,
-        TaskState::Drafting,
-        "a person confirms the card (B15)"
-    );
     assert_eq!(labelled.card.criteria, vec!["works"]);
-    let question = open_question(&h, &f, &labelled.id);
-    h.op(Command::Answer {
-        task: labelled.id.clone(),
-        question: Some(question.id),
-        choice: Some("confirm".into()),
-        text: None,
-        change: false,
-    });
+    assert_eq!(
+        labelled.card.goal, "Do it\n- [ ] works",
+        "the body as written (B2)"
+    );
+    // The label means start: no card confirmation, only the review (B1).
+    assert!(labelled.open_questions().next().is_none());
+    h.engine.tick();
+    let started = h.task(&f, &labelled.id);
+    assert!(
+        matches!(started.state, TaskState::Waiting | TaskState::Running),
+        "{:?}",
+        started.state
+    );
+    assert!(started.first_started_at.is_some() || started.state == TaskState::Waiting);
     assert_eq!(
         h.writes("issue.create").len(),
         1,
@@ -2632,71 +2655,69 @@ fn a_low_disk_holds_new_starts_and_the_hold_clears_on_recheck() {
 }
 
 #[test]
-fn a_diagnosis_runs_an_enabled_recovery_and_an_approved_proposal_runs_too() {
+fn a_stopped_start_is_restarted_once_by_the_schedule_and_a_command_becomes_a_to_do() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
     h.world().spawn_failure = Some(Failure::task("worker.spawn", "refused"));
     let stopped = h.ready("Refused", &[]);
     assert_eq!(h.state(&f, &stopped), TaskState::Stopped);
     h.world().spawn_failure = None;
-    h.world().disk_free = Some(1 << 30);
-    let _held = h.ready("Held", &[]);
-    let enabled = h.op(Command::Config {
-        project: Some(PROJECT.into()),
-        set: vec![("recovery".into(), "restart_worker=on".into())],
-    });
-    assert_eq!(enabled["ok"], true, "{enabled}");
-    h.world().env_diagnosis = Some(json!({"cause": "disk", "action": "restart_worker"}));
-    h.advance(31 * MINUTE_MS);
+    h.world().env_diagnosis = Some(json!({
+        "cause": "the agent was not signed in",
+        "action": "restart_worker",
+        "command": "claude login",
+        "impact": "signs the agent in",
+    }));
+    h.advance(29 * MINUTE_MS);
+    h.engine.tick();
+    assert_eq!(
+        h.state(&f, &stopped),
+        TaskState::Stopped,
+        "nothing before 30 minutes"
+    );
+    h.advance(2 * MINUTE_MS);
     h.engine.tick();
     h.engine.tick();
     assert_ne!(
         h.state(&f, &stopped),
         TaskState::Stopped,
-        "the enabled action ran (B61)"
+        "the restart ran without a person (B12, B14)"
     );
-
-    // An action outside the enabled scope is a proposal; approving runs it.
-    let mut h = Bench::new(false);
-    let f = h.factory(true);
-    h.world().spawn_failure = Some(Failure::task("worker.spawn", "refused"));
-    let stopped = h.ready("Refused", &[]);
-    h.world().spawn_failure = None;
-    h.world().disk_free = Some(1 << 30);
-    let _held = h.ready("Held", &[]);
-    h.world().env_diagnosis = Some(json!({"cause": "disk", "action": "restart_worker"}));
-    h.advance(31 * MINUTE_MS);
-    h.engine.tick();
-    h.engine.tick();
-    assert_eq!(h.state(&f, &stopped), TaskState::Stopped);
-    let (owner, proposal) = h
-        .engine
-        .tasks_of(&f)
-        .find_map(|t| {
-            t.open_questions()
-                .find(|q| matches!(q.kind, QuestionKind::Proposal { .. }))
-                .map(|q| (t.id.clone(), q.id.clone()))
-        })
-        .expect("a proposal for a person");
-    let answered = h.op(Command::Answer {
-        task: owner,
-        question: Some(proposal),
-        choice: Some("approve".into()),
-        text: None,
-        change: false,
+    let task = h.task(&f, &stopped);
+    assert!(task.recovery_restarted);
+    assert!(task.activity.iter().any(|entry| matches!(
+        entry.event,
+        ActivityEvent::Recovery {
+            action: RecoveryAction::RestartWorker,
+            ..
+        }
+    )));
+    // The command outside the list is a person's to-do (B16).
+    let summary = h.engine.summary();
+    let todo = summary
+        .inbox
+        .iter()
+        .find(|item| item.kind == "command")
+        .expect("a command to-do");
+    assert_eq!(todo.command.as_deref(), Some("claude login"));
+    assert_eq!(todo.resolve.as_deref(), Some("C1"));
+    let resolved = h.op(Command::Resolve {
+        project: None,
+        item: "C1".into(),
     });
-    assert_eq!(answered["ok"], true, "{answered}");
-    assert_ne!(h.state(&f, &stopped), TaskState::Stopped);
+    assert_eq!(resolved["ok"], true, "{resolved}");
+    assert!(
+        !h.engine
+            .summary()
+            .inbox
+            .iter()
+            .any(|item| item.kind == "command")
+    );
 }
 
-/// Turns `action` on, holds starts below the disk floor so a problem
-/// outlasts 30 minutes, and lets the diagnosis name `action`.
+/// Holds starts below the disk floor so a problem outlasts 30 minutes, and
+/// lets the diagnosis name `action`, which every Factory has on (B12).
 fn diagnose(h: &mut Bench, action: &str) -> String {
-    let enabled = h.op(Command::Config {
-        project: Some(PROJECT.into()),
-        set: vec![("recovery".into(), format!("{action}=on"))],
-    });
-    assert_eq!(enabled["ok"], true, "{enabled}");
     h.world().disk_free = Some(1 << 30);
     let held = h.ready("Held", &[]);
     h.world().env_diagnosis = Some(json!({"cause": "disk", "action": action}));
@@ -3001,6 +3022,7 @@ fn a_restart_keeps_every_task_question_and_applied_letter() {
         choice: Some("suggestion".into()),
         text: None,
         change: false,
+        decision: None,
     });
     tick_until(&mut h, &f, &a, TaskState::Running);
     assert_eq!(h.state(&f, &b), TaskState::Waiting);
@@ -3074,7 +3096,7 @@ fn the_inbox_orders_blocking_questions_first_then_answers_merges_and_stops() {
     let groups: Vec<(&str, &str)> = summary
         .inbox
         .iter()
-        .map(|item| (item.group.as_str(), item.task.as_str()))
+        .map(|item| (item.group.as_str(), item.task.as_deref().unwrap_or("")))
         .collect();
     assert_eq!(
         groups,
@@ -3250,12 +3272,14 @@ fn a_worker_whose_agent_has_not_started_holds_its_slot_and_is_asked_again_later(
     // Ten quiet minutes: the person is told to look at the pane.
     h.advance(10 * 60_000);
     h.engine.tick();
-    let notice = open_question(&h, &f, &a);
-    assert!(
-        notice.text.contains("시작되지 않았습니다"),
-        "{}",
-        notice.text
-    );
+    let summary = h.engine.summary();
+    let todo = summary
+        .inbox
+        .iter()
+        .find(|item| item.kind == "start")
+        .expect("a to-do to look at the pane");
+    assert_eq!(todo.task.as_deref(), Some(a.as_str()));
+    assert_eq!(todo.resolve.as_deref(), Some("start:T-1"));
 
     // The agent comes up: the same spawn now answers, and B still waits.
     h.world().spawn_failure = None;
@@ -3264,6 +3288,14 @@ fn a_worker_whose_agent_has_not_started_holds_its_slot_and_is_asked_again_later(
     assert_eq!(h.state(&f, &a), TaskState::Running);
     assert_eq!(h.state(&f, &b), TaskState::Waiting);
     assert_eq!(h.world().spawned.len(), 1);
+    assert!(
+        !h.engine
+            .summary()
+            .inbox
+            .iter()
+            .any(|item| item.kind == "start"),
+        "a worker that showed up clears the to-do"
+    );
 }
 
 #[test]
@@ -3289,8 +3321,26 @@ fn a_refused_worker_start_stops_the_task_once_and_a_retry_starts_it() {
         .filter(|e| e.kind == "external.failed")
         .count();
     assert_eq!(failed, 1, "a refusal is not asked again every tick");
+    assert!(
+        !h.engine
+            .summary()
+            .inbox
+            .iter()
+            .any(|i| i.task.as_deref() == Some(a.as_str())),
+        "the recovery schedule has it first (D-44)"
+    );
+    // Turned off, the schedule only waits for its 180 minutes.
+    h.op(Command::Config {
+        project: Some(PROJECT.into()),
+        set: vec![("recovery".into(), "restart_worker=off".into())],
+    });
+    h.advance(181 * MINUTE_MS);
+    h.engine.tick();
     let inbox = h.engine.summary().inbox;
-    let item = inbox.iter().find(|i| i.task == a).expect("stopped item");
+    let item = inbox
+        .iter()
+        .find(|i| i.task.as_deref() == Some(a.as_str()))
+        .expect("stopped item");
     assert!(
         item.text.contains("Codex support could not be confirmed"),
         "{}",
@@ -3311,13 +3361,13 @@ fn a_refused_worker_start_stops_the_task_once_and_a_retry_starts_it() {
 }
 
 #[test]
-fn a_failing_check_with_nothing_to_ask_or_an_unreadable_diff_holds_the_merge() {
+fn an_unreadable_check_answer_or_an_unreadable_diff_holds_the_merge() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
     let t = h.ready("Fails quietly", &[]);
     h.world().drift.insert(
         t.clone(),
-        json!({"pass": false, "questions": [], "flags": []}),
+        json!({"verdict": "maybe", "questions": [], "flags": []}),
     );
     h.done(&f, &t);
     tick_until(&mut h, &f, &t, TaskState::MergeWaiting);
@@ -3345,7 +3395,7 @@ fn a_failing_check_with_nothing_to_ask_or_an_unreadable_diff_holds_the_merge() {
 }
 
 #[test]
-fn a_periodic_check_failing_with_nothing_to_ask_holds_nothing() {
+fn an_unreadable_periodic_check_holds_nothing() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
     h.op(Command::Check {
@@ -3356,7 +3406,7 @@ fn a_periodic_check_failing_with_nothing_to_ask_holds_nothing() {
     let t = h.ready("Running", &[]);
     h.world().drift.insert(
         t.clone(),
-        json!({"pass": false, "questions": [], "flags": []}),
+        json!({"verdict": "maybe", "questions": [], "flags": []}),
     );
     h.advance(30 * 60_000);
     h.engine.tick();
@@ -3385,7 +3435,7 @@ fn a_periodic_check_reads_each_running_task_on_the_watch_cadence() {
     let waiting = h.ready("Waiting", &[&running]);
     h.world().drift.insert(
         running.clone(),
-        json!({"pass": false, "questions": [{"text": "Drifting?", "suggestion": "keep", "default_action": "keep going"}], "flags": []}),
+        json!({"verdict": "questions", "send_back": "", "criteria": [], "questions": [{"text": "Drifting?", "stopped": "", "suggestion": "keep", "default_action": "keep going", "choices": []}], "flags": []}),
     );
     let periodic = |h: &Bench| {
         h.world()
@@ -3411,13 +3461,28 @@ fn a_periodic_check_reads_each_running_task_on_the_watch_cadence() {
     assert_eq!(h.task(&f, &waiting).open_questions().count(), 0);
 }
 
+/// The Factory's watch lines, oldest first, with the action each ran.
+fn watch_lines(h: &Bench) -> Vec<(String, Option<RecoveryAction>)> {
+    h.engine
+        .factories()
+        .next()
+        .unwrap()
+        .activity
+        .iter()
+        .filter_map(|entry| match &entry.event {
+            ActivityEvent::Watch { text, action } => Some((text.clone(), *action)),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
-fn a_watch_warning_about_a_task_that_moved_since_the_board_was_read_is_only_logged() {
+fn a_watch_action_about_a_task_that_moved_since_the_board_was_read_does_not_run() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
     let b = h.ready("B", &[]);
     h.world().watch.push_back(json!({"warnings": [
-        {"text": "B still waits for a slot", "action": "look at B", "task": b},
+        {"text": "B waits on input", "action": "sleep_wake_worker", "task": b},
     ]}));
     h.advance(30 * 60_000);
     // The watch reads the board; before it answers, B moves on.
@@ -3428,90 +3493,52 @@ fn a_watch_warning_about_a_task_that_moved_since_the_board_was_read_is_only_logg
     h.world().hold_judgments = false;
     h.engine.tick();
     assert_eq!(
-        h.task(&f, &b)
-            .questions
-            .iter()
-            .filter(|q| q.text.starts_with("감시:"))
-            .count(),
-        0,
+        watch_lines(&h),
+        vec![("B waits on input".into(), None)],
         "the warning describes a board that is gone"
     );
-    assert!(
-        h.engine
-            .events(&f, Some(&b), 100)
-            .iter()
-            .any(|e| e.kind == "watch.logged" && e.detail["stale"] == true)
-    );
+    assert_eq!(h.state(&f, &b), TaskState::Paused);
 }
 
 #[test]
-fn the_watch_raises_actionable_warnings_once_each_within_the_daily_cap() {
+fn the_watch_runs_closed_actions_within_the_daily_cap_and_logs_the_rest() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
     let a = h.ready("A", &[]);
-    let b = h.ready("B", &[]);
-    let asked = h.as_worker(
-        &f,
-        &a,
-        Command::Ask {
-            text: "Which name?".into(),
-            suggestion: "calc".into(),
-            default_action: "use calc".into(),
-            deadline_hours: Some(24),
-            letter: None,
-            choices: Vec::new(),
-        },
-    );
-    assert_eq!(asked["ok"], true, "{asked}");
-    let notices = |h: &Bench, id: &str| {
-        h.task(&f, id)
-            .open_questions()
-            .filter(|q| q.text.starts_with("감시:"))
-            .count()
-    };
     h.world().watch.push_back(json!({"warnings": [
         {"text": "nothing to do here"},
-        {"text": "A still waits on its answer", "action": "answer A", "task": a},
-        {"text": "B has been quiet", "action": "look at B", "task": b},
+        {"text": "reads look stuck", "action": "retry_reads_and_reconnect", "task": a},
     ]}));
     // The watch reads the board every 30 minutes (B69).
     h.advance(30 * 60_000);
     h.engine.tick();
     h.engine.tick();
     assert_eq!(
-        notices(&h, &b),
-        1,
-        "an actionable warning reaches the inbox"
+        watch_lines(&h),
+        vec![
+            ("nothing to do here".into(), None),
+            (
+                "reads look stuck".into(),
+                Some(RecoveryAction::RetryReadsAndReconnect)
+            ),
+        ]
     );
-    assert_eq!(notices(&h, &a), 0, "A is already in the inbox");
-    let logged = h
-        .engine
-        .events(&f, None, 200)
-        .iter()
-        .filter(|e| e.kind == "watch.logged")
-        .count();
-    assert_eq!(logged, 2, "no action, or already open: the log only");
+    assert!(h.task(&f, &a).open_questions().next().is_none(), "B11");
 
-    // At most five a day.
+    // At most five actions a day; the rest are lines only.
     for n in 0..6 {
         h.world().watch.push_back(json!({"warnings": [
-            {"text": format!("finding {n}"), "action": "check", "task": null},
+            {"text": format!("finding {n}"), "action": "retry_reads_and_reconnect", "task": null},
         ]}));
         h.advance(30 * 60_000);
         h.engine.tick();
         h.engine.tick();
     }
-    let sent: usize = h
-        .engine
-        .tasks_of(&f)
-        .map(|t| {
-            t.questions
-                .iter()
-                .filter(|q| q.text.starts_with("감시:"))
-                .count()
-        })
-        .sum();
-    assert_eq!(sent, 5, "the daily cap holds");
+    let ran = watch_lines(&h)
+        .iter()
+        .filter(|(_, action)| action.is_some())
+        .count();
+    assert_eq!(ran, 5, "the daily cap holds");
     assert!(
         h.engine
             .events(&f, None, 400)
@@ -3721,6 +3748,7 @@ fn intake_summary_is_persisted_and_goal_edits_replace_it_without_growing_judgmen
         choice: Some("approve".into()),
         text: None,
         change: false,
+        decision: None,
     });
     assert_eq!(card_json(&h, &id)["summary"], "새 목표 첫 문장.");
     for judgment in &h.world().judged {
@@ -3858,52 +3886,83 @@ fn every_judgment_and_worker_prompt_is_in_the_operators_language_read_when_asked
 }
 
 #[test]
-fn an_environment_question_names_what_the_action_does_in_the_operators_words() {
+fn an_environment_recovery_is_a_line_of_the_factory_activity_not_a_question() {
     let mut h = Bench::new(false);
-    h.world().language = Some(Language::English);
     let f = h.factory(true);
     h.world().disk_free = Some(1 << 30);
     let held = h.ready("Held", &[]);
     h.world().env_diagnosis = Some(json!({
-        "cause": "Free disk is about 4.7 GB, under the floor.",
+        "cause": "Free disk is about 1 GB, under the floor.",
         "action": "remove_finished_worktrees"
     }));
     h.advance(31 * MINUTE_MS);
     h.engine.tick();
     h.engine.tick();
-    let question = h
-        .task(&f, &held)
-        .open_questions()
-        .find(|q| matches!(q.kind, QuestionKind::Proposal { .. }))
-        .cloned()
-        .expect("a proposal for a person");
-    assert_eq!(
-        question.text,
-        "Environment problem: Free disk is about 4.7 GB, under the floor. Remove the worktrees of finished Tasks, and of cancelled Tasks past their keep period, to free disk space?"
+    assert!(h.task(&f, &held).open_questions().next().is_none());
+    let factory = h.engine.factories().next().unwrap().clone();
+    assert!(
+        factory.activity.iter().any(|entry| matches!(
+            entry.event,
+            ActivityEvent::Recovery {
+                action: RecoveryAction::RemoveFinishedWorktrees,
+                outcome: Some(RecoveryOutcome::Unchanged),
+                ..
+            }
+        )),
+        "nothing was finished, so nothing changed: {:?}",
+        factory.activity
+    );
+    // Past 180 minutes the hold is one to-do with one button (B14, B23).
+    h.advance(150 * MINUTE_MS);
+    h.engine.tick();
+    let summary = h.engine.summary();
+    let todo = summary
+        .inbox
+        .iter()
+        .find(|item| item.kind == "hold")
+        .expect("a hold to-do");
+    assert_eq!(todo.resolve.as_deref(), Some("hold:start-disk_floor"));
+    assert_eq!(todo.env_hold, Some(EnvHold::DiskFloor));
+    let again = h.op(Command::Resolve {
+        project: None,
+        item: "hold:start-disk_floor".into(),
+    });
+    assert_eq!(again["ok"], true, "{again}");
+    assert!(
+        !h.engine
+            .summary()
+            .inbox
+            .iter()
+            .any(|item| item.kind == "hold")
     );
 }
 
 #[test]
-fn a_watch_warning_reads_in_the_operators_language() {
+fn a_watch_warning_is_a_line_of_the_activity_and_never_a_question() {
     let mut h = Bench::new(false);
-    h.world().language = Some(Language::English);
     let f = h.factory(true);
     let t = h.ready("Quiet", &[]);
     h.world().watch.push_back(json!({"warnings": [
-        {"text": "T-1 has not moved for an hour.", "action": "Look at its pane.", "task": t},
+        {"text": "T-1 has not moved for an hour.", "action": "none", "task": t},
     ]}));
     h.advance(30 * MINUTE_MS);
     h.engine.tick();
     h.engine.tick();
-    let notice = h
-        .task(&f, &t)
-        .open_questions()
-        .find(|q| q.kind == QuestionKind::Notice)
-        .map(|q| q.text.clone())
-        .expect("a notice");
+    assert!(h.task(&f, &t).open_questions().next().is_none(), "B11");
+    let factory = h.engine.factories().next().unwrap().clone();
+    let line = factory
+        .activity
+        .iter()
+        .find_map(|entry| match &entry.event {
+            ActivityEvent::Watch { text, action } => {
+                Some((text.clone(), *action, entry.task.clone()))
+            }
+            _ => None,
+        })
+        .expect("a watch line");
     assert_eq!(
-        notice,
-        "Watch: T-1 has not moved for an hour. (to do: Look at its pane)"
+        line,
+        ("T-1 has not moved for an hour.".into(), None, Some(t))
     );
 }
 
@@ -3962,8 +4021,8 @@ fn a_run_sent_back_to_the_worker_closes_as_cancelled_and_the_next_takes_the_next
         .insert(t.clone(), vec![VerifyPoll::Pending; 8].into());
     h.world().drift.insert(
         t.clone(),
-        json!({"pass": false, "questions": [
-            {"text": "Grok is outside the card. Keep it?", "suggestion": "keep", "default_action": "keep"}
+        json!({"verdict": "questions", "send_back": "", "criteria": [], "questions": [
+            {"text": "Grok is outside the card. Keep it?", "stopped": "", "suggestion": "keep", "default_action": "keep", "choices": []}
         ], "flags": []}),
     );
     h.done(&f, &t);
@@ -3985,6 +4044,7 @@ fn a_run_sent_back_to_the_worker_closes_as_cancelled_and_the_next_takes_the_next
         choice: None,
         text: Some("drop it".into()),
         change: false,
+        decision: None,
     });
     assert_eq!(answered["ok"], true, "{answered}");
     assert_eq!(h.state(&f, &t), TaskState::Running);

@@ -34,6 +34,12 @@ pub const PROJECT_READ_LIMIT: usize = 256 * 1024;
 pub const LOG_TAIL_LIMIT: usize = 64 * 1024;
 /// The largest PRD a Task may attach.
 pub const PRD_LIMIT: u64 = 4 * 1024 * 1024;
+/// The most of one repository file an intake review reads about its card.
+pub const PROJECT_FILE_LIMIT: usize = 4 * 1024;
+/// The longest search a related-issue or pull request lookup sends.
+pub const SEARCH_LIMIT: usize = 200;
+/// The most issues or pull requests a related lookup answers.
+pub const SEARCH_RESULTS: &str = "5";
 
 /// The files a project read answers the text of: the guides a judgment
 /// reads, and the two the probe reads verify candidates from.
@@ -82,6 +88,10 @@ pub enum FactoryCall {
     /// The PRD file a Task attaches, at most [`PRD_LIMIT`] bytes; answers
     /// its bytes in base64.
     ReadPrd { path: String },
+    /// The start of the file at `path`, relative to the project at
+    /// `project` and inside it, at most [`PROJECT_FILE_LIMIT`] bytes;
+    /// answers `Option<String>`, `None` when it is not a readable text file.
+    ProjectFile { project: String, path: String },
     /// The repository a linked worktree at `checkout` belongs to, read
     /// before it goes; answers `Option<String>`, `None` for a folder already
     /// gone.
@@ -423,10 +433,23 @@ pub enum FactoryGh {
         repo: String,
         marker: String,
     },
+    /// Creates an issue, with the factory label unless `unlabelled`.
     IssueCreate {
         repo: String,
         title: String,
         body: String,
+        #[serde(default)]
+        unlabelled: bool,
+    },
+    /// The issues a search finds, newest first.
+    IssueSearch {
+        repo: String,
+        query: String,
+    },
+    /// The pull requests a search finds, newest first.
+    PrSearch {
+        repo: String,
+        query: String,
     },
     IssueLabel {
         repo: String,
@@ -538,17 +561,54 @@ impl FactoryGh {
                 "--json",
                 "number,body",
             ]),
-            Self::IssueCreate { repo, title, body } => owned(&[
+            Self::IssueCreate {
+                repo,
+                title,
+                body,
+                unlabelled,
+            } => {
+                let mut args = vec![
+                    "issue",
+                    "create",
+                    "--repo",
+                    repository(repo)?,
+                    "--title",
+                    bounded(title, TITLE_LIMIT, "title")?,
+                    "--body",
+                    bounded(body, BODY_LIMIT, "body")?,
+                ];
+                if !unlabelled {
+                    args.extend(["--label", LABEL]);
+                }
+                owned(&args)
+            }
+            Self::IssueSearch { repo, query } => owned(&[
                 "issue",
-                "create",
+                "list",
                 "--repo",
                 repository(repo)?,
-                "--title",
-                bounded(title, TITLE_LIMIT, "title")?,
-                "--body",
-                bounded(body, BODY_LIMIT, "body")?,
-                "--label",
-                LABEL,
+                "--state",
+                "all",
+                "--search",
+                bounded(query, SEARCH_LIMIT, "search")?,
+                "--limit",
+                SEARCH_RESULTS,
+                "--json",
+                "number,title,state,url",
+            ]),
+            Self::PrSearch { repo, query } => owned(&[
+                "pr",
+                "list",
+                "--repo",
+                repository(repo)?,
+                "--state",
+                "all",
+                "--search",
+                bounded(query, SEARCH_LIMIT, "search")?,
+                "--limit",
+                SEARCH_RESULTS,
+                "--json",
+                "number,title,state,url",
             ]),
             Self::IssueLabel { repo, number } => owned(&[
                 "issue",
@@ -912,7 +972,8 @@ mod tests {
             FactoryGh::IssueCreate {
                 repo: "o/r".into(),
                 title: "-x".into(),
-                body: "--y".into()
+                body: "--y".into(),
+                unlabelled: false,
             }
             .args()
             .unwrap(),
@@ -920,6 +981,30 @@ mod tests {
                 "issue", "create", "--repo", "o/r", "--title", "-x", "--body", "--y", "--label",
                 "factory"
             ]
+        );
+        // A follow-up's issue is made without the label (D-31).
+        assert_eq!(
+            FactoryGh::IssueCreate {
+                repo: "o/r".into(),
+                title: "t".into(),
+                body: "b".into(),
+                unlabelled: true,
+            }
+            .args()
+            .unwrap(),
+            [
+                "issue", "create", "--repo", "o/r", "--title", "t", "--body", "b"
+            ]
+        );
+        // A search is the value of its flag, never an option.
+        assert_eq!(
+            FactoryGh::IssueSearch {
+                repo: "o/r".into(),
+                query: "--web".into(),
+            }
+            .args()
+            .unwrap()[6..8],
+            ["--search", "--web"]
         );
     }
 }

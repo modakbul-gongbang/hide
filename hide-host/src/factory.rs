@@ -13,9 +13,9 @@ use std::time::{Duration, Instant};
 
 use hide_node_link::factory::{
     COMMAND_TEXT_LIMIT, FactoryCall, FactoryGh, LOG_TAIL_LIMIT, MemoryPressure, PRD_LIMIT,
-    PROJECT_ENTRY_LIMIT, PROJECT_MARKERS, PROJECT_READ_LIMIT, PROJECT_READS, ProjectFiles,
-    RUN_DEADLINE_MS, RunAnswer, VERIFY_COMMAND_LIMIT, VERIFY_QUEUE_LIMIT, VerifyJob, VerifyOutcome,
-    VerifyStep,
+    PROJECT_ENTRY_LIMIT, PROJECT_FILE_LIMIT, PROJECT_MARKERS, PROJECT_READ_LIMIT, PROJECT_READS,
+    ProjectFiles, RUN_DEADLINE_MS, RunAnswer, VERIFY_COMMAND_LIMIT, VERIFY_QUEUE_LIMIT, VerifyJob,
+    VerifyOutcome, VerifyStep,
 };
 use hide_node_link::git::GitCommand;
 use hide_node_link::git::branch_name;
@@ -75,6 +75,9 @@ pub fn handle(
         FactoryCall::LogTail { path } => to_value(log_tail(&absolute(&path)?)),
         FactoryCall::Project { path } => to_value(project_files(&absolute(&path)?)),
         FactoryCall::ReadPrd { path } => to_value(read_prd(&absolute(&path)?)?),
+        FactoryCall::ProjectFile { project, path } => {
+            to_value(project_file(&absolute(&project)?, &path)?)
+        }
         FactoryCall::WorktreeRoot { checkout } => to_value(worktree_root(&absolute(&checkout)?)?),
         FactoryCall::RemoveWorktree {
             root,
@@ -604,6 +607,59 @@ fn read_prd(path: &Path) -> HostResult<String> {
         return Err(HostError::new(ErrorCode::TooLarge, "attachment_too_large"));
     }
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// The start of a text file inside the project, at most
+/// [`PROJECT_FILE_LIMIT`] bytes: a path that leaves the project, through
+/// `..`, a root or a link, is refused, and one that is not a text file
+/// answers `None`.
+fn project_file(project: &Path, relative: &str) -> HostResult<Option<String>> {
+    use std::io::Read;
+    use std::path::Component;
+    let path = Path::new(relative);
+    if relative.is_empty()
+        || !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(invalid(format!(
+            "not a path inside the project: {relative:?}"
+        )));
+    }
+    let Ok(root) = project.canonicalize() else {
+        return Ok(None);
+    };
+    let Ok(file_path) = root.join(path).canonicalize() else {
+        return Ok(None);
+    };
+    if !file_path.starts_with(&root) {
+        return Err(invalid(format!(
+            "not a path inside the project: {relative:?}"
+        )));
+    }
+    let Ok(file) = File::open(&file_path) else {
+        return Ok(None);
+    };
+    if !file.metadata().is_ok_and(|metadata| metadata.is_file()) {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    if file
+        .take(PROJECT_FILE_LIMIT as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.contains(&0)
+    {
+        return Ok(None);
+    }
+    // A cut inside a character keeps what came before it.
+    Ok(Some(match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => {
+            let valid = error.utf8_error().valid_up_to();
+            String::from_utf8_lossy(&error.into_bytes()[..valid]).into_owned()
+        }
+    }))
 }
 
 fn read_capped(path: &Path) -> Option<String> {
