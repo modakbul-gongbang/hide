@@ -435,7 +435,7 @@ pub struct Hold {
 
 /// Where a hold is in its schedule.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "phase", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum HoldPhase {
     /// Its next step runs when that step's time comes.
     #[default]
