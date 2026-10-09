@@ -93,8 +93,6 @@ test(`${kind} native title and durable sleep wake the exact conversation in a fr
 });
 }
 
-type QuestionRow = { pane_id: string; user_turn?: unknown };
-
 test("OpenCode's root session titles its row, waits on its question and wakes by id in a fresh pane", async ({ page }) => {
   let agents: QuestionRow[] = [];
   page.on("websocket", (socket) => socket.on("framereceived", (frame) => {
