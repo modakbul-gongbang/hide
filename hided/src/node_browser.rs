@@ -29,7 +29,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
-use tokio::sync::{Notify, Semaphore, watch};
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, watch};
 
 use crate::browser_control::{BrowserControl, Failure, Registration};
 use crate::node_daemon::NodeState;
@@ -60,6 +60,8 @@ struct Ticket {
     display_id: String,
     generation: u64,
     issued: Instant,
+    /// The relay it may run, held from issue to the relay's end.
+    slot: OwnedSemaphorePermit,
 }
 
 /// This machine's desktop windows and the relays handed out for them.
@@ -92,11 +94,19 @@ impl NodeBrowser {
         self.generation.load(Ordering::SeqCst) == generation
     }
 
-    /// The tickets waiting, past their life dropped, and whether one more
-    /// relay fits beside them and the running ones.
-    fn room(&self, tickets: &mut HashMap<String, Ticket>) -> bool {
+    /// The tickets waiting, past their life dropped, and the slot of one
+    /// more relay, if one fits beside them and the running ones.
+    fn room(&self, tickets: &mut HashMap<String, Ticket>) -> Option<OwnedSemaphorePermit> {
         tickets.retain(|_, ticket| ticket.issued.elapsed() < TICKET_LIFE);
-        tickets.len() < self.relays.available_permits()
+        let slot = Arc::clone(&self.relays).try_acquire_owned().ok();
+        if slot.is_none() {
+            herdr_core::diagnostic!(json!({
+                "component": "node_browser",
+                "kind": "relay.cap_reached",
+                "cap": MAX_RELAYS,
+            }));
+        }
+        slot
     }
 
     /// The core's question over the link of `generation`. Everything the
@@ -113,7 +123,7 @@ impl NodeBrowser {
             if display_id.is_none() {
                 return Err("browser_display_missing".to_owned());
             }
-            if !self.room(&mut lock(&self.tickets)) {
+            if self.room(&mut lock(&self.tickets)).is_none() {
                 return Err("browser_relay_limit".to_owned());
             }
         }
@@ -134,9 +144,9 @@ impl NodeBrowser {
         }
         // Another question took the last room meanwhile: this capability
         // is never handed out and goes with the link's revocation.
-        if !self.room(&mut tickets) {
+        let Some(slot) = self.room(&mut tickets) else {
             return Err("browser_relay_limit".to_owned());
-        }
+        };
         let ticket = crate::state_file::new_token();
         tickets.insert(
             ticket.clone(),
@@ -145,6 +155,7 @@ impl NodeBrowser {
                 display_id,
                 generation,
                 issued: Instant::now(),
+                slot,
             },
         );
         Ok(json!({
@@ -450,14 +461,6 @@ pub async fn relay(
     let Some(ticket) = state.browser.take(&ticket, generation) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Ok(slot) = Arc::clone(&state.browser.relays).try_acquire_owned() else {
-        herdr_core::diagnostic!(json!({
-            "component": "node_browser",
-            "kind": "relay.cap_reached",
-            "cap": MAX_RELAYS,
-        }));
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
     let gateway = match crate::browser_relay::connect(&ticket.browser_ws_url).await {
         Ok(gateway) => gateway,
         Err((reason, _)) => {
@@ -472,7 +475,8 @@ pub async fn relay(
     let live = state.live.clone();
     let generation = ticket.generation;
     upgrade.on_upgrade(move |mut socket| async move {
-        let _slot = slot;
+        // The relay's slot, taken when its ticket was issued, goes as it ends.
+        let _slot = ticket.slot;
         crate::browser_relay::pump(
             &mut socket,
             gateway,
@@ -541,6 +545,7 @@ mod tests {
                     display_id: "d".to_owned(),
                     generation,
                     issued: Instant::now(),
+                    slot: Arc::clone(&browser.relays).try_acquire_owned().unwrap(),
                 },
             );
             format!("t{generation}")
@@ -583,6 +588,7 @@ mod tests {
                     display_id: "d".to_owned(),
                     generation: 1,
                     issued: Instant::now(),
+                    slot: Arc::clone(&browser.relays).try_acquire_owned().unwrap(),
                 },
             );
         }
