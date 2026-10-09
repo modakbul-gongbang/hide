@@ -141,14 +141,11 @@ fn run_coordinator(
                 .map(|node| crate::github::GithubReader::new(Arc::clone(node)))
         })
         .flatten();
+    // Sizes are measured on the machine the folders are on: this one's by
+    // its own node, a node that dials this core through its link.
     let mut disk_reader = context
-        .is_local()
-        .then(|| {
-            context
-                .node()
-                .map(|node| crate::disk::DiskReader::new(Arc::clone(node)))
-        })
-        .flatten();
+        .machine()
+        .map(|node| crate::disk::DiskReader::new(Arc::clone(node)));
     // The provider probe starts a `codex app-server` child and runs
     // `claude auth status`, so it is a reader like the three above and it
     // reads nothing at all while the Background AI group is off screen.
@@ -1771,7 +1768,12 @@ fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::Gi
 
 fn read_disk_request(context: &SessionSyncContext) -> Option<crate::disk::DiskRequest> {
     let runtime = context.runtime.upgrade()?;
-    let request = runtime.lock().ok()?.disk_request();
+    let request = match &context.target {
+        SessionSyncTarget::Local { .. } => runtime.lock().ok()?.disk_request(),
+        SessionSyncTarget::Remote { target_id, .. } => {
+            runtime.lock().ok()?.device_disk_request(target_id)
+        }
+    };
     drop(runtime);
     Some(request)
 }
@@ -1945,7 +1947,12 @@ fn publish_disk_usage(
         return false;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_disk_usage(disk),
+        Ok(mut guard) => match &context.target {
+            SessionSyncTarget::Local { .. } => guard.ingest_disk_usage(disk),
+            SessionSyncTarget::Remote { target_id, .. } => {
+                guard.ingest_device_disk_usage(target_id, disk)
+            }
+        },
         Err(_) => return false,
     };
     drop(runtime);

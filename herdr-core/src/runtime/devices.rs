@@ -244,6 +244,8 @@ impl Runtime {
     pub(super) fn disconnect_remote_device(&mut self, device_id: &str) {
         self.device_machine_ids.remove(device_id);
         self.device_ports.remove(device_id);
+        self.device_disk.remove(device_id);
+        self.device_disk_project.remove(device_id);
         self.forget_device_host(device_id);
         if let Some(connection) = self.remote_connections.remove(device_id)
             && let Some(sync) = connection.sync

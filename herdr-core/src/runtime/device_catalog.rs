@@ -38,9 +38,20 @@ impl Runtime {
             facts,
         );
         if let Some(worktrees) = self.device_worktrees.get(target) {
+            let measured = self.device_disk.get(target);
             for project in &mut session.workspaces {
-                if let Some(listed) = worktrees.projects.get(&project.path) {
-                    device_catalog::apply_worktrees(project, listed);
+                let Some(listed) = worktrees.projects.get(&project.path) else {
+                    continue;
+                };
+                match measured {
+                    Some(disk) => {
+                        let mut listed = listed.clone();
+                        super::projects::measure_worktrees(&mut listed, disk);
+                        device_catalog::apply_worktrees(project, &listed);
+                        let named = self.device_disk_project.get(target) == Some(&project.path);
+                        project.disk = super::projects::project_disk(Some(&listed), named);
+                    }
+                    None => device_catalog::apply_worktrees(project, listed),
                 }
             }
         }

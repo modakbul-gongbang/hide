@@ -1768,3 +1768,95 @@ fn a_file_dropped_on_the_node_stays_there_for_its_own_pane_and_crosses_once_for_
         }
     }
 }
+
+/// The core's row for `device`'s project at `path`, in that device's session.
+fn device_project(snapshot: &Value, device: &str, path: &std::path::Path) -> Option<Value> {
+    snapshot
+        .pointer("/status/remote")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter(|status| status["target_id"] == device)
+        .filter_map(|status| {
+            status
+                .pointer("/session/workspaces")
+                .and_then(Value::as_array)
+        })
+        .flatten()
+        .find(|row| row["path"] == path.to_str().unwrap_or_default())
+        .cloned()
+}
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_node_project_is_measured_on_the_node_as_a_local_one_is() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        // A repository of the node's, with a file whose size the
+        // measurement has to count.
+        let project = fixture.screen_home().join("project");
+        ensure!(
+            std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&project)
+                .status()?
+                .success(),
+            "git init"
+        );
+        std::fs::write(project.join("weight.bin"), vec![1_u8; 512 * 1024])?;
+        fixture.screen.workspace_at(&project)?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
+            )
+            .await?;
+            let row = tokio::task::block_in_place(|| {
+                wait_for("the node's Git project on the core", || {
+                    Ok(device_project(&fixture.snapshot()?, &node, &project)
+                        .filter(|row| row["is_git"] == true))
+                })
+            })?;
+            // The node's screen opens the project's Overview, which asks for
+            // its size.
+            send(
+                &mut socket,
+                "card_measure_disk",
+                json!({"workspace_id": row["id"]}),
+            )
+            .await?;
+            let mut last = Value::Null;
+            tokio::task::block_in_place(|| {
+                wait_for("the node project's size", || {
+                    let row = device_project(&fixture.snapshot()?, &node, &project)
+                        .unwrap_or(Value::Null);
+                    last = row["disk"].clone();
+                    Ok(row["disk"]["total_bytes"]
+                        .as_u64()
+                        .filter(|bytes| *bytes >= 512 * 1024)
+                        .map(|_| ()))
+                })
+            })
+            .with_context(|| format!("the project's disk: {last}"))?;
+            Ok::<_, anyhow::Error>(())
+        })
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}

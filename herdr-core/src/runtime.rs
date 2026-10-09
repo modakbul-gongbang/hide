@@ -1112,6 +1112,10 @@ pub struct Runtime {
     /// link; that device's panes carry them (PRD core-host-node-remote-core
     /// B13). An SSH device's listeners are not read, so its panes have none.
     device_ports: HashMap<String, Vec<crate::model::ListeningPortSnapshot>>,
+    /// What each node that dials this core measured of its own projects, and
+    /// the project a web Overview named for measuring there.
+    device_disk: HashMap<String, Vec<crate::model::DiskUsageSnapshot>>,
+    device_disk_project: HashMap<String, String>,
     /// This machine's file host: the helper's dispatch, run in place.
     own_node: Arc<dyn crate::node_access::NodeLink>,
     /// Opens the transport to each registered device; the node that holds
@@ -1882,6 +1886,8 @@ impl Runtime {
             device_recent_tabs: HashMap::new(),
             device_worktrees: HashMap::new(),
             device_ports: HashMap::new(),
+            device_disk: HashMap::new(),
+            device_disk_project: HashMap::new(),
             own_node,
             devices,
             document_places: HashMap::new(),

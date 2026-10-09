@@ -110,11 +110,60 @@ fn remote_purpose_unavailable_reason(version: Option<&str>) -> String {
     }
 }
 
+/// Puts the measured sizes on a repository's worktrees and its shared Git
+/// directory, matched by path, and sums them for its facts line. A device's
+/// repositories take their own device's rows only, so a path that names
+/// another machine's folder never matches.
+pub(super) fn measure_worktrees(
+    project: &mut crate::model::ProjectWorktreesSnapshot,
+    disk_usage: &[crate::model::DiskUsageSnapshot],
+) {
+    for worktree in &mut project.worktrees {
+        worktree.disk = disk_usage
+            .iter()
+            .find(|disk| disk.path.as_deref() == Some(worktree.path.as_str()))
+            .cloned()
+            .unwrap_or_default();
+    }
+    project.shared_git_disk = disk_usage
+        .iter()
+        .find(|d| d.path.is_some() && d.path == project.shared_git_path)
+        .cloned()
+        .unwrap_or_default();
+    let components: Vec<_> = project
+        .worktrees
+        .iter()
+        .map(|w| &w.disk)
+        .chain(std::iter::once(&project.shared_git_disk))
+        .collect();
+    project.disk_total_bytes = project
+        .shared_git_path
+        .as_ref()
+        .and_then(|_| components.iter().map(|d| d.total_bytes).sum());
+    let confirmed: Vec<_> = components.iter().filter_map(|d| d.total_bytes).collect();
+    project.disk_confirmed_bytes = (!confirmed.is_empty()).then(|| confirmed.iter().sum());
+    project.linked_disk_bytes = project
+        .worktrees
+        .iter()
+        .filter(|w| !w.is_main)
+        .map(|w| w.disk.total_bytes)
+        .sum();
+    project.disk_unavailable_reason = components
+        .iter()
+        .find_map(|d| d.unavailable_reason.clone())
+        .or_else(|| {
+            project
+                .shared_git_path
+                .is_none()
+                .then(|| "Shared Git directory is unavailable. Refresh Overview.".into())
+        });
+}
+
 /// A project's size as its facts line reads it: the catalog's sum once every
 /// part is measured, the reason when a part could not be, and `measuring`
 /// while the project is the one named for measuring and neither has come
 /// back yet.
-fn project_disk(
+pub(super) fn project_disk(
     project: Option<&crate::model::ProjectWorktreesSnapshot>,
     named: bool,
 ) -> crate::model::ProjectDiskSnapshot {
@@ -710,11 +759,6 @@ impl Runtime {
                     &pane_instrumentation,
                     &self.snapshot.navigator.agents,
                 );
-                worktree.disk = disk_usage
-                    .iter()
-                    .find(|disk| disk.path.as_deref() == Some(worktree.path.as_str()))
-                    .cloned()
-                    .unwrap_or_default();
                 worktree.github = github_project
                     .map(|project| project.status.clone())
                     .unwrap_or_default();
@@ -732,38 +776,7 @@ impl Runtime {
                     worktree.pane_count,
                 );
             }
-            project.shared_git_disk = disk_usage
-                .iter()
-                .find(|d| d.path.is_some() && d.path == project.shared_git_path)
-                .cloned()
-                .unwrap_or_default();
-            let components: Vec<_> = project
-                .worktrees
-                .iter()
-                .map(|w| &w.disk)
-                .chain(std::iter::once(&project.shared_git_disk))
-                .collect();
-            project.disk_total_bytes = project
-                .shared_git_path
-                .as_ref()
-                .and_then(|_| components.iter().map(|d| d.total_bytes).sum());
-            let confirmed: Vec<_> = components.iter().filter_map(|d| d.total_bytes).collect();
-            project.disk_confirmed_bytes = (!confirmed.is_empty()).then(|| confirmed.iter().sum());
-            project.linked_disk_bytes = project
-                .worktrees
-                .iter()
-                .filter(|w| !w.is_main)
-                .map(|w| w.disk.total_bytes)
-                .sum();
-            project.disk_unavailable_reason = components
-                .iter()
-                .find_map(|d| d.unavailable_reason.clone())
-                .or_else(|| {
-                    project
-                        .shared_git_path
-                        .is_none()
-                        .then(|| "Shared Git directory is unavailable. Refresh Overview.".into())
-                });
+            measure_worktrees(project, &disk_usage);
             project.worktrees.sort_by(|left, right| {
                 right
                     .is_main
@@ -2714,6 +2727,24 @@ impl Runtime {
     /// not a local Git project here has no size to measure; the refusal is a
     /// diagnostic, and the Overview simply draws no size.
     pub(super) fn measure_project_disk(&mut self, workspace_id: &str) -> bool {
+        // A Git project of a node that dials this core is measured on its
+        // own machine, through its link (PRD core-host-node-remote-core B13).
+        let inbound = self.snapshot.status.remote.iter().find_map(|status| {
+            let workspace = status
+                .session
+                .as_ref()?
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == workspace_id && workspace.is_git)?;
+            self.is_inbound(&status.target_id)
+                .then(|| (status.target_id.clone(), workspace.path.clone()))
+        });
+        if let Some((device, path)) = inbound {
+            self.device_disk_project.insert(device.clone(), path);
+            self.disk_generation = self.disk_generation.wrapping_add(1);
+            self.refresh_device_catalog(&device);
+            return true;
+        }
         let Some(path) = self
             .snapshot
             .navigator
@@ -2737,6 +2768,71 @@ impl Runtime {
         self.disk_generation = self.disk_generation.wrapping_add(1);
         self.refresh_worktree_projection();
         true
+    }
+
+    /// What a node that dials this core measures on its own machine: the
+    /// worktrees of its project in front of the Overview and of the one a
+    /// web Overview named, as `disk_request` asks of this machine's.
+    pub(crate) fn device_disk_request(&self, device_id: &str) -> crate::disk::DiskRequest {
+        let mut roots = Vec::new();
+        if self.snapshot.ui_state.right_panel_visible
+            && matches!(
+                self.snapshot.ui_state.right_panel_section,
+                RightPanelSection::Overview
+            )
+            && let Some(focused) = self.snapshot.navigator.focused_checkout_id.as_deref()
+            && let Some(workspace) = self
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .filter(|status| status.target_id == device_id)
+                .filter_map(|status| status.session.as_ref())
+                .flat_map(|session| session.workspaces.iter())
+                .find(|workspace| {
+                    workspace
+                        .checkouts
+                        .iter()
+                        .any(|checkout| checkout.id == focused)
+                })
+        {
+            roots.push(workspace.path.clone());
+        }
+        roots.extend(self.device_disk_project.get(device_id).cloned());
+        let mut paths = Vec::new();
+        let mut shared_git = Vec::new();
+        if let Some(listed) = self.device_worktrees.get(device_id) {
+            for project in roots.iter().filter_map(|root| listed.projects.get(root)) {
+                paths.extend(project.worktrees.iter().map(|w| PathBuf::from(&w.path)));
+                if let Some(shared) = project.shared_git_path.as_ref().map(PathBuf::from) {
+                    paths.push(shared.clone());
+                    shared_git.push(shared);
+                }
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        shared_git.sort();
+        shared_git.dedup();
+        crate::disk::DiskRequest {
+            paths,
+            shared_git,
+            generation: self.disk_generation,
+        }
+    }
+
+    /// A node that dials this core measured its own projects: their rows
+    /// carry the sizes, as this machine's do.
+    pub(crate) fn ingest_device_disk_usage(
+        &mut self,
+        device_id: &str,
+        disk: Vec<crate::model::DiskUsageSnapshot>,
+    ) -> bool {
+        if !self.is_inbound(device_id) || self.device_disk.get(device_id) == Some(&disk) {
+            return false;
+        }
+        self.device_disk.insert(device_id.to_owned(), disk);
+        self.refresh_device_catalog(device_id)
     }
 
     pub fn ingest_disk_usage(&mut self, disk: Vec<crate::model::DiskUsageSnapshot>) -> bool {
