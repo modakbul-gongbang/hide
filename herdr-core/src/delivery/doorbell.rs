@@ -274,6 +274,9 @@ impl Doorbell {
             let observed = match verdict {
                 Ok(observed) => observed,
                 Err(reason) => {
+                    if reason == Hold::Absent {
+                        self.link_lost(&letter.id);
+                    }
                     self.hold(&letter.id, pane, reason);
                     continue;
                 }
@@ -292,6 +295,7 @@ impl Doorbell {
                 .ok()
                 .and_then(|guard| guard.delivery_connector(&letter.recipient.device_id))
             else {
+                self.link_lost(&letter.id);
                 self.hold(&letter.id, pane, Hold::Absent);
                 continue;
             };
@@ -390,6 +394,21 @@ impl Doorbell {
         }
         self.held.retain(|id, _| ids.contains(id.as_str()));
         self.tried.retain(|id, _| ids.contains(id.as_str()));
+    }
+
+    /// The pane or its device's link went away after a failed Herdr call.
+    /// The failure waits for the pane to move because the bell may have been
+    /// typed; a link that comes back to an idle pane at the same state
+    /// sequence shows no turn ever started, so the letter is tried again
+    /// rather than waiting for a pane that has no reason to move.
+    fn link_lost(&mut self, id: &str) {
+        if self
+            .tried
+            .get(id)
+            .is_some_and(|tried| tried.retry_at == u64::MAX)
+        {
+            self.tried.remove(id);
+        }
     }
 
     /// Logs a letter's reason for waiting once per change of reason, with
@@ -892,6 +911,35 @@ mod tests {
                 .unwrap()
                 .attempts()
         }
+    }
+
+    /// A ring whose Herdr call failed as the device's link went away is
+    /// tried again once the link is back, though the pane did not move.
+    #[test]
+    fn a_ring_lost_with_the_link_rings_once_the_link_returns() {
+        use crate::runtime::delivery::tests::set_live;
+        let bell = Bell::start(json!({}));
+        let mut doorbell = Doorbell::default();
+        let gone = crate::fake_herdr::FakeHerdr::start("doorbell-gone", |_, _| json!({}));
+        set_live(&mut bell.runtime.lock().unwrap(), Some(&gone));
+        drop(gone);
+        let records = bell.pass(&mut doorbell, now());
+        assert!(
+            records
+                .iter()
+                .any(|record| record["kind"] == "doorbell.failed"),
+            "{records:?}"
+        );
+        assert!(
+            bell.pass(&mut doorbell, now()).is_empty(),
+            "a failure waits"
+        );
+        set_live(&mut bell.runtime.lock().unwrap(), None);
+        assert_eq!(held(&bell.pass(&mut doorbell, now())), ["pane_unavailable"]);
+        set_live(&mut bell.runtime.lock().unwrap(), Some(&bell.herdr));
+        bell.pass(&mut doorbell, now());
+        assert_eq!(bell.typed().len(), 1);
+        assert!(bell.line().is_some());
     }
 
     fn held(records: &[Value]) -> Vec<&str> {
