@@ -250,9 +250,9 @@ impl PaneEvents for Events {
             NodeEvent::Refused { pane_id, reason } => {
                 record_refusal(node, pane_id.as_deref(), &reason, "node");
             }
-            // The link hands its Herdr streams' lines to the streams
-            // themselves (`hide_node::ssh::LinkHerdrConnector`).
-            NodeEvent::HerdrData { .. } | NodeEvent::HerdrClosed { .. } | NodeEvent::Ping => {}
+            // The link hands its streams' lines to the streams themselves
+            // (`hide_node::ssh::LinkStream`).
+            NodeEvent::LinkData { .. } | NodeEvent::LinkClosed { .. } | NodeEvent::Ping => {}
         }
     }
 

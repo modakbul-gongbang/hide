@@ -8,7 +8,7 @@
 //! The core never dials such a node: [`InboundTransport::establish`] hands
 //! over the link that is already up, once; a link that ended is replaced
 //! only by the node dialing again. Its Herdr is reached through the link
-//! (`link_herdr`), never through a socket on this machine.
+//! (`link_streams`), never through a socket on this machine.
 
 use std::sync::{Arc, Mutex};
 

@@ -17,8 +17,8 @@
 use super::*;
 #[path = "inbound.rs"]
 pub mod inbound;
-#[path = "link_herdr.rs"]
-mod link_herdr;
+#[path = "link_streams.rs"]
+mod link_streams;
 #[path = "retirement.rs"]
 mod retirement;
 use futures_util::{StreamExt, TryStreamExt, stream};
@@ -28,7 +28,9 @@ use hide_node_link::device::{HostConsent, HostIdentity};
 use hide_node_link::panes::{NodeEvent, PanesStarted};
 use hide_node_link::protocol::{Call, Hello, PROTOCOL_VERSION, Request};
 use hide_node_link::{LinkAnswer, NodeLink, call_as};
-pub use link_herdr::{LinkHerdrConnector, MAX_HERDR_PENDING};
+pub use link_streams::{
+    LinkHerdrConnector, LinkStream, MAX_HERDR_PENDING, OpenError, StreamCloser,
+};
 use russh_sftp::client::{RawSftpSession, error::Error as SftpError};
 use russh_sftp::protocol::{FileAttributes, StatusCode};
 use serde_json::value::RawValue;
@@ -480,9 +482,9 @@ struct Inner {
     readers: std::sync::OnceLock<hide_node_link::sessions::ReaderFeatures>,
     /// The protocol the node's Hello named.
     protocol: std::sync::OnceLock<u32>,
-    /// The streams to the node's own Herdr open on this link, for a node
-    /// that dialed its core (`link_herdr`).
-    herdr: link_herdr::HerdrStreams,
+    /// The streams to the node's own Herdr and its daemon's browser relay
+    /// open on this link, for a node that dialed its core (`link_streams`).
+    streams: link_streams::LinkStreams,
     /// The link runs over the attach role's local stream: a node that dialed
     /// this core, not a device it dialed.
     dialed_by_node: bool,
@@ -554,7 +556,7 @@ impl RemoteHost {
                 terminals: std::sync::OnceLock::new(),
                 readers: std::sync::OnceLock::new(),
                 protocol: std::sync::OnceLock::new(),
-                herdr: Default::default(),
+                streams: Default::default(),
                 dialed_by_node: false,
             }),
         }
@@ -925,7 +927,7 @@ fn mark_closed(inner: &Inner, reason: String) {
     drop(closed);
     // Dropping the senders wakes every waiting request as disconnected.
     lock_recover(&inner.pending).clear();
-    inner.herdr.end_all();
+    inner.streams.end_all();
     inner.stop_gates(&reason);
 }
 
@@ -2222,7 +2224,7 @@ fn start_reader(
         terminals: std::sync::OnceLock::new(),
         readers: std::sync::OnceLock::new(),
         protocol: std::sync::OnceLock::new(),
-        herdr: Default::default(),
+        streams: Default::default(),
         dialed_by_node,
     });
     let reader = Arc::downgrade(&inner);
@@ -2305,8 +2307,8 @@ fn deliver_line(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
     if line.starts_with(b"{\"event\":\"ping\"}") {
         return;
     }
-    if line.starts_with(b"{\"event\":\"herdr_") {
-        deliver_herdr(inner, line);
+    if line.starts_with(b"{\"event\":\"link_") {
+        deliver_link(inner, line);
         return;
     }
     if line.starts_with(b"{\"event\":") {
@@ -2403,20 +2405,23 @@ fn deliver_report(inner: &Arc<Inner>, line: &[u8]) {
         .send(Delivery::Report(report.report.to_owned()));
 }
 
-/// Hands what the node read from its Herdr to the stream the core opened
-/// (`link_herdr`); these never reach hided's pane events.
-fn deliver_herdr(inner: &Arc<Inner>, line: &[u8]) {
+/// Hands what the node read from a stream's end to the stream the core
+/// opened (`link_streams`); these never reach hided's pane events.
+fn deliver_link(inner: &Arc<Inner>, line: &[u8]) {
     match serde_json::from_slice::<NodeEvent>(line) {
-        Ok(NodeEvent::HerdrData { stream, data }) => inner.herdr.data(&inner.target, stream, &data),
-        Ok(NodeEvent::HerdrClosed { stream, reason }) => {
+        Ok(NodeEvent::LinkData { stream, data }) => {
+            inner.streams.data(&inner.target, stream, &data);
+        }
+        Ok(NodeEvent::LinkClosed { stream, reason }) => {
             crate::diagnostic!(json!({
                 "component": "remote_host",
-                "kind": "herdr_stream.closed_by_node",
+                "kind": "link_stream.closed_by_node",
                 "target": inner.target,
                 "stream": stream,
+                "end": inner.streams.end_of(stream),
                 "reason": reason.chars().take(64).collect::<String>(),
             }));
-            inner.herdr.end(stream, "the node's Herdr ended the stream");
+            inner.streams.end(stream, "the node ended the stream");
         }
         Ok(_) | Err(_) => crate::diagnostic!(json!({
             "component": "remote_host",

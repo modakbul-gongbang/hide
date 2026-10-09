@@ -78,6 +78,7 @@ pub fn serve_with_terminals(
             heartbeat: false,
             checkout_callers: false,
             opened_roots: None,
+            browser: None,
         },
     )
 }
@@ -103,6 +104,11 @@ pub struct Services<'a> {
     /// screen machine's node, whose own screens read files under them
     /// without the core (PRD core-host-node-remote-core D-05).
     pub opened_roots: Option<&'a OpenedRoots>,
+    /// The browser gateway of the node's desktop window, which its core
+    /// asks for capabilities and reaches the relay of through the link: a
+    /// node that dialed its core (PRD core-host-node-remote-core B4, B13,
+    /// B15). Every other node refuses both.
+    pub browser: Option<&'a dyn crate::link_bridge::BrowserGateway>,
 }
 
 /// The checkout roots a node's core opened on it over one link, which are
@@ -156,6 +162,7 @@ impl Services<'_> {
             heartbeat: false,
             checkout_callers: false,
             opened_roots: None,
+            browser: None,
         }
     }
 }
@@ -180,9 +187,7 @@ fn serve_in(
     let opened_roots = services.opened_roots;
     // Ends the heartbeat when the input does.
     let input_ended = (Mutex::new(false), std::sync::Condvar::new());
-    let herdr = services
-        .herdr_socket
-        .map(crate::herdr_bridge::HerdrBridge::new);
+    let link = crate::link_bridge::LinkBridge::new(services.herdr_socket, services.browser);
     let output = Mutex::new(output);
     // The calls handed to a worker and not yet answered, each with whether
     // it was asked to stop; the reader enters one before handing it over, so
@@ -225,7 +230,7 @@ fn serve_in(
             let bridges = &bridges;
             let env = &env;
             let running = &running;
-            let herdr = &herdr;
+            let link = &link;
             scope.spawn(move || {
                 loop {
                     let request = match receiver.lock().map(|receiver| receiver.recv()) {
@@ -260,27 +265,27 @@ fn serve_in(
                         Call::PaneInspect { pane_id } => panes.inspect(&pane_id).and_then(to_value),
                         Call::StreamWrite { stream, data } => panes.write_stream(stream, &data),
                         Call::StreamClose { stream } => panes.close_stream(stream),
-                        Call::HerdrOpen { stream } => match herdr {
-                            Some(herdr) => herdr.open(scope, output, stream),
-                            None => Err(no_herdr_bridge()),
-                        },
-                        Call::HerdrWrite { stream, data } => match herdr {
-                            Some(herdr) => herdr.write(stream, &data),
-                            None => Err(no_herdr_bridge()),
-                        },
-                        Call::HerdrClose { stream } => match herdr {
-                            Some(herdr) => {
-                                herdr.close(stream);
-                                Ok(Value::Null)
-                            }
-                            None => Err(no_herdr_bridge()),
+                        Call::LinkOpen { stream, end } => link.open(scope, output, stream, end),
+                        Call::LinkWrite { stream, data } => link.write(stream, &data),
+                        Call::LinkClose { stream } => {
+                            link.close(stream);
+                            Ok(Value::Null)
+                        }
+                        // On a machine lane: it waits on the gateway's answer.
+                        Call::BrowserGateway { scope, relay } => match link.browser() {
+                            Some(browser) => browser
+                                .capability(&scope, relay)
+                                .map_err(|reason| HostError::new(ErrorCode::Unsupported, reason)),
+                            None => Err(crate::link_bridge::unreached(
+                                hide_node_link::protocol::LinkEnd::BrowserRelay,
+                            )),
                         },
                         // A core that names no server labels the one this
                         // link's pane service serves.
                         Call::LabelLock {
                             herdr_socket,
                             generator,
-                        } => label_socket(herdr.as_ref(), herdr_socket, panes).and_then(
+                        } => label_socket(link.herdr_socket(), herdr_socket, panes).and_then(
                             |herdr_socket| {
                                 handle_in(
                                     Call::LabelLock {
@@ -294,7 +299,7 @@ fn serve_in(
                         Call::LabelUnlock {
                             herdr_socket,
                             generator,
-                        } => label_socket(herdr.as_ref(), herdr_socket, panes).and_then(
+                        } => label_socket(link.herdr_socket(), herdr_socket, panes).and_then(
                             |herdr_socket| {
                                 handle_in(
                                     Call::LabelUnlock {
@@ -377,10 +382,8 @@ fn serve_in(
         if let Some(terminals) = terminals {
             terminals.stop();
         }
-        // Each Herdr stream's reader ends with its connection.
-        if let Some(herdr) = &herdr {
-            herdr.stop();
-        }
+        // Each link stream's reader ends with its connection.
+        link.stop();
         // The connection is gone: a kit step still running ends its child
         // rather than keep the helper alive after it, and the pane service
         // ends its listener and streams so the scope can close.
@@ -406,14 +409,14 @@ fn no_labeled_server() -> HostError {
 /// cannot have it create a lock file anywhere else; a device locks the
 /// server its core names, or the one its pane service serves.
 fn label_socket(
-    bridge: Option<&crate::herdr_bridge::HerdrBridge>,
+    bridged: Option<&Path>,
     named: Option<String>,
     panes: &crate::panes::Panes,
 ) -> HostResult<Option<String>> {
-    let Some(bridge) = bridge else {
+    let Some(bridged) = bridged else {
         return Ok(named.or_else(|| panes.herdr_socket()));
     };
-    let own = bridge.socket().to_string_lossy().into_owned();
+    let own = bridged.to_string_lossy().into_owned();
     match named {
         Some(named) if named != own => Err(HostError::new(
             ErrorCode::InvalidRequest,
@@ -421,15 +424,6 @@ fn label_socket(
         )),
         _ => Ok(Some(own)),
     }
-}
-
-/// Why a node with no Herdr bridge refuses a Herdr stream: its core
-/// reaches its Herdr over SSH, never through the link.
-fn no_herdr_bridge() -> HostError {
-    HostError::new(
-        ErrorCode::Unsupported,
-        "This node's Herdr is not reached through its link",
-    )
 }
 
 /// Reads requests and hands each to its lane: `[machine, control]`.
@@ -1246,9 +1240,13 @@ pub fn handle_with_progress(
             ErrorCode::Unsupported,
             "Only a device node's link carries its panes' credentials and commands",
         )),
-        Call::HerdrOpen { .. } | Call::HerdrWrite { .. } | Call::HerdrClose { .. } => {
-            Err(no_herdr_bridge())
-        }
+        Call::LinkOpen { end, .. } => Err(crate::link_bridge::unreached(end)),
+        Call::LinkWrite { .. } | Call::LinkClose { .. } => Err(crate::link_bridge::unreached(
+            hide_node_link::protocol::LinkEnd::Herdr,
+        )),
+        Call::BrowserGateway { .. } => Err(crate::link_bridge::unreached(
+            hide_node_link::protocol::LinkEnd::BrowserRelay,
+        )),
         Call::SessionText { path, scope } => session_read(env, &path, scope.as_ref(), |path| {
             hide_session::read_bounded(path, hide_session::SESSION_READ_LIMIT_BYTES)
                 .map_err(|e| e.to_string())

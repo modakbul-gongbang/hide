@@ -1,14 +1,17 @@
-//! The Herdr of a node that dialed its core, reached through the node's
-//! link (PRD core-host-node-remote-core D-18, D-19): an [`ApiConnector`]
-//! whose every connection is one stream inside the link, which the node
-//! bridges to its own Herdr socket (`hide_host::herdr_bridge`). The session
-//! sync, controls, doorbell, find, phone reply and agent sleep take it where
-//! they take a local socket or an SSH device's channel.
+//! What the core reaches on the machine of a node that dialed it, through
+//! the node's link (PRD core-host-node-remote-core D-18, D-19, B15): every
+//! connection is one stream inside the link, which the node bridges to the
+//! end the core names (`hide_host::link_bridge`). The node's Herdr is one
+//! end, taken as an [`ApiConnector`] by the session sync, controls,
+//! doorbell, find, phone reply and agent sleep where they take a local
+//! socket or an SSH device's channel; the browser relay of the node's
+//! daemon is the other, which carries a caller's CDP to the node's desktop
+//! window ([`RemoteHost::browser_relay_stream`]).
 //!
 //! A stream reads what the node sent, in order, from a bounded queue: one
 //! the reader leaves past [`MAX_HERDR_PENDING`] chunks is ended as stalled,
-//! and a link holds at most [`MAX_HERDR_STREAMS`] at once. The link ending
-//! ends every stream on it.
+//! and a link holds at most [`LinkEnd::cap`] streams to each end at once.
+//! The link ending ends every stream on it.
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -18,13 +21,13 @@ use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use hide_herdr_client::{ApiConnector, ApiError, ApiStream, ConnectionShutdown};
-use hide_node_link::panes::{MAX_CHUNK, MAX_HERDR_STREAMS};
-use hide_node_link::protocol::Call;
+use hide_node_link::panes::MAX_CHUNK;
+use hide_node_link::protocol::{Call, LinkEnd};
 use serde_json::json;
 
 use super::{RemoteHost, lock_recover};
 
-/// Chunks one Herdr stream holds for its reader; past it the stream ends.
+/// Chunks one link stream holds for its reader; past it the stream ends.
 pub const MAX_HERDR_PENDING: usize = 64;
 /// How long an open, a write or a close may take on the link.
 const HERDR_CALL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -34,46 +37,56 @@ enum Piece {
     Ended(String),
 }
 
-/// The Herdr streams open on one link, by the id the core gave each. A
+/// The streams open on one link, by the id the core gave each. A
 /// stream this side gave up (its reader fell behind, or the node sent what
 /// is not base64) keeps its entry, with no sender, until its owner drops
 /// it and the node is told to close it; only the node ending a stream
 /// removes its entry unasked. So every stream the node holds is one the
 /// cap counts, and none is left open on the node unseen.
 #[derive(Default)]
-pub(super) struct HerdrStreams {
-    open: Mutex<HashMap<u64, Option<mpsc::SyncSender<Piece>>>>,
+pub(super) struct LinkStreams {
+    open: Mutex<HashMap<u64, Entry>>,
     next: AtomicU64,
 }
 
-impl HerdrStreams {
-    /// Bytes the node read from its Herdr for `stream`. A reader that has
-    /// fallen [`MAX_HERDR_PENDING`] chunks behind loses its stream.
+struct Entry {
+    end: LinkEnd,
+    sender: Option<mpsc::SyncSender<Piece>>,
+}
+
+impl LinkStreams {
+    /// Bytes the node read from `stream`'s end. A reader that has fallen
+    /// [`MAX_HERDR_PENDING`] chunks behind loses its stream.
     pub(super) fn data(&self, target: &str, stream: u64, data: &str) {
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else {
-            self.give_up(stream, "the node sent a Herdr chunk that is not base64");
+            self.give_up(stream, "the node sent a link chunk that is not base64");
             return;
         };
         let mut open = lock_recover(&self.open);
-        let Some(Some(sender)) = open.get(&stream) else {
+        let Some(entry) = open.get_mut(&stream) else {
+            return;
+        };
+        let Some(sender) = &entry.sender else {
             return;
         };
         match sender.try_send(Piece::Data(bytes)) {
             Ok(()) => {}
             Err(mpsc::TrySendError::Full(_)) => {
                 // The reader finds the queue's end after what it holds.
-                open.insert(stream, None);
+                entry.sender = None;
+                let end = entry.end;
                 drop(open);
                 crate::diagnostic!(json!({
                     "component": "remote_host",
-                    "kind": "herdr_stream.overflow",
+                    "kind": "link_stream.overflow",
                     "target": target,
                     "stream": stream,
+                    "end": end,
                     "cap": MAX_HERDR_PENDING,
                 }));
             }
             Err(mpsc::TrySendError::Disconnected(_)) => {
-                open.insert(stream, None);
+                entry.sender = None;
             }
         }
     }
@@ -83,7 +96,7 @@ impl HerdrStreams {
     fn give_up(&self, stream: u64, reason: &str) {
         let mut open = lock_recover(&self.open);
         if let Some(entry) = open.get_mut(&stream)
-            && let Some(sender) = entry.take()
+            && let Some(sender) = entry.sender.take()
         {
             let _ = sender.try_send(Piece::Ended(reason.to_owned()));
         }
@@ -91,9 +104,18 @@ impl HerdrStreams {
 
     /// The node ended `stream`; nothing is left open there to close.
     pub(super) fn end(&self, stream: u64, reason: &str) {
-        if let Some(Some(sender)) = lock_recover(&self.open).remove(&stream) {
+        if let Some(Entry {
+            sender: Some(sender),
+            ..
+        }) = lock_recover(&self.open).remove(&stream)
+        {
             let _ = sender.try_send(Piece::Ended(reason.to_owned()));
         }
+    }
+
+    /// The end `stream` reaches, while it is open.
+    pub(super) fn end_of(&self, stream: u64) -> Option<LinkEnd> {
+        lock_recover(&self.open).get(&stream).map(|entry| entry.end)
     }
 
     /// The link ended: every stream reads its end.
@@ -127,54 +149,97 @@ impl RemoteHost {
 
 impl ApiConnector for LinkHerdrConnector {
     fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError> {
-        let streams = &self.link.inner.herdr;
-        if let Some(reason) = self.link.closed_reason() {
-            return Err(ApiError::Transport(format!(
-                "the node's link has ended ({reason})"
-            )));
+        match self.link.open_stream(LinkEnd::Herdr) {
+            Ok(stream) => Ok(Box::new(stream)),
+            Err(error) => {
+                let message = format!("the node's Herdr could not be reached: {error}");
+                Err(match &error {
+                    OpenError::Refused(hide_node_link::LinkError::Refused(refusal))
+                        if refusal.code == hide_node_link::ErrorCode::NotFound =>
+                    {
+                        ApiError::NotRunning(message)
+                    }
+                    _ => ApiError::Transport(message),
+                })
+            }
+        }
+    }
+}
+
+/// Why a link stream did not open.
+#[derive(Debug)]
+pub enum OpenError {
+    /// The link has ended.
+    Ended(String),
+    /// The link already carries its cap of streams to this end.
+    Cap(usize),
+    /// The node refused it or never answered.
+    Refused(hide_node_link::LinkError),
+}
+
+impl std::fmt::Display for OpenError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ended(reason) => write!(formatter, "the node's link has ended ({reason})"),
+            Self::Cap(cap) => write!(
+                formatter,
+                "the node's link already carries {cap} streams to this end"
+            ),
+            Self::Refused(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl RemoteHost {
+    /// A stream to the browser relay of the node's daemon at the other end
+    /// of this link (B15): its first bytes ask for a relay ticket the node
+    /// handed out over this link.
+    pub fn browser_relay_stream(&self) -> Result<LinkStream, OpenError> {
+        self.open_stream(LinkEnd::BrowserRelay)
+    }
+
+    fn open_stream(&self, end: LinkEnd) -> Result<LinkStream, OpenError> {
+        let streams = &self.inner.streams;
+        if let Some(reason) = self.closed_reason() {
+            return Err(OpenError::Ended(reason));
         }
         let stream = streams.next.fetch_add(1, Ordering::Relaxed) + 1;
         let (sender, receiver) = mpsc::sync_channel(MAX_HERDR_PENDING);
         {
             let mut open = lock_recover(&streams.open);
-            if open.len() >= MAX_HERDR_STREAMS {
+            let cap = end.cap();
+            if open.values().filter(|entry| entry.end == end).count() >= cap {
                 drop(open);
                 crate::diagnostic!(json!({
                     "component": "remote_host",
-                    "kind": "herdr_stream.cap_reached",
-                    "target": self.link.target(),
-                    "cap": MAX_HERDR_STREAMS,
+                    "kind": "link_stream.cap_reached",
+                    "target": self.target(),
+                    "end": end,
+                    "cap": cap,
                 }));
-                return Err(ApiError::Transport(format!(
-                    "the node's link already carries {MAX_HERDR_STREAMS} Herdr streams"
-                )));
+                return Err(OpenError::Cap(cap));
             }
-            open.insert(stream, Some(sender));
+            open.insert(
+                stream,
+                Entry {
+                    end,
+                    sender: Some(sender),
+                },
+            );
         }
-        if let Err(error) = self
-            .link
-            .call(Call::HerdrOpen { stream }, HERDR_CALL_TIMEOUT)
-        {
+        if let Err(error) = self.call(Call::LinkOpen { stream, end }, HERDR_CALL_TIMEOUT) {
             // An open whose answer never came may have opened the stream on
             // the node, so it is told to close; one refused or never sent
             // left nothing there.
             if matches!(error, hide_node_link::LinkError::Unknown(_)) {
-                close_stream(&self.link, stream);
+                close_stream(self, stream);
             } else {
                 lock_recover(&streams.open).remove(&stream);
             }
-            let message = format!("the node's Herdr could not be reached: {error}");
-            return Err(match &error {
-                hide_node_link::LinkError::Refused(refusal)
-                    if refusal.code == hide_node_link::ErrorCode::NotFound =>
-                {
-                    ApiError::NotRunning(message)
-                }
-                _ => ApiError::Transport(message),
-            });
+            return Err(OpenError::Refused(error));
         }
-        Ok(Box::new(LinkHerdrStream {
-            link: self.link.clone(),
+        Ok(LinkStream {
+            link: self.clone(),
             stream,
             state: Arc::new(StreamState {
                 receiver: Mutex::new(receiver),
@@ -183,7 +248,7 @@ impl ApiConnector for LinkHerdrConnector {
             held: Vec::new(),
             read_timeout: Mutex::new(None),
             write_timeout: Mutex::new(None),
-        }))
+        })
     }
 }
 
@@ -192,8 +257,8 @@ struct StreamState {
     ended: Mutex<Option<String>>,
 }
 
-/// One Herdr connection of a linked node.
-struct LinkHerdrStream {
+/// One stream of a linked node's link, to the end it was opened for.
+pub struct LinkStream {
     link: RemoteHost,
     stream: u64,
     state: Arc<StreamState>,
@@ -203,7 +268,7 @@ struct LinkHerdrStream {
     write_timeout: Mutex<Option<Duration>>,
 }
 
-impl LinkHerdrStream {
+impl LinkStream {
     /// The next chunk, waiting at most until `deadline`; `None` at the end.
     fn next_chunk(&mut self, deadline: Option<Instant>) -> io::Result<Option<Vec<u8>>> {
         if self
@@ -234,7 +299,7 @@ impl LinkHerdrStream {
             }
             Err(Some(())) => Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                "the node's Herdr sent nothing in time",
+                "the node sent nothing on the stream in time",
             )),
             Err(None) => {
                 *lock_recover(&self.state.ended) = Some("the stream ended".to_owned());
@@ -244,7 +309,7 @@ impl LinkHerdrStream {
     }
 }
 
-impl Read for LinkHerdrStream {
+impl Read for LinkStream {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         if self.held.is_empty() {
             let deadline = lock_recover(&self.read_timeout).map(|timeout| Instant::now() + timeout);
@@ -260,14 +325,14 @@ impl Read for LinkHerdrStream {
     }
 }
 
-impl Write for LinkHerdrStream {
+impl Write for LinkStream {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         let taken = buffer.len().min(MAX_CHUNK);
         let data = base64::engine::general_purpose::STANDARD.encode(&buffer[..taken]);
         let timeout = lock_recover(&self.write_timeout).unwrap_or(HERDR_CALL_TIMEOUT);
         self.link
             .call(
-                Call::HerdrWrite {
+                Call::LinkWrite {
                     stream: self.stream,
                     data,
                 },
@@ -282,7 +347,7 @@ impl Write for LinkHerdrStream {
     }
 }
 
-impl ApiStream for LinkHerdrStream {
+impl ApiStream for LinkStream {
     fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError> {
         *lock_recover(&self.read_timeout) = timeout;
         Ok(())
@@ -331,36 +396,51 @@ impl ApiStream for LinkHerdrStream {
     }
 
     fn shutdown_handle(&self) -> Result<Box<dyn ConnectionShutdown>, ApiError> {
-        Ok(Box::new(LinkHerdrShutdown {
-            link: self.link.clone(),
-            stream: self.stream,
-        }))
+        Ok(Box::new(self.closer()))
     }
 }
 
-impl Drop for LinkHerdrStream {
+impl Drop for LinkStream {
     fn drop(&mut self) {
         close_stream(&self.link, self.stream);
     }
 }
 
-struct LinkHerdrShutdown {
+/// Ends one link stream from any thread.
+pub struct StreamCloser {
     link: RemoteHost,
     stream: u64,
 }
 
-impl ConnectionShutdown for LinkHerdrShutdown {
-    fn shutdown(&self) {
+impl StreamCloser {
+    /// Ends the stream: its reader reads the end, and the node is told.
+    pub fn close(&self) {
         close_stream(&self.link, self.stream);
     }
 }
 
+impl ConnectionShutdown for StreamCloser {
+    fn shutdown(&self) {
+        self.close();
+    }
+}
+
+impl LinkStream {
+    /// What ends this stream from another thread.
+    pub fn closer(&self) -> StreamCloser {
+        StreamCloser {
+            link: self.link.clone(),
+            stream: self.stream,
+        }
+    }
+}
+
 /// Ends `stream` on this side at once, so its reader reads the end, and
-/// tells the node, which closes its Herdr connection. Telling the node
+/// tells the node, which closes its connection to the stream's end. Telling the node
 /// waits on the link, so it is done off any runtime thread.
 fn close_stream(link: &RemoteHost, stream: u64) {
-    let open = lock_recover(&link.inner.herdr.open).remove(&stream);
-    let Some(sender) = open else {
+    let open = lock_recover(&link.inner.streams.open).remove(&stream);
+    let Some(Entry { sender, .. }) = open else {
         return;
     };
     if let Some(sender) = sender {
@@ -371,11 +451,11 @@ fn close_stream(link: &RemoteHost, stream: u64) {
     }
     let link = link.clone();
     let tell = move || {
-        let _ = link.call(Call::HerdrClose { stream }, HERDR_CALL_TIMEOUT);
+        let _ = link.call(Call::LinkClose { stream }, HERDR_CALL_TIMEOUT);
     };
     if tokio::runtime::Handle::try_current().is_ok() {
         let _ = std::thread::Builder::new()
-            .name("herdr-stream-close".into())
+            .name("link-stream-close".into())
             .spawn(tell);
     } else {
         tell();
@@ -385,6 +465,7 @@ fn close_stream(link: &RemoteHost, stream: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hide_node_link::panes::MAX_HERDR_STREAMS;
     use hide_platform::ipc::LocalListener;
     use std::io::{BufRead, BufReader};
 
@@ -413,6 +494,49 @@ mod tests {
 
     /// A link whose other end is a node serving `herdr_socket` as its own.
     fn linked_node(herdr_socket: std::path::PathBuf) -> RemoteHost {
+        linked_node_with(herdr_socket, None)
+    }
+
+    /// A browser gateway whose relay echoes what it reads, and whose
+    /// capability names the scope it was asked for.
+    struct EchoGateway(std::net::SocketAddr);
+
+    impl hide_host::link_bridge::BrowserGateway for EchoGateway {
+        fn capability(
+            &self,
+            scope: &serde_json::Value,
+            relay: bool,
+        ) -> Result<serde_json::Value, String> {
+            if scope["workspace"] == "refused" {
+                return Err("browser_control_unavailable".to_owned());
+            }
+            Ok(json!({"scope": scope, "relay": relay}))
+        }
+
+        fn relay_address(&self) -> std::net::SocketAddr {
+            self.0
+        }
+    }
+
+    fn echo_relay() -> &'static EchoGateway {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a relay port");
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            while let Ok((connection, _)) = listener.accept() {
+                std::thread::spawn(move || {
+                    let mut reader = connection.try_clone().unwrap();
+                    let mut writer = connection;
+                    let _ = std::io::copy(&mut reader, &mut writer);
+                });
+            }
+        });
+        Box::leak(Box::new(EchoGateway(address)))
+    }
+
+    fn linked_node_with(
+        herdr_socket: std::path::PathBuf,
+        browser: Option<&'static dyn hide_host::link_bridge::BrowserGateway>,
+    ) -> RemoteHost {
         let (core_end, node_end) = hide_platform::ipc::LocalStream::pair().expect("a pair");
         std::thread::spawn(move || {
             let input = BufReader::new(node_end.duplicate());
@@ -425,6 +549,7 @@ mod tests {
                     heartbeat: false,
                     checkout_callers: false,
                     opened_roots: None,
+                    browser,
                 },
             );
         });
@@ -494,7 +619,7 @@ mod tests {
         // The node's chunks for it, past what its reader holds.
         let chunk = base64::engine::general_purpose::STANDARD.encode(b"x");
         for _ in 0..=MAX_HERDR_PENDING {
-            link.inner.herdr.data("inbound:test", 1, &chunk);
+            link.inner.streams.data("inbound:test", 1, &chunk);
         }
         drop(given_up);
         let open: Vec<_> = (0..MAX_HERDR_STREAMS)
@@ -579,6 +704,90 @@ mod tests {
         link.close("test ended the link");
         assert_eq!(reader.join().unwrap().unwrap(), 0);
         assert!(link.herdr_connector().connect().is_err());
+    }
+
+    fn answer_value(answer: hide_node_link::LinkAnswer) -> serde_json::Value {
+        match answer {
+            hide_node_link::LinkAnswer::Parsed(value) => value,
+            hide_node_link::LinkAnswer::Raw(raw) => serde_json::from_str(raw.get()).unwrap(),
+        }
+    }
+
+    /// A stream to the node's browser relay carries bytes both ways, and the
+    /// relay has its own cap: past it the next open is refused while Herdr
+    /// streams still open, and one closing makes room (B15, D-20).
+    #[test]
+    fn browser_relay_streams_reach_the_node_s_relay_under_their_own_cap() {
+        let folder = tempfile::tempdir().unwrap();
+        let link = linked_node_with(echo_herdr(folder.path()), Some(echo_relay()));
+        let mut open: Vec<_> = (0..hide_node_link::panes::MAX_BROWSER_STREAMS)
+            .map(|_| link.browser_relay_stream().expect("a stream under the cap"))
+            .collect();
+        open[0].write_all(b"GET /browser-relay/t\r\n").unwrap();
+        let mut read = [0_u8; 22];
+        open[0].read_exact(&mut read).unwrap();
+        assert_eq!(&read, b"GET /browser-relay/t\r\n");
+        let refused = link.browser_relay_stream().err().expect("past the cap");
+        assert!(matches!(refused, OpenError::Cap(4)), "{refused}");
+        link.herdr_connector()
+            .connect()
+            .expect("a Herdr stream beside a full relay");
+        open.pop();
+        link.browser_relay_stream().expect("room after a close");
+    }
+
+    /// The core's question for a capability reaches the node's gateway with
+    /// the scope the core decided, and the gateway's refusal comes back as
+    /// its reason; a node with no gateway refuses both the question and a
+    /// relay stream.
+    #[test]
+    fn the_node_s_gateway_answers_the_core_s_capability_question() {
+        let folder = tempfile::tempdir().unwrap();
+        let link = linked_node_with(echo_herdr(folder.path()), Some(echo_relay()));
+        let scope = json!({"workspace": "local\u{0}/checkout", "area_id": "area"});
+        let answer = link
+            .call(
+                Call::BrowserGateway {
+                    scope: scope.clone(),
+                    relay: true,
+                },
+                HERDR_CALL_TIMEOUT,
+            )
+            .expect("the gateway's answer");
+        assert_eq!(answer_value(answer), json!({"scope": scope, "relay": true}));
+        let refused = link
+            .call(
+                Call::BrowserGateway {
+                    scope: json!({"workspace": "refused"}),
+                    relay: false,
+                },
+                HERDR_CALL_TIMEOUT,
+            )
+            .expect_err("the gateway's refusal");
+        assert!(
+            refused.to_string().contains("browser_control_unavailable"),
+            "{refused}"
+        );
+        let other = tempfile::tempdir().unwrap();
+        let bare = linked_node(echo_herdr(other.path()));
+        let refused = bare
+            .call(
+                Call::BrowserGateway {
+                    scope,
+                    relay: false,
+                },
+                HERDR_CALL_TIMEOUT,
+            )
+            .expect_err("no gateway");
+        assert!(
+            refused.to_string().contains("no browser relay"),
+            "{refused}"
+        );
+        let refused = bare.browser_relay_stream().err().expect("no relay");
+        assert!(
+            refused.to_string().contains("no browser relay"),
+            "{refused}"
+        );
     }
 
     /// A node with no Herdr bridge, a device its core dialed, refuses a

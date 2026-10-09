@@ -599,6 +599,7 @@ fn serve(
             heartbeat: true,
             checkout_callers: true,
             opened_roots: Some(roots),
+            browser: None,
         },
     )
     .map(|()| "link_closed".to_owned())

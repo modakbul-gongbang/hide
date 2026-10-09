@@ -91,13 +91,40 @@ use crate::error::HostError;
 /// first prompt could not start on that device, so it is refused at Hello and
 /// reinstalled.
 /// 28: a node may dial its core (PRD core-host-node-remote-core D-04): the
-/// core reaches such a node's Herdr through streams inside the link
-/// (`herdr_open`, `herdr_write`, `herdr_close` and
-/// [`crate::panes::NodeEvent::HerdrData`]), takes a label generator's lock
-/// on the node that owns the Herdr server, and terminal lines name the
-/// screen a view or a key came from. A node on 27 would refuse the first as
-/// unknown, so it is refused at Hello and reinstalled.
+/// core reaches such a node's Herdr and its desktop's browser gateway
+/// through streams inside the link (`link_open`, `link_write`, `link_close`
+/// and [`crate::panes::NodeEvent::LinkData`]), asks that gateway for a
+/// capability (`browser_gateway`), takes a label generator's lock on the
+/// node that owns the Herdr server, and terminal lines name the screen a
+/// view or a key came from. A node on 27 would refuse the first as unknown,
+/// so it is refused at Hello and reinstalled.
 pub const PROTOCOL_VERSION: u32 = 28;
+
+/// What a link stream the core opens on a node that dialed it reaches on
+/// the node's machine ([`Call::LinkOpen`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkEnd {
+    /// The node's own Herdr socket (D-18, D-19).
+    Herdr,
+    /// The browser relay of the node's daemon, which carries a caller's CDP
+    /// to the gateway of the desktop window whose registration the daemon
+    /// holds: a caller on another machine driving a page only that window
+    /// shows (B15). The stream's first bytes ask for a relay ticket the
+    /// node handed out over this link.
+    BrowserRelay,
+}
+
+impl LinkEnd {
+    /// Streams to this end one link carries at once; the next open is
+    /// refused.
+    pub const fn cap(self) -> usize {
+        match self {
+            Self::Herdr => crate::panes::MAX_HERDR_STREAMS,
+            Self::BrowserRelay => crate::panes::MAX_BROWSER_STREAMS,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -566,22 +593,37 @@ pub enum Call {
     StreamClose {
         stream: u64,
     },
-    /// Opens `stream` to this node's own Herdr socket for the core: the
-    /// only way a core reaches the Herdr of a node that dialed it (PRD
-    /// core-host-node-remote-core D-18, D-19). What the node reads arrives as
-    /// [`crate::panes::NodeEvent::HerdrData`]. A node with no Herdr bridge,
-    /// a device its core dialed included, refuses it.
-    HerdrOpen {
+    /// Opens `stream` to `end` on this node's machine for the core: the
+    /// only way a core reaches what listens only there on a node that
+    /// dialed it (PRD core-host-node-remote-core D-18, D-19, B15). What the
+    /// node reads arrives as [`crate::panes::NodeEvent::LinkData`]. A node
+    /// with nothing at that end, a device its core dialed included,
+    /// refuses it.
+    LinkOpen {
         stream: u64,
+        end: LinkEnd,
     },
-    /// Base64 bytes for Herdr on `stream`; answered once they are written.
-    HerdrWrite {
+    /// Base64 bytes for `stream`'s end; answered once they are written.
+    LinkWrite {
         stream: u64,
         data: String,
     },
     /// Ends `stream` from the core's side.
-    HerdrClose {
+    LinkClose {
         stream: u64,
+    },
+    /// Asks the browser gateway of the desktop window on this node's
+    /// machine for a capability in `scope` (the Workspace, area and display
+    /// the core decided for its caller). Answered with the gateway's
+    /// `cdp_http_url` and `browser_ws_url`, both on this machine's loopback;
+    /// with `relay`, with a one-shot `relay_url` on this node's daemon
+    /// instead, whose relay carries the CDP to the gateway: a caller on
+    /// this machine dials it, and the core reaches it for a caller on
+    /// another machine through a [`LinkEnd::BrowserRelay`] stream. A node
+    /// with no gateway registered refuses it, its reason in the message.
+    BrowserGateway {
+        scope: serde_json::Value,
+        relay: bool,
     },
     /// Takes the label generator lock of the Herdr server at `herdr_socket`
     /// on this node's machine, or of the server this link's pane service
@@ -636,9 +678,9 @@ impl Call {
                 | Self::PaneProofAnswer { .. }
                 | Self::StreamWrite { .. }
                 | Self::StreamClose { .. }
-                | Self::HerdrOpen { .. }
-                | Self::HerdrWrite { .. }
-                | Self::HerdrClose { .. }
+                | Self::LinkOpen { .. }
+                | Self::LinkWrite { .. }
+                | Self::LinkClose { .. }
         )
     }
 
@@ -713,9 +755,10 @@ impl Call {
             | Self::PaneInspect { .. }
             | Self::StreamWrite { .. }
             | Self::StreamClose { .. }
-            | Self::HerdrOpen { .. }
-            | Self::HerdrWrite { .. }
-            | Self::HerdrClose { .. }
+            | Self::LinkOpen { .. }
+            | Self::LinkWrite { .. }
+            | Self::LinkClose { .. }
+            | Self::BrowserGateway { .. }
             | Self::LabelLock { .. }
             | Self::LabelUnlock { .. }
             | Self::Cancel { .. } => true,

@@ -1,0 +1,305 @@
+//! What a core reaches on the machine of a node that dialed it, through the
+//! node's link (PRD core-host-node-remote-core D-18, D-19, B15): each stream
+//! the core opens with `link_open` is one local connection to the end it
+//! names, its bytes carried by the link both ways. The node's own Herdr
+//! socket is one end; the browser relay of the node's daemon, which carries
+//! a caller's CDP to this machine's desktop window, is the other. Nothing
+//! on the core's machine listens for either; the link is the only way in,
+//! and it ends every stream when it ends.
+//!
+//! A stream is a byte pipe and nothing here reads what it carries. Each end
+//! has its own cap ([`LinkEnd::cap`]); the next open is refused, and the
+//! refusal goes to the core, which logs it with the node.
+
+use std::collections::HashMap;
+use std::io::{self, Read, Write};
+use std::net::{Shutdown, SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::thread::Scope;
+
+use base64::Engine as _;
+use hide_node_link::panes::{MAX_CHUNK, NodeEvent};
+use hide_node_link::protocol::LinkEnd;
+use hide_platform::ipc::{LocalStream, ShutdownHandle};
+use serde_json::Value;
+
+use crate::error::{ErrorCode, HostError, HostResult};
+use crate::panes::write_event;
+
+/// How long one write to a stream's end may take.
+const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long the node's daemon has to take a browser relay connection.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The browser gateway of the desktop window on a node that dialed its
+/// core, as the node's daemon holds its registration. The core decides the
+/// scope; the gateway's capability URLs never leave this machine except as
+/// the core's answer to a caller on it.
+pub trait BrowserGateway: Send + Sync {
+    /// The gateway's capability for `scope` (`{"workspace", "area_id",
+    /// "display_id"?}`), or with `relay` a one-shot `relay_url` on the
+    /// daemon. A refusal is one of the browser control reasons.
+    fn capability(&self, scope: &Value, relay: bool) -> Result<Value, String>;
+    /// The loopback address of the daemon's browser relay.
+    fn relay_address(&self) -> SocketAddr;
+}
+
+/// One end's connection.
+enum Connection {
+    Local(LocalStream),
+    Tcp(TcpStream),
+}
+
+impl Connection {
+    fn writer(&self) -> io::Result<Box<dyn Write + Send>> {
+        Ok(match self {
+            Self::Local(stream) => Box::new(stream.duplicate()),
+            Self::Tcp(stream) => Box::new(stream.try_clone()?),
+        })
+    }
+
+    fn reader(&self) -> io::Result<Box<dyn Read + Send>> {
+        Ok(match self {
+            Self::Local(stream) => Box::new(stream.duplicate()),
+            Self::Tcp(stream) => Box::new(stream.try_clone()?),
+        })
+    }
+
+    fn closer(&self) -> io::Result<Closer> {
+        Ok(match self {
+            Self::Local(stream) => Closer::Local(stream.shutdown_handle()),
+            Self::Tcp(stream) => Closer::Tcp(stream.try_clone()?),
+        })
+    }
+}
+
+enum Closer {
+    Local(ShutdownHandle),
+    Tcp(TcpStream),
+}
+
+impl Closer {
+    fn close(&self) {
+        match self {
+            Self::Local(handle) => handle.shutdown(),
+            Self::Tcp(stream) => {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+        }
+    }
+}
+
+struct Open {
+    end: LinkEnd,
+    writer: Mutex<Box<dyn Write + Send>>,
+    closer: Closer,
+}
+
+/// The link streams of one node link.
+pub struct LinkBridge<'a> {
+    herdr: Option<PathBuf>,
+    browser: Option<&'a dyn BrowserGateway>,
+    streams: Mutex<HashMap<u64, std::sync::Arc<Open>>>,
+}
+
+impl<'a> LinkBridge<'a> {
+    /// A bridge to this node's own Herdr at `herdr` and its daemon's
+    /// browser relay, whichever it has.
+    pub fn new(herdr: Option<PathBuf>, browser: Option<&'a dyn BrowserGateway>) -> Self {
+        Self {
+            herdr,
+            browser,
+            streams: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The socket of this node's own Herdr, the one server it bridges.
+    pub fn herdr_socket(&self) -> Option<&Path> {
+        self.herdr.as_deref()
+    }
+
+    /// The browser gateway of this node's desktop window.
+    pub fn browser(&self) -> Option<&'a dyn BrowserGateway> {
+        self.browser
+    }
+
+    fn connect(&self, end: LinkEnd) -> HostResult<Connection> {
+        match end {
+            LinkEnd::Herdr => {
+                let socket = self.herdr.as_deref().ok_or_else(|| unreached(end))?;
+                let connection = LocalStream::connect(socket).map_err(|error| {
+                    let code = if error.kind() == io::ErrorKind::NotFound {
+                        ErrorCode::NotFound
+                    } else {
+                        ErrorCode::Io
+                    };
+                    HostError::new(code, format!("The node's Herdr did not answer: {error}"))
+                })?;
+                // A Herdr that stops reading fails the write rather than
+                // hold a worker of the link's control lane.
+                connection
+                    .set_write_timeout(Some(WRITE_TIMEOUT))
+                    .map_err(io_error)?;
+                Ok(Connection::Local(connection))
+            }
+            LinkEnd::BrowserRelay => {
+                let browser = self.browser.ok_or_else(|| unreached(end))?;
+                let connection =
+                    TcpStream::connect_timeout(&browser.relay_address(), CONNECT_TIMEOUT).map_err(
+                        |error| {
+                            HostError::new(
+                                ErrorCode::Io,
+                                format!("The node's browser relay did not answer: {error}"),
+                            )
+                        },
+                    )?;
+                connection
+                    .set_write_timeout(Some(WRITE_TIMEOUT))
+                    .map_err(io_error)?;
+                Ok(Connection::Tcp(connection))
+            }
+        }
+    }
+
+    /// Connects `stream` to `end` and reads it on `scope` until either side
+    /// ends it.
+    pub fn open<'scope, 'env, W: Write + Send>(
+        &'scope self,
+        scope: &'scope Scope<'scope, 'env>,
+        output: &'scope Mutex<W>,
+        stream: u64,
+        end: LinkEnd,
+    ) -> HostResult<Value> {
+        let admitted = |streams: &HashMap<u64, std::sync::Arc<Open>>| {
+            if streams.contains_key(&stream) {
+                return Err(HostError::new(
+                    ErrorCode::InvalidRequest,
+                    "A link stream with this id is still open",
+                ));
+            }
+            let cap = end.cap();
+            if streams.values().filter(|open| open.end == end).count() >= cap {
+                return Err(HostError::new(
+                    ErrorCode::Busy,
+                    format!("The node already has {cap} {} streams open", name(end)),
+                ));
+            }
+            Ok(())
+        };
+        admitted(&lock(&self.streams))?;
+        // Connected outside the table's lock, so an end slow to accept
+        // holds only this open, never another stream's write or close.
+        let connection = self.connect(end)?;
+        let mut reader = connection.reader().map_err(io_error)?;
+        let open = std::sync::Arc::new(Open {
+            end,
+            writer: Mutex::new(connection.writer().map_err(io_error)?),
+            closer: connection.closer().map_err(io_error)?,
+        });
+        {
+            let mut streams = lock(&self.streams);
+            if let Err(error) = admitted(&streams) {
+                open.closer.close();
+                return Err(error);
+            }
+            streams.insert(stream, std::sync::Arc::clone(&open));
+        }
+        scope.spawn(move || {
+            let mut buffer = vec![0_u8; MAX_CHUNK];
+            let reason = loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break "end_closed",
+                    Ok(read) => {
+                        let data =
+                            base64::engine::general_purpose::STANDARD.encode(&buffer[..read]);
+                        if write_event(output, &NodeEvent::LinkData { stream, data }).is_err() {
+                            break "link_closed";
+                        }
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Err(_) => break "end_read_failed",
+                }
+            };
+            // A stream the core closed is already gone from the map, and the
+            // core heard nothing more of it on purpose.
+            if lock(&self.streams).remove(&stream).is_some() {
+                let _ = write_event(
+                    output,
+                    &NodeEvent::LinkClosed {
+                        stream,
+                        reason: reason.to_owned(),
+                    },
+                );
+            }
+        });
+        Ok(Value::Null)
+    }
+
+    /// Writes base64 `data` to `stream`'s end.
+    pub fn write(&self, stream: u64, data: &str) -> HostResult<Value> {
+        if data.len() > MAX_CHUNK.div_ceil(3) * 4 {
+            return Err(HostError::new(
+                ErrorCode::TooLarge,
+                "A link chunk is larger than the link carries",
+            ));
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|_| HostError::new(ErrorCode::InvalidRequest, "A link chunk is not base64"))?;
+        let open = lock(&self.streams)
+            .get(&stream)
+            .cloned()
+            .ok_or_else(|| HostError::new(ErrorCode::NotFound, "The link stream has ended"))?;
+        let written = lock(&open.writer).write_all(&bytes);
+        written.map_err(|error| {
+            self.close(stream);
+            HostError::new(ErrorCode::Io, error.to_string())
+        })?;
+        Ok(Value::Null)
+    }
+
+    /// Ends `stream` from the core's side.
+    pub fn close(&self, stream: u64) {
+        if let Some(open) = lock(&self.streams).remove(&stream) {
+            open.closer.close();
+        }
+    }
+
+    /// The link is gone: every stream ends, and its reader with it.
+    pub fn stop(&self) {
+        for (_, open) in lock(&self.streams).drain() {
+            open.closer.close();
+        }
+    }
+}
+
+fn name(end: LinkEnd) -> &'static str {
+    match end {
+        LinkEnd::Herdr => "Herdr",
+        LinkEnd::BrowserRelay => "browser relay",
+    }
+}
+
+/// Why a node refuses a stream to an end it does not bridge: a device its
+/// core dialed is reached over SSH, never through the link, and a node with
+/// no desktop window registered has no browser relay.
+pub fn unreached(end: LinkEnd) -> HostError {
+    HostError::new(
+        ErrorCode::Unsupported,
+        match end {
+            LinkEnd::Herdr => "This node's Herdr is not reached through its link",
+            LinkEnd::BrowserRelay => "This node has no browser relay",
+        },
+    )
+}
+
+fn io_error(error: io::Error) -> HostError {
+    HostError::new(ErrorCode::Io, error.to_string())
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}

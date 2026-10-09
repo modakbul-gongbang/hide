@@ -17,6 +17,9 @@ pub const MAX_PENDING_CHUNKS: usize = 64;
 /// D-20): the session subscription, controls, doorbell, find and phone
 /// reply of a node that dialed its core each hold one while they run.
 pub const MAX_HERDR_STREAMS: usize = 32;
+/// Browser relay streams one link carries at once (B15): as many as the
+/// core relays `hide browser` commands at once.
+pub const MAX_BROWSER_STREAMS: usize = 4;
 /// How often a node that dialed its core writes [`NodeEvent::Ping`].
 pub const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10);
 /// How long the attach role waits for a byte from its node before it ends
@@ -74,11 +77,11 @@ pub enum NodeEvent {
     /// whose node fell silent (PRD core-host-node-remote-core B20).
     Ping,
     /// Base64 bytes the node read from its Herdr on a stream the core
-    /// opened with `herdr_open`.
-    HerdrData { stream: u64, data: String },
+    /// opened with `link_open`.
+    LinkData { stream: u64, data: String },
     /// The node's Herdr ended a stream the core opened, or the node did at
     /// one of its caps; `reason` says which, never what the stream carried.
-    HerdrClosed { stream: u64, reason: String },
+    LinkClosed { stream: u64, reason: String },
     /// The node turned a caller away on its own, before the core was asked
     /// or at one of its caps, with the reason the caller read; the core
     /// records it with the node, since a device's stderr reaches no log.
