@@ -180,6 +180,38 @@ async fn invalid_token_is_refused() {
     running.stop();
 }
 
+/// A command sends its request right behind its handshake, before the
+/// daemon has answered. A refusal of that handshake still reaches the
+/// client, and the connection then ends rather than resets: a reset can
+/// discard the close frame before the client reads it, which Windows does,
+/// and the command would report a lost daemon instead (issue 785).
+#[tokio::test]
+async fn a_refused_client_that_already_sent_its_request_reads_the_refusal() {
+    let (_dir, running) = start().await;
+    for _ in 0..10 {
+        let mut socket = connect(running.port, None).await;
+        socket.send(handshake(&"ab".repeat(32), 2)).await.unwrap();
+        socket
+            .send(Message::Text(
+                json!({"type": "workspace_query", "request_id": "r", "query": "info"})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        match socket.next().await {
+            Some(Ok(Message::Close(Some(frame)))) => assert_eq!(u16::from(frame.code), 4001),
+            other => panic!("expected the refusal, read {other:?}"),
+        }
+        // Reading on sends the client's own close; the daemon waited for it.
+        assert!(
+            socket.next().await.is_none(),
+            "the connection ends after the closing handshake"
+        );
+    }
+    running.stop();
+}
+
 #[tokio::test]
 async fn schema_mismatch_is_refused() {
     let (_dir, running) = start().await;
@@ -314,6 +346,33 @@ async fn first_frame(
     }
 }
 
+/// The newest cursor a client holds: frames already waiting are applied, and
+/// the state frame at or past `at_least` is waited for.
+async fn applied(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    mut cursor: (u64, u64),
+    at_least: u64,
+) -> (u64, u64) {
+    loop {
+        let waiting = if cursor.0 < at_least {
+            Some(first_frame(socket).await)
+        } else {
+            tokio::time::timeout(Duration::ZERO, first_frame(socket))
+                .await
+                .ok()
+        };
+        let Some(frame) = waiting else {
+            return cursor;
+        };
+        cursor = (
+            frame["payload"]["revision"].as_u64().unwrap(),
+            frame["payload"]["terminal_sequence"].as_u64().unwrap(),
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_reconnect_resumes_from_the_client_cursor() {
     let (_dir, running) = start().await;
@@ -325,35 +384,54 @@ async fn a_reconnect_resumes_from_the_client_cursor() {
         full["payload"]["rest"].is_object(),
         "a snapshot carries rest"
     );
-    let revision = full["payload"]["revision"].as_u64().unwrap();
-    let sequence = full["payload"]["terminal_sequence"].as_u64().unwrap();
+    let mut cursor = (
+        full["payload"]["revision"].as_u64().unwrap(),
+        full["payload"]["terminal_sequence"].as_u64().unwrap(),
+    );
 
     // Same cursor the first client applied: nothing changed, so a delta
-    // without the rest section, not a second full snapshot.
-    let mut resumed = connect(running.port, None).await;
-    resumed
-        .send(handshake_from(&running.token, revision, sequence))
-        .await
-        .unwrap();
-    let delta = first_frame(&mut resumed).await;
-    assert_eq!(delta["type"], "delta");
-    assert!(
-        delta["payload"]["rest"].is_null(),
-        "a delta at the current revision has no rest"
-    );
-    assert_eq!(delta["payload"]["revision"], revision);
+    // without the rest section, not a second full snapshot. A starting
+    // daemon still publishes what its workers find, so a resume that
+    // crossed one of those resumes again from the cursor the first client
+    // applied with it.
+    let revision = loop {
+        let mut resumed = connect(running.port, None).await;
+        resumed
+            .send(handshake_from(&running.token, cursor.0, cursor.1))
+            .await
+            .unwrap();
+        let delta = first_frame(&mut resumed).await;
+        assert_eq!(
+            delta["type"], "delta",
+            "a known cursor resumes with a delta"
+        );
+        let current = delta["payload"]["revision"].as_u64().unwrap();
+        assert!(current >= cursor.0, "a delta never goes back");
+        if current == cursor.0 {
+            assert!(
+                delta["payload"]["rest"].is_null(),
+                "a delta at the current revision has no rest"
+            );
+            break current;
+        }
+        cursor = applied(&mut fresh, cursor, current).await;
+    };
 
     // A cursor ahead of the daemon (it restarted): the client state is not one
     // a delta applies to, so it gets a self-contained snapshot again.
     let mut ahead = connect(running.port, None).await;
     ahead
-        .send(handshake_from(&running.token, revision + 1000, sequence))
+        .send(handshake_from(&running.token, revision + 1000, cursor.1))
         .await
         .unwrap();
     let resync = first_frame(&mut ahead).await;
     assert_eq!(resync["type"], "snapshot");
     assert!(resync["payload"]["rest"].is_object());
-    assert_eq!(resync["payload"]["revision"], revision);
+    let at = resync["payload"]["revision"].as_u64().unwrap();
+    assert!(
+        (revision..revision + 1000).contains(&at),
+        "the snapshot is the daemon's state, not the client's cursor"
+    );
     running.stop();
 }
 

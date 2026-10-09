@@ -50,9 +50,18 @@ pub fn read_prompt(payload: &[u8], truncated: bool) -> Prompt {
     }
 }
 
-/// Whether a session id may travel as a `hide` argument.
+/// The longest native session a letter pull or a Factory question guard
+/// carries: Herdr takes an agent session of up to 4096 bytes, and Pi and omp
+/// report theirs as a session file path, which on a deep checkout passes 250
+/// bytes (PRD pi-omp-extension D-05).
+pub const SESSION_LIMIT: usize = 4096;
+
+/// Whether a session id or session file path may travel as a `hide` argument.
 pub fn valid_session(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 256 && !id.starts_with('-') && !id.chars().any(char::is_control)
+    !id.is_empty()
+        && id.len() <= SESSION_LIMIT
+        && !id.starts_with('-')
+        && !id.chars().any(char::is_control)
 }
 
 #[derive(Deserialize)]
@@ -89,13 +98,7 @@ pub fn pull(deadline: Instant, prompt: &Prompt) -> Result<Option<Intake>, Failur
     }
     let answer = run_cli(&arguments, pull_deadline)?;
     let intake: Intake = serde_json::from_value(answer).map_err(|_| "format")?;
-    if intake.context.len() > CONTEXT_LIMIT
-        || intake.ids.len() > 5
-        || intake
-            .ids
-            .iter()
-            .any(|id| id.is_empty() || id.len() > 256 || id.chars().any(char::is_control))
-    {
+    if intake.context.len() > CONTEXT_LIMIT || !valid_letter_ids(&intake.ids) {
         return Err("format".into());
     }
     // A count-only answer carries a context line and nothing to confirm.
@@ -104,6 +107,18 @@ pub fn pull(deadline: Instant, prompt: &Prompt) -> Result<Option<Intake>, Failur
     } else {
         Ok(Some(intake))
     }
+}
+
+/// Whether `ids` may travel to `hide inbox --confirm` as its arguments: at
+/// most one hook's five letters, each a letter id rather than an option.
+pub fn valid_letter_ids(ids: &[String]) -> bool {
+    ids.len() <= 5
+        && ids.iter().all(|id| {
+            !id.is_empty()
+                && id.len() <= 256
+                && !id.starts_with('-')
+                && !id.chars().any(char::is_control)
+        })
 }
 
 pub fn confirm(intake: &Intake, deadline: Instant) -> Result<(), Failure> {

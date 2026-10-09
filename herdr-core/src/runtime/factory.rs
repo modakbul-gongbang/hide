@@ -249,7 +249,7 @@ impl Runtime {
             .map_err(|_| "factory_guard_context_changed")?
             .context;
         if context != *expected
-            || !crate::delivery::valid_key(session)
+            || !crate::delivery::valid_session(session)
             || !crate::delivery::valid_key(terminal_id)
         {
             return Err("factory_guard_context_changed".into());
@@ -820,6 +820,40 @@ mod tests {
                 .is_err(),
             "an ended ledger by itself proves nothing about the replacement"
         );
+    }
+
+    #[test]
+    fn a_question_caller_named_by_a_deep_session_file_is_the_panes_own() {
+        // Pi and omp name a session by its file, which a deep checkout makes
+        // longer than 256 bytes (PRD pi-omp-extension D-05).
+        let root = tempfile::tempdir().unwrap();
+        let herdr = crate::fake_herdr::FakeHerdr::start("question-deep-session", |method, _| {
+            panic!("in-memory authority checks must not call {method}")
+        });
+        let (runtime, _, _, _) = crate::runtime::delivery::tests::fixture(root.path());
+        let mut runtime = runtime.lock().unwrap();
+        let deep = format!(
+            "/fixture-home/.omp/agent/sessions/-{}-/2026-10-08T20-05-41-366Z_01a11d1f.jsonl",
+            "deep-checkout-segment".repeat(12)
+        );
+        assert!(deep.len() > 256);
+        let observed =
+            crate::runtime::delivery::tests::recipient_at_rest(&mut runtime, &deep, &herdr);
+        let context = crate::runtime::delivery::tests::authority(&observed.actor).context;
+        let caller = |runtime: &mut Runtime, session: &str| {
+            runtime.factory_question_caller(
+                crate::node::TEST_NODE,
+                "recipient",
+                &context,
+                session,
+                "codex",
+                "terminal-1",
+            )
+        };
+        assert!(caller(&mut runtime, &deep).is_ok());
+        let past = "x".repeat(crate::delivery::SESSION_LIMIT + 1);
+        assert!(matches!(caller(&mut runtime, &past),
+            Err(reason) if reason == "factory_guard_context_changed"));
     }
 
     #[test]

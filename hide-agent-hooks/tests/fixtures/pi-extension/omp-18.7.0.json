@@ -1,0 +1,1549 @@
+{
+  "host": "omp 18.7.0",
+  "captured": "2026-10-09, a private HOME and agent folder, a local fake OpenAI-compatible model, the capture extension in the PR's run notes",
+  "samples": {
+    "session_start": {
+      "event": {
+        "type": "session_start"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "before_agent_start": {
+      "event": {
+        "type": "before_agent_start",
+        "prompt": "run TOOL please",
+        "systemPrompt": "[omitted]"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "agent_start": {
+      "event": {
+        "type": "agent_start"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "turn_start": {
+      "event": {
+        "type": "turn_start",
+        "turnIndex": 0,
+        "timestamp": 1791489941457
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "message_start.user": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "user"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "message_end.user": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "user"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "message_start.custom": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "custom",
+          "customType": "hide-capture",
+          "display": false
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "message_end.custom": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "custom",
+          "customType": "hide-capture",
+          "display": false
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "message_start.assistant": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "assistant"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "tool_call.bash": {
+      "event": {
+        "type": "tool_call",
+        "toolName": "bash",
+        "toolCallId": "call_1",
+        "input": {
+          "command": "echo hide-sample"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "message_end.assistant": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "tool_execution_start.bash": {
+      "event": {
+        "type": "tool_execution_start",
+        "toolCallId": "call_1",
+        "toolName": "bash",
+        "args": {
+          "command": "echo hide-sample"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "tool_result.bash": {
+      "event": {
+        "type": "tool_result",
+        "toolName": "bash",
+        "toolCallId": "call_1",
+        "input": {
+          "command": "echo hide-sample"
+        },
+        "isError": false
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "tool_execution_end.bash": {
+      "event": {
+        "type": "tool_execution_end",
+        "toolCallId": "call_1",
+        "toolName": "bash",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "hide-sample\n\n\nWall time: 0.06 seconds"
+            }
+          ],
+          "details": {
+            "timeoutSeconds": 300,
+            "wallTimeMs": 62.762084000000016
+          }
+        },
+        "isError": false
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "message_start.toolResult": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "toolResult"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "message_end.toolResult": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "toolResult"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "turn_end.assistant": {
+      "event": {
+        "type": "turn_end",
+        "message": {
+          "role": "assistant"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "session_stop": {
+      "event": {
+        "type": "session_stop",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "run TOOL please"
+              }
+            ],
+            "attribution": "user",
+            "timestamp": 1791489941426
+          },
+          {
+            "role": "custom",
+            "customType": "hide-capture",
+            "content": "CAPTURE-HIDDEN",
+            "display": false,
+            "attribution": "user",
+            "timestamp": 1791489941429
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "toolCall",
+                "id": "call_1",
+                "name": "bash",
+                "arguments": {
+                  "command": "echo hide-sample"
+                },
+                "partialArgs": "{\"command\": \"echo hide-sample\"}",
+                "streamIndex": 0
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "fake",
+            "model": "fake",
+            "usage": "[omitted]",
+            "stopReason": "toolUse",
+            "timestamp": 1791489941458,
+            "responseId": "chatcmpl-1",
+            "duration": 3.8753749999999627,
+            "ttft": 3.4302920000000086,
+            "completedAt": 1791489941463,
+            "contextSnapshot": {
+              "promptTokens": 0,
+              "nonMessageTokens": 6341,
+              "compactionEpoch": 0
+            }
+          },
+          {
+            "role": "toolResult",
+            "toolCallId": "call_1",
+            "toolName": "bash",
+            "content": [
+              {
+                "type": "text",
+                "text": "hide-sample\n\n\nWall time: 0.06 seconds"
+              }
+            ],
+            "details": {
+              "timeoutSeconds": 300,
+              "wallTimeMs": 62.762084000000016
+            },
+            "isError": false,
+            "timestamp": 1791489941530
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "ok"
+              }
+            ],
+            "api": "openai-completions",
+            "provider": "fake",
+            "model": "fake",
+            "usage": "[omitted]",
+            "stopReason": "stop",
+            "timestamp": 1791489941555,
+            "responseId": "chatcmpl-1",
+            "duration": 3.855624999999975,
+            "ttft": 3.6211250000000064,
+            "completedAt": 1791489941560,
+            "contextSnapshot": {
+              "promptTokens": 0,
+              "nonMessageTokens": 6341,
+              "compactionEpoch": 0
+            },
+            "errorId": 0
+          }
+        ],
+        "turn_id": 1,
+        "last_assistant_message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "ok"
+            }
+          ],
+          "api": "openai-completions",
+          "provider": "fake",
+          "model": "fake",
+          "usage": "[omitted]",
+          "stopReason": "stop",
+          "timestamp": 1791489941555,
+          "responseId": "chatcmpl-1",
+          "duration": 3.855624999999975,
+          "ttft": 3.6211250000000064,
+          "completedAt": 1791489941560,
+          "contextSnapshot": {
+            "promptTokens": 0,
+            "nonMessageTokens": 6341,
+            "compactionEpoch": 0
+          },
+          "errorId": 0
+        },
+        "session_id": "01a11d1f-1f76-701d-87bb-b31dc28aab3b",
+        "session_file": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/\u2026",
+        "stop_hook_active": false,
+        "signal": {}
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "agent_end": {
+      "event": {
+        "type": "agent_end",
+        "messages": "[omitted]"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "session_shutdown": {
+      "event": {
+        "type": "session_shutdown"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-05-41-366Z_01a11d1f-1f76-701d-87bb-b31dc28aab3b.jsonl",
+        "sessionId": "01a11d1f-1f76-701d-87bb-b31dc28aab3b"
+      }
+    },
+    "tool_call.task": {
+      "event": {
+        "type": "tool_call",
+        "toolName": "task",
+        "toolCallId": "call_task",
+        "input": {
+          "agent": "explore",
+          "context": "Fixture.",
+          "tasks": [
+            {
+              "id": "t1",
+              "description": "look",
+              "task": "Say ok."
+            }
+          ]
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d.jsonl",
+        "sessionId": "01a11d20-54c0-7144-ab2b-3d422abdeb9d"
+      }
+    },
+    "tool_execution_start.task": {
+      "event": {
+        "type": "tool_execution_start",
+        "toolCallId": "call_task",
+        "toolName": "task",
+        "args": {
+          "agent": "explore",
+          "context": "Fixture.",
+          "tasks": [
+            {
+              "id": "t1",
+              "description": "look",
+              "task": "Say ok."
+            }
+          ]
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d.jsonl",
+        "sessionId": "01a11d20-54c0-7144-ab2b-3d422abdeb9d"
+      }
+    },
+    "tool_result.task": {
+      "event": {
+        "type": "tool_result",
+        "toolName": "task",
+        "toolCallId": "call_task",
+        "input": {
+          "agent": "explore",
+          "context": "Fixture.",
+          "tasks": [
+            {
+              "id": "t1",
+              "description": "look",
+              "task": "Say ok."
+            }
+          ]
+        },
+        "isError": false
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d.jsonl",
+        "sessionId": "01a11d20-54c0-7144-ab2b-3d422abdeb9d"
+      }
+    },
+    "tool_execution_end.task": {
+      "event": {
+        "type": "tool_execution_end",
+        "toolCallId": "call_task",
+        "toolName": "task",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Spawned agent `MassMoth` (job `MassMoth`).\n\nResults auto-deliver; NEVER poll. Completely blocked? Call `wait` to receive the first settled job you started.\nCoordinate while peers run via `write agent://<id>` (or `agent://all` to broadcast).\n\n`read proc://` lists jobs/services; `read proc://<id>` ins\u2026"
+            }
+          ],
+          "details": {
+            "projectAgentsDir": null,
+            "results": [],
+            "totalDurationMs": 1,
+            "usage": "[omitted]",
+            "progress": [
+              {
+                "index": 0,
+                "id": "MassMoth",
+                "agent": "task",
+                "agentSource": "bundled",
+                "status": "pending",
+                "task": "Complete assignment thoroughly:\n\nSay ok.",
+                "assignment": "Say ok.",
+                "recentTools": [],
+                "recentOutput": [],
+                "toolCount": 0,
+                "requests": 0,
+                "tokens": 0,
+                "cost": 0,
+                "durationMs": 0
+              }
+            ],
+            "async": {
+              "state": "running",
+              "jobId": "MassMoth",
+              "type": "task"
+            }
+          }
+        },
+        "isError": false
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d.jsonl",
+        "sessionId": "01a11d20-54c0-7144-ab2b-3d422abdeb9d"
+      }
+    },
+    "tool_call.wait": {
+      "event": {
+        "type": "tool_call",
+        "toolName": "wait",
+        "toolCallId": "call_wait",
+        "input": {}
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d.jsonl",
+        "sessionId": "01a11d20-54c0-7144-ab2b-3d422abdeb9d"
+      }
+    },
+    "tool_execution_start.wait": {
+      "event": {
+        "type": "tool_execution_start",
+        "toolCallId": "call_wait",
+        "toolName": "wait",
+        "args": {}
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d.jsonl",
+        "sessionId": "01a11d20-54c0-7144-ab2b-3d422abdeb9d"
+      }
+    },
+    "before_subagent_spawn": {
+      "event": {
+        "type": "before_subagent_spawn",
+        "agent": "task",
+        "invocationKind": "task",
+        "patterns": [
+          "fake/fake"
+        ],
+        "spawnKey": "MassMoth"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d.jsonl",
+        "sessionId": "01a11d20-54c0-7144-ab2b-3d422abdeb9d"
+      }
+    },
+    "sub.session_start": {
+      "event": {
+        "type": "session_start"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.before_agent_start": {
+      "event": {
+        "type": "before_agent_start",
+        "prompt": "Complete assignment thoroughly:\n\nSay ok.",
+        "systemPrompt": "[omitted]"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.agent_start": {
+      "event": {
+        "type": "agent_start"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.turn_start": {
+      "event": {
+        "type": "turn_start",
+        "turnIndex": 0,
+        "timestamp": 1791490020687
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.message_start.user": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "user"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.message_end.user": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "user"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.message_start.custom": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "custom",
+          "customType": "hide-capture",
+          "display": false
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.message_end.custom": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "custom",
+          "customType": "hide-capture",
+          "display": false
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.message_start.assistant": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "assistant"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.tool_call.yield": {
+      "event": {
+        "type": "tool_call",
+        "toolName": "yield",
+        "toolCallId": "call_yield",
+        "input": {}
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.message_end.assistant": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.tool_result.yield": {
+      "event": {
+        "type": "tool_result",
+        "toolName": "yield",
+        "toolCallId": "call_yield",
+        "input": {},
+        "isError": true
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.tool_execution_start.yield": {
+      "event": {
+        "type": "tool_execution_start",
+        "toolCallId": "call_yield",
+        "toolName": "yield",
+        "args": {}
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.tool_execution_end.yield": {
+      "event": {
+        "type": "tool_execution_end",
+        "toolCallId": "call_yield",
+        "toolName": "yield",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "yield must contain either `data` or `error`. Submit success as {\"data\":<your output>} or failure as {\"error\":\"message\"}. Empty untyped result retries remaining before abort: 2."
+            }
+          ],
+          "details": {}
+        },
+        "isError": true
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.message_start.toolResult": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "toolResult"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.message_end.toolResult": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "toolResult"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.turn_end.assistant": {
+      "event": {
+        "type": "turn_end",
+        "message": {
+          "role": "assistant"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.agent_end": {
+      "event": {
+        "type": "agent_end",
+        "messages": "[omitted]"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.message_start.developer": {
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "developer"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "sub.message_end.developer": {
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "developer"
+        }
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "tool_result.wait": {
+      "event": {
+        "type": "tool_result",
+        "toolName": "wait",
+        "toolCallId": "call_wait",
+        "input": {},
+        "isError": false
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d.jsonl",
+        "sessionId": "01a11d20-54c0-7144-ab2b-3d422abdeb9d"
+      }
+    },
+    "tool_execution_end.wait": {
+      "event": {
+        "type": "tool_execution_end",
+        "toolCallId": "call_wait",
+        "toolName": "wait",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "## Completed (1)\n\n### MassMoth [task] \u2014 completed\nLabel: MassMoth\nDelivery: not auto-delivered; recovered by this snapshot.\n```\n<task-result id=\"MassMoth\" agent=\"task\" status=\"completed\" duration=\"82ms\">\n<meta lines=\"1\" size=\"8B\" />\n<output>\nokokokok\n</output>\n</task-result>\n\nMassMoth is now idle \u2014 \u2026"
+            }
+          ],
+          "details": {
+            "op": "wait",
+            "meta": {
+              "source": {
+                "type": "report",
+                "value": "background jobs snapshot"
+              }
+            },
+            "jobs": [
+              {
+                "id": "MassMoth",
+                "type": "task",
+                "status": "completed",
+                "label": "MassMoth",
+                "durationMs": 83,
+                "resolvedModel": "fake/fake",
+                "resolvedModelIdentity": "fake/fake",
+                "resultText": "<task-result id=\"MassMoth\" agent=\"task\" status=\"completed\" duration=\"82ms\">\n<meta lines=\"1\" size=\"8B\" />\n<output>\nokokokok\n</output>\n</task-result>\n\nMassMoth is now idle \u2014 message it via `write agent://MassMoth` to follow up; transcript at history://MassMoth",
+                "agentUrlId": "MassMoth"
+              }
+            ]
+          }
+        },
+        "isError": false
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d.jsonl",
+        "sessionId": "01a11d20-54c0-7144-ab2b-3d422abdeb9d"
+      }
+    },
+    "sub.session_shutdown": {
+      "event": {
+        "type": "session_shutdown"
+      },
+      "ctx": {
+        "hasUI": false,
+        "mode": "print",
+        "agent": {
+          "kind": "sub",
+          "id": "MassMoth",
+          "name": "task",
+          "depth": 1,
+          "parentId": "Main"
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-00-544Z_01a11d20-54c0-7144-ab2b-3d422abdeb9d/MassMoth.jsonl",
+        "sessionId": "01a11d20-5539-7123-ad4a-bc528b69e051"
+      }
+    },
+    "input": {
+      "event": {
+        "type": "input",
+        "text": "please ASK me",
+        "source": "rpc"
+      },
+      "ctx": {
+        "hasUI": true,
+        "mode": "rpc",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-28-341Z_01a11d20-c155-7612-8c8b-406f9a6cff80.jsonl",
+        "sessionId": "01a11d20-c155-7612-8c8b-406f9a6cff80"
+      }
+    },
+    "tool_call.ask": {
+      "event": {
+        "type": "tool_call",
+        "toolName": "ask",
+        "toolCallId": "call_ask",
+        "input": {
+          "questions": [
+            {
+              "id": "q1",
+              "question": "Proceed?",
+              "options": [
+                {
+                  "label": "yes"
+                },
+                {
+                  "label": "no"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ctx": {
+        "hasUI": true,
+        "mode": "rpc",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-28-341Z_01a11d20-c155-7612-8c8b-406f9a6cff80.jsonl",
+        "sessionId": "01a11d20-c155-7612-8c8b-406f9a6cff80"
+      }
+    },
+    "tool_execution_start.ask": {
+      "event": {
+        "type": "tool_execution_start",
+        "toolCallId": "call_ask",
+        "toolName": "ask",
+        "args": {
+          "questions": [
+            {
+              "id": "q1",
+              "question": "Proceed?",
+              "options": [
+                {
+                  "label": "yes"
+                },
+                {
+                  "label": "no"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ctx": {
+        "hasUI": true,
+        "mode": "rpc",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-28-341Z_01a11d20-c155-7612-8c8b-406f9a6cff80.jsonl",
+        "sessionId": "01a11d20-c155-7612-8c8b-406f9a6cff80"
+      }
+    },
+    "tool_result.ask": {
+      "event": {
+        "type": "tool_result",
+        "toolName": "ask",
+        "toolCallId": "call_ask",
+        "input": {
+          "questions": [
+            {
+              "id": "q1",
+              "question": "Proceed?",
+              "options": [
+                {
+                  "label": "yes"
+                },
+                {
+                  "label": "no"
+                }
+              ]
+            }
+          ]
+        },
+        "isError": true
+      },
+      "ctx": {
+        "hasUI": true,
+        "mode": "rpc",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-28-341Z_01a11d20-c155-7612-8c8b-406f9a6cff80.jsonl",
+        "sessionId": "01a11d20-c155-7612-8c8b-406f9a6cff80"
+      }
+    },
+    "tool_execution_end.ask": {
+      "event": {
+        "type": "tool_execution_end",
+        "toolCallId": "call_ask",
+        "toolName": "ask",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "RPC client disconnected before extension UI response completed"
+            }
+          ],
+          "details": {}
+        },
+        "isError": true
+      },
+      "ctx": {
+        "hasUI": true,
+        "mode": "rpc",
+        "agent": {
+          "kind": "main",
+          "id": "Main",
+          "name": "main",
+          "depth": 0
+        },
+        "sessionFile": "/fixture-home/.omp/agent/sessions/-fixture-home-work-/2026-10-08T20-07-28-341Z_01a11d20-c155-7612-8c8b-406f9a6cff80.jsonl",
+        "sessionId": "01a11d20-c155-7612-8c8b-406f9a6cff80"
+      }
+    }
+  },
+  "sequence": [
+    "prompt:session_start",
+    "prompt:before_agent_start",
+    "prompt:agent_start",
+    "prompt:turn_start",
+    "prompt:message_start(user)",
+    "prompt:message_end(user)",
+    "prompt:message_start(custom)",
+    "prompt:message_end(custom)",
+    "prompt:message_start(assistant)",
+    "prompt:tool_call(bash)",
+    "prompt:message_end(assistant)",
+    "prompt:tool_execution_start(bash)",
+    "prompt:tool_result(bash)",
+    "prompt:tool_execution_end(bash)",
+    "prompt:message_start(toolResult)",
+    "prompt:message_end(toolResult)",
+    "prompt:turn_end(assistant)",
+    "prompt:turn_start",
+    "prompt:message_start(assistant)",
+    "prompt:message_end(assistant)",
+    "prompt:turn_end(assistant)",
+    "prompt:session_stop",
+    "prompt:agent_end",
+    "prompt:session_shutdown",
+    "sub:session_start",
+    "sub:before_agent_start",
+    "sub:agent_start",
+    "sub:turn_start",
+    "sub:message_start(user)",
+    "sub:message_end(user)",
+    "sub:message_start(custom)",
+    "sub:message_end(custom)",
+    "sub:message_start(assistant)",
+    "sub:tool_call(task)",
+    "sub:message_end(assistant)",
+    "sub:tool_execution_start(task)",
+    "sub:tool_result(task)",
+    "sub:tool_execution_end(task)",
+    "sub:message_start(toolResult)",
+    "sub:message_end(toolResult)",
+    "sub:turn_end(assistant)",
+    "sub:turn_start",
+    "sub:message_start(assistant)",
+    "sub:tool_call(wait)",
+    "sub:message_end(assistant)",
+    "sub:tool_execution_start(wait)",
+    "sub:before_subagent_spawn",
+    "sub:sub.session_start",
+    "sub:sub.before_agent_start",
+    "sub:sub.agent_start",
+    "sub:sub.turn_start",
+    "sub:sub.message_start(user)",
+    "sub:sub.message_end(user)",
+    "sub:sub.message_start(custom)",
+    "sub:sub.message_end(custom)",
+    "sub:sub.message_start(assistant)",
+    "sub:sub.tool_call(yield)",
+    "sub:sub.message_end(assistant)",
+    "sub:sub.tool_result(yield)",
+    "sub:sub.tool_execution_start(yield)",
+    "sub:sub.tool_execution_end(yield)",
+    "sub:sub.message_start(toolResult)",
+    "sub:sub.message_end(toolResult)",
+    "sub:sub.turn_end(assistant)",
+    "sub:sub.turn_start",
+    "sub:sub.message_start(assistant)",
+    "sub:sub.message_end(assistant)",
+    "sub:sub.turn_end(assistant)",
+    "sub:sub.agent_end",
+    "sub:sub.before_agent_start",
+    "sub:sub.agent_start",
+    "sub:sub.turn_start",
+    "sub:sub.message_start(developer)",
+    "sub:sub.message_end(developer)",
+    "sub:sub.message_start(custom)",
+    "sub:sub.message_end(custom)",
+    "sub:sub.message_start(assistant)",
+    "sub:sub.message_end(assistant)",
+    "sub:sub.turn_end(assistant)",
+    "sub:sub.agent_end",
+    "sub:sub.before_agent_start",
+    "sub:sub.agent_start",
+    "sub:sub.turn_start",
+    "sub:sub.message_start(developer)",
+    "sub:sub.message_end(developer)",
+    "sub:sub.message_start(custom)",
+    "sub:sub.message_end(custom)",
+    "sub:sub.message_start(assistant)",
+    "sub:sub.message_end(assistant)",
+    "sub:sub.turn_end(assistant)",
+    "sub:sub.agent_end",
+    "sub:sub.before_agent_start",
+    "sub:sub.agent_start",
+    "sub:sub.turn_start",
+    "sub:sub.message_start(developer)",
+    "sub:sub.message_end(developer)",
+    "sub:sub.message_start(custom)",
+    "sub:sub.message_end(custom)",
+    "sub:sub.message_start(assistant)",
+    "sub:sub.message_end(assistant)",
+    "sub:sub.turn_end(assistant)",
+    "sub:sub.agent_end",
+    "sub:tool_result(wait)",
+    "sub:tool_execution_end(wait)",
+    "sub:message_start(toolResult)",
+    "sub:message_end(toolResult)",
+    "sub:turn_end(assistant)",
+    "sub:turn_start",
+    "sub:message_start(assistant)",
+    "sub:message_end(assistant)",
+    "sub:turn_end(assistant)",
+    "sub:session_stop",
+    "sub:agent_end",
+    "sub:sub.session_shutdown",
+    "sub:session_shutdown",
+    "ask:session_start",
+    "ask:input",
+    "ask:before_agent_start",
+    "ask:agent_start",
+    "ask:turn_start",
+    "ask:message_start(user)",
+    "ask:message_end(user)",
+    "ask:message_start(custom)",
+    "ask:message_end(custom)",
+    "ask:message_start(assistant)",
+    "ask:tool_call(ask)",
+    "ask:message_end(assistant)",
+    "ask:tool_execution_start(ask)",
+    "ask:tool_result(ask)",
+    "ask:session_shutdown",
+    "ask:tool_execution_end(ask)",
+    "ask:message_start(toolResult)",
+    "ask:message_end(toolResult)"
+  ]
+}

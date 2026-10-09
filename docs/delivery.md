@@ -89,9 +89,9 @@ Its ignored run report records active detection-manifest versions and native out
 The adapter declaration is a reviewed product decision; the tool never changes it automatically.
 The shared agent adapter declares bell eligibility separately from prompt intake, spawn refusal and session format; its contract rejects a bell without a prompt hook, and adding prompt intake alone never widens the bell targets.
 Claude Code's plan approval reads `blocked`; Codex's does not, and the session read guards it instead (next section).
-Gemini, Grok and Cursor are not targets because their menus were not observed (no logged-in CLI was available for the check); Pi and every other kind keep today's behavior, with letters read through `hide inbox`.
-OpenCode is not a target either, though Hide's plugin gives it a prompt hook: on 2026-10-07 its previous-session picker read `done`, and a bell's Enter there opened another session.
-Its letters ride its next prompt instead (below), and the bell is reconsidered only in the change that would flip its adapter declaration, once the live-check tool has found a bell harmless in every scene OpenCode does not read as `blocked`.
+Gemini, Grok and Cursor are not targets because their menus were not observed (no logged-in CLI was available for the check); every other kind without a prompt hook keeps today's behavior, with letters read through `hide inbox`.
+OpenCode, Pi and omp are not targets either, though Hide's plugin and extension give them a prompt hook: on 2026-10-07 OpenCode's previous-session picker read `done`, and a bell's Enter there opened another session, and Pi's and omp's resume pickers read `done` too.
+Their letters ride their next prompt instead (below), and a bell is reconsidered only in the change that would flip an adapter declaration, once the live-check tool has found a bell harmless in every scene that agent does not read as `blocked`.
 Herdr 0.9.1 reads a built-in slash picker such as `/model` or `/resume` as `done`, not `blocked`, for both targets, and a bell typed into an open picker is accepted by it.
 Hide therefore does not take the Enter that opens a picker for a submission: the pane holds as a draft, and stays held after `/clear`, `/model` or `/help` until the next real prompt runs its hook.
 The same holds after an Esc or Ctrl-C that interrupts a turn, since no prompt hook runs for it.
@@ -117,16 +117,18 @@ A letter whose three bells are spent stays pending for `hide inbox` and expires 
 A payload that is truncated, unreadable or not read within 0.5 seconds counts as an operator prompt.
 Both pulls carry the payload's `session_id`; the core takes the pull as proof the pane's composer was sent only when that session is the pane's own native session, so a stray `hide inbox --hook` from another tool in the pane clears no draft.
 The session id is not a secret, so this guards against accidents and not against a hostile process in the pane (external input, D-18).
-A hook that runs while Herdr already reports the pane `working` is a queued prompt being taken up and clears nothing, and an id longer than 256 bytes or holding a control character is refused before it is hashed.
+A hook that runs while Herdr already reports the pane `working` is a queued prompt being taken up and clears nothing, and a session longer than 4096 bytes (Herdr's own bound; Pi and omp name a session by its file path), starting with `-` or holding a control character is refused before it is hashed.
 A device kit older than the local app sends `hide inbox --hook` without `--bell`, so its bell turn gets only the count line and the letter stays pending until the kit is updated; keep the kit and the app on the same build.
 A prompt hook that runs inside an agent with no prompt hook of its own (Grok loading Claude Code's hook) receives nothing and confirms nothing.
 Claude Code's hook run inside OpenCode, through an operator plugin that bridges `~/.claude/settings.json`, ends silently as a whole, so OpenCode's letters and counts are taken once, by Hide's own plugin.
 
-An agent with a prompt hook that no bell rings for, today only OpenCode through Hide's plugin, takes its letters on its next prompt, whoever typed it, since no turn of Hide's own will ever bring them (`mailbox::next_prompt_letters`).
+An agent with a prompt hook that no bell rings for, today OpenCode through Hide's plugin and Pi and omp through Hide's extension, takes its letters on its next prompt, whoever typed it, since no turn of Hide's own will ever bring them (`mailbox::next_prompt_letters`).
 Its `hide inbox --hook --session` pull hands over the letter bodies as a bell pull does and confirms nothing: the plugin attaches them to the root session's prompt as a synthetic part, and only when OpenCode reports that part written (`message.part.updated` with the part's id) does it run `hide inbox --confirm`.
 OpenCode's `chat.message` runs before the prompt is stored, so a prompt OpenCode loses before that leaves its letters pending for the next prompt or `hide inbox`.
 A subagent's prompt and a prompt of only synthetic text pull nothing.
 The plugin forgets a pull it never saw stored after 10 minutes and keeps at most 16 waiting, so a stored part reported late can still confirm; past that the letter stays pending and comes again.
+Pi's and omp's extension attaches them as a hidden custom message (`display: false`) that `before_agent_start` returns for the pane's own session, and runs `hide inbox --confirm` once the host has written that message and then the reply after it; omp prepares a submission more than once, so each attempt's message carries its own id and only the written one confirms, once.
+A turn that ends before its reply leaves the letters pending, and an omp subagent's prompt pulls nothing.
 An agent with no prompt hook reads letters with `hide inbox`, which shows an `ack_command` for each, and `hide request ack` is its receipt, as it is for an agent with one: it records `hook_confirmed` and ends a matching report watch, as the flushed hook confirmation does.
 Transport arrival and the doorbell alone do not confirm intake.
 Interruption before confirmation can repeat the same letter ID; confirmed letters do not appear again in hook context.
@@ -139,7 +141,7 @@ A blocked diagnostic store or output stream can prevent the diagnostic from fini
 CLI output collection uses the canonical platform capture, with a 64 KiB bound and no reader thread or blocking join after timeout.
 Cleanup uncertainty is a separate private diagnostic field and never authorizes confirmation.
 Manual `hide inbox` and `hide request show` remain available when the hook is missing or fails.
-OpenCode's plugin holds the same 1.85-second prompt budget around its helper call, which itself stops at 1.65 seconds so the process start fits; past the budget the prompt goes on unchanged and the cause lands in the same private diagnostic (cause `plugin` for helper calls the plugin skipped or gave up on).
+OpenCode's plugin and Pi's and omp's extension hold the same 1.85-second prompt budget around their helper call, which itself stops at 1.65 seconds so the process start fits; past the budget the prompt goes on unchanged and the cause lands in the same private diagnostic (cause `plugin` for helper calls the plugin skipped or gave up on).
 
 The pinned Herdr API has no atomic composer guard.
 Hide checks the occupant before and after the durable reservation and checks its memory state immediately before the off-lock pane write, but direct external Herdr/TUI input can race that final write.

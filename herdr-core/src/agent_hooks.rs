@@ -101,9 +101,9 @@ pub fn device_hook_status(
 
 /// The hook `dialect` speaks through, as a machine's kit reported it: Claude
 /// Code's and Codex's kit parts, or the hook piece on the agent's own row
-/// (OpenCode's plugin, Grok's and Cursor's hook entries). This Mac's Claude
-/// Code and Codex hooks are read from their files instead
-/// (`hide_agent_hooks::Diagnosis`); the others have no other reading.
+/// (OpenCode's plugin, Pi's and omp's extension, Grok's and Cursor's hook
+/// entries). This Mac's Claude Code and Codex hooks are read from their files
+/// instead (`hide_agent_hooks::Diagnosis`); the others have no other reading.
 pub fn kit_hook_status(
     kit: &crate::model::KitSnapshot,
     dialect: HookDialect,
@@ -119,7 +119,11 @@ pub fn kit_hook_status(
     let state = match dialect {
         HookDialect::ClaudeCode => part(ComponentId::ClaudeCodeHook)?,
         HookDialect::Codex => part(ComponentId::CodexHook)?,
-        HookDialect::OpenCode | HookDialect::Grok | HookDialect::Cursor => {
+        HookDialect::OpenCode
+        | HookDialect::Pi
+        | HookDialect::Omp
+        | HookDialect::Grok
+        | HookDialect::Cursor => {
             kit.agents
                 .iter()
                 .find(|agent| agent.id == dialect.adapter().id)?
@@ -248,6 +252,8 @@ mod tests {
         use hide_kit::ComponentState;
         for (dialect, id) in [
             (HookDialect::OpenCode, "opencode"),
+            (HookDialect::Pi, "pi"),
+            (HookDialect::Omp, "omp"),
             (HookDialect::Grok, "grok"),
             (HookDialect::Cursor, "cursor"),
         ] {

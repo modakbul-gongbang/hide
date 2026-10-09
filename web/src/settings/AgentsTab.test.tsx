@@ -49,9 +49,9 @@ const SEVEN = [
   agent("claude-code", { sessions: 2 }),
   agent("codex", { sessions: 0 }),
   partial("grok"),
-  partial("opencode"),
-  partial("pi", { availability: "not_installed" }),
-  partial("omp", { availability: "not_installed" }),
+  agent("opencode", { enabled: false, sessions: null }),
+  agent("pi", { availability: "not_installed" }),
+  agent("omp", { availability: "not_installed" }),
   partial("cursor", { availability: "not_installed" }),
 ];
 
@@ -125,7 +125,7 @@ it("shows a status only for an agent that is on: Ready, how many sessions run, a
   const set = [
     agent("claude-code", { sessions: 2 }),
     agent("codex", { sessions: 0 }),
-    partial("omp", { enabled: true, sessions: null }),
+    partial("cursor", { enabled: true, sessions: null }),
     partial("grok", { sessions: 3 }),
   ];
   const { q, text, unmount } = await mount(state([device("local", { kit: kit(set) })]));
@@ -135,10 +135,10 @@ it("shows a status only for an agent that is on: Ready, how many sessions run, a
   expect(q('[data-agent-row="local:claude-code:on"] button:not([role="switch"])')).toBeNull();
   expect(text()).not.toContain("connected");
   // Partial: the chip only, on or off, never a count.
-  expect(q('[data-agent-partial="omp"]')).not.toBeNull();
+  expect(q('[data-agent-partial="cursor"]')).not.toBeNull();
   expect(q('[data-agent-partial="grok"]')).not.toBeNull();
   expect(q('[data-agent-row="local:grok:off"] [data-agent-status]')).toBeNull();
-  expect(q('[data-agent-row="local:omp:on"] [data-agent-status]')).toBeNull();
+  expect(q('[data-agent-row="local:cursor:on"] [data-agent-status]')).toBeNull();
   // A Full agent never wears the chip.
   expect(q('[data-agent-partial="codex"]')).toBeNull();
   await unmount();

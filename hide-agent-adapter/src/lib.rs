@@ -44,8 +44,9 @@ pub enum TitlePriority {
 
 /// The input and output protocol of an agent's own hook: how its payload
 /// names the shell call and session, and how a refusal is written. Claude
-/// Code's and Codex's six-event hook, OpenCode's plugin, which calls the same
-/// helper, and Grok's and Cursor's own hook files.
+/// Code's and Codex's six-event hook, a script file of Hide's in the agent's
+/// own folder (OpenCode's plugin, Pi's and omp's extension), which calls the
+/// same helper, and Grok's and Cursor's own hook files.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum HookDialect {
     ClaudeCode,
@@ -53,15 +54,19 @@ pub enum HookDialect {
     OpenCode,
     Grok,
     Cursor,
+    Pi,
+    Omp,
 }
 
 impl HookDialect {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::ClaudeCode,
         Self::Codex,
         Self::OpenCode,
         Self::Grok,
         Self::Cursor,
+        Self::Pi,
+        Self::Omp,
     ];
 
     pub const fn adapter(self) -> &'static AgentAdapter {
@@ -71,6 +76,8 @@ impl HookDialect {
             Self::OpenCode => AgentId::OpenCode.adapter(),
             Self::Grok => AgentId::Grok.adapter(),
             Self::Cursor => AgentId::Cursor.adapter(),
+            Self::Pi => AgentId::Pi.adapter(),
+            Self::Omp => AgentId::Omp.adapter(),
         }
     }
 }
@@ -92,10 +99,13 @@ impl GuidanceDialect {
     }
 }
 
-/// A plugin file Hide owns in the agent's own plugin folder.
+/// A script file Hide owns in the agent's own plugin or extension folder.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PluginDialect {
     OpenCode,
+    /// Pi's and omp's extension: one source, two files.
+    Pi,
+    Omp,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
