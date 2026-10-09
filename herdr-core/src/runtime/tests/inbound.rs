@@ -299,3 +299,50 @@ fn only_a_connected_node_that_dialed_in_is_a_linked_machine() {
     }
     assert_eq!(runtime.linked_nodes(), vec![NODE.to_owned()]);
 }
+
+/// L11: the nodes that dial this core are capped, so a node whose identity
+/// keeps changing cannot grow the device list without end; a node already
+/// registered is still taken, and the label a node gives is shown as plain,
+/// bounded text.
+#[test]
+fn inbound_nodes_are_capped_and_their_labels_are_plain_text() {
+    let shared = shared_runtime();
+    {
+        let mut runtime = shared.lock().unwrap();
+        for index in 0..crate::runtime::inbound::MAX_INBOUND_NODES {
+            runtime
+                .snapshot
+                .ui_state
+                .device_registrations
+                .push(crate::model::DeviceRegistration {
+                    id: format!("node-{index}"),
+                    label: format!("node {index}"),
+                    ssh_alias: None,
+                    herdr_socket_path: None,
+                    host_consent: None,
+                    inbound: true,
+                });
+        }
+        assert_eq!(runtime.inbound_refusal("node-new"), Some("nodes_full"));
+        assert_eq!(runtime.inbound_refusal("node-3"), None);
+    }
+
+    let (link, _release) = HeldLink::new();
+    let label = format!("\u{1b}[31m{}\n", "x".repeat(200));
+    shared
+        .lock()
+        .unwrap()
+        .accept_inbound_node("node-3", &label, link)
+        .expect("a registered node's link");
+    let runtime = shared.lock().unwrap();
+    let shown = &runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .iter()
+        .find(|registration| registration.id == "node-3")
+        .unwrap()
+        .label;
+    assert!(!shown.chars().any(char::is_control), "{shown:?}");
+    assert_eq!(shown.chars().count(), 64);
+}

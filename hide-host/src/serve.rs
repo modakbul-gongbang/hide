@@ -111,6 +111,8 @@ pub struct Services<'a> {
 #[derive(Debug, Default)]
 pub struct OpenedRoots {
     roots: Mutex<Vec<String>>,
+    /// Whether a root past the cap was left out and logged.
+    full: std::sync::atomic::AtomicBool,
 }
 
 impl OpenedRoots {
@@ -119,8 +121,23 @@ impl OpenedRoots {
 
     fn record(&self, root: &str) {
         let mut roots = lock(&self.roots);
-        if !roots.iter().any(|kept| kept == root) && roots.len() < Self::CAP {
+        if roots.iter().any(|kept| kept == root) {
+            return;
+        }
+        if roots.len() < Self::CAP {
             roots.push(root.to_owned());
+            return;
+        }
+        drop(roots);
+        if !self.full.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "node",
+                    "kind": "opened_roots.full",
+                    "cap": Self::CAP,
+                })
+            );
         }
     }
 

@@ -365,6 +365,23 @@ pub const MAX_RELAY_REQUESTS: usize = 64;
 pub struct RelayRequests {
     waiting: AtomicUsize,
     refused: AtomicU64,
+    /// The node's screens relayed now.
+    screens: AtomicUsize,
+}
+
+/// The screens one linked node may relay at once: fewer than this core's
+/// client cap, so a node's windows never leave the core's own machine
+/// without a place for its own.
+pub const MAX_RELAY_SCREENS: usize = crate::state_file::MAX_CLIENTS - 2;
+
+/// One relayed screen's place among [`MAX_RELAY_SCREENS`].
+#[derive(Debug)]
+pub struct RelayScreenSlot(Arc<RelayRequests>);
+
+impl Drop for RelayScreenSlot {
+    fn drop(&mut self) {
+        self.0.screens.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 /// One waiting answer's place among [`MAX_RELAY_REQUESTS`], given back
@@ -379,6 +396,27 @@ impl Drop for RelaySlot {
 }
 
 impl RelayRequests {
+    /// A place for one more of `node`'s screens, or `None` at the cap,
+    /// which is logged.
+    pub fn take_screen(self: &Arc<Self>, node: &str) -> Option<RelayScreenSlot> {
+        let taken = self
+            .screens
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |screens| {
+                (screens < MAX_RELAY_SCREENS).then_some(screens + 1)
+            })
+            .is_ok();
+        if taken {
+            return Some(RelayScreenSlot(Arc::clone(self)));
+        }
+        herdr_core::diagnostic!(json!({
+            "component": "node_relay",
+            "kind": "relay.screens_full",
+            "node": node,
+            "cap": MAX_RELAY_SCREENS,
+        }));
+        None
+    }
+
     /// A slot for one more answer to `node`'s screens, or `None` at the
     /// cap, which is logged.
     pub fn take(self: &Arc<Self>, node: &str) -> Option<RelaySlot> {
@@ -536,6 +574,19 @@ mod tests {
             requests.take("node").is_some(),
             "an answer gives its slot back"
         );
+    }
+
+    /// A node relays at most `MAX_RELAY_SCREENS` screens, fewer than the
+    /// core's client cap, so the core's own windows keep a place.
+    #[test]
+    fn a_node_relays_fewer_screens_than_the_core_takes() {
+        let requests = Arc::new(RelayRequests::default());
+        let held: Vec<RelayScreenSlot> = (0..MAX_RELAY_SCREENS)
+            .map(|_| requests.take_screen("node").expect("a place under the cap"))
+            .collect();
+        assert!(requests.take_screen("node").is_none());
+        drop(held);
+        assert!(requests.take_screen("node").is_some());
     }
 
     fn outputs(tap: &Arc<RelayTap>) -> Vec<TerminalOutput> {

@@ -292,9 +292,17 @@ async fn relay_browser_source(
         .get(RELAY_GRANT_HEADER)
         .and_then(|value| value.to_str().ok())
         .and_then(|grant| state.relay_grants.valid(grant));
-    if admitted.is_none() {
+    let Some(admitted) = admitted else {
         return StatusCode::FORBIDDEN.into_response();
-    }
+    };
+    // One of the answers the node's screens may wait on (B17, D-20).
+    let Some(_slot) = admitted.requests.take(&admitted.node) else {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            axum::Json(json!({"reason":"relay_busy"})),
+        )
+            .into_response();
+    };
     if query.device_id.is_empty()
         || query.device_id.len() > 256
         || !hide_platform::path::is_wire_absolute(&query.checkout_path)
@@ -880,6 +888,10 @@ async fn relay_screen(mut socket: WebSocket, state: AppState, relay: RelayScreen
         refuse(&mut socket, CloseReason::SchemaMismatch, None).await;
         return;
     }
+    let Some(_place) = relay.requests.take_screen(&relay.node) else {
+        refuse(&mut socket, CloseReason::ClientLimit, None).await;
+        return;
+    };
     let connection = state.connections.fetch_add(1, Ordering::SeqCst);
     screen_loop(socket, state, connection, handshake, Some(relay)).await;
 }

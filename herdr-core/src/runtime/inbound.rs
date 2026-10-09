@@ -11,6 +11,14 @@ use super::*;
 use crate::model::DeviceRegistration;
 use crate::remote::DeviceTransport;
 
+/// The most nodes that dial this core it keeps registered: each is a
+/// device row the operator removes by hand, so a node whose identity keeps
+/// changing (a reinstall, a fixture per state folder) cannot grow the list
+/// without end.
+pub(crate) const MAX_INBOUND_NODES: usize = 16;
+/// The longest label a node's own name is shown with.
+const MAX_LABEL_CHARS: usize = 64;
+
 impl Runtime {
     /// Whether `device_id` is a node that dials this core.
     pub(super) fn is_inbound(&self, device_id: &str) -> bool {
@@ -37,8 +45,19 @@ impl Runtime {
             }));
             return Err(reason.to_owned());
         }
-        let label = label.trim();
-        let label = if label.is_empty() { node } else { label };
+        // A node names itself; what it says is shown only as plain text of
+        // a bounded length, and its id stands in for anything else.
+        let label: String = label
+            .trim()
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(MAX_LABEL_CHARS)
+            .collect();
+        let label = if label.is_empty() {
+            node
+        } else {
+            label.as_str()
+        };
         let existing = self
             .snapshot
             .ui_state
@@ -119,7 +138,23 @@ impl Runtime {
             Some(hosts::HostPhase::Connecting) => true,
             _ => false,
         };
-        live.then_some("already_linked")
+        if live {
+            return Some("already_linked");
+        }
+        let registered = self
+            .snapshot
+            .ui_state
+            .device_registrations
+            .iter()
+            .filter(|registration| registration.inbound);
+        let mut count = 0;
+        for registration in registered {
+            if registration.id == node {
+                return None;
+            }
+            count += 1;
+        }
+        (count >= MAX_INBOUND_NODES).then_some("nodes_full")
     }
 
     /// The nodes that dialed this core and are connected now, in the order
