@@ -13,6 +13,7 @@
 pub enum ForkableAgent {
     Claude,
     Codex,
+    Grok,
     Pi,
     Omp,
 }
@@ -22,10 +23,10 @@ impl ForkableAgent {
         match hide_agent_adapter::adapter(agent_kind)?.fork? {
             hide_agent_adapter::LaunchDialect::Claude => Some(Self::Claude),
             hide_agent_adapter::LaunchDialect::Codex => Some(Self::Codex),
+            hide_agent_adapter::LaunchDialect::Grok => Some(Self::Grok),
             hide_agent_adapter::LaunchDialect::Pi => Some(Self::Pi),
             hide_agent_adapter::LaunchDialect::Omp => Some(Self::Omp),
-            hide_agent_adapter::LaunchDialect::Grok
-            | hide_agent_adapter::LaunchDialect::OpenCode
+            hide_agent_adapter::LaunchDialect::OpenCode
             | hide_agent_adapter::LaunchDialect::Cursor => None,
         }
     }
@@ -44,6 +45,7 @@ impl ForkableAgent {
                     .herdr
                     .name
             }
+            Self::Grok => hide_agent_adapter::LaunchDialect::Grok.adapter().herdr.name,
             Self::Pi => hide_agent_adapter::LaunchDialect::Pi.adapter().herdr.name,
             Self::Omp => hide_agent_adapter::LaunchDialect::Omp.adapter().herdr.name,
         }
@@ -54,7 +56,8 @@ impl ForkableAgent {
     /// agent's vocabulary rather than Herdr's.
     pub fn resume_arguments(self, session_id: &str) -> Vec<String> {
         match self {
-            Self::Claude => vec![
+            // Grok 1.0.46 `--fork-session`: a new id from the resumed history.
+            Self::Claude | Self::Grok => vec![
                 "--resume".to_owned(),
                 session_id.to_owned(),
                 "--fork-session".to_owned(),
@@ -271,6 +274,21 @@ mod tests {
             ["--fork", "3f2b1c00-0000-4000-8000-000000000001"]
         );
         assert!(is_forkable(Some("pi"), Some("native-session")));
+    }
+
+    #[test]
+    fn a_grok_fork_resumes_the_confirmed_native_id_as_a_new_session() {
+        let request = request(ForkableAgent::Grok);
+        assert_eq!(request.agent.kind(), "grok");
+        assert_eq!(
+            request.agent.resume_arguments(&request.session_id),
+            [
+                "--resume",
+                "3f2b1c00-0000-4000-8000-000000000001",
+                "--fork-session"
+            ]
+        );
+        assert!(is_forkable(Some("grok"), Some("native-session")));
     }
 
     #[test]

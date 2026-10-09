@@ -85,14 +85,19 @@ use crate::error::HostError;
 /// keys and output both ways. A node on 25 would read those lines as
 /// unreadable requests, so it is refused at Hello and reinstalled; the
 /// audited 24 link keeps its legacy features and starts no terminals.
-/// 27: a node may dial its core (PRD core-host-node-remote-core D-04): the
+/// 27: `line_input` answers how a pane shell's terminal takes typed input,
+/// so a start waits for the shell's line editor before it types a line the
+/// terminal could cut. A node on 26 would refuse it as unknown, and a long
+/// first prompt could not start on that device, so it is refused at Hello and
+/// reinstalled.
+/// 28: a node may dial its core (PRD core-host-node-remote-core D-04): the
 /// core reaches such a node's Herdr through streams inside the link
 /// (`herdr_open`, `herdr_write`, `herdr_close` and
 /// [`crate::panes::NodeEvent::HerdrData`]), takes a label generator's lock
 /// on the node that owns the Herdr server, and terminal lines name the
-/// screen a view or a key came from. A node on 26 would refuse the first as
+/// screen a view or a key came from. A node on 27 would refuse the first as
 /// unknown, so it is refused at Hello and reinstalled.
-pub const PROTOCOL_VERSION: u32 = 27;
+pub const PROTOCOL_VERSION: u32 = 28;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -408,6 +413,12 @@ pub enum Call {
     ProcessDescendants {
         pid: u32,
     },
+    /// How the terminal `pid` controls takes typed input now
+    /// (`process::LineInput`), read before a pane's shell is given a line its
+    /// terminal could cut.
+    LineInput {
+        pid: u32,
+    },
     /// Measures each of `paths` (`disk::DiskUsage`), reporting each one as
     /// it finishes and answering them all. The entries of `shared_git` are
     /// a repository's shared Git directory, measured as one size.
@@ -513,6 +524,14 @@ pub enum Call {
         path: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scope: Option<hide_session::SessionReadScope>,
+    },
+    /// A bounded provider-neutral conversation page, including native graphs.
+    SessionConversation {
+        agent: hide_session::Agent,
+        path: String,
+        scope: hide_session::SessionReadScope,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkpoint: Option<hide_session::ConversationCheckpoint>,
     },
     /// Starts this node's pane service for the Herdr at `herdr_socket`: the
     /// bootstrap socket a device pane's `hide` asks on. Answered with
@@ -672,6 +691,7 @@ impl Call {
             | Self::AgentInstalled { .. }
             | Self::ProcessStarts { .. }
             | Self::ProcessDescendants { .. }
+            | Self::LineInput { .. }
             | Self::DiskUsage { .. }
             | Self::ListeningPorts
             | Self::VolumeFree { .. }
@@ -686,6 +706,7 @@ impl Call {
             | Self::SessionStat { .. }
             | Self::SessionChunk { .. }
             | Self::SessionText { .. }
+            | Self::SessionConversation { .. }
             | Self::PanesStart { .. }
             | Self::TerminalsStart { .. }
             | Self::PaneProofAnswer { .. }

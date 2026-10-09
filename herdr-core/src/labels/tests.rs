@@ -341,6 +341,48 @@ fn task(label: Option<AgentLabel>) -> Option<String> {
 }
 
 #[test]
+fn a_titles_only_opencode_session_keeps_its_native_title_and_generated_goal() {
+    let harness = Harness::new();
+    let directory = harness.home.path().join(".local/share/opencode");
+    std::fs::create_dir_all(&directory).unwrap();
+    let database = directory.join("opencode.db");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    connection
+        .execute_batch(include_str!(
+            "../../../hide-session/tests/fixtures/adapters/opencode-1.18.30/opencode.sql"
+        ))
+        .unwrap();
+    drop(connection);
+    let original = std::fs::read(&database).unwrap();
+    harness.backend.answer("요청 보기 구현 작업", "done", "");
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let observed = ObservedAgent {
+        pane_id: "w1:p1".into(),
+        agent: Some("opencode".into()),
+        status: Some("idle".into()),
+        reference: Some(("id".into(), "ses_0a1b2c3d4e5f60718293a4b5c6".into())),
+        cwd: Some("/work/app".into()),
+        state_change_seq: 1,
+    };
+
+    observe(&mut worker, &observed);
+    settle(&mut worker, &woken);
+
+    assert_eq!(
+        shown_facts(&worker, &observed)
+            .and_then(|facts| facts.native_title)
+            .as_deref(),
+        Some("요청 보기 만들기")
+    );
+    assert_eq!(
+        task(shown(&worker, &observed)).as_deref(),
+        Some("요청 보기 구현 작업")
+    );
+    assert_eq!(harness.backend.calls(), 1);
+    assert_eq!(std::fs::read(database).unwrap(), original);
+}
+
+#[test]
 fn a_path_reveals_only_its_proven_native_id_and_a_switched_path_has_no_identity() {
     let harness = Harness::new();
     let path = harness.session("a", "native-a", &[("user", "요청"), ("assistant", "완료")]);

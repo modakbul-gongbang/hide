@@ -320,27 +320,42 @@ fn authenticated_node_advertises_only_its_compiled_readers() {
             .unwrap()
             .supports("pi", ReaderFeature::Turns)
     );
+    for agent in ["omp", "grok"] {
+        for feature in [
+            ReaderFeature::Conversation,
+            ReaderFeature::Turns,
+            ReaderFeature::UserTurnContent,
+        ] {
+            assert!(
+                device
+                    .link
+                    .reader_features()
+                    .unwrap()
+                    .supports(agent, feature),
+                "{agent}: {feature:?}"
+            );
+        }
+    }
+    // Cursor's accepted reader contract includes conversation/search, while
+    // its native records provide no title, Memory, link or structured turn.
+    let features = device.link.reader_features().unwrap();
     for feature in [
+        ReaderFeature::Identity,
+        ReaderFeature::Labels,
         ReaderFeature::Conversation,
+        ReaderFeature::Search,
+        ReaderFeature::Activity,
+    ] {
+        assert!(features.supports("cursor", feature), "cursor: {feature:?}");
+    }
+    for feature in [
+        ReaderFeature::Titles,
+        ReaderFeature::Memory,
+        ReaderFeature::Links,
         ReaderFeature::Turns,
         ReaderFeature::UserTurnContent,
     ] {
-        assert!(
-            device
-                .link
-                .reader_features()
-                .unwrap()
-                .supports("omp", feature)
-        );
-    }
-    for agent in ["grok", "cursor"] {
-        assert!(
-            !device
-                .link
-                .reader_features()
-                .unwrap()
-                .supports(agent, ReaderFeature::Conversation)
-        );
+        assert!(!features.supports("cursor", feature), "cursor: {feature:?}");
     }
 }
 

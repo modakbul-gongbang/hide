@@ -14,7 +14,7 @@ pub fn label_reference_token(provider: &str, kind: &str, value: &str) -> Option<
     reference_token(Agent::from_kind(provider)?, kind, value)
 }
 
-fn reference_token(agent: Agent, kind: &str, value: &str) -> Option<String> {
+pub(crate) fn reference_token(agent: Agent, kind: &str, value: &str) -> Option<String> {
     let provider = agent.as_str();
     if !matches!(kind, "id" | "path")
         || value.trim().is_empty()
@@ -105,8 +105,9 @@ pub fn confirm_label_session(
     confirm_metadata(agent, path, reported_id, None, None)
 }
 
-/// Shared file proof for consumers, including idle/paged reads. Pi additionally
-/// requires its exact checkout and refuses every linked entry under home.
+/// Shared file proof for consumers, including idle/paged reads. Pi, omp and
+/// Grok additionally require their exact checkout and refuse every linked
+/// entry under home.
 pub fn confirm_session_file(
     home: &Path,
     agent: Agent,
@@ -126,6 +127,15 @@ fn confirm_metadata(
     cwd: Option<&str>,
     home: Option<&Path>,
 ) -> Result<ConfirmedLabelSession> {
+    if agent == Agent::Cursor {
+        return crate::cursor::proof(
+            home.ok_or_else(|| anyhow!("label_session_outside_roots"))?,
+            path,
+            reported_id,
+            cwd.ok_or_else(|| anyhow!("label_session_cwd_unconfirmed"))?,
+        )
+        .map_err(|error| anyhow!(error.to_string()));
+    }
     if !std::fs::metadata(path)
         .map_err(|_| anyhow!("label_session_file_unavailable"))?
         .is_file()
@@ -151,7 +161,11 @@ fn confirm_metadata(
     let mut native_id = None;
     if agent.requires_native_file_proof() {
         let mut remaining = SESSION_INCREMENT_READ_LIMIT_BYTES;
-        let header = crate::native_file::header_from_reader(agent, &mut reader, &mut remaining)?;
+        let header = if agent == Agent::Grok {
+            crate::native_file::header(agent, path)?
+        } else {
+            crate::native_file::header_from_reader(agent, &mut reader, &mut remaining)?
+        };
         let expected = cwd.ok_or_else(|| anyhow!("label_session_cwd_unconfirmed"))?;
         let expected = hide_platform::fs::identity::canonical(Path::new(expected))
             .map_err(|_| anyhow!("label_session_cwd_unconfirmed"))?;
@@ -162,8 +176,7 @@ fn confirm_metadata(
         }
         let home = home.ok_or_else(|| anyhow!("label_session_outside_roots"))?;
         let native_directory = crate::native_file::default_directory(home, agent, &native)?;
-        let actual_directory = path
-            .parent()
+        let actual_directory = crate::native_file::directory_of(agent, path)
             .and_then(|parent| hide_platform::fs::identity::canonical(parent).ok());
         if actual_directory.is_none()
             || hide_platform::fs::identity::canonical(&native_directory).ok() != actual_directory
@@ -301,7 +314,7 @@ mod tests {
                 Agent::Claude => {
                     serde_json::json!({"type":"user","sessionId":"native-a","message":{"role":"user","content":"content must not identify the owner"}})
                 }
-                Agent::Pi | Agent::Omp | Agent::OpenCode => {
+                Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode | Agent::Cursor => {
                     unreachable!("legacy metadata fixtures")
                 }
             };

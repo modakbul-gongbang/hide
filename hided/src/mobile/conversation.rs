@@ -9,7 +9,7 @@
 //! terminal too, because the newest transcript in its folder may be a
 //! neighbour's.
 //!
-//! A page is the newest `PAGE_MESSAGES` messages before a byte offset, read
+//! A page is the newest `PAGE_MESSAGES` messages before a native ordinal, read
 //! backwards in `WINDOW_BYTES` windows and never more than
 //! `PAGE_BUDGET_BYTES` a request; the offset of its oldest message is the
 //! cursor the phone sends back for the page before it. What the agent appends
@@ -47,13 +47,46 @@ const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Message {
-    /// The byte offset of its transcript record: unique and in order.
+    /// The native record's ordinal: unique and in order.
     pub id: u64,
     /// `you`, `agent`, or `stopped` for an interruption.
     pub who: &'static str,
     pub text: String,
     pub truncated: bool,
     pub at_ms: u64,
+    /// The native message this record is a part of (Grok writes a prompt's
+    /// blocks and an answer's text runs as separate records).
+    #[serde(skip)]
+    part: Option<String>,
+}
+
+impl Message {
+    fn continued_by(&self, next: &Self) -> bool {
+        self.part.is_some() && self.part == next.part && self.who == next.who
+    }
+}
+
+/// Join consecutive records of one native message into the first one.
+fn join(messages: Vec<Message>) -> Vec<Message> {
+    let mut joined: Vec<Message> = Vec::with_capacity(messages.len());
+    for message in messages {
+        match joined.last_mut() {
+            Some(last) if last.continued_by(&message) => {
+                if !last.truncated {
+                    last.text
+                        .push_str(if last.who == "agent" { "\n\n" } else { "\n" });
+                    last.text.push_str(&message.text);
+                    if let Some((cut, _)) = last.text.char_indices().nth(MESSAGE_CHARS) {
+                        last.text.truncate(cut);
+                        last.truncated = true;
+                    }
+                    last.truncated |= message.truncated;
+                }
+            }
+            _ => joined.push(message),
+        }
+    }
+    joined
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -119,6 +152,10 @@ pub struct Transcript {
     /// The file's length at the last read, so an idle poll reads nothing.
     length: u64,
     proof: Option<NativeProof>,
+    /// The newest message the phone holds, which an append may continue.
+    newest: Option<Message>,
+    /// Cursor's graph position; SQLite file length is not its append position.
+    cursor: Option<hide_session::cursor::Checkpoint>,
 }
 
 /// The phone retains no native authority beyond its source. Every native page,
@@ -187,6 +224,7 @@ impl NativeProof {
         if current.confirmed.incarnation != self.confirmed.incarnation
             || current.confirmed.bytes < self.confirmed.bytes
             || (current.confirmed.bytes == self.confirmed.bytes && current.stamp != self.stamp)
+            || (self.source.agent == Agent::Cursor && current.stamp != self.stamp)
         {
             return Err(SessionError::Checkpoint(
                 "label_session_read_changed".to_owned(),
@@ -216,7 +254,22 @@ impl Transcript {
         )?;
         let proof = NativeProof::new(home, &source, &path)?;
         let length = file_length(&path)?;
-        let (page, end) = page_before(&path, source.agent, None)?;
+        let (page, end, cursor) = if source.agent == Agent::Cursor {
+            let native = cursor_page(
+                proof.as_ref().ok_or(SessionError::SessionFileMissing)?,
+                &path,
+                None,
+            )?;
+            let end = native.tail.offset();
+            let page = Page {
+                messages: messages_from(native.parsed),
+                before: native.before,
+            };
+            (page, end, Some(native.tail))
+        } else {
+            let (page, end) = page_before(&path, source.agent, None)?;
+            (page, end, None)
+        };
         let proof = proof.map(|proof| proof.require_same(&path)).transpose()?;
         Ok((
             Self {
@@ -225,6 +278,8 @@ impl Transcript {
                 end,
                 length,
                 proof,
+                newest: page.messages.last().cloned(),
+                cursor,
             },
             page,
         ))
@@ -251,6 +306,9 @@ impl Transcript {
             .as_ref()
             .map(|proof| proof.current(&self.path))
             .transpose()?;
+        if self.source.agent == Agent::Cursor {
+            return self.poll_cursor(proof.ok_or(SessionError::SessionFileMissing)?);
+        }
         if let (Some(before), Some(after)) = (&self.proof, &proof)
             && (before.confirmed.incarnation != after.confirmed.incarnation
                 || after.confirmed.bytes < before.confirmed.bytes
@@ -291,12 +349,83 @@ impl Transcript {
             }
             end = Some(chunk.start_offset);
         }
+        let messages = join(messages);
+        // A record that continues the message the phone already holds
+        // changes that message: read the newest page anew.
+        if let (Some(newest), Some(first)) = (&self.newest, messages.first())
+            && newest.continued_by(first)
+        {
+            return Ok(Tail::Reset);
+        }
         if let Some(proof) = proof {
             self.proof = Some(proof.require_same(&self.path)?);
         }
         self.length = length;
         self.end = newest_end.unwrap_or(self.end);
+        if let Some(last) = messages.last() {
+            self.newest = Some(last.clone());
+        }
         Ok(Tail::Messages(messages))
+    }
+
+    fn poll_cursor(&mut self, proof: NativeProof) -> Result<Tail, SessionError> {
+        if self.proof.as_ref().is_none_or(|before| {
+            before.confirmed.incarnation != proof.confirmed.incarnation
+                || proof.confirmed.bytes < before.confirmed.bytes
+        }) {
+            return Ok(Tail::Reset);
+        }
+        let native_id = proof
+            .confirmed
+            .native_session_id
+            .as_deref()
+            .ok_or(SessionError::SessionFileMissing)?;
+        let cwd = proof
+            .source
+            .cwd
+            .as_deref()
+            .ok_or(SessionError::SessionFileMissing)?;
+        let mut checkpoint = self
+            .cursor
+            .clone()
+            .ok_or_else(|| SessionError::Checkpoint("cursor_checkpoint_missing".into()))?;
+        let mut read_bytes = 0u64;
+        let mut messages = Vec::new();
+        for _ in 0..hide_session::cursor::ARCHIVE_PAGE_LIMIT {
+            let read = match hide_session::cursor::read(
+                &proof.home,
+                &self.path,
+                native_id,
+                cwd,
+                Some(checkpoint),
+                PAGE_BUDGET_BYTES.saturating_sub(read_bytes),
+            ) {
+                Err(SessionError::Capacity {
+                    resource: "cursor_read_bytes",
+                    ..
+                }) if read_bytes > 0 => return Ok(Tail::Reset),
+                other => other?,
+            };
+            if read.parsed.rescan_reason.is_some() {
+                return Ok(Tail::Reset);
+            }
+            read_bytes = read_bytes.saturating_add(read.read_bytes);
+            messages.extend(messages_from(read.parsed));
+            checkpoint = read.checkpoint;
+            if !read.has_more {
+                self.proof = Some(proof.require_same(&self.path)?);
+                self.end = checkpoint.offset();
+                self.cursor = Some(checkpoint);
+                if let Some(last) = messages.last() {
+                    self.newest = Some(last.clone());
+                }
+                return Ok(Tail::Messages(messages));
+            }
+            if read_bytes >= PAGE_BUDGET_BYTES {
+                return Ok(Tail::Reset);
+            }
+        }
+        Ok(Tail::Reset)
     }
 }
 
@@ -315,12 +444,49 @@ impl Pager {
             .as_ref()
             .map(|proof| proof.require_same(&self.path))
             .transpose()?;
-        let (page, _) = page_before(&self.path, self.agent, Some(cursor))?;
+        let page = if self.agent == Agent::Cursor {
+            let native = cursor_page(
+                proof.as_ref().ok_or(SessionError::SessionFileMissing)?,
+                &self.path,
+                Some(cursor),
+            )?;
+            Page {
+                messages: messages_from(native.parsed),
+                before: native.before,
+            }
+        } else {
+            page_before(&self.path, self.agent, Some(cursor))?.0
+        };
         if let Some(proof) = proof {
             proof.require_same(&self.path)?;
         }
         Ok(page)
     }
+}
+
+fn cursor_page(
+    proof: &NativeProof,
+    path: &Path,
+    before: Option<u64>,
+) -> Result<hide_session::cursor::Page, SessionError> {
+    let native_id = proof
+        .confirmed
+        .native_session_id
+        .as_deref()
+        .ok_or(SessionError::SessionFileMissing)?;
+    let cwd = proof
+        .source
+        .cwd
+        .as_deref()
+        .ok_or(SessionError::SessionFileMissing)?;
+    hide_session::cursor::page_before(
+        &proof.home,
+        path,
+        native_id,
+        cwd,
+        before,
+        hide_session::cursor::PageLimits::default(),
+    )
 }
 
 fn file_length(path: &Path) -> Result<u64, SessionError> {
@@ -341,7 +507,7 @@ fn page_before(path: &Path, agent: Agent, end: Option<u64>) -> Result<(Page, u64
         read += chunk.end_offset - chunk.start_offset;
         let mut found = messages_in(agent, &chunk.contents, chunk.start_offset);
         found.append(&mut messages);
-        messages = found;
+        messages = join(found);
         if let Some(keep) = page_start(&messages) {
             messages.drain(..keep);
             break messages.first().map(|message| message.id);
@@ -375,6 +541,10 @@ fn page_start(messages: &[Message]) -> Option<usize> {
 /// The messages a phone shows from one chunk of complete lines.
 fn messages_in(agent: Agent, contents: &str, start_offset: u64) -> Vec<Message> {
     let parsed = parse_events_at(agent, contents, start_offset);
+    messages_from(parsed)
+}
+
+fn messages_from(parsed: hide_session::ParsedSession) -> Vec<Message> {
     parsed
         .events
         .into_iter()
@@ -403,6 +573,7 @@ fn messages_in(agent: Agent, contents: &str, start_offset: u64) -> Vec<Message> 
                 text,
                 truncated,
                 at_ms: event.at_unix_ms,
+                part: event.part().map(str::to_owned),
             })
         })
         .collect()
@@ -412,6 +583,98 @@ fn messages_in(agent: Agent, contents: &str, start_offset: u64) -> Vec<Message> 
 mod tests {
     use super::*;
     use std::io::Write;
+
+    fn cursor_transcript() -> (tempfile::TempDir, PathBuf, Source, serde_json::Value) {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().join("checkout");
+        std::fs::create_dir(&cwd).unwrap();
+        let id = "a1b2c3d4-0000-4000-8000-000000000001";
+        let bucket = format!("{:x}", md5::compute(cwd.to_str().unwrap().as_bytes()));
+        let path = home
+            .path()
+            .join(hide_session::cursor::SESSIONS)
+            .join(bucket)
+            .join(id)
+            .join("store.db");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let graph: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../hide-session/tests/fixtures/cursor-2026.10.01/graph.json"
+        ))
+        .unwrap();
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("PRAGMA user_version=1; CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT); CREATE TABLE blobs(id TEXT PRIMARY KEY, data BLOB);").unwrap();
+        for (id, value) in graph["blobs"].as_object().unwrap() {
+            db.execute(
+                "INSERT INTO blobs VALUES (?1,?2)",
+                rusqlite::params![id, hex::decode(value.as_str().unwrap()).unwrap()],
+            )
+            .unwrap();
+        }
+        drop(db);
+        std::fs::write(path.with_file_name("meta.json"), serde_json::json!({"schemaVersion":1,"createdAtMs":1_790_989_200_000_u64,"hasConversation":true,"cwd":cwd}).to_string()).unwrap();
+        cursor_root(&path, &graph, "first");
+        let source = Source {
+            agent: Agent::Cursor,
+            identity: SessionIdentity::id(id),
+            cwd: Some(cwd.to_str().unwrap().into()),
+        };
+        (home, path, source, graph)
+    }
+
+    fn cursor_root(path: &Path, graph: &serde_json::Value, variant: &str) {
+        let metadata = serde_json::json!({"agentId":"a1b2c3d4-0000-4000-8000-000000000001","latestRootBlobId":graph["roots"][variant],"createdAt":1_790_989_200_000_u64});
+        rusqlite::Connection::open(path)
+            .unwrap()
+            .execute(
+                "INSERT OR REPLACE INTO meta VALUES ('0',?1)",
+                [hex::encode(metadata.to_string().as_bytes())],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn cursor_phone_uses_graph_ordinals_append_and_reset_without_reading_sqlite_as_lines() {
+        let (home, path, source, graph) = cursor_transcript();
+        let files = || {
+            std::fs::read_dir(path.parent().unwrap())
+                .unwrap()
+                .map(|entry| {
+                    let entry = entry.unwrap();
+                    (entry.file_name(), std::fs::read(entry.path()).unwrap())
+                })
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let before = files();
+        let (mut transcript, page) = Transcript::open(home.path(), "fixture", source).unwrap();
+        assert_eq!(
+            texts(&page.messages),
+            ["Read this conversation", "Native answer"]
+        );
+        assert_eq!(
+            page.messages
+                .iter()
+                .map(|message| (message.id, message.at_ms))
+                .collect::<Vec<_>>(),
+            [(0, 0), (1, 1_790_989_260_000)]
+        );
+        assert_eq!(page.before, None);
+        assert_eq!(transcript.poll().unwrap(), Tail::Messages(Vec::new()));
+        assert_eq!(files(), before);
+        let old_pager = transcript.pager();
+        cursor_root(&path, &graph, "append");
+        assert!(old_pager.before(1).is_err());
+        let Tail::Messages(appended) = transcript.poll().unwrap() else {
+            panic!("append reset")
+        };
+        assert_eq!(texts(&appended), ["Later answer"]);
+        assert_eq!(appended[0].id, 3);
+        cursor_root(&path, &graph, "rewrite");
+        assert_eq!(transcript.poll().unwrap(), Tail::Reset);
+        let (mut restored, _) =
+            Transcript::open(home.path(), "fixture", transcript.source.clone()).unwrap();
+        std::fs::remove_file(path.with_file_name("meta.json")).unwrap();
+        assert!(restored.poll().is_err());
+    }
 
     fn human(text: &str, second: u32) -> String {
         serde_json::json!({
@@ -527,6 +790,8 @@ mod tests {
             end,
             length,
             proof: None,
+            newest: None,
+            cursor: None,
         };
         assert_eq!(open.poll().unwrap(), Tail::Messages(Vec::new()));
         let mut file = std::fs::OpenOptions::new()
@@ -606,6 +871,116 @@ mod tests {
             cwd: Some(cwd.display().to_string()),
         };
         (home, path, source)
+    }
+
+    /// Grok's session folder, its id-owning summary and `records` as its
+    /// conversation, each `(kind, prompt or turn, text)`.
+    fn grok_transcript(records: &[(&str, &str, &str)]) -> (tempfile::TempDir, PathBuf, Source) {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().join("checkout");
+        std::fs::create_dir(&cwd).unwrap();
+        let cwd = std::fs::canonicalize(cwd).unwrap();
+        let group: String = cwd
+            .to_str()
+            .unwrap()
+            .bytes()
+            .map(|byte| {
+                if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+                    (byte as char).to_string()
+                } else {
+                    format!("%{byte:02X}")
+                }
+            })
+            .collect();
+        let id = "0199b000-0000-7000-8000-0000000000aa";
+        let folder = home.path().join(".grok/sessions").join(group).join(id);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("summary.json"),
+            serde_json::json!({"info":{"id":id,"cwd":cwd},"session_summary":"","created_at":"2026-10-03T01:00:00Z",
+                "updated_at":"2026-10-03T01:00:00Z","num_messages":0,"current_model_id":"grok-build"})
+            .to_string(),
+        )
+        .unwrap();
+        let path = folder.join("updates.jsonl");
+        std::fs::File::create(&path).unwrap();
+        grok_append(&path, records);
+        let source = Source {
+            agent: Agent::Grok,
+            identity: SessionIdentity::id(id),
+            cwd: Some(cwd.display().to_string()),
+        };
+        (home, path, source)
+    }
+
+    fn grok_append(path: &Path, records: &[(&str, &str, &str)]) {
+        let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        for (kind, part, text) in records {
+            let (update, meta) = match *kind {
+                "user" => (
+                    serde_json::json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":text},
+                        "_meta":{"promptIndex":part.parse::<u64>().unwrap()}}),
+                    serde_json::json!({"agentTimestampMs":1_790_989_200_000_u64}),
+                ),
+                "agent" => (
+                    serde_json::json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":text}}),
+                    serde_json::json!({"agentTimestampMs":1_790_989_200_000_u64,"promptId":part}),
+                ),
+                _ => (
+                    serde_json::json!({"sessionUpdate":"tool_call_update","toolCallId":text,"status":"completed",
+                        "content":[{"type":"content","content":{"type":"text","text":"hidden tool output"}}]}),
+                    serde_json::json!({"agentTimestampMs":1_790_989_200_000_u64,"promptId":part}),
+                ),
+            };
+            writeln!(
+                file,
+                "{}",
+                serde_json::json!({"timestamp":1_790_989_200_u64,"method":"session/update",
+                "params":{"sessionId":"x","update":update,"_meta":meta}})
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn grok_phone_shows_a_turns_answer_runs_as_one_message_and_resets_on_a_continuation() {
+        let mut records = Vec::new();
+        let prompts: Vec<String> = (0..40).map(|index| index.to_string()).collect();
+        let turns: Vec<String> = (0..40).map(|index| format!("p-{index}")).collect();
+        let answers: Vec<String> = (0..40).map(|index| format!("답변 {index}")).collect();
+        for index in 0..40 {
+            records.push(("user", prompts[index].as_str(), "요청"));
+            records.push(("agent", turns[index].as_str(), answers[index].as_str()));
+            records.push(("tool", turns[index].as_str(), "call"));
+            records.push(("agent", turns[index].as_str(), "이어서"));
+        }
+        let (home, path, source) = grok_transcript(&records);
+        let (mut transcript, page) = Transcript::open(home.path(), "pane", source).unwrap();
+        assert_eq!(page.messages.len(), PAGE_MESSAGES);
+        assert_eq!(texts(&page.messages).last(), Some(&"답변 39\n\n이어서"));
+        assert_eq!(texts(&page.messages)[page.messages.len() - 2], "요청");
+        let older = transcript.pager().before(page.before.unwrap()).unwrap();
+        assert!(texts(&older.messages).contains(&"답변 10\n\n이어서"));
+
+        grok_append(
+            &path,
+            &[("user", "40", "새 요청"), ("agent", "p-40", "새 답")],
+        );
+        let Tail::Messages(appended) = transcript.poll().unwrap() else {
+            panic!("a new turn is appended");
+        };
+        assert_eq!(texts(&appended), ["새 요청", "새 답"]);
+        grok_append(
+            &path,
+            &[("tool", "p-40", "call-2"), ("agent", "p-40", "마저")],
+        );
+        assert_eq!(
+            transcript.poll().unwrap(),
+            Tail::Reset,
+            "the held answer grew, so the phone takes the page anew"
+        );
+        let (_, page) = Transcript::open(home.path(), "pane", transcript.source().clone()).unwrap();
+        assert_eq!(texts(&page.messages).last(), Some(&"새 답\n\n마저"));
     }
 
     #[test]

@@ -55,6 +55,9 @@ test("Basic chips expose three accessible groups in all four languages and retur
         await expect(popover.locator("[data-agent-feature]")).toHaveCount(12);
         await expect(popover.locator('[data-agent-feature="herdr_integration:yes"]')).toContainText("✓");
         await expect(popover.locator('[data-agent-feature="letters:no"]')).toContainText("–");
+        await expect(popover.locator('[data-agent-feature="sleep:yes"]')).toContainText("✓");
+        await expect(popover.locator('[data-agent-feature="fork:no"]')).toContainText("–");
+        await expect(popover.locator('[data-agent-feature="titles:yes"]')).toContainText("✓");
         const bounds = await popover.evaluate((node) => {
           const rect = node.getBoundingClientRect();
           return { overflow: node.scrollWidth - node.clientWidth, left: rect.left, right: rect.right, width: innerWidth };

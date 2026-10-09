@@ -608,6 +608,7 @@ fn spawn(
         machine: native_machine,
         codex: codex_daemon,
         on_node,
+        node,
     } = context(client, &child_device).map_err(|reason| {
         if reserved.machine.is_some() {
             "machine_unavailable".to_owned()
@@ -632,7 +633,7 @@ fn spawn(
             )
             .map_err(|error| format!("{error}"))?;
             let existing = crate::wire::listed_worktree_path(listed, branch)?;
-            if let Some(existing) = existing {
+            let (checkout, pane) = if let Some(existing) = existing {
                 if path.as_ref().is_some_and(|path| path != &existing) {
                     return Err("checkout_path_conflict".into());
                 }
@@ -686,18 +687,7 @@ fn spawn(
                         .pane_id
                     }
                 };
-                reserved = serde_json::from_value(mutate(
-                    client,
-                    authority,
-                    actor,
-                    Mutation::Advance {
-                        id: reserved.id.clone(),
-                        path: Some(existing),
-                        pane: Some(pane),
-                        child: None,
-                    },
-                )?)
-                .map_err(|_| "spawn_unavailable")?;
+                (existing, pane)
             } else {
                 let mut params = crate::wire::worktree_create_params(repo, branch, None, false)?;
                 params["label"] = json!(format!("hide:{}", reserved.id));
@@ -712,19 +702,24 @@ fn spawn(
                 )
                 .map_err(|error| format!("{error}"))?;
                 let created = crate::wire::created_worktree(result)?;
-                reserved = serde_json::from_value(mutate(
-                    client,
-                    authority,
-                    actor,
-                    Mutation::Advance {
-                        id: reserved.id.clone(),
-                        path: Some(created.path),
-                        pane: Some(created.pane_id),
-                        child: None,
-                    },
-                )?)
-                .map_err(|_| "spawn_unavailable")?;
-            }
+                (created.path, created.pane_id)
+            };
+            // The terminal is recorded with the pane, so a later attempt can
+            // tell this pane from one Herdr gives the same id afterwards.
+            let terminal = pane_terminal(connector.as_ref(), &pane)?;
+            reserved = serde_json::from_value(mutate(
+                client,
+                authority,
+                actor,
+                Mutation::Advance {
+                    id: reserved.id.clone(),
+                    path: Some(checkout),
+                    pane: Some(pane),
+                    terminal: Some(terminal),
+                    child: None,
+                },
+            )?)
+            .map_err(|_| "spawn_unavailable")?;
         }
         let pane = reserved.pane.as_deref().ok_or("spawn_unavailable")?;
         let observed = agents(connector.as_ref())?;
@@ -737,8 +732,23 @@ fn spawn(
             if reserved.child.is_some() {
                 return Err("child_identity_changed".into());
             }
+            // This spawn already had its start typed here, and Herdr still
+            // holds the name with no agent while the shell is back at its
+            // prompt: the start ended without the agent. Asking the same
+            // intent again answers that, rather than typing the start again
+            // each time; a new attempt closes this pane and starts afresh.
+            if observed.iter().any(|agent| {
+                agent.pane_id == pane
+                    && agent.name.as_deref() == Some(name)
+                    && agent.agent.is_none()
+            }) && shell_alone(connector.as_ref(), pane) == Ok(true)
+            {
+                return Err("agent_not_started".into());
+            }
+            close_unstarted_attempts(connector.as_ref(), &*state(client)?, &reserved, &observed);
             crate::live::start_agent(
                 connector.as_ref(),
+                node.as_deref(),
                 &reserved.id,
                 pane,
                 name,
@@ -800,6 +810,97 @@ fn spawn(
             reason
         }
     })
+}
+
+/// Whether `pane`'s shell alone holds its terminal: no program it started
+/// runs in the foreground.
+fn shell_alone(connector: &dyn ApiConnector, pane: &str) -> Result<bool, String> {
+    crate::wire::pane_process_info_params(pane)
+        .and_then(|params| {
+            request_with_connector(
+                connector,
+                "pane.process_info",
+                params,
+                Duration::from_secs(2),
+            )
+            .map_err(|error| error.to_string())
+        })
+        .and_then(crate::wire::pane_process_group)
+        .map(|group| group.shell_holds_terminal())
+}
+
+/// The terminal Herdr runs in `pane` now.
+fn pane_terminal(connector: &dyn ApiConnector, pane: &str) -> Result<String, String> {
+    crate::wire::pane_target_params(pane)
+        .and_then(|params| {
+            request_with_connector(connector, "pane.get", params, Duration::from_secs(5))
+                .map_err(|error| error.to_string())
+        })
+        .and_then(crate::wire::pane_terminal)
+}
+
+/// Closes the pane of every earlier attempt of `reserved`: a spawn of the
+/// same parent, name and device that made a pane and never bound a child,
+/// because its agent did not start (a refused start, or one Herdr typed that
+/// never showed its agent). Each new attempt is its own intent with a pane of
+/// its own, so the earlier pane would stay behind as an extra tab, holding the
+/// agent's name in Herdr when its start was typed. Herdr hands a pane id out
+/// again (a new server, a live handoff), so a pane is the attempt's own only
+/// while it runs the terminal the attempt recorded; any other pane under that
+/// id, and a record from before terminals were recorded, is logged and left
+/// open. A pane where an agent shows or the shell does not hold the terminal
+/// is left alone, and a pane that cannot be read or closed is logged and left
+/// to Herdr's own answer.
+fn close_unstarted_attempts(
+    connector: &dyn ApiConnector,
+    ledger: &crate::delivery::ledger::Ledger,
+    reserved: &SpawnRecord,
+    observed: &[ProjectedAgent],
+) {
+    let earlier = ledger.spawns.iter().filter(|record| {
+        record.id != reserved.id
+            && record.parent == reserved.parent
+            && record.name == reserved.name
+            && record.machine == reserved.machine
+            && record.child.is_none()
+            && !record.completed
+            && record.pane != reserved.pane
+    });
+    for record in earlier {
+        let Some(pane) = record.pane.as_deref() else {
+            continue;
+        };
+        if observed
+            .iter()
+            .any(|agent| agent.pane_id == pane && agent.agent.is_some())
+        {
+            continue;
+        }
+        let same_pane = match record.terminal.as_deref() {
+            None => Err("pane_identity_unrecorded".to_owned()),
+            Some(recorded) => pane_terminal(connector, pane).and_then(|terminal| {
+                if terminal == recorded {
+                    Ok(())
+                } else {
+                    Err("pane_replaced".to_owned())
+                }
+            }),
+        };
+        let closed = match same_pane.and_then(|()| shell_alone(connector, pane)) {
+            Ok(false) => continue,
+            Ok(true) => crate::wire::pane_target_params(pane).and_then(|params| {
+                request_with_connector(connector, "pane.close", params, Duration::from_secs(5))
+                    .map(drop)
+                    .map_err(|error| error.to_string())
+            }),
+            Err(reason) => Err(reason),
+        };
+        crate::diagnostic!(json!({
+            "component": "spawn", "kind": "unstarted_attempt.close", "spawn": reserved.id,
+            "attempt": record.id, "pane_id": pane, "closed": closed.is_ok(),
+            "reason": closed.err(),
+        }));
+    }
 }
 
 /// A failure of a spawn's work on a device, as the caller should read it: the
@@ -1004,6 +1105,232 @@ mod tests {
         assert_eq!(observations.load(Ordering::SeqCst), 2);
         assert_eq!(herdr.methods(), ["agent.list", "agent.list"]);
     }
+    /// A Factory parent and the spawn records of its attempts, each made the
+    /// way the executor makes them: reserved, then advanced with its pane and
+    /// the terminal recorded with it (none for a record an older build wrote).
+    struct Attempts {
+        actor: Actor,
+        ledger: crate::delivery::ledger::Ledger,
+        parent: String,
+    }
+
+    impl Attempts {
+        fn new() -> Self {
+            let actor = Actor {
+                pane_id: "factory".into(),
+                name: "factory".into(),
+                kind: "codex".into(),
+                device_id: crate::node::TEST_NODE.into(),
+                session: crate::wire::session_digest("native-factory"),
+            };
+            let mut ledger = crate::delivery::ledger::Ledger::default();
+            let parent = super::super::apply(
+                &mut ledger,
+                &actor,
+                &Mutation::Register {
+                    record: AgentRecord {
+                        id: String::new(),
+                        name: "factory".into(),
+                        machine: crate::node::TEST_NODE.into(),
+                        host_scope: "fixture".into(),
+                        native_machine: "fixture-machine".into(),
+                        session: "native-factory".into(),
+                        instance: "factory-terminal".into(),
+                        pane: "factory".into(),
+                        parent: None,
+                        origin: None,
+                        project: None,
+                        ended: false,
+                        actor: actor.clone(),
+                    },
+                    check: false,
+                },
+                1,
+            )
+            .unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            Self {
+                actor,
+                ledger,
+                parent,
+            }
+        }
+
+        fn attempt(
+            &mut self,
+            name: &str,
+            intent: &str,
+            pane: &str,
+            terminal: Option<&str>,
+        ) -> SpawnRecord {
+            let reserved = super::super::apply(
+                &mut self.ledger,
+                &self.actor,
+                &Mutation::Reserve {
+                    parent: self.parent.clone(),
+                    command: Command::Spawn {
+                        parent: Some(self.parent.clone()),
+                        machine: None,
+                        name: name.into(),
+                        intent: intent.into(),
+                        kind: "claude".into(),
+                        repo: "/fixture".into(),
+                        branch: "factory/801".into(),
+                        path: None,
+                        args: Vec::new(),
+                    },
+                },
+                1,
+            )
+            .unwrap();
+            serde_json::from_value(
+                super::super::apply(
+                    &mut self.ledger,
+                    &self.actor,
+                    &Mutation::Advance {
+                        id: reserved["id"].as_str().unwrap().into(),
+                        path: Some("/fixture.worktrees/801".into()),
+                        pane: Some(pane.into()),
+                        terminal: terminal.map(Into::into),
+                        child: None,
+                    },
+                    1,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        }
+    }
+
+    /// A Herdr whose panes run the given terminals, each with its shell
+    /// alone at the prompt unless named busy, and that closes what it is
+    /// asked to.
+    fn attempt_panes(
+        name: &str,
+        terminals: &'static [(&'static str, &'static str)],
+        busy: &'static [&'static str],
+    ) -> FakeHerdr {
+        FakeHerdr::start(name, move |method, params| {
+            let pane = params["pane_id"].as_str().unwrap().to_owned();
+            match method {
+                "pane.get" => {
+                    let (_, terminal) = terminals
+                        .iter()
+                        .find(|(id, _)| *id == pane)
+                        .expect("a pane the fixture runs");
+                    json!({"type": "pane_info", "pane": {"pane_id": pane,
+                        "terminal_id": terminal, "workspace_id": "w2", "tab_id": "w2:t1",
+                        "focused": false, "agent_status": "idle", "revision": 1}})
+                }
+                "pane.process_info" => {
+                    let foreground = if busy.contains(&pane.as_str()) {
+                        4200
+                    } else {
+                        4100
+                    };
+                    json!({"type": "pane_process_info", "process_info": {
+                        "pane_id": pane, "shell_pid": 4100,
+                        "foreground_process_group_id": foreground,
+                        "foreground_processes": [{"pid": foreground, "name": "zsh"}]}})
+                }
+                "pane.close" => json!({"type": "ok"}),
+                other => panic!("unexpected {other}"),
+            }
+        })
+    }
+
+    fn closed_panes(herdr: &FakeHerdr) -> Vec<String> {
+        herdr
+            .calls()
+            .into_iter()
+            .filter(|(method, _)| method == "pane.close")
+            .map(|(_, params)| params["pane_id"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// A Factory retry is a new attempt with its own intent and pane; the
+    /// earlier attempts of the same parent and name whose agent never
+    /// started are closed, so no extra tab and no held name stays behind.
+    /// A pane where an agent shows or the shell is busy, another name's
+    /// spawn and the attempt's own pane are left alone.
+    #[test]
+    fn a_new_attempt_closes_the_idle_panes_of_earlier_attempts_that_never_started() {
+        let mut attempts = Attempts::new();
+        attempts.attempt("worker", "factory-801", "w2:p1", Some("t1"));
+        attempts.attempt("worker", "factory-801-a1", "w2:p2", Some("t2"));
+        attempts.attempt("worker", "factory-801-a2", "w2:p3", Some("t3"));
+        attempts.attempt("other", "factory-857", "w3:p1", Some("t31"));
+        let current = attempts.attempt("worker", "factory-801-a3", "w2:p4", Some("t4"));
+        // The shell runs a command in w2:p3: that attempt is busy.
+        let herdr = attempt_panes(
+            "coordination-earlier-attempts",
+            &[
+                ("w2:p1", "t1"),
+                ("w2:p2", "t2"),
+                ("w2:p3", "t3"),
+                ("w3:p1", "t31"),
+            ],
+            &["w2:p3"],
+        );
+        // An agent shows in w2:p2, and Herdr holds the name for the start in
+        // w2:p1 that never showed one.
+        let observed: Vec<ProjectedAgent> =
+            crate::wire::agents_response(json!({"type": "agent_list", "agents": [
+                {"pane_id": "w2:p1", "workspace_id": "w2", "tab_id": "w2:t1",
+                    "terminal_id": "t1", "revision": 0, "focused": false,
+                    "agent_status": "unknown", "name": "worker", "launch_pending": true},
+                {"pane_id": "w2:p2", "workspace_id": "w2", "tab_id": "w2:t2",
+                    "terminal_id": "t2", "revision": 0, "focused": false,
+                    "agent_status": "idle", "agent": "claude"},
+            ]}))
+            .unwrap();
+        close_unstarted_attempts(&herdr.connector(), &attempts.ledger, &current, &observed);
+        assert_eq!(closed_panes(&herdr), ["w2:p1"]);
+    }
+
+    /// Herdr hands a pane id out again after its server is replaced, so an
+    /// earlier attempt's pane id can name an idle shell the attempt never
+    /// made (issue 874). Only a pane still running the terminal the attempt
+    /// recorded is its own and closed; a pane id now running another
+    /// terminal, and a record an older build wrote without one, are left
+    /// open and logged.
+    #[test]
+    fn an_earlier_attempt_pane_is_closed_only_while_it_runs_the_terminal_the_attempt_recorded() {
+        let mut attempts = Attempts::new();
+        let kept = attempts.attempt("worker", "factory-801", "w2:p1", Some("t1"));
+        let replaced = attempts.attempt("worker", "factory-801-a1", "w2:p2", Some("t2-before"));
+        let unrecorded = attempts.attempt("worker", "factory-801-a2", "w2:p3", None);
+        let current = attempts.attempt("worker", "factory-801-a3", "w2:p4", Some("t4"));
+        let herdr = attempt_panes(
+            "coordination-earlier-attempt-identity",
+            &[("w2:p1", "t1"), ("w2:p2", "t2-after"), ("w2:p3", "t3")],
+            &[],
+        );
+        let ((), records) = crate::diagnostics::capture(|| {
+            close_unstarted_attempts(&herdr.connector(), &attempts.ledger, &current, &[]);
+        });
+        assert_eq!(closed_panes(&herdr), ["w2:p1"]);
+        let outcome = |attempt: &SpawnRecord| {
+            records
+                .iter()
+                .find(|record| {
+                    record["kind"] == "unstarted_attempt.close" && record["attempt"] == attempt.id
+                })
+                .map(|record| (record["closed"].clone(), record["reason"].clone()))
+        };
+        assert_eq!(outcome(&kept), Some((json!(true), Value::Null)));
+        assert_eq!(
+            outcome(&replaced),
+            Some((json!(false), json!("pane_replaced")))
+        );
+        assert_eq!(
+            outcome(&unrecorded),
+            Some((json!(false), json!("pane_identity_unrecorded")))
+        );
+    }
+
     #[test]
     fn completed_spawn_replay_after_restart_preserves_report_stop_end_and_explicit_watch() {
         use crate::delivery::{ledger, mailbox, watch, worker::Worker};
@@ -1114,6 +1441,7 @@ mod tests {
                     id: spawn.clone(),
                     path: Some("/fixture/topic".into()),
                     pane: Some("recipient".into()),
+                    terminal: None,
                     child: None,
                 },
                 now,

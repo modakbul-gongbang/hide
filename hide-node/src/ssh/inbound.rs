@@ -327,19 +327,17 @@ mod tests {
         }
     }
 
-    /// A node on the protocol before this one is refused at its Hello and
-    /// its link closed, so it is reinstalled rather than sent calls it does
-    /// not know (NodeLink 27).
+    /// A node on 27, the protocol of a build without the node's dial (one
+    /// from main before NodeLink 28), is refused at its Hello and its link
+    /// closed, so it is reinstalled rather than sent calls it does not know.
+    /// The number is written out: were the bump lost, both would say 27.
     #[test]
     fn a_node_on_an_older_protocol_is_refused_and_its_link_closed() {
-        let (core, node) = node_answering(PROTOCOL_VERSION - 1, "node-a");
+        let (core, node) = node_answering(27, "node-a");
         let refused = establish(inbound("node-a"), core, None, None)
             .err()
             .expect("an older node is refused");
-        assert!(
-            refused.contains(&format!("protocol {}", PROTOCOL_VERSION - 1)),
-            "{refused}"
-        );
+        assert!(refused.contains("protocol 27"), "{refused}");
         assert!(node.join().unwrap(), "the refused link was not closed");
     }
 

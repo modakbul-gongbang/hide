@@ -1164,6 +1164,26 @@ pub(crate) fn agent_start_params(
     })
 }
 
+/// The most bytes the pinned Herdr types into the pane's shell for
+/// `agent.start` with `params`: the kind's program, then each argument
+/// quoted for a POSIX shell (`'…'`, a `'` inside written `'\''`; PowerShell
+/// quoting is shorter), separated by spaces, inside bracketed-paste markers
+/// when the shell asked for them, then Enter. `FRAMING_BYTES` covers the
+/// program name, the markers and the Enter.
+pub(crate) fn agent_start_line_bytes(params: &Value) -> usize {
+    const FRAMING_BYTES: usize = 64;
+    let args = params["args"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    FRAMING_BYTES
+        + args
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|arg| 1 + 2 + arg.len() + 3 * arg.matches('\'').count())
+            .sum::<usize>()
+}
+
 /// A split that creates the pane a fork will run in. Unlike the operator's
 /// own split it does not take focus: the operator forked the pane they are
 /// reading, and taking focus away from it would undo that.
@@ -1647,6 +1667,16 @@ pub(crate) fn pane_resize_changed(value: Value) -> Result<bool, String> {
     let missing = "pane.resize response is missing resize";
     match response(value, missing)? {
         res::ResponseResult::PaneResize { resize } => Ok(resize.changed),
+        _ => Err(missing.into()),
+    }
+}
+/// The terminal a `pane.get` answer runs in its pane. Herdr gives every
+/// terminal it starts a new id, a restored one included, while a pane id can
+/// be handed out again, so this is what tells a pane from a later one.
+pub(crate) fn pane_terminal(value: Value) -> Result<String, String> {
+    let missing = "pane.get response is missing pane.terminal_id";
+    match response(value, missing)? {
+        res::ResponseResult::PaneInfo { pane } => nonempty_id(pane.terminal_id, missing),
         _ => Err(missing.into()),
     }
 }

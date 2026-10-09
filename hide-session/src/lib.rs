@@ -27,7 +27,10 @@ use std::path::{Path, PathBuf};
 
 mod catalog;
 mod conversation_cursor;
+pub mod cursor;
 mod envelope;
+pub mod environment;
+mod grok;
 mod label_owner;
 pub mod label_transcript;
 pub mod links;
@@ -47,7 +50,9 @@ pub use label_owner::{
     label_reference_token, read_session_file, valid_native_id,
 };
 
-pub use conversation_cursor::{ConversationCheckpoint, ConversationCursor};
+pub use conversation_cursor::{
+    ConversationCheckpoint, ConversationCursor, ConversationRead, read_conversation,
+};
 
 pub use catalog::{
     ProjectSession, SESSION_DISCOVERY_LIMIT, SessionAvailability, SessionCatalog,
@@ -124,6 +129,8 @@ pub const CLAUDE_SESSIONS: &str = ".claude/projects";
 pub const CODEX_SESSIONS: &str = ".codex/sessions";
 /// Pi's default native session root. Custom session directories grant no trust.
 pub const PI_SESSIONS: &str = ".pi/agent/sessions";
+/// Grok's default native root; a `GROK_HOME` elsewhere grants no trust.
+pub const GROK_SESSIONS: &str = ".grok/sessions";
 /// omp's default native root; profiles and custom session roots grant no trust.
 pub const OMP_SESSIONS: &str = ".omp/agent/sessions";
 
@@ -133,8 +140,10 @@ pub fn session_root(home: &Path, agent: Agent) -> Option<PathBuf> {
     match agent {
         Agent::Claude => Some(home.join(CLAUDE_SESSIONS)),
         Agent::Codex => Some(home.join(CODEX_SESSIONS)),
+        Agent::Grok => Some(home.join(GROK_SESSIONS)),
         Agent::Pi => Some(home.join(PI_SESSIONS)),
         Agent::Omp => Some(home.join(OMP_SESSIONS)),
+        Agent::Cursor => Some(home.join(cursor::SESSIONS)),
         Agent::OpenCode => None,
     }
 }
@@ -214,14 +223,31 @@ pub fn inside_session_root(
 /// device named where a session file should be is refused at once instead of
 /// blocking the reader, and so is a folder.
 pub(crate) fn open_session_file(path: &Path) -> io::Result<File> {
+    open_session_file_with_links(path, true)
+}
+
+pub(crate) fn open_session_file_nofollow(path: &Path) -> io::Result<File> {
+    open_session_file_with_links(path, false)
+}
+
+fn open_session_file_with_links(path: &Path, follow: bool) -> io::Result<File> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
+        options.custom_flags(libc::O_NONBLOCK | if follow { 0 } else { libc::O_NOFOLLOW });
     }
     let file = options.open(path)?;
+    if !follow
+        && hide_platform::fs::identity::file_id_nofollow(path)?
+            != hide_platform::fs::identity::file_id_of(&file)?
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Session source is linked.",
+        ));
+    }
     if !file.metadata()?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -239,8 +265,10 @@ pub(crate) fn open_session_file(path: &Path) -> io::Result<File> {
 pub enum Agent {
     Codex,
     Claude,
+    Grok,
     Pi,
     Omp,
+    Cursor,
     #[serde(rename = "opencode")]
     OpenCode,
 }
@@ -258,8 +286,10 @@ impl Agent {
         match self {
             Self::Claude => hide_agent_adapter::SessionFormat::Claude,
             Self::Codex => hide_agent_adapter::SessionFormat::Codex,
+            Self::Grok => hide_agent_adapter::SessionFormat::Grok,
             Self::Pi => hide_agent_adapter::SessionFormat::Pi,
             Self::Omp => hide_agent_adapter::SessionFormat::Omp,
+            Self::Cursor => hide_agent_adapter::SessionFormat::Cursor,
             Self::OpenCode => hide_agent_adapter::SessionFormat::OpenCode,
         }
     }
@@ -268,8 +298,10 @@ impl Agent {
         match format {
             hide_agent_adapter::SessionFormat::Claude => Self::Claude,
             hide_agent_adapter::SessionFormat::Codex => Self::Codex,
+            hide_agent_adapter::SessionFormat::Grok => Self::Grok,
             hide_agent_adapter::SessionFormat::Pi => Self::Pi,
             hide_agent_adapter::SessionFormat::Omp => Self::Omp,
+            hide_agent_adapter::SessionFormat::Cursor => Self::Cursor,
             hide_agent_adapter::SessionFormat::OpenCode => Self::OpenCode,
         }
     }
@@ -289,6 +321,10 @@ impl Agent {
     }
     pub const fn has_session_file(self) -> bool {
         self.format().has_session_file()
+    }
+
+    pub const fn is_jsonl(self) -> bool {
+        self.format().is_jsonl()
     }
 
     pub const fn requires_native_file_proof(self) -> bool {
@@ -314,7 +350,8 @@ impl SessionIdentity {
 }
 
 /// The normalized kind of a conversation record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EventKind {
     Human,
     Injected,
@@ -334,7 +371,7 @@ impl EventKind {
 }
 
 /// A provider-neutral conversation event.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ConversationEvent {
     pub role: &'static str,
     pub kind: EventKind,
@@ -347,6 +384,52 @@ pub struct ConversationEvent {
     /// Images attached to the message; their bytes never enter `text`, and
     /// a message of images alone has empty `text`.
     pub images: u32,
+    /// The native message this record is a part of, for a format that
+    /// writes one message as several records (Grok's prompt blocks and an
+    /// answer's text runs); consecutive parts become one event.
+    part: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct OwnedConversationEvent {
+    role: String,
+    kind: EventKind,
+    provider_injected: bool,
+    at_unix_ms: u64,
+    text: String,
+    images: u32,
+    part: Option<String>,
+}
+
+impl TryFrom<OwnedConversationEvent> for ConversationEvent {
+    type Error = &'static str;
+    fn try_from(event: OwnedConversationEvent) -> std::result::Result<Self, Self::Error> {
+        let role = match event.role.as_str() {
+            "user" => "user",
+            "assistant" => "assistant",
+            "system" => "system",
+            _ => return Err("conversation_role_invalid"),
+        };
+        Ok(Self {
+            role,
+            kind: event.kind,
+            provider_injected: event.provider_injected,
+            at_unix_ms: event.at_unix_ms,
+            text: event.text,
+            images: event.images,
+            part: event.part,
+        })
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ConversationEvent {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        OwnedConversationEvent::deserialize(deserializer)?
+            .try_into()
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 impl ConversationEvent {
@@ -363,12 +446,43 @@ impl ConversationEvent {
             at_unix_ms,
             text: text.into(),
             images: 0,
+            part: None,
         }
     }
 
     fn with_images(mut self, images: u32) -> Self {
         self.images = images;
         self
+    }
+
+    fn with_part(mut self, part: Option<String>) -> Self {
+        self.part = part;
+        self
+    }
+
+    /// The native message this record is a part of, when the format
+    /// splits messages; records of one message share it.
+    pub fn part(&self) -> Option<&str> {
+        self.part.as_deref()
+    }
+
+    fn continued_by(&self, next: &Self) -> bool {
+        self.part.is_some() && self.part == next.part && self.kind == next.kind
+    }
+
+    fn absorb(&mut self, next: Self) {
+        if !next.text.is_empty() {
+            if !self.text.is_empty() {
+                self.text.push_str(if self.kind == EventKind::Assistant {
+                    "\n\n"
+                } else {
+                    "\n"
+                });
+            }
+            self.text.push_str(&next.text);
+        }
+        self.images += next.images;
+        self.provider_injected |= next.provider_injected;
     }
 
     pub const fn is_provider_injected(&self) -> bool {
@@ -388,6 +502,11 @@ pub enum SkipReason {
     MissingTimestamp,
     InvalidTimestamp,
     NonConversationCapacity,
+    /// A record past the line cap whose text, or whose structure, the
+    /// bounded scan cannot keep; its text is lost.
+    ConversationCapacity,
+    /// A record longer than the line cap was read without its bodies.
+    BodyCapacity,
     UserTurnCapacity,
     UserTurnInvalid,
 }
@@ -399,6 +518,8 @@ impl SkipReason {
             Self::MissingTimestamp => "missing_timestamp",
             Self::InvalidTimestamp => "invalid_timestamp",
             Self::NonConversationCapacity => "non_conversation_capacity",
+            Self::ConversationCapacity => "conversation_capacity",
+            Self::BodyCapacity => "body_capacity",
             Self::UserTurnCapacity => "user_turn_capacity",
             Self::UserTurnInvalid => "user_turn_invalid",
         }
@@ -449,6 +570,9 @@ pub struct ParsedSession {
     /// The turn records of an agent that reports them, each with its record's
     /// offset, in record order (`turns`); empty for every other agent.
     pub turn_marks: Vec<(u64, turns::TurnMark)>,
+    /// A plan awaiting approval that the session's current state, not one
+    /// of its records, says is pending (Grok's `plan_mode.json`).
+    pub plan_hold: Option<turns::UserTurnContent>,
     pub skipped_lines: usize,
     pub skipped_reasons: BTreeMap<SkipReason, usize>,
     pub rescan_reason: Option<RescanReason>,
@@ -458,6 +582,23 @@ impl ParsedSession {
     fn skipped(&mut self, reason: SkipReason) {
         self.skipped_lines += 1;
         *self.skipped_reasons.entry(reason).or_default() += 1;
+    }
+
+    /// Join the consecutive parts of one native message, keeping the first
+    /// part's offset and time. A reader that pages or polls by record
+    /// offset joins its own boundaries instead (`ConversationEvent::part`).
+    pub fn coalesce(&mut self) {
+        let events = std::mem::take(&mut self.events);
+        let offsets = std::mem::take(&mut self.event_offsets);
+        for (event, offset) in events.into_iter().zip(offsets) {
+            match self.events.last_mut() {
+                Some(last) if last.continued_by(&event) => last.absorb(event),
+                _ => {
+                    self.events.push(event);
+                    self.event_offsets.push(offset);
+                }
+            }
+        }
     }
 }
 
@@ -827,7 +968,7 @@ impl SessionLocator {
             SessionIdentity::Id(id) => match agent {
                 Agent::Claude => self.claude_path_for_id(cwd, id, budget),
                 Agent::Codex => self.codex_path_for_id(id, budget),
-                Agent::Pi | Agent::Omp => {
+                Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor => {
                     native_file::locate(&self.home, agent, Some(identity), cwd, budget)
                 }
                 Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
@@ -892,7 +1033,7 @@ impl SessionLocator {
                 budget,
             )?)),
             Agent::Codex => self.newest_codex_session(cwd, budget),
-            Agent::Pi | Agent::Omp => {
+            Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor => {
                 native_file::locate(&self.home, agent, None, Some(cwd), budget).map(Some)
             }
             Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
@@ -1248,8 +1389,11 @@ pub(crate) fn parse_events_into(
             base_offset,
             parse_claude_line,
             links::claude_line,
-            Some(turns::native::claude),
-            true,
+            Turns {
+                parser: Some(turns::native::claude),
+                human_starts_turn: true,
+                large: None,
+            },
             found,
         ),
         Agent::Codex => parse_lines_at(
@@ -1257,8 +1401,23 @@ pub(crate) fn parse_events_into(
             base_offset,
             parse_codex_line,
             links::codex_line,
-            Some(turns::native::codex),
-            false,
+            Turns {
+                parser: Some(turns::native::codex),
+                human_starts_turn: false,
+                large: None,
+            },
+            found,
+        ),
+        Agent::Grok => parse_lines_at(
+            contents,
+            base_offset,
+            grok::parse_line,
+            links::grok_line,
+            Turns {
+                parser: Some(grok::turn),
+                human_starts_turn: true,
+                large: Some(grok::reduced_line),
+            },
             found,
         ),
         Agent::Pi => parse_lines_at(
@@ -1266,8 +1425,11 @@ pub(crate) fn parse_events_into(
             base_offset,
             |item| native_file::parse_line(Agent::Pi, item),
             links::pi_line,
-            None,
-            false,
+            Turns {
+                parser: None,
+                human_starts_turn: false,
+                large: None,
+            },
             found,
         ),
         Agent::Omp => parse_lines_at(
@@ -1275,12 +1437,23 @@ pub(crate) fn parse_events_into(
             base_offset,
             |item| native_file::parse_line(Agent::Omp, item),
             links::pi_line,
-            Some(turns::native::omp),
-            true,
+            Turns {
+                parser: Some(turns::native::omp),
+                human_starts_turn: true,
+                large: None,
+            },
             found,
         ),
-        Agent::OpenCode => ParsedSession::default(),
+        Agent::OpenCode | Agent::Cursor => ParsedSession::default(),
     }
+}
+
+/// How a format's records mark turns, and how it reads a record longer
+/// than the line cap.
+struct Turns {
+    parser: Option<turns::native::Parser>,
+    human_starts_turn: bool,
+    large: Option<fn(&str) -> Option<String>>,
 }
 
 /// Each record is parsed once and read by both the conversation parser and
@@ -1291,19 +1464,35 @@ fn parse_lines_at(
     base_offset: u64,
     mut extract: impl FnMut(&Value) -> LineResult,
     link: links::LinkLine,
-    turn: Option<turns::native::Parser>,
-    human_starts_turn: bool,
+    turns: Turns,
     found: &mut links::LinkAccumulator,
 ) -> ParsedSession {
+    let Turns {
+        parser: turn,
+        human_starts_turn,
+        large,
+    } = turns;
     let mut parsed = ParsedSession::default();
     let mut relative_offset = 0_u64;
     for raw_line in contents.split_inclusive('\n') {
         let line_offset = base_offset.saturating_add(relative_offset);
         relative_offset = relative_offset.saturating_add(raw_line.len() as u64);
-        if raw_line.len() > SESSION_LINE_LIMIT_BYTES {
-            parsed.skipped(SkipReason::NonConversationCapacity);
-            continue;
-        }
+        let reduced;
+        let raw_line = if raw_line.len() > SESSION_LINE_LIMIT_BYTES {
+            match large.and_then(|reduce| reduce(raw_line)) {
+                Some(line) => {
+                    parsed.skipped(SkipReason::BodyCapacity);
+                    reduced = line;
+                    reduced.as_str()
+                }
+                None => {
+                    parsed.skipped(SkipReason::NonConversationCapacity);
+                    continue;
+                }
+            }
+        } else {
+            raw_line
+        };
         let line = raw_line.trim_end_matches(['\n', '\r']);
         if line.trim().is_empty() {
             continue;
@@ -2140,6 +2329,45 @@ mod tests {
         assert_eq!(parsed.events[0].role, "developer");
         assert_eq!(parsed.events[0].kind, EventKind::Injected);
         assert!(parsed.events[0].is_provider_injected());
+    }
+
+    /// Hide's extension message, as Pi 1.0.4 and omp 18.7.0 store it, carries
+    /// the Memory receipt as provider-injected context; another extension's
+    /// custom message stays out, and an operator's own text quoting a receipt,
+    /// even inside reminder tags, never asserts one (PRD pi-omp-extension
+    /// D-09).
+    #[test]
+    fn hides_pi_and_omp_extension_message_is_provider_injected_context() {
+        let receipt =
+            "<hide-memory-receipt event=\"SessionStart\" count=\"0\" items=\"\" auth=\"aa\" />";
+        let hidden = format!("<system-reminder>\nguidance\n{receipt}\n</system-reminder>");
+        let lines = [
+            serde_json::json!({"type": "session", "version": 3, "id": "native-a", "timestamp": "2026-10-09T00:00:00.000Z", "cwd": "/work/app"}),
+            serde_json::json!({"type": "message", "timestamp": "2026-10-09T00:00:01.000Z", "message": {"role": "user", "content": [{"type": "text", "text": receipt}]}}),
+            serde_json::json!({"type": "message", "timestamp": "2026-10-09T00:00:01.200Z", "message": {"role": "user", "content": [{"type": "text", "text": format!("<system-reminder>\n{receipt}\n</system-reminder>")}]}}),
+            serde_json::json!({"type": "custom_message", "customType": "hide", "content": hidden, "display": false, "details": {"hide": "0011"}, "timestamp": "2026-10-09T00:00:01.500Z"}),
+            serde_json::json!({"type": "custom_message", "customType": "extension", "content": receipt, "display": true, "timestamp": "2026-10-09T00:00:02.000Z"}),
+        ]
+        .map(|line| line.to_string())
+        .join("\n");
+        for agent in [Agent::Pi, Agent::Omp] {
+            let parsed = parse_events(agent, &format!("{lines}\n"));
+            let kinds: Vec<_> = parsed
+                .events
+                .iter()
+                .map(|event| (event.kind, event.is_provider_injected()))
+                .collect();
+            assert_eq!(
+                kinds,
+                [
+                    (EventKind::Human, false),
+                    (EventKind::Injected, false),
+                    (EventKind::Injected, true)
+                ],
+                "{agent:?}"
+            );
+            assert_eq!(parsed.events[2].text, hidden, "{agent:?}");
+        }
     }
 
     #[test]

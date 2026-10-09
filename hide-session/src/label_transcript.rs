@@ -127,7 +127,8 @@ pub struct LabelTranscript {
     /// Hide's Project Memory receipts the session stored in a part only Hide's
     /// own plugin writes (OpenCode's synthetic prompt part); the core checks
     /// each one's tag before it records the injection (PRD opencode-plugin
-    /// D-12). Claude Code's and Codex's receipts are read by Memory's own pass.
+    /// D-12). Claude Code's, Codex's, Pi's and omp's receipts are read by
+    /// Memory's own pass over their session files.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memory_receipts: Vec<MemoryReceiptPart>,
     /// Where each subagent file was read up to, for the next request.
@@ -177,15 +178,32 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         .clone()
         .map(ConversationCursor::restore)
         .unwrap_or_default();
-    let parsed = cursor
-        .read(request.agent, &path)
-        .map_err(|error| match error {
-            SessionError::Capacity { resource, limit } => {
-                format!("session_capacity:{resource}:{limit}")
-            }
-            SessionError::SessionFileMissing => "session_file_missing".to_owned(),
-            _ => "label_session_read_failed".to_owned(),
-        })?;
+    let read = if request.agent == Agent::Cursor {
+        cursor.read_confirmed(
+            home,
+            request.agent,
+            &path,
+            &crate::SessionReadScope {
+                id: before
+                    .native_session_id
+                    .clone()
+                    .ok_or_else(|| "label_session_id_unconfirmed".to_owned())?,
+                cwd: request
+                    .cwd
+                    .clone()
+                    .ok_or_else(|| "label_session_cwd_unconfirmed".to_owned())?,
+            },
+        )
+    } else {
+        cursor.read(request.agent, &path)
+    };
+    let parsed = read.map_err(|error| match error {
+        SessionError::Capacity { resource, limit } => {
+            format!("session_capacity:{resource}:{limit}")
+        }
+        SessionError::SessionFileMissing => "session_file_missing".to_owned(),
+        _ => "label_session_read_failed".to_owned(),
+    })?;
     for reason in [
         crate::SkipReason::UserTurnCapacity,
         crate::SkipReason::UserTurnInvalid,
@@ -237,6 +255,9 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
                 break;
             }
         }
+        if request.agent == Agent::Grok {
+            turns.set_plan_hold(parsed.plan_hold.clone());
+        }
         turns
     });
     if turns.as_ref().is_some_and(TurnTracker::capacity_exceeded) {
@@ -257,13 +278,18 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     }
     let title = match request.agent {
         Agent::Codex => codex_thread_name(home, request, &path),
-        Agent::Claude | Agent::Pi | Agent::Omp | Agent::OpenCode => parsed.title.clone(),
+        Agent::Cursor => None,
+        Agent::Claude | Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
+            parsed.title.clone()
+        }
     };
     let anchor = events
         .iter()
         .rev()
         .find(|event| event.kind == LabelEventKind::Human)
-        .map(|event| cursor.checkpoint_at(event.offset));
+        .map(|event| cursor.checkpoint_at(event.offset))
+        .transpose()
+        .map_err(|_| "label_session_anchor_invalid".to_owned())?;
     Ok(LabelTranscript {
         confirmed: after,
         events,
@@ -602,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn an_oversized_tool_result_is_skipped_and_an_oversized_sentence_is_a_capacity_failure() {
+    fn an_oversized_tool_result_is_skipped_and_an_oversized_sentence_is_lost() {
         let root = tempfile::tempdir().unwrap();
         let path = transcript_path(root.path(), "session.jsonl");
         let huge = "x".repeat(crate::SESSION_LINE_LIMIT_BYTES + 10);
@@ -629,8 +655,19 @@ mod tests {
                 + &claude_line("assistant", "s1", &huge, "2026-10-01T00:00:01Z"),
         )
         .unwrap();
-        let error = read(root.path(), &request(&sentence, None)).unwrap_err();
-        assert!(error.starts_with("session_capacity:line_bytes"), "{error}");
+        let answer = read(root.path(), &request(&sentence, None)).unwrap();
+        assert_eq!(
+            answer.skipped_reasons.get("conversation_capacity"),
+            Some(&1)
+        );
+        assert_eq!(
+            answer
+                .events
+                .iter()
+                .map(|event| event.text.as_str())
+                .collect::<Vec<_>>(),
+            ["request"]
+        );
     }
 
     #[test]

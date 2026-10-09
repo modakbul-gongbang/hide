@@ -23,8 +23,10 @@ pub enum SessionFilter {
     All,
     Codex,
     Claude,
+    Grok,
     Pi,
     Omp,
+    Cursor,
 }
 
 impl SessionFilter {
@@ -34,8 +36,10 @@ impl SessionFilter {
                 (self, agent),
                 (Self::Codex, Agent::Codex)
                     | (Self::Claude, Agent::Claude)
+                    | (Self::Grok, Agent::Grok)
                     | (Self::Pi, Agent::Pi)
                     | (Self::Omp, Agent::Omp)
+                    | (Self::Cursor, Agent::Cursor)
             )
     }
 }
@@ -148,6 +152,19 @@ impl SessionCatalog {
                 )?;
             }
         }
+        if let Ok(root) = crate::native_file::root(&self.home, Agent::Grok) {
+            collect_grok(&root, &mut files, &mut visited, SESSION_DISCOVERY_LIMIT)?;
+        }
+        if let Ok(root) = crate::native_file::root(&self.home, Agent::Cursor) {
+            collect_jsonl(
+                &root,
+                Agent::Cursor,
+                2,
+                &mut files,
+                &mut visited,
+                SESSION_DISCOVERY_LIMIT,
+            )?;
+        }
 
         let mut sessions = Vec::new();
         for (agent, path) in files {
@@ -156,7 +173,13 @@ impl SessionCatalog {
             {
                 continue;
             }
-            let Some(cwd) = session_cwd(agent, &path) else {
+            let Some(cwd) = (if agent == Agent::Cursor {
+                crate::cursor::header(&self.home, &path)
+                    .ok()
+                    .map(|header| header.cwd)
+            } else {
+                session_cwd(agent, &path)
+            }) else {
                 continue;
             };
             let Ok(identity) = hide_project::resolve(&cwd, &self.device_id) else {
@@ -246,9 +269,12 @@ fn collect_jsonl(
         }
         if path.is_dir() && depth > 0 {
             collect_jsonl(&path, agent, depth - 1, output, visited, limit)?;
-        } else if path
-            .extension()
-            .is_some_and(|extension| extension == "jsonl")
+        } else if (agent == Agent::Cursor
+            && path.file_name().is_some_and(|name| name == "store.db"))
+            || (agent != Agent::Cursor
+                && path
+                    .extension()
+                    .is_some_and(|extension| extension == "jsonl"))
         {
             output.push((agent, path));
         }
@@ -256,9 +282,65 @@ fn collect_jsonl(
     Ok(())
 }
 
+/// Grok keeps a folder per session, grouped by cwd; only its conversation
+/// file is a session, and a folder's other files are never visited.
+fn collect_grok(
+    root: &Path,
+    output: &mut Vec<(Agent, PathBuf)>,
+    visited: &mut usize,
+    limit: usize,
+) -> Result<(), SessionCatalogError> {
+    // Grok's own sweep may remove a folder between two listings.
+    let entries = |directory: &Path| match fs::read_dir(directory) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(SessionCatalogError::Io {
+            operation: "read_directory",
+            path: directory.to_path_buf(),
+            source,
+        }),
+    };
+    let visit = |visited: &mut usize| {
+        *visited = visited.saturating_add(1);
+        (*visited <= limit)
+            .then_some(())
+            .ok_or(SessionCatalogError::Capacity { limit })
+    };
+    let folders = |entries: fs::ReadDir, visited: &mut usize| {
+        let mut folders = Vec::new();
+        for entry in entries {
+            visit(visited)?;
+            let entry = entry.map_err(|source| SessionCatalogError::Io {
+                operation: "read_entry",
+                path: root.to_path_buf(),
+                source,
+            })?;
+            // A link or a dot entry is no native session folder.
+            if entry.file_type().is_ok_and(|kind| kind.is_dir())
+                && !entry.file_name().to_string_lossy().starts_with('.')
+            {
+                folders.push(entry.path());
+            }
+        }
+        Ok::<_, SessionCatalogError>(folders)
+    };
+    let Some(groups) = entries(root)? else {
+        return Ok(());
+    };
+    for group in folders(groups, visited)? {
+        let Some(sessions) = entries(&group)? else {
+            continue;
+        };
+        for session in folders(sessions, visited)? {
+            output.push((Agent::Grok, session.join(crate::grok::UPDATES)));
+        }
+    }
+    Ok(())
+}
+
 fn session_cwd(agent: Agent, path: &Path) -> Option<PathBuf> {
     match agent {
-        Agent::Pi | Agent::Omp => crate::native_file::header(agent, path)
+        Agent::Grok | Agent::Pi | Agent::Omp => crate::native_file::header(agent, path)
             .ok()
             .map(|header| header.cwd),
         Agent::Codex => crate::codex_session_cwd(path).map(PathBuf::from),
@@ -280,7 +362,7 @@ fn session_cwd(agent: Agent, path: &Path) -> Option<PathBuf> {
             }
             None
         }
-        Agent::OpenCode => None,
+        Agent::OpenCode | Agent::Cursor => None,
     }
 }
 
@@ -290,6 +372,37 @@ fn read_project_session(
     path: PathBuf,
     cwd: PathBuf,
 ) -> Option<ProjectSession> {
+    if agent == Agent::Cursor {
+        let header = crate::cursor::header(home, &path).ok()?;
+        let scope = crate::SessionReadScope {
+            id: header.id.clone(),
+            cwd: cwd.to_str()?.to_owned(),
+        };
+        let read = crate::cursor::read_all(home, &path, &scope);
+        let (events, availability) = match read {
+            Ok(parsed) => (parsed.events, SessionAvailability::Available),
+            Err(error) => (
+                Vec::new(),
+                SessionAvailability::Unavailable {
+                    reason: error.to_string(),
+                },
+            ),
+        };
+        return Some(ProjectSession {
+            id: header.id,
+            agent,
+            locator: path,
+            checkout_path: cwd,
+            first_human_request: first_human(&events).map(compact_snippet),
+            started_at_unix_ms: events
+                .first()
+                .and_then(|event| (event.at_unix_ms != 0).then_some(event.at_unix_ms)),
+            updated_at_unix_ms: header.updated_at.unwrap_or(header.created_at),
+            title: None,
+            event_count: events.len(),
+            availability,
+        });
+    }
     let metadata = fs::metadata(&path).ok();
     let updated_at_unix_ms = metadata
         .as_ref()
@@ -310,7 +423,14 @@ fn read_project_session(
         }
         (_, Some(_)) => match read_bounded(&path, SESSION_READ_LIMIT_BYTES) {
             Ok(contents) => {
-                let parsed = parse_events(agent, &contents);
+                let mut parsed = parse_events(agent, &contents);
+                parsed.coalesce();
+                if agent == Agent::Grok {
+                    // Grok keeps its current title beside the conversation.
+                    let summary = crate::grok::summary(&path, &mut 0).ok();
+                    (parsed.title, parsed.custom_title) =
+                        summary.map(|summary| summary.title).unzip();
+                }
                 let unavailable = (parsed.events.is_empty() && parsed.skipped_lines > 0)
                     .then(|| "session_malformed".to_owned());
                 (Some(parsed), unavailable)
@@ -357,7 +477,7 @@ fn read_project_session(
                 .as_ref()
                 .filter(|title| !title.trim().is_empty())
                 .cloned()
-                .or_else(|| value.title.clone())
+                .or_else(|| value.title.clone().filter(|title| !title.trim().is_empty()))
         }),
         event_count: events.len(),
         availability: unavailable.map_or(SessionAvailability::Available, |reason| {

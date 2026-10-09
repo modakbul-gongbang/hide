@@ -185,16 +185,16 @@ fn the_counts_follow_the_sessions_open_now_and_never_accumulate() {
 }
 
 #[test]
-fn an_agent_hide_cannot_hear_is_never_given_a_count() {
+fn a_readable_cursor_session_counts_without_claiming_a_hook_connection() {
     let mut runtime = runtime();
     kit_rows(&mut runtime, None);
     runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
     feed(
         &mut runtime,
-        &[("w1:p1", "grok", false), ("w1:p2", "claude", true)],
+        &[("w1:p1", "cursor", false), ("w1:p2", "claude", true)],
     );
 
-    assert_eq!(sessions_of(&runtime, "grok"), None, "B19");
+    assert_eq!(sessions_of(&runtime, "cursor"), Some(1));
     assert_eq!(connection_of(&runtime, "w1:p1"), None);
     // An on agent with no session is "Ready": a count of zero, not an absent one.
     assert_eq!(sessions_of(&runtime, "codex"), Some(0));

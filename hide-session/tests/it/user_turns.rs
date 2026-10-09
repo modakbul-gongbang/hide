@@ -341,6 +341,60 @@ fn oversized_native_questions_and_answers_keep_their_turn_without_their_content(
 }
 
 #[test]
+fn a_lost_screenshot_message_keeps_the_wait_and_an_unreadable_record_holds_it_until_a_person_writes()
+ {
+    let huge = "A".repeat(hide_session::SESSION_LINE_LIMIT_BYTES);
+    let waiting = |answer: &LabelTranscript| answer.turns.as_ref().unwrap().waiting();
+    for agent in [Agent::Claude, Agent::Codex] {
+        let mut session = Session::question(agent);
+        let asked = session.read();
+        session.resume(&asked);
+        session.append(&session.result("question-1"));
+        if agent == Agent::Codex {
+            session.append(
+                &json!({"type":"event_msg","timestamp":"2026-10-07T01:00:03Z",
+                "payload":{"type":"task_complete","turn_id":"turn-1"}}),
+            );
+        }
+        let answered = session.read();
+        assert_eq!(waiting(&answered), Some(Waiting::Nothing), "{agent:?}");
+        session.resume(&answered);
+        // A person's message with a pasted screenshot loses its text; it
+        // could only have cleared a wait, so the wait read stands.
+        session.append(&match agent {
+            Agent::Claude => json!({"type":"user","sessionId":"question-session",
+                "timestamp":"2026-10-07T01:00:05Z","message":{"role":"user","content":[
+                    {"type":"text","text":"이 화면 봐줘"},
+                    {"type":"image","source":{"type":"base64","media_type":"image/png","data":huge}}]}}),
+            _ => json!({"type":"response_item","timestamp":"2026-10-07T01:00:05Z",
+                "payload":{"type":"message","role":"user","content":[
+                    {"type":"input_text","text":"이 화면 봐줘"},
+                    {"type":"input_image","image_url":format!("data:image/png;base64,{huge}")}]}}),
+        });
+        let lost = session.read();
+        assert_eq!(
+            lost.skipped_reasons.get("conversation_capacity"),
+            Some(&1),
+            "{agent:?}"
+        );
+        assert_eq!(waiting(&lost), Some(Waiting::Nothing), "{agent:?}");
+        session.resume(&lost);
+        // An envelope nothing certifies may have asked: the wait is not
+        // known until a person writes.
+        session.append(&json!({"kind":"unknown","data":huge}));
+        let unknown = session.read();
+        assert_eq!(waiting(&unknown), None, "{agent:?}");
+        session.resume(&unknown);
+        session.append(&session.human("다음 단계로 가자"));
+        assert_eq!(
+            waiting(&session.read()),
+            Some(Waiting::Nothing),
+            "{agent:?}"
+        );
+    }
+}
+
+#[test]
 fn a_large_native_question_at_the_record_cap_still_truncates_its_content() {
     for agent in [Agent::Claude, Agent::Codex] {
         let mut session = Session::question(agent);

@@ -208,6 +208,7 @@ pub(crate) fn start_agent(
     };
     match crate::agent_start::start_at_shell_reusing_name(
         connector,
+        Some(node),
         &format!("herdr-core:agent-sleep:{}:wake", request.pane_id),
         &request.pane_id,
         params,
@@ -543,6 +544,11 @@ mod tests {
                 "agent_name_taken".into(),
                 "agent name one is already used".into(),
             )),
+            // Another agent holds the name, so reading it changes nothing.
+            "agent.get" => Ok(serde_json::json!({"type": "agent_info", "agent": {
+                "pane_id": "w1:p2", "terminal_id": "term_2", "workspace_id": "w1",
+                "tab_id": "w1:t2", "name": "one", "focused": false, "agent": "claude",
+                "agent_status": "working", "revision": 0}})),
             other => panic!("unexpected {other}"),
         });
         let outcome = start_agent(

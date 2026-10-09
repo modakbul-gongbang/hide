@@ -129,6 +129,11 @@ pub struct SpawnRecord {
     pub args: Vec<String>,
     pub path: Option<String>,
     pub pane: Option<String>,
+    /// The Herdr terminal `pane` ran when the spawn recorded it. A pane id
+    /// can name another pane later, so only this proves the pane is the
+    /// spawn's own; a record written before it existed has none.
+    #[serde(default)]
+    pub terminal: Option<String>,
     pub child: Option<String>,
     // Completion and the initial watch are one durable store transaction.
     // Later report/end/watch-stop events never invalidate this receipt.
@@ -155,6 +160,8 @@ pub(crate) enum Mutation {
         id: String,
         path: Option<String>,
         pane: Option<String>,
+        /// The terminal `pane` runs, recorded with it.
+        terminal: Option<String>,
         child: Option<String>,
     },
     BindChild {
@@ -475,6 +482,7 @@ pub(crate) fn apply(
                 args: args.clone(),
                 path: None,
                 pane: None,
+                terminal: None,
                 child: None,
                 completed: false,
                 auto_watch_id: None,
@@ -486,6 +494,7 @@ pub(crate) fn apply(
             id,
             path,
             pane,
+            terminal,
             child,
         } => {
             let parent = ledger
@@ -506,6 +515,7 @@ pub(crate) fn apply(
             if [
                 (record.path.as_ref(), path.as_ref()),
                 (record.pane.as_ref(), pane.as_ref()),
+                (record.terminal.as_ref(), terminal.as_ref()),
                 (record.child.as_ref(), child.as_ref()),
             ]
             .into_iter()
@@ -521,6 +531,9 @@ pub(crate) fn apply(
             };
             if pane.is_some() {
                 record.pane = pane.clone()
+            };
+            if terminal.is_some() {
+                record.terminal = terminal.clone()
             };
             if child.is_some() {
                 record.child = child.clone()
@@ -1183,6 +1196,7 @@ mod tests {
                 id: id.clone(),
                 path: Some("/fixture/topic".into()),
                 pane: Some("child-pane".into()),
+                terminal: None,
                 child: None,
             },
             4,
@@ -1200,6 +1214,7 @@ mod tests {
                     id,
                     path: None,
                     pane: Some("wrong".into()),
+                    terminal: None,
                     child: None
                 },
                 5
@@ -1326,6 +1341,7 @@ mod tests {
                 id: id.clone(),
                 path: Some("/fixture/topic".into()),
                 pane: Some("worker".into()),
+                terminal: None,
                 child: None,
             },
             2,
@@ -1751,6 +1767,7 @@ mod tests {
                 id: spawn.clone(),
                 path: Some("/fixture/topic".into()),
                 pane: None,
+                terminal: None,
                 child: None,
             },
             Mutation::BindChild {

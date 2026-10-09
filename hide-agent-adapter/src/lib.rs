@@ -120,8 +120,10 @@ pub enum HookInstall {
 pub enum SessionFormat {
     Claude,
     Codex,
+    Grok,
     Pi,
     Omp,
+    Cursor,
     OpenCode,
 }
 
@@ -130,23 +132,35 @@ impl SessionFormat {
         match self {
             Self::Claude => AgentId::ClaudeCode.adapter(),
             Self::Codex => AgentId::Codex.adapter(),
+            Self::Grok => AgentId::Grok.adapter(),
             Self::Pi => AgentId::Pi.adapter(),
             Self::Omp => AgentId::Omp.adapter(),
+            Self::Cursor => AgentId::Cursor.adapter(),
             Self::OpenCode => AgentId::OpenCode.adapter(),
         }
     }
 
     pub const fn reports_turns(self) -> bool {
-        matches!(self, Self::Claude | Self::Codex | Self::Omp)
+        matches!(self, Self::Claude | Self::Codex | Self::Grok | Self::Omp)
     }
     pub const fn has_session_file(self) -> bool {
-        matches!(self, Self::Claude | Self::Codex | Self::Pi | Self::Omp)
+        matches!(
+            self,
+            Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp | Self::Cursor
+        )
+    }
+
+    pub const fn is_jsonl(self) -> bool {
+        matches!(
+            self,
+            Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp
+        )
     }
 
     /// Native file metadata and the default CLI resolver must agree before
     /// a transcript can authorize a read or a lifecycle effect.
     pub const fn requires_native_file_proof(self) -> bool {
-        matches!(self, Self::Pi | Self::Omp)
+        matches!(self, Self::Grok | Self::Pi | Self::Omp | Self::Cursor)
     }
 }
 
@@ -514,7 +528,7 @@ impl AgentAdapter {
             Feature::Start => self.start.is_some(),
             // OpenCode's existing label reader is not the session features
             // offered by Settings; keep that established distinction.
-            Feature::Titles => self.conversation.is_some() && self.titles.is_some(),
+            Feature::Titles => self.conversation.is_some(),
         }
     }
 

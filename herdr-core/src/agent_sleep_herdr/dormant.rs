@@ -334,6 +334,7 @@ fn start_dormant(
     };
     match crate::agent_start::start_at_shell_checked(
         connector,
+        Some(node),
         &format!("hide:{}:resume", work.id.as_str()),
         pane,
         params,

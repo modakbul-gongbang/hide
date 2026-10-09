@@ -1433,7 +1433,8 @@
                 "machine_unavailable",
                 "repository_unavailable",
                 "agent_not_installed",
-                "intent_conflict"
+                "intent_conflict",
+                "agent_not_started"
             ],
             "repeats_at_most": null,
             "rest": "the agent's own arguments"
@@ -1736,7 +1737,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:61ac1f75358671367bea4f3ceb8e4a7ea92d0f7aa7b2d6d2e0a00a4ff8248c46",
+    "digest": "sha256:df4acf17ab7ebce4c7debf3e0fa6f3fc116669d7136184e82cbe4c38c34eab4f",
     "envelopes": {
         "agent": {
             "answer": "value",

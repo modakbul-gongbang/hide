@@ -45,9 +45,15 @@ impl ReaderFeatures {
         let mut result = Self::default();
         for agent in hide_session::Agent::supported() {
             let row = agent.format().adapter();
-            let mut features = std::collections::BTreeSet::from([Identity, Labels, Links]);
+            let mut features = std::collections::BTreeSet::from([Identity, Labels]);
+            if agent != hide_session::Agent::Cursor {
+                features.insert(Links);
+            }
             if agent.has_session_file() {
-                features.extend([Activity, Search, Memory]);
+                features.extend([Activity, Search]);
+            }
+            if agent.is_jsonl() {
+                features.insert(Memory);
             }
             if row.titles.is_some() {
                 features.insert(Titles);
@@ -326,9 +332,34 @@ mod reader_tests {
         for feature in [ReaderFeature::Turns, ReaderFeature::UserTurnContent] {
             assert!(!facts.supports("pi", feature));
         }
-        for provider in ["grok", "cursor"] {
-            assert!(!facts.supports(provider, ReaderFeature::Identity));
+        assert!(facts.supports("cursor", ReaderFeature::Identity));
+    }
+
+    #[test]
+    fn cursor_advertises_only_its_proven_graph_features_on_current_helpers() {
+        for feature in [
+            ReaderFeature::Identity,
+            ReaderFeature::Labels,
+            ReaderFeature::Conversation,
+            ReaderFeature::Search,
+            ReaderFeature::Activity,
+        ] {
+            assert!(ReaderFeatures::implemented().supports("cursor", feature));
+            assert!(!ReaderFeatures::protocol24().supports("cursor", feature));
         }
+        for feature in [
+            ReaderFeature::Titles,
+            ReaderFeature::Memory,
+            ReaderFeature::Links,
+            ReaderFeature::Turns,
+            ReaderFeature::UserTurnContent,
+        ] {
+            assert!(!ReaderFeatures::implemented().supports("cursor", feature));
+        }
+        let earlier: ReaderFeatures =
+            serde_json::from_str(r#"[{"provider":"grok","features":["identity","conversation"]}]"#)
+                .unwrap();
+        assert!(!earlier.supports("cursor", ReaderFeature::Conversation));
     }
 
     #[test]
@@ -356,6 +387,33 @@ mod reader_tests {
         .unwrap();
         assert!(earlier.supports("pi", ReaderFeature::Identity));
         assert!(!earlier.supports("omp", ReaderFeature::Identity));
+    }
+
+    #[test]
+    fn grok_has_its_native_reader_and_waits_only_on_a_helper_that_implements_it() {
+        let facts = ReaderFeatures::implemented();
+        for feature in [
+            ReaderFeature::Identity,
+            ReaderFeature::Labels,
+            ReaderFeature::Titles,
+            ReaderFeature::Conversation,
+            ReaderFeature::Search,
+            ReaderFeature::Memory,
+            ReaderFeature::Links,
+            ReaderFeature::Activity,
+            ReaderFeature::Turns,
+            ReaderFeature::UserTurnContent,
+        ] {
+            assert!(facts.supports("grok", feature), "{feature:?}");
+            assert!(!ReaderFeatures::protocol24().supports("grok", feature));
+        }
+        // A protocol25 helper built before this reader grants no Grok read.
+        let earlier: ReaderFeatures = serde_json::from_str(
+            r#"[{"provider":"pi","features":["identity"]},{"provider":"omp","features":["identity","turns"]}]"#,
+        )
+        .unwrap();
+        assert!(earlier.supports("omp", ReaderFeature::Identity));
+        assert!(!earlier.supports("grok", ReaderFeature::Identity));
     }
 }
 
