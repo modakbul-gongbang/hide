@@ -153,7 +153,8 @@ const SessionRow = memo(function SessionRow({ row, model, actions, staleness, op
           onKeyDown={(event) => treeKey(event, open, () => actions.toggleSessionTree(agent.pane_id))}
           aria-expanded={open ?? undefined} aria-label={[agent.identity_label, agent.agent_kind, statusText(t, agent.status_code)].join(", ")} title={agent.identity_label}
           className="flex min-w-0 flex-1 items-center gap-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50">
-          <StatusMark symbol={agent.symbol} className={markTone(agent)} /><AgentMark kind={agent.agent_kind} />
+          {/* Unfinished Idle work wears ◐ in the mark's place (B31); the line says what is left. */}
+          {session.unfinished ? <StatusMark symbol="◐" className="text-warning" data-session-unfinished="true" /> : <StatusMark symbol={agent.symbol} className={markTone(agent)} />}<AgentMark kind={agent.agent_kind} />
           <span className="min-w-0 truncate text-caption font-medium">{agent.identity_label}</span>
         </button>
         {issues.map((task) => <IssueChip key={task.key} project={project} task={task} handlers={handlers} now={Date.now()} />)}
@@ -190,17 +191,14 @@ function ChildRow({ parent, child, model, actions, staleness, place, workspace }
   </li>;
 }
 
-/** B31: the ask for Needs You, else the core's line, with ◐ for unfinished Idle work. */
+/** B31: the ask for Needs You, else the core's line. */
 function SecondLine({ agent }: { agent: AgentRow }) {
   const session = agent.state.session;
   const ask = session.group === "needs_you" ? agent.state.ask : null;
   if (ask) return <div className="flex min-w-0 text-micro" data-session-line="ask"><AskLine ask={ask} className="flex-1" /></div>;
   if (!session.line) return null;
-  return <div className="flex min-w-0 items-baseline gap-xs text-micro" data-session-line={session.unfinished ? "unfinished" : "label"}>
-    <span className="flex min-w-0 flex-1 items-baseline gap-xs text-subtle-foreground">
-      {session.unfinished ? <span aria-hidden="true" className="shrink-0 text-warning">◐</span> : null}
-      <span className="min-w-0 truncate" title={session.line}>{session.line}</span>
-    </span>
+  return <div className="flex min-w-0 text-micro text-subtle-foreground" data-session-line={session.unfinished ? "unfinished" : "label"}>
+    <span className="min-w-0 truncate" title={session.line}>{session.line}</span>
   </div>;
 }
 

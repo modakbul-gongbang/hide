@@ -13,6 +13,9 @@ import { AgentTreePopover } from "./agent-tree-popover";
 import { Elapsed } from "./elapsed";
 import { EntryContextMenu, type MenuEntry } from "./entry-menu";
 import { DeviceChip } from "./device-chip";
+import { CheckoutCardHint } from "./pr-card";
+import { pullRequestCard } from "../projects";
+import { catalogWorkspaces } from "../snapshot";
 import { StatusMark } from "./status-mark";
 import { Badge } from "./ui/badge";
 import { Keycap } from "./ui/keycap";
@@ -87,6 +90,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   remote = null,
   selected,
   onOpen,
+  onOpenPullRequest,
   inset,
   branchShown = true,
   number = null,
@@ -105,6 +109,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   remote?: { label: string; reachable: boolean } | null;
   selected: boolean;
   onOpen: (paneId: string) => void;
+  /** Opens a PR from the PR icon's card; `external` asks for the default browser. */
+  onOpenPullRequest: (url: string, external: boolean) => void;
   /** Where a root's first column starts. */
   inset: string;
   /** False where the row above already names the row's checkout. */
@@ -192,7 +198,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             {device ? (
               <DeviceChip label={device} className="pointer-events-none max-w-2/5" />
             ) : null}
-            {ask ? null : <PrIcon agent={agent} staleness={staleness} card={(icon) => <PrHoverCard agent={agent} icon={icon} />} />}
+            {ask ? null : <PrIcon agent={agent} staleness={staleness} card={(icon) => <PrHoverCard agent={agent} icon={icon} onOpenPullRequest={onOpenPullRequest} />} />}
             {ask || !folded ? null : <span className="pointer-events-none flex shrink-0"><DescendantMark agent={agent} /></span>}
             {/* A time the core never measured draws nothing, and nothing stands in for it. */}
             <Elapsed since={agent.changed_at_unix_ms} aria-hidden="true" className="pointer-events-none shrink-0 font-mono text-caption text-muted-foreground" data-agent-elapsed="true" />
@@ -204,8 +210,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             </span>
           ) : null}
           {remote ? (
-            <span aria-hidden="true" data-agent-remote={remote.label} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-muted-foreground">
-              {remote.label}
+            <span aria-hidden="true" data-agent-remote={remote.label} className="pointer-events-none flex min-w-0 pt-xxs">
+              <DeviceChip label={remote.reachable ? remote.label : `${remote.label} · ${t("devices.rail.notConnected")}`} />
             </span>
           ) : null}
           {place ? (
@@ -249,10 +255,24 @@ function RowChevron({ agent, tree, returnFocus }: { agent: AgentRow; tree: Sideb
   );
 }
 
-/** Under the pointer, the sidebar PR icon shows each own PR with its state and title (B23). */
-function PrHoverCard({ agent, icon }: { agent: AgentRow; icon: ReactNode }) {
+/**
+ * Under the pointer, the sidebar PR icon shows the existing PR card for one
+ * own PR, and each own PR with its state and title for several (B23).
+ */
+function PrHoverCard({ agent, icon, onOpenPullRequest }: { agent: AgentRow; icon: ReactNode; onOpenPullRequest: (url: string, external: boolean) => void }) {
   const { t } = useInterfaceTranslation();
+  const rest = useShellStore((s) => s.rest);
   const pulls = ownPulls(agent);
+  const trigger = <span className="relative z-10 flex shrink-0" data-pr-hover={agent.pane_id}>{icon}</span>;
+  const single = pulls.length === 1 ? pulls[0]!.pull : null;
+  const pr = single ? catalogWorkspaces(rest).flatMap((project) => project.pull_requests ?? []).find((row) => row.url === single.url) : undefined;
+  if (pr) {
+    return (
+      <CheckoutCardHint card={pullRequestCard(pr, t)} description={`#${pr.number} ${pr.title}`} onOpenPullRequest={onOpenPullRequest}>
+        {trigger}
+      </CheckoutCardHint>
+    );
+  }
   const label = pulls.map(({ pull, state }) => `#${pull.number} ${t(`agentSessions.pr.${state}`)} · ${pull.title}`).join("\n");
-  return <Hint label={label}><span className="relative z-10 flex shrink-0" data-pr-hover={agent.pane_id}>{icon}</span></Hint>;
+  return <Hint label={label}>{trigger}</Hint>;
 }

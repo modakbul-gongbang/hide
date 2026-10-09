@@ -496,6 +496,7 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
               depth={0}
               selected={agent.pane_id === focusRowPane}
               onOpen={actions.openAgent}
+              onOpenPullRequest={(url, external) => actions.openLink(url, external)}
               inset={CHECKOUT_COLUMN}
               number={numbers?.(agent.pane_id, "home") ?? null}
               menu={menu}
@@ -800,6 +801,7 @@ function RaisedAgentRow({ listed: { agent, device }, context }: { listed: Listed
       ask={agent.state.needs_you}
       selected={agent.pane_id === context.focusRowPane}
       onOpen={context.actions.openAgent}
+      onOpenPullRequest={(url, external) => context.actions.openLink(url, external)}
       inset={PROJECT_COLUMN}
       number={context.numberOf?.(agent.pane_id, null) ?? null}
       menu={context.agentRowMenu}
@@ -1461,6 +1463,7 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, conte
             remote={remote}
             selected={agent.pane_id === context.focusRowPane}
             onOpen={depth === 0 || !parent ? context.actions.openAgent : (id) => context.actions.followRelation(parent.pane_id, id, agent.identity_label)}
+            onOpenPullRequest={(url, external) => context.actions.openLink(url, external)}
             inset={inset}
             branchShown={depth > 0}
             number={depth === 0 ? context.numberOf?.(agent.pane_id, checkoutId) ?? null : null}

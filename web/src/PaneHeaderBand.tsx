@@ -1,4 +1,4 @@
-import { CircleAlertIcon, GitPullRequestIcon, MoonIcon } from "lucide-react";
+import { ChevronDownIcon, CircleAlertIcon, GitPullRequestIcon, MoonIcon } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
@@ -41,14 +41,15 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
   const label = ask ? null : band.kind === "exit" ? t("agentSessions.exitCode", { exitCode: band.exit_code! }) : t(labelKey as Exclude<MessageKey, "agentSessions.exitCode">);
   const Icon = ["sleeping", "waking"].includes(band.kind) ? MoonIcon : ["fix", "review", "merge"].includes(band.kind) ? GitPullRequestIcon : CircleAlertIcon;
   const reason = navigation ?? (ask ? null : bandReason(band, t));
-  return <div className="absolute inset-x-0 top-0 z-10 bg-background"><div className={cn("flex h-[var(--size-pane-header)] min-w-0 items-center gap-xs px-sm text-caption", TONES[band.tone])} data-pane-header-band={band.kind}>
+  // An ask reads as text on a quiet fill with the warning rail (D-43); the verb carries the colour.
+  return <div className="absolute inset-x-0 top-0 z-10 bg-background"><div className={cn("flex h-[var(--size-pane-header)] min-w-0 items-center gap-xs px-sm text-caption", ask ? "border-l-2 border-warning bg-secondary text-foreground" : TONES[band.tone])} data-pane-header-band={band.kind}>
     {ask ? <AskBand paneId={paneId} band={band} navigation={navigation} failed={progress?.phase === "failed"} actions={actions} /> : <>
       <Icon className="size-(--size-icon-sm) shrink-0" aria-hidden="true" /><span className="shrink-0">{label}</span>
       <Hint label={reason ?? label!}><span className={cn("min-w-0 flex-1 truncate", progress?.phase === "failed" && "text-destructive")} role={progress?.phase === "failed" ? "alert" : progress?.phase === "pending" ? "status" : undefined} data-pane-band-navigation={progress?.phase}>{reason}</span></Hint>
       {band.more > 0 ? <span className="shrink-0 text-micro">+{band.more}</span> : null}
       <Elapsed since={band.since_unix_ms} className="shrink-0 font-mono text-micro" />
     </>}
-    {action ? <button type="button" data-pane-band-open={paneId} disabled={progress?.phase === "pending" || (progress?.phase === "failed" && !progress.retryable)} aria-busy={progress?.phase === "pending"} className={cn("shrink-0 rounded-xs px-xs py-xxs text-micro outline-none hover:brightness-95 focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50", ACTION_TONES[band.tone])} onClick={() => action.kind === "child" ? actions.followRelation(paneId, action.pane_id, action.label) : actions.openSessionPullRequest(action)}>{progress?.phase === "failed" && progress.retryable ? t("common.retry") : action.kind === "child" ? t("common.open") : t("agentSessions.openPr")}</button> : null}
+    {action ? <button type="button" data-pane-band-open={paneId} disabled={progress?.phase === "pending" || (progress?.phase === "failed" && !progress.retryable)} aria-busy={progress?.phase === "pending"} className={cn("shrink-0 rounded-xs px-xs py-xxs text-micro outline-none hover:brightness-95 focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50", ask ? "border border-border bg-background text-foreground" : ACTION_TONES[band.tone])} onClick={() => action.kind === "child" ? actions.followRelation(paneId, action.pane_id, action.label) : actions.openSessionPullRequest(action)}>{progress?.phase === "failed" && progress.retryable ? t("common.retry") : action.kind === "child" ? t("common.open") : t("agentSessions.openPr")}</button> : null}
   </div></div>;
 }
 
@@ -81,13 +82,14 @@ function AskBand({ paneId, band, navigation, failed, actions }: { paneId: string
     onGraph={() => actions.openAgentsOverview()}
     returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-band-more="${paneId}"]`)?.focus()}
     triggerLabel={t("agentSessions.moreAsks", { count: band.more })}
-    trigger={<button type="button" data-pane-band-more={paneId} className="shrink-0 rounded-xs px-xs py-xxs text-micro underline-offset-2 outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring">{t("agentSessions.moreAsks", { count: band.more })}</button>}
+    trigger={<button type="button" data-pane-band-more={paneId} className="shrink-0 rounded-xs px-xs py-xxs text-micro text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring">{t("agentSessions.moreAsks", { count: band.more })}</button>}
   /> : null;
   return <>
     <VerbText verb={verb} />
     <Hint label={navigation ?? what}><span className={cn("min-w-0 flex-1 truncate", failed && "text-destructive")} role={failed ? "alert" : navigation ? "status" : undefined} data-pane-band-navigation={navigation ? failed ? "failed" : "pending" : undefined}>{navigation ?? what}</span></Hint>
-    {raised ? <Hint label={who!}><span className="flex min-w-0 max-w-1/3 shrink items-center gap-xxs text-foreground" data-pane-band-who={raised.pane_id}><AgentMark kind={raised.agent_kind} /><span className="min-w-0 truncate">{raised.title}</span></span></Hint> : null}
-    <Elapsed since={band.since_unix_ms} className="shrink-0 font-mono text-micro" />
+    {raised ? <Hint label={who!}><span className="flex min-w-0 max-w-1/3 shrink items-center gap-xxs text-muted-foreground" data-pane-band-who={raised.pane_id}><AgentMark kind={raised.agent_kind} /><span className="min-w-0 truncate">{raised.title}</span></span></Hint> : null}
+    {raised?.unreceived_by && minutes !== null ? <span className="min-w-0 max-w-1/4 shrink truncate text-muted-foreground" data-pane-band-unreceived="true">{t("agentSessions.unreceived", { name: raised.unreceived_by, minutes })}</span> : null}
+    {raised?.unreceived_by ? null : <Elapsed since={band.since_unix_ms} className="shrink-0 font-mono text-micro text-muted-foreground" />}
     {more}
   </>;
 }
@@ -128,7 +130,7 @@ export function PaneTreeButton({ paneId, actions }: { paneId: string; actions: A
     onGraph={() => actions.openAgentsOverview()}
     returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-tree="${paneId}"]`)?.focus()}
     triggerLabel={label}
-    trigger={<button type="button" aria-label={label} data-pane-tree={paneId} className="flex h-(--size-sidebar-line-detail) shrink-0 items-center rounded-xs px-xs outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-popover"><TreeButtonFace count={count} /></button>}
+    trigger={<button type="button" aria-label={label} data-pane-tree={paneId} className="flex h-(--size-sidebar-line-detail) shrink-0 items-center gap-xxs rounded-xs border border-border px-xs outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-secondary"><TreeButtonFace count={count} /><ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" /></button>}
   />;
 }
 
