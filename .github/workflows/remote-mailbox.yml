@@ -81,7 +81,7 @@ jobs:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
         continue-on-error: true
         run: |
-          for i in 1 2 3 4; do
+          for i in 1 2 3 4 5 6 7 8; do
             bash scripts/verify-cargo.sh nextest --profile ci -p hided --test it -E 'test(/^remote_delivery::connected_remote_panes/)' --run-ignored only --retries 0 --no-fail-fast || true
           done
       - name: Terminal attach children end with what started them
