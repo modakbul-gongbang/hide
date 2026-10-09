@@ -348,9 +348,10 @@ impl FactoryGit {
             ]),
             Self::DiffNumstat { base } => owned(&["diff", "--numstat", &range(base)?]),
             // A rename lists both its paths, so moving a file out of a risk
-            // path still touches it.
+            // path still touches it; NUL ends each name so git never quotes
+            // one, whatever its bytes or the machine's core.quotePath.
             Self::DiffNames { base } => {
-                owned(&["diff", "--name-only", "--no-renames", &range(base)?])
+                owned(&["diff", "--name-only", "-z", "--no-renames", &range(base)?])
             }
             Self::DiffPatch { base } => owned(&["diff", "--stat", "--patch", &range(base)?]),
             Self::MergeTree { base } => owned(&[
@@ -938,7 +939,13 @@ mod tests {
             }
             .args()
             .unwrap(),
-            ["diff", "--name-only", "--no-renames", "origin/main...HEAD"]
+            [
+                "diff",
+                "--name-only",
+                "-z",
+                "--no-renames",
+                "origin/main...HEAD"
+            ]
         );
         assert_eq!(
             FactoryGh::PrMerge {

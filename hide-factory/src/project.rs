@@ -1210,11 +1210,11 @@ impl MergeTarget for SharedProjects {
         let mut this = self.lock();
         let base = this.base(factory)?;
         let path = worktree(task)?;
-        Ok(this
-            .git("git.diff", &path, FactoryGit::DiffNames { base })?
-            .lines()
-            .map(str::to_owned)
-            .collect())
+        Ok(changed_names(&this.git(
+            "git.diff",
+            &path,
+            FactoryGit::DiffNames { base },
+        )?))
     }
 
     fn diff_text(&mut self, factory: &Factory, task: &Task) -> Result<String, Failure> {
@@ -1264,11 +1264,8 @@ impl MergeTarget for SharedProjects {
             }
         }
         if !factory.config.risk_paths.is_empty() {
-            let changed: Vec<String> = this
-                .git("git.diff", &path, FactoryGit::DiffNames { base })?
-                .lines()
-                .map(str::to_owned)
-                .collect();
+            let changed =
+                changed_names(&this.git("git.diff", &path, FactoryGit::DiffNames { base })?);
             let paths: Vec<String> = changed
                 .into_iter()
                 .filter(|p| {
@@ -1819,6 +1816,15 @@ fn merge_commit(stage: &str, view: &Value) -> Result<String, Failure> {
             ..Failure::task(stage, "merge commit not named yet")
         }),
     }
+}
+
+/// The paths `git diff --name-only -z` lists, each as its raw name.
+fn changed_names(output: &str) -> Vec<String> {
+    output
+        .split('\0')
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// `prefix/**`, `*.ext` or an exact path.
