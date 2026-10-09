@@ -23,7 +23,8 @@
         "schema_version": { "type": "integer", "const": 2 },
         "client_kind": { "type": "string", "enum": ["web", "desktop"] },
         "have_revision": { "type": "integer", "minimum": 0 },
-        "have_terminal_sequence": { "description": "The `terminal_sequence` of the last terminal frame a reconnecting client applied. With a delta it resumes every pane from there (a pane the hub's ring no longer reaches is drawn again from a full frame); a client that kept its terminals and names none has every pane drawn again; a client given a whole snapshot ignores it.", "type": "integer", "minimum": 0 }
+        "have_terminal_sequence": { "description": "The `terminal_sequence` of the last terminal frame a reconnecting client applied. With a delta and the `have_terminal_epoch` of the hub that gave it, it resumes every pane from there (a pane the hub's ring no longer reaches is drawn again from a full frame); a client that kept its terminals and names none, or names it without this hub's epoch, has every pane drawn again; a client given a whole snapshot ignores it.", "type": "integer", "minimum": 0 },
+        "have_terminal_epoch": { "description": "The `terminal_epoch` of the terminal frame `have_terminal_sequence` came from. Each daemon's hub draws its own, so a page that outlived its daemon names an epoch the new hub does not have and is drawn again whole.", "type": "string", "pattern": "^[0-9a-f]{16}$" }
       }
     },
     "workspaceQuery": {
@@ -128,10 +129,10 @@
       }
     },
     "terminalFrame": {
-      "description": "Payload of a terminal frame: pane output from the screen-side hub (PRD core-host-node-terminal D-11, D-22), in the order the panes' nodes produced it. One sequence numbers every pane's chunks; terminal_sequence is the client's cursor after this frame, which it names as have_terminal_sequence when it reconnects. After a whole snapshot the client resets every terminal and is sent a terminal frame with no chunks that gives its new cursor. A pane whose output a client left unsent past 1 MiB, or that a resume cannot reach, sends that client nothing more until a full frame redraws it. Keys go the other way as the `key` event {pane_id or pending_request, bytes_base64}, and a view's grid as `terminal_viewport` {pane_id, cols, rows, new_view}; both reach the pane's node directly and never the core.",
+      "description": "Payload of a terminal frame: pane output from the screen-side hub (PRD core-host-node-terminal D-11, D-22), in the order the panes' nodes produced it. One sequence numbers every pane's chunks; terminal_sequence is the client's cursor after this frame, which it names as have_terminal_sequence, with terminal_epoch as have_terminal_epoch, when it reconnects; each daemon's hub has its own epoch, so a cursor resumes only on the hub that gave it. After a whole snapshot the client resets every terminal and is sent a terminal frame with no chunks that gives its new cursor. A pane whose output a client left unsent past 1 MiB, or that a resume cannot reach, sends that client nothing more until a full frame redraws it. Keys go the other way as the `key` event {pane_id or pending_request, bytes_base64}, and a view's grid as `terminal_viewport` {pane_id, cols, rows, new_view}; both reach the pane's node directly and never the core.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["chunks", "terminal_sequence"],
+      "required": ["chunks", "terminal_epoch", "terminal_sequence"],
       "properties": {
         "chunks": {
           "type": "array",
@@ -145,6 +146,7 @@
             }
           }
         },
+        "terminal_epoch": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
         "terminal_sequence": { "type": "integer", "minimum": 0 }
       }
     },

@@ -37,6 +37,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
   let healthFails = 0;
   let revision = 0;
   let terminalSequence: number | null = null;
+  let terminalEpoch: string | null = null;
   let operatorFocusSequence = 0;
   let reconnectTimer: number | undefined;
 
@@ -94,8 +95,10 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
           schema_version: 2,
           client_kind: hostKind() === "electron" ? "desktop" : "web",
           have_revision: revision,
-          // A client with no cursor names none and has its kept terminals drawn again.
+          // A client with no cursor names none and has its kept terminals
+          // drawn again; a cursor resumes only on the hub its epoch names.
           have_terminal_sequence: terminalSequence ?? undefined,
+          have_terminal_epoch: terminalEpoch ?? undefined,
         }),
       );
     });
@@ -107,7 +110,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       }
       const frame = JSON.parse(String(event.data)) as {
         type: string;
-        payload?: { revision?: number; terminal_sequence?: number };
+        payload?: { revision?: number; terminal_sequence?: number; terminal_epoch?: string };
       };
       // The daemon describes itself before the first snapshot. It is not
       // state: the connection turns live only with the snapshot, because
@@ -135,6 +138,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       const chunks = useShellStore.getState().applyFrame(frame);
       revision = useShellStore.getState().revision;
       terminalSequence = useShellStore.getState().terminalSequence;
+      terminalEpoch = useShellStore.getState().terminalEpoch;
       handlers.onChunks(chunks, frame.type === "snapshot");
       useShellStore.getState().setConnection("live");
       backoff = 500;

@@ -124,8 +124,10 @@ struct Handshake {
     client_kind: Option<String>,
     have_revision: Option<u64>,
     /// The last `terminal` frame's cursor the client applied, which resumes
-    /// every pane's output from the terminal hub.
+    /// every pane's output from the terminal hub that gave it.
     have_terminal_sequence: Option<u64>,
+    /// The epoch of the hub that gave the cursor.
+    have_terminal_epoch: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -817,14 +819,18 @@ async fn client_loop(
     // across a reconnect resumes every pane from its cursor, or is drawn
     // again whole when it names none; one that got a whole snapshot draws
     // each pane from the full frame its view asks for.
-    let terminals = state
-        .core
-        .hub
-        .connect(match (first, handshake.have_terminal_sequence) {
-            (FrameKind::Snapshot, _) => Resume::Fresh,
-            (FrameKind::Delta, Some(cursor)) => Resume::After(cursor),
-            (FrameKind::Delta, None) => Resume::Redraw,
-        });
+    let terminals = state.core.hub.connect(
+        match (
+            first,
+            handshake.have_terminal_sequence,
+            handshake.have_terminal_epoch,
+        ) {
+            (FrameKind::Snapshot, _, _) => Resume::Fresh,
+            (FrameKind::Delta, Some(cursor), Some(epoch)) => Resume::After { epoch, cursor },
+            // A cursor without the hub it came from is not trusted.
+            (FrameKind::Delta, _, _) => Resume::Redraw,
+        },
+    );
     loop {
         tokio::select! {
             changed = notify.recv() => {

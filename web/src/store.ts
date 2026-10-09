@@ -83,6 +83,7 @@ export type Frame = {
   payload?: {
     revision?: number;
     terminal_sequence?: number;
+    terminal_epoch?: string;
     rest?: SnapshotRest;
     editor?: EditorSnapshot | null;
     changes?: ChangesSnapshot | null;
@@ -130,6 +131,8 @@ type Store = {
   revision: number;
   /** The hub's cursor after the last `terminal` frame; null after a whole snapshot until the hub names the new one. */
   terminalSequence: number | null;
+  /** The epoch of the hub that gave `terminalSequence`: a cursor resumes only on that hub. */
+  terminalEpoch: string | null;
   /** The core's rest section, structurally shared across frames (`share.ts`). */
   rest: SnapshotRest | null;
   /**
@@ -291,6 +294,7 @@ export const useShellStore = create<Store>((set, get) => ({
   mobile: null,
   revision: 0,
   terminalSequence: null,
+  terminalEpoch: null,
   rest: null,
   editor: null,
   changes: null,
@@ -527,7 +531,10 @@ export const useShellStore = create<Store>((set, get) => ({
     }
     // Pane output comes from the hub beside the core's frames, never inside them.
     if (frame.type === "terminal") {
-      set({ terminalSequence: payload.terminal_sequence ?? get().terminalSequence });
+      set({
+        terminalSequence: payload.terminal_sequence ?? get().terminalSequence,
+        terminalEpoch: payload.terminal_epoch ?? get().terminalEpoch,
+      });
       return payload.chunks ?? [];
     }
     const cursors = {
@@ -535,6 +542,7 @@ export const useShellStore = create<Store>((set, get) => ({
       // A whole snapshot resets every terminal, so the old cursor names
       // output those terminals no longer hold.
       terminalSequence: frame.type === "snapshot" ? null : get().terminalSequence,
+      terminalEpoch: frame.type === "snapshot" ? null : get().terminalEpoch,
       find: payload.find ? share(get().find, payload.find) : get().find,
     };
     if (frame.type === "snapshot" || payload.rest) {

@@ -9,6 +9,10 @@
 //! `RETAINED_BYTES + MAX_UNSENT_OUTPUT_BYTES` and its latest full frame
 //! however many clients are connected. One sequence numbers every chunk of every pane; a client's
 //! cursor is the last one it was sent, so one number resumes every pane.
+//! The cursor is good only with the hub that gave it: each hub has its own
+//! epoch, a frame carries it beside the cursor, and a client resuming with
+//! another epoch (a page that outlived its daemon) has every pane drawn
+//! again.
 //!
 //! A client that leaves a pane's output unsent past
 //! [`MAX_UNSENT_OUTPUT_BYTES`] loses that pane's backlog and gets nothing
@@ -176,9 +180,11 @@ struct HubState {
 }
 
 /// Every pane's output on its way to the screens.
-#[derive(Default)]
 pub struct TerminalHub {
     state: Mutex<HubState>,
+    /// This hub's own name for its sequence, 16 hex digits drawn at random:
+    /// a cursor is resumed only beside it.
+    epoch: Box<str>,
 }
 
 /// One `terminal` frame for a client: its chunks and the cursor they bring
@@ -188,14 +194,14 @@ pub struct TerminalFrame {
 }
 
 /// Where a client starts in the hub's output.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Resume {
     /// The client drew every pane again from a whole snapshot and asks each
     /// view's full frame itself; it is told its cursor at once.
     Fresh,
-    /// The client kept its terminals and was sent everything up to this
-    /// cursor.
-    After(u64),
+    /// The client kept its terminals and was sent everything up to
+    /// `cursor` by the hub `epoch` names.
+    After { epoch: String, cursor: u64 },
     /// The client kept its terminals but names no cursor: every pane is
     /// drawn again from a full frame.
     Redraw,
@@ -210,7 +216,12 @@ pub struct HubClient {
 
 impl TerminalHub {
     pub fn new() -> Arc<Self> {
-        Arc::default()
+        let mut epoch = [0_u8; 8];
+        getrandom::getrandom(&mut epoch).expect("getrandom");
+        Arc::new(Self {
+            state: Mutex::default(),
+            epoch: hex::encode(epoch).into_boxed_str(),
+        })
     }
 
     /// Adds a client, starting where `resume` says.
@@ -230,7 +241,16 @@ impl TerminalHub {
         };
         match resume {
             Resume::Fresh => {}
-            Resume::After(cursor) => resume_from(&mut state, &mut client, cursor),
+            Resume::After { epoch, cursor } if *epoch == *self.epoch => {
+                resume_from(&mut state, &mut client, cursor);
+            }
+            // Another hub's cursor: whatever this one numbered the same, the
+            // client never held it.
+            Resume::After { .. } => {
+                for (pane, ring) in &mut state.panes {
+                    await_full(&mut client, ring, pane, "resume_other_hub");
+                }
+            }
             Resume::Redraw => {
                 for (pane, ring) in &mut state.panes {
                     await_full(&mut client, ring, pane, "resume_without_cursor");
@@ -285,8 +305,7 @@ impl TerminalHub {
 /// until a full frame it asks for.
 fn resume_from(state: &mut HubState, client: &mut Client, cursor: u64) {
     if cursor > state.sequence {
-        // A cursor from another hub (the daemon restarted): every pane it
-        // shows is drawn again.
+        // A cursor this hub never gave: every pane is drawn again.
         for (pane, ring) in &mut state.panes {
             await_full(client, ring, pane, "resume_unknown_cursor");
         }
@@ -608,7 +627,10 @@ impl HubClient {
             client.wake.notify_one();
             last
         };
-        text.push_str(&format!(r#"],"terminal_sequence":{cursor}}}}}"#));
+        text.push_str(&format!(
+            r#"],"terminal_epoch":"{}","terminal_sequence":{cursor}}}}}"#,
+            self.hub.epoch
+        ));
         if !redraws.is_empty() {
             herdr_core::diagnostic!(json!({
                 "component": "terminal_hub",
@@ -664,7 +686,10 @@ mod tests {
         drop(first);
         hub.output("w1:p1", b"c", false);
         hub.output("w1:p2", b"d", false);
-        let resumed = hub.connect(Resume::After(cursor));
+        let resumed = hub.connect(Resume::After {
+            epoch: hub.epoch.to_string(),
+            cursor,
+        });
         let (frame, redraws) = resumed.take();
         assert!(redraws.is_empty());
         let (chunks, cursor) = frame_chunks(&frame.unwrap());
@@ -697,7 +722,10 @@ mod tests {
         let (chunks, cursor) = frame_chunks(&frame.unwrap());
         assert_eq!(chunks, [("w1:p2".to_owned(), b"q".to_vec())]);
         drop(first);
-        let resumed = hub.connect(Resume::After(cursor));
+        let resumed = hub.connect(Resume::After {
+            epoch: hub.epoch.to_string(),
+            cursor,
+        });
         hub.output("w1:p1", b"y", false);
         let (frame, _) = resumed.take();
         assert!(
@@ -725,7 +753,10 @@ mod tests {
             hub.output("w1:p1", b"x", false);
         }
         hub.output("w1:p2", b"more", false);
-        let resumed = hub.connect(Resume::After(cursor));
+        let resumed = hub.connect(Resume::After {
+            epoch: hub.epoch.to_string(),
+            cursor,
+        });
         let (frame, redraws) = resumed.take();
         assert_eq!(redraws, ["w1:p1"]);
         let (chunks, _) = frame_chunks(&frame.unwrap());
@@ -902,6 +933,35 @@ mod tests {
         }
     }
 
+    /// A page that outlived its daemon names a cursor of the old daemon's
+    /// hub; the new hub numbered past it with output the page never held,
+    /// so every pane is drawn again rather than resumed from that number.
+    #[test]
+    fn a_cursor_from_another_hub_redraws_every_pane() {
+        let old = TerminalHub::new();
+        old.output("w1:p1", b"old", true);
+        let page = old.connect(Resume::Fresh);
+        let frame = page.take().0.unwrap();
+        let (_, cursor) = frame_chunks(&frame);
+        let epoch = serde_json::from_str::<serde_json::Value>(&frame.text).unwrap()["payload"]
+            ["terminal_epoch"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(epoch, &*old.epoch, "the frame names its hub");
+        let hub = TerminalHub::new();
+        hub.output("w1:p1", b"\x1bcnew", true);
+        hub.output("w1:p1", b"more", false);
+        assert!(cursor < 2, "the new hub's sequence passed the old cursor");
+        let client = hub.connect(Resume::After { epoch, cursor });
+        let (frame, redraws) = client.take();
+        assert_eq!(redraws, ["w1:p1"]);
+        assert!(
+            frame.is_none(),
+            "nothing of the new hub reaches the old page"
+        );
+    }
+
     /// A request no full frame answered within its limit is given up, so a
     /// pane whose node cannot draw it is not asked for ever; the client
     /// still draws the pane's next full frame.
@@ -994,7 +1054,10 @@ mod tests {
         drop(first);
         let screen = vec![b's'; 1200 * 1024];
         hub.output("w1:p1", &screen, true);
-        let resumed = hub.connect(Resume::After(cursor));
+        let resumed = hub.connect(Resume::After {
+            epoch: hub.epoch.to_string(),
+            cursor,
+        });
         let line = vec![b'l'; 600 * 1024];
         hub.output("w1:p1", &line, false);
         let (sent, redraws) = resumed.take();
