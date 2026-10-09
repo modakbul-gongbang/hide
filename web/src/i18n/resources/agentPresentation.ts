@@ -278,7 +278,7 @@ const ja = {
   "agents.status.approval": "承認待ち",
   "agents.status.working": "作業中",
   "agents.status.done": "完了",
-  "agents.status.idle": "待機中",
+  "agents.status.idle": "休止中",
   "agents.status.unknown": "不明",
   "agents.status.waiting": "待機中",
   "agents.status.stopped": "停止",

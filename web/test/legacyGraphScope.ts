@@ -18,7 +18,7 @@ export function legacyGraphScope(project: Workspace, members: AgentScope["member
     for (const agent of own) if ((agent.last_activity ?? "") > value.recency) value.recency = agent.last_activity!;
   }
   const owner = new Map(members.map((m) => [m.pane_id, m.checkout_id]));
-  const marks: Record<string, "error" | "approval" | "question" | "working" | "done" | "idle"> = { "▲": "error", "!": "approval", "?": "question", "●": "working", "✓": "done", "○": "idle" };
+  const marks: Record<string, "error" | "approval" | "question" | "working" | "stopped" | "done" | "idle"> = { "▲": "error", "!": "approval", "?": "question", "●": "working", "◐": "stopped", "✓": "done", "○": "idle" };
   for (let selector = 0; selector < 16; selector++) {
     const shown = new Set(Object.entries(value.checkouts).filter(([, c]) => (c.primary && (selector & 8)) || c.fold === null || (selector & { empty: 1, cleanup: 2, resting: 4 }[c.fold])).map(([id]) => id));
     const badges: AgentGraphScope["tucked"][number] = {};
