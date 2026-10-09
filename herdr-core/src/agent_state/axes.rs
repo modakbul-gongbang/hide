@@ -361,16 +361,6 @@ pub(crate) fn stopped_unfinished(agent: &SidebarAgentSnapshot) -> bool {
         })
 }
 
-/// A stopped row that only said it waits, with nothing proven to wake it: the
-/// one stop that a pull request's pending checks explain (B15).
-pub(crate) fn stopped_only_waiting(agent: &SidebarAgentSnapshot) -> bool {
-    stopped_unfinished(agent)
-        && agent
-            .row_facts
-            .as_ref()
-            .is_some_and(|facts| facts.end == Some(LabelEnd::Waiting) && !facts.wake_vanished)
-}
-
 /// A stopped row whose awaited work died with its process (B16).
 pub(crate) fn wake_vanished(agent: &SidebarAgentSnapshot) -> bool {
     stopped_unfinished(agent)
