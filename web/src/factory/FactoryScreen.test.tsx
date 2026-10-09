@@ -373,6 +373,19 @@ it("says a Task is gone when its Factory has left the summary, instead of loadin
   expect(container.querySelector("[data-factory-task-loading]")).toBeNull();
 });
 
+it("shows a Task page as reading until its section comes, and one that could not be read with a button that reads it again (B32)", async () => {
+  const { container, events } = await mount({ my_turn: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  await act(async () => useShellStore.setState({ factoryTask: null }));
+  expect(container.querySelector("[data-factory-task-loading]")).not.toBeNull();
+  await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: null } }));
+  expect(container.querySelector("[data-factory-task-loading]")).toBeNull();
+  expect(container.textContent).toContain(english["factory.task.unreadable"]);
+  const before = events.length;
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-task-reread]")!.click());
+  expect(events.slice(before).map((event) => (event as unknown as { kind: string; payload: unknown }).kind)).toEqual(["factory_task_close", "factory_task_open"]);
+  expect((events.at(-1) as unknown as { payload: unknown }).payload).toEqual({ factory: "f1", task: "T-1" });
+});
+
 it("does not send a taken answer again while its item is still on screen (B10)", async () => {
   const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [MERGE] });
   const send = container.querySelector<HTMLButtonElement>("[data-factory-send]")!;
