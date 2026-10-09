@@ -293,7 +293,7 @@ fn native_call_and_id_capacity_is_a_reported_read_failure() {
 }
 
 #[test]
-fn oversized_native_questions_and_answers_cannot_return_stale_or_missing_facts() {
+fn oversized_native_questions_and_answers_keep_their_turn_without_their_content() {
     for agent in [Agent::Claude, Agent::Codex] {
         for answering in [false, true] {
             let mut session = Session::question(agent);
@@ -326,13 +326,16 @@ fn oversized_native_questions_and_answers_cannot_return_stale_or_missing_facts()
                 hide_session::SESSION_LINE_LIMIT_BYTES + 1
             );
             session.append(&record);
-            assert_eq!(
-                read(session.home.path(), &session.request).unwrap_err(),
-                format!(
-                    "session_capacity:line_bytes:{}",
-                    hide_session::SESSION_LINE_LIMIT_BYTES
-                )
-            );
+            // The discarded record still answers or asks its call; a large
+            // question waits with its content absent rather than invented.
+            let read = session.read();
+            if answering {
+                assert_eq!(fact(&read), None, "{agent:?}");
+            } else {
+                let waiting = fact(&read).unwrap();
+                assert_eq!(waiting.kind, UserTurnKind::Question, "{agent:?}");
+                assert_eq!(waiting.content, None, "{agent:?}");
+            }
         }
     }
 }
