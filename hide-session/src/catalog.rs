@@ -26,6 +26,7 @@ pub enum SessionFilter {
     Grok,
     Pi,
     Omp,
+    Cursor,
     #[serde(rename = "opencode")]
     OpenCode,
 }
@@ -40,6 +41,7 @@ impl SessionFilter {
                     | (Self::Grok, Agent::Grok)
                     | (Self::Pi, Agent::Pi)
                     | (Self::Omp, Agent::Omp)
+                    | (Self::Cursor, Agent::Cursor)
                     | (Self::OpenCode, Agent::OpenCode)
             )
     }
@@ -176,6 +178,16 @@ impl SessionCatalog {
         if let Ok(root) = crate::native_file::root(&self.home, Agent::Grok) {
             collect_grok(&root, &mut files, &mut visited, SESSION_DISCOVERY_LIMIT)?;
         }
+        if let Ok(root) = crate::native_file::root(&self.home, Agent::Cursor) {
+            collect_jsonl(
+                &root,
+                Agent::Cursor,
+                2,
+                &mut files,
+                &mut visited,
+                SESSION_DISCOVERY_LIMIT,
+            )?;
+        }
 
         let mut refusals = Vec::new();
         let mut sessions = crate::opencode::catalog(
@@ -198,7 +210,13 @@ impl SessionCatalog {
             {
                 continue;
             }
-            let Some(cwd) = session_cwd(agent, &path) else {
+            let Some(cwd) = (if agent == Agent::Cursor {
+                crate::cursor::header(&self.home, &path)
+                    .ok()
+                    .map(|header| header.cwd)
+            } else {
+                session_cwd(agent, &path)
+            }) else {
                 continue;
             };
             let Ok(identity) = hide_project::resolve(&cwd, &self.device_id) else {
@@ -294,9 +312,12 @@ fn collect_jsonl(
         }
         if path.is_dir() && depth > 0 {
             collect_jsonl(&path, agent, depth - 1, output, visited, limit)?;
-        } else if path
-            .extension()
-            .is_some_and(|extension| extension == "jsonl")
+        } else if (agent == Agent::Cursor
+            && path.file_name().is_some_and(|name| name == "store.db"))
+            || (agent != Agent::Cursor
+                && path
+                    .extension()
+                    .is_some_and(|extension| extension == "jsonl"))
         {
             output.push((agent, path));
         }
@@ -384,7 +405,7 @@ fn session_cwd(agent: Agent, path: &Path) -> Option<PathBuf> {
             }
             None
         }
-        Agent::OpenCode => None,
+        Agent::OpenCode | Agent::Cursor => None,
     }
 }
 
@@ -394,6 +415,37 @@ fn read_project_session(
     path: PathBuf,
     cwd: PathBuf,
 ) -> Option<ProjectSession> {
+    if agent == Agent::Cursor {
+        let header = crate::cursor::header(home, &path).ok()?;
+        let scope = crate::SessionReadScope {
+            id: header.id.clone(),
+            cwd: cwd.to_str()?.to_owned(),
+        };
+        let read = crate::cursor::read_all(home, &path, &scope);
+        let (events, availability) = match read {
+            Ok(parsed) => (parsed.events, SessionAvailability::Available),
+            Err(error) => (
+                Vec::new(),
+                SessionAvailability::Unavailable {
+                    reason: error.to_string(),
+                },
+            ),
+        };
+        return Some(ProjectSession {
+            id: header.id,
+            agent,
+            locator: path,
+            checkout_path: cwd,
+            first_human_request: first_human(&events).map(compact_snippet),
+            started_at_unix_ms: events
+                .first()
+                .and_then(|event| (event.at_unix_ms != 0).then_some(event.at_unix_ms)),
+            updated_at_unix_ms: header.updated_at.unwrap_or(header.created_at),
+            title: None,
+            event_count: events.len(),
+            availability,
+        });
+    }
     let metadata = fs::metadata(&path).ok();
     let updated_at_unix_ms = metadata
         .as_ref()

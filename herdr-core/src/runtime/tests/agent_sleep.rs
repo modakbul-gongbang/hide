@@ -207,6 +207,49 @@ fn a_native_dormant_journey_refuses_a_changed_route_before_close_wake_or_start()
     }
 }
 
+#[test]
+#[cfg(unix)]
+fn cursor_durable_sleep_wakes_exactly_once_and_refuses_a_lost_native_owner() {
+    const CHILD: &str = "HIDE_TEST_CURSOR_SLEEP_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // The native fixture owns a default-root account, independent of any
+        // Cursor roots exported by the test runner. Never mutate the shared
+        // process environment after the reader has captured its startup roots.
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "runtime::tests::agent_sleep::cursor_durable_sleep_wakes_exactly_once_and_refuses_a_lost_native_owner",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .env_remove("CURSOR_CONFIG_DIR")
+            .env_remove("XDG_CONFIG_HOME");
+        let output = hide_platform::process::run_to_end(
+            &mut command,
+            Duration::from_secs(60),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(
+            output.succeeded(),
+            "private default-root sleep test failed:\n{}\n{}",
+            output.stdout,
+            output.stderr
+        );
+        return;
+    }
+    for phase in [
+        "none",
+        "missing-source-before-close",
+        "missing-source-before-wake",
+        "missing-source-before-start",
+    ] {
+        durable_dormant_journey("cursor", phase);
+    }
+}
+
 /// OpenCode's proof reads its database row: a session moved to another
 /// checkout or gone refuses every later effect, and nothing is written there.
 #[test]
@@ -237,7 +280,7 @@ struct NativeRecord {
 
 #[cfg(unix)]
 impl NativeRecord {
-    /// Another session where this one was (Pi, omp), or this session moved to
+    /// Another session where this one was (a native file), or this session moved to
     /// another checkout (OpenCode).
     fn duplicate(&self) {
         if self.kind == "opencode" {
@@ -322,21 +365,27 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
             path,
         }
     } else {
-        let native_folder = crate::fixture::native_session_folder(
-            home.path(),
-            if kind == "omp" { "omp" } else { "pi" },
-            std::path::Path::new(&cwd),
-        );
-        std::fs::create_dir_all(&native_folder).unwrap();
-        let native_path = native_folder.join("native.jsonl");
-        std::fs::write(
-            &native_path,
-            format!(
-                "{}\n",
-                serde_json::json!({"type":"session", "version":3, "id":native_id, "cwd":cwd})
-            ),
-        )
-        .unwrap();
+        let native_path = if kind == "cursor" {
+            crate::fixture::cursor_session(home.path(), Path::new(&cwd), native_id)
+        } else {
+            let folder = crate::fixture::native_session_folder(
+                home.path(),
+                if kind == "omp" { "omp" } else { "pi" },
+                Path::new(&cwd),
+            );
+            std::fs::create_dir_all(&folder).unwrap();
+            let file = folder.join("native.jsonl");
+            std::fs::write(
+                &file,
+                format!(
+                    "{}\n",
+                    serde_json::json!({"type":"session", "version":3, "id":native_id, "cwd":cwd})
+                ),
+            )
+            .unwrap();
+            file
+        };
+        let native_folder = native_path.parent().unwrap().to_path_buf();
         let native_before = std::fs::read(&native_path).unwrap();
         let other_before = [native_before.as_slice(), b"{\"type\":\"message\",\"id\":\"other-message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"different history\"}]}}\n"].concat();
         NativeRecord {
@@ -350,9 +399,13 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     let native = Arc::new(native);
     let native_folder = native.folder.clone();
     let backup_path = native_folder.join(format!("date_{native_id}-alias.jsonl.123.bak"));
-    let backup_bytes = String::from_utf8(native.other.clone())
-        .unwrap()
-        .replace(native_id, "different-native-owner");
+    let backup_bytes = if kind == "cursor" {
+        String::new()
+    } else {
+        String::from_utf8(native.other.clone())
+            .unwrap()
+            .replace(native_id, "different-native-owner")
+    };
     if kind != "claude" {
         runtime.own_node = Arc::new(hide_node::Local::new(Some(home.path().to_path_buf())));
         runtime.live.as_mut().unwrap().node = runtime.own_node();

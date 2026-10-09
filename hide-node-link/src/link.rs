@@ -447,6 +447,7 @@ fn reader_requirements(call: &Call) -> Vec<(hide_session::Agent, ReaderFeature)>
         Call::LabelTranscript { request } => vec![(request.agent, ReaderFeature::Labels)],
         Call::SessionActivity { request } => vec![(request.agent, ReaderFeature::Activity)],
         Call::SessionIndexRead { agent, .. } => vec![(*agent, ReaderFeature::Search)],
+        Call::SessionConversation { agent, .. } => vec![(*agent, ReaderFeature::Conversation)],
         Call::LinkRead { requests } => requests
             .iter()
             .map(|request| (request.agent, ReaderFeature::Links))
@@ -732,5 +733,41 @@ mod tests {
             assert!(!shown.contains("sk-secret"), "{shown}");
             assert!(shown.contains("bytes"), "{shown}");
         }
+    }
+
+    #[test]
+    fn cursor_graph_calls_and_saved_progress_require_current_reader_facts() {
+        let call = Call::SessionConversation {
+            agent: hide_session::Agent::Cursor,
+            path: "/private-fixture/store.db".into(),
+            scope: hide_session::SessionReadScope {
+                id: "fixture".into(),
+                cwd: "/private-fixture".into(),
+            },
+            checkpoint: Some(Default::default()),
+        };
+        for features in [
+            ReaderFeatures::protocol24(),
+            serde_json::from_str::<ReaderFeatures>(
+                r#"[{"provider":"grok","features":["conversation"]}]"#,
+            )
+            .unwrap(),
+        ] {
+            assert!(check_reader_features(&features, &call).is_err());
+            let peer = LabelPeer {
+                features,
+                response: "null",
+            };
+            assert!(check_reader_call(&peer, &call).is_err());
+            let answer: Result<serde_json::Value, _> = call_as_reader(
+                &peer,
+                hide_session::Agent::Cursor,
+                ReaderFeature::Conversation,
+                call.clone(),
+                Duration::from_secs(1),
+            );
+            assert!(answer.is_err());
+        }
+        assert!(check_reader_features(&ReaderFeatures::implemented(), &call).is_ok());
     }
 }

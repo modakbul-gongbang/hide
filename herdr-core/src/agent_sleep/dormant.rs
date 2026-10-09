@@ -557,6 +557,7 @@ mod tests {
             ("pi", ("path", "/fixture/native.jsonl")),
             ("omp", ("path", "/fixture/native.jsonl")),
             ("grok", ("path", "/fixture/native.jsonl")),
+            ("cursor", ("path", "/fixture/native.jsonl")),
             ("opencode", ("id", "native-one")),
         ] {
             let entry = store.dormant.get_mut(&id).unwrap();
@@ -569,10 +570,9 @@ mod tests {
             });
             assert!(store.dormant_snapshots()[0].wake_available, "{kind}");
         }
-        for kind in ["cursor", "unknown"] {
-            store.dormant.get_mut(&id).unwrap().kind = kind.into();
-            assert!(!store.dormant_snapshots()[0].wake_available, "{kind}");
-        }
+        // An unknown kind has no reader at all.
+        store.dormant.get_mut(&id).unwrap().kind = "unknown".into();
+        assert!(!store.dormant_snapshots()[0].wake_available);
         assert_eq!(store.dormant.len(), 1);
     }
 

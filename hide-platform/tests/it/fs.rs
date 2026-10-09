@@ -1489,6 +1489,32 @@ fn a_link_planted_at_an_own_files_name_is_neither_followed_nor_accepted() {
 }
 
 #[test]
+fn directory_entry_open_refuses_files_links_and_pipes() {
+    let outer = folder();
+    let directory = outer.path().join("directory");
+    fs::create_dir(&directory).unwrap();
+    hide_platform::fs::open_dir_nofollow(&directory).unwrap();
+    let file = outer.path().join("file");
+    fs::write(&file, "kept").unwrap();
+    assert!(hide_platform::fs::open_dir_nofollow(&file).is_err());
+    let at = outer.path().join("link");
+    link::create_link(&directory, &at).unwrap();
+    assert!(hide_platform::fs::open_dir_nofollow(&at).is_err());
+    #[cfg(unix)]
+    {
+        let pipe = outer.path().join("pipe");
+        assert!(
+            Command::new("mkfifo")
+                .arg(&pipe)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(hide_platform::fs::open_dir_nofollow(&pipe).is_err());
+    }
+}
+
+#[test]
 fn only_a_regular_file_opens_as_one_and_a_link_at_its_name_is_not_followed() {
     let outer = folder();
     let file = outer.path().join("image.png");

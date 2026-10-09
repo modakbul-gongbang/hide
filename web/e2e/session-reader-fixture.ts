@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { HerdrFixture } from "./herdr-fixture";
 import { copyFixtureShim } from "./shims/build";
@@ -16,7 +17,9 @@ export const OMP_UPDATED_TITLE = "요청 보기 - 현재 이름 日本語";
 export const GROK_ID = "0199b000-0000-7000-8000-0000000000e2";
 export const GROK_TITLE = "요청 보기 - Grok native title";
 export const GROK_PLAN = "## 계획\n요청 보기를 두 단계로 나눈다";
-export type NativeFileReader = "pi" | "omp" | "grok";
+export const CURSOR_ID = "0199b000-0000-7000-8000-0000000000c2";
+export const CURSOR_GOAL = "요청 보기 - Cursor generated goal";
+export type NativeFileReader = "pi" | "omp" | "grok" | "cursor";
 
 /** Grok's group name for a cwd: urlencoding of every byte but `A-Za-z0-9-_.~`. */
 function grokGroup(cwd: string): string {
@@ -81,8 +84,28 @@ export function preparePiWriter(herdr: HerdrFixture, checkout = path.join(herdr.
 }
 
 export function prepareNativeWriter(herdr: HerdrFixture, kind: NativeFileReader, checkout = path.join(herdr.root, "fixture")): string {
-  copyFixtureShim("claude-shim", path.join(herdr.root, "bin", fixtureExecutable(kind)));
+  copyFixtureShim("claude-shim", path.join(herdr.root, "bin", fixtureExecutable(kind === "cursor" ? "cursor-agent" : kind)));
   const cwd = fs.realpathSync(checkout);
+  if (kind === "cursor") {
+    // Ordinary pinned CLI routing, independently of the product locator.
+    const bucket = createHash("md5").update(cwd).digest("hex");
+    const session = path.join(herdr.env.HOME!, ".cursor", "chats", bucket, CURSOR_ID, "store.db");
+    fs.mkdirSync(path.dirname(session), { recursive: true });
+    fs.writeFileSync(path.join(herdr.root, "cursor-session-path.config"), session);
+    fs.writeFileSync(path.join(herdr.root, "cursor-meta-seed.json"), JSON.stringify({ schemaVersion: 1, cwd, createdAtMs: 1_790_989_200_000, hasConversation: true, isSubagent: false }));
+    const graph = JSON.parse(fs.readFileSync(new URL("../../hide-session/tests/fixtures/cursor-2026.10.01/browser-graph.json", import.meta.url), "utf8")) as { roots: { first: string }; blobs: Record<string, string> };
+    const database = new DatabaseSync(path.join(herdr.root, "cursor-session-seed.db"));
+    try {
+      database.exec("PRAGMA user_version=1; CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE blobs(id TEXT PRIMARY KEY,data BLOB);");
+      const meta = { agentId: CURSOR_ID, latestRootBlobId: graph.roots.first, createdAt: 1_790_989_200_000 };
+      database.prepare("INSERT INTO meta VALUES('0',?)").run(Buffer.from(JSON.stringify(meta)).toString("hex"));
+      const insert = database.prepare("INSERT INTO blobs VALUES(?,?)");
+      for (const [id, bytes] of Object.entries(graph.blobs)) insert.run(id, Buffer.from(bytes, "hex"));
+    } finally {
+      database.close();
+    }
+    return session;
+  }
   const relativeTemp = path.relative(fs.realpathSync(os.tmpdir()), cwd);
   if (kind === "omp" && (relativeTemp.startsWith("..") || path.isAbsolute(relativeTemp))) throw new Error("omp fixture requires an owned temporary checkout");
   const encoded = kind === "pi" ? `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--` : `-tmp-${relativeTemp.replace(/[/\\:]/g, "-")}`;
@@ -121,7 +144,7 @@ export function reportPiWriter(herdr: HerdrFixture, pane: string, session: strin
 
 export function reportNativeWriter(herdr: HerdrFixture, kind: NativeFileReader, pane: string, session: string): void {
   // Herdr's Grok integration reports the native id; Pi's and omp's report the file.
-  const reference = kind === "grok" ? ["--agent-session-id", GROK_ID] : ["--agent-session-path", session];
+  const reference = kind === "grok" ? ["--agent-session-id", GROK_ID] : kind === "cursor" ? ["--agent-session-id", CURSOR_ID] : ["--agent-session-path", session];
   execFileSync(herdr.bin, ["pane", "report-agent-session", pane, "--source", `herdr:${kind}`, "--agent", kind, ...reference, "--seq", "2", "--session-start-source", "clear"], { env: herdr.env, timeout: 30_000 });
 }
 

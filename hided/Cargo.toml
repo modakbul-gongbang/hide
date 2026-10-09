@@ -51,7 +51,7 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile = "=3.27.0"
-# The phone's OpenCode conversation tests write OpenCode's own database.
+md5 = "=0.8.1"
 rusqlite = { version = "=0.32.1", features = ["bundled"] }
 anyhow = "=1.0.104"
 hide-agent-hooks = { path = "../hide-agent-hooks" }

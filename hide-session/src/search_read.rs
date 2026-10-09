@@ -26,6 +26,72 @@ pub fn read_step(
     read_opened(saved, agent, path, &opened)
 }
 
+pub fn read_step_confirmed(
+    home: &Path,
+    saved: Option<&SavedFile>,
+    agent: Agent,
+    path: &Path,
+    scope: Option<&crate::SessionReadScope>,
+) -> Result<(IndexStep, UpdateReads), String> {
+    if agent != Agent::Cursor {
+        return read_step(saved, agent, path);
+    }
+    let scope = scope.ok_or_else(|| "cursor_read_scope_required".to_owned())?;
+    let confirmed = crate::cursor::proof(home, path, Some(&scope.id), &scope.cwd)
+        .map_err(|_| "cursor_scope_unconfirmed".to_owned())?;
+    let observed = stamp_at(path).ok_or_else(|| "cursor_source_unavailable".to_owned())?;
+    let checkpoint: Option<ConversationCheckpoint> = saved
+        .map(|saved| {
+            serde_json::from_str(&saved.cursor).map_err(|_| "cursor_checkpoint_invalid".to_owned())
+        })
+        .transpose()?;
+    if let Some(checkpoint) = &checkpoint {
+        if !checkpoint.is_native() {
+            return Ok((IndexStep::Reset, UpdateReads::default()));
+        }
+        if checkpoint
+            .native_matches(&confirmed)
+            .map_err(|_| "cursor_checkpoint_invalid".to_owned())?
+            && saved.is_some_and(|saved| saved.stamp == observed)
+            && !checkpoint.has_more()
+        {
+            return Ok((IndexStep::Done, UpdateReads::default()));
+        }
+    }
+    let read = crate::conversation_cursor::read_conversation(home, agent, path, scope, checkpoint)
+        .map_err(|_| "cursor_index_read_failed".to_owned())?;
+    if stamp_at(path).as_deref() != Some(&observed) {
+        return Err("cursor_source_changed".to_owned());
+    }
+    let messages = read
+        .events
+        .into_iter()
+        .zip(read.event_offsets)
+        .filter(|(event, _)| matches!(event.kind, EventKind::Human | EventKind::Assistant))
+        .map(|(event, offset)| IndexedMessage {
+            offset,
+            role: event.role.to_owned(),
+            at_unix_ms: event.at_unix_ms,
+            text: event.text,
+        })
+        .collect();
+    Ok((
+        IndexStep::Read {
+            reset: read.rescanned,
+            messages,
+            cursor: serde_json::to_string(&read.checkpoint)
+                .map_err(|_| "cursor_checkpoint_invalid".to_owned())?,
+            stamp: observed,
+            witness: "{\"kind\":\"cursor_graph_v1\"}".to_owned(),
+            more: read.has_more,
+        },
+        UpdateReads {
+            cursor_bytes: read.read_bytes,
+            witness_bytes: 0,
+        },
+    ))
+}
+
 /// One read and its write, where the index and the file share a machine.
 /// True means more bytes.
 pub fn update(
@@ -73,7 +139,11 @@ pub fn stamps(paths: &[String]) -> Vec<Option<String>> {
 /// The current stamp of the file at `path`, `None` when it is gone or
 /// unreadable.
 pub fn stamp_at(path: &Path) -> Option<String> {
-    stamp(path).ok()
+    if path.file_name().is_some_and(|name| name == "store.db") {
+        crate::cursor::source_stamp(path)
+    } else {
+        stamp(path).ok()
+    }
 }
 
 /// The scope of the OpenCode session a catalog locator (`opencode/<id>`)

@@ -336,13 +336,27 @@ fn authenticated_node_advertises_only_its_compiled_readers() {
             );
         }
     }
-    assert!(
-        !device
-            .link
-            .reader_features()
-            .unwrap()
-            .supports("cursor", ReaderFeature::Conversation)
-    );
+    // Cursor's accepted reader contract includes conversation/search, while
+    // its native records provide no title, Memory, link or structured turn.
+    let features = device.link.reader_features().unwrap();
+    for feature in [
+        ReaderFeature::Identity,
+        ReaderFeature::Labels,
+        ReaderFeature::Conversation,
+        ReaderFeature::Search,
+        ReaderFeature::Activity,
+    ] {
+        assert!(features.supports("cursor", feature), "cursor: {feature:?}");
+    }
+    for feature in [
+        ReaderFeature::Titles,
+        ReaderFeature::Memory,
+        ReaderFeature::Links,
+        ReaderFeature::Turns,
+        ReaderFeature::UserTurnContent,
+    ] {
+        assert!(!features.supports("cursor", feature), "cursor: {feature:?}");
+    }
 }
 
 // This test-only input names a retained release payload directory. It is

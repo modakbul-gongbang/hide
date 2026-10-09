@@ -2316,7 +2316,31 @@ pub(crate) fn confirm_session_launch(
         },
         Duration::from_secs(10),
     )
-    .map_err(|_| "session_route_unconfirmed".to_owned())?;
+    .map_err(|error| {
+        let reason = match &error {
+            crate::node_access::LinkError::Refused(error) => match error
+                .message
+                .strip_prefix("session_checkpoint_invalid:")
+                .unwrap_or(&error.message)
+            {
+                "cursor_launch_root_unsupported"
+                | "cursor_launch_root_ambiguous"
+                | "cursor_launch_environment_invalid"
+                | "cursor_launch_root_unconfirmed"
+                | "cursor_launch_root_changed" => error
+                    .message
+                    .strip_prefix("session_checkpoint_invalid:")
+                    .unwrap_or(&error.message),
+                _ => "session_route_unconfirmed",
+            },
+            _ => "session_route_unconfirmed",
+        };
+        crate::diagnostic!(json!({
+            "component": "session_route", "kind": "session_route.refused",
+            "agent_kind": kind, "native_session_id": id, "reason": reason,
+        }));
+        "session_route_unconfirmed".to_owned()
+    })?;
     check()
 }
 

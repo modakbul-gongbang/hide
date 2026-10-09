@@ -123,6 +123,7 @@ pub enum SessionFormat {
     Grok,
     Pi,
     Omp,
+    Cursor,
     OpenCode,
 }
 
@@ -134,6 +135,7 @@ impl SessionFormat {
             Self::Grok => AgentId::Grok.adapter(),
             Self::Pi => AgentId::Pi.adapter(),
             Self::Omp => AgentId::Omp.adapter(),
+            Self::Cursor => AgentId::Cursor.adapter(),
             Self::OpenCode => AgentId::OpenCode.adapter(),
         }
     }
@@ -147,6 +149,13 @@ impl SessionFormat {
     pub const fn has_session_file(self) -> bool {
         matches!(
             self,
+            Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp | Self::Cursor
+        )
+    }
+
+    pub const fn is_jsonl(self) -> bool {
+        matches!(
+            self,
             Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp
         )
     }
@@ -154,7 +163,7 @@ impl SessionFormat {
     /// Native file metadata and the default CLI resolver must agree before
     /// a transcript can authorize a read or a lifecycle effect.
     pub const fn requires_native_file_proof(self) -> bool {
-        matches!(self, Self::Grok | Self::Pi | Self::Omp)
+        matches!(self, Self::Grok | Self::Pi | Self::Omp | Self::Cursor)
     }
 
     /// The native reader proves the session's owner and checkout before a
@@ -170,7 +179,7 @@ impl SessionFormat {
     pub const fn proof_reference_kind(self) -> &'static str {
         match self {
             Self::OpenCode => "id",
-            Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp => "path",
+            Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp | Self::Cursor => "path",
         }
     }
 
@@ -548,8 +557,8 @@ impl AgentAdapter {
             Feature::Fork => self.fork.is_some(),
             Feature::Start => self.start.is_some(),
             // A label reader alone is not the session features offered by
-            // Settings: titles count once the conversation is read too.
-            Feature::Titles => self.conversation.is_some() && self.titles.is_some(),
+            // Settings: titles count once the conversation is read.
+            Feature::Titles => self.conversation.is_some(),
         }
     }
 

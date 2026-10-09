@@ -46,6 +46,33 @@ pub fn open_dir(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     Ok(folder)
 }
 
+/// Opens the directory entry itself. A link, pipe or device cannot redirect
+/// the open or leave it waiting for a writer.
+pub fn open_dir_nofollow(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_DIRECTORY);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x0020_0000 | 0x0200_0000);
+    }
+    let folder = options.open(path)?;
+    if !folder.metadata()?.is_dir()
+        || identity::file_id_of(&folder)? != identity::file_id_nofollow(path)?
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the entry is not a directory",
+        ));
+    }
+    Ok(folder)
+}
+
 /// Opens `path` for reading only when the name itself is a regular file. A
 /// link at the name is not followed (an error on Unix, `InvalidInput` on
 /// Windows, which opens the link as itself), and a folder, a pipe or a device
