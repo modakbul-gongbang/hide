@@ -40,7 +40,7 @@ impl<'a> Caller<'a> {
             .filter(|(key, path)| {
                 !key.is_empty()
                     && key.bytes().all(|byte| byte.is_ascii_alphanumeric())
-                    && path.starts_with('/')
+                    && hide_platform::path::is_wire_absolute(path)
             })
             .map_or(Caller::Pane(id), |(key, path)| Caller::Checkout {
                 key,
@@ -407,6 +407,16 @@ mod tests {
             Caller::Checkout {
                 key: "k",
                 path: "/mnt/a:b/c"
+            }
+        );
+        // A checkout on a Windows screen machine, in the spelling between
+        // machines, is a checkout caller as the attestation that made it is.
+        let windows = checkout_caller_id("k", "C:/work/app");
+        assert_eq!(
+            Caller::parse(&windows),
+            Caller::Checkout {
+                key: "k",
+                path: "C:/work/app"
             }
         );
         assert_eq!(Caller::parse("w8P:pM"), Caller::Pane("w8P:pM"));
