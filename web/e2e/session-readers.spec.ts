@@ -5,7 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { PI_ID, PI_TITLE, preparePiWriter, reportPiWriter } from "./session-reader-fixture";
+import crypto from "node:crypto";
+import {
+  OPENCODE_CHILD_TITLE, OPENCODE_ID, OPENCODE_TITLE, PI_ID, PI_TITLE, prepareOpenCodeWriter, preparePiWriter, reportOpenCodeState,
+  reportPiWriter, writeOpenCodeQuestion,
+} from "./session-reader-fixture";
 import { screenshot } from "./wire";
 
 test.describe.configure({ timeout: 150_000 });
@@ -50,6 +54,72 @@ test("Pi native title and durable sleep wake the exact conversation in a fresh p
     await expect(page.locator(`nav[data-sidebar] [data-pane="${fresh}"]`)).toContainText(PI_TITLE);
     expect(fs.readFileSync(session, "utf8")).toBe(prior);
     await screenshot(page, "pi-exact-wake");
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
+type QuestionRow = { pane_id: string; user_turn?: unknown };
+
+test("OpenCode's root session titles its row, waits on its question and wakes by id in a fresh pane", async ({ page }) => {
+  let agents: QuestionRow[] = [];
+  page.on("websocket", (socket) => socket.on("framereceived", (frame) => {
+    if (typeof frame.payload !== "string") return;
+    const incoming = JSON.parse(frame.payload) as { type: string; payload?: { rest?: { navigator?: { agents?: QuestionRow[] } } } };
+    if (["snapshot", "delta"].includes(incoming.type) && incoming.payload?.rest?.navigator?.agents) agents = incoming.payload.rest.navigator.agents;
+  }));
+  const herdr = await startHerdr({ agents: false });
+  let daemon: Daemon | null = null;
+  try {
+    const sourcePane = herdr.panes[0];
+    const database = prepareOpenCodeWriter(herdr);
+    const launches = () => fs.readFileSync(path.join(herdr.root, "opencode-launches.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line) as string[]);
+    herdr.run(["agent", "start", "opencode-reader", "--kind", "opencode", "--pane", sourcePane]);
+    await expect.poll(() => fs.existsSync(database)).toBe(true);
+    daemon = await startHided(herdr, "opencode-reader", herdr.env.HOME);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await page.locator("[data-checkout]").first().click();
+    const row = page.locator(`nav[data-sidebar] [data-pane="${sourcePane}"]`);
+    await expect(row).toContainText(OPENCODE_TITLE, { timeout: 30_000 });
+    await expect(page.locator("nav[data-sidebar]")).not.toContainText(OPENCODE_CHILD_TITLE);
+    await screenshot(page, "opencode-native-title");
+
+    // A question keeps OpenCode's answer unfinished; its answer completes it.
+    const question = () => agents.find((agent) => agent.pane_id === sourcePane)?.user_turn;
+    await reportOpenCodeState(herdr, sourcePane, "working");
+    writeOpenCodeQuestion(database, "running");
+    await reportOpenCodeState(herdr, sourcePane, "idle");
+    await expect.poll(question, { message: "the native question reached the row", timeout: 30_000 })
+      .toEqual({ kind: "question", content: { text: "어느 브랜치에 올릴까요?", choices: ["main", "release"], truncated: false } });
+    await expect(page.locator(`[data-pane="${sourcePane}"] [data-agent-status-mark="question"]`).first()).toBeVisible();
+    await screenshot(page, "opencode-native-question");
+    await reportOpenCodeState(herdr, sourcePane, "working");
+    writeOpenCodeQuestion(database, "completed");
+    await reportOpenCodeState(herdr, sourcePane, "idle");
+    await expect.poll(question, { message: "the answer cleared the question", timeout: 30_000 }).toBeUndefined();
+
+    await row.click();
+    await page.locator(`[data-pane-menu="${sourcePane}"]`).click();
+    await expect(page.locator('[data-menu-item="sleep_agent"]')).toBeEnabled({ timeout: 20_000 });
+    await page.locator('[data-menu-item="sleep_agent"]').click();
+    const sleeping = page.locator("[data-sleeping-session]");
+    await expect(sleeping).toContainText(OPENCODE_TITLE, { timeout: 30_000 });
+    await expect.poll(() => JSON.stringify(herdr.run(["pane", "list"]))).not.toContain(`"pane_id":"${sourcePane}"`);
+    const digest = () => crypto.createHash("sha256").update(fs.readFileSync(database)).digest("hex");
+    const prior = digest();
+    await sleeping.getByRole("button", { name: "Wake agent" }).click();
+    await expect.poll(launches, { timeout: 30_000 }).toContainEqual(["-s", OPENCODE_ID]);
+    type Listed = { result: { agents: { pane_id: string; agent: string }[] } };
+    let fresh = "";
+    await expect.poll(() => {
+      fresh = (herdr.run(["agent", "list"]) as Listed).result.agents.find(agent => agent.agent === "opencode" && agent.pane_id !== sourcePane)?.pane_id ?? "";
+      return fresh;
+    }, { timeout: 30_000 }).not.toBe("");
+    await expect(sleeping).toHaveCount(0, { timeout: 30_000 });
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${fresh}"]`)).toContainText(OPENCODE_TITLE);
+    expect(digest()).toBe(prior);
+    await screenshot(page, "opencode-exact-wake");
   } finally {
     daemon?.stop();
     herdr.stop();
