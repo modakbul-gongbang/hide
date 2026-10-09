@@ -29,10 +29,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use hide_node::pane_proof::BootstrapListener;
 use hide_node::ssh::RemoteHost;
 use hide_node::ssh::host::inbound::{self, InboundNode};
 use hide_node::terminal::device::DeviceSink;
-use hide_platform::ipc::{LocalListener, LocalStream};
+use hide_platform::ipc::LocalStream;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::Notify;
@@ -57,6 +58,11 @@ const GRANT_BIND_WAIT: Duration = Duration::from_secs(10);
 /// How long a node's earlier link has to answer a greeting when the node
 /// dials again, before the new link replaces it (B9's 10 s holds with it).
 const STALE_PROBE: Duration = Duration::from_secs(3);
+/// How long a grant handed to a node may wait for its link to be taken.
+const UNBOUND_GRANT_LIFETIME: Duration = Duration::from_secs(60);
+/// The wait after an accept that failed, doubling to [`ACCEPT_RETRY_MAX`].
+const ACCEPT_RETRY_FIRST: Duration = Duration::from_millis(100);
+const ACCEPT_RETRY_MAX: Duration = Duration::from_secs(5);
 
 /// What the attach role answers when no core runs on its machine.
 pub const NO_CORE: &str = "no_core";
@@ -143,7 +149,7 @@ pub fn attach_record(state_dir: &Path) -> PathBuf {
 }
 
 /// Binds the core's attach socket and records it in `state_dir`.
-pub fn bind(state_dir: &Path) -> Result<(LocalListener, PathBuf), String> {
+pub fn bind(state_dir: &Path) -> Result<(BootstrapListener, PathBuf), String> {
     hide_node::pane_proof::bind_recorded(
         &attach_record(state_dir),
         "hide-attach",
@@ -161,6 +167,8 @@ pub struct RelayGrants {
 
 struct Grant {
     node: String,
+    /// When it was handed out; one never bound to a link expires.
+    issued: Instant,
     /// The link the grant belongs to, once the link is up.
     link: Option<RemoteHost>,
     /// What the node's screens wait on this core for, over every relay.
@@ -179,11 +187,9 @@ impl RelayGrants {
     /// A new grant for `node`, not yet bound to its link; `None` at the cap.
     fn issue(&self, node: &str) -> Option<String> {
         let mut grants = lock(&self.grants);
-        grants.retain(|_, grant| {
-            grant
-                .link
-                .as_ref()
-                .is_none_or(|link| link.closed_reason().is_none())
+        grants.retain(|_, grant| match &grant.link {
+            Some(link) => link.closed_reason().is_none(),
+            None => grant.issued.elapsed() < UNBOUND_GRANT_LIFETIME,
         });
         if grants.len() >= MAX_GRANTS {
             return None;
@@ -193,6 +199,7 @@ impl RelayGrants {
             token.clone(),
             Grant {
                 node: node.to_owned(),
+                issued: Instant::now(),
                 link: None,
                 requests: Arc::default(),
             },
@@ -258,7 +265,11 @@ pub struct AttachService {
 }
 
 /// Takes nodes' links on `listener` until `shutdown`.
-pub async fn serve(listener: LocalListener, service: Arc<AttachService>, shutdown: Arc<Notify>) {
+pub async fn serve(
+    listener: BootstrapListener,
+    service: Arc<AttachService>,
+    shutdown: Arc<Notify>,
+) {
     // Closed however this future ends, a drop included, so the accept
     // thread never outlives it.
     let closing = CloseOnDrop {
@@ -270,27 +281,7 @@ pub async fn serve(listener: LocalListener, service: Arc<AttachService>, shutdow
         let closed = Arc::clone(&closing.closed);
         std::thread::Builder::new()
             .name("node-attach-accept".to_owned())
-            .spawn(move || {
-                loop {
-                    match listener.accept() {
-                        Ok(stream) => {
-                            if accepted.blocking_send(Ok(stream)).is_err() {
-                                return;
-                            }
-                        }
-                        Err(error)
-                            if error.kind() == std::io::ErrorKind::ConnectionAborted
-                                && closed.load(Ordering::SeqCst) =>
-                        {
-                            return;
-                        }
-                        Err(error) => {
-                            let _ = accepted.blocking_send(Err(error));
-                            return;
-                        }
-                    }
-                }
-            })
+            .spawn(move || accept_nodes(&listener, &accepted, &closed))
     };
     if let Err(error) = accepting {
         attach_stopped(&error.to_string());
@@ -302,13 +293,8 @@ pub async fn serve(listener: LocalListener, service: Arc<AttachService>, shutdow
             arrival = arrivals.recv() => arrival,
             _ = shutdown.notified() => break,
         };
-        let stream = match arrival {
-            Some(Ok(stream)) => stream,
-            Some(Err(error)) => {
-                attach_stopped(&error.to_string());
-                break;
-            }
-            None => break,
+        let Some(stream) = arrival else {
+            break;
         };
         // The folder admits only this account already; a peer the system
         // cannot name, or names as another account, is not taken either.
@@ -333,6 +319,40 @@ pub async fn serve(listener: LocalListener, service: Arc<AttachService>, shutdow
             let _permit = permit;
             take_link(stream, &service);
         });
+    }
+}
+
+/// Accepts nodes until the listener is closed. An accept that fails (out of
+/// descriptors, a peer gone before it was taken) is logged and tried again
+/// after a bounded wait, so one failure never ends the attach service while
+/// its record still tells nodes a core runs here.
+#[allow(clippy::disallowed_methods)] // a production wait between accepts, not test code
+fn accept_nodes(
+    listener: &BootstrapListener,
+    accepted: &tokio::sync::mpsc::Sender<LocalStream>,
+    closed: &AtomicBool,
+) {
+    let mut wait = ACCEPT_RETRY_FIRST;
+    loop {
+        match listener.accept() {
+            Ok(stream) => {
+                wait = ACCEPT_RETRY_FIRST;
+                if accepted.blocking_send(stream).is_err() {
+                    return;
+                }
+            }
+            Err(_) if closed.load(Ordering::SeqCst) => return,
+            Err(error) => {
+                herdr_core::diagnostic!(json!({
+                    "component": "node_link",
+                    "kind": "attach.accept_failed",
+                    "message": error.to_string(),
+                    "retry_ms": wait.as_millis() as u64,
+                }));
+                std::thread::sleep(wait);
+                wait = (wait * 2).min(ACCEPT_RETRY_MAX);
+            }
+        }
     }
 }
 
@@ -469,6 +489,17 @@ fn take_link(stream: LocalStream, service: &AttachService) {
         }
     };
     service.grants.bind(&relay_token, transport.link().clone());
+    // The grant goes with its link, so a link that ended holds nothing of
+    // its connection in the table.
+    {
+        let grants = Arc::clone(&service.grants);
+        let link = transport.link().clone();
+        let token = relay_token.clone();
+        tokio::runtime::Handle::current().spawn(async move {
+            crate::relay::link_ended(&link).await;
+            grants.revoke(&token);
+        });
+    }
     let link = transport.link().identity();
     match service
         .core
@@ -572,6 +603,10 @@ pub fn run(args: &[OsString]) -> Result<(), String> {
 /// either ends or the node falls silent, then exits the process, so no
 /// direction is left waiting on the other.
 fn pipe(core: LocalStream) -> ! {
+    // Milliseconds since `started` on the monotonic clock, so a step of the
+    // wall clock neither ends a healthy link nor hides a silent one.
+    let started = Instant::now();
+    let now_ms = move || started.elapsed().as_millis() as u64;
     let heard = Arc::new(AtomicU64::new(now_ms()));
     let (done, ended) = std::sync::mpsc::channel::<&'static str>();
     let mut to_core = core.duplicate();
@@ -640,12 +675,6 @@ fn pipe(core: LocalStream) -> ! {
         json!({"component": "node_link", "kind": "attach.ended", "reason": reason})
     );
     std::process::exit(0)
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

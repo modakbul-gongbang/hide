@@ -54,6 +54,11 @@ impl Upstream {
         &self.client.host.host_id
     }
 
+    /// The alias this connection dials, as it was read.
+    pub fn alias(&self) -> &SshAlias {
+        &self.client.host
+    }
+
     /// Dials the core's machine when the connection is not up, and runs
     /// `program attach [--state-dir <dir>]` there on a new exec channel.
     pub fn attach(&self, program: &str, state_dir: Option<&str>) -> RemoteResult<AttachChannel> {

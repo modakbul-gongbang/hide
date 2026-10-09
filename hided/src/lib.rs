@@ -148,11 +148,12 @@ impl Drop for RunningDaemon {
 pub struct RunningNode {
     pub port: u16,
     pub token: String,
-    pub _lock: std::fs::File,
     shutdown: Arc<Notify>,
-    /// Ended on drop, before the instance lock is released: the link, its
-    /// SSH connection and its thread.
+    /// Ended on drop, before the instance lock below is released (fields
+    /// drop in this order): the terminals relay, the route reaper, and the
+    /// link with its SSH connection and threads, which only this holds.
     pub node: node_daemon::NodeDaemon,
+    pub _lock: std::fs::File,
 }
 
 impl RunningNode {

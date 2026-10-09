@@ -212,7 +212,10 @@ fn wake(shared: &Shared) {
         link.shutdown();
     }
     drop(state);
-    if let Some(upstream) = lock(&shared.upstream).as_ref() {
+    // Closed outside the slot's lock: a close waits for a dial in progress,
+    // which must not hold the next attempt or the role's end behind it.
+    let upstream = lock(&shared.upstream).clone();
+    if let Some(upstream) = upstream {
         upstream.close();
     }
     shared.changed.notify_all();
@@ -227,7 +230,8 @@ impl Drop for NodeRole {
                 link.shutdown();
             }
         }
-        if let Some(upstream) = lock(&self.shared.upstream).take() {
+        let upstream = lock(&self.shared.upstream).take();
+        if let Some(upstream) = upstream {
             upstream.close();
         }
         self.shared.changed.notify_all();
@@ -338,7 +342,12 @@ fn watch(shared: &Shared) {
             continue;
         }
         match (&phase, &upstream) {
-            (Phase::Waiting { reason }, Some(upstream)) if reason.starts_with(UNREACHABLE) => {
+            // Probed only until the port answers: past that the dial failed
+            // on something else (a key, a host key, the account), and the
+            // wait's own retry tries it again.
+            (Phase::Waiting { reason }, Some(upstream))
+                if reason.starts_with(UNREACHABLE) && port.last != Some(true) =>
+            {
                 if port.came_back(upstream.reachable(PROBE_WITHIN)) {
                     herdr_core::diagnostic!(json!({
                         "component": "node_role",
@@ -444,16 +453,23 @@ fn link_once(
     identity: &NodeIdentity,
     generation: u64,
 ) -> Result<String, String> {
+    // The alias is read again for every attempt, so a fix the operator
+    // makes to it reaches the next dial; a connection to an alias that
+    // changed is ended and a new one made.
+    let alias = SshAlias::from_config_file(config, &placement.alias)
+        .map_err(|error| format!("ssh_alias: {}", error.diagnostic().reason))?;
     let upstream = {
         let mut slot = lock(&shared.upstream);
         match slot.as_ref() {
-            Some(upstream) => Arc::clone(upstream),
-            None => {
-                let alias = SshAlias::from_config_file(config, &placement.alias)
-                    .map_err(|error| format!("ssh_alias: {}", error.diagnostic().reason))?;
+            Some(upstream) if *upstream.alias() == alias => Arc::clone(upstream),
+            _ => {
                 let upstream =
                     Arc::new(Upstream::new(alias).map_err(|error| format!("ssh: {error}"))?);
-                *slot = Some(Arc::clone(&upstream));
+                let replaced = slot.replace(Arc::clone(&upstream));
+                drop(slot);
+                if let Some(replaced) = replaced {
+                    replaced.close();
+                }
                 upstream
             }
         }

@@ -16,9 +16,32 @@ pub use hide_host::pane_peer::{
     PaneIdentity, descends_from, inspect, inspect_until, process_start,
 };
 
-/// The listener a pane's process asks for a capability on: a Unix socket or
-/// a named pipe, whose system reports the caller's pid.
-pub type BootstrapListener = hide_platform::ipc::LocalListener;
+/// The listener a pane's process asks for a capability on, or a node asks
+/// its core on: a Unix socket or a named pipe, whose system reports the
+/// caller's pid. It owns the private folder [`bind_recorded`] made for it:
+/// the socket and its lock go as the listener drops, and the folder after
+/// them, so a daemon that stopped leaves no folder behind.
+pub struct BootstrapListener {
+    listener: Option<hide_platform::ipc::LocalListener>,
+    directory: PathBuf,
+}
+
+impl std::ops::Deref for BootstrapListener {
+    type Target = hide_platform::ipc::LocalListener;
+
+    fn deref(&self) -> &Self::Target {
+        self.listener
+            .as_ref()
+            .expect("the listener is held until drop")
+    }
+}
+
+impl Drop for BootstrapListener {
+    fn drop(&mut self) {
+        drop(self.listener.take());
+        let _ = fs::remove_dir(&self.directory);
+    }
+}
 
 /// The longest bootstrap socket path the record may hold: a short `/tmp`
 /// path on Unix, the account's temporary folder on Windows.
@@ -84,7 +107,13 @@ pub fn bind_recorded(
         .unwrap_or_else(|| Err(format!("{prefix} directory collision limit")))?;
     let path = directory.join(name);
     let result = (|| {
-        let listener = BootstrapListener::bind(&path).map_err(|error| error.to_string())?;
+        let listener = BootstrapListener {
+            listener: Some(
+                hide_platform::ipc::LocalListener::bind(&path)
+                    .map_err(|error| error.to_string())?,
+            ),
+            directory: directory.clone(),
+        };
         private::restrict_to_owner(&path).map_err(|error| error.to_string())?;
         let staging = record.with_extension(format!("{}.tmp", &token()[..16]));
         let mut file = private::create_new_file(&staging).map_err(|error| error.to_string())?;
@@ -167,5 +196,23 @@ mod tests {
     #[test]
     fn a_caller_that_is_gone_is_unavailable() {
         assert_eq!(caller_directory(i32::MAX), Err("caller_unavailable"));
+    }
+
+    /// A recorded listener takes its private folder with it: the socket,
+    /// its lock and the folder are gone once it drops (L4).
+    #[test]
+    fn a_recorded_listener_leaves_no_folder_behind() {
+        let state = tempfile::tempdir().unwrap();
+        let tokens = std::sync::atomic::AtomicU64::new(0);
+        let token = || {
+            let next = tokens.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            format!("{:032x}{next:032x}", std::process::id())
+        };
+        let (listener, socket) =
+            bind_recorded(&state.path().join("record"), "hide-test", "t.sock", token).unwrap();
+        let folder = socket.parent().unwrap().to_path_buf();
+        assert!(folder.is_dir());
+        drop(listener);
+        assert!(!folder.exists(), "{} was left", folder.display());
     }
 }
