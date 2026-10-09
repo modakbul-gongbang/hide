@@ -60,6 +60,31 @@ impl Herdr {
         Ok(herdr)
     }
 
+    /// Runs `herdr <args>` against this server and answers its JSON.
+    pub fn run(&self, args: &[&str]) -> Result<Value> {
+        let mut command = self.environment.command(&self.binary);
+        command.args(args);
+        serde_json::from_slice(&successful(command)?).context("private Herdr answer JSON")
+    }
+
+    /// A Herdr workspace at `folder`, and its root pane.
+    pub fn workspace_at(&self, folder: &Path) -> Result<String> {
+        let created = self.run(&[
+            "workspace",
+            "create",
+            "--label",
+            "fixture",
+            "--cwd",
+            folder.to_str().context("fixture path UTF-8")?,
+            "--focus",
+        ])?;
+        Ok(created
+            .pointer("/result/root_pane/pane_id")
+            .and_then(Value::as_str)
+            .context("private Herdr root pane")?
+            .to_owned())
+    }
+
     fn stop(&mut self) -> Result<()> {
         if let Some(mut server) = self.server.take() {
             let mut command = self.environment.command(&self.binary);
@@ -88,6 +113,8 @@ pub struct Fixture {
     removed: bool,
     _ipc: tempfile::TempDir,
     daemon: Option<OwnedChild>,
+    /// The screen machine's hided in the node role, once started.
+    node: Option<OwnedChild>,
     port: u16,
     token: String,
 }
@@ -185,6 +212,7 @@ impl Fixture {
             removed: false,
             _ipc: ipc,
             daemon: Some(daemon),
+            node: None,
             port: 0,
             token: String::new(),
         };
@@ -221,6 +249,54 @@ impl Fixture {
         &self.screen.environment.home
     }
 
+    /// Starts the screen machine's hided with the core machine recorded as
+    /// its core: it runs in the node role. Answers its port and token.
+    pub fn start_node(&mut self) -> Result<(u16, String)> {
+        let state = self._ipc.path().join("s");
+        hide_platform::fs::private::create_dir_all(&state)?;
+        let placement = self.placement();
+        let record = hided::placement::record_path(&state);
+        fs::write(
+            &record,
+            serde_json::to_vec(&json!({
+                "alias": placement.alias,
+                "node": placement.node,
+                "program": placement.program,
+                "state_dir": placement.state_dir,
+            }))?,
+        )?;
+        hide_platform::fs::private::restrict_to_owner(&record)?;
+        let mut environment = self.screen.environment.clone();
+        environment.set("HIDE_STATE_DIR", state.as_os_str());
+        environment.set("HIDE_KEEP_ALIVE", "1");
+        environment.set("HIDE_OPEN_COMMAND", "/usr/bin/true");
+        let log = File::create(self.root.join("node-hided.log"))?;
+        let mut command = environment.command(&self.hided);
+        command
+            .stdin(Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log);
+        self.node = Some(OwnedChild::spawn(&mut command)?);
+        let daemon_state: Value = wait_for("private node hided state", || {
+            let path = state.join("hided.json");
+            if !path.exists() {
+                return Ok(None);
+            }
+            Ok(serde_json::from_slice(&read(&path)?).ok())
+        })?;
+        let port = daemon_state["port"].as_u64().context("node port")? as u16;
+        let token = daemon_state["token"]
+            .as_str()
+            .context("node token")?
+            .to_owned();
+        Ok((port, token))
+    }
+
+    /// The node role's diagnostic rows of `component` and `kind`.
+    pub fn node_log(&self, component: &str, kind: &str) -> Result<Vec<Value>> {
+        log_rows(&self._ipc.path().join("s/Logs/core.jsonl"), component, kind)
+    }
+
     pub fn snapshot(&self) -> Result<Value> {
         Ok(Renderer::connect(self.port, &self.token)?
             .snapshot()
@@ -243,15 +319,7 @@ impl Fixture {
 
     /// The core's diagnostic rows of `component` and `kind`.
     pub fn core_log(&self, component: &str, kind: &str) -> Result<Vec<Value>> {
-        let path = self.core_state.join("Logs/core.jsonl");
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-        Ok(String::from_utf8(read(&path)?)?
-            .lines()
-            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-            .filter(|row| row["component"] == component && row["kind"] == kind)
-            .collect())
+        log_rows(&self.core_state.join("Logs/core.jsonl"), component, kind)
     }
 
     pub fn create_workspace_on(&self, node: &str, path: &Path) -> Result<()> {
@@ -262,6 +330,12 @@ impl Fixture {
     }
 
     pub fn stop(&mut self) -> Result<()> {
+        if let Some(mut node) = self.node.take() {
+            node.kill_tree()?;
+            wait_for("private node hided confirmed exit", || {
+                Ok(node.try_wait()?.map(|_| ()))
+            })?;
+        }
         if let Some(mut daemon) = self.daemon.take() {
             daemon.kill_tree()?;
             wait_for("private core hided confirmed exit", || {
@@ -294,4 +368,15 @@ impl Drop for Fixture {
             eprintln!("private remote core fixture cleanup failed, evidence retained: {error}");
         }
     }
+}
+
+fn log_rows(path: &Path, component: &str, kind: &str) -> Result<Vec<Value>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    Ok(String::from_utf8(read(path)?)?
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|row| row["component"] == component && row["kind"] == kind)
+        .collect())
 }

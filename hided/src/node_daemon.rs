@@ -1,0 +1,717 @@
+//! This daemon on a screen machine whose core runs elsewhere (PRD
+//! core-host-node-remote-core D-02, D-05, D-06, D-08): it starts no core.
+//! It keeps its node's link to the core ([`NodeRole`]) and serves its own
+//! screens on loopback exactly as a core's daemon does, `/ws` included, so
+//! the screen and the desktop host cannot tell the difference.
+//!
+//! Each screen's core traffic (events, snapshots and deltas, answers) goes
+//! to the core through one relay per screen on the link's SSH connection.
+//! Terminals are drawn from this daemon's own hub: this machine's panes
+//! from its own terminals without the link, every other pane from the one
+//! terminals relay the node keeps to the core. So a key into one of this
+//! machine's panes and its output never leave the machine.
+//!
+//! While the link is down a screen is held: its socket stays open, every
+//! frame it sends is dropped and counted, and nothing reaches it until the
+//! link is back; a screen that was attached when the link ended is closed
+//! once, so its next attempt is the held one (amendment 4 of the plan's
+//! review). Keys typed meanwhile are never delivered later (B8).
+
+use std::collections::HashSet;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use axum::Router;
+use axum::extract::State;
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::http::{HeaderMap, Uri};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use futures_util::{SinkExt, StreamExt};
+use hide_node::terminal::OutputSink;
+use hide_node_link::terminal::{
+    KeyTarget, MAX_PANE_ID_BYTES, TerminalDown, TerminalLine, TerminalNode, TerminalUp,
+    decode_base64, device_pane_prefix, encode_base64,
+};
+use serde_json::{Value, json};
+use tokio::sync::{Notify, mpsc, watch};
+use tokio_tungstenite::tungstenite;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+use crate::node_role::{LiveLink, NodeIdentity, NodeRole, Phase};
+use crate::placement::Placement;
+use crate::server::{
+    CloseReason, FIRST_FRAME_TIMEOUT, Handshake, RELAY_GRANT_HEADER, check_origin, refuse,
+    terminal_key, terminal_view,
+};
+use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
+use crate::terminal_hub::{HubClient, Resume, TerminalHub};
+
+/// Terminal lines for the core's panes waiting to go up the terminals
+/// relay; past it a key is refused and counted, never queued without end.
+const RELAY_LINES: usize = 1024;
+/// How long a terminals relay that failed waits before it opens again on
+/// the same link.
+const RELAY_RETRY: Duration = Duration::from_secs(1);
+/// The largest message a relay of the core may send this daemon.
+const RELAY_MAX_MESSAGE: usize = 16 * 1024 * 1024;
+
+/// What the node role's screen server holds.
+#[derive(Clone)]
+pub struct NodeState {
+    pub token: Arc<String>,
+    pub allowed_origins: Arc<HashSet<String>>,
+    pub ui_dir: Option<PathBuf>,
+    pub version: &'static str,
+    pub build: Option<Arc<str>>,
+    pub hub: Arc<TerminalHub>,
+    pub terminals: Arc<ScreenTerminals>,
+    pub live: watch::Receiver<Option<Arc<LiveLink>>>,
+    pub phase: Arc<dyn Fn() -> Phase + Send + Sync>,
+    pub clients: Arc<AtomicUsize>,
+    pub connections: Arc<AtomicU64>,
+    pub last_client_gone: Arc<Mutex<Instant>>,
+    pub shutdown: Arc<Notify>,
+    /// Frames screens sent while the link was down, dropped.
+    pub held_frames: Arc<AtomicU64>,
+}
+
+/// This machine's panes, as its hub names them: the core's names for them.
+struct OwnPanes {
+    hub: Arc<TerminalHub>,
+    prefix: String,
+}
+
+impl OutputSink for OwnPanes {
+    fn output(&self, pane: &str, bytes: &[u8], full: bool) {
+        self.hub
+            .output(&format!("{}{pane}", self.prefix), bytes, full);
+    }
+
+    fn forget(&self, pane: &str) {
+        self.hub.forget(&format!("{}{pane}", self.prefix));
+    }
+}
+
+/// Where a screen's keys, views and redraws go: this machine's panes to
+/// its own terminals for the link's life, every other pane up the
+/// terminals relay.
+pub struct ScreenTerminals {
+    own_prefix: String,
+    live: watch::Receiver<Option<Arc<LiveLink>>>,
+    relay: Mutex<Option<mpsc::Sender<String>>>,
+    refused: AtomicU64,
+}
+
+impl ScreenTerminals {
+    fn own(&self) -> Option<Arc<LiveLink>> {
+        self.live.borrow().clone()
+    }
+
+    fn up(&self, line: TerminalDown) {
+        let Ok(text) = serde_json::to_string(&TerminalLine { terminal: line }) else {
+            return;
+        };
+        let sent = lock(&self.relay)
+            .as_ref()
+            .is_some_and(|relay| relay.try_send(text).is_ok());
+        if !sent {
+            let refused = self.refused.fetch_add(1, Ordering::Relaxed) + 1;
+            if refused.is_power_of_two() {
+                herdr_core::diagnostic!(json!({
+                    "component": "node_daemon",
+                    "kind": "terminals.relay_refused",
+                    "refused": refused,
+                    "cap": RELAY_LINES,
+                }));
+            }
+        }
+    }
+}
+
+impl TerminalNode for ScreenTerminals {
+    fn control(&self, _control: hide_node_link::terminal::TerminalControl) {}
+
+    fn key(&self, target: KeyTarget, bytes: Vec<u8>, typed_at_unix_ms: u64) {
+        if let KeyTarget::Pane(pane) = &target
+            && let Some(own) = pane.strip_prefix(&self.own_prefix)
+        {
+            if let Some(link) = self.own() {
+                link.terminals
+                    .key(KeyTarget::Pane(own.to_owned()), bytes, typed_at_unix_ms);
+            }
+            return;
+        }
+        self.up(TerminalDown::Key {
+            target,
+            data: encode_base64(&bytes),
+            typed_at_unix_ms,
+        });
+    }
+
+    fn view(&self, pane: &str, size: hide_node_link::terminal::GridSize, new_view: bool) {
+        if let Some(own) = pane.strip_prefix(&self.own_prefix) {
+            if let Some(link) = self.own() {
+                link.terminals.view(own, size, new_view);
+            }
+            return;
+        }
+        self.up(TerminalDown::View {
+            pane: pane.to_owned(),
+            size,
+            new_view,
+        });
+    }
+
+    fn redraw(&self, pane: &str) {
+        if let Some(own) = pane.strip_prefix(&self.own_prefix) {
+            if let Some(link) = self.own() {
+                link.terminals.redraw(own);
+            }
+            return;
+        }
+        self.up(TerminalDown::Redraw {
+            pane: pane.to_owned(),
+        });
+    }
+}
+
+/// The node role, running: its link and its screen server.
+pub struct NodeDaemon {
+    pub state: NodeState,
+    role: Arc<NodeRole>,
+    relay: tokio::task::JoinHandle<()>,
+}
+
+impl NodeDaemon {
+    /// Starts the link to the core `placement` names and the terminals
+    /// relay that follows it; the caller serves [`router`] with `state`.
+    pub fn start(
+        home: &std::path::Path,
+        placement: Placement,
+        identity: NodeIdentity,
+        server: ServerParts,
+    ) -> Result<Self, String> {
+        let hub = TerminalHub::new();
+        let own_prefix = device_pane_prefix(&identity.node);
+        let role = Arc::new(NodeRole::start(
+            home,
+            placement,
+            identity,
+            Arc::new(OwnPanes {
+                hub: Arc::clone(&hub),
+                prefix: own_prefix.clone(),
+            }),
+        )?);
+        let live = role.live();
+        let terminals = Arc::new(ScreenTerminals {
+            own_prefix: own_prefix.clone(),
+            live: live.clone(),
+            relay: Mutex::new(None),
+            refused: AtomicU64::new(0),
+        });
+        let relay = tokio::spawn(keep_terminals_relay(
+            live.clone(),
+            Arc::clone(&hub),
+            Arc::clone(&terminals),
+        ));
+        let phase = {
+            let role = Arc::clone(&role);
+            Arc::new(move || role.phase()) as Arc<dyn Fn() -> Phase + Send + Sync>
+        };
+        Ok(Self {
+            state: NodeState {
+                token: server.token,
+                allowed_origins: server.allowed_origins,
+                ui_dir: server.ui_dir,
+                version: server.version,
+                build: server.build,
+                hub,
+                terminals,
+                live,
+                phase,
+                clients: Arc::new(AtomicUsize::new(0)),
+                connections: Arc::new(AtomicU64::new(0)),
+                last_client_gone: Arc::new(Mutex::new(Instant::now())),
+                shutdown: server.shutdown,
+                held_frames: Arc::new(AtomicU64::new(0)),
+            },
+            role,
+            relay,
+        })
+    }
+
+    /// The link's phase, for a caller that waits on it.
+    pub fn role(&self) -> &NodeRole {
+        &self.role
+    }
+}
+
+impl Drop for NodeDaemon {
+    fn drop(&mut self) {
+        self.relay.abort();
+        lock(&self.state.terminals.relay).take();
+    }
+}
+
+/// What the screen server is given by the daemon that starts it.
+pub struct ServerParts {
+    pub token: Arc<String>,
+    pub allowed_origins: Arc<HashSet<String>>,
+    pub ui_dir: Option<PathBuf>,
+    pub version: &'static str,
+    pub build: Option<Arc<str>>,
+    pub shutdown: Arc<Notify>,
+}
+
+pub fn router(state: NodeState) -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .route("/ws", get(ws_upgrade))
+        .route("/", get(static_asset))
+        .route("/assets/{*path}", get(static_asset))
+        .fallback(|| async { axum::http::StatusCode::NOT_FOUND })
+        .with_state(state)
+}
+
+/// What `hide connect` reads, as a core's daemon answers it, and where the
+/// link to the core stands.
+async fn health(State(state): State<NodeState>) -> impl IntoResponse {
+    let phase = (state.phase)();
+    let (link, reason) = match &phase {
+        Phase::Connecting => ("connecting", None),
+        Phase::Live(_) => ("live", None),
+        Phase::Waiting { reason } => ("waiting", Some(reason.clone())),
+    };
+    axum::Json(json!({
+        "pid": std::process::id(),
+        "version": state.version,
+        "build": state.build.as_deref(),
+        "schema_version": SCHEMA_VERSION,
+        "clients": state.clients.load(Ordering::SeqCst),
+        "open_handlers_in_flight": 0,
+        "idle_remaining_secs": Value::Null,
+        "role": "node",
+        "core_link": link,
+        "core_link_reason": reason,
+    }))
+}
+
+async fn static_asset(uri: Uri, State(state): State<NodeState>) -> Response {
+    crate::server::ui_asset(state.ui_dir.as_deref(), uri.path()).await
+}
+
+async fn ws_upgrade(
+    ws: WebSocketUpgrade,
+    headers: HeaderMap,
+    State(state): State<NodeState>,
+) -> Response {
+    let origin = headers
+        .get("origin")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    // A screen of this machine only: the node role serves no phone and
+    // nothing through `tailscale serve`.
+    let proxied = crate::server::via_tailnet(&headers);
+    ws.on_upgrade(move |socket| screen(socket, state, origin, proxied))
+}
+
+async fn screen(mut socket: WebSocket, state: NodeState, origin: Option<String>, proxied: bool) {
+    if proxied || check_origin(origin.as_deref(), &state.allowed_origins).is_err() {
+        refuse(&mut socket, CloseReason::OriginNotAllowed, None).await;
+        return;
+    }
+    let handshake_text = match tokio::time::timeout(FIRST_FRAME_TIMEOUT, socket.recv()).await {
+        Ok(Some(Ok(Message::Text(text)))) => text.to_string(),
+        _ => {
+            refuse(&mut socket, CloseReason::InvalidToken, None).await;
+            return;
+        }
+    };
+    let Ok(handshake) = serde_json::from_str::<Handshake>(&handshake_text) else {
+        refuse(&mut socket, CloseReason::InvalidToken, None).await;
+        return;
+    };
+    if handshake.schema_version != SCHEMA_VERSION {
+        refuse(&mut socket, CloseReason::SchemaMismatch, None).await;
+        return;
+    }
+    if !crate::server::token_matches(&handshake.token, &state.token) {
+        refuse(&mut socket, CloseReason::InvalidToken, None).await;
+        return;
+    }
+    let previous = state.clients.fetch_add(1, Ordering::SeqCst);
+    if previous >= MAX_CLIENTS {
+        state.clients.fetch_sub(1, Ordering::SeqCst);
+        refuse(&mut socket, CloseReason::ClientLimit, Some(previous + 1)).await;
+        return;
+    }
+    let connection = state.connections.fetch_add(1, Ordering::SeqCst);
+    let ended = attached(&mut socket, &state, handshake, &handshake_text, connection).await;
+    herdr_core::diagnostic!(json!({
+        "component": "node_daemon",
+        "kind": "screen.ended",
+        "connection": connection,
+        "reason": ended,
+    }));
+    if ended == "link_ended" {
+        let _ = socket
+            .send(Message::Close(Some(CloseFrame {
+                code: 1012,
+                reason: "core_link_lost".into(),
+            })))
+            .await;
+    }
+    let remaining = state
+        .clients
+        .fetch_sub(1, Ordering::SeqCst)
+        .saturating_sub(1);
+    if remaining == 0 {
+        *state
+            .last_client_gone
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Instant::now();
+    }
+}
+
+type Upstream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Opens a relay of `mode` to the core through the link's forward.
+async fn open_relay(link: &LiveLink, mode: &str) -> Result<Upstream, String> {
+    let address = SocketAddr::from(([127, 0, 0, 1], link.relay_port));
+    let mut request = format!("ws://{address}/relay?mode={mode}")
+        .into_client_request()
+        .map_err(|error| error.to_string())?;
+    request.headers_mut().insert(
+        RELAY_GRANT_HEADER,
+        link.accepted
+            .relay_token
+            .parse()
+            .map_err(|_| "the relay grant is not a header value".to_owned())?,
+    );
+    let config = tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(RELAY_MAX_MESSAGE))
+        .max_frame_size(Some(RELAY_MAX_MESSAGE));
+    let (socket, _) = tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio_tungstenite::connect_async_with_config(request, Some(config), true),
+    )
+    .await
+    .map_err(|_| "the relay did not open in time".to_owned())?
+    .map_err(|error| error.to_string())?;
+    Ok(socket)
+}
+
+/// Waits for a live link, holding the screen: what it sends meanwhile is
+/// dropped and counted. `None` when the screen left first.
+async fn hold(socket: &mut WebSocket, state: &NodeState) -> Option<Arc<LiveLink>> {
+    let mut live = state.live.clone();
+    loop {
+        if let Some(link) = live.borrow_and_update().clone() {
+            return Some(link);
+        }
+        tokio::select! {
+            changed = live.changed() => {
+                if changed.is_err() {
+                    return None;
+                }
+            }
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return None,
+                Some(Ok(_)) => {
+                    state.held_frames.fetch_add(1, Ordering::Relaxed);
+                }
+            },
+        }
+    }
+}
+
+/// One screen while the link stands: its core traffic through its relay,
+/// its terminals from this daemon's hub. Answers why it ended.
+async fn attached(
+    socket: &mut WebSocket,
+    state: &NodeState,
+    handshake: Handshake,
+    handshake_text: &str,
+    connection: u64,
+) -> &'static str {
+    let Some(link) = hold(socket, state).await else {
+        return "screen_closed";
+    };
+    let mut upstream = match open_relay(&link, "screen").await {
+        Ok(upstream) => upstream,
+        Err(message) => {
+            herdr_core::diagnostic!(json!({
+                "component": "node_daemon",
+                "kind": "screen.relay_failed",
+                "connection": connection,
+                "message": message,
+            }));
+            return "link_ended";
+        }
+    };
+    if upstream
+        .send(tungstenite::Message::Text(handshake_text.into()))
+        .await
+        .is_err()
+    {
+        return "link_ended";
+    }
+    let mut live = state.live.clone();
+    let mut terminals: Option<HubClient> = None;
+    loop {
+        tokio::select! {
+            changed = live.changed() => {
+                let same = changed.is_ok()
+                    && live
+                        .borrow_and_update()
+                        .as_ref()
+                        .is_some_and(|now| now.generation == link.generation);
+                if !same {
+                    return "link_ended";
+                }
+            }
+            () = async {
+                match &terminals {
+                    Some(client) => client.ready().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                let Some(client) = &terminals else { continue };
+                let (frame, redraws) = client.take();
+                for pane in redraws {
+                    state.terminals.redraw(&pane);
+                }
+                if let Some(frame) = frame
+                    && socket.send(Message::Text(frame.text.into())).await.is_err()
+                {
+                    return "screen_closed";
+                }
+            }
+            from_core = upstream.next() => {
+                let message = match from_core {
+                    Some(Ok(message)) => message,
+                    _ => return "link_ended",
+                };
+                match message {
+                    tungstenite::Message::Text(text) => {
+                        let kind = frame_kind(&text);
+                        match (kind, &terminals) {
+                            (Some(kind), None) => {
+                                terminals = Some(state.hub.connect(resume(kind, &handshake)));
+                            }
+                            (Some(FrameStart::Snapshot), Some(client)) => client.restart(),
+                            _ => {}
+                        }
+                        if socket.send(Message::Text(text.as_str().into())).await.is_err() {
+                            return "screen_closed";
+                        }
+                    }
+                    tungstenite::Message::Binary(bytes) => {
+                        if socket.send(Message::Binary(bytes)).await.is_err() {
+                            return "screen_closed";
+                        }
+                    }
+                    tungstenite::Message::Close(_) => return "link_ended",
+                    _ => {}
+                }
+            }
+            from_screen = socket.recv() => {
+                let message = match from_screen {
+                    Some(Ok(message)) => message,
+                    _ => {
+                        let _ = upstream.close(None).await;
+                        return "screen_closed";
+                    }
+                };
+                match message {
+                    Message::Text(text) => {
+                        if let Some(reply) = take_terminal_event(state, &text) {
+                            if let Err(error) = reply {
+                                let frame = json!({"type":"error","payload":{},"message": error});
+                                if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                                    return "screen_closed";
+                                }
+                            }
+                            continue;
+                        }
+                        if upstream.send(tungstenite::Message::Text(text.as_str().into())).await.is_err() {
+                            return "link_ended";
+                        }
+                    }
+                    Message::Binary(bytes) => {
+                        if upstream.send(tungstenite::Message::Binary(bytes)).await.is_err() {
+                            return "link_ended";
+                        }
+                    }
+                    Message::Close(_) => {
+                        let _ = upstream.close(None).await;
+                        return "screen_closed";
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FrameStart {
+    Snapshot,
+    Delta,
+}
+
+/// Whether a core frame is a whole snapshot or a delta, read from its
+/// `type` alone.
+fn frame_kind(text: &str) -> Option<FrameStart> {
+    let head = text.get(..text.len().min(32))?;
+    if head.starts_with(r#"{"type":"snapshot""#) {
+        Some(FrameStart::Snapshot)
+    } else if head.starts_with(r#"{"type":"delta""#) {
+        Some(FrameStart::Delta)
+    } else {
+        None
+    }
+}
+
+/// Where a screen's terminals start in this daemon's hub, by the first
+/// core frame it got, as a core's daemon decides it.
+fn resume(first: FrameStart, handshake: &Handshake) -> Resume {
+    match (
+        first,
+        handshake.have_terminal_sequence,
+        handshake.have_terminal_epoch.clone(),
+    ) {
+        (FrameStart::Snapshot, _, _) => Resume::Fresh,
+        (FrameStart::Delta, Some(cursor), Some(epoch)) => Resume::After { epoch, cursor },
+        (FrameStart::Delta, _, _) => Resume::Redraw,
+    }
+}
+
+/// A screen's key or view, taken here; `None` for every other event, which
+/// goes to the core.
+fn take_terminal_event(state: &NodeState, text: &str) -> Option<Result<(), String>> {
+    // A key or a view names its kind first; anything else is not parsed.
+    if !text.contains(r#""kind":"key""#) && !text.contains(r#""kind":"terminal_viewport""#) {
+        return None;
+    }
+    let event: Value = serde_json::from_str(text).ok()?;
+    match event.get("kind").and_then(Value::as_str) {
+        Some("key") => Some(terminal_key(&event).map(|(target, bytes)| {
+            state
+                .terminals
+                .key(target, bytes, crate::server::unix_ms_now());
+        })),
+        Some("terminal_viewport") => Some(terminal_view(&event).map(|(pane, size, new_view)| {
+            state.terminals.view(&pane, size, new_view);
+        })),
+        _ => None,
+    }
+}
+
+/// Keeps one terminals relay to the core for each live link: the core's
+/// panes' output into this daemon's hub, and screens' keys, views and
+/// redraws for those panes up to the core.
+async fn keep_terminals_relay(
+    mut live: watch::Receiver<Option<Arc<LiveLink>>>,
+    hub: Arc<TerminalHub>,
+    terminals: Arc<ScreenTerminals>,
+) {
+    loop {
+        let link = live.borrow_and_update().clone();
+        let Some(link) = link else {
+            if live.changed().await.is_err() {
+                return;
+            }
+            continue;
+        };
+        let ended = terminals_relay(&link, &mut live, &hub, &terminals).await;
+        lock(&terminals.relay).take();
+        herdr_core::diagnostic!(json!({
+            "component": "node_daemon",
+            "kind": "terminals.relay_ended",
+            "generation": link.generation,
+            "reason": ended,
+        }));
+        let still = live
+            .borrow()
+            .as_ref()
+            .is_some_and(|now| now.generation == link.generation);
+        if still {
+            tokio::time::sleep(RELAY_RETRY).await;
+        }
+    }
+}
+
+async fn terminals_relay(
+    link: &LiveLink,
+    live: &mut watch::Receiver<Option<Arc<LiveLink>>>,
+    hub: &TerminalHub,
+    terminals: &ScreenTerminals,
+) -> String {
+    let mut upstream = match open_relay(link, "terminals").await {
+        Ok(upstream) => upstream,
+        Err(message) => return format!("open_failed: {message}"),
+    };
+    let (sender, mut lines) = mpsc::channel::<String>(RELAY_LINES);
+    *lock(&terminals.relay) = Some(sender);
+    loop {
+        tokio::select! {
+            changed = live.changed() => {
+                let same = changed.is_ok()
+                    && live
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|now| now.generation == link.generation);
+                if !same {
+                    let _ = upstream.close(None).await;
+                    return "link_ended".to_owned();
+                }
+            }
+            Some(line) = lines.recv() => {
+                if upstream.send(tungstenite::Message::Text(line.into())).await.is_err() {
+                    return "core_closed".to_owned();
+                }
+            }
+            from_core = upstream.next() => match from_core {
+                Some(Ok(tungstenite::Message::Text(text))) => {
+                    ingest(hub, &terminals.own_prefix, &text);
+                }
+                Some(Ok(tungstenite::Message::Close(_))) | None | Some(Err(_)) => {
+                    return "core_closed".to_owned();
+                }
+                Some(Ok(_)) => {}
+            },
+        }
+    }
+}
+
+/// The core's panes' output, one terminal line each, into the hub.
+fn ingest(hub: &TerminalHub, own_prefix: &str, text: &str) {
+    for line in text.lines() {
+        let output = match serde_json::from_str::<TerminalLine<TerminalUp>>(line) {
+            Ok(TerminalLine {
+                terminal: TerminalUp::Output(output),
+            }) => output,
+            _ => continue,
+        };
+        // The core sends no pane of this machine; one it did is not drawn
+        // over this machine's own.
+        if output.pane.starts_with(own_prefix) || output.pane.len() > MAX_PANE_ID_BYTES {
+            continue;
+        }
+        if let Ok(bytes) = decode_base64(&output.data) {
+            hub.output(&output.pane, &bytes, output.full);
+        }
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}

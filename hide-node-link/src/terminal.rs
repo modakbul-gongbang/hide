@@ -135,6 +135,12 @@ pub enum TerminalControl {
     /// Report when the pane's next frame reaches the screen. A node keeps
     /// at most [`MAX_FRAME_WATCHES`] of them, apart from its panes.
     WatchFrame { pane: String },
+    /// Whether the core has a screen of its own that draws this node's
+    /// panes, for a node that draws them on its own screens (PRD
+    /// core-host-node-remote-core D-06): while it has none, the node's pane
+    /// output stays on the node, and when one arrives every pane it holds
+    /// is sent again whole.
+    Mirror { on: bool },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -498,7 +504,8 @@ impl TerminalControl {
             | Self::RequestDiscard { .. }
             | Self::AttachmentRefuse { .. }
             | Self::AttachmentDeliver { .. }
-            | Self::AttachmentRelease { .. } => None,
+            | Self::AttachmentRelease { .. }
+            | Self::Mirror { .. } => None,
         }
     }
 }

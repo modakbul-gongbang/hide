@@ -914,6 +914,8 @@ impl Inner {
                 }
             }
             TerminalControl::WatchFrame { pane } => self.watch_frame(pane, now),
+            // The node's link decides where output goes, not its service.
+            TerminalControl::Mirror { .. } => {}
         }
     }
 

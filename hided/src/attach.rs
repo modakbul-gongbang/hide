@@ -50,6 +50,9 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_ATTACHING: usize = 4;
 /// Grants held at once: one per linked node and a few being handed out.
 const MAX_GRANTS: usize = 16;
+/// How long a relay waits for a grant handed out moments ago to be bound to
+/// its link: the node's Hello and the core's acceptance, with room.
+const GRANT_BIND_WAIT: Duration = Duration::from_secs(10);
 
 /// What the attach role answers when no core runs on its machine.
 pub const NO_CORE: &str = "no_core";
@@ -190,6 +193,27 @@ impl RelayGrants {
 
     fn revoke(&self, token: &str) {
         lock(&self.grants).remove(token);
+    }
+
+    /// The node and link `token` was granted on, waiting up to
+    /// [`GRANT_BIND_WAIT`] for a grant handed out moments ago to be bound:
+    /// the node's screens may ask before the core finished taking its link.
+    pub async fn admit(&self, token: &str) -> Option<(String, RemoteHost)> {
+        let deadline = tokio::time::Instant::now() + GRANT_BIND_WAIT;
+        loop {
+            {
+                let grants = lock(&self.grants);
+                let grant = grants.get(token)?;
+                if grant.link.is_some() {
+                    drop(grants);
+                    return self.valid(token);
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return None;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 
     /// The node and link `token` was granted on, while that link lives.

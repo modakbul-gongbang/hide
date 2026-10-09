@@ -19,8 +19,11 @@ use std::time::{Duration, Instant};
 
 use hide_node::ssh::SshAlias;
 use hide_node::ssh::upstream::Upstream;
+use hide_node::terminal::OutputSink;
+use hide_node::terminal::device::NodeTerminals;
 use hide_platform::ipc::{LocalStream, ShutdownHandle};
 use serde_json::json;
+use tokio::sync::watch;
 
 use crate::attach::{self, Accepted, Line, NodeHello};
 use crate::placement::Placement;
@@ -43,6 +46,22 @@ pub struct NodeIdentity {
     /// This machine's own Herdr, which the core reaches only through the
     /// link.
     pub herdr_socket: PathBuf,
+    /// The Herdr binary this machine's panes attach with.
+    pub herdr_bin: PathBuf,
+}
+
+/// A link the core took, as the node's screens reach the core through it.
+pub struct LiveLink {
+    /// Counts links since the role started: a screen that opened on one
+    /// link ends with it.
+    pub generation: u64,
+    pub accepted: Accepted,
+    /// The loopback port on this machine whose connections reach the
+    /// core's port through the link's SSH connection.
+    pub relay_port: u16,
+    /// This node's terminals for the link's life: the node's screens send
+    /// its own panes' keys and views here, without the link.
+    pub terminals: Arc<NodeTerminals>,
 }
 
 /// Where the node's link is.
@@ -69,6 +88,9 @@ struct Shared {
     state: Mutex<State>,
     changed: Condvar,
     upstream: Mutex<Option<Arc<Upstream>>>,
+    live: watch::Sender<Option<Arc<LiveLink>>>,
+    /// Where the node's own panes' output goes besides the link.
+    screen: Arc<dyn OutputSink>,
 }
 
 /// The node role's link to its core, held for as long as the daemon runs.
@@ -80,10 +102,12 @@ pub struct NodeRole {
 impl NodeRole {
     /// Starts keeping the link to the core `placement` names; `home` is
     /// the account whose `~/.ssh/config` names its alias.
+    /// Its own panes' output reaches `screen`, the node's screens.
     pub fn start(
         home: &Path,
         placement: Placement,
         identity: NodeIdentity,
+        screen: Arc<dyn OutputSink>,
     ) -> Result<Self, String> {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
@@ -94,6 +118,8 @@ impl NodeRole {
             }),
             changed: Condvar::new(),
             upstream: Mutex::new(None),
+            live: watch::Sender::new(None),
+            screen,
         });
         let config = home.join(".ssh/config");
         let thread = {
@@ -111,6 +137,11 @@ impl NodeRole {
 
     pub fn phase(&self) -> Phase {
         lock(&self.shared.state).phase.clone()
+    }
+
+    /// The live link, as it changes: `None` while there is none.
+    pub fn live(&self) -> watch::Receiver<Option<Arc<LiveLink>>> {
+        self.shared.live.subscribe()
     }
 
     /// Waits up to `timeout` for the phase to satisfy `done`, and answers
@@ -170,12 +201,15 @@ impl Drop for NodeRole {
 
 fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: &NodeIdentity) {
     let mut wait = FIRST_WAIT;
+    let mut generation = 0;
     loop {
+        generation += 1;
         if set_phase(shared, Phase::Connecting) {
             return;
         }
         let started = Instant::now();
-        let ended = link_once(shared, config, placement, identity);
+        let ended = link_once(shared, config, placement, identity, generation);
+        shared.live.send_replace(None);
         let reason = match ended {
             Ok(reason) | Err(reason) => reason,
         };
@@ -234,6 +268,7 @@ fn link_once(
     config: &Path,
     placement: &Placement,
     identity: &NodeIdentity,
+    generation: u64,
 ) -> Result<String, String> {
     let upstream = {
         let mut slot = lock(&shared.upstream);
@@ -260,7 +295,15 @@ fn link_once(
         }
         state.link = Some(stream.shutdown_handle());
     }
-    let ended = serve_link(&stream, placement, identity, shared, &channel.stderr);
+    let ended = serve_link(
+        &stream,
+        placement,
+        identity,
+        shared,
+        &channel.stderr,
+        &upstream,
+        generation,
+    );
     lock(&shared.state).link = None;
     stream.shutdown_handle().shutdown();
     ended
@@ -272,6 +315,8 @@ fn serve_link(
     identity: &NodeIdentity,
     shared: &Shared,
     stderr: &Mutex<Vec<u8>>,
+    upstream: &Upstream,
+    generation: u64,
 ) -> Result<String, String> {
     let mut reader = BufReader::new(stream.duplicate());
     let mut writer = stream.duplicate();
@@ -319,10 +364,28 @@ fn serve_link(
         "core": placement.node,
         "port": accepted.port,
     }));
-    if set_phase(shared, Phase::Live(accepted)) {
+    // The screens' way to the core: held for the link's life, and ended
+    // with it.
+    let forward = upstream
+        .forward(accepted.port)
+        .map_err(|error| format!("relay_forward: {error}"))?;
+    let terminals = Arc::new(NodeTerminals::for_screen(
+        Arc::clone(&shared.screen),
+        identity.herdr_bin.clone(),
+    ));
+    if set_phase(shared, Phase::Live(accepted.clone())) {
         return Err("stopping".to_owned());
     }
-    serve(reader, writer, identity)
+    shared.live.send_replace(Some(Arc::new(LiveLink {
+        generation,
+        accepted,
+        relay_port: forward.port(),
+        terminals: Arc::clone(&terminals),
+    })));
+    let ended = serve(reader, writer, identity, &terminals);
+    shared.live.send_replace(None);
+    drop(forward);
+    ended
 }
 
 /// Answers the core's calls until the link ends. The reader keeps what it
@@ -331,13 +394,13 @@ fn serve(
     reader: impl BufRead,
     writer: LocalStream,
     identity: &NodeIdentity,
+    terminals: &NodeTerminals,
 ) -> Result<String, String> {
-    let terminals = hide_node::terminal::device::NodeTerminals::new();
     hide_host::serve::serve_with(
         reader,
         writer,
         hide_host::serve::Services {
-            terminals: Some(&terminals),
+            terminals: Some(terminals),
             herdr_socket: Some(identity.herdr_socket.clone()),
             heartbeat: true,
         },

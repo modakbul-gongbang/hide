@@ -132,6 +132,9 @@ pub struct CoreHandle {
     pub terminals: Arc<Router>,
     /// The output every node's terminals produce, as each screen reads it.
     pub hub: Arc<TerminalHub>,
+    /// What every pane's output reaches: the hub, and the terminals relay
+    /// of each linked node (`relay`).
+    pub outputs: Arc<crate::relay::ScreenOutputs>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -258,16 +261,17 @@ impl CoreHandle {
         let (reports, terminal_reports) = herdr_core::terminal_reports::terminal_reports();
         let reports: Arc<dyn ReportSink> = Arc::new(reports);
         let hub = TerminalHub::new();
+        let outputs = crate::relay::ScreenOutputs::new(Arc::clone(&hub));
         let local = Service::start(
             local_attacher(&options),
-            Arc::clone(&hub) as Arc<dyn OutputSink>,
+            Arc::clone(&outputs) as Arc<dyn OutputSink>,
             Arc::clone(&reports),
             RetryPolicy::Automatic,
         )
         .map_err(|error| format!("terminal service failed to start: {error}"))?;
         let terminals = Arc::new(Router::new(
             Arc::new(local),
-            Arc::clone(&hub) as Arc<dyn OutputSink>,
+            Arc::clone(&outputs) as Arc<dyn OutputSink>,
             reports,
         ));
         let routes = Arc::clone(&terminals);
@@ -293,6 +297,7 @@ impl CoreHandle {
             notify: notify_tx,
             terminals,
             hub,
+            outputs,
             thread: Mutex::new(Some(thread)),
         })
     }

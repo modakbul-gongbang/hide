@@ -98,6 +98,10 @@ struct PaneUplink {
 #[derive(Default)]
 struct UplinkState {
     stopped: bool,
+    /// The core has no screen of its own drawing this node's panes, which
+    /// the node draws on its own (`TerminalControl::Mirror`): output stays
+    /// here, and each pane that had some is sent again whole once one does.
+    withheld: bool,
     /// Kept as what they say until the writer takes them, so a full queue
     /// can fold a report into the waiting one about its subject.
     reports: VecDeque<TerminalReport>,
@@ -159,14 +163,18 @@ impl Uplink {
     }
 
     fn push_output(&self, pane: &str, bytes: &[u8], full: bool) {
-        // A pane waiting for its full frame takes nothing else, unencoded.
-        if !full
-            && lock(&self.state)
-                .panes
-                .get(pane)
-                .is_some_and(|entry| entry.dropping)
         {
-            return;
+            let mut state = lock(&self.state);
+            if state.withheld {
+                if !state.stopped {
+                    state.panes.entry(pane.to_owned()).or_default().dropping = true;
+                }
+                return;
+            }
+            // A pane waiting for its full frame takes nothing else, unencoded.
+            if !full && state.panes.get(pane).is_some_and(|entry| entry.dropping) {
+                return;
+            }
         }
         // Encoded before the lock, so a large frame holds up no other
         // pane's output, no report and not the writer's next line; the
@@ -313,6 +321,33 @@ impl Uplink {
         }
     }
 
+    /// Withholds pane output from the link, or sends it again: each pane
+    /// that had output meanwhile is drawn again whole first.
+    fn withhold(&self, withheld: bool) {
+        let mut state = lock(&self.state);
+        if state.withheld == withheld {
+            return;
+        }
+        state.withheld = withheld;
+        if withheld {
+            for entry in state.panes.values_mut() {
+                entry.lines.clear();
+                entry.bytes = 0;
+                entry.dropping = true;
+                entry.redraw = false;
+            }
+            state.order.clear();
+        } else {
+            for entry in state.panes.values_mut() {
+                if entry.dropping {
+                    entry.redraw = true;
+                }
+            }
+        }
+        drop(state);
+        self.ready.notify_one();
+    }
+
     fn stop(&self) {
         let mut state = lock(&self.state);
         state.stopped = true;
@@ -364,11 +399,32 @@ pub fn forward_diagnostic(record: serde_json::Value) {
 /// How a device node attaches to the Herdr at a socket.
 type AttacherFor = Box<dyn Fn(&str) -> Box<dyn super::Attacher> + Send + Sync>;
 
+/// Where a node's pane output goes: up its link and, on a node that draws
+/// its own panes on its own screens, to those screens too.
+struct NodeOutputs {
+    screen: Arc<dyn OutputSink>,
+    uplink: Arc<Uplink>,
+}
+
+impl OutputSink for NodeOutputs {
+    fn output(&self, pane: &str, bytes: &[u8], full: bool) {
+        self.screen.output(pane, bytes, full);
+        self.uplink.push_output(pane, bytes, full);
+    }
+
+    fn forget(&self, pane: &str) {
+        self.screen.forget(pane);
+        self.uplink.forget(pane);
+    }
+}
+
 /// A device node's terminal service, as its link's serve loop reaches it.
 pub struct NodeTerminals {
     service: Mutex<Option<Service>>,
     uplink: Arc<Uplink>,
     attacher: AttacherFor,
+    /// The node's own screens, for a node whose core runs elsewhere.
+    screen: Option<Arc<dyn OutputSink>>,
 }
 
 impl Default for NodeTerminals {
@@ -387,11 +443,39 @@ impl NodeTerminals {
         }))
     }
 
+    /// The service of a node whose core runs on another machine (PRD
+    /// core-host-node-remote-core D-06): its panes' output reaches its own
+    /// `screen` always, and its link only while the core says a screen of
+    /// the core's own draws them.
+    /// `herdr` is the binary this machine's daemon runs its Herdr with.
+    pub fn for_screen(screen: Arc<dyn OutputSink>, herdr: std::path::PathBuf) -> Self {
+        let mut terminals = Self::with_attacher(Box::new(move |socket: &str| {
+            Box::new(LocalAttacher::new(Some(herdr.clone()), socket.into()))
+                as Box<dyn super::Attacher>
+        }));
+        terminals.uplink.withhold(true);
+        terminals.screen = Some(screen);
+        terminals
+    }
+
     fn with_attacher(attacher: AttacherFor) -> Self {
         Self {
             service: Mutex::default(),
             uplink: Arc::default(),
             attacher,
+            screen: None,
+        }
+    }
+
+    fn take_control(&self, control: TerminalControl) {
+        match control {
+            // A node with no screen of its own always sends its output up.
+            TerminalControl::Mirror { on } => {
+                if self.screen.is_some() {
+                    self.uplink.withhold(!on);
+                }
+            }
+            control => self.with_service(|service| service.control(control)),
         }
     }
 
@@ -410,9 +494,16 @@ impl hide_host::serve::Terminals for NodeTerminals {
         if service.is_some() {
             return Ok(());
         }
+        let outputs: Arc<dyn OutputSink> = match &self.screen {
+            Some(screen) => Arc::new(NodeOutputs {
+                screen: Arc::clone(screen),
+                uplink: Arc::clone(&self.uplink),
+            }),
+            None => Arc::new(UplinkOutputs(Arc::clone(&self.uplink))),
+        };
         let started = Service::start(
             (self.attacher)(herdr_socket),
-            Arc::new(UplinkOutputs(Arc::clone(&self.uplink))),
+            outputs,
             Arc::new(UplinkReports(Arc::clone(&self.uplink))),
             // A device's panes have always waited for the operator's
             // Reconnect after a failed attach.
@@ -445,9 +536,7 @@ impl hide_host::serve::Terminals for NodeTerminals {
             return;
         }
         match down {
-            TerminalDown::Control { control } => {
-                self.with_service(|service| service.control(control))
-            }
+            TerminalDown::Control { control } => self.take_control(control),
             TerminalDown::Key {
                 target,
                 data,
@@ -489,6 +578,25 @@ impl hide_host::serve::Terminals for NodeTerminals {
         // ends its attach child.
         let service = lock(&self.service).take();
         drop(service);
+    }
+}
+
+/// The node's own screens reach its panes here, without the link.
+impl TerminalNode for NodeTerminals {
+    fn control(&self, control: TerminalControl) {
+        self.take_control(control);
+    }
+
+    fn key(&self, target: KeyTarget, bytes: Vec<u8>, typed_at_unix_ms: u64) {
+        self.with_service(|service| service.key(target, bytes, typed_at_unix_ms));
+    }
+
+    fn view(&self, pane: &str, size: GridSize, new_view: bool) {
+        self.with_service(|service| service.view(pane, size, new_view));
+    }
+
+    fn redraw(&self, pane: &str) {
+        self.with_service(|service| service.redraw(pane));
     }
 }
 

@@ -20,11 +20,13 @@ pub mod file_url;
 pub mod index;
 pub mod mobile;
 pub mod node_cli;
+pub mod node_daemon;
 
 pub mod node_panes;
 pub mod node_role;
 pub mod pane_auth;
 pub mod placement;
+pub mod relay;
 pub mod server;
 pub mod spawn;
 pub mod state_file;
@@ -137,8 +139,45 @@ impl Drop for RunningDaemon {
     }
 }
 
+/// The daemon in the node role (PRD core-host-node-remote-core D-02): this
+/// machine's node, linked to a core on another machine, and its screens.
+/// No core runs here.
+pub struct RunningNode {
+    pub port: u16,
+    pub token: String,
+    pub _lock: std::fs::File,
+    shutdown: Arc<Notify>,
+    /// Ended on drop, before the instance lock is released: the link, its
+    /// SSH connection and its thread.
+    pub node: node_daemon::NodeDaemon,
+}
+
+impl RunningNode {
+    pub fn stop(&self) {
+        self.shutdown.notify_waiters();
+    }
+}
+
+impl Drop for RunningNode {
+    fn drop(&mut self) {
+        self.shutdown.notify_waiters();
+    }
+}
+
 pub async fn run_daemon(env: Env) -> Result<(), String> {
     let state_dir = env.state_dir.clone();
+    // A machine whose core runs elsewhere starts no core of its own.
+    let node = herdr_core::node::NodeId::of_this_machine()?;
+    if placement::read(&env.state_dir, node.as_str())?.is_some() {
+        let running = start_node_daemon(env).await?;
+        tokio::select! {
+            _ = running.shutdown.notified() => {}
+            () = stop_requested() => running.shutdown.notify_waiters(),
+        }
+        drop(running);
+        forget_daemon(&state_dir, std::process::id());
+        return Ok(());
+    }
     let running = start_daemon(env).await?;
     wait_shutdown_or_signal(&running).await;
     // A graceful stop takes hide's `tailscale serve` entry with it; a crash
@@ -204,6 +243,12 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     // This machine's name in every key that names it. A machine Hide cannot
     // name refuses to start rather than guess one (PRD core-host-node D-28).
     let node = herdr_core::node::NodeId::of_this_machine()?;
+    // A machine whose core runs elsewhere starts the node role instead.
+    if placement::read(&env.state_dir, node.as_str())?.is_some() {
+        return Err(
+            "the core runs on another machine: this state folder starts the node role".to_owned(),
+        );
+    }
     // Stored state from before node ids is converted once, before the core
     // reads it; a store that cannot be converted stops the start and names
     // the file (PRD core-host-node B2).
@@ -425,6 +470,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             "idle_secs": env.idle_secs,
         })),
         mobile: Arc::clone(&mobile),
+        relay_grants: Arc::clone(&relay_grants),
     };
     node_panes.serve(app.clone());
     let env_state_dir = env.state_dir.clone();
@@ -480,6 +526,109 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         node_attach_record: attach::attach_record(&env.state_dir),
         mobile,
         core,
+    })
+}
+
+/// The daemon in the node role: the link to the core the state folder's
+/// placement record names, and this machine's screens, with no core here.
+pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
+    if let Some(error) = env::herdr_bin_error(&env) {
+        return Err(error);
+    }
+    let lock = acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
+    let node = herdr_core::node::NodeId::of_this_machine()?;
+    let placement = placement::read(&env.state_dir, node.as_str())?
+        .ok_or("no core placement record: this state folder starts a core")?;
+    let herdr_socket = env
+        .herdr_socket_path
+        .clone()
+        .ok_or("the node role needs this machine's Herdr socket (HERDR_SOCKET_PATH)")?;
+    // Its records go where the core's would: Logs beside the state folder.
+    if let Err(error) = herdr_core::diagnostics::install(&env.state_dir.join("core-state.json")) {
+        eprintln!(
+            "{}",
+            serde_json::json!({"kind": "diagnostics.open_failed", "message": error.to_string()})
+        );
+    }
+    let build = match env.build.clone() {
+        Some(build) => build,
+        None => build_id::of_current_exe()?,
+    };
+    let token = new_token();
+    let listener = server::bind(env.bind).await?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| error.to_string())?
+        .port();
+    let pid = std::process::id();
+    let state = DaemonState {
+        pid,
+        port,
+        token: token.clone(),
+        socket: Some(herdr_socket.clone()),
+        started_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_else(|_| "0".into()),
+        pid_started: hide_platform::process::start_time(pid).ok(),
+    };
+    write_state(&env.state_dir, &state).map_err(|error| error.to_string())?;
+    let shutdown = Arc::new(Notify::new());
+    let daemon = node_daemon::NodeDaemon::start(
+        &env.home,
+        placement.clone(),
+        node_role::NodeIdentity {
+            node: node.as_str().to_owned(),
+            label: host_name().unwrap_or_else(|| node.as_str().to_owned()),
+            build: build.clone(),
+            herdr_socket: std::path::PathBuf::from(&herdr_socket),
+            herdr_bin: env
+                .herdr_bin_path
+                .clone()
+                .ok_or("the node role needs this machine's Herdr binary")?,
+        },
+        node_daemon::ServerParts {
+            token: Arc::new(token.clone()),
+            allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
+            ui_dir: if server::has_embedded_ui() {
+                None
+            } else {
+                find_ui_dir()
+            },
+            version: VERSION,
+            build: Some(Arc::from(build.as_str())),
+            shutdown: Arc::clone(&shutdown),
+        },
+    )?;
+    herdr_core::diagnostic!(serde_json::json!({
+        "component": "node_daemon",
+        "kind": "started",
+        "node": node.as_str(),
+        "core": placement.node,
+        "alias": placement.alias,
+        "port": port,
+    }));
+    let app = node_daemon::router(daemon.state.clone());
+    let state_dir = env.state_dir.clone();
+    let stopping = Arc::clone(&shutdown);
+    tokio::spawn(async move {
+        let served = axum::serve(listener, app)
+            .with_graceful_shutdown(async move { stopping.notified().await })
+            .await;
+        if let Err(error) = served {
+            eprintln!(
+                "{}",
+                serde_json::json!({"component":"node_daemon","kind":"server.exit","message": error.to_string()})
+            );
+        }
+        forget_daemon(&state_dir, std::process::id());
+    });
+    Ok(RunningNode {
+        port,
+        token,
+        _lock: lock,
+        shutdown,
+        node: daemon,
     })
 }
 

@@ -115,19 +115,21 @@ pub struct AppState {
     pub daemon_info: Arc<Value>,
     /// Settings > Mobile and the phones it pairs (`mobile/`).
     pub mobile: Arc<crate::mobile::Mobile>,
+    /// The grants this core handed linked nodes' screen relays (`relay`).
+    pub relay_grants: Arc<crate::attach::RelayGrants>,
 }
 
 #[derive(Debug, Deserialize)]
-struct Handshake {
-    token: String,
-    schema_version: u32,
-    client_kind: Option<String>,
-    have_revision: Option<u64>,
+pub(crate) struct Handshake {
+    pub(crate) token: String,
+    pub(crate) schema_version: u32,
+    pub(crate) client_kind: Option<String>,
+    pub(crate) have_revision: Option<u64>,
     /// The last `terminal` frame's cursor the client applied, which resumes
     /// every pane's output from the terminal hub that gave it.
-    have_terminal_sequence: Option<u64>,
+    pub(crate) have_terminal_sequence: Option<u64>,
     /// The epoch of the hub that gave the cursor.
-    have_terminal_epoch: Option<String>,
+    pub(crate) have_terminal_epoch: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -163,6 +165,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws_upgrade))
+        .route("/relay", get(relay_upgrade))
         .route(
             "/browser-route",
             post(resolve_browser_route).delete(release_browser_route),
@@ -462,7 +465,12 @@ fn confined_file(root: &std::path::Path, relative: &str) -> Option<std::path::Pa
 }
 
 async fn static_asset(uri: Uri, State(state): State<AppState>) -> Response {
-    let path = uri.path();
+    ui_asset(state.ui_dir.as_deref(), uri.path()).await
+}
+
+/// The web shell's file at `path`: embedded in a release build, read from
+/// the confined `ui_dir` in a debug build, and the fallback page at `/`.
+pub(crate) async fn ui_asset(ui_dir: Option<&Path>, path: &str) -> Response {
     if has_embedded_ui() {
         return match embedded_file(path) {
             Some((name, bytes)) => Response::builder()
@@ -473,7 +481,7 @@ async fn static_asset(uri: Uri, State(state): State<AppState>) -> Response {
             None => StatusCode::NOT_FOUND.into_response(),
         };
     }
-    if let Some(dir) = &state.ui_dir {
+    if let Some(dir) = ui_dir {
         let relative = path.trim_start_matches('/');
         if let Some(candidate) = confined_file(dir, relative)
             && candidate.is_file()
@@ -662,9 +670,12 @@ async fn link_client_loop(mut socket: WebSocket, route: LinkRoute) {
 /// The largest message a WebSocket that came through `tailscale serve` may send.
 const TAILNET_MAX_MESSAGE: usize = 64 * 1024;
 /// How long a new WebSocket may wait before its first frame.
-const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn check_origin(origin: Option<&str>, allowed: &HashSet<String>) -> Result<(), CloseReason> {
+pub(crate) fn check_origin(
+    origin: Option<&str>,
+    allowed: &HashSet<String>,
+) -> Result<(), CloseReason> {
     let Some(origin) = origin else {
         return Err(CloseReason::OriginNotAllowed);
     };
@@ -752,6 +763,85 @@ async fn client_loop(
         }
         return;
     }
+    screen_loop(socket, state, connection, handshake, None).await;
+}
+
+/// A linked node's screen or terminals, through its own SSH connection
+/// (`relay`). Only the grant the core handed the node's link admits it,
+/// never through `tailscale serve`; a grant that is not live is refused
+/// before the upgrade.
+async fn relay_upgrade(
+    ws: WebSocketUpgrade,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<RelayQuery>,
+    State(state): State<AppState>,
+) -> Response {
+    if via_tailnet(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(grant) = headers
+        .get(RELAY_GRANT_HEADER)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let Some((node, link)) = state.relay_grants.admit(grant).await else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    match query.mode.as_str() {
+        "terminals" => {
+            let outputs = Arc::clone(&state.core.outputs);
+            let terminals = Arc::clone(&state.core.terminals) as Arc<dyn TerminalNode>;
+            ws.on_upgrade(move |socket| {
+                crate::relay::serve_terminals(socket, outputs, terminals, node, link)
+            })
+        }
+        "screen" => ws.on_upgrade(move |socket| relay_screen(socket, state, node, link)),
+        _ => StatusCode::BAD_REQUEST.into_response(),
+    }
+}
+
+/// The header a node's relay carries its grant in.
+pub const RELAY_GRANT_HEADER: &str = "x-hide-relay-grant";
+
+#[derive(Deserialize)]
+struct RelayQuery {
+    mode: String,
+}
+
+async fn relay_screen(
+    mut socket: WebSocket,
+    state: AppState,
+    node: String,
+    link: hide_node::ssh::RemoteHost,
+) {
+    let handshake = match tokio::time::timeout(FIRST_FRAME_TIMEOUT, socket.recv()).await {
+        Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<Handshake>(&text).ok(),
+        _ => None,
+    };
+    let Some(handshake) = handshake else {
+        refuse(&mut socket, CloseReason::InvalidToken, None).await;
+        return;
+    };
+    if handshake.schema_version != SCHEMA_VERSION {
+        refuse(&mut socket, CloseReason::SchemaMismatch, None).await;
+        return;
+    }
+    let connection = state.connections.fetch_add(1, Ordering::SeqCst);
+    screen_loop(socket, state, connection, handshake, Some((node, link))).await;
+}
+
+/// One screen's session after its handshake: the snapshot stream, the
+/// answers to its events and, for a screen of this machine, its terminals.
+/// A linked node's screen (`relay`) draws terminals from its own node's hub
+/// and ends with the node's link.
+async fn screen_loop(
+    mut socket: WebSocket,
+    state: AppState,
+    connection: u64,
+    handshake: Handshake,
+    relay: Option<(String, hide_node::ssh::RemoteHost)>,
+) {
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
     if previous >= MAX_CLIENTS {
         state.clients.fetch_sub(1, Ordering::SeqCst);
@@ -819,18 +909,21 @@ async fn client_loop(
     // across a reconnect resumes every pane from its cursor, or is drawn
     // again whole when it names none; one that got a whole snapshot draws
     // each pane from the full frame its view asks for.
-    let terminals = state.core.hub.connect(
-        match (
-            first,
-            handshake.have_terminal_sequence,
-            handshake.have_terminal_epoch,
-        ) {
-            (FrameKind::Snapshot, _, _) => Resume::Fresh,
-            (FrameKind::Delta, Some(cursor), Some(epoch)) => Resume::After { epoch, cursor },
-            // A cursor without the hub it came from is not trusted.
-            (FrameKind::Delta, _, _) => Resume::Redraw,
-        },
-    );
+    let terminals = relay.is_none().then(|| {
+        state.core.hub.connect(
+            match (
+                first,
+                handshake.have_terminal_sequence,
+                handshake.have_terminal_epoch.clone(),
+            ) {
+                (FrameKind::Snapshot, _, _) => Resume::Fresh,
+                (FrameKind::Delta, Some(cursor), Some(epoch)) => Resume::After { epoch, cursor },
+                // A cursor without the hub it came from is not trusted.
+                (FrameKind::Delta, _, _) => Resume::Redraw,
+            },
+        )
+    });
+    let link = relay.as_ref().map(|(_, link)| link.clone());
     loop {
         tokio::select! {
             changed = notify.recv() => {
@@ -841,12 +934,28 @@ async fn client_loop(
                 }
                 match send_snapshot(&mut socket, &state, &mut have_revision).await {
                     // A whole snapshot resets the client's terminals too.
-                    Ok(FrameKind::Snapshot) => terminals.restart(),
+                    Ok(FrameKind::Snapshot) => {
+                        if let Some(terminals) = &terminals {
+                            terminals.restart();
+                        }
+                    }
                     Ok(FrameKind::Delta) => {}
                     Err(()) => break,
                 }
             }
-            () = terminals.ready() => {
+            () = async {
+                match &link {
+                    Some(link) => crate::relay::link_ended(link).await,
+                    None => std::future::pending().await,
+                }
+            } => break,
+            () = async {
+                match &terminals {
+                    Some(terminals) => terminals.ready().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                let Some(terminals) = &terminals else { continue };
                 let (frame, redraws) = terminals.take();
                 for pane in redraws {
                     state.core.terminals.redraw(&pane);
@@ -2785,7 +2894,7 @@ fn device_root_known(
 
 /// A `key` event's target, a pane or a creation request (exactly one), and
 /// its bytes.
-fn terminal_key(event: &Value) -> Result<(KeyTarget, Vec<u8>), String> {
+pub(crate) fn terminal_key(event: &Value) -> Result<(KeyTarget, Vec<u8>), String> {
     let field = |name: &str| {
         event
             .pointer(&format!("/payload/{name}"))
@@ -2813,7 +2922,7 @@ fn terminal_key(event: &Value) -> Result<(KeyTarget, Vec<u8>), String> {
 
 /// A `terminal_viewport` event: the pane, the grid its view draws at, and
 /// whether the view has nothing drawn yet.
-fn terminal_view(event: &Value) -> Result<(String, GridSize, bool), String> {
+pub(crate) fn terminal_view(event: &Value) -> Result<(String, GridSize, bool), String> {
     let pane = payload_str(event, "pane_id");
     let dimension = |name: &str| {
         event
@@ -2837,7 +2946,7 @@ fn terminal_view(event: &Value) -> Result<(String, GridSize, bool), String> {
     Ok((pane, GridSize { rows, cols }, new_view))
 }
 
-fn unix_ms_now() -> u64 {
+pub(crate) fn unix_ms_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| {
@@ -3301,7 +3410,7 @@ const REFUSE_LIMIT: Duration = Duration::from_secs(10);
 /// the connection, and a reset can discard the close frame before the client
 /// reads it, which Windows does (issue 785), so the client would read a lost
 /// daemon instead of the refusal.
-async fn refuse(socket: &mut WebSocket, reason: CloseReason, extra: Option<usize>) {
+pub(crate) async fn refuse(socket: &mut WebSocket, reason: CloseReason, extra: Option<usize>) {
     log_refusal(reason, extra);
     // Bounded: a stalled tailnet socket must not hold this task open.
     let _ = tokio::time::timeout(REFUSE_LIMIT, async {
@@ -3403,7 +3512,7 @@ const HERDR_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 const HERDR_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Whether the Herdr server at `socket` answers; a refusal is an answer.
-fn herdr_reachable(socket: &std::path::Path) -> bool {
+pub(crate) fn herdr_reachable(socket: &std::path::Path) -> bool {
     matches!(
         hide_herdr_client::request_with_timeout(socket, "ping", json!({}), HERDR_PROBE_TIMEOUT),
         Ok(_) | Err(hide_herdr_client::ApiError::Remote { .. })
