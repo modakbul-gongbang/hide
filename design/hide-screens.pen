@@ -2899,7 +2899,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -3095,7 +3095,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -3218,7 +3218,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -3410,7 +3410,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -3543,7 +3543,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -3654,7 +3654,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -3850,7 +3850,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -4046,7 +4046,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -4186,7 +4186,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -4326,7 +4326,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -4438,14 +4438,14 @@
                       "gap": 0
                     }
                   ],
-                  "width": 480,
+                  "width": 420,
                   "height": 760,
                   "layout": "vertical",
                   "gap": 8,
                   "fill": "$--card",
                   "stroke": "$--border",
                   "strokeWidth": 1,
-                  "strokeAlignment": "center",
+                  "strokeAlignment": "inner",
                   "clip": true
                 },
                 {
@@ -11353,7 +11353,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -11549,7 +11549,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -11672,7 +11672,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -11864,7 +11864,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -11997,7 +11997,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -12108,7 +12108,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -12304,7 +12304,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -12500,7 +12500,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -12640,7 +12640,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -12780,7 +12780,7 @@
                               ]
                             }
                           ],
-                          "width": 480,
+                          "width": 420,
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
@@ -12892,14 +12892,14 @@
                       "gap": 0
                     }
                   ],
-                  "width": 480,
+                  "width": 420,
                   "height": 760,
                   "layout": "vertical",
                   "gap": 8,
                   "fill": "$--card",
                   "stroke": "$--border",
                   "strokeWidth": 1,
-                  "strokeAlignment": "center",
+                  "strokeAlignment": "inner",
                   "clip": true
                 },
                 {
@@ -73993,20 +73993,20 @@
               "name": "Pane header states",
               "children": [
                 {
-                  "type": "text",
-                  "id": "sfu-ph-board-l-title",
-                  "name": "pane 머리 · 승인된 Pen 2차",
-                  "content": "pane 머리 · 승인된 Pen 2차",
-                  "fill": "$--foreground",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-headline",
-                  "fontWeight": "600"
-                },
-                {
                   "type": "frame",
-                  "id": "sfu-ph-board-l-row-0",
-                  "name": "Root and child",
+                  "id": "sfu-ph-board-l-sec-root",
+                  "name": "Root pane, a descendant raised: band with 외 1건 (B4, B6)",
                   "children": [
+                    {
+                      "type": "text",
+                      "id": "sfu-ph-board-l-sec-root-label",
+                      "name": "Root pane, a descendant rais",
+                      "content": "Root pane, a descendant raised: band with 외 1건 (B4, B6)",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
+                    },
                     {
                       "type": "frame",
                       "id": "sfu-ph-board-l-root",
@@ -74303,7 +74303,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -74312,6 +74312,26 @@
                       "stroke": "$--border",
                       "strokeWidth": 1,
                       "strokeAlignment": "inner"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8
+                },
+                {
+                  "type": "frame",
+                  "id": "sfu-ph-board-l-sec-child",
+                  "name": "Child pane: path back to the root, its own PR and its children after the title (B20, B21)",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "sfu-ph-board-l-sec-child-label",
+                      "name": "Child pane: path back to the",
+                      "content": "Child pane: path back to the root, its own PR and its children after the title (B20, B21)",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
                     },
                     {
                       "type": "frame",
@@ -74512,7 +74532,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -74523,15 +74543,25 @@
                       "strokeAlignment": "inner"
                     }
                   ],
-                  "layout": "horizontal",
-                  "gap": 24,
-                  "width": "fill_container"
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8
                 },
                 {
                   "type": "frame",
-                  "id": "sfu-ph-board-l-row-1",
-                  "name": "Grandchild and two PRs",
+                  "id": "sfu-ph-board-l-sec-grand",
+                  "name": "Grandchild pane: two ancestors, no PR and no children (B20)",
                   "children": [
+                    {
+                      "type": "text",
+                      "id": "sfu-ph-board-l-sec-grand-label",
+                      "name": "Grandchild pane: two ancesto",
+                      "content": "Grandchild pane: two ancestors, no PR and no children (B20)",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
+                    },
                     {
                       "type": "frame",
                       "id": "sfu-ph-board-l-grand",
@@ -74693,7 +74723,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -74702,6 +74732,26 @@
                       "stroke": "$--border",
                       "strokeWidth": 1,
                       "strokeAlignment": "inner"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8
+                },
+                {
+                  "type": "frame",
+                  "id": "sfu-ph-board-l-sec-two",
+                  "name": "Two own PRs: PR 2 ×1 (B22)",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "sfu-ph-board-l-sec-two-label",
+                      "name": "Two own PRs: PR 2 ×1 (B22)",
+                      "content": "Two own PRs: PR 2 ×1 (B22)",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
                     },
                     {
                       "type": "frame",
@@ -74893,7 +74943,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -74904,15 +74954,25 @@
                       "strokeAlignment": "inner"
                     }
                   ],
-                  "layout": "horizontal",
-                  "gap": 24,
-                  "width": "fill_container"
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8
                 },
                 {
                   "type": "frame",
-                  "id": "sfu-ph-board-l-bands",
-                  "name": "Band per cause",
+                  "id": "sfu-ph-board-l-sec-bands",
+                  "name": "Band per cause (B3)",
                   "children": [
+                    {
+                      "type": "text",
+                      "id": "sfu-ph-board-l-sec-bands-label",
+                      "name": "Band per cause (B3)",
+                      "content": "Band per cause (B3)",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
+                    },
                     {
                       "type": "frame",
                       "id": "sfu-ph-board-l-band-approval",
@@ -75161,7 +75221,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -75419,7 +75479,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -75677,7 +75737,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -75935,7 +75995,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -75946,9 +76006,9 @@
                       "strokeAlignment": "inner"
                     }
                   ],
+                  "width": "fill_container",
                   "layout": "vertical",
-                  "gap": 12,
-                  "width": "fill_container"
+                  "gap": 8
                 },
                 {
                   "type": "text",
@@ -75961,10 +76021,15 @@
                   "fontWeight": "400"
                 }
               ],
-              "width": 1240,
+              "width": 761,
               "layout": "vertical",
               "gap": 20,
-              "padding": 48,
+              "padding": [
+                0,
+                0,
+                24,
+                0
+              ],
               "fill": "$--background"
             },
             {
@@ -93669,20 +93734,20 @@
               "name": "Pane header states",
               "children": [
                 {
-                  "type": "text",
-                  "id": "sfu-ph-board-d-title",
-                  "name": "pane 머리 · 승인된 Pen 2차",
-                  "content": "pane 머리 · 승인된 Pen 2차",
-                  "fill": "$--foreground",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-headline",
-                  "fontWeight": "600"
-                },
-                {
                   "type": "frame",
-                  "id": "sfu-ph-board-d-row-0",
-                  "name": "Root and child",
+                  "id": "sfu-ph-board-d-sec-root",
+                  "name": "Root pane, a descendant raised: band with 외 1건 (B4, B6)",
                   "children": [
+                    {
+                      "type": "text",
+                      "id": "sfu-ph-board-d-sec-root-label",
+                      "name": "Root pane, a descendant rais",
+                      "content": "Root pane, a descendant raised: band with 외 1건 (B4, B6)",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
+                    },
                     {
                       "type": "frame",
                       "id": "sfu-ph-board-d-root",
@@ -93979,7 +94044,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -93988,6 +94053,26 @@
                       "stroke": "$--border",
                       "strokeWidth": 1,
                       "strokeAlignment": "inner"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8
+                },
+                {
+                  "type": "frame",
+                  "id": "sfu-ph-board-d-sec-child",
+                  "name": "Child pane: path back to the root, its own PR and its children after the title (B20, B21)",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "sfu-ph-board-d-sec-child-label",
+                      "name": "Child pane: path back to the",
+                      "content": "Child pane: path back to the root, its own PR and its children after the title (B20, B21)",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
                     },
                     {
                       "type": "frame",
@@ -94188,7 +94273,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -94199,15 +94284,25 @@
                       "strokeAlignment": "inner"
                     }
                   ],
-                  "layout": "horizontal",
-                  "gap": 24,
-                  "width": "fill_container"
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8
                 },
                 {
                   "type": "frame",
-                  "id": "sfu-ph-board-d-row-1",
-                  "name": "Grandchild and two PRs",
+                  "id": "sfu-ph-board-d-sec-grand",
+                  "name": "Grandchild pane: two ancestors, no PR and no children (B20)",
                   "children": [
+                    {
+                      "type": "text",
+                      "id": "sfu-ph-board-d-sec-grand-label",
+                      "name": "Grandchild pane: two ancesto",
+                      "content": "Grandchild pane: two ancestors, no PR and no children (B20)",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
+                    },
                     {
                       "type": "frame",
                       "id": "sfu-ph-board-d-grand",
@@ -94369,7 +94464,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -94378,6 +94473,26 @@
                       "stroke": "$--border",
                       "strokeWidth": 1,
                       "strokeAlignment": "inner"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8
+                },
+                {
+                  "type": "frame",
+                  "id": "sfu-ph-board-d-sec-two",
+                  "name": "Two own PRs: PR 2 ×1 (B22)",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "sfu-ph-board-d-sec-two-label",
+                      "name": "Two own PRs: PR 2 ×1 (B22)",
+                      "content": "Two own PRs: PR 2 ×1 (B22)",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
                     },
                     {
                       "type": "frame",
@@ -94569,7 +94684,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -94580,15 +94695,25 @@
                       "strokeAlignment": "inner"
                     }
                   ],
-                  "layout": "horizontal",
-                  "gap": 24,
-                  "width": "fill_container"
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8
                 },
                 {
                   "type": "frame",
-                  "id": "sfu-ph-board-d-bands",
-                  "name": "Band per cause",
+                  "id": "sfu-ph-board-d-sec-bands",
+                  "name": "Band per cause (B3)",
                   "children": [
+                    {
+                      "type": "text",
+                      "id": "sfu-ph-board-d-sec-bands-label",
+                      "name": "Band per cause (B3)",
+                      "content": "Band per cause (B3)",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
+                    },
                     {
                       "type": "frame",
                       "id": "sfu-ph-board-d-band-approval",
@@ -94837,7 +94962,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -95095,7 +95220,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -95353,7 +95478,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -95611,7 +95736,7 @@
                           ]
                         }
                       ],
-                      "width": 560,
+                      "width": "fill_container",
                       "height": 120,
                       "layout": "vertical",
                       "gap": 0,
@@ -95622,9 +95747,9 @@
                       "strokeAlignment": "inner"
                     }
                   ],
+                  "width": "fill_container",
                   "layout": "vertical",
-                  "gap": 12,
-                  "width": "fill_container"
+                  "gap": 8
                 },
                 {
                   "type": "text",
@@ -95637,10 +95762,15 @@
                   "fontWeight": "400"
                 }
               ],
-              "width": 1240,
+              "width": 761,
               "layout": "vertical",
               "gap": 20,
-              "padding": 48,
+              "padding": [
+                0,
+                0,
+                24,
+                0
+              ],
               "fill": "$--background"
             },
             {

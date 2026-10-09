@@ -1465,7 +1465,8 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, conte
             onOpen={depth === 0 || !parent ? context.actions.openAgent : (id) => context.actions.followRelation(parent.pane_id, id, agent.identity_label)}
             onOpenPullRequest={(url, external) => context.actions.openLink(url, external)}
             inset={inset}
-            branchShown={depth > 0}
+            // A tree row is one line with no branch (B14); the popover names a differing branch.
+            branchShown={false}
             number={depth === 0 ? context.numberOf?.(agent.pane_id, checkoutId) ?? null : null}
             menu={context.agentRowMenu}
           />

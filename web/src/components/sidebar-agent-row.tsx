@@ -202,7 +202,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             {ask || !folded ? null : <span className="pointer-events-none flex shrink-0"><DescendantMark agent={agent} /></span>}
             {/* A time the core never measured draws nothing, and nothing stands in for it. */}
             <Elapsed since={agent.changed_at_unix_ms} aria-hidden="true" className="pointer-events-none shrink-0 font-mono text-caption text-muted-foreground" data-agent-elapsed="true" />
-            {tree ? null : <FoldLane />}
+            {/* Every row ends in the fold slot, so every time ends on one column (sidebar-readability D-3). */}
+            <FoldLane />
           </span>
           {ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : line ? (
             <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))}>

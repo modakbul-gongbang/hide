@@ -6,7 +6,7 @@ export async function measure(page) {
     const partProblems = [], rowsFit = [], overflow = [];
     const root = document.querySelector('[data-session-panel]');
     if (!root) throw new Error('Sessions panel is missing');
-    for (const row of root.querySelectorAll('[data-session-row], [data-session-closed-pr]')) {
+    for (const row of root.querySelectorAll('[data-session-row], [data-session-child]')) {
       const edge = row.getBoundingClientRect();
       const parts = [...row.querySelectorAll('button, [data-mark], [data-agent-mark], span')].filter(part => part.getClientRects().length && (part.matches('button, [data-mark], [data-agent-mark]') || [...part.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())));
       for (const part of parts) {

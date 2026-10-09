@@ -41,7 +41,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         : spec.line ? [caption(`${id}-line`, spec.line, '$--subtle-foreground')] : []),
     ]),
   ]);
-  function panel(suffix, width=480, id=`sfu-panel-${suffix}`) {
+  function panel(suffix, width=420, id=`sfu-panel-${suffix}`) {
     const group=(key,title,rows,{folded=false,more=0,count}={})=>frame(`${id}-${key}`,title,{width:'fill_container',layout:'vertical',gap:0},[
       frame(`${id}-${key}-heading`,'Group heading',{width:'fill_container',height:32,layout:'horizontal',gap:6,alignItems:'center',padding:[0,12]},[
         ...(folded?[icon(`${id}-${key}-fold`,'chevron-right',{size:12,fill:'$--muted-foreground'})]:[]),
@@ -53,7 +53,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         icon(`${id}-${key}-more-g`,'chevron-right',{size:12,fill:'$--muted-foreground'}),caption(`${id}-${key}-more-l`,`그 외 ${more}`,'$--subtle-foreground'),
       ])]:[]),
     ]);
-    return frame(id,'Sessions panel',{width,height:760,layout:'vertical',gap:8,fill:'$--card',stroke:'$--border',strokeWidth:1,strokeAlignment:'center',clip:true},[
+    return frame(id,'Sessions panel',{width,height:760,layout:'vertical',gap:8,fill:'$--card',stroke:'$--border',strokeWidth:1,strokeAlignment:'inner',clip:true},[
       frame(`${id}-tabs`,'Tools tabs',{width:'fill_container',height:32,layout:'horizontal',gap:12,padding:[0,12],alignItems:'center'},[
         caption(`${id}-tab-sessions`,'세션','$--foreground',{weight:'600'}),caption(`${id}-tab-explorer`,'Explorer'),caption(`${id}-tab-history`,'History'),
       ]),
@@ -108,7 +108,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       frame(`${id}-band-sp`, 'Spacer', {width:'fill_container',height:1}, []),
       screenButton(`${id}-band-open`, '열기', {variant:'outline', height:20}),
     ])] : [];
-    return frame(id, 'Pane', {width:560,height:120,layout:'vertical',gap:0,clip:true,fill:'$--background',stroke:'$--border',strokeWidth:1,strokeAlignment:'inner'}, [
+    return frame(id, 'Pane', {width:'fill_container',height:120,layout:'vertical',gap:0,clip:true,fill:'$--background',stroke:'$--border',strokeWidth:1,strokeAlignment:'inner'}, [
       header, ...bandRow,
       frame(`${id}-terminal`, 'Terminal', {width:'fill_container',height:'fill_container',padding:[8,12]}, [caption(`${id}-terminal-text`, terminal ?? '› 테스트 작성 결과를 기다리는 중', '$--muted-foreground', {mono:true})]),
     ]);
@@ -122,17 +122,14 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       ['confirm',{verb:'확인',what:'리뷰 지적 3건 반영하고 멈춤',who:['claude','사전 리뷰'],age:'1h'}],
       ['draft',{verb:'초안',what:'내 입력 초안 때문에 질문이 못 감',who:['codex','P8 읽기 전용 준비'],age:'8m'}],
     ];
-    return frame(id,'Pane header states',{width:1240,layout:'vertical',gap:20,padding:48,fill:'$--background'},[
-      text(`${id}-title`,'pane 머리 · 승인된 Pen 2차',{size:'$--text-headline',weight:'600'}),
-      frame(`${id}-row-0`,'Root and child',{layout:'horizontal',gap:24,width:'fill_container'},[
-        pane(`${id}-root`,{mark:'!',tone:'$--warning',provider:'claude',title:'hide 에이전트 지원 PR 묶음 머지 조율',pr:{number:812,state:'mergeable'},children:8,band:{verb:'승인',what:'e2e 테스트 돌리던 중',who:['codex','테스트 작성'],age:'12m',more:1},terminal:'› 에이전트 지원 PR 다섯 개의 머지 순서를 맞추는 중'}),
-        pane(`${id}-child`,{path:[root],title:'P8 읽기 전용 준비',pr:{number:811,state:'failed'},children:2}),
-      ]),
-      frame(`${id}-row-1`,'Grandchild and two PRs',{layout:'horizontal',gap:24,width:'fill_container'},[
-        pane(`${id}-grand`,{path:[root,'P8 읽기 전용 준비'],mark:'!',tone:'$--warning',title:'테스트 작성',terminal:'Allow bash: pnpm --dir web e2e ? (y/n)'}),
-        pane(`${id}-two`,{path:[root],mark:'✓',tone:'$--success',provider:'claude',title:'P6 OpenCode 세션 리더',pr:{count:2,state:'failed',worst:1}}),
-      ]),
-      frame(`${id}-bands`,'Band per cause',{layout:'vertical',gap:12,width:'fill_container'},bands.map(([key,band])=>pane(`${id}-band-${key}`,{path:[root],title:'P8 읽기 전용 준비',band}))),
+    // One column at the approved board's width, each pane under the line that says what it shows.
+    const labeled = (key, label, children) => frame(`${id}-sec-${key}`, label, {width:'fill_container',layout:'vertical',gap:8}, [caption(`${id}-sec-${key}-label`, label, '$--subtle-foreground', {weight:'600'}), ...children]);
+    return frame(id,'Pane header states',{width:761,layout:'vertical',gap:20,padding:[0,0,24,0],fill:'$--background'},[
+      labeled('root','Root pane, a descendant raised: band with 외 1건 (B4, B6)',[pane(`${id}-root`,{mark:'!',tone:'$--warning',provider:'claude',title:'hide 에이전트 지원 PR 묶음 머지 조율',pr:{number:812,state:'mergeable'},children:8,band:{verb:'승인',what:'e2e 테스트 돌리던 중',who:['codex','테스트 작성'],age:'12m',more:1},terminal:'› 에이전트 지원 PR 다섯 개의 머지 순서를 맞추는 중'})]),
+      labeled('child','Child pane: path back to the root, its own PR and its children after the title (B20, B21)',[pane(`${id}-child`,{path:[root],title:'P8 읽기 전용 준비',pr:{number:811,state:'failed'},children:2})]),
+      labeled('grand','Grandchild pane: two ancestors, no PR and no children (B20)',[pane(`${id}-grand`,{path:[root,'P8 읽기 전용 준비'],mark:'!',tone:'$--warning',title:'테스트 작성',terminal:'Allow bash: pnpm --dir web e2e ? (y/n)'})]),
+      labeled('two','Two own PRs: PR 2 ×1 (B22)',[pane(`${id}-two`,{path:[root],mark:'✓',tone:'$--success',provider:'claude',title:'P6 OpenCode 세션 리더',pr:{count:2,state:'failed',worst:1}})]),
+      labeled('bands','Band per cause (B3)',bands.map(([key,band])=>pane(`${id}-band-${key}`,{path:[root],title:'P8 읽기 전용 준비',band}))),
       caption(`${id}-rule`,'승인은 label 줄이 없으면 "권한 요청에서 멈춤". 답변의 대기는 부모가 못 받은 시간. 초안은 초안이 걸린 부모를 연다. 띠는 PTY 크기를 바꾸지 않는다.'),
     ]);
   }

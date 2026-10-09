@@ -13,7 +13,6 @@ import { statusText } from "./agentStatus";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
 import { cn } from "./lib/utils";
-import { IssueChip, lensHandlers } from "./OverviewLenses";
 import type { LensAgent } from "./overviewLens";
 import type { AgentRow, SessionGroup } from "./snapshot";
 import { useShellStore } from "./store";
@@ -136,12 +135,6 @@ const SessionRow = memo(function SessionRow({ row, model, actions, staleness, op
   const { agent, project } = row;
   const session = agent.state.session;
   const needsYou = session.group === "needs_you";
-  const work = project.agent_scope.work[agent.pane_id];
-  const issues = (work?.issue_chips ?? []).map((key) => project.tasks?.tasks.find((task) => task.key === key)).filter((task) => task !== undefined);
-  const handlers = lensHandlers(actions, {
-    openIssue: (_project, task) => actions.openOverview(project.device_id, project.id, { issue: task.key }),
-    toggleFold: () => undefined,
-  });
   const open_ = () => { if (model.available) actions.openAgent(agent.pane_id); };
   // The chevron lane spans the row so an opened row's rail runs on to its children.
   return <li className="group/session relative flex min-w-0 items-stretch rounded-xs pr-xs hover:bg-accent focus-within:bg-accent"
@@ -157,7 +150,6 @@ const SessionRow = memo(function SessionRow({ row, model, actions, staleness, op
           {session.unfinished ? <StatusMark symbol="◐" className="text-warning" data-session-unfinished="true" /> : <StatusMark symbol={agent.symbol} className={markTone(agent)} />}<AgentMark kind={agent.agent_kind} />
           <span className="min-w-0 truncate text-caption font-medium">{agent.identity_label}</span>
         </button>
-        {issues.map((task) => <IssueChip key={task.key} project={project} task={task} handlers={handlers} now={Date.now()} />)}
         {needsYou ? null : <PrChip agent={agent} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: project.id, url: pull.url, number: pull.number })} />}
         {needsYou || open ? null : <DescendantMark agent={agent} />}
         <Elapsed since={agent.state.request_since} className="shrink-0 text-micro text-muted-foreground" />

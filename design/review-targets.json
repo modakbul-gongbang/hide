@@ -1,6 +1,6 @@
 {
   "session-panel": {
-    "description": "The approved v6 Sessions panel: project scope, one row per task, live facts and resolved sessions.",
+    "description": "The approved Pen round 2 Sessions panel (agent-hierarchy-screens D-44): Needs You, Working, Done, Idle and Resolved, one tree level, own PR chips and the folded descendant mark.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-main",
     "scene": "session-panel",
@@ -9,18 +9,18 @@
     "frames": [
       {
         "node": "sfu-panel-l",
-        "referenceNode": "YIiB2",
+        "referenceNode": "zepvC",
         "theme": "light",
-        "width": 481,
+        "width": 420,
         "scale": 1,
         "content": "reference",
         "state": "rest"
       },
       {
         "node": "sfu-panel-d",
-        "referenceNode": "YIiB2",
+        "referenceNode": "xPrJs",
         "theme": "dark",
-        "width": 481,
+        "width": 420,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -32,7 +32,7 @@
         "dark"
       ],
       "widths": [
-        480,
+        420,
         360
       ],
       "contents": [
@@ -42,21 +42,21 @@
     },
     "states": {
       "rest": "Project Sessions at rest.",
-      "children": "Direct children opened from the row badge.",
-      "resolved": "Today's resolved sessions expanded."
+      "children": "One row opened a level through its chevron.",
+      "resolved": "Resolved expanded."
     },
     "rules": {
       "noOverlap": true,
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "The approved reference is Dark; Light must retain its hierarchy using the existing theme tokens.",
-      "Do the two-line rows, task tags, live issue/PR facts and front-checkout bar match v6?",
-      "Are long Korean titles and branch names recognizable at the narrow width without hiding controls?"
+      "The approved reference is the Pen round 2 Sessions board (Light); Dark must keep its hierarchy with the theme tokens.",
+      "Do the group order, the Needs You verb line, the PR chips, the ◐ unfinished mark and the one-level tree match round 2?",
+      "Are long Korean titles recognizable at the narrow width without hiding the PR chip or the age?"
     ]
   },
   "pane-header": {
-    "description": "The approved v9 pane identity, task and connection bands, and shared direct-child badge.",
+    "description": "The approved Pen round 2 pane header (agent-hierarchy-screens D-14, D-43): ancestor path, own PR chip and tree button after the title, and the ask band.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-workspace",
     "scene": "pane-header",
@@ -65,18 +65,18 @@
     "frames": [
       {
         "node": "sfu-ph-board-l",
-        "referenceNode": "MYW3i",
+        "referenceNode": "S2Cn0e",
         "theme": "light",
-        "width": 1240,
+        "width": 761,
         "scale": 1,
         "content": "reference",
         "state": "rest"
       },
       {
         "node": "sfu-ph-board-d",
-        "referenceNode": "MYW3i",
+        "referenceNode": "Ef3CX",
         "theme": "dark",
-        "width": 1240,
+        "width": 761,
         "scale": 1,
         "content": "reference",
         "state": "rest"
@@ -88,7 +88,7 @@
         "dark"
       ],
       "widths": [
-        1240
+        761
       ],
       "contents": [
         "reference",
@@ -96,18 +96,17 @@
       ]
     },
     "states": {
-      "rest": "Connection and direct-child states.",
-      "children": "The header badge's shared direct-child popover."
+      "rest": "Bands and header identities.",
+      "children": "The tree button popover."
     },
     "rules": {
       "noOverlap": true,
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "The approved reference is Dark; Light must retain its hierarchy using the existing theme tokens.",
-      "Does the identity stay quiet while the highest-priority band carries the one actionable state?",
-      "Does the header child badge replace the former child row and relationship sheet?",
-      "The reference footer's beside-open shortcut is excluded by D-40."
+      "The approved reference is the Pen round 2 pane header board (Light); Dark must keep its hierarchy with the theme tokens.",
+      "Does the ask band read verb, what, who, wait, 외 N건 and 열기 on a quiet fill with the warning rail?",
+      "Do the ancestor path, the own PR chip and the tree button sit after the title, with only menu, zoom and close at the end?"
     ]
   },
   "projects-sidebar": {
@@ -123,7 +122,8 @@
         "width": 292,
         "scale": 1,
         "content": "reference",
-        "state": "rest"
+        "state": "rest",
+        "referenceNode": "rnIl8"
       },
       {
         "node": "psb-sidebar-d",
@@ -131,7 +131,8 @@
         "width": 292,
         "scale": 1,
         "content": "reference",
-        "state": "rest"
+        "state": "rest",
+        "referenceNode": "rPB4Q"
       }
     ],
     "conditions": {

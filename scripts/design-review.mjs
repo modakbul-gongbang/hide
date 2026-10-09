@@ -299,8 +299,9 @@ async function enterState(page, state, target) {
   }
   if (state === 'checkout-closed') await page.locator('nav[data-sidebar] [data-checkout-toggle="herdr-ide:main"]').click();
   if (state === 'checkout-closed') await page.mouse.move(0, 0);
-  if (state === 'children') await page.locator('[data-descendant-badge]').first().click();
-  if (state === 'resolved') await page.locator('[data-session-group=resolved_today] [data-session-focus=group]').click();
+  // Sessions opens a row a level through its chevron; a pane header opens the tree popover from its tree button.
+  if (state === 'children') await page.locator('[data-session-chevron], [data-pane-tree]').first().click();
+  if (state === 'resolved') await page.locator('[data-session-group=resolved] [data-session-focus=group]').click();
   if (state === 'server-picker') await page.getByRole('button', {name:'Open server', exact:true}).click();
   // The Factory screen's other views, and the states a target's scene sets up from its address.
   if (['board', 'graph', 'sizes', ...(target.urlStates ?? [])].includes(state)) {
