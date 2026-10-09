@@ -17,13 +17,15 @@ import { Hint } from "./components/ui/tooltip";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
 import { DeviceRail } from "./components/device-rail";
-import { frontDeviceId, frontTitle, homeProjectCount, railShown, sidebarBody } from "./devices";
+import { deviceConnected, frontDeviceId, frontTitle, homeProjectCount, railShown, sidebarBody } from "./devices";
 import { badgeWords } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
 import { agentNumber, sidebarAgentNumbers } from "./numbering";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
-import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
+import { FoldLane, SidebarAgentRow, type AgentRowMenu, type SidebarTreeSlot } from "./components/sidebar-agent-row";
+import { TreeChevron, TreeRails } from "./components/agent-tree";
+import { sidebarTreeLines } from "./sidebarTree";
 import { SleepingSessionRow } from "./components/sleeping-session-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
@@ -485,27 +487,20 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
       )}
       {roots.length > 0 ? (
         <ul aria-label={t("sidebar.homeAgents")} data-home-agents="true">
-          {roots.map((agent) => {
-            const children = directChildren(agent, agents);
-            return (
-              <SidebarAgentRow
-                key={agent.id}
-                agent={agent}
-                device={null}
-                place={null}
-                depth={0}
-                descendants={children.length}
-                childRows={children}
-                selected={agent.pane_id === focusRowPane}
-                onOpen={actions.openAgent}
-                onOpenChild={(id) => actions.followRelation(agent.pane_id, id, agents.find((child) => child.pane_id === id)!.identity_label)}
-                onAll={() => actions.openAgentsOverview()}
-                inset={CHECKOUT_COLUMN}
-                number={numbers?.(agent.pane_id, "home") ?? null}
-                menu={menu}
-              />
-            );
-          })}
+          {roots.map((agent) => (
+            <SidebarAgentRow
+              key={agent.id}
+              agent={agent}
+              device={null}
+              place={null}
+              depth={0}
+              selected={agent.pane_id === focusRowPane}
+              onOpen={actions.openAgent}
+              inset={CHECKOUT_COLUMN}
+              number={numbers?.(agent.pane_id, "home") ?? null}
+              menu={menu}
+            />
+          ))}
         </ul>
       ) : null}
     </li>
@@ -795,7 +790,6 @@ function RaisedSection({ row, context }: { row: Extract<ProjectRow, { kind: "rai
 }
 
 function RaisedAgentRow({ listed: { agent, device }, context }: { listed: ListedAgent; context: ListContext }) {
-  const children = context.childrenOf(agent);
   return (
     <SidebarAgentRow
       agent={agent}
@@ -803,12 +797,9 @@ function RaisedAgentRow({ listed: { agent, device }, context }: { listed: Listed
       device={null}
       place={context.placeOf(device, agent.pane_id)}
       depth={0}
-      descendants={children.length}
-      childRows={children}
+      ask={agent.state.needs_you}
       selected={agent.pane_id === context.focusRowPane}
       onOpen={context.actions.openAgent}
-      onOpenChild={(id) => context.actions.followRelation(agent.pane_id, id, children.find((child) => child.pane_id === id)!.identity_label)}
-      onAll={() => context.actions.openAgentsOverview()}
       inset={PROJECT_COLUMN}
       number={context.numberOf?.(agent.pane_id, null) ?? null}
       menu={context.agentRowMenu}
@@ -1068,7 +1059,8 @@ function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: Che
     .filter((parent): parent is AgentRow => parent !== undefined)
     .map((parent) => parent.identity_label))];
   const raisedFrom = parents.length > 0 ? t("sidebar.raisedFrom", { name: `${parents[0]}${parents.length > 1 ? ` +${parents.length - 1}` : ""}` }) : null;
-  return { foldable, open, purpose, secondLine: checkoutHasSecondLine(view, purpose, raisedFrom), raisedFrom };
+  // Opened, the agent rows say what the checkout is doing, so the row is one line (B35).
+  return { foldable, open, purpose, secondLine: !open && checkoutHasSecondLine(view, purpose, raisedFrom), raisedFrom };
 }
 
 /**
@@ -1103,7 +1095,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const name = checkout.branch ?? checkout.label;
   const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
   const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length);
-  const visibleRows = open ? agentRows : agentRows.filter((row) => row.agent.state.needs_you);
+  const visibleRows = open ? agentRows : agentRows.filter((row) => row.depth === 0 && row.agent.state.needs_you);
   const marks = checkout.agent_summary?.marks;
   return (
     <li
@@ -1204,7 +1196,7 @@ const FolderRowView = memo(function FolderRowView({
   const marks = checkout.agent_summary?.marks;
   const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
   const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length);
-  const visibleRows = open ? agentRows : agentRows.filter((row) => row.agent.state.needs_you);
+  const visibleRows = open ? agentRows : agentRows.filter((row) => row.depth === 0 && row.agent.state.needs_you);
   return (
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted py-xs")}>
       <EntryContextMenu
@@ -1417,33 +1409,61 @@ function PurposeLine({ purpose, origin, age, raisedFrom }: { purpose: string | n
 }
 
 /**
- * An opened checkout's operator roots and separate dormant conversations.
- * A live parent's badge opens its children through the shared popover;
- * a dormant conversation has no pane or numbered shortcut.
+ * An opened checkout's tree (PRD agent-hierarchy-screens D-12, D-38; B10 to
+ * B16): its operator roots, and under a root the operator opened its
+ * children and grandchildren wherever they work, five siblings at a time,
+ * joined by elbow rails. A grandchild's chevron opens the tree popover
+ * rooted on it. A dormant conversation has no pane or numbered shortcut.
  */
 function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, context }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; sleeping: SleepingSession[]; inset: string; context: ListContext }) {
-  const rows = agentRows;
+  const { t } = useInterfaceTranslation();
+  const [shownAll, setShownAll] = useState<ReadonlySet<string>>(NO_PANES);
+  const lines = useMemo(() => sidebarTreeLines(agentRows, shownAll), [agentRows, shownAll]);
   return (
     <ul data-checkout-agents-open={checkoutId}>
-      {rows.map((row) => {
-        const children = context.childrenOf(row.agent);
-        const device = row.agent.device_id !== deviceId ? (row.agent.device_label ?? null) : null;
+      {lines.map((line) => {
+        if (line.kind === "more") {
+          return (
+            <li key={`more:${line.parent}`} className="flex items-stretch rounded-sm pr-xs hover:bg-accent" style={{ paddingLeft: `calc(${inset} - var(--size-lineage-chevron) - var(--spacing-xs))` }}>
+              <TreeRails place={line.place} />
+              <TreeChevron name="" open={null} hangs />
+              <button type="button" data-tree-more={line.count} className="min-w-0 flex-1 truncate py-xs pl-xs text-left text-caption text-subtle-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring" onClick={() => setShownAll((before) => new Set(before).add(line.parent))}>
+                {t("agentSessions.tree.more", { count: line.count })}
+              </button>
+            </li>
+          );
+        }
+        const { agent, depth } = line.row;
+        const parent = depth > 0 ? context.agents.find((row) => row.pane_id === agent.lineage_parent_pane_id) : undefined;
+        const hasChildren = context.childrenOf(agent).length > 0;
+        const parentDevice = parent?.device_id ?? deviceId;
+        const remote = depth > 0 && agent.device_id !== undefined && agent.device_id !== parentDevice
+          ? { label: agent.device_label ?? agent.device_id, reachable: deviceConnected(useShellStore.getState().rest, agent.device_id) }
+          : null;
+        const tree: SidebarTreeSlot = {
+          place: line.place,
+          open: hasChildren ? depth < 2 && !agent.lineage_collapsed : null,
+          onToggle: () => context.actions.toggleAgentTree(agent.pane_id),
+          popover: hasChildren && depth >= 2 ? {
+            agents: context.agents,
+            onOpenChild: (id, label) => context.actions.followRelation(agent.pane_id, id, label),
+            onGraph: () => context.actions.openAgentsOverview(),
+          } : null,
+        };
         return (
           <SidebarAgentRow
-            key={row.agent.pane_id}
-            agent={row.agent}
-            device={device}
+            key={`${agent.pane_id}:${depth}`}
+            agent={agent}
+            device={depth === 0 && agent.device_id !== deviceId ? (agent.device_label ?? null) : null}
             place={null}
-            depth={row.depth}
-            descendants={children.length}
-            childRows={children}
-            selected={row.agent.pane_id === context.focusRowPane}
-            onOpen={context.actions.openAgent}
-            onOpenChild={(id) => context.actions.followRelation(row.agent.pane_id, id, children.find((child) => child.pane_id === id)!.identity_label)}
-            onAll={() => context.actions.openAgentsOverview()}
+            depth={depth}
+            tree={tree}
+            remote={remote}
+            selected={agent.pane_id === context.focusRowPane}
+            onOpen={depth === 0 || !parent ? context.actions.openAgent : (id) => context.actions.followRelation(parent.pane_id, id, agent.identity_label)}
             inset={inset}
-            branchShown={row.depth > 0}
-            number={context.numberOf?.(row.agent.pane_id, checkoutId) ?? null}
+            branchShown={depth > 0}
+            number={depth === 0 ? context.numberOf?.(agent.pane_id, checkoutId) ?? null : null}
             menu={context.agentRowMenu}
           />
         );
@@ -1453,7 +1473,7 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, sleeping, inset, conte
   );
 }
 
-
+const NO_PANES: ReadonlySet<string> = new Set();
 
 /** What a row's menu reads from the host when it opens: the OS file manager, and the new-tab chord the registry binds here. */
 function menuHost(): MenuHost {

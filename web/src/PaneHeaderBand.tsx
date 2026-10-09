@@ -1,7 +1,9 @@
-import { CircleAlertIcon, CornerDownRightIcon, GitPullRequestIcon, MessageCircleIcon, MoonIcon } from "lucide-react";
+import { CircleAlertIcon, GitPullRequestIcon, MoonIcon } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { Actions } from "./actions";
-import { DescendantBadge } from "./components/agent-row";
+import { AgentMark } from "./AgentMark";
+import { askWhat, PrChip, prStaleness, TreeButtonFace, VerbText } from "./components/agent-tree";
+import { AgentTreePopover } from "./components/agent-tree-popover";
 import { Elapsed } from "./components/elapsed";
 import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -17,9 +19,8 @@ const LABELS: Record<string, MessageKey> = {
   disconnected: "panes.transport.disconnected", closing: "panes.transport.closing", starting: "panes.transport.starting",
   unavailable: "panes.transport.remoteUnavailable", terminated: "panes.transport.remoteEnded", exit: "agentSessions.exitCode",
   controlled_elsewhere: "panes.transport.scrollElsewhere", device_offline: "panes.transport.disconnected",
-  approval: "agentSessions.tag.approval", answer: "agentSessions.tag.answer", stopped: "agentSessions.tag.stopped",
+  stopped: "agentSessions.tag.stopped",
   result: "agentSessions.tag.result", fix: "agentSessions.tag.fix", review: "agentSessions.tag.review", merge: "agentSessions.tag.merge",
-  raised_child: "agentSessions.children",
 };
 const TONES = { muted: "bg-secondary text-muted-foreground", warning: "bg-warning/10 text-warning", error: "bg-destructive/10 text-destructive", success: "bg-success/10 text-success", pr: "bg-pr-open/10 text-pr-open" };
 const ACTION_TONES = { muted: "bg-secondary text-secondary-foreground", warning: "bg-warning text-status-foreground", error: "bg-destructive text-destructive-foreground", success: "bg-success text-status-foreground", pr: "bg-pr-open text-status-foreground" };
@@ -30,36 +31,105 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
   const outcome = useShellStore((state) => state.rest?.status?.pane_focus_request);
   const band = header?.band;
   if (!band) return header?.working ? <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[calc(2*var(--size-hairline))] bg-agent-working" data-pane-working-line={paneId} /> : null;
-  const labelKey = LABELS[band.kind];
-  if (!labelKey) throw new Error(`Unknown core pane band: ${band.kind}`);
-  const label = band.kind === "raised_child" ? (band.child_tag ? t(LABELS[band.child_tag]!) : "↳") : band.kind === "exit" ? t("agentSessions.exitCode", { exitCode: band.exit_code! }) : t(labelKey as Exclude<MessageKey, "agentSessions.exitCode">);
-  const Icon = ["sleeping", "waking"].includes(band.kind) ? MoonIcon : band.kind === "raised_child" ? CornerDownRightIcon : ["fix", "review", "merge"].includes(band.kind) ? GitPullRequestIcon : band.kind === "answer" ? MessageCircleIcon : CircleAlertIcon;
   const action = band.action;
   const tracked = action?.kind === "child" && relation?.sourcePaneId === paneId && relation.targetPaneId === action.pane_id ? relation : null;
   const progress = relationState(tracked, outcome, t);
-  const reason = progress?.phase === "failed" ? progress.message : progress?.phase === "pending" ? t("panes.relation.opening", { name: tracked!.label }) : bandReason(band, t);
+  const navigation = progress?.phase === "failed" ? progress.message : progress?.phase === "pending" ? t("panes.relation.opening", { name: tracked!.label }) : null;
+  const ask = band.kind === "raised" || band.kind === "approval" || band.kind === "answer";
+  const labelKey = LABELS[band.kind];
+  if (!ask && !labelKey) throw new Error(`Unknown core pane band: ${band.kind}`);
+  const label = ask ? null : band.kind === "exit" ? t("agentSessions.exitCode", { exitCode: band.exit_code! }) : t(labelKey as Exclude<MessageKey, "agentSessions.exitCode">);
+  const Icon = ["sleeping", "waking"].includes(band.kind) ? MoonIcon : ["fix", "review", "merge"].includes(band.kind) ? GitPullRequestIcon : CircleAlertIcon;
+  const reason = navigation ?? (ask ? null : bandReason(band, t));
   return <div className="absolute inset-x-0 top-0 z-10 bg-background"><div className={cn("flex h-[var(--size-pane-header)] min-w-0 items-center gap-xs px-sm text-caption", TONES[band.tone])} data-pane-header-band={band.kind}>
-    <Icon className="size-(--size-icon-sm) shrink-0" aria-hidden="true" /><span className="shrink-0">{label}</span>
-    <Hint label={reason ?? label}><span className={cn("min-w-0 flex-1 truncate", progress?.phase === "failed" && "text-destructive")} role={progress?.phase === "failed" ? "alert" : progress?.phase === "pending" ? "status" : undefined} data-pane-band-navigation={progress?.phase}>{reason}</span></Hint>
-    {band.more > 0 ? <span className="shrink-0 text-micro">+{band.more}</span> : null}
-    <Elapsed since={band.since_unix_ms} className="shrink-0 font-mono text-micro" />
+    {ask ? <AskBand paneId={paneId} band={band} navigation={navigation} failed={progress?.phase === "failed"} actions={actions} /> : <>
+      <Icon className="size-(--size-icon-sm) shrink-0" aria-hidden="true" /><span className="shrink-0">{label}</span>
+      <Hint label={reason ?? label!}><span className={cn("min-w-0 flex-1 truncate", progress?.phase === "failed" && "text-destructive")} role={progress?.phase === "failed" ? "alert" : progress?.phase === "pending" ? "status" : undefined} data-pane-band-navigation={progress?.phase}>{reason}</span></Hint>
+      {band.more > 0 ? <span className="shrink-0 text-micro">+{band.more}</span> : null}
+      <Elapsed since={band.since_unix_ms} className="shrink-0 font-mono text-micro" />
+    </>}
     {action ? <button type="button" data-pane-band-open={paneId} disabled={progress?.phase === "pending" || (progress?.phase === "failed" && !progress.retryable)} aria-busy={progress?.phase === "pending"} className={cn("shrink-0 rounded-xs px-xs py-xxs text-micro outline-none hover:brightness-95 focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50", ACTION_TONES[band.tone])} onClick={() => action.kind === "child" ? actions.followRelation(paneId, action.pane_id, action.label) : actions.openSessionPullRequest(action)}>{progress?.phase === "failed" && progress.retryable ? t("common.retry") : action.kind === "child" ? t("common.open") : t("agentSessions.openPr")}</button> : null}
   </div></div>;
+}
+
+/**
+ * An ask band (PRD D-43; B4 to B7): verb · what · who · waited · 외 N건 · Open.
+ * The pane's own approval or question names no one; a raised descendant's
+ * names its provider and title, whose hover gives the path from the root,
+ * the checkout and the wait. 외 N건 opens the tree with the raised rows first.
+ */
+function AskBand({ paneId, band, navigation, failed, actions }: { paneId: string; band: NonNullable<PaneHeader["band"]>; navigation: string | null; failed: boolean; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const rest = useShellStore((state) => state.rest);
+  const local = useShellStore((state) => state.agents);
+  const agents = rows(rest, local);
+  const self = agents.find((agent) => agent.pane_id === paneId);
+  const raised = band.raised ?? null;
+  const verb = raised?.verb ?? (band.kind === "answer" ? "answer" : "approval");
+  const what = askWhat(t, verb, raised ? raised.what : band.reason ?? (band.facts ? bandReason(band, t) : null));
+  const minutes = band.since_unix_ms == null ? null : Math.max(0, Math.floor((Date.now() - band.since_unix_ms) / 60_000));
+  const who = raised ? [
+    t("agentSessions.tree.path", { path: [...raised.path, raised.title].join(" › ") }),
+    raised.checkout,
+    minutes === null ? null : t("agentSessions.waited", { minutes }),
+  ].filter(Boolean).join("\n") : null;
+  const more = band.more > 0 && self ? <AgentTreePopover
+    parent={self}
+    agents={agents}
+    raised
+    onOpenChild={(id, label) => actions.followRelation(paneId, id, label)}
+    onGraph={() => actions.openAgentsOverview()}
+    returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-band-more="${paneId}"]`)?.focus()}
+    triggerLabel={t("agentSessions.moreAsks", { count: band.more })}
+    trigger={<button type="button" data-pane-band-more={paneId} className="shrink-0 rounded-xs px-xs py-xxs text-micro underline-offset-2 outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring">{t("agentSessions.moreAsks", { count: band.more })}</button>}
+  /> : null;
+  return <>
+    <VerbText verb={verb} />
+    <Hint label={navigation ?? what}><span className={cn("min-w-0 flex-1 truncate", failed && "text-destructive")} role={failed ? "alert" : navigation ? "status" : undefined} data-pane-band-navigation={navigation ? failed ? "failed" : "pending" : undefined}>{navigation ?? what}</span></Hint>
+    {raised ? <Hint label={who!}><span className="flex min-w-0 max-w-1/3 shrink items-center gap-xxs text-foreground" data-pane-band-who={raised.pane_id}><AgentMark kind={raised.agent_kind} /><span className="min-w-0 truncate">{raised.title}</span></span></Hint> : null}
+    <Elapsed since={band.since_unix_ms} className="shrink-0 font-mono text-micro" />
+    {more}
+  </>;
 }
 
 function rows(rest: SnapshotRest | null, local: AgentRow[]): AgentRow[] {
   return [...local, ...(rest?.status?.remote ?? []).flatMap((remote) => remote.session?.agents ?? [])];
 }
 
-export function PaneChildrenBadge({ paneId, actions }: { paneId: string; actions: Actions }) {
+/** Every agent row this page knows, local and from connected devices. */
+export function usePaneAgents(): AgentRow[] {
   const rest = useShellStore((state) => state.rest);
   const local = useShellStore((state) => state.agents);
-  const agents = rows(rest, local);
+  return rows(rest, local);
+}
+
+/** The pane's own PR chip after its title (B21, B22); a descendant's PRs stay on its own rows. */
+export function PanePrChip({ paneId, actions }: { paneId: string; actions: Actions }) {
+  const rest = useShellStore((state) => state.rest);
+  const agent = usePaneAgents().find((row) => row.pane_id === paneId);
+  if (!agent?.state.pr) return null;
+  // The pane names no project; the PR's URL finds the one that lists it.
+  return <PrChip agent={agent} staleness={prStaleness(rest, agent)} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} />;
+}
+
+/** The pane header's child button (B21): a tree icon and the direct child count, opening the tree popover. */
+export function PaneTreeButton({ paneId, actions }: { paneId: string; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const agents = usePaneAgents();
   const parent = agents.find((agent) => agent.pane_id === paneId);
   if (!parent) return null;
-  const children = (parent.lineage_child_pane_ids ?? []).map((id) => agents.find((agent) => agent.pane_id === id)).filter((agent): agent is AgentRow => agent !== undefined);
-  if (!children.length) return null;
-  return <DescendantBadge agent={parent} descendants={children.length} childRows={children} onOpenChild={(id) => actions.followRelation(paneId, id, children.find((child) => child.pane_id === id)!.identity_label)} onUnfold={() => actions.openAgentsOverview()} returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-view="${paneId}"] [data-descendant-badge]`)?.focus()} />;
+  const count = (parent.lineage_child_pane_ids ?? []).filter((id) => agents.some((agent) => agent.pane_id === id)).length;
+  if (count === 0) return null;
+  const label = t("agentSessions.tree.children", { count });
+  return <AgentTreePopover
+    parent={parent}
+    agents={agents}
+    onOpenChild={(id, name) => actions.followRelation(paneId, id, name)}
+    onGraph={() => actions.openAgentsOverview()}
+    returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-tree="${paneId}"]`)?.focus()}
+    triggerLabel={label}
+    trigger={<button type="button" aria-label={label} data-pane-tree={paneId} className="flex h-(--size-sidebar-line-detail) shrink-0 items-center rounded-xs px-xs outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-popover"><TreeButtonFace count={count} /></button>}
+  />;
 }
 
 /** Localize the core's facts; no verb or attention decision lives here. */

@@ -18,7 +18,7 @@ import type { AgentRow, MarkCounts, TabAgent } from "./snapshot";
  * - `quiet`: nothing to report; the line shows only on the selected or hovered
  *   row, where it is revealed in full.
  */
-export type LineMode = "request" | "news" | "quiet" | "raised_child";
+export type LineMode = "request" | "news" | "quiet";
 
 export type RowLine = { text: string; mode: LineMode };
 
@@ -46,10 +46,6 @@ export function lineShownAtRest(line: RowLine, selected: boolean): boolean {
 
 /** The colour of a line: a request in its demand's colour, dimmed like its mark once read, news bright, a revealed line subdued. */
 export function lineTone(line: RowLine, agent: Pick<AgentRow, "state">): string {
-  if (line.mode === "raised_child") {
-    if (!agent.state.line) throw new Error("Raised child line has no core tone");
-    return toneClass(agent.state.line.tone);
-  }
   if (line.mode === "request") return toneClass(agent.state.chip_tone);
   return line.mode === "news" ? "text-foreground" : "text-subtle-foreground";
 }
@@ -102,12 +98,6 @@ export function badgeWords(counts: BadgeCounts | undefined, t: TFunction<"transl
   return badgeParts(counts)
     .map((part) => COUNT_WORDS[part.state](t, part.count))
     .join(", ");
-}
-
-/** The badge's accessible name: how many live descendants and what they are doing. */
-export function badgeLabel(counts: BadgeCounts | undefined, live: number, t: TFunction<"translation">): string {
-  const states = badgeWords(counts, t);
-  return states ? t("agents.liveDescendantStates", { count: live, states }) : t("agents.liveDescendants", { count: live });
 }
 
 /**

@@ -1,4 +1,5 @@
-import { memo, useRef } from "react";
+import { ChevronRightIcon } from "lucide-react";
+import { memo, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { AgentMark } from "../AgentMark";
 import { agentClosing } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
@@ -7,7 +8,8 @@ import { branchChip, lineTone, markTone, rowAccessibleName, sidebarLine } from "
 import { cn } from "../lib/utils";
 import type { AgentRow } from "../snapshot";
 import type { AgentMenuItem } from "../workspaceManage";
-import { DescendantBadge } from "./agent-row";
+import { AskLine, DescendantMark, ownPulls, PrIcon, prStaleness, TreeChevron, TreeRails, type TreePlace } from "./agent-tree";
+import { AgentTreePopover } from "./agent-tree-popover";
 import { Elapsed } from "./elapsed";
 import { EntryContextMenu, type MenuEntry } from "./entry-menu";
 import { DeviceChip } from "./device-chip";
@@ -45,37 +47,46 @@ export function FoldLane() {
   return <span aria-hidden="true" data-fold-slot="true" className="w-(--size-lineage-chevron) shrink-0" />;
 }
 
+/** Where a sidebar row sits in a drawn tree, and how its chevron opens its children. */
+export type SidebarTreeSlot = {
+  place: TreePlace;
+  /** Null for a row with no children; a grandchild's chevron opens the popover instead. */
+  open: boolean | null;
+  onToggle: () => void;
+  /** Set on a grandchild with children: its chevron opens the tree popover rooted on it. */
+  popover: { agents: AgentRow[]; onOpenChild: (paneId: string, label: string) => void; onGraph: () => void } | null;
+};
+
 /**
  * One agent in the sidebar, in Agents and under a checkout in Projects (PRD
- * sidebar-readability D-2..D-6, B2-B7, B12-B15). Line one is the status mark,
- * the provider mark, the stable task name, a branch chip when a delegated
- * row's checkout differs from its parent's, the device chip, the descendant
- * badge while folded, the elapsed time, and the lineage chevron on a row that
- * has children, whose slot every other row keeps empty. A request or news takes one line of its own from the moment it
- * exists; a quiet sentence is only in the tooltip. `place` is the Agents
- * list's context line; Projects passes none because the rows above say it,
- * and for the same reason a Projects root drawn in its own checkout carries
- * no branch chip, while a child drawn under a parent elsewhere keeps it.
+ * sidebar-readability D-2..D-6; agent-hierarchy-screens D-12, D-37 to D-40,
+ * B10 to B17). Line one is the status mark, the provider mark, the stable
+ * task name, a branch chip when a delegated row's checkout differs from its
+ * parent's, the device chip, the row's own PR icon, the descendant mark
+ * while folded, and the elapsed time. In a drawn tree (`tree`) the rails and
+ * the chevron lane stand left of the marks, and a tree row is one line but
+ * for a child on another device, whose second line names that device. A
+ * Needs You row (`ask`) has no PR or mark: its second line is the verb and
+ * what to do. Elsewhere a request or news takes the second line; a quiet
+ * sentence is only in the tooltip. `place` is the Agents list's context
+ * line; Projects passes none because the rows above say it.
  *
  * Nothing here grows or moves on hover, focus, selection or an open menu:
  * those change a fill, a ring and the chevron's opacity only. The title is
  * 12/400 in every state; attention and selection brighten it rather than
- * thicken it (PRD sidebar-typography D-02). Line one is 20 high and line two
- * 16, so a row is 28 or 44 with its padding (D-03). `number` is the digit an
- * ⌥ hold shows at the row's top right (PRD electron-digit-shortcuts-hints B5),
- * floating over the time and the fold slot, which stay where they are.
+ * thicken it (PRD sidebar-typography D-02). `number` is the digit an ⌥ hold
+ * shows at the row's top right (PRD electron-digit-shortcuts-hints B5).
  */
 export const SidebarAgentRow = memo(function SidebarAgentRow({
   agent,
   device,
   place,
   depth,
-  descendants,
-  childRows,
+  tree = null,
+  ask = false,
+  remote = null,
   selected,
   onOpen,
-  onOpenChild = onOpen,
-  onAll,
   inset,
   branchShown = true,
   number = null,
@@ -86,15 +97,14 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   place: string | null;
   /** How deep under the root drawn above it; a root is 0. */
   depth: number;
-  /** Live descendants among the device's rows. */
-  descendants: number;
-  /** The direct children still listed, for the chevron and the badge's popover. */
-  childRows: AgentRow[];
+  /** Set where the row is drawn in a tree with its rails and chevron. */
+  tree?: SidebarTreeSlot | null;
+  /** A Needs You row: its second line is the ask, with no PR or descendant mark (B2). */
+  ask?: boolean;
+  /** A child on another device than its parent: that device's name and whether it can be reached (B14). */
+  remote?: { label: string; reachable: boolean } | null;
   selected: boolean;
   onOpen: (paneId: string) => void;
-  onOpenChild?: (paneId: string) => void;
-  /** Null where the tree is drawn with nothing folded (a selected SSH device's Projects). */
-  onAll: () => void;
   /** Where a root's first column starts. */
   inset: string;
   /** False where the row above already names the row's checkout. */
@@ -106,12 +116,23 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
 }) {
   const { t } = useInterfaceTranslation();
   const main = useRef<HTMLButtonElement>(null);
-  const closing = useShellStore((s) => agentClosing(s.rest?.status?.async_operations, agent.pane_id));
-  const line = sidebarLine(agent);
+  const rest = useShellStore((s) => s.rest);
+  const closing = agentClosing(rest?.status?.async_operations, agent.pane_id);
+  const line = tree ? null : sidebarLine(agent);
   const branch = branchShown ? branchChip(agent) : null;
   const attention = agent.state.attention;
+  const unreachable = remote !== null && !remote.reachable;
   const titleTone = agent.state.title_emphasized || (selected && agent.state.selection_emphasizes_title) ? "text-foreground" : "text-subtle-foreground";
   const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agent.detail?.trim(), place].filter(Boolean).join("\n");
+  const staleness = ask ? undefined : prStaleness(rest, agent);
+  const folded = tree ? tree.open !== true : true;
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (!tree || tree.open === null || tree.popover || event.metaKey || event.ctrlKey || event.altKey) return;
+    if ((event.key === "ArrowRight" && !tree.open) || (event.key === "ArrowLeft" && tree.open)) {
+      event.preventDefault();
+      tree.onToggle();
+    }
+  };
   return (
     <EntryContextMenu
       asChild
@@ -127,71 +148,111 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       data-waiting={agent.waiting_on_descendants ? "true" : "false"}
       data-agent-device={device ?? undefined}
       data-depth={depth}
-      className={cn("group/row relative flex items-start gap-xs rounded-sm py-xs pr-xs text-body", selected ? "bg-secondary" : "hover:bg-accent")}
-      style={{ paddingLeft: `calc(${inset} + ${depth} * var(--size-lineage-indent))` }}
+      data-unreachable={unreachable ? "true" : undefined}
+      className={cn("group/row relative flex rounded-sm pr-xs text-body", tree ? "items-stretch" : "items-start gap-xs py-xs", selected ? "bg-secondary" : "hover:bg-accent", unreachable && "opacity-(--opacity-dimmed)")}
+      style={{ paddingLeft: tree ? `calc(${inset} - var(--size-lineage-chevron) - var(--spacing-xs))` : inset }}
     >
       <Hint label={hint} reveals>
         <button
           ref={main}
           type="button"
-          aria-label={[rowAccessibleName(t, agent, device), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
+          disabled={unreachable}
+          aria-label={[rowAccessibleName(t, agent, device ?? remote?.label ?? null), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
           aria-current={selected ? "true" : undefined}
+          aria-expanded={tree && tree.open !== null && !tree.popover ? tree.open : undefined}
           data-agent-open={agent.pane_id}
           className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
           onClick={() => onOpen(agent.pane_id)}
+          onKeyDown={onKeyDown}
         />
       </Hint>
-      <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
-        <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_code} />
-        <AgentMark kind={agent.agent_kind} />
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="flex min-h-(--size-sidebar-line) min-w-0 items-center gap-xs">
-          {/* The row button's name already reads all of this out. */}
-          <span aria-hidden="true" className={cn("pointer-events-none min-w-0 flex-auto truncate", titleTone)} data-agent-title="true">
-            {agent.identity_label}
+      {tree ? <TreeRails place={tree.place} /> : null}
+      {tree ? <RowChevron agent={agent} tree={tree} returnFocus={() => main.current?.focus()} /> : null}
+      <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs pl-xs")}>
+        <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
+          <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_code} />
+          <AgentMark kind={agent.agent_kind} />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="flex min-h-(--size-sidebar-line) min-w-0 items-center gap-xs">
+            {/* The row button's name already reads all of this out. */}
+            <span aria-hidden="true" className={cn("pointer-events-none min-w-0 flex-auto truncate", titleTone)} data-agent-title="true">
+              {agent.identity_label}
+            </span>
+            {closing ? (
+              <span aria-hidden="true" className="pointer-events-none shrink-0 text-caption text-muted-foreground" data-agent-closing="true">
+                {t("agents.closing")}
+              </span>
+            ) : null}
+            {branch ? (
+              <Badge aria-hidden="true" variant="secondary" className="pointer-events-none min-w-0 max-w-2/5 shrink font-mono" data-branch-chip={branch}>
+                <span className="truncate">{branch}</span>
+              </Badge>
+            ) : null}
+            {device ? (
+              <DeviceChip label={device} className="pointer-events-none max-w-2/5" />
+            ) : null}
+            {ask ? null : <PrIcon agent={agent} staleness={staleness} card={(icon) => <PrHoverCard agent={agent} icon={icon} />} />}
+            {ask || !folded ? null : <span className="pointer-events-none flex shrink-0"><DescendantMark agent={agent} /></span>}
+            {/* A time the core never measured draws nothing, and nothing stands in for it. */}
+            <Elapsed since={agent.changed_at_unix_ms} aria-hidden="true" className="pointer-events-none shrink-0 font-mono text-caption text-muted-foreground" data-agent-elapsed="true" />
+            {tree ? null : <FoldLane />}
           </span>
-          {closing ? (
-            <span aria-hidden="true" className="pointer-events-none shrink-0 text-caption text-muted-foreground" data-agent-closing="true">
-              {t("agents.closing")}
+          {ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : line ? (
+            <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))}>
+              {line.text}
             </span>
           ) : null}
-          {branch ? (
-            <Badge aria-hidden="true" variant="secondary" className="pointer-events-none min-w-0 max-w-2/5 shrink font-mono" data-branch-chip={branch}>
-              <span className="truncate">{branch}</span>
-            </Badge>
+          {remote ? (
+            <span aria-hidden="true" data-agent-remote={remote.label} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-muted-foreground">
+              {remote.label}
+            </span>
           ) : null}
-          {device ? (
-            <DeviceChip label={device} className="pointer-events-none max-w-2/5" />
+          {place ? (
+            <span aria-hidden="true" data-agent-place={place} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-muted-foreground">
+              {place}
+            </span>
           ) : null}
-          {descendants > 0 ? (
-            <DescendantBadge
-              agent={agent}
-              descendants={descendants}
-              childRows={childRows}
-              onOpenChild={onOpenChild}
-              onUnfold={onAll}
-              returnFocus={() => main.current?.focus()}
-            />
-          ) : null}
-          {/* A time the core never measured draws nothing, and nothing stands in for it. */}
-          <Elapsed since={agent.changed_at_unix_ms} aria-hidden="true" className="pointer-events-none shrink-0 font-mono text-caption text-muted-foreground" data-agent-elapsed="true" />
-          <FoldLane />
         </span>
-        {line ? (
-          <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))}>
-            {line.text}
-          </span>
-        ) : null}
-        {place ? (
-          <span aria-hidden="true" data-agent-place={place} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-muted-foreground">
-            {place}
-          </span>
-        ) : null}
-
       </span>
       {number !== null ? <Keycap number={number} /> : null}
     </li>
     </EntryContextMenu>
   );
 });
+
+/** A tree row's chevron: it folds the row's children in place, or on a grandchild opens the popover rooted on it (B13). */
+function RowChevron({ agent, tree, returnFocus }: { agent: AgentRow; tree: SidebarTreeSlot; returnFocus: () => void }) {
+  const { t } = useInterfaceTranslation();
+  if (!tree.popover || tree.open === null) {
+    return <TreeChevron name={agent.identity_label} open={tree.open} onToggle={tree.onToggle} hangs={tree.place.depth > 0} data-tree-chevron={agent.pane_id} />;
+  }
+  const { agents, onOpenChild, onGraph } = tree.popover;
+  const label = t("agentSessions.tree.expand", { name: agent.identity_label });
+  return (
+    <span className="relative w-(--size-lineage-chevron) shrink-0 self-stretch">
+      <span aria-hidden="true" className="absolute top-(--size-lineage-elbow-y) right-xxs left-none h-(--size-hairline) bg-lineage-rail" />
+      <AgentTreePopover
+        parent={agent}
+        agents={agents}
+        onOpenChild={onOpenChild}
+        onGraph={onGraph}
+        returnFocus={returnFocus}
+        triggerLabel={label}
+        trigger={
+          <button type="button" tabIndex={-1} aria-label={label} aria-haspopup="dialog" data-tree-chevron={agent.pane_id} className="relative z-10 mt-xs flex h-(--size-sidebar-line) w-full items-center justify-center rounded-xs bg-sidebar text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring">
+            <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+          </button>
+        }
+      />
+    </span>
+  );
+}
+
+/** Under the pointer, the sidebar PR icon shows each own PR with its state and title (B23). */
+function PrHoverCard({ agent, icon }: { agent: AgentRow; icon: ReactNode }) {
+  const { t } = useInterfaceTranslation();
+  const pulls = ownPulls(agent);
+  const label = pulls.map(({ pull, state }) => `#${pull.number} ${t(`agentSessions.pr.${state}`)} · ${pull.title}`).join("\n");
+  return <Hint label={label}><span className="relative z-10 flex shrink-0" data-pr-hover={agent.pane_id}>{icon}</span></Hint>;
+}

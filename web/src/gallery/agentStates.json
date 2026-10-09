@@ -79,9 +79,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "resting",
-        "tag": "idle"
-      }
+        "group": "idle",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 3,
+      "pr": null
     },
     {
       "attention": false,
@@ -117,9 +121,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "in_progress",
-        "tag": "working"
-      }
+        "group": "working",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 1,
+      "pr": null
     },
     {
       "attention": false,
@@ -155,9 +163,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "in_progress",
-        "tag": "working"
-      }
+        "group": "working",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 1,
+      "pr": null
     },
     {
       "attention": false,
@@ -193,9 +205,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "resting",
-        "tag": "idle"
-      }
+        "group": "idle",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 3,
+      "pr": null
     },
     {
       "attention": false,
@@ -231,9 +247,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "in_progress",
-        "tag": "working"
-      }
+        "group": "working",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 1,
+      "pr": null
     },
     {
       "attention": false,
@@ -276,9 +296,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "in_progress",
-        "tag": "working"
-      }
+        "group": "working",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 1,
+      "pr": null
     },
     {
       "attention": false,
@@ -314,9 +338,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "in_progress",
-        "tag": "working"
-      }
+        "group": "working",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 1,
+      "pr": null
     },
     {
       "attention": true,
@@ -359,9 +387,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "resting",
-        "tag": "idle"
-      }
+        "group": "idle",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 3,
+      "pr": null
     },
     {
       "attention": false,
@@ -397,9 +429,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "resting",
-        "tag": "idle"
-      }
+        "group": "idle",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 3,
+      "pr": null
     },
     {
       "attention": false,
@@ -435,9 +471,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "in_progress",
-        "tag": "working"
-      }
+        "group": "working",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 1,
+      "pr": null
     },
     {
       "attention": false,
@@ -473,9 +513,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "in_progress",
-        "tag": "working"
-      }
+        "group": "working",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 1,
+      "pr": null
     },
     {
       "attention": false,
@@ -511,9 +555,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "in_progress",
-        "tag": "working"
-      }
+        "group": "working",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 1,
+      "pr": null
     },
     {
       "attention": false,
@@ -549,9 +597,13 @@
       "request_todo": false,
       "request_since": null,
       "session": {
-        "group": "resting",
-        "tag": "idle"
-      }
+        "group": "idle",
+        "line": null,
+        "unfinished": false
+      },
+      "ask": null,
+      "tree_rank": 3,
+      "pr": null
     }
   ]
 }

@@ -337307,6 +337307,34 @@
         }
       ]
     },
+    "--pr-pending": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#BF8700"
+        },
+        {
+          "value": "#D29922",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--lineage-rail": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#C9C9CE"
+        },
+        {
+          "value": "#55585E",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
     "--pr-draft": {
       "type": "color",
       "value": [
@@ -338107,6 +338135,14 @@
       "type": "number",
       "value": 16
     },
+    "--size-lineage-rail-x": {
+      "type": "number",
+      "value": 8
+    },
+    "--size-lineage-departure-y": {
+      "type": "number",
+      "value": 18
+    },
     "--size-worktree-dialog": {
       "type": "number",
       "value": 440
@@ -338413,6 +338449,14 @@
       "type": "number",
       "value": 40
     },
+    "--size-pane-parent-breakpoint": {
+      "type": "number",
+      "value": 640
+    },
+    "--size-pane-state-example": {
+      "type": "number",
+      "value": 144
+    },
     "--font-ui": {
       "type": "string",
       "value": "Inter"
@@ -338424,14 +338468,6 @@
     "--color-selected-wash": {
       "type": "color",
       "value": "#F4F4F61F"
-    },
-    "--size-pane-parent-breakpoint": {
-      "type": "number",
-      "value": 640
-    },
-    "--size-pane-state-example": {
-      "type": "number",
-      "value": 144
     }
   },
   "imports": {

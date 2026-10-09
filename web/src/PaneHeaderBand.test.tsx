@@ -23,7 +23,8 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-const header: PaneHeader = { working: false, pull: null, band: { kind: "raised_child", tone: "warning", reason: "하위 검증 권한이 필요합니다", since_unix_ms: null, action: {kind: "child", pane_id: "child", label: "자식 검증"}, more: 0, exit_code: null, child_tag: "approval" } };
+const header: PaneHeader = { working: false, band: { kind: "raised", tone: "warning", reason: null, since_unix_ms: null, action: {kind: "child", pane_id: "child", label: "자식 검증"}, more: 0, exit_code: null,
+  raised: { verb: "approval", what: "하위 검증 권한이 필요합니다", pane_id: "child", title: "자식 검증", agent_kind: "codex", open_pane_id: "child", since_unix_ms: null, path: ["부모"], checkout: "feature", human_notice: true } } };
 
 async function mount(value = header) {
   vi.useFakeTimers();
@@ -78,6 +79,17 @@ it("turns a missing core answer into a retryable timeout beside the move", async
     await act(async () => vi.advanceTimersByTime(RELATION_ANSWER_TIMEOUT_MS));
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("did not answer in time");
     expect(container.querySelector<HTMLButtonElement>("[data-pane-band-open]")!.disabled).toBe(false);
+  } finally { await unmount(); }
+});
+
+it("draws a raised ask as verb, what and who, with the descendant's path under the pointer", async () => {
+  const {container, unmount} = await mount();
+  try {
+    const band = container.querySelector("[data-pane-header-band=raised]")!;
+    expect(band.querySelector("[data-verb=approval]")?.textContent).toBe("Approve");
+    expect(band.textContent).toContain("하위 검증 권한이 필요합니다");
+    expect(band.querySelector("[data-pane-band-who=child]")?.textContent).toBe("자식 검증");
+    expect(band.querySelector("[data-pane-band-more]")).toBeNull();
   } finally { await unmount(); }
 });
 
