@@ -276,15 +276,18 @@ function Summary({ detail }: { detail: TaskDetail }) {
         </div>
       ) : null}
       {detail.attachments.length > 0 ? (
-        <ul className="flex flex-col gap-xs">
-          {detail.attachments.map((file) => (
-            <li key={file.sha256} className="flex items-center gap-sm text-body">
-              <PaperclipIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" />
-              <span className="min-w-0 truncate">{file.original}</span>
-              <span className="text-caption text-muted-foreground">v{file.version}</span>
-            </li>
-          ))}
-        </ul>
+        <div className="flex flex-col gap-xxs" data-factory-attachments="true">
+          <span className="text-caption text-muted-foreground">{t("factory.task.attachments")}</span>
+          <ul className="flex flex-col gap-xs">
+            {detail.attachments.map((file) => (
+              <li key={file.sha256} className="flex items-center gap-sm text-body">
+                <PaperclipIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-muted-foreground" />
+                <span className="min-w-0 truncate">{file.original}</span>
+                <span className="text-caption text-muted-foreground">v{file.version}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
     </Field>
   );
