@@ -100,7 +100,7 @@ export type UserTurnFact = {
 };
 
 /** How the label read a turn's end (`LabelEnd`). */
-export type LabelEnd = "working" | "question" | "done" | "waiting" | "unfinished";
+export type LabelEnd = "working" | "question" | "blocked" | "done" | "waiting" | "unfinished";
 
 /** What a row asks of the operator now (`RequestVerb`), in the order the request view draws its groups. */
 export type RequestVerb = "answer" | "fix" | "review" | "stopped" | "result" | "working" | "waiting" | "idle";

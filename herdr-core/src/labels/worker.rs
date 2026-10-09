@@ -328,8 +328,8 @@ impl LabelWorker {
                 self.dirty = true;
             }
             // A running agent is not waiting on anyone: how the last turn
-            // ended (and a question's reply) is over, and the turn's end
-            // writes anew. A
+            // ended (and a question's reply or a block's cause) is over, and
+            // the turn's end writes anew. A
             // stopped agent whose state moved and is stopped again (or at a
             // permission prompt) ran in between, even when its working state
             // came and went inside one burst of Herdr events and was never
@@ -339,7 +339,7 @@ impl LabelWorker {
                     && was_stopped
                     && matches!(status.as_str(), "idle" | "done" | "blocked"));
             if ran && let Some(end) = record.end.filter(|end| *end != LabelEnd::Working) {
-                if end == LabelEnd::Question {
+                if matches!(end, LabelEnd::Question | LabelEnd::Blocked) {
                     record.line.clear();
                 }
                 record.end = None;

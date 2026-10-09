@@ -210,6 +210,7 @@ impl SleepRecord {
             progress: self.progress.clone(),
             expected_reply: None,
             question: false,
+            blocked: false,
         });
         // Any other key is Herdr's padded sequence, which the sequence below
         // reproduces.

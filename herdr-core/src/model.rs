@@ -4957,6 +4957,7 @@ mod wire_enum_tests {
         let ends = [
             LabelEnd::Working,
             LabelEnd::Question,
+            LabelEnd::Blocked,
             LabelEnd::Done,
             LabelEnd::Waiting,
             LabelEnd::Unfinished,
@@ -4965,6 +4966,7 @@ mod wire_enum_tests {
             match variant {
                 LabelEnd::Working
                 | LabelEnd::Question
+                | LabelEnd::Blocked
                 | LabelEnd::Done
                 | LabelEnd::Waiting
                 | LabelEnd::Unfinished => {}

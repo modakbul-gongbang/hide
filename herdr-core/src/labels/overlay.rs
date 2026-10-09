@@ -176,15 +176,17 @@ impl LabelOverlay {
             if let Some(summary) = &label.summary {
                 let working = agent.agent_status.as_deref() == Some("working");
                 let asking = summary.end == Some(LabelEnd::Question);
+                let blocked = summary.end == Some(LabelEnd::Blocked);
                 let line = (!summary.line.trim().is_empty()).then(|| summary.line.clone());
                 // The sidebar's two lines keep their meaning: the line is the
                 // reply asked for when the turn ended on a question, and the
-                // progress otherwise.
+                // progress otherwise, which for a block is its cause.
                 agent.label = Some(AgentLabel {
                     task: summary.goal.clone(),
                     progress: line.clone().filter(|_| !asking),
                     expected_reply: line.clone().filter(|_| asking),
                     question: asking && !working,
+                    blocked: blocked && !working,
                 });
                 facts.end = summary.end;
                 facts.line = line;

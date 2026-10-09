@@ -183,6 +183,11 @@ pub struct AgentLabel {
     /// The agent's last message asks the operator something specific.
     #[serde(default)]
     pub question: bool,
+    /// The agent stopped and named what stopped it (`end: blocked`). This is
+    /// the label's block, not Herdr's `blocked` lifecycle, which is an
+    /// approval prompt.
+    #[serde(default)]
+    pub blocked: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1639,6 +1644,7 @@ mod tests {
                     progress: None,
                     expected_reply: None,
                     question: false,
+                    blocked: false,
                 });
                 agent.facts = Some(crate::request_view::RowFacts {
                     native_title: native.map(str::to_owned),

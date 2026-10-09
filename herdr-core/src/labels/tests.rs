@@ -762,6 +762,22 @@ fn the_providers_answer_is_judged_before_it_is_shown() {
     )
     .unwrap();
     assert_eq!(long.line.chars().count(), 40);
+    let block_without_cause = parse_text(
+        AnalysisPhase::TurnEnd,
+        r#"{"goal":"배포 방식 결정 작업","goal_changed":false,"line":"","end":"blocked"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        block_without_cause.end,
+        LabelEnd::Unfinished,
+        "a block needs a cause to name"
+    );
+    let block = parse_text(
+        AnalysisPhase::TurnEnd,
+        r#"{"goal":"배포 방식 결정 작업","goal_changed":false,"line":"디스크 여유가 없어 검증을 못 함","end":"blocked"}"#,
+    )
+    .unwrap();
+    assert_eq!(block.end, LabelEnd::Blocked);
     assert!(parse_text(AnalysisPhase::TurnEnd, r#"{"goal":"짧음"}"#).is_err());
     for end in ["stuck", "working"] {
         assert!(
@@ -772,7 +788,7 @@ fn the_providers_answer_is_judged_before_it_is_shown() {
                 ),
             )
             .is_err(),
-            "a stopped turn's end outside the four is refused, not read as anything: {end}"
+            "a stopped turn's end outside the five is refused, not read as anything: {end}"
         );
     }
 }
@@ -809,7 +825,22 @@ fn each_turn_boundary_is_asked_only_what_it_can_know() {
     let end = request(AnalysisPhase::TurnEnd, "pane", "r2".to_owned(), "context");
     assert_eq!(
         end.output_schema["properties"]["end"]["enum"],
-        json!(["question", "waiting", "unfinished", "done"])
+        json!(["question", "blocked", "waiting", "unfinished", "done"])
+    );
+    // The order the prompt checks them in is the status model's precedence:
+    // the operator's move, then a stated cause, then something else's move,
+    // then nobody's (docs/status-model.md, Mark precedence).
+    let prompt = &end.system;
+    let at = |word: &str| {
+        prompt
+            .find(&format!("{word}: "))
+            .unwrap_or_else(|| panic!("{word}"))
+    };
+    assert!(at("question") < at("blocked") && at("blocked") < at("waiting"));
+    assert!(at("waiting") < at("unfinished") && at("unfinished") < at("done"));
+    assert!(
+        !prompt.contains("확실하지 않으면 done"),
+        "an unsure stop is unfinished, never done"
     );
 }
 
