@@ -109,7 +109,9 @@ cleanup() {
   fi
   for pid in "${pids[@]:-}"; do [[ -n "$pid" ]] && wait "$pid" 2>/dev/null; done
   if $core_started; then
-    bash "$measure_dir/core-host.sh" stop > "$MEASURE_RUN_DIR/core-stop.txt" 2>&1
+    # A core left running on the device is said where the run is read.
+    bash "$measure_dir/core-host.sh" stop > "$MEASURE_RUN_DIR/core-stop.txt" 2>&1 \
+      || echo "the device's core was not stopped; see $MEASURE_RUN_DIR/core-stop.txt" >&2
   fi
   rmdir "$MEASURE_SOCKET_DIR"
   {

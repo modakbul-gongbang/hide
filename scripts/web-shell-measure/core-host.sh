@@ -27,7 +27,13 @@ case "${1:-}" in
     [[ -x "$local_bin" ]] || { echo "usage: core-host.sh start <hided>" >&2; exit 2; }
     on_device "if $ours; then echo 'a core this script started still runs' >&2; exit 2; fi"
     on_device "mkdir -p $(q "$(dirname "$MEASURE_CORE_PROGRAM")") && cat > $(q "$MEASURE_CORE_PROGRAM.upload") && chmod 755 $(q "$MEASURE_CORE_PROGRAM.upload") && mv -f $(q "$MEASURE_CORE_PROGRAM.upload") $(q "$MEASURE_CORE_PROGRAM")" < "$local_bin"
-    on_device "rm -rf $(q "$MEASURE_CORE_STATE") && mkdir -p -m 700 $(q "$MEASURE_CORE_STATE") && \
+    # The private HOME and the state folder are this account's own and no
+    # link, so the removal below stays inside them.
+    on_device "[ -d $(q "$MEASURE_DEVICE_HOME") ] && [ ! -L $(q "$MEASURE_DEVICE_HOME") ] && [ -O $(q "$MEASURE_DEVICE_HOME") ] && [ ! -L $(q "$MEASURE_CORE_STATE") ]" \
+      || { echo "the device's private HOME is not this account's own folder" >&2; exit 2; }
+    # Only the core is put in the background, so the pid recorded is the
+    # core's own (nohup and env each replace themselves with what they run).
+    on_device "rm -rf $(q "$MEASURE_CORE_STATE") && mkdir -p -m 700 $(q "$MEASURE_CORE_STATE") || exit 1; \
       nohup env HOME=$(q "$MEASURE_DEVICE_HOME") PATH=$(q "$MEASURE_DEVICE_HOME/.local/bin"):/usr/bin:/bin:/usr/sbin:/sbin SHELL=/bin/zsh \
         XDG_CONFIG_HOME=$(q "$MEASURE_DEVICE_HOME/.config") XDG_STATE_HOME=$(q "$MEASURE_DEVICE_HOME/.state") XDG_DATA_HOME=$(q "$MEASURE_DEVICE_HOME/.data") \
         HERDR_SOCKET_PATH=$(q "$MEASURE_DEVICE_SOCKET") HERDR_BIN_PATH=$(q "$MEASURE_DEVICE_HOME/.local/bin/herdr") \
