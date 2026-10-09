@@ -167,6 +167,18 @@ async function shape(page: Page): Promise<string> {
   );
 }
 
+/**
+ * Double-clicks each row in turn. A file is shown when its read lands, and
+ * two reads land in either order, so each file is on screen, kept open and
+ * selected in the area in use before the next one is opened.
+ */
+async function keepOpenInTurn(page: Page, names: string[], row: (name: string) => Locator): Promise<void> {
+  for (const name of names) {
+    await row(name).dblclick();
+    await expect.poll(async () => /@\([^)]*?>(\S+?)[ )]/.exec(await shape(page))?.[1]).toBe(name);
+  }
+}
+
 function area(page: Page, index: number): Locator {
   return page.locator("[data-view-area-id]").nth(index);
 }
@@ -556,7 +568,7 @@ test("dragging a tab reorders, moves or splits once on a valid drop and leaves e
   const stack = await startStack(page, "s7-drag", { "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n" });
   try {
     // The drop points below are measured in the open panel.
-    for (const name of ["a.txt", "b.txt", "c.txt"]) await explorerRow(page, stack, name).dblclick();
+    await keepOpenInTurn(page, ["a.txt", "b.txt", "c.txt"], (name) => explorerRow(page, stack, name));
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt >c.txt)");
     const moves = () => stack.sent.get("view_layout.move") ?? 0;
     const splits = () => stack.sent.get("view_layout.split") ?? 0;
@@ -674,13 +686,13 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
       await target.locator("[data-project]", { hasText: project }).locator("[data-checkout]").first().click();
     };
     // Each Workspace numbers its own views, so both hold a1 with d2 and d3.
-    for (const name of ["a.txt", "c.txt"]) await explorerRow(page, stack, name).dblclick();
+    await keepOpenInTurn(page, ["a.txt", "c.txt"], (name) => explorerRow(page, stack, name));
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
     await choose(page, "beta");
     // A Workspace chosen for the first time starts with File Views off.
     await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-file-views", "off");
     await showExplorer(page);
-    for (const name of ["b1.txt", "b2.txt"]) await page.locator(`[data-explorer-row="${betaRoot}/${name}"]`).dblclick();
+    await keepOpenInTurn(page, ["b1.txt", "b2.txt"], (name) => page.locator(`[data-explorer-row="${betaRoot}/${name}"]`));
     await expect.poll(() => shape(page)).toBe("@(b1.txt >b2.txt)");
     await choose(page, "fixture");
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
@@ -773,7 +785,7 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     });
   const stack = await startStack(page, "s7-keys", { "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n", "d.txt": "d\n" }, { beforeOpen: duplicateFirstSplit });
   try {
-    for (const name of ["a.txt", "b.txt", "c.txt", "d.txt"]) await explorerRow(page, stack, name).dblclick();
+    await keepOpenInTurn(page, ["a.txt", "b.txt", "c.txt", "d.txt"], (name) => explorerRow(page, stack, name));
     await widenFileViews(page);
     const workspace = page.locator("[data-workspace-screen]");
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
@@ -944,7 +956,8 @@ const layoutEvents = (stack: Stack) => viewEvents(stack).length;
 
 /** Pins f02 to f10 in one area. The first click of each double click takes the preview's place, so the f01 preview gives way to f02 (B1). */
 async function pinNine(page: Page, stack: Stack) {
-  for (let index = 2; index <= 10; index += 1) await explorerRow(page, stack, `f${String(index).padStart(2, "0")}.txt`).dblclick();
+  const names = Array.from({ length: 9 }, (_, index) => `f${String(index + 2).padStart(2, "0")}.txt`);
+  await keepOpenInTurn(page, names, (name) => explorerRow(page, stack, name));
   await expect.poll(() => shape(page)).toBe("@(f02.txt f03.txt f04.txt f05.txt f06.txt f07.txt f08.txt f09.txt >f10.txt)");
 }
 
@@ -1136,8 +1149,7 @@ test("a narrow body shows one column, File Views with one area and a way to the 
   const stack = await startStack(page, "s7-narrow", { "a.txt": "a\n", "b.txt": "b\n" });
   try {
     // Two areas in File Views beside the agents and Tools.
-    await explorerRow(page, stack, "a.txt").dblclick();
-    await explorerRow(page, stack, "b.txt").dblclick();
+    await keepOpenInTurn(page, ["a.txt", "b.txt"], (name) => explorerRow(page, stack, name));
     await widenFileViews(page);
     await tabMenu(page, page, "b.txt", "split_right");
     await expect.poll(() => shape(page)).toBe("(>a.txt) | @(>b.txt)");
@@ -1235,8 +1247,7 @@ test("a restart brings the View areas back as they were, and a file gone meanwhi
   try {
     const row = (name: string) => explorerRow(page, stack, name);
     // Three areas, a preview, two ratios, the panel expanded, History without the Explorer.
-    await row("a.txt").dblclick();
-    await row("b.txt").dblclick();
+    await keepOpenInTurn(page, ["a.txt", "b.txt"], row);
     await row("c.txt").click();
     await tabMenu(page, page, "b.txt", "split_right");
     await expect.poll(() => shape(page)).toBe("(a.txt >c.txt*) | @(>b.txt)");
