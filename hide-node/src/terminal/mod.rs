@@ -627,6 +627,9 @@ impl Inner {
             })
             .map(|(pane, _)| pane.clone())
             .collect::<Vec<_>>();
+        if unowned.is_empty() {
+            return;
+        }
         for pane in &unowned {
             self.panes.remove(pane);
             self.facts.remove(pane);
