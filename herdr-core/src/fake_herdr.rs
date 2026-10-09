@@ -1,7 +1,8 @@
 //! A fake Herdr socket server for tests.
 //!
-//! The core talks to Herdr one request per connection: connect, write one JSON
-//! line, read one JSON line back. Every test that exercised that path used to
+//! The core talks to Herdr with newline-delimited requests and responses.
+//! A connection can carry an identity read followed by its guarded mutation.
+//! Every test that exercised that path used to
 //! carry its own listener, accept loop and response writer, fifteen copies in
 //! `live.rs` and `runtime.rs`, and the one copy that differed in a socket
 //! detail (a non-blocking listener whose accepted streams inherited the flag
@@ -103,32 +104,36 @@ impl FakeHerdr {
                         if stopping.load(Ordering::Acquire) {
                             return;
                         }
-                        let mut line = String::new();
                         let mut stream = BufReader::new(stream);
-                        stream
-                            .read_line(&mut line)
-                            .expect("read fake herdr request");
-                        if line.trim().is_empty() {
-                            // A client that connected and hung up sent nothing to
-                            // answer; the next connection may still carry a request.
-                            continue;
+                        loop {
+                            let mut line = String::new();
+                            stream
+                                .read_line(&mut line)
+                                .expect("read fake herdr request");
+                            if line.trim().is_empty() {
+                                // A client that connected and hung up sent nothing to
+                                // answer; the next connection may still carry a request.
+                                break;
+                            }
+                            let request: Value =
+                                serde_json::from_str(&line).expect("fake herdr request JSON");
+                            let method = request["method"]
+                                .as_str()
+                                .expect("fake herdr request names a method")
+                                .to_owned();
+                            let response = match respond(&method, &request["params"]) {
+                                Ok(result) => {
+                                    wire::checked_response_fixture(&request["id"], result)
+                                }
+                                Err((code, message)) => serde_json::json!({
+                                    "id": request["id"],
+                                    "error": {"code": code, "message": message}
+                                }),
+                            };
+                            requests.lock().unwrap().push(request.clone());
+                            writeln!(stream.get_mut(), "{response}")
+                                .expect("write fake herdr response");
                         }
-                        let request: Value =
-                            serde_json::from_str(&line).expect("fake herdr request JSON");
-                        let method = request["method"]
-                            .as_str()
-                            .expect("fake herdr request names a method")
-                            .to_owned();
-                        let response = match respond(&method, &request["params"]) {
-                            Ok(result) => wire::checked_response_fixture(&request["id"], result),
-                            Err((code, message)) => serde_json::json!({
-                                "id": request["id"],
-                                "error": {"code": code, "message": message}
-                            }),
-                        };
-                        requests.lock().unwrap().push(request.clone());
-                        writeln!(stream.get_mut(), "{response}")
-                            .expect("write fake herdr response");
                     }
                 })
                 .expect("spawn fake herdr thread")

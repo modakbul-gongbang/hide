@@ -62,6 +62,31 @@ pub(crate) struct WorkerTextSources {
 const LINEAGE_LIMIT: usize = 16;
 
 impl Runtime {
+    pub(crate) fn factory_start_control(&self) -> Result<crate::factory::StartControl, String> {
+        Ok(crate::factory::StartControl {
+            connector: self
+                .live
+                .as_ref()
+                .ok_or("herdr_unavailable")?
+                .api_connector
+                .clone(),
+            node: self.own_node(),
+            generation: self.live_generation,
+        })
+    }
+
+    pub(crate) fn factory_start_control_current(
+        &self,
+        control: &crate::factory::StartControl,
+    ) -> bool {
+        self.live_generation == control.generation
+            && self
+                .live
+                .as_ref()
+                .is_some_and(|live| std::sync::Arc::ptr_eq(&live.api_connector, &control.connector))
+            && std::sync::Arc::ptr_eq(&self.own_node(), &control.node)
+    }
+
     pub(crate) fn set_factory_screen_port(&mut self, port: crate::factory::ScreenPort) {
         self.factory_screen = Some(port);
     }

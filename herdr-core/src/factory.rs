@@ -359,7 +359,60 @@ struct Starts {
 struct Finished {
     /// A new worker, whose worktree the start made.
     fresh: bool,
-    result: Result<WorkerRef, Failure>,
+    result: Result<StartedWorker, Failure>,
+}
+
+/// Only an unclaimed start retains rollback authority; claiming it discards
+/// this context rather than persisting transport capabilities in WorkerRef.
+#[derive(Clone)]
+struct StartedWorker {
+    worker: WorkerRef,
+    rollback: Result<Arc<OwnedStart>, Failure>,
+}
+
+impl std::fmt::Debug for StartedWorker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StartedWorker")
+            .field("worker", &self.worker)
+            .finish_non_exhaustive()
+    }
+}
+
+pub(crate) struct StartControl {
+    pub connector: Arc<dyn hide_herdr_client::ApiConnector>,
+    pub node: Arc<dyn crate::node_access::NodeLink>,
+    pub generation: u64,
+}
+
+struct OwnedStart {
+    control: StartControl,
+    native: crate::wire::DeliveryAgent,
+}
+
+impl OwnedStart {
+    fn current(&self, runtime: &Weak<Mutex<Runtime>>) -> Result<(), String> {
+        let runtime = runtime.upgrade().ok_or("runtime_gone")?;
+        if guard(&runtime).factory_start_control_current(&self.control) {
+            Ok(())
+        } else {
+            Err("worker_start_control_changed".into())
+        }
+    }
+
+    fn check_native(&self, value: Value) -> Result<(), String> {
+        let current = crate::wire::delivery_agent(value)?;
+        if current.pane_id == self.native.pane_id
+            && current.terminal_id == self.native.terminal_id
+            && current.kind == self.native.kind
+            && current.name == self.native.name
+            && current.session.is_some()
+            && current.session == self.native.session
+        {
+            Ok(())
+        } else {
+            Err("worker_start_execution_changed".into())
+        }
+    }
 }
 
 /// Starts waiting for the starter thread; one past it is asked again later.
@@ -377,8 +430,8 @@ fn run_starts(
     jobs: Receiver<WorkerSpawn>,
     state: Arc<Mutex<WorkerState>>,
     stop: Arc<AtomicBool>,
-    start: impl Fn(&WorkerSpawn) -> Result<WorkerRef, Failure>,
-    release: impl Fn(&WorkerSpawn, &WorkerRef),
+    start: impl Fn(&WorkerSpawn) -> Result<StartedWorker, Failure>,
+    release: impl Fn(&WorkerSpawn, &StartedWorker),
 ) {
     for job in jobs {
         let key = start_key(&job.factory, &job.task);
@@ -418,7 +471,7 @@ fn poll_start(state: &Mutex<WorkerState>, key: &str) -> Option<Result<WorkerRef,
         return Some(Err(Failure::task("worker.spawn", "state_unavailable")));
     };
     if let Some(finished) = state.starts.done.remove(key) {
-        return Some(finished.result);
+        return Some(finished.result.map(|started| started.worker));
     }
     state
         .starts
@@ -487,7 +540,7 @@ fn run(
             .name("factory-starts".into())
             .spawn(move || {
                 let start = |job: &WorkerSpawn| start_worker(&runtime, job);
-                let release = |job: &WorkerSpawn, worker: &WorkerRef| {
+                let release = |job: &WorkerSpawn, worker: &StartedWorker| {
                     let mut port = CoreWorkers {
                         runtime: runtime.clone(),
                         state: Arc::clone(&state),
@@ -1174,7 +1227,8 @@ struct CoreWorkers {
 impl CoreWorkers {
     /// A start no Task claims: its worker stops and, when the start made a
     /// new worktree, that worktree and its branch go too.
-    fn release_start(&mut self, task: &str, fresh: bool, worker: &WorkerRef) {
+    fn release_start(&mut self, task: &str, fresh: bool, started: &StartedWorker) {
+        let worker = &started.worker;
         // A cancelled start owns this new execution, even when the dialect
         // cannot safely sleep a claimed Factory worker for a later resume.
         let closes_pane = worker
@@ -1183,14 +1237,12 @@ impl CoreWorkers {
             .sleep
             .is_some_and(|dialect| dialect.closes_pane_when_sleeping());
         let mut result = if closes_pane {
-            self.end_worker(worker)
+            self.release_owned_start(started, fresh)
         } else {
             self.stop(worker)
         };
-        if fresh && result.is_ok() {
+        if !closes_pane && fresh && result.is_ok() {
             result = self.remove_worktree(worker, Removal::Discarded);
-        } else if closes_pane && result.is_ok() {
-            result = self.close_owned_start(worker);
         }
         if let Err(failure) = result {
             crate::diagnostic!(
@@ -1225,32 +1277,80 @@ impl CoreWorkers {
 
     /// A resumed start owns its new pane, not the existing worktree or any
     /// other pane using it. Confirm that exact pane and its processes ended.
-    fn close_owned_start(&self, worker: &WorkerRef) -> Result<(), Failure> {
-        let pane = worker
-            .pane
-            .as_ref()
-            .ok_or_else(|| Failure::task("worker.abandon_close", "worker has no pane"))?;
-        let runtime = self.runtime()?;
-        let (connector, node) = {
-            let current = guard(&runtime);
-            (
-                current.delivery_connector(current.node().as_str()),
-                current.own_node(),
-            )
+    fn release_owned_start(&self, started: &StartedWorker, fresh: bool) -> Result<(), Failure> {
+        let worker = &started.worker;
+        let owned = started.rollback.as_ref().map_err(Clone::clone)?;
+        let current = || owned.current(&self.runtime);
+        let connector = crate::live::CurrentSessionConnector {
+            connector: owned.control.connector.as_ref(),
+            current: &current,
         };
-        drop(runtime);
-        let connector = connector.ok_or_else(|| {
-            Failure::environment("worker.abandon_close", EnvSignal::HerdrSocket, "no Herdr")
-        })?;
-        crate::live::close_checkout_panes(
-            connector.as_ref(),
-            node.as_ref(),
-            &[],
-            std::slice::from_ref(pane),
+        let fail = |reason| Failure::task("worker.abandon_close", reason);
+        let params = crate::wire::agent_target_params(&owned.native.pane_id).map_err(fail)?;
+        let native = hide_herdr_client::request_small_response(
+            &connector,
+            "agent.get",
+            params.clone(),
+            Duration::from_secs(2),
+        )
+        .map_err(|error| fail(error.to_string()))?;
+        owned.check_native(native).map_err(fail)?;
+        current().map_err(fail)?;
+        self.end_worker(worker)?;
+        let machine = Machine::new(
+            Arc::clone(&owned.control.node),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let root: Option<String> = if fresh {
+            current().map_err(fail)?;
+            machine.call(
+                "worktree.root",
+                FactoryCall::WorktreeRoot {
+                    checkout: worker.worktree.clone(),
+                },
+            )?
+        } else {
+            None
+        };
+        let paths: &[String] = if fresh {
+            std::slice::from_ref(&worker.worktree)
+        } else {
+            &[]
+        };
+        crate::live::close_checkout_panes_checked(
+            &connector,
+            owned.control.node.as_ref(),
+            paths,
+            std::slice::from_ref(&owned.native.pane_id),
             crate::live::ProcessWait::ForEnd,
             crate::live::CONFIRM_TIMEOUT,
+            &|stream, _| {
+                let native = hide_herdr_client::request_on_stream(
+                    stream,
+                    "factory-abandon:identity",
+                    "agent.get",
+                    params.clone(),
+                    Duration::from_secs(2),
+                )
+                .map_err(|error| error.to_string())?;
+                owned.check_native(native)?;
+                current()
+            },
         )
-        .map_err(|reason| Failure::task("worker.abandon_close", reason))
+        .map_err(fail)?;
+        current().map_err(fail)?;
+        if let Some(root) = root {
+            machine.call::<()>(
+                "worktree.remove",
+                FactoryCall::RemoveWorktree {
+                    root,
+                    checkout: worker.worktree.clone(),
+                    branch: worker.branch.clone(),
+                    discard: true,
+                },
+            )?;
+        }
+        Ok(())
     }
     /// Hands each woken worker its letters once its agent is back.
     fn deliver_woken(&mut self) {
@@ -1664,21 +1764,26 @@ fn read_screen(connector: &dyn hide_herdr_client::ApiConnector, pane: &str) -> O
 fn start_worker(
     runtime: &Weak<Mutex<Runtime>>,
     request: &WorkerSpawn,
-) -> Result<WorkerRef, Failure> {
+) -> Result<StartedWorker, Failure> {
     let runtime = runtime
         .upgrade()
         .ok_or_else(|| Failure::task("worker.spawn", "runtime_gone"))?;
-    let (client, authority, actor) = {
+    let (client, authority, actor, control) = {
         let current = guard(&runtime);
         if let Some(previous) = &request.resume {
             current
                 .factory_worker_resume_allowed(previous)
                 .map_err(|reason| Failure::task("worker.spawn", reason))?;
         }
-        current
+        let (client, authority, actor) = current
             .factory_delivery(&request.factory)
-            .map_err(|reason| Failure::task("worker.spawn", reason))?
+            .map_err(|reason| Failure::task("worker.spawn", reason))?;
+        let control = current
+            .factory_start_control()
+            .map_err(|reason| Failure::task("worker.spawn", reason))?;
+        (client, authority, actor, control)
     };
+    let weak = Arc::downgrade(&runtime);
     drop(runtime);
     let parent = crate::coordination::register_code_owned(&client, &authority, &actor)
         .map_err(|reason| Failure::task("worker.spawn", reason))?;
@@ -1743,7 +1848,7 @@ fn start_worker(
         },
     )
     .map_err(|reason| spawn_failure(&reason))?;
-    Ok(WorkerRef {
+    let worker = WorkerRef {
         factory: request.factory.clone(),
         agent: view["id"].as_str().map(str::to_owned),
         name: request.name.clone(),
@@ -1755,7 +1860,70 @@ fn start_worker(
         asleep: false,
         model: request.model.clone(),
         effort: request.effort.clone(),
-    })
+    };
+    let rollback = if worker
+        .runtime
+        .adapter()
+        .sleep
+        .is_some_and(|dialect| dialect.closes_pane_when_sleeping())
+    {
+        capture_owned_start(&weak, control, &worker, &view).map(Arc::new)
+    } else {
+        Err(Failure::task(
+            "worker.abandon_close",
+            "close-pane rollback is not required",
+        ))
+    };
+    Ok(StartedWorker { worker, rollback })
+}
+
+/// A spawn's ledger session is joined to Herdr's actual terminal, never to
+/// the ledger's `instance` field (which is only the raw pane ID).
+fn capture_owned_start(
+    runtime: &Weak<Mutex<Runtime>>,
+    control: StartControl,
+    worker: &WorkerRef,
+    view: &Value,
+) -> Result<OwnedStart, Failure> {
+    let fail = |reason| Failure::task("worker.abandon_close", reason);
+    let current = || {
+        let runtime = runtime.upgrade().ok_or("runtime_gone")?;
+        if guard(&runtime).factory_start_control_current(&control) {
+            Ok(())
+        } else {
+            Err("worker_start_control_changed".to_owned())
+        }
+    };
+    let connector = crate::live::CurrentSessionConnector {
+        connector: control.connector.as_ref(),
+        current: &current,
+    };
+    let pane = worker
+        .pane
+        .as_deref()
+        .ok_or_else(|| fail("worker has no pane".to_owned()))?;
+    let native = hide_herdr_client::request_small_response(
+        &connector,
+        "agent.get",
+        crate::wire::agent_target_params(pane).map_err(fail)?,
+        Duration::from_secs(2),
+    )
+    .map_err(|error| fail(error.to_string()))?;
+    let native = crate::wire::delivery_agent(native).map_err(fail)?;
+    let session = view["session"]
+        .as_str()
+        .and_then(crate::wire::session_digest);
+    if native.pane_id != pane
+        || native.name != worker.name
+        || native.kind.as_deref() != Some(worker.runtime.as_str())
+        || session.is_none()
+        || native.session != session
+        || native.terminal_id.is_empty()
+    {
+        return Err(fail("worker_start_execution_changed".into()));
+    }
+    current().map_err(fail)?;
+    Ok(OwnedStart { control, native })
 }
 
 fn spawn_failure(reason: &str) -> Failure {
@@ -2636,6 +2804,16 @@ mod tests {
         }
     }
 
+    fn unbound_start(worker: WorkerRef) -> StartedWorker {
+        StartedWorker {
+            worker,
+            rollback: Err(Failure::task(
+                "worker.abandon_close",
+                "execution proof unavailable",
+            )),
+        }
+    }
+
     fn worker(job: &WorkerSpawn) -> WorkerRef {
         WorkerRef {
             factory: job.factory.clone(),
@@ -2863,7 +3041,7 @@ mod tests {
     fn abandoned_close_pane_starts_release_the_owned_execution_and_only_fresh_worktrees() {
         for kind in ["pi", "omp"] {
             for fresh in [false, true] {
-                abandoned_close_pane_start(kind, fresh, false, false);
+                abandoned_close_pane_start(kind, fresh, false, false, None);
             }
         }
     }
@@ -2872,7 +3050,7 @@ mod tests {
     fn in_flight_abandoned_close_pane_starts_release_only_the_owned_execution() {
         for kind in ["pi", "omp"] {
             for fresh in [false, true] {
-                abandoned_close_pane_start(kind, fresh, true, false);
+                abandoned_close_pane_start(kind, fresh, true, false, None);
             }
         }
     }
@@ -2881,12 +3059,82 @@ mod tests {
     fn abandoned_close_pane_start_close_refusal_preserves_files_and_reports_failure() {
         for kind in ["pi", "omp"] {
             for fresh in [false, true] {
-                abandoned_close_pane_start(kind, fresh, false, true);
+                abandoned_close_pane_start(kind, fresh, false, true, None);
             }
         }
     }
 
-    fn abandoned_close_pane_start(kind: &str, fresh: bool, in_flight: bool, refuse_close: bool) {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum StartReplacement {
+        ControlBefore,
+        ControlOnCloseConnect,
+        ExecutionBefore,
+        ExecutionOnClose,
+        ControlBeforeRemove,
+    }
+
+    #[test]
+    fn abandoned_close_pane_start_refuses_replaced_control() {
+        replaced_start(StartReplacement::ControlBefore);
+    }
+
+    #[test]
+    fn abandoned_close_pane_start_refuses_control_replaced_during_actual_close_connect() {
+        replaced_start(StartReplacement::ControlOnCloseConnect);
+    }
+
+    #[test]
+    fn abandoned_close_pane_start_refuses_replaced_execution() {
+        replaced_start(StartReplacement::ExecutionBefore);
+    }
+
+    #[test]
+    fn abandoned_close_pane_start_refuses_execution_replaced_on_actual_close_connection() {
+        replaced_start(StartReplacement::ExecutionOnClose);
+    }
+
+    #[test]
+    fn abandoned_close_pane_start_refuses_control_replaced_before_file_removal() {
+        replaced_start(StartReplacement::ControlBeforeRemove);
+    }
+
+    fn replaced_start(replacement: StartReplacement) {
+        for kind in ["pi", "omp"] {
+            for fresh in [false, true] {
+                for in_flight in [false, true] {
+                    abandoned_close_pane_start(kind, fresh, in_flight, false, Some(replacement));
+                }
+            }
+        }
+    }
+
+    struct SwapOnConnect {
+        connector: hide_herdr_client::LocalSocketConnector,
+        replacement: crate::live::LiveContext,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl hide_herdr_client::ApiConnector for SwapOnConnect {
+        fn connect(
+            &self,
+        ) -> Result<Box<dyn hide_herdr_client::ApiStream>, hide_herdr_client::ApiError> {
+            let stream = hide_herdr_client::ApiConnector::connect(&self.connector)?;
+            // Capture, pre-End proof, process read, then actual close connect.
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 3 {
+                let runtime = self.replacement.runtime.upgrade().unwrap();
+                guard(&runtime).set_live(self.replacement.clone());
+            }
+            Ok(stream)
+        }
+    }
+
+    fn abandoned_close_pane_start(
+        kind: &str,
+        fresh: bool,
+        in_flight: bool,
+        refuse_close: bool,
+        replacement: Option<StartReplacement>,
+    ) {
         let (home, runtime) = factory_runtime(&Default::default());
         let folder = tempfile::tempdir().unwrap();
         let repo = folder.path().join("repo");
@@ -2930,6 +3178,32 @@ mod tests {
         let peer_cwd = if fresh { &repo } else { &tree }
             .to_string_lossy()
             .into_owned();
+        let replacement_server = crate::fake_herdr::FakeHerdr::start(
+            "factory-replacement",
+            |method, _| {
+                assert_eq!(
+                    method, "agent.get",
+                    "a replacement must never receive a mutation"
+                );
+                json!({"type":"agent_info", "agent":{
+                    "pane_id":"pane-T-1", "terminal_id":"replacement-terminal", "workspace_id":"w1", "tab_id":"t1",
+                    "name":"replacement", "agent":"omp", "agent_status":"working", "focused":false,
+                    "revision":1, "state_change_seq":1,
+                    "agent_session":{"source":"herdr:omp", "agent":"omp", "kind":"id", "value":"replacement-session"}
+                }})
+            },
+        );
+        let replacement_live = crate::live::LiveContext {
+            socket_path: replacement_server.socket_path().into(),
+            herdr_bin: None,
+            runtime: Arc::downgrade(&runtime),
+            notifier: crate::handle::ChangeNotifier::noop(),
+            api_connector: Arc::new(replacement_server.connector()),
+            node: guard(&runtime).own_node(),
+        };
+        let on_confirmation = replacement_live.clone();
+        let mut identity_reads = 0;
+        let kind_owned = kind.to_owned();
         let herdr = crate::fake_herdr::FakeHerdr::start_with_errors(
             "factory-abandon",
             move |method, params| {
@@ -2938,6 +3212,20 @@ mod tests {
                     return Err(("pane_busy".into(), "fixture close refusal".into()));
                 }
                 Ok(match method {
+                    "agent.get" => {
+                        identity_reads += 1;
+                        let replaced = match replacement {
+                            Some(StartReplacement::ExecutionBefore) => identity_reads >= 2,
+                            Some(StartReplacement::ExecutionOnClose) => identity_reads >= 3,
+                            _ => false,
+                        };
+                        json!({"type":"agent_info", "agent": {
+                            "pane_id":"pane-T-1", "terminal_id":if replaced { "replacement-terminal" } else { "owned-terminal" },
+                            "workspace_id":"w1", "tab_id":"t1", "name":"w-T-1", "agent":kind_owned,
+                            "agent_status":"working", "focused":false, "revision":1, "state_change_seq":1,
+                            "agent_session":{"source":format!("herdr:{kind_owned}"), "agent":kind_owned, "kind":"id", "value":"native-worker"}
+                        }})
+                    }
                     "pane.process_info" => {
                         assert_eq!(params["pane_id"], "pane-T-1");
                         json!({"type":"pane_process_info", "process_info":{"pane_id":"pane-T-1", "foreground_processes":[]}})
@@ -2946,11 +3234,17 @@ mod tests {
                         assert_eq!(params["pane_id"], "pane-T-1");
                         json!({"type":"ok"})
                     }
-                    "session.snapshot" => json!({"type":"session_snapshot", "snapshot":{
-                        "version":"fixture", "protocol":hide_herdr_client::HERDR_PROTOCOL_REVISION,
-                        "workspaces":[], "tabs":[], "layouts":[], "agents":[],
-                        "panes":[{"pane_id":"peer", "terminal_id":"peer-terminal", "workspace_id":"w1", "tab_id":"t1", "cwd":peer_cwd, "focused":false, "agent_status":"idle", "revision":0}]
-                    }}),
+                    "session.snapshot" => {
+                        if replacement == Some(StartReplacement::ControlBeforeRemove) {
+                            let runtime = on_confirmation.runtime.upgrade().unwrap();
+                            guard(&runtime).set_live(on_confirmation.clone());
+                        }
+                        json!({"type":"session_snapshot", "snapshot":{
+                            "version":"fixture", "protocol":hide_herdr_client::HERDR_PROTOCOL_REVISION,
+                            "workspaces":[], "tabs":[], "layouts":[], "agents":[],
+                            "panes":[{"pane_id":"peer", "terminal_id":"peer-terminal", "workspace_id":"w1", "tab_id":"t1", "cwd":peer_cwd, "focused":false, "agent_status":"idle", "revision":0}]
+                        }})
+                    }
                     other => panic!("unexpected abandoned-start effect {other}"),
                 })
             },
@@ -3011,9 +3305,33 @@ mod tests {
                 herdr_bin: None,
                 runtime: Arc::downgrade(&runtime),
                 notifier: crate::handle::ChangeNotifier::noop(),
-                api_connector: Arc::new(herdr.connector()),
+                api_connector: if replacement == Some(StartReplacement::ControlOnCloseConnect) {
+                    Arc::new(SwapOnConnect {
+                        connector: herdr.connector(),
+                        replacement: replacement_live.clone(),
+                        calls: std::sync::atomic::AtomicUsize::new(0),
+                    })
+                } else {
+                    Arc::new(herdr.connector())
+                },
                 node: Arc::new(hide_node::Local::of_process()),
             });
+        }
+        let control = guard(&runtime).factory_start_control().unwrap();
+        let rollback = capture_owned_start(
+            &Arc::downgrade(&runtime),
+            control,
+            &owned,
+            &json!({"session":"native-worker"}),
+        )
+        .map(Arc::new);
+        assert!(rollback.is_ok());
+        let started = StartedWorker {
+            worker: owned.clone(),
+            rollback,
+        };
+        if replacement == Some(StartReplacement::ControlBefore) {
+            guard(&runtime).set_live(replacement_live.clone());
         }
         let (state, jobs) = starter(1);
         if in_flight {
@@ -3026,7 +3344,7 @@ mod tests {
                 start_key("f-1", "T-1"),
                 Finished {
                     fresh,
-                    result: Ok(owned.clone()),
+                    result: Ok(started.clone()),
                 },
             );
         }
@@ -3042,7 +3360,7 @@ mod tests {
                     jobs,
                     Arc::clone(&state),
                     Arc::new(AtomicBool::new(false)),
-                    |_| Ok(owned.clone()),
+                    |_| Ok(started.clone()),
                     |job, worker| {
                         CoreWorkers {
                             runtime: Arc::downgrade(&runtime),
@@ -3061,40 +3379,66 @@ mod tests {
             .iter()
             .filter(|record| record["kind"] == "worker.abandon_failed")
             .collect();
-        assert_eq!(failures.len(), usize::from(refuse_close));
-        if refuse_close {
+        assert_eq!(
+            failures.len(),
+            usize::from(refuse_close || replacement.is_some()),
+            "{kind}/{fresh}/{in_flight}/{replacement:?}"
+        );
+        if refuse_close || replacement.is_some() {
             assert_eq!(failures[0]["task"], "T-1");
-            assert_eq!(
-                failures[0]["stage"],
-                if fresh {
-                    "worktree.close"
-                } else {
-                    "worker.abandon_close"
-                }
-            );
+            assert_eq!(failures[0]["stage"], "worker.abandon_close");
         }
         let stored = crate::delivery::ledger::load(&path).unwrap();
-        assert!(
+        let refused_before_end = matches!(
+            replacement,
+            Some(StartReplacement::ControlBefore | StartReplacement::ExecutionBefore)
+        );
+        assert_eq!(
             stored
                 .agents
                 .iter()
                 .find(|record| record.id == "agent-2")
                 .unwrap()
                 .ended,
-            "{kind}/{fresh}"
+            !refused_before_end
         );
         assert!(!stored.agents[0].ended, "the Factory remains live");
-        assert!(stored.watches.is_empty());
-        assert!(herdr.methods().iter().any(|method| method == "pane.close"));
-        assert_eq!(tree.exists(), !fresh || refuse_close);
+        assert_eq!(stored.watches.is_empty(), !refused_before_end);
+        let close_sent =
+            replacement.is_none() || replacement == Some(StartReplacement::ControlBeforeRemove);
+        assert_eq!(
+            herdr.methods().iter().any(|method| method == "pane.close"),
+            close_sent
+        );
+        let preserve = !fresh || refuse_close || replacement.is_some();
+        assert_eq!(tree.exists(), preserve);
         assert_eq!(
             repo.join(".git/refs/heads/factory/owned").exists(),
-            !fresh || refuse_close
+            preserve
         );
-        if !fresh || refuse_close {
+        if preserve {
             assert_eq!(
                 std::fs::read_to_string(tree.join("README.md")).unwrap(),
                 "Original source\n"
+            );
+        }
+        if replacement.is_some() {
+            // Both endpoints remain usable after refusal. Disconnection never
+            // masquerades as the ownership fence and neither receives a close.
+            for connector in [herdr.connector(), replacement_server.connector()] {
+                hide_herdr_client::request_small_response(
+                    &connector,
+                    "agent.get",
+                    crate::wire::agent_target_params("pane-T-1").unwrap(),
+                    Duration::from_secs(2),
+                )
+                .unwrap();
+            }
+            assert!(
+                !replacement_server
+                    .methods()
+                    .iter()
+                    .any(|method| method == "pane.close")
             );
         }
         assert_eq!(
@@ -3134,7 +3478,7 @@ mod tests {
             jobs,
             Arc::clone(&state),
             Arc::new(AtomicBool::new(false)),
-            |job| Ok(worker(job)),
+            |job| Ok(unbound_start(worker(job))),
             |_, _| panic!("nothing was abandoned"),
         );
         let answer = poll_start(&state, &key).unwrap().unwrap();
@@ -3178,11 +3522,11 @@ mod tests {
             jobs,
             Arc::clone(&state),
             Arc::new(AtomicBool::new(false)),
-            |job| Ok(worker(job)),
+            |job| Ok(unbound_start(worker(job))),
             |job, worker| {
                 released
                     .borrow_mut()
-                    .push((worker.agent.clone().unwrap(), job.resume.is_none()))
+                    .push((worker.worker.agent.clone().unwrap(), job.resume.is_none()))
             },
         );
         assert_eq!(
@@ -3208,7 +3552,7 @@ mod tests {
             Arc::new(AtomicBool::new(true)),
             |job| {
                 *started.borrow_mut() += 1;
-                Ok(worker(job))
+                Ok(unbound_start(worker(job)))
             },
             |_, _| {},
         );

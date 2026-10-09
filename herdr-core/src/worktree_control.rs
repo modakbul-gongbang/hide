@@ -2036,6 +2036,23 @@ pub(crate) fn close_checkout_panes(
     wait: ProcessWait,
     timeout: Duration,
 ) -> Result<(), String> {
+    close_checkout_panes_checked(connector, node, paths, pane_ids, wait, timeout, &|_, _| {
+        Ok(())
+    })
+}
+
+/// The destructive request uses the same connection on which its caller
+/// checks the pane's execution identity. Every other close rule stays shared.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
+pub(crate) fn close_checkout_panes_checked(
+    connector: &dyn ApiConnector,
+    node: &dyn crate::node_access::NodeLink,
+    paths: &[String],
+    pane_ids: &[String],
+    wait: ProcessWait,
+    timeout: Duration,
+    before_close: &dyn Fn(&mut dyn hide_herdr_client::ApiStream, &str) -> Result<(), String>,
+) -> Result<(), String> {
     let path = paths.join(",");
     let path = path.as_str();
     let result = (|| {
@@ -2048,8 +2065,17 @@ pub(crate) fn close_checkout_panes(
             }
         }
         for pane_id in pane_ids {
+            let mut stream = connector.connect().map_err(|error| error.to_string())?;
+            before_close(stream.as_mut(), pane_id)?;
             trace(path, std::slice::from_ref(pane_id), "close_requested", None);
-            control_request(connector, "pane.close", json!({"pane_id":pane_id}))?;
+            hide_herdr_client::request_on_stream(
+                stream.as_mut(),
+                "herdr-core:pane.close",
+                "pane.close",
+                json!({"pane_id":pane_id}),
+                timeout,
+            )
+            .map_err(|error| error.to_string())?;
         }
         if pane_ids.is_empty() {
             return Ok(());

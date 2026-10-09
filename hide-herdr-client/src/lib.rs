@@ -339,6 +339,23 @@ pub fn request_with_correlation_id(
     response_result(response, request_id)
 }
 
+/// Sends a request on the caller's established connection. A caller can read
+/// an execution identity and mutate that execution on the same connection.
+/// The bounded line reader leaves following responses untouched.
+pub fn request_on_stream(
+    stream: &mut dyn ApiStream,
+    request_id: &str,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value, ApiError> {
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    write_request(stream, request_id, method, params)?;
+    let response = decode_response(&stream.read_line_with_timeout(timeout)?)?;
+    response_result(response, request_id)
+}
+
 /// Open an event subscription. `params` is the `events.subscribe` parameter
 /// object, which the caller builds from the contract (`herdr-core`'s `wire`).
 pub fn subscribe(

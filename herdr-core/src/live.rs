@@ -53,7 +53,8 @@ pub(crate) mod cleanup;
 #[path = "worktree_control.rs"]
 mod worktree_control;
 pub(crate) use worktree_control::{
-    CONFIRM_TIMEOUT, ProcessWait, close_checkout_panes, prompt_argument,
+    CONFIRM_TIMEOUT, ProcessWait, close_checkout_panes, close_checkout_panes_checked,
+    prompt_argument,
 };
 pub use worktree_control::{
     CheckoutTabRequest, HomeStartRequest, IssueWriteFailure, PendingAgentStart, PurposeMirror,
@@ -2897,9 +2898,9 @@ fn read_pane_text(
 /// Topology reads and opening an SSH stream can wait. Recheck the same
 /// control, file node and admitted intent on both sides of every connection.
 /// The callback reads only current runtime facts, never files or sockets.
-struct CurrentSessionConnector<'a> {
-    connector: &'a dyn ApiConnector,
-    current: &'a (dyn Fn() -> Result<(), String> + Sync),
+pub(crate) struct CurrentSessionConnector<'a> {
+    pub(crate) connector: &'a dyn ApiConnector,
+    pub(crate) current: &'a (dyn Fn() -> Result<(), String> + Sync),
 }
 
 impl CurrentSessionConnector<'_> {
