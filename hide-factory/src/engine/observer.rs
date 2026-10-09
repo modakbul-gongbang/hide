@@ -329,12 +329,13 @@ impl Engine {
         .then(|| answer.clone());
         let mut route = route(mode, &verdict);
         let mut no_choice = None;
-        // A closed question runs only a listed choice; any other words would
-        // settle it with nothing run, so they are a person's (D-33), and the
-        // mode is not why.
-        if route == Route::Observer
-            && (answer.is_empty() || (question.kind.closed() && chosen.is_none()))
-        {
+        // An empty answer is unusable, and a closed question runs only a
+        // listed choice, since any other words would settle it with nothing
+        // run; either is a person's (D-33), and the mode is not why.
+        if route == Route::Observer && answer.is_empty() {
+            route = Route::Person { proposal: false };
+            no_choice = Some(Fallback::Failed);
+        } else if route == Route::Observer && question.kind.closed() && chosen.is_none() {
             route = Route::Person { proposal: false };
             no_choice = Some(Fallback::NoChoice);
         }
