@@ -237,7 +237,8 @@ It names the session by its file, as Herdr's integration does, which a deep chec
 Each handler calls `hide-agent-hooks <pi|omp> <start|prompt|confirm|tool|subagents>` with one JSON object on stdin, which carries the extension's version, and one answered on stdout; the helper always exits 0, a failure answers `{}`, and a version this build does not write also answers `{}`, so a file another build left does nothing until the kit replaces it.
 
 - `session_start` and `session_switch` read the session guidance once, as OpenCode's plugin does at load; a read that failed is asked again by the next prompt.
-- `before_agent_start` returns one custom message for the prompt, wrapped in `<system-reminder>`: the guidance until a message that carried it has been written, then the pane's waiting letters ([docs/delivery.md](delivery.md)).
+- `before_agent_start` returns one custom message for the prompt, wrapped in `<system-reminder>`: the guidance until a message that carried it has been written, then the Project Memory capsule under Claude Code's rules (a session-start capsule with the guidance, a prompt capsule after it), then the pane's waiting letters ([docs/delivery.md](delivery.md)).
+  Letters know the session by its file and Memory by the host's own session id (`sessionManager.getSessionId()`), which is what Pi's and omp's session reader keys a receipt by; the extension sends both.
   The message is `display: false`, so the host keeps it off the screen and out of the title while the model reads it, and a letter cannot close Hide's reminder tags.
   Its `details` carry a fresh id per attempt, because omp can prepare one submission more than once and keeps only the attempt it delivers.
 - `message_end` confirms the letters once the host has written Hide's message and then the reply after it, and only for the attempt it wrote; a turn that ends before any reply leaves them pending for the next prompt or `hide inbox`, and a confirmation Hide did not take is made again when the letter rides the next prompt.
@@ -249,7 +250,7 @@ The budgets, the cap of eight running helpers and the `plugin` diagnostic cause 
 Both hosts wait on a handler far longer (omp blocks the tool call after 30 seconds), so the extension enforces them: past the budget the helper is killed, the prompt goes on unchanged and the tool call runs.
 Every callback catches its own error, since a throw from a timer callback ends an omp session.
 No bell rings for Pi or omp: on 2026-10-07 their resume pickers read `done`, as OpenCode's did, so their letters ride the next prompt ([docs/delivery.md](delivery.md#safe-intake-and-manual-fallback)).
-Memory is not declared for either yet: its receipt needs the session readers to recognise Hide's hidden message as injected text (PRD pi-omp-extension D-09).
+The host stores Hide's message in the session file as a `custom_message` entry of `customType` `hide`; the shared Pi and omp reader reads that entry, and no other extension's, as provider-injected context, so the Memory pass finds the receipt in it as it finds the Claude and Codex transcripts' (PRD pi-omp-extension D-09).
 The kit row reads the file as it reads OpenCode's plugin, and Settings names the piece Extension.
 
 ## Other agents: skill and guidance hook
@@ -272,7 +273,7 @@ A test fails a row with no `https` `doc_url`, and a row with no program, so a cl
 Hide supports an agent only when the pinned Herdr ships an integration for it (`herdr integration install <target>`, listed by `herdr integration status`).
 Lineage, the mailbox identity, labels and sleep all read the session id that integration gives Herdr, and an agent without one could only have its state judged from its screen, a second kind of row that behaves unlike every other; so the support list follows Herdr's, and an agent Herdr has no target for is not listed (Gemini CLI left for that reason and is retired below).
 `AgentAdapter::herdr` is therefore required, not optional.
-Among the supported agents, one gets the multi-agent collaboration tier (letters, the spawn guard, Memory and the subagent count) when its official documentation or SDK types give a hook or plugin that can both put text into the prompt and refuse a tool call; today that is Claude Code and Codex, through the six-event hook, OpenCode, through Hide's plugin, and Pi and omp, through Hide's extension (without Memory yet, and for Pi without a subagent count, since Pi runs none).
+Among the supported agents, one gets the multi-agent collaboration tier (letters, the spawn guard, Memory and the subagent count) when its official documentation or SDK types give a hook or plugin that can both put text into the prompt and refuse a tool call; today that is Claude Code and Codex, through the six-event hook, OpenCode, through Hide's plugin, and Pi and omp, through Hide's extension (Pi without a subagent count, since Pi runs none).
 Every other supported agent is the basic tier: the skill, Herdr's integration and, where its documentation gives a command hook, the agent hook: the spawn guard and the subagent count where the hook can refuse a shell call and sees a subagent start and end (Grok and Cursor), and the guidance where its session start adds context (Cursor).
 A basic-tier agent takes no letters through a hook, so `hide request ack` stays its receipt and it is no bell target (PRD grok-cursor-hooks D-07).
 Adding an agent to the list checks, in order: the pinned Herdr lists a target for it and which folder that target needs; the vendor's documentation confirms the folder it reads skills from and the name of the program it installs; the vendor publishes a mark (`docs/BRAND.md`) or the row draws a monogram; and whether its hooks or plugins meet the collaboration tier above.
@@ -307,7 +308,7 @@ Two pieces are written per agent into the agent's own files, and nothing else; a
   It is one entry per event the agent's documentation names, in the agent's own format, whose command is `hide-agent-hooks hook --runtime <agent id> --event <event>`.
   `hide-agent-hooks` writes it (`src/guidance.rs`) and nothing else does, under the marker `hide-guidance@2` that proves an entry is Hide's and separates a current one from an older one; an entry of `@1`, which only knew the session start, is Hide's own and replaced by the next pass.
   Where the session start adds context (Cursor), its output is the worktree-purpose instruction, including the sentence that points at `hide factory add`, one fixed line that points at `hide browser help`, and the live Workspace guidance when the daemon answers, in the field the agent documents.
-  It prints no Memory capsule, because the Memory receipt is read from Claude and Codex transcripts.
+  It prints no Memory capsule, because a Memory receipt is read back only from a session Hide reads it from: Claude Code's, Codex's, Pi's and omp's files and OpenCode's database.
   A second delivery of the same session prints the same guidance: the output is a pure function of the daemon's answer, and a test runs the hook twice and compares.
   The other events carry the spawn guard and the subagent count ([Grok's and Cursor's own hooks](#groks-and-cursors-own-hooks)).
 
@@ -425,7 +426,7 @@ Its popover groups the feature table into Herdr basics, session reading and mult
 | `letters` | its prompt dialect declaration | yes | yes | yes | yes | no | no |
 | `spawn_guard` | its refusal dialect declaration | yes | yes | yes | yes | yes | yes |
 | `subagents` | its counter dialect declaration | yes | yes | no | yes | yes | yes |
-| `memory` | its Memory dialect declaration | yes | yes | no | no | no | no |
+| `memory` | its Memory dialect declaration | yes | yes | yes | yes | no | no |
 | `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no | no | no | no |
 | `herdr_integration` | always: every supported agent has a Herdr target | yes | yes | yes | yes | yes | yes |
 | `start` | its launch declaration | yes | yes | yes | yes | yes | yes |

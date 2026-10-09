@@ -174,6 +174,16 @@ function sessionFile(ctx) {
   }
 }
 
+/** The host's own id for the session, which Memory knows it by, or null. */
+function nativeSession(ctx) {
+  try {
+    const id = ctx?.sessionManager?.getSessionId?.();
+    return typeof id === "string" && id.length > 0 && id.length <= 4096 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Records `key` as the newest member of a Set of at most SESSION_LIMIT, dropping the oldest. */
 function remember(set, key) {
   set.delete(key);
@@ -249,7 +259,7 @@ async function onPrompt(state, event, ctx) {
   const answer = await helper(
     state,
     "prompt",
-    { session_id: session, prompt: clip(event?.prompt), cwd: ctx?.cwd, first },
+    { session_id: session, native_session: nativeSession(ctx), prompt: clip(event?.prompt), cwd: ctx?.cwd, first },
     Math.max(0, deadline - Date.now()),
   );
   const sections = [];

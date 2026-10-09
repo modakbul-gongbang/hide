@@ -39,6 +39,10 @@ const INPUT_LIMIT: u64 = 256 * 1024;
 #[serde(default)]
 struct Input {
     session_id: Option<String>,
+    /// The agent's own id for the session, which Memory and its receipts know
+    /// it by; Pi's and omp's extension names the session by its file for
+    /// letters, as Herdr does, and sends this beside it.
+    native_session: Option<String>,
     prompt: Option<String>,
     cwd: Option<PathBuf>,
     first: bool,
@@ -85,6 +89,19 @@ impl Agent {
             PluginDialect::Pi | PluginDialect::Omp => {
                 version == Some(hide_agent_hooks::pi_extension::VERSION)
             }
+        }
+    }
+
+    /// The session Memory knows: OpenCode's session id is already its own,
+    /// while Pi's and omp's file path is not what their session reader keys a
+    /// receipt by.
+    fn memory_session(&self, input: &Input, session: &str) -> Option<String> {
+        match self.dialect {
+            PluginDialect::OpenCode => Some(session.to_owned()),
+            PluginDialect::Pi | PluginDialect::Omp => input
+                .native_session
+                .clone()
+                .filter(|id| delivery::valid_session(id)),
         }
     }
 
@@ -164,7 +181,10 @@ fn prompt(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value 
     let Some(session) = session(&input) else {
         return json!({});
     };
-    let memory = if agent.adapter.memory.is_some() {
+    let memory_session = agent.memory_session(&input, &session);
+    let memory = if agent.adapter.memory.is_some()
+        && let Some(memory_session) = memory_session
+    {
         memory_context_until(
             MemoryRequest {
                 runtime_id: agent.runtime(),
@@ -175,7 +195,7 @@ fn prompt(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value 
                 },
                 cwd: input.cwd,
                 prompt: input.prompt,
-                session_id: Some(session.clone()),
+                session_id: Some(memory_session),
             },
             home,
             Instant::now() + Duration::from_millis(hide_memory::HOOK_PROCESS_BUDGET_MS),

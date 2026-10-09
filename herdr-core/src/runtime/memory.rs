@@ -1410,6 +1410,97 @@ mod scope_tests {
         );
     }
 
+    /// Pi's receipt rides Hide's extension message in Pi's own session file,
+    /// signed for Pi's native session id; the Memory pass reads it there and
+    /// the next prompt gets Memory (PRD pi-omp-extension B10, D-09).
+    #[test]
+    fn a_pi_session_start_receipt_in_its_session_file_unblocks_its_prompt_memory() {
+        use hide_agent_hooks::memory::{MemoryRequest, memory_context_until};
+        let temp = tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project_root = temp.path().join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&project_root).unwrap();
+        let project = hide_project::resolve(&project_root, &hook_node()).unwrap();
+        let database = database_path(&home);
+        fs::create_dir_all(database.parent().unwrap()).unwrap();
+        let store = MemoryStore::open(&database).unwrap();
+        store
+            .ensure_project(&project.id, &project.root, &hook_node())
+            .unwrap();
+        store.set_enabled(&project.id, true, true).unwrap();
+        drop(store);
+        let session_id = "01a11d1d-24ec-71fa-b8b3-f6f22cffab12";
+        let ask = |event| {
+            memory_context_until(
+                MemoryRequest {
+                    runtime_id: "pi",
+                    event,
+                    cwd: Some(project_root.clone()),
+                    prompt: Some("keep going".to_owned()),
+                    session_id: Some(session_id.to_owned()),
+                },
+                &home,
+                Instant::now() + FUNCTIONAL_HOOK_TEST_TIMEOUT,
+            )
+        };
+        let start = ask(HookEvent::SessionStart).context.unwrap();
+        assert_eq!(
+            ask(HookEvent::UserPromptSubmit).outcome,
+            HookMemoryOutcome::Unavailable,
+            "no session start receipt yet"
+        );
+
+        // Pi keeps a session under its default folder for the checkout, named
+        // by the checkout's path, and stores the extension's message as a
+        // custom message beside the prompt.
+        let checkout = project_root.canonicalize().unwrap();
+        let cwd = checkout.to_string_lossy().into_owned();
+        let folder = home.join(".pi/agent/sessions").join(format!(
+            "--{}--",
+            cwd.trim_start_matches('/').replace(['/', '\\', ':'], "-")
+        ));
+        fs::create_dir_all(&folder).unwrap();
+        let locator = folder.join(format!("2026-10-09T00-00-00-000Z_{session_id}.jsonl"));
+        let lines = [
+            json!({"type": "session", "version": 3, "id": session_id, "timestamp": "2026-10-09T00:00:00.000Z", "cwd": cwd}),
+            json!({"type": "message", "id": "a1", "parentId": null, "timestamp": "2026-10-09T00:00:01.000Z", "message": {"role": "user", "content": [{"type": "text", "text": "keep going"}]}}),
+            json!({"type": "custom_message", "customType": "hide", "content": format!("<system-reminder>\n{start}\n</system-reminder>"), "display": false, "details": {"hide": "0011"}, "id": "a2", "parentId": "a1", "timestamp": "2026-10-09T00:00:01.100Z"}),
+        ];
+        fs::write(&locator, lines.map(|line| format!("{line}\n")).concat()).unwrap();
+        let session = ProjectSession {
+            id: session_id.to_owned(),
+            agent: Agent::Pi,
+            locator,
+            checkout_path: project_root.clone(),
+            first_human_request: None,
+            started_at_unix_ms: Some(1),
+            updated_at_unix_ms: 1,
+            title: None,
+            event_count: 2,
+            availability: SessionAvailability::Available,
+        };
+        let mut store = MemoryStore::open(&database).unwrap();
+        update_hook_projection(
+            &mut store,
+            &hide_node::Local::new(Some(home.clone())),
+            &project.id,
+            &session,
+        )
+        .unwrap();
+        assert_eq!(
+            store
+                .session_start_receipt_ids(&project.id, "pi", session_id)
+                .unwrap(),
+            Some(Vec::new())
+        );
+        drop(store);
+        assert_ne!(
+            ask(HookEvent::UserPromptSubmit).outcome,
+            HookMemoryOutcome::Unavailable
+        );
+    }
+
     #[test]
     fn empty_session_start_projection_unblocks_later_prompt_memory_for_both_providers() {
         let temp = tempdir().unwrap();

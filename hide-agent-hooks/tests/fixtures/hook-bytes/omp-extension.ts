@@ -1,4 +1,4 @@
-// hide-extension@1 sha256=b635e0e1204cc8c849e96be5ced48b4a6192051939c8a36ce247546fdb309655
+// hide-extension@2 sha256=c744db7b63e8f1742f4507e89ece2decc41d4a2ef94c852b91c2443043726ef9
 // Hide's extension for Pi and omp, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane, in an agent started from another Pi's or omp's shell, or when its helper is gone, it does
@@ -11,7 +11,7 @@ import { statSync } from "node:fs";
 
 const HELPER = "/kit path/it's/hide-agent-hooks";
 const AGENT = "omp";
-const VERSION = 1;
+const VERSION = 2;
 
 // The prompt budget is Claude Code's prompt hook's; the tool budget is the spawn guard's. Both hosts wait for
 // a handler far longer (omp gives up at 30 s and then blocks the tool), so these are the limits.
@@ -175,6 +175,16 @@ function sessionFile(ctx) {
   }
 }
 
+/** The host's own id for the session, which Memory knows it by, or null. */
+function nativeSession(ctx) {
+  try {
+    const id = ctx?.sessionManager?.getSessionId?.();
+    return typeof id === "string" && id.length > 0 && id.length <= 4096 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Records `key` as the newest member of a Set of at most SESSION_LIMIT, dropping the oldest. */
 function remember(set, key) {
   set.delete(key);
@@ -250,7 +260,7 @@ async function onPrompt(state, event, ctx) {
   const answer = await helper(
     state,
     "prompt",
-    { session_id: session, prompt: clip(event?.prompt), cwd: ctx?.cwd, first },
+    { session_id: session, native_session: nativeSession(ctx), prompt: clip(event?.prompt), cwd: ctx?.cwd, first },
     Math.max(0, deadline - Date.now()),
   );
   const sections = [];

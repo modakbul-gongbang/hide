@@ -111,7 +111,7 @@ Prompt retrieval confirms lexical or meaningful cwd/path overlap before ranking;
 The app owns the only writer connection.
 Hook helpers and render-facing reads open read-only connections, fail closed on schema or projection drift, and never rebuild the index in the prompt path.
 The same SQLite store owns one random authentication key per Project, and each hook receipt is authenticated over Project, runtime, session, event, and the exact ordered item revisions before the core accepts it as provided-history.
-Transcript text prefixes remain display classification only: receipt authority additionally requires Claude provider-owned metadata, a Codex developer message or an OpenCode synthetic user part, so human or Project instruction text cannot assert a receipt.
+Transcript text prefixes remain display classification only: receipt authority additionally requires Claude provider-owned metadata, a Codex developer message, an OpenCode synthetic user part or a Pi or omp custom message of Hide's own extension (`customType` `hide`), so human or Project instruction text cannot assert a receipt.
 OpenCode keeps its sessions in a database the label read already opens, so its receipts come from that read rather than a session-file poll: `LabelTranscript.memory_receipts` carries the receipt lines of the synthetic parts Hide's plugin added (at most 64 a read), the label worker hands them up with its result, and `Runtime::record_memory_receipts` verifies and records them on one owned thread off the lock, at most 256 waiting.
 
 The coordinator's existing worker context owns session refresh, the five-second due-work poll, and one Memory analysis intent at a time.

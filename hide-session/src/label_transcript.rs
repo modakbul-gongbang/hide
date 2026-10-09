@@ -127,7 +127,8 @@ pub struct LabelTranscript {
     /// Hide's Project Memory receipts the session stored in a part only Hide's
     /// own plugin writes (OpenCode's synthetic prompt part); the core checks
     /// each one's tag before it records the injection (PRD opencode-plugin
-    /// D-12). Claude Code's and Codex's receipts are read by Memory's own pass.
+    /// D-12). Claude Code's, Codex's, Pi's and omp's receipts are read by
+    /// Memory's own pass over their session files.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memory_receipts: Vec<MemoryReceiptPart>,
     /// Where each subagent file was read up to, for the next request.
