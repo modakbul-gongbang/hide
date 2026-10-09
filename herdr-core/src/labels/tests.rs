@@ -46,8 +46,9 @@ impl Scripted {
         })
     }
 
-    /// A v5 answer: `end` is the turn's end, and a question's `line` is the
-    /// reply it asks for, any other's the goal's progress.
+    /// A turn end's answer: `end` is how the turn stopped, and a
+    /// question's `line` is the reply it asks for, any other's the goal's
+    /// progress.
     fn answer(&self, goal: &str, end: &str, reply: &str) {
         let line = if end == "question" {
             reply.to_owned()
@@ -56,6 +57,13 @@ impl Scripted {
         };
         self.answers.lock().unwrap().push_back(json!({
             "goal": goal, "goal_changed": true, "line": line, "end": end,
+        }));
+    }
+
+    /// A turn start's answer, which says nothing of how the turn ends.
+    fn begin(&self, goal: &str) {
+        self.answers.lock().unwrap().push_back(json!({
+            "goal": goal, "goal_changed": true, "line": format!("{goal} 진행"),
         }));
     }
 
@@ -434,6 +442,42 @@ fn a_finished_turn_is_named_once_and_unchanged_panes_spend_nothing() {
 }
 
 #[test]
+fn a_request_repeated_word_for_word_is_a_new_turn_and_is_asked_again() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let first = [("user", "ㅇㅇ"), ("assistant", "첫 조각을 머지했습니다")];
+    let path = harness.session("a", "native-a", &first);
+    harness.backend.answer("라벨 턴 구분 작업", "done", "");
+    observe(&mut worker, &agent(&path, "idle", 3));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 1);
+
+    harness.session(
+        "a",
+        "native-a",
+        &[
+            first[0],
+            first[1],
+            ("user", "ㅇㅇ"),
+            ("assistant", "다음 조각의 CI를 기다립니다"),
+        ],
+    );
+    harness.backend.answer("다음 조각 CI", "waiting", "");
+    let again = agent(&path, "idle", 5);
+    observe(&mut worker, &again);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        harness.backend.calls(),
+        2,
+        "the second ㅇㅇ is its own turn"
+    );
+    assert_eq!(
+        shown(&worker, &again).unwrap().progress.as_deref(),
+        Some("다음 조각 CI 진행")
+    );
+}
+
+#[test]
 fn an_agent_listed_before_its_pane_is_still_read_and_named() {
     let harness = Harness::new();
     let (mut worker, woken, _) = harness.worker(harness.store());
@@ -736,27 +780,72 @@ fn a_shutdown_answers_the_running_request_without_recording_it() {
 
 #[test]
 fn the_providers_answer_is_judged_before_it_is_shown() {
-    let question_without_reply = super::context_label::parse_text(
+    use super::analysis::{AnalysisPhase, LabelEnd};
+    use super::context_label::parse_text;
+    let question_without_reply = parse_text(
+        AnalysisPhase::TurnEnd,
         r#"{"goal":"배포 방식 결정 작업","goal_changed":true,"line":"","end":"question"}"#,
     )
     .unwrap();
     assert_eq!(
         question_without_reply.end,
-        super::analysis::LabelEnd::Done,
+        LabelEnd::Done,
         "a question needs a reply to ask for"
     );
-    let long = super::context_label::parse_text(
+    let long = parse_text(
+        AnalysisPhase::TurnEnd,
         r#"{"goal":"배포 방식 결정 작업","goal_changed":false,"line":"이 줄은 사십 자를 훌쩍 넘기는 아주 긴 결과 문장이라서 화면 한 줄에 맞게 반드시 잘려야 합니다","end":"done"}"#,
     )
     .unwrap();
     assert_eq!(long.line.chars().count(), 40);
-    assert!(super::context_label::parse_text(r#"{"goal":"짧음"}"#).is_err());
+    assert!(parse_text(AnalysisPhase::TurnEnd, r#"{"goal":"짧음"}"#).is_err());
+    for end in ["stuck", "working"] {
+        assert!(
+            parse_text(
+                AnalysisPhase::TurnEnd,
+                &format!(
+                    r#"{{"goal":"배포 방식 결정 작업","goal_changed":true,"line":"테스트 레인 실행 중","end":"{end}"}}"#
+                ),
+            )
+            .is_err(),
+            "a stopped turn's end outside the four is refused, not read as anything: {end}"
+        );
+    }
+}
+
+/// A turn's start cannot know how the turn will end, so it is not asked and
+/// its end is working; only the end of the turn says how it stopped.
+#[test]
+fn each_turn_boundary_is_asked_only_what_it_can_know() {
+    use super::analysis::{AnalysisPhase, LabelEnd};
+    use super::context_label::{parse_text, request};
+    let start = request(AnalysisPhase::TurnStart, "pane", "r1".to_owned(), "context");
+    assert_eq!(start.output_schema["properties"].get("end"), None);
     assert!(
-        super::context_label::parse_text(
-            r#"{"goal":"배포 방식 결정 작업","goal_changed":true,"line":"","end":"stuck"}"#
+        !start.output_schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("end"))
+    );
+    let started = parse_text(
+        AnalysisPhase::TurnStart,
+        r#"{"goal":"배포 방식 결정 작업","goal_changed":false,"line":"배포 스크립트 고치는 중"}"#,
+    )
+    .unwrap();
+    assert_eq!(started.end, LabelEnd::Working);
+    assert!(
+        parse_text(
+            AnalysisPhase::TurnStart,
+            r#"{"goal":"배포 방식 결정 작업","goal_changed":false,"line":"앞 턴은 덜 끝남","end":"unfinished"}"#,
         )
         .is_err(),
-        "an end outside the five is refused"
+        "a turn's start does not judge how a turn ended"
+    );
+
+    let end = request(AnalysisPhase::TurnEnd, "pane", "r2".to_owned(), "context");
+    assert_eq!(
+        end.output_schema["properties"]["end"]["enum"],
+        json!(["question", "waiting", "unfinished", "done"])
     );
 }
 
@@ -1171,7 +1260,7 @@ fn only_a_turn_the_operator_started_moves_the_goal() {
         ),
     ];
     harness.session("a", "native-a", &by_agent);
-    harness.backend.answer("CI 다시 보는 작업", "working", "");
+    harness.backend.begin("CI 다시 보는 작업");
     let working = agent(&path, "working", 4);
     observe(&mut worker, &working);
     settle(&mut worker, &woken);
@@ -1190,9 +1279,7 @@ fn only_a_turn_the_operator_started_moves_the_goal() {
     ];
     harness.session("a", "native-a", &by_operator);
     harness.input.record("w1:p1", turn_at(4) - 300, false);
-    harness
-        .backend
-        .answer("요청 보기와 설정 화면", "working", "");
+    harness.backend.begin("요청 보기와 설정 화면");
     let working = agent(&path, "working", 6);
     observe(&mut worker, &working);
     settle(&mut worker, &woken);
@@ -1281,7 +1368,7 @@ fn turning_summaries_off_ends_the_request_and_on_asks_for_the_current_turn() {
     let record = &store.target(LOCAL_TARGET)["w1:p1"];
     assert_eq!(record.goal.as_deref(), Some("파서 버그 수정 작업"));
 
-    harness.backend.answer("파서 버그 수정 작업", "working", "");
+    harness.backend.begin("파서 버그 수정 작업");
     assert!(worker.set_summaries(true, Instant::now()));
     assert_eq!(
         task(shown(&worker, &working)).as_deref(),

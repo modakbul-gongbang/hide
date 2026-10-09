@@ -278,8 +278,10 @@ export type FixtureLabel = {
   /** The reply the agent asks for; the label's line when given, with `question` its end. */
   reply?: string;
   question?: boolean;
-  /** How the turn ended (v5 `end`); a question by default when `question`, else done. */
-  end?: "working" | "question" | "done" | "waiting" | "unfinished";
+  /** How the stopped turn ended (`context_label.v6`); a question by default when
+   * `question`, else done. A turn start's answer carries none: the provider shim
+   * leaves `end` out when the request's schema asks for none. */
+  end?: "question" | "done" | "waiting" | "unfinished";
 };
 
 /** Where the fixture's Claude transcripts live: the fixture HOME's, which
@@ -313,7 +315,7 @@ export function labelMarker(label: FixtureLabel): string {
   const answer = {
     goal: label.task,
     goal_changed: true,
-    // v5 has one line: the reply asked for when there is one, else the progress.
+    // One line: the reply asked for when there is one, else the progress.
     line: label.reply ?? label.progress ?? "",
     end: label.end ?? (label.question ? "question" : "done"),
   };
