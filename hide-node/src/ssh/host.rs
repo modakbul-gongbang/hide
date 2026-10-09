@@ -2112,6 +2112,8 @@ pub fn over_local_stream(
             let mut buffer = vec![0u8; LOCAL_READ_BYTES];
             loop {
                 match std::io::Read::read(&mut reading, &mut buffer) {
+                    // A signal that cut the read short is no end of the link.
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                     Ok(0) | Err(_) => return,
                     Ok(read) => {
                         if chunks.blocking_send(buffer[..read].to_vec()).is_err() {
