@@ -263,7 +263,7 @@ fn claude_subagent_poll_resumes_an_oversized_tool_discard_across_its_budget() {
 }
 
 #[test]
-fn claude_subagent_poll_counts_bytes_even_when_an_admitted_record_fails() {
+fn claude_subagent_poll_counts_the_bytes_of_a_skipped_oversized_record() {
     let (home, folder, mut request) = subagent_poll_fixture();
     let oversized = serde_json::json!({"type":"assistant","sessionId":"budget-session",
         "message":{"role":"assistant","content":[{"type":"text","text":"x".repeat(900 * 1024)}]}});
@@ -284,12 +284,12 @@ fn claude_subagent_poll_counts_bytes_even_when_an_admitted_record_fails() {
         [301, 302]
     );
     assert!(first.has_more);
-    assert!(!first.subagents.contains_key("agent-1.jsonl"));
-    assert!(!first.subagents.contains_key("agent-2.jsonl"));
-    // The provider removes the failed files. Valid deferred records still
-    // resume from their last complete line, without losing or repeating one.
+    // The oversized text is lost, and the files are read past it.
     for index in 1..=2 {
-        std::fs::remove_file(folder.join(format!("agent-{index}.jsonl"))).unwrap();
+        assert_eq!(
+            first.subagents[&format!("agent-{index}.jsonl")].offset(),
+            format!("{oversized}\n").len() as u64
+        );
     }
     resume_subagent_poll(&mut request, &first);
     let next = read(home.path(), &request).unwrap();

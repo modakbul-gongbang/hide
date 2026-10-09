@@ -602,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn an_oversized_tool_result_is_skipped_and_an_oversized_sentence_is_a_capacity_failure() {
+    fn an_oversized_tool_result_is_skipped_and_an_oversized_sentence_is_lost() {
         let root = tempfile::tempdir().unwrap();
         let path = transcript_path(root.path(), "session.jsonl");
         let huge = "x".repeat(crate::SESSION_LINE_LIMIT_BYTES + 10);
@@ -629,8 +629,19 @@ mod tests {
                 + &claude_line("assistant", "s1", &huge, "2026-10-01T00:00:01Z"),
         )
         .unwrap();
-        let error = read(root.path(), &request(&sentence, None)).unwrap_err();
-        assert!(error.starts_with("session_capacity:line_bytes"), "{error}");
+        let answer = read(root.path(), &request(&sentence, None)).unwrap();
+        assert_eq!(
+            answer.skipped_reasons.get("conversation_capacity"),
+            Some(&1)
+        );
+        assert_eq!(
+            answer
+                .events
+                .iter()
+                .map(|event| event.text.as_str())
+                .collect::<Vec<_>>(),
+            ["request"]
+        );
     }
 
     #[test]

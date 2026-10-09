@@ -313,21 +313,30 @@ fn oversized_claude_tool_blocks_resume_after_restart_without_losing_human_text()
             .len(),
         1
     );
-    // A mixed envelope has real conversation text and must fail its bound,
-    // rather than silently discarding that text with a large tool result.
-    fs::write(&source, serde_json::json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","input":{"data":"x".repeat(2*1024*1024)}},{"type":"text","text":"keep this real answer"}]}}).to_string()+"\n").unwrap();
-    let mut failure = None;
+    // A mixed envelope's text is lost with its large tool input, and the
+    // read goes on to the records after it.
+    fs::write(&source, serde_json::json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","input":{"data":"x".repeat(2*1024*1024)}},{"type":"text","text":"lost with its tool input"}]}}).to_string()+"\n"+&human("after mixed 대화검색")).unwrap();
+    let mut finished = false;
     for _ in 0..12 {
-        match search_read::update(&mut index, "p", "s", Agent::Claude, &source, 0) {
-            Err(error) => {
-                failure = Some(error);
-                break;
-            }
-            Ok(true) => (),
-            Ok(false) => panic!("mixed oversized conversation must fail"),
+        if !search_read::update(&mut index, "p", "s", Agent::Claude, &source, 0).unwrap() {
+            finished = true;
+            break;
         }
     }
-    assert!(failure.unwrap().contains("line_bytes"));
+    assert!(finished);
+    assert!(
+        search_read::search(&index, "p", "lost with", 0)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
+    assert_eq!(
+        search_read::search(&index, "p", "after mixed", 0)
+            .unwrap()
+            .hits
+            .len(),
+        1
+    );
 }
 
 #[cfg(unix)]
@@ -474,29 +483,35 @@ fn all_source_work_is_bounded_and_unchanged_reads_are_zero() {
 }
 
 #[test]
-fn escaped_conversation_discriminators_never_authorize_discard_even_after_restart() {
-    for (agent, prefix, suffix) in [
+fn escaped_conversation_discriminators_are_skipped_and_the_read_continues_after_restart() {
+    for (agent, prefix, suffix, after) in [
         (
             Agent::Codex,
             r#"{"type":"response\u005fitem","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":""#,
             r#""}]}}"#,
+            event("user", "after escaped 대화검색"),
         ),
         (
             Agent::Codex,
             r#"{"type":"response_item","payload":{"type":"mess\u0061ge","role":"assistant","content":[{"type":"output_text","text":""#,
             r#""}]}}"#,
+            event("user", "after escaped 대화검색"),
         ),
         (
             Agent::Claude,
             r#"{"type":"us\u0065r","userType":"external","message":{"role":"user","content":""#,
             r#""}}"#,
+            serde_json::json!({"type":"user","userType":"external","promptId":"p","timestamp":"2026-10-01T00:00:00Z",
+                "message":{"role":"user","content":"after escaped 대화검색"}})
+            .to_string()
+                + "\n",
         ),
     ] {
         let tmp = tempdir().unwrap();
         let source = tmp.path().join("s.jsonl");
         fs::write(
             &source,
-            format!("{prefix}{}{suffix}\n", "real text ".repeat(300_000)),
+            format!("{prefix}{}{suffix}\n{after}", "real text ".repeat(300_000)),
         )
         .unwrap();
         let database = tmp.path().join("index.db");
@@ -504,19 +519,28 @@ fn escaped_conversation_discriminators_never_authorize_discard_even_after_restar
         assert!(search_read::update(&mut index, "p", "s", agent, &source, 0).unwrap());
         drop(index);
         let mut index = SearchIndex::open(&database).unwrap();
-        let mut failed = false;
+        let mut finished = false;
         for _ in 0..12 {
-            match search_read::update(&mut index, "p", "s", agent, &source, 0) {
-                Err(error) => {
-                    assert!(error.contains("line_bytes"));
-                    failed = true;
-                    break;
-                }
-                Ok(true) => (),
-                Ok(false) => panic!("real oversized text was silently discarded"),
+            if !search_read::update(&mut index, "p", "s", agent, &source, 0).unwrap() {
+                finished = true;
+                break;
             }
         }
-        assert!(failed);
+        assert!(finished, "{agent:?}");
+        assert!(
+            search_read::search(&index, "p", "real text", 0)
+                .unwrap()
+                .hits
+                .is_empty()
+        );
+        assert_eq!(
+            search_read::search(&index, "p", "after escaped", 0)
+                .unwrap()
+                .hits
+                .len(),
+            1,
+            "{agent:?}"
+        );
     }
 }
 

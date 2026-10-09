@@ -1,7 +1,6 @@
 use hide_session::turns::{ToolTurnMark, TurnMark, TurnMode};
 use hide_session::{
-    Agent, ConversationCursor, EventKind, RescanReason, SESSION_LINE_LIMIT_BYTES, SessionError,
-    SkipReason,
+    Agent, ConversationCursor, EventKind, RescanReason, SESSION_LINE_LIMIT_BYTES, SkipReason,
 };
 use serde_json::json;
 use std::fs;
@@ -86,17 +85,95 @@ fn split_oversized_tool_result_resumes_only_at_the_next_record() {
 }
 
 #[test]
-fn oversized_conversation_and_unclassifiable_records_still_fail() {
+fn oversized_conversation_and_unreadable_records_lose_their_text_and_the_read_continues() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.jsonl");
-    for contents in [
-        human(&"x".repeat(SESSION_LINE_LIMIT_BYTES)),
-        "x".repeat(SESSION_LINE_LIMIT_BYTES + 1),
-    ] {
-        fs::write(&path, contents).unwrap();
-        assert!(
-            matches!(ConversationCursor::new().read(Agent::Codex, &path),
-            Err(SessionError::Capacity { resource: "line_bytes", limit }) if limit == SESSION_LINE_LIMIT_BYTES as u64)
+    let huge = "x".repeat(SESSION_LINE_LIMIT_BYTES + 1);
+    let claude_after = format!(
+        "{}\n",
+        json!({"type":"user","timestamp":"2026-10-09T00:00:00Z",
+            "message":{"role":"user","content":"after the record"}})
+    );
+    let codex_after = human("after the record");
+    let asked = TurnMark::Tools(vec![ToolTurnMark::Asked {
+        call: "question-1".into(),
+        content: None,
+    }]);
+    // (agent, record, what a lost text keeps of its turn)
+    let records = [
+        (Agent::Codex, human(&huge), None),
+        // A person's message with a pasted screenshot.
+        (
+            Agent::Claude,
+            format!(
+                "{}\n",
+                json!({"type":"user","message":{"role":"user","content":[
+                    {"type":"text","text":"이 화면 봐줘"},
+                    {"type":"image","source":{"type":"base64","media_type":"image/png","data":huge}}
+                ]}})
+            ),
+            None,
+        ),
+        // Text beside a question keeps the question.
+        (
+            Agent::Claude,
+            format!(
+                "{}\n",
+                json!({"type":"assistant","message":{"content":[
+                    {"type":"text","text":huge},
+                    {"type":"tool_use","id":"question-1","name":"AskUserQuestion","input":{}}
+                ]}})
+            ),
+            Some(asked),
+        ),
+        // Nothing certifies these: what the turn waits for is not known.
+        (
+            Agent::Codex,
+            format!("{huge}\n"),
+            Some(TurnMark::Unreadable),
+        ),
+        (
+            Agent::Claude,
+            format!("{}\n", json!({"kind":"unknown","data":huge})),
+            Some(TurnMark::Unreadable),
+        ),
+    ];
+    for (agent, record, mark) in records {
+        let after = match agent {
+            Agent::Claude => &claude_after,
+            _ => &codex_after,
+        };
+        fs::write(&path, format!("{record}{after}")).unwrap();
+        let mut reader = ConversationCursor::new();
+        let (mut marks, mut events, mut lost) = (Vec::new(), Vec::new(), 0);
+        while {
+            let parsed = reader.read(agent, &path).unwrap();
+            marks.extend(parsed.turn_marks);
+            events.extend(parsed.events);
+            lost += parsed
+                .skipped_reasons
+                .get(&SkipReason::ConversationCapacity)
+                .copied()
+                .unwrap_or(0);
+            reader.has_more()
+        } {}
+        let context = format!("{agent:?} {record:.80}");
+        assert_eq!(lost, 1, "{context}");
+        assert_eq!(
+            marks
+                .iter()
+                .find(|(offset, _)| *offset == 0)
+                .map(|(_, mark)| mark),
+            mark.as_ref(),
+            "{context}"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.text.as_str())
+                .collect::<Vec<_>>(),
+            ["after the record"],
+            "{context}"
         );
     }
 }

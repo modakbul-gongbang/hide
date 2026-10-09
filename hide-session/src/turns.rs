@@ -66,6 +66,11 @@ pub enum TurnMark {
     HumanTurn,
     /// A native interruption, without a turn identifier.
     Interrupted,
+    /// A record too large to keep whose structure no bounded scan certifies
+    /// (an unknown envelope, a record nested past the scan's depth): what the
+    /// turn waits for is not known until the next turn starts or a person
+    /// writes.
+    Unreadable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,6 +157,10 @@ pub struct TurnTracker {
     questions: Vec<QuestionCall>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     question_capacity: bool,
+    /// An unreadable record was folded since the last turn start or
+    /// person's message.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    unreadable: bool,
 }
 
 fn deserialize_calls<'de, D: serde::Deserializer<'de>>(
@@ -244,6 +253,7 @@ impl TurnTracker {
                 }
                 self.questions.clear();
                 self.question_capacity = false;
+                self.unreadable = false;
                 self.last = Some(Turn {
                     id: turn.clone(),
                     mode: match mode {
@@ -314,6 +324,7 @@ impl TurnTracker {
             TurnMark::Human => {
                 self.questions.clear();
                 self.question_capacity = false;
+                self.unreadable = false;
                 match self.last.as_mut() {
                     Some(turn) if turn.end.is_some() => turn.answered = true,
                     Some(_) => {}
@@ -323,6 +334,7 @@ impl TurnTracker {
             TurnMark::HumanTurn => {
                 self.questions.clear();
                 self.question_capacity = false;
+                self.unreadable = false;
                 self.unstructured = false;
                 self.last = Some(Turn {
                     id: None,
@@ -339,6 +351,7 @@ impl TurnTracker {
                     turn.end = Some(End::Aborted);
                 }
             }
+            TurnMark::Unreadable => self.unreadable = true,
         }
     }
 
@@ -351,10 +364,11 @@ impl TurnTracker {
 
     /// What the last turn leaves the operator to do; `None` when the records
     /// read do not settle it (a running turn whose mode was not plain, a
-    /// finished plan whose turn's mode was not read or not known, or a
-    /// person's messages with no turn record at all).
+    /// finished plan whose turn's mode was not read or not known, a
+    /// person's messages with no turn record at all, or an unreadable record
+    /// since the turn started).
     pub fn waiting(&self) -> Option<Waiting> {
-        if self.question_capacity {
+        if self.question_capacity || self.unreadable {
             return None;
         }
         if self.questions.iter().any(|question| !question.answered) {
@@ -446,6 +460,35 @@ mod tests {
             mode: TurnMode::Other,
         });
         assert_eq!(folded(&next).waiting(), Some(Waiting::Nothing));
+    }
+
+    #[test]
+    fn an_unreadable_record_is_unknown_until_a_turn_starts_or_a_person_writes() {
+        let done = [
+            TurnMark::Started {
+                turn: id("t1"),
+                mode: TurnMode::Other,
+            },
+            TurnMark::Completed { turn: id("t1") },
+            TurnMark::Unreadable,
+        ];
+        assert_eq!(folded(&done).waiting(), None);
+        for settles in [
+            TurnMark::Started {
+                turn: id("t2"),
+                mode: TurnMode::Other,
+            },
+            TurnMark::Human,
+            TurnMark::HumanTurn,
+        ] {
+            let mut next = done.to_vec();
+            next.push(settles.clone());
+            assert_eq!(
+                folded(&next).waiting(),
+                Some(Waiting::Nothing),
+                "{settles:?}"
+            );
+        }
     }
 
     #[test]
