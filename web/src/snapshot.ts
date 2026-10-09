@@ -45,6 +45,9 @@ export type PrState = "failed" | "pending" | "mergeable" | "merged";
 export type RaisedAsk = {
   verb: RaiseVerb;
   what: string | null;
+  /** The raised descendant itself, where a tree draws the ask. */
+  raised_pane_id: string;
+  /** The agent the band names: the raised descendant, or for a draft the parent holding it. */
   pane_id: string;
   title: string;
   agent_kind: string;

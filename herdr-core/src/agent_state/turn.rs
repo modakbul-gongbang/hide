@@ -104,7 +104,9 @@ pub struct Ask {
 
 /// The verb of the row's own demand. A native unanswered question also holds
 /// the pane blocked until a reply; only that proven native wait overrides
-/// the approval of a blocked menu.
+/// the approval of a blocked menu. An AI question the operator has read is
+/// no longer a demand (docs/status-model.md, The Sessions tool); a native one
+/// holds until it is answered.
 pub(crate) fn demand_verb(agent: &SidebarAgentSnapshot) -> Option<super::escalation::Verb> {
     use super::escalation::Verb;
     let native_question = agent.demand == "question"
@@ -114,7 +116,7 @@ pub(crate) fn demand_verb(agent: &SidebarAgentSnapshot) -> Option<super::escalat
             .is_some_and(|turn| turn.kind == hide_session::turns::UserTurnKind::Question);
     if (agent.blocked || agent.demand == "approval") && !native_question {
         Some(Verb::Approval)
-    } else if matches!(agent.demand.as_str(), "question" | "error") {
+    } else if agent.demand == "error" || (agent.demand == "question" && (native_question || agent.unread)) {
         Some(Verb::Answer)
     } else {
         None
@@ -927,6 +929,25 @@ mod row_tests {
             "agents": [{"pane_id": "root", "agent": "claude", "agent_status": "idle", "state_change_seq": 1}]
         })).unwrap();
         project_agents(payload).agents.remove(0)
+    }
+
+    // A root whose own AI question was read, with a raised descendant, asks
+    // the descendant's ask, not its read question; a native question holds
+    // until answered.
+    #[test]
+    fn a_read_ai_question_is_no_demand_while_a_native_one_still_is() {
+        use super::super::escalation::Verb;
+        let mut agent = row();
+        agent.demand = "question".into();
+        agent.unread = true;
+        assert_eq!(demand_verb(&agent), Some(Verb::Answer));
+        agent.unread = false;
+        assert_eq!(demand_verb(&agent), None);
+        agent.user_turn = Some(hide_session::turns::UserTurnFact {
+            kind: hide_session::turns::UserTurnKind::Question,
+            content: None,
+        });
+        assert_eq!(demand_verb(&agent), Some(Verb::Answer));
     }
 
     #[test]

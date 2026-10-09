@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 const header: PaneHeader = { working: false, band: { kind: "raised", tone: "warning", reason: null, since_unix_ms: null, action: {kind: "child", pane_id: "child", label: "자식 검증"}, more: 0, exit_code: null,
-  raised: { verb: "approval", what: "하위 검증 권한이 필요합니다", pane_id: "child", title: "자식 검증", agent_kind: "codex", open_pane_id: "child", since_unix_ms: null, path: ["부모"], checkout: "feature", human_notice: true } } };
+  raised: { verb: "approval", what: "하위 검증 권한이 필요합니다", raised_pane_id: "child", pane_id: "child", title: "자식 검증", agent_kind: "codex", open_pane_id: "child", since_unix_ms: null, path: ["부모", "자식 검증"], checkout: "feature", human_notice: true } } };
 
 async function mount(value = header) {
   vi.useFakeTimers();

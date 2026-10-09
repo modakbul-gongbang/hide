@@ -816,7 +816,6 @@ impl Cache {
                         + checkout.agent_summary.working
                         + checkout.agent_summary.seen;
                     value.tree = trees.remove(&checkout.id).expect("checkout tree projected");
-                    value.sidebar_tree = super::lineage::sidebar_tree(&physical, &device.agents);
                     value.global_tree = global_trees
                         .remove(&checkout.id)
                         .expect("global checkout tree projected");

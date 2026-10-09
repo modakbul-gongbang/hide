@@ -178,6 +178,8 @@ impl Cause {
 pub struct RaisedAsk {
     pub verb: Verb,
     pub what: Option<String>,
+    /// The raised descendant itself, where a tree draws the ask.
+    pub raised_pane_id: String,
     /// The agent the band names: the raised descendant, or for a draft the
     /// parent whose input holds it.
     pub pane_id: String,
@@ -252,6 +254,12 @@ pub(crate) fn lift(
         let Some(verb) = escalation.cause.verb() else {
             continue;
         };
+        // A child blocked on a native question asks for an answer, as its own
+        // row does (`turn::demand_verb`), not for an approval.
+        let verb = match escalation.cause {
+            Cause::ChildBlocked => super::turn::demand_verb(&rows[i]).unwrap_or(verb),
+            _ => verb,
+        };
         let Some(&root) = chain.last() else {
             continue;
         };
@@ -273,6 +281,9 @@ pub(crate) fn lift(
         };
         let what = match verb {
             Verb::Approval | Verb::Confirm => label_line(row),
+            Verb::Answer if escalation.cause == Cause::ChildBlocked => {
+                row.detail.clone().or_else(|| label_line(row))
+            }
             Verb::Answer => escalation.letter_id.as_deref().and_then(&letter_line),
             Verb::Draft => None,
         };
@@ -286,6 +297,7 @@ pub(crate) fn lift(
         asks.entry(root).or_default().push(RaisedAsk {
             verb,
             what,
+            raised_pane_id: row.pane_id.clone(),
             pane_id: named.pane_id.clone(),
             title: named.identity_label.clone(),
             agent_kind: named.agent_kind.clone(),
@@ -364,6 +376,69 @@ mod tests {
         row.lineage_session = Some("child-session".into());
         row.declared_parent_session = Some("parent-session".into());
         row
+    }
+
+    /// A root, its child and a grandchild the given cause raised, as `lift` reads them.
+    fn raised_lineage(cause: Cause) -> Vec<SidebarAgentSnapshot> {
+        let mut root = child();
+        root.pane_id = "root".into();
+        root.identity_label = "Root".into();
+        root.delegated = false;
+        root.lineage_parent_pane_id = None;
+        let mut middle = child();
+        middle.pane_id = "middle".into();
+        middle.identity_label = "Middle".into();
+        middle.lineage_parent_pane_id = Some("root".into());
+        let mut raised = child();
+        raised.pane_id = "raised".into();
+        raised.identity_label = "Raised".into();
+        raised.lineage_parent_pane_id = Some("middle".into());
+        raised.escalation = Some(Escalation {
+            cause,
+            letter_id: None,
+            since_unix_ms: Some(10),
+            human_notice: false,
+        });
+        vec![root, middle, raised]
+    }
+
+    // agent-hierarchy-screens B3: a descendant blocked on a native question
+    // asks the operator to answer it, in its own words.
+    #[test]
+    fn a_descendant_blocked_on_a_native_question_is_lifted_as_an_answer() {
+        let mut rows = raised_lineage(Cause::ChildBlocked);
+        rows[2].blocked = true;
+        rows[2].demand = "question".into();
+        rows[2].detail = Some("Keep the old stdin path?".into());
+        rows[2].user_turn = Some(hide_session::turns::UserTurnFact {
+            kind: hide_session::turns::UserTurnKind::Question,
+            content: None,
+        });
+        lift(&mut rows, |_| None);
+        let ask = &rows[0].raised[0];
+        assert_eq!(ask.verb, Verb::Answer);
+        assert_eq!(ask.what.as_deref(), Some("Keep the old stdin path?"));
+        assert_eq!(ask.path, ["Root", "Middle", "Raised"]);
+    }
+
+    // B3, B6: a blocked menu stays an approval; a draft names and opens the
+    // parent holding it, while the tree still draws it on the raised row.
+    #[test]
+    fn a_blocked_menu_is_an_approval_and_a_draft_opens_the_parent_holding_it() {
+        let mut rows = raised_lineage(Cause::ChildBlocked);
+        rows[2].blocked = true;
+        lift(&mut rows, |_| None);
+        assert_eq!(rows[0].raised[0].verb, Verb::Approval);
+
+        let mut rows = raised_lineage(Cause::Draft);
+        lift(&mut rows, |_| None);
+        let ask = &rows[0].raised[0];
+        assert_eq!(ask.verb, Verb::Draft);
+        assert_eq!(
+            (ask.raised_pane_id.as_str(), ask.pane_id.as_str(), ask.open_pane_id.as_str()),
+            ("raised", "middle", "middle")
+        );
+        assert_eq!(ask.path, ["Root", "Middle"]);
     }
 
     fn actor(pane: &str) -> Actor {

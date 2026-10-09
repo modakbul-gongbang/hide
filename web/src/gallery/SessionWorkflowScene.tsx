@@ -23,7 +23,7 @@ const EXAMPLES: Example[] = [
   { title: "쉬는 세션", group: "idle", line: null },
   { title: "완료한 검토", group: "resolved", line: null, pr: "merged" },
 ];
-const RAISED: RaisedAsk = { verb: "approval", what: "검증 명령 실행 권한이 필요합니다", pane_id: "a1c1", title: "한국어 입력 경계 검토", agent_kind: "codex", open_pane_id: "a1c1", since_unix_ms: null, path: ["입력과 세션 복귀 흐름 검토"], checkout: "prd/session-ui", human_notice: true };
+const RAISED: RaisedAsk = { verb: "approval", what: "검증 명령 실행 권한이 필요합니다", raised_pane_id: "a1c1", pane_id: "a1c1", title: "한국어 입력 경계 검토", agent_kind: "codex", open_pane_id: "a1c1", since_unix_ms: null, path: ["입력과 세션 복귀 흐름 검토", "한국어 입력 경계 검토"], checkout: "prd/session-ui", human_notice: true };
 const BANDS: [string, PaneHeader["band"]][] = [
   ["sleeping", { kind: "sleeping", tone: "muted", reason: "12분 동안 휴면 중", since_unix_ms: null, action: null, more: 0, exit_code: null }],
   ["failed", { kind: "failed", tone: "error", reason: "세션을 찾을 수 없음", since_unix_ms: null, action: null, more: 0, exit_code: null }],
