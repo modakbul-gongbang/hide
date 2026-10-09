@@ -67,14 +67,17 @@
       "sample": "hide-agent-hooks/tests/fixtures/grok-pre-tool-use.json"
     },
     "session": {
-      "absent": "No session reader in this build"
+      "sample": "hide-session/tests/fixtures/adapters/grok-1.0.46/updates.jsonl"
     },
     "features": [
       "skill",
       "subagents",
       "spawn_guard",
       "herdr_integration",
-      "start"
+      "sleep",
+      "fork",
+      "start",
+      "titles"
     ],
     "factory": {
       "direct_ask": "unconfirmed",

@@ -120,6 +120,7 @@ pub enum HookInstall {
 pub enum SessionFormat {
     Claude,
     Codex,
+    Grok,
     Pi,
     Omp,
     OpenCode,
@@ -130,6 +131,7 @@ impl SessionFormat {
         match self {
             Self::Claude => AgentId::ClaudeCode.adapter(),
             Self::Codex => AgentId::Codex.adapter(),
+            Self::Grok => AgentId::Grok.adapter(),
             Self::Pi => AgentId::Pi.adapter(),
             Self::Omp => AgentId::Omp.adapter(),
             Self::OpenCode => AgentId::OpenCode.adapter(),
@@ -139,24 +141,28 @@ impl SessionFormat {
     pub const fn reports_turns(self) -> bool {
         matches!(
             self,
-            Self::Claude | Self::Codex | Self::Omp | Self::OpenCode
+            Self::Claude | Self::Codex | Self::Grok | Self::Omp | Self::OpenCode
         )
     }
     pub const fn has_session_file(self) -> bool {
-        matches!(self, Self::Claude | Self::Codex | Self::Pi | Self::Omp)
+        matches!(
+            self,
+            Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp
+        )
     }
 
     /// Native file metadata and the default CLI resolver must agree before
     /// a transcript can authorize a read or a lifecycle effect.
     pub const fn requires_native_file_proof(self) -> bool {
-        matches!(self, Self::Pi | Self::Omp)
+        matches!(self, Self::Grok | Self::Pi | Self::Omp)
     }
 
     /// The native reader proves the session's owner and checkout before a
     /// lifecycle effect (wake, fork, resume) uses its id, and Herdr's
-    /// reported id alone grants none of them.
+    /// reported id alone grants none of them: every native-file reader, and
+    /// OpenCode's database reader.
     pub const fn requires_native_proof(self) -> bool {
-        matches!(self, Self::Pi | Self::Omp | Self::OpenCode)
+        self.requires_native_file_proof() || matches!(self, Self::OpenCode)
     }
 
     /// The reported reference a native proof takes: OpenCode names a session
@@ -164,7 +170,7 @@ impl SessionFormat {
     pub const fn proof_reference_kind(self) -> &'static str {
         match self {
             Self::OpenCode => "id",
-            Self::Claude | Self::Codex | Self::Pi | Self::Omp => "path",
+            Self::Claude | Self::Codex | Self::Grok | Self::Pi | Self::Omp => "path",
         }
     }
 

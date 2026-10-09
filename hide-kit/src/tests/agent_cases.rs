@@ -761,6 +761,7 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
     // without enabling their future reader/sleep/fork features. The complete
     // Pi and OMP slices add native title and exact sleep/fork beside the
     // accepted extension's collaboration features (reader B1/B2/B3/B14, D13);
+    // the Grok slice adds the same to its hook features and Grok stays Basic;
     // the OpenCode slice does the same beside its plugin.
     let opencode = [
         Skill,
@@ -806,7 +807,16 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
         ("codex", &Feature::ALL, false),
         (
             "grok",
-            &[Skill, Subagents, SpawnGuard, HerdrIntegration, Start],
+            &[
+                Skill,
+                Subagents,
+                SpawnGuard,
+                HerdrIntegration,
+                Sleep,
+                Fork,
+                Start,
+                Titles,
+            ],
             true,
         ),
         ("opencode", &opencode, false),

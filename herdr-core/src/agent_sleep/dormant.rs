@@ -556,6 +556,7 @@ mod tests {
         for (kind, reference) in [
             ("pi", ("path", "/fixture/native.jsonl")),
             ("omp", ("path", "/fixture/native.jsonl")),
+            ("grok", ("path", "/fixture/native.jsonl")),
             ("opencode", ("id", "native-one")),
         ] {
             let entry = store.dormant.get_mut(&id).unwrap();
@@ -568,7 +569,7 @@ mod tests {
             });
             assert!(store.dormant_snapshots()[0].wake_available, "{kind}");
         }
-        for kind in ["grok", "cursor", "unknown"] {
+        for kind in ["cursor", "unknown"] {
             store.dormant.get_mut(&id).unwrap().kind = kind.into();
             assert!(!store.dormant_snapshots()[0].wake_available, "{kind}");
         }

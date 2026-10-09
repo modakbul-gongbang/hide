@@ -1056,6 +1056,57 @@ mod scope_tests {
     }
 
     #[test]
+    fn grok_session_detail_shows_a_prompts_blocks_and_a_turns_answer_runs_as_one_message_each() {
+        let temp = tempdir().unwrap();
+        let cwd = temp.path().join("checkout");
+        fs::create_dir(&cwd).unwrap();
+        let cwd = cwd.canonicalize().unwrap();
+        let id = "0199b000-0000-7000-8000-000000000003";
+        let session_path = crate::fixture::grok_session(temp.path(), &cwd, id);
+        fs::write(
+            &session_path,
+            include_str!("../../../hide-session/tests/fixtures/adapters/grok-1.0.46/updates.jsonl"),
+        )
+        .unwrap();
+        let row = project_session_row(ProjectSession {
+            id: id.to_owned(),
+            agent: Agent::Grok,
+            locator: session_path,
+            checkout_path: cwd,
+            first_human_request: None,
+            started_at_unix_ms: Some(1),
+            updated_at_unix_ms: 1,
+            title: None,
+            event_count: 1,
+            availability: SessionAvailability::Available,
+        });
+
+        let detail = load_session_detail(
+            &hide_node::Local::new(Some(temp.path().to_path_buf())),
+            &temp.path().join("missing.sqlite3"),
+            "project-1",
+            row,
+        )
+        .unwrap();
+
+        let of = |kind: &str| {
+            detail
+                .events
+                .iter()
+                .filter(|event| event.kind == kind)
+                .map(|event| event.text.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(of("human")[0], "요청 보기를 만들어줘\n긴 요청의 둘째 줄");
+        assert_eq!(
+            of("assistant"),
+            [
+                "PR을 열었습니다: https://github.com/acme/app/pull/12\n\n예전 것은 https://github.com/acme/app/pull/99 입니다"
+            ]
+        );
+    }
+
+    #[test]
     fn an_opencode_detail_reads_only_its_proven_root_session_in_its_checkout() {
         let temp = tempdir().unwrap();
         let checkout = temp.path().join("work");
@@ -1562,7 +1613,7 @@ mod scope_tests {
                         "content": [{"type": "input_text", "text": context}],
                     },
                 }),
-                Agent::Pi | Agent::Omp | Agent::OpenCode => {
+                Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
                     unreachable!("legacy hook-only fixture")
                 }
             };
@@ -2712,7 +2763,9 @@ pub(super) fn load_session_detail(
     let store = MemoryStore::exists(database)
         .then(|| MemoryStore::open_read_only(database).map_err(|error| error.to_string()))
         .transpose()?;
-    let parsed = hide_session::parse_events(agent, &contents);
+    let mut parsed = hide_session::parse_events(agent, &contents);
+    // A message a format splits into records is one message to read.
+    parsed.coalesce();
     let events = parsed
         .events
         .into_iter()

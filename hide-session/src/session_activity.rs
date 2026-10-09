@@ -110,14 +110,18 @@ mod tests {
         let root = match agent {
             Agent::Claude => home.join(".claude/projects/project"),
             Agent::Codex => home.join(".codex/sessions/2026/01/01"),
-            Agent::Pi | Agent::Omp | Agent::OpenCode => unreachable!("legacy metadata fixtures"),
+            Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
+                unreachable!("legacy metadata fixtures")
+            }
         };
         fs::create_dir_all(&root).unwrap();
         let path = root.join("native-a.jsonl");
         let header = match agent {
             Agent::Claude => serde_json::json!({"type":"user","sessionId":"native-a"}),
             Agent::Codex => serde_json::json!({"type":"session_meta","payload":{"id":"native-a"}}),
-            Agent::Pi | Agent::Omp | Agent::OpenCode => unreachable!("legacy metadata fixtures"),
+            Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
+                unreachable!("legacy metadata fixtures")
+            }
         };
         // Conversation records are deliberately invalid: activity must not
         // parse or project them after establishing the native owner.

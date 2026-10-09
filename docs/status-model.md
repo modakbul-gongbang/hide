@@ -106,7 +106,8 @@ Demand has these sources:
 
 - A question is the core's label verdict on the agent's last message (`label.question`, see Task identity below).
   It exists only while the label is proven for the pane's current session, and it ends when the agent starts working again or a turn ran between two looks at a stopped agent, so a question never outlives the turn that asked it.
-- A native unanswered Claude `AskUserQuestion`, Codex `request_user_input`, omp `ask` or OpenCode `question` is a question even with summaries off.
+- A native unanswered Claude `AskUserQuestion`, Codex `request_user_input`, Grok `ask_user_question`, omp `ask` or OpenCode `question` is a question even with summaries off.
+  A Grok session whose `plan_mode.json` is `Active` and awaiting plan approval is a plan approval, with `plan.md` as its bounded content, until that file says otherwise.
   The current-session/current-state read carries the optional `user_turn` row fact, with `kind: question|plan_approval` and optional `content: {text, choices, truncated}`.
   Text is capped at 8 KiB, choices at eight and each choice at 256 UTF-8 bytes; cuts preserve character boundaries and set `truncated`.
   A correlated native result, a later human turn or an abort clears the pending question.
@@ -515,6 +516,9 @@ Same-length title updates at EOF change no event offset and replay no conversati
 The existing label reader refreshes native-file titles and questions at a minimum three-second interval without requiring a Herdr lifecycle transition; failed native proofs revoke the row's authority and retry after fifteen seconds.
 Unanswered native `ask` calls supply exact bounded text and choices, and only their correlated result, a later human turn or an abort clears them.
 A failed current omp reread revokes native identity and question authority until a fresh proof, and nested child artifacts supply no root conversation or inferred child relationship.
+Grok 1.0.46 takes its title from `summary.json`: `generated_title`, marked manual by `title_is_manual` after `/rename`, with a missing or empty title clearing the stale name; the file is read again on every poll and moves no event offset.
+Its unanswered `ask_user_question` calls supply exact bounded text and option labels, and its terminal tool update, a later human turn or a cancelled turn clears them.
+A Grok subagent, headless or hidden session is no pane's root, so it supplies no title, question or conversation.
 Before an omp resume or fork, Hide refuses option-like IDs, non-ASCII filenames with uncertain native case matching, and pending native directory migration or orphaned backup recovery.
 These action-only checks never move or repair a history; read-only labels and conversations retain their own proof, and the native CLI must resolve the pending maintenance before a fresh route can be admitted.
 OpenCode 1.18.30's session `title` is a proven native title of its root session only; a subagent's child session never names the root row.
@@ -524,7 +528,7 @@ The Herdr workspace label is never a name: it is whatever the workspace was call
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
 Nothing publishes a session `name`, reads Codex's first human turn as a title, or renames an agent or tab.
 
-The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Pi, omp or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v5`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
+The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex, Grok, Pi, omp or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v5`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
 `LabelOverlay::apply` lays that label onto an agent just before the runtime projects it, as `task` (the goal), `expected_reply` (the line when the turn ended on a question), `progress` (the line otherwise) and `question` (a question end on an agent that is not running), and `sidebar.rs::project_agent` reads those four.
 With Settings › Hide AI › Features › Agent summaries off nothing of the label is laid: the row is titled by the session's own title or the provider, and has no sentence and no written question (D-11).
 A label is shown only for the session it was proven for.

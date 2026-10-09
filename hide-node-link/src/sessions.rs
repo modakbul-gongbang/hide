@@ -332,9 +332,7 @@ mod reader_tests {
         for feature in [ReaderFeature::Turns, ReaderFeature::UserTurnContent] {
             assert!(!facts.supports("pi", feature));
         }
-        for provider in ["grok", "cursor"] {
-            assert!(!facts.supports(provider, ReaderFeature::Identity));
-        }
+        assert!(!facts.supports("cursor", ReaderFeature::Identity));
     }
 
     #[test]
@@ -362,6 +360,33 @@ mod reader_tests {
         .unwrap();
         assert!(earlier.supports("pi", ReaderFeature::Identity));
         assert!(!earlier.supports("omp", ReaderFeature::Identity));
+    }
+
+    #[test]
+    fn grok_has_its_native_reader_and_waits_only_on_a_helper_that_implements_it() {
+        let facts = ReaderFeatures::implemented();
+        for feature in [
+            ReaderFeature::Identity,
+            ReaderFeature::Labels,
+            ReaderFeature::Titles,
+            ReaderFeature::Conversation,
+            ReaderFeature::Search,
+            ReaderFeature::Memory,
+            ReaderFeature::Links,
+            ReaderFeature::Activity,
+            ReaderFeature::Turns,
+            ReaderFeature::UserTurnContent,
+        ] {
+            assert!(facts.supports("grok", feature), "{feature:?}");
+            assert!(!ReaderFeatures::protocol24().supports("grok", feature));
+        }
+        // A protocol25 helper built before this reader grants no Grok read.
+        let earlier: ReaderFeatures = serde_json::from_str(
+            r#"[{"provider":"pi","features":["identity"]},{"provider":"omp","features":["identity","turns"]}]"#,
+        )
+        .unwrap();
+        assert!(earlier.supports("omp", ReaderFeature::Identity));
+        assert!(!earlier.supports("grok", ReaderFeature::Identity));
     }
 
     #[test]

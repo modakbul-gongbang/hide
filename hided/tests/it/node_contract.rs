@@ -320,28 +320,29 @@ fn authenticated_node_advertises_only_its_compiled_readers() {
             .unwrap()
             .supports("pi", ReaderFeature::Turns)
     );
-    for feature in [
-        ReaderFeature::Conversation,
-        ReaderFeature::Turns,
-        ReaderFeature::UserTurnContent,
-    ] {
-        assert!(
-            device
-                .link
-                .reader_features()
-                .unwrap()
-                .supports("omp", feature)
-        );
+    for agent in ["omp", "grok"] {
+        for feature in [
+            ReaderFeature::Conversation,
+            ReaderFeature::Turns,
+            ReaderFeature::UserTurnContent,
+        ] {
+            assert!(
+                device
+                    .link
+                    .reader_features()
+                    .unwrap()
+                    .supports(agent, feature),
+                "{agent}: {feature:?}"
+            );
+        }
     }
-    for agent in ["grok", "cursor"] {
-        assert!(
-            !device
-                .link
-                .reader_features()
-                .unwrap()
-                .supports(agent, ReaderFeature::Conversation)
-        );
-    }
+    assert!(
+        !device
+            .link
+            .reader_features()
+            .unwrap()
+            .supports("cursor", ReaderFeature::Conversation)
+    );
 }
 
 // This test-only input names a retained release payload directory. It is

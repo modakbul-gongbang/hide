@@ -316,12 +316,13 @@ pub fn resume_arguments(agent: &ClosedAgent) -> Option<Vec<String>> {
     match dialect {
         hide_agent_adapter::LaunchDialect::Claude
         | hide_agent_adapter::LaunchDialect::Codex
+        | hide_agent_adapter::LaunchDialect::Grok
         | hide_agent_adapter::LaunchDialect::Pi
         | hide_agent_adapter::LaunchDialect::Omp
         | hide_agent_adapter::LaunchDialect::OpenCode => {
             Some(vec![dialect.resume_flag().into(), session_id.clone()])
         }
-        hide_agent_adapter::LaunchDialect::Grok | hide_agent_adapter::LaunchDialect::Cursor => None,
+        hide_agent_adapter::LaunchDialect::Cursor => None,
     }
 }
 
@@ -396,7 +397,17 @@ mod tests {
 
     #[test]
     fn resume_arguments_resume_without_forking() {
-        for kind in ["pi", "omp"] {
+        assert_eq!(
+            resume_arguments(&ClosedAgent {
+                kind: "grok".into(),
+                session_id: Some("0199b000-0000-7000-8000-000000000003".into()),
+            }),
+            Some(vec![
+                "--resume".to_owned(),
+                "0199b000-0000-7000-8000-000000000003".to_owned()
+            ])
+        );
+        for kind in ["grok", "pi", "omp"] {
             assert!(
                 resume_arguments(&ClosedAgent {
                     kind: kind.into(),
