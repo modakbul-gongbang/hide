@@ -3336,7 +3336,7 @@ mod tests {
     }
 
     #[test]
-    fn a_worker_whose_agent_declares_no_sleep_is_refused_rather_than_queued() {
+    fn a_worker_is_queued_to_sleep_whatever_agent_it_runs() {
         let state = Arc::new(Mutex::new(WorkerState::default()));
         let mut port = CoreWorkers {
             runtime: Weak::new(),
@@ -3349,8 +3349,8 @@ mod tests {
             ("grok", true),
             ("pi", true),
             ("omp", true),
-            ("opencode", false),
-            ("cursor", false),
+            ("opencode", true),
+            ("cursor", true),
         ] {
             job.runtime = AgentRuntime::parse(agent).expect(agent);
             let answer = port.sleep(&worker(&job));
@@ -3371,7 +3371,8 @@ mod tests {
             ("pi", true),
             ("omp", true),
             ("grok", true),
-            ("opencode", false),
+            ("opencode", true),
+            ("cursor", true),
         ] {
             let state = Arc::new(Mutex::new(WorkerState::default()));
             let mut port = CoreWorkers {
@@ -4151,6 +4152,7 @@ mod tests {
             letters: Vec::new(),
             since: Instant::now(),
             waiting_on: None,
+            asked: false,
         };
         let ((), records) = crate::diagnostics::capture(|| {
             woken.waits_on("pane-T-1", "agent_absent");
