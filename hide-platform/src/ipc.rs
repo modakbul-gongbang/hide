@@ -18,8 +18,10 @@
 //! - A [`LocalStream::duplicate`] reads on one thread while the original
 //!   writes on another, and the bytes of each direction arrive whole.
 //! - [`ShutdownHandle::shutdown`] called from another thread ends a read
-//!   that is blocked, with `Ok(0)`; later reads return `Ok(0)` and later
-//!   writes fail with `BrokenPipe`.
+//!   that is blocked, with `Ok(0)`, and a write a peer that stopped reading
+//!   holds, with an error; later reads return `Ok(0)` and later writes fail
+//!   with `BrokenPipe`. A caller that bounds a write on every system ends it
+//!   this way, since a Windows pipe has no write timeout.
 //! - [`LocalListener::bind`] fails with `AddrInUse` while another listener
 //!   lives at the path, whether or not its queue is full (#403), and replaces
 //!   what a dead one left behind. A listener is alive while it holds a lock
@@ -179,7 +181,8 @@ impl LocalStream {
         }
     }
 
-    /// A handle another thread uses to end this stream's blocked reads.
+    /// A handle another thread uses to end this stream's blocked reads and
+    /// writes.
     pub fn shutdown_handle(&self) -> ShutdownHandle {
         ShutdownHandle {
             shared: Arc::clone(&self.shared),
@@ -242,8 +245,9 @@ impl fmt::Debug for ShutdownHandle {
 }
 
 impl ShutdownHandle {
-    /// A read blocked on the stream returns `Ok(0)`; later reads return
-    /// `Ok(0)` and later writes fail with `BrokenPipe`. Idempotent.
+    /// A read blocked on the stream returns `Ok(0)` and a blocked write
+    /// fails; later reads return `Ok(0)` and later writes fail with
+    /// `BrokenPipe`. Idempotent.
     pub fn shutdown(&self) {
         sys::shutdown(&self.shared);
     }
@@ -1029,12 +1033,12 @@ mod sys {
     /// Waits between looks at a pipe that has no data yet, growing to a cap.
     const FIRST_PAUSE: Duration = Duration::from_millis(1);
     const LONGEST_PAUSE: Duration = Duration::from_millis(4);
-    /// How long `shutdown` keeps cancelling a read that is still starting.
+    /// How long `shutdown` keeps cancelling a read or write still starting.
     const SHUTDOWN_ATTEMPTS: u32 = 200;
 
-    /// `cancelled` ends the stream; `blocked` counts reads parked inside the
-    /// system call, so a `shutdown` that raced one cancels again until it
-    /// has left.
+    /// `cancelled` ends the stream; `blocked` counts reads and writes parked
+    /// inside the system call, so a `shutdown` that raced one cancels again
+    /// until it has left.
     #[derive(Default)]
     pub(super) struct Stop {
         cancelled: AtomicBool,
@@ -1145,12 +1149,19 @@ mod sys {
     }
 
     pub(super) fn write(shared: &Shared, _: Option<Duration>, buffer: &[u8]) -> io::Result<usize> {
-        if shared.stop.cancelled.load(Ordering::SeqCst) {
-            return Err(io::ErrorKind::BrokenPipe.into());
-        }
-        let mut raw = &shared.raw;
-        raw.write(buffer).map_err(|error| {
-            if shared.stop.cancelled.load(Ordering::SeqCst) {
+        let stop = &shared.stop;
+        // Counted before the cancel check, as a read is, so a shutdown that
+        // lands between the check and the write cancels it again.
+        stop.blocked.fetch_add(1, Ordering::SeqCst);
+        let result = if stop.cancelled.load(Ordering::SeqCst) {
+            Err(io::ErrorKind::BrokenPipe.into())
+        } else {
+            let mut raw = &shared.raw;
+            raw.write(buffer)
+        };
+        stop.blocked.fetch_sub(1, Ordering::SeqCst);
+        result.map_err(|error| {
+            if stop.cancelled.load(Ordering::SeqCst) {
                 io::ErrorKind::BrokenPipe.into()
             } else {
                 error
@@ -1158,7 +1169,7 @@ mod sys {
         })
     }
 
-    #[allow(clippy::disallowed_methods)] // a production wait: shutdown retries the pipe cancel until the blocked reader has left, one millisecond apart
+    #[allow(clippy::disallowed_methods)] // a production wait: shutdown retries the pipe cancel until the blocked reader or writer has left, one millisecond apart
     pub(super) fn shutdown(shared: &Shared) {
         let stop = &shared.stop;
         stop.cancelled.store(true, Ordering::SeqCst);
