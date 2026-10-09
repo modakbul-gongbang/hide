@@ -758,8 +758,8 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
     // session-start hook's output). The session-reader common contract B1/B6
     // enables starts for the five agents besides Claude Code and Codex
     // without enabling their future reader/sleep/fork features. The complete
-    // Pi slice adds native title and exact sleep/fork without changing its
-    // Basic collaboration grade.
+    // Pi and omp slices add native title and exact sleep/fork without
+    // changing their Basic collaboration grades (reader B1/B2/B3/B14, D13).
     let opencode = [
         Skill,
         Guidance,
@@ -784,7 +784,11 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
             &[Skill, HerdrIntegration, Sleep, Fork, Start, Titles],
             true,
         ),
-        ("omp", &[Skill, HerdrIntegration, Start], true),
+        (
+            "omp",
+            &[Skill, HerdrIntegration, Sleep, Fork, Start, Titles],
+            true,
+        ),
         (
             "cursor",
             &[
