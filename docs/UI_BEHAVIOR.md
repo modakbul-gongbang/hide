@@ -370,7 +370,7 @@ While a listed pane's status is unknown, `Stop work and close` is disabled, `Kee
 Otherwise one sheet opens in place of the Stop-work confirmation, titled `이 에이전트와 자식 N개를 닫을까요?` (a tab: `이 탭과 자식 N개를 닫을까요?`), N counting only the descendants outside.
 It has no sentence under the title, and lists the target first and then its descendants in tree order, indented by depth, each with the sidebar's status mark and name and a device chip when it runs on another device than the target; the list scrolls inside the sheet when it is long.
 Closing a tab lists every agent in the tab as a target, each followed by its own descendants, so a working agent beside the parent is shown before it closes.
-A line above the list counts, with the sidebar's marks and neutral text, the descendants that are working (`진행 중`), waiting for an answer to a question, approval or error (`답 대기`), holding an unread result (`확인 안 한 결과`) and unreadable (`상태 모름`), leaving out a kind with none; those rows are bright and add their status word in neutral text, and a quiet one (idle, read, asleep) is dimmed with no word, its state in its mark's tooltip.
+A line above the list counts, with the sidebar's marks and neutral text, the descendants that are working (`진행 중`), waiting for an answer to a question, approval or block (`답 대기`), holding an unread result (`확인 안 한 결과`) and unreadable (`상태 모름`), leaving out a kind with none; those rows are bright and add their status word in neutral text, and a quiet one (idle, read, asleep) is dimmed with no word, its state in its mark's tooltip.
 Each row is focusable, and its accessible name is its name, its device when it differs, and its status word.
 `이것만 닫기`'s tooltip and accessible description say what it leaves: the children keep running and come up into the operator's own list.
 Colour in both sheets is the status marks' and the one destructive button's (`모두 닫기`, `Stop work and close`); `취소`, `Keep open` and `이것만 닫기` are neutral.
@@ -949,7 +949,7 @@ The last-commit age stays in place whatever the pointer does and while the menu 
 An opened checkout and its agent rows share one small group fill; no card border nests inside another.
 Checkouts start open, and `session_collapsed_checkout_ids` keeps only the checkouts the operator explicitly closes across launches.
 A closed checkout draws its status badge and still shows questioning or blocked Needs You rows.
-A status badge counts agents under the mark each agent's own row draws, one mark and count per state, worst first (`× ! ? ● ✓ ○`), with idle agents included and zero states left out (docs/status-model.md, Workspace aggregation).
+A status badge counts agents under the mark each agent's own row draws, one mark and count per state, worst first (`▲ ! ? ● ◐ ✓ ○`), with idle agents included and zero states left out (docs/status-model.md, Workspace aggregation).
 A web project row opens its device's last focused usable checkout, falling back to the primary checkout and then the first usable checkout.
 It opens the Workspace and unfolds its checkouts in one admitted event; activating it while that target Workspace is in front and the project is unfolded folds the project while keeping the Workspace in front.
 A project without a usable checkout opens the shared Overview at that project's scope.
