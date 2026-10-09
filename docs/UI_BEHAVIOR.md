@@ -320,7 +320,7 @@ The zoom control names the panes it hides and unzooms the tab; the existing pane
 The core publishes at most one band: connection or sleep first, own demand next, the lead raised descendant next, then task state.
 An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, `외 N건` for the other asks under this root, and Open.
 Open goes to the raised descendant, or for a draft to the parent whose input holds it, and is disabled with the connection reason beside it while that pane's device is not connected; `외 N건` opens the tree popover with the raised branches open, each raised row with its ask and Open.
-Fix is red, Result is success, and Review or Merge follow the PR tone.
+Blocked is a warning band with its cause, Fix is red, Result is success, and Review or Merge follow the PR tone.
 Task bands carry a reason and stable action age; they navigate only, with answers in the terminal and merges in the PR view.
 Working has a thin blue line; CI wait, waiting and idle have no band.
 Normal termination, disconnection, starting, sleeping and control elsewhere are gray; a failed exit is red with the actual code.
@@ -528,11 +528,11 @@ Reading an AI question removes its Answer and Needs You attention; an active men
 A row with children opens one level of them under its chevron, closed at first and remembered apart from the sidebar's folds; a grandchild shows only as its child's descendant mark, and Sessions has no popover.
 
 Click or Enter opens a row's Workspace, tab and pane, and arrows, Home and End navigate the displayed group heads and rows.
-Resolve hides a session only after its state has been saved; it keeps the pane and conversation alive and appears under Resolved today.
+Resolve hides a session only after its state has been saved; it keeps the pane and conversation alive and appears under Resolved.
 A save failure keeps the row with the existing actionable error.
 Typing into the session, receiving a letter or renewed agent work brings it back.
 Automatic resolution requires every assigned PR settled, no demand and stopped activity.
-Yesterday's resolutions leave this list and the sidebar but remain in tabs and the Agents graph.
+A resolution older than 24 hours leaves this list and the sidebar but remains in tabs and the Agents graph.
 No undo or close is added to Resolve.
 
 An empty scope has the quiet existing nothing-to-do line; an unlabelled row keeps its shape without an invented task sentence.

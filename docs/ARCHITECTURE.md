@@ -317,7 +317,7 @@ These functions operate on the facts already projected by the core, including re
 The existing `sidebar::tests`, `request_view::tests`, `pet::tests` and `runtime::tests::lineage` exercise these shared rules through their original projection callers.
 `runtime/session_state.rs` owns durable live resolution: a successful UI-state save acknowledgement publishes the saved resolution, an activity fingerprint rejects stale acknowledgements, and new input, delivery or working activity restores a row.
 The same coalesced writer acknowledges dormant conversation and live resolution records from the exact saved frame, applying both results before announcing a change outside the runtime lock.
-The owner-thread clock checks local-day rollover through the existing tick; it does not create a timer or per-frame publication.
+The owner-thread clock checks the end of the 24-hour Resolved window through the existing tick; it does not create a timer or per-frame publication.
 Closed-session PR links are read outside the runtime lock, and Sessions deduplicates them against live PR ownership.
 An unchanged remote raw session reuses its complete published projection, including resolution and machine-qualified lineage; applying read fields to a freshly built copy is not itself a runtime transition.
 Pane bands travel in `terminal.headers` through the terminal metadata wire and the rest-section stamp.
@@ -1524,7 +1524,7 @@ It draws `agent_scope.sessions` and row state through `web/src/AgentSessions.tsx
 Its visible-board demand reuses the existing running-checks observation gate rather than adding a polling worker or clock.
 Session escalation, resolve and pane headers are pure core projections over accepted agent, delivery and PR facts (`agent_state`, `runtime/session_state.rs`).
 Changed inputs refresh the projection under Runtime and publish only changed values; repeated transport-control frames do not rederive headers.
-Resolve uses the existing coalesced state-save worker and publishes its durable result after the save answers; local-day rollover compares one deadline on the existing coordinator tick.
+Resolve uses the existing coalesced state-save worker and publishes its durable result after the save answers; the end of the Resolved window compares one deadline on the existing coordinator tick.
 Remembered sidebar folds survive incomplete startup and reconnect catalogs, as recent checkouts do, and leave only with a confirmed project or device removal.
 
 That projection is never saved: `core-state.json` keeps the right panel it held when the process started (`ui_state_to_save`), so an older build started on the same state directory opens with its own panel.

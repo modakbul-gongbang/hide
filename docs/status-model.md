@@ -638,9 +638,9 @@ An idle or done parent still owns the child; only a closed parent pane or absent
 `escalation::lift` carries every raised descendant to its lineage root (PRD D-10, D-27) as a `RaisedAsk`: the verb, what to do, the agent named, the pane Open goes to, since when, the titles from the root and the checkout.
 The verb is Approval for a blocked child (Answer when it is blocked on a native question, with that question as what to do), Answer for an undelivered or unanswered letter, Confirm for an unanswered watch and Draft for a letter held by the parent's input, which names and opens that parent; a blocked parent stands for itself and adds no ask.
 An Answer also names the parent that has not received the letter.
-The root's asks are ordered by verb, then by age; the root enters Needs You and its second line is the lead ask, unless its own demand comes first, which an AI question the operator has read no longer is.
+The root's asks are ordered by verb, then by age; the root enters Needs You and its second line is the lead ask, unless its own demand comes first, which an AI question or a block the operator has read no longer is.
 The raised child keeps its own place in the tree, and no ancestor between it and the root changes group.
-Menu blocking uses Approval, a letter or question uses Answer, and an unanswered watch uses Stopped.
+Menu blocking uses Approval, a letter or question uses Answer, an unanswered watch uses Confirm, and a draft uses Draft.
 The first three causes clear on receipt or a successful bell, menu blocking on answer, and watch escalation on response, cancellation or a new child activity episode.
 A letter's cause (the first three and an undelivered letter) also ends for good once the child's session takes up a request written after the letter, from the operator or a letter: the child started a new turn without the answer, so stopping again does not bring the raise back.
 That time is the session's own request record (`RowFacts` `operator_request` and `other_request`), which `labels.json` keeps and a device's helper reads again after a restart, so a restarted daemon gives the same answer; an agent whose session Hide cannot read keeps the cause until receipt, reply, cancellation or expiry.
@@ -654,7 +654,7 @@ Regression owners: `agent_state::escalation::tests`, `runtime::tests::lineage`, 
 
 `agent_state/header.rs` publishes a working-line flag and at most one band per pane.
 Connection or sleep availability wins, then the pane's own demand, then the lead raised descendant, then the ordinary task verb.
-Approval, Answer, Fix, Review, Merge, Stopped and Result have bands; Working has only a thin blue line, while CI wait, child wait and Idle have none.
+Approval, Answer, Blocked, Fix, Review, Merge, Stopped and Result have bands; Working has only a thin blue line, while CI wait, child wait and Idle have none.
 An ask band (the pane's own Approval or Answer, or a raised descendant's `RaisedAsk`) is quiet text on the secondary fill with a warning rail (PRD D-43): the verb in its colour, what to do, who asks with the path, checkout and wait in its hover, the unreceived parent for an Answer, the elapsed time, `외 N건` for the other asks, and Open.
 Other bands carry the core reason, action and stable verb time.
 PR actions select the duty that produced the verb and retain the canonical URL, so equal PR numbers in different repositories cannot redirect the action.

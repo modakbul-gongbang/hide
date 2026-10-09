@@ -424,6 +424,23 @@ mod tests {
         assert_eq!(ask.unreceived_by, None);
     }
 
+    // B1 with agent-blocked-state B2: once its own block is read, a root that
+    // waits on its children asks the raised approval, in the warning colour.
+    #[test]
+    fn a_read_block_on_a_waiting_root_gives_way_to_the_raised_ask() {
+        let mut rows = raised_lineage(Cause::ChildBlocked);
+        rows[2].blocked = true;
+        rows[0].demand = "error".into();
+        rows[0].unread = false;
+        rows[0].group = "needs_you".into();
+        rows[0].wait = Some(crate::model::AgentWait::Children);
+        lift(&mut rows, |_| None);
+        assert_eq!(super::super::turn::demand_verb(&rows[0]), None);
+        let state = super::super::turn::row_state(&rows[0]);
+        assert_eq!(state.ask.map(|ask| ask.verb), Some(Verb::Approval));
+        assert_eq!(state.mark_tone.kind, "warning");
+    }
+
     // B3, B6: a blocked menu stays an approval; a draft names and opens the
     // parent holding it, while the tree still draws it on the raised row.
     #[test]

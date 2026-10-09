@@ -478,7 +478,11 @@ pub mod phone {
     }
 
     fn tone(agent: &Value) -> &'static str {
-        if agent.get("wait").is_some_and(|wait| !wait.is_null()) {
+        let raised = agent
+            .get("raised")
+            .and_then(Value::as_array)
+            .is_some_and(|raised| !raised.is_empty());
+        if !raised && agent.get("wait").is_some_and(|wait| !wait.is_null()) {
             return "working";
         }
         match str_of(agent, "demand") {

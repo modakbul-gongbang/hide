@@ -116,7 +116,7 @@ pub(crate) fn demand_verb(agent: &SidebarAgentSnapshot) -> Option<super::escalat
             .is_some_and(|turn| turn.kind == hide_session::turns::UserTurnKind::Question);
     if (agent.blocked || agent.demand == "approval") && !native_question {
         Some(Verb::Approval)
-    } else if agent.demand == "error"
+    } else if (agent.demand == "error" && agent.unread)
         || (agent.demand == "question" && (native_question || agent.unread))
     {
         Some(Verb::Answer)
@@ -128,7 +128,7 @@ pub(crate) fn demand_verb(agent: &SidebarAgentSnapshot) -> Option<super::escalat
 fn ask_of(agent: &SidebarAgentSnapshot, needs_you: bool) -> Option<Ask> {
     // A block is not asked of the operator in a verb: its row draws the
     // cause instead (agent-blocked-state B1).
-    if !needs_you || agent.demand == "error" {
+    if !needs_you || (agent.demand == "error" && agent.unread) {
         return None;
     }
     if let Some(verb) = demand_verb(agent) {
@@ -152,7 +152,8 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
     let asking = matches!(demand, "error" | "question" | "approval");
     let needs_you = group == "needs_you";
     let attention = needs_you || agent.unread;
-    let waiting = agent.wait.is_some();
+    // A raised root waits on its children too, but the raise is the news.
+    let waiting = agent.wait.is_some() && agent.raised.is_empty();
     // A block draws in the warning colour with the question and the approval;
     // its own shape, not a red, is what tells the three apart.
     let chip_kind = match demand {
@@ -655,7 +656,7 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     // A row the operator still has to deal with is drawn bright; everything
     // already read or merely running is subdued.
     agent.emphasized = matches!(group, AgentGroup::NeedsYou | AgentGroup::Done);
-    agent.status_code = if waiting {
+    agent.status_code = if waiting && agent.raised.is_empty() {
         AgentStatusCode::Waiting
     } else if stopped_unfinished(agent) {
         AgentStatusCode::Stopped

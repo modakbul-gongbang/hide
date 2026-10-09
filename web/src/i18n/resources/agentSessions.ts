@@ -211,7 +211,7 @@ const ja: Messages = {
   "agentSessions.cleanup": "整理する項目",
   "agentSessions.openPrs": "未完了 PR {{count}}",
   "agentSessions.lastRead": "最終読み込み：{{time}}",
-  "agentSessions.group.idle": "待機中",
+  "agentSessions.group.idle": "休止中",
   "agentSessions.group.resolved": "整理済み",
   "agentSessions.foldedMore": "他 {{count}}",
   "agentSessions.verb.approval": "承認",

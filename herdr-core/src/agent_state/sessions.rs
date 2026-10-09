@@ -87,7 +87,7 @@ pub(crate) fn row(agent: &SidebarAgentSnapshot) -> Row {
         // cause (agent-blocked-state B1).
         "needs_you" => Row {
             group: Group::NeedsYou,
-            line: (agent.demand == "error")
+            line: (agent.demand == "error" && agent.unread)
                 .then(|| agent.detail.clone())
                 .flatten(),
             unfinished: false,
@@ -105,6 +105,13 @@ pub(crate) fn row(agent: &SidebarAgentSnapshot) -> Row {
             group: Group::Done,
             line: label_line(),
             unfinished: false,
+        },
+        // A read block rests here with its cause, ahead of the fold
+        // (agent-blocked-state B2).
+        _ if agent.demand == "error" => Row {
+            group: Group::Idle,
+            line: agent.detail.clone(),
+            unfinished: true,
         },
         _ => Row {
             group: Group::Idle,
