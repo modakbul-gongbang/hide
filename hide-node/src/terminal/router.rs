@@ -17,7 +17,7 @@
 //! cut to [`DEVICE_MESSAGE_CHARS`], and at most
 //! [`DEVICE_REPORTS_PER_WINDOW`] reports a window are taken.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -72,6 +72,11 @@ struct Routes {
     shown: Vec<String>,
     /// The pane the core's keyboard is in, as it last said, by its id.
     focus: Option<String>,
+    /// The device panes the core said hold a sleeping agent, and those it
+    /// said are closing, by its ids: a device's next link starts a fresh
+    /// node, which is told them. Each mirrors a set of the core's.
+    asleep: BTreeSet<String>,
+    closing: BTreeSet<String>,
     /// Which device a paste's held input is on; a paste on this machine
     /// has none.
     intents: HashMap<String, Option<String>>,
@@ -310,6 +315,28 @@ impl Router {
             .map(|(_, source)| source.to_owned());
         node.control(TerminalControl::Focus { pane });
     }
+
+    /// Tells a device which of its panes hold a sleeping agent or are
+    /// closing.
+    fn flags_to(routes: &Routes, device: &str, node: &dyn TerminalNode) {
+        let own = |panes: &BTreeSet<String>| {
+            panes
+                .iter()
+                .filter_map(|pane| Self::device_of(pane))
+                .filter(|(owner, _)| *owner == device)
+                .map(|(_, source)| source.to_owned())
+                .collect::<Vec<_>>()
+        };
+        for pane in own(&routes.asleep) {
+            node.control(TerminalControl::Asleep { pane, asleep: true });
+        }
+        for pane in own(&routes.closing) {
+            node.control(TerminalControl::Closing {
+                pane,
+                closing: true,
+            });
+        }
+    }
 }
 
 impl TerminalNode for Router {
@@ -343,6 +370,23 @@ impl TerminalNode for Router {
                 drop(routes);
                 self.local.control(TerminalControl::Focus { pane: local });
                 return;
+            }
+            // Kept for the device's next link, then routed like any control.
+            TerminalControl::Asleep { pane, asleep } if Self::device_of(pane).is_some() => {
+                let mut routes = lock(&self.routes);
+                if *asleep {
+                    routes.asleep.insert(pane.clone());
+                } else {
+                    routes.asleep.remove(pane.as_str());
+                }
+            }
+            TerminalControl::Closing { pane, closing } if Self::device_of(pane).is_some() => {
+                let mut routes = lock(&self.routes);
+                if *closing {
+                    routes.closing.insert(pane.clone());
+                } else {
+                    routes.closing.remove(pane.as_str());
+                }
             }
             TerminalControl::RequestOpen { .. }
             | TerminalControl::RequestResolve { .. }
@@ -493,6 +537,7 @@ impl TerminalRoutes for Router {
         let replaced = routes.devices.insert(device.to_owned(), Arc::clone(&node));
         Self::shown_to(&routes, device, node.as_ref());
         Self::focus_to(&routes, device, node.as_ref());
+        Self::flags_to(&routes, device, node.as_ref());
         drop(routes);
         // The replaced link's writer ends once it is dropped, outside the
         // routing lock.
@@ -727,6 +772,44 @@ mod tests {
                 pane: "remote:mini:pane:w2:p3".into(),
                 generation: 2
             }]
+        );
+    }
+
+    /// A device linked again starts with a fresh node, which is told which
+    /// of its panes hold a sleeping agent or are closing, whether the core
+    /// said so while the last link was up or while there was none.
+    #[test]
+    fn a_device_linked_again_is_told_its_sleeping_and_closing_panes() {
+        let (router, _local, _hub, _reports) = router();
+        let asleep = |pane: &str, asleep| TerminalControl::Asleep {
+            pane: pane.into(),
+            asleep,
+        };
+        let closing = |pane: &str| TerminalControl::Closing {
+            pane: pane.into(),
+            closing: true,
+        };
+        router.install_device(
+            "mini",
+            Arc::new(Recorder::default()) as Arc<dyn TerminalNode>,
+        );
+        router.control(asleep("remote:mini:pane:w2:p3", true));
+        router.remove_device("mini");
+        router.control(closing("remote:mini:pane:w2:p4"));
+        router.control(asleep("remote:mini:pane:w2:p5", true));
+        router.control(asleep("remote:mini:pane:w2:p5", false));
+        router.control(asleep("remote:studio:pane:w1:p1", true));
+        router.control(asleep("w1:p1", true));
+        let mini = Arc::new(Recorder::default());
+        router.install_device("mini", Arc::clone(&mini) as Arc<dyn TerminalNode>);
+        assert_eq!(
+            mini.controls.lock().unwrap().as_slice(),
+            [
+                TerminalControl::Shown { panes: Vec::new() },
+                TerminalControl::Focus { pane: None },
+                asleep("w2:p3", true),
+                closing("w2:p4"),
+            ]
         );
     }
 
