@@ -988,7 +988,7 @@ fn start_task_agent(
         .transpose();
     // The node that runs the task's pane, this machine's or a device's, which
     // a long start line asks whether the pane's shell is reading.
-    let pane_node = task_session_node(&runtime, id).ok();
+    let pane_node = task_session_node(&runtime, id, &start.kind).ok();
     let outcome = match reader {
         Err(reason) => TaskAgentOutcome::Failed(reason),
         Ok(reader) => {
