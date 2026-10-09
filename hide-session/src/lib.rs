@@ -1404,7 +1404,9 @@ pub(crate) fn parse_events_into(
             links::claude_line,
             Turns {
                 parser: Some(turns::native::claude),
-                wake: Some(turns::wake::claude),
+                wake: agent
+                    .reports_wake_devices()
+                    .then_some(turns::wake::claude as turns::wake::Parser),
                 human_starts_turn: true,
                 large: None,
             },
