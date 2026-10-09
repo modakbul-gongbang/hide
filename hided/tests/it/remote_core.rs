@@ -841,6 +841,10 @@ fn a_screen_whose_core_is_not_running_attaches_and_waits_for_it() -> Result<()> 
             std::fs::read(&core_state)? == before,
             "a core started on the core's machine"
         );
+        // The node keeps dialing as it does with no record: a core started
+        // again on its machine is reached with nothing done on the screen.
+        fixture.start_core()?;
+        runtime.block_on(node_link(port, "live", LINK_BOUND))?;
         Ok(())
     })();
     match journey {

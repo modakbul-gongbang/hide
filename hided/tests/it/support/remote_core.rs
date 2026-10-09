@@ -203,43 +203,62 @@ impl Fixture {
                 ssh_dir.join("client").display(),
             ),
         )?;
-        let log = File::create(root.join("core-hided.log"))?;
-        let mut command = core_env.command(&hided);
-        command
-            .stdin(Stdio::null())
-            .stdout(log.try_clone()?)
-            .stderr(log);
-        let daemon = OwnedChild::spawn(&mut command)?;
         let mut fixture = Self {
             core,
-            core_state: core_state.clone(),
+            core_state,
             screen,
             ssh,
             hided,
             root,
             removed: false,
             _ipc: ipc,
-            daemon: Some(daemon),
+            daemon: None,
             node: None,
             port: 0,
             token: String::new(),
         };
+        fixture.start_core()?;
+        Ok(fixture)
+    }
+
+    /// Starts the core machine's hided on its state folder and waits for
+    /// its attach socket; a core that ended before leaves its state behind,
+    /// and this start's state is the one waited for.
+    pub fn start_core(&mut self) -> Result<()> {
+        ensure!(self.daemon.is_none(), "the core's hided already runs");
+        let state = self.core_state.join("hided.json");
+        let socket = self.core_state.join("node-attach-socket");
+        for left in [&state, &socket] {
+            match fs::remove_file(left) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(error.into());
+                }
+                _ => {}
+            }
+        }
+        let log = File::options()
+            .create(true)
+            .append(true)
+            .open(self.root.join("core-hided.log"))?;
+        let mut command = self.core.environment.command(&self.hided);
+        command
+            .stdin(Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log);
+        self.daemon = Some(OwnedChild::spawn(&mut command)?);
         let daemon_state: Value = wait_for("private core hided state", || {
-            let path = core_state.join("hided.json");
-            if !path.exists() {
+            if !state.exists() {
                 return Ok(None);
             }
-            Ok(serde_json::from_slice(&read(&path)?).ok())
+            Ok(serde_json::from_slice(&read(&state)?).ok())
         })?;
-        fixture.port = daemon_state["port"].as_u64().context("core port")? as u16;
-        fixture.token = daemon_state["token"]
+        self.port = daemon_state["port"].as_u64().context("core port")? as u16;
+        self.token = daemon_state["token"]
             .as_str()
             .context("core token")?
             .to_owned();
-        wait_for("core attach socket", || {
-            Ok(core_state.join("node-attach-socket").exists().then_some(()))
-        })?;
-        Ok(fixture)
+        wait_for("core attach socket", || Ok(socket.exists().then_some(())))?;
+        Ok(())
     }
 
     /// Records the core machine as this screen machine's core, as the move
