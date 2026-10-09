@@ -250,14 +250,20 @@ enum Delivery {
 
 /// Output decided under the service's lock and not yet handed to the sink.
 /// Each batch is queued before the lock is released, so the queue holds
-/// output in the order it was decided; one thread at a time hands it over,
-/// and the thread that decided a batch returns only once its batch was
-/// handed, so a reader is slowed by its own frames as before and the queue
-/// holds at most one batch per thread. A sink that panics ends the thread
-/// that handed it over, and the next thread takes the queue from there.
+/// output in the order it was decided, and one thread at a time hands it
+/// over. A session's reader returns only once its batch was handed, so it
+/// is slowed by its own frames and the queue holds at most one frame batch
+/// per reader. Every other caller (a control or a key from the core, the
+/// clock, an attach) never waits, and what it queues (a notice, a forget) is
+/// small. A thread hands over its own batch and any of those small
+/// deliveries, never another reader's frame: that reader is waiting to take
+/// it, with whatever small deliveries follow it. So a control never waits
+/// on, or encodes, a frame. A sink that panics is logged and the next
+/// delivery goes on.
 #[derive(Default)]
 struct Deliveries {
-    queue: VecDeque<Delivery>,
+    /// Each delivery, and whether the thread that queued it waits for it.
+    queue: VecDeque<(Delivery, bool)>,
     /// Deliveries queued, and handed to the sink, since the service started.
     queued: u64,
     handed: u64,
@@ -413,67 +419,63 @@ impl Shared {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Hands the queued output to the sink up to and including the batch
-    /// that ends at `through`, unless another thread is already doing so,
-    /// in which case this waits for it.
-    fn hand_over(&self, through: u64) {
+    /// Hands the queued output to the sink: this thread's batch, numbered
+    /// `first..=through`, and the deliveries no thread waits for. A thread
+    /// that `waits` (a session's reader) returns once its batch was handed;
+    /// any other returns as soon as its batch is another thread's to hand.
+    fn hand_over(&self, first: u64, through: u64, waits: bool) {
+        // Whether this thread may hand the next delivery over: its own, or
+        // one whose thread does not wait for it.
+        let mine = |deliveries: &Deliveries| {
+            deliveries.queue.front().is_some_and(|(_, waited_for)| {
+                !*waited_for || (waits && deliveries.handed + 1 >= first)
+            })
+        };
         let mut deliveries = self.deliveries_lock();
         loop {
             if deliveries.handed >= through {
                 return;
             }
-            if deliveries.handing {
-                deliveries = self
-                    .handed
-                    .wait(deliveries)
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                continue;
+            if !deliveries.handing && mine(&deliveries) {
+                break;
             }
-            deliveries.handing = true;
-            while deliveries.handed < through {
-                let Some(delivery) = deliveries.queue.pop_front() else {
-                    break;
-                };
-                drop(deliveries);
-                let handed = panic::catch_unwind(AssertUnwindSafe(|| match &delivery {
-                    Delivery::Output { pane, bytes, full } => {
-                        self.outputs.output(pane, bytes, *full)
-                    }
-                    Delivery::Forget { pane } => self.outputs.forget(pane),
-                }));
-                // A frame's bytes are freed before the queue's lock is taken.
-                let failed = match handed {
-                    Ok(()) => {
-                        drop(delivery);
-                        None
-                    }
-                    Err(failure) => Some((failure, delivery)),
-                };
-                deliveries = self.deliveries_lock();
-                deliveries.handed += 1;
-                if let Some((failure, delivery)) = failed {
-                    // The sink's failure ends this thread, not the handing
-                    // over: the next thread takes the queue from here.
-                    deliveries.handing = false;
-                    drop(deliveries);
-                    self.handed.notify_all();
-                    let (pane, forget) = match &delivery {
-                        Delivery::Output { pane, .. } => (pane, false),
-                        Delivery::Forget { pane } => (pane, true),
-                    };
-                    crate::diagnostic!(json!({
-                        "component": "terminal_session",
-                        "kind": "terminal.sink_panicked",
-                        "pane_id": pane,
-                        "forget": forget,
-                    }));
-                    panic::resume_unwind(failure);
-                }
+            if !waits {
+                return;
             }
-            deliveries.handing = false;
-            self.handed.notify_all();
-            return;
+            deliveries = self
+                .handed
+                .wait(deliveries)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
+        deliveries.handing = true;
+        while mine(&deliveries) {
+            let (delivery, _) = deliveries.queue.pop_front().expect("looked at above");
+            drop(deliveries);
+            let handed = panic::catch_unwind(AssertUnwindSafe(|| match &delivery {
+                Delivery::Output { pane, bytes, full } => self.outputs.output(pane, bytes, *full),
+                Delivery::Forget { pane } => self.outputs.forget(pane),
+            }));
+            if handed.is_err() {
+                let (pane, forget) = match &delivery {
+                    Delivery::Output { pane, .. } => (pane, false),
+                    Delivery::Forget { pane } => (pane, true),
+                };
+                crate::diagnostic!(json!({
+                    "component": "terminal_session",
+                    "kind": "terminal.sink_panicked",
+                    "pane_id": pane,
+                    "forget": forget,
+                }));
+            }
+            // A frame's bytes are freed before the queue's lock is taken.
+            drop(delivery);
+            deliveries = self.deliveries_lock();
+            deliveries.handed += 1;
+        }
+        deliveries.handing = false;
+        drop(deliveries);
+        // The next delivery is a waiting reader's frame: it takes it now.
+        self.handed.notify_all();
     }
 
     fn clock_lock(&self) -> MutexGuard<'_, Clock> {
@@ -488,6 +490,20 @@ impl Shared {
     /// starts its attaches and wakes the clock when a deadline may have
     /// moved, with the lock released.
     fn run<T>(self: &Arc<Self>, work: impl FnOnce(&mut Inner, &Arc<Shared>) -> T) -> T {
+        self.run_as(false, work)
+    }
+
+    /// [`Shared::run`] for a session's reader, which returns only once the
+    /// output it decided was handed over.
+    fn run_reading<T>(self: &Arc<Self>, work: impl FnOnce(&mut Inner, &Arc<Shared>) -> T) -> T {
+        self.run_as(true, work)
+    }
+
+    fn run_as<T>(
+        self: &Arc<Self>,
+        waits: bool,
+        work: impl FnOnce(&mut Inner, &Arc<Shared>) -> T,
+    ) -> T {
         let (value, spawns, wake, batch) = {
             let mut inner = self.lock();
             let value = work(&mut inner, self);
@@ -496,9 +512,12 @@ impl Shared {
             }
             let batch = (!inner.deliveries.is_empty()).then(|| {
                 let mut deliveries = self.deliveries_lock();
+                let first = deliveries.queued + 1;
                 deliveries.queued += inner.deliveries.len() as u64;
-                deliveries.queue.extend(inner.deliveries.drain(..));
-                deliveries.queued
+                deliveries
+                    .queue
+                    .extend(inner.deliveries.drain(..).map(|delivery| (delivery, waits)));
+                (first, deliveries.queued)
             });
             (
                 value,
@@ -507,8 +526,8 @@ impl Shared {
                 batch,
             )
         };
-        if let Some(batch) = batch {
-            self.hand_over(batch);
+        if let Some((first, through)) = batch {
+            self.hand_over(first, through, waits);
         }
         for spawn in spawns {
             self.spawn(spawn);
@@ -1483,7 +1502,7 @@ impl Inner {
             let Some(shared) = reader_shared.upgrade() else {
                 return false;
             };
-            shared.run(|inner, shared| {
+            shared.run_reading(|inner, shared| {
                 inner.session_event(shared, &reader_pane, generation, mode, event)
             })
         });

@@ -140,6 +140,16 @@ pub(super) struct Outputs {
     forgotten: Mutex<Vec<String>>,
     /// The pane whose next output the sink panics on, told first.
     panic_on: Mutex<Option<(String, Sender<()>)>>,
+    /// The pane whose next output the sink holds until the test lets it go
+    /// on.
+    hold_on: Mutex<Option<Hold>>,
+}
+
+pub(super) struct Hold {
+    pane: String,
+    /// Told when the sink took the output.
+    told: Sender<()>,
+    go_on: Receiver<()>,
 }
 
 impl OutputSink for Outputs {
@@ -152,6 +162,15 @@ impl OutputSink for Outputs {
         if let Some((_, told)) = panicking {
             let _ = told.send(());
             panic!("the sink failed on {pane}");
+        }
+        let holding = self
+            .hold_on
+            .lock()
+            .unwrap()
+            .take_if(|hold| hold.pane == pane);
+        if let Some(hold) = holding {
+            let _ = hold.told.send(());
+            let _ = hold.go_on.recv();
         }
         self.written
             .lock()
@@ -578,6 +597,56 @@ fn a_sink_that_panics_on_one_output_does_not_stop_the_others() {
     let written = harness.wait_written(1);
     assert_eq!(written[0].0, "w1:p2");
     assert!(written[0].1.ends_with(b"kept"), "{written:?}");
+}
+
+/// A control from the core never waits on output: while the sink is busy
+/// with one pane's frame, releasing another pane returns at once, and its
+/// output is forgotten once the sink is free.
+#[test]
+fn a_control_returns_while_the_sink_is_busy_with_another_panes_frame() {
+    let harness = harness(RetryPolicy::Automatic);
+    let first = harness.controlling("w1:p1");
+    let _second = harness.controlling("w1:p2");
+    let (told, entered) = channel();
+    let (go_on, held) = channel();
+    *harness.outputs.hold_on.lock().unwrap() = Some(Hold {
+        pane: "w1:p1".into(),
+        told,
+        go_on: held,
+    });
+    first.frame(SIZE, true, b"large");
+    entered.recv_timeout(WAIT).expect("the sink took the frame");
+    let service = Arc::clone(&harness.service.shared);
+    let (returned, released) = channel();
+    thread::spawn(move || {
+        service.run(|inner, shared| {
+            inner.control(
+                shared,
+                TerminalControl::Release {
+                    pane: "w1:p2".into(),
+                    message: "detached".into(),
+                },
+            )
+        });
+        let _ = returned.send(());
+    });
+    let waited = released.recv_timeout(Duration::from_secs(2));
+    go_on.send(()).unwrap();
+    waited.expect("the release waited for another pane's frame");
+    let started = Instant::now();
+    while !harness
+        .outputs
+        .forgotten
+        .lock()
+        .unwrap()
+        .contains(&"w1:p2".to_owned())
+    {
+        assert!(
+            started.elapsed() < WAIT,
+            "the release's forget never reached the sink"
+        );
+        thread::yield_now();
+    }
 }
 
 #[test]
