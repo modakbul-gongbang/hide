@@ -71,6 +71,7 @@ pub fn serve_with_terminals(
             herdr_socket: None,
             heartbeat: false,
             checkout_callers: false,
+            opened_roots: None,
         },
     )
 }
@@ -92,6 +93,35 @@ pub struct Services<'a> {
     /// node, whose agents' tools may run outside any pane. A device the
     /// core dialed proves pane callers only.
     pub checkout_callers: bool,
+    /// Where the checkout roots the core opened on this node are kept: the
+    /// screen machine's node, whose own screens read files under them
+    /// without the core (PRD core-host-node-remote-core D-05).
+    pub opened_roots: Option<&'a OpenedRoots>,
+}
+
+/// The checkout roots a node's core opened on it over one link, which are
+/// the checkouts the core's catalog carries for this machine. Capped; past
+/// the cap a root is not kept, and the screen asks the core for its files.
+#[derive(Debug, Default)]
+pub struct OpenedRoots {
+    roots: Mutex<Vec<String>>,
+}
+
+impl OpenedRoots {
+    /// The most roots kept.
+    pub const CAP: usize = 256;
+
+    fn record(&self, root: &str) {
+        let mut roots = lock(&self.roots);
+        if !roots.iter().any(|kept| kept == root) && roots.len() < Self::CAP {
+            roots.push(root.to_owned());
+        }
+    }
+
+    /// The roots opened so far, in the order they were first opened.
+    pub fn roots(&self) -> Vec<String> {
+        lock(&self.roots).clone()
+    }
 }
 
 impl Services<'_> {
@@ -102,6 +132,7 @@ impl Services<'_> {
             herdr_socket: None,
             heartbeat: false,
             checkout_callers: false,
+            opened_roots: None,
         }
     }
 }
@@ -123,6 +154,7 @@ fn serve_in(
 ) -> io::Result<()> {
     let terminals = services.terminals;
     let heartbeat = services.heartbeat;
+    let opened_roots = services.opened_roots;
     // Ends the heartbeat when the input does.
     let input_ended = (Mutex::new(false), std::sync::Condvar::new());
     let herdr = services
@@ -215,6 +247,15 @@ fn serve_in(
                             }
                             None => Err(no_herdr_bridge()),
                         },
+                        Call::RootOpen { root } => {
+                            let opened = handle_in(Call::RootOpen { root: root.clone() }, env);
+                            if opened.is_ok()
+                                && let Some(roots) = opened_roots
+                            {
+                                roots.record(&root);
+                            }
+                            opened
+                        }
                         call => handle_with_progress(call, env, &mut |report| {
                             write_line(
                                 output,

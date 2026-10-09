@@ -2723,6 +2723,25 @@ async fn send_file_bytes(
     roots: &crate::RootFollower,
     event: &Value,
 ) -> Result<(), ()> {
+    let path = payload_str(event, "path");
+    let opened = match boundary.open_file(&path) {
+        Err(Refusal::OutsideCheckout) if roots_current(roots) => boundary.open_file(&path),
+        opened => opened,
+    };
+    send_opened_file_bytes(socket, event, opened).await
+}
+
+/// A file a boundary opened for a read: its real path, the open file and its
+/// size, or why it was refused.
+pub(crate) type OpenedFile = Result<(PathBuf, std::fs::File, u64), Refusal>;
+
+/// Answers a `file_bytes` event with the file `opened` gave for its path, or
+/// with the refusal: the same frames whichever daemon read the file.
+pub(crate) async fn send_opened_file_bytes(
+    socket: &mut WebSocket,
+    event: &Value,
+    opened: OpenedFile,
+) -> Result<(), ()> {
     let request_id = payload_str(event, "request_id");
     let path = payload_str(event, "path");
     let offset = event
@@ -2730,10 +2749,6 @@ async fn send_file_bytes(
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let length = event.pointer("/payload/length").and_then(Value::as_u64);
-    let opened = match boundary.open_file(&path) {
-        Err(Refusal::OutsideCheckout) if roots_current(roots) => boundary.open_file(&path),
-        opened => opened,
-    };
     let (real, file, total) = match opened {
         Ok(source) => source,
         Err(refusal) => {

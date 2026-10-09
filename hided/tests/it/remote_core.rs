@@ -1011,3 +1011,117 @@ fn a_pane_runs_at_the_grid_of_the_screen_that_last_typed_into_it() -> Result<()>
         }
     }
 }
+
+/// The next binary frame on `socket` within `bound`: its JSON header and
+/// its bytes; text frames before it are skipped.
+async fn next_bytes(socket: &mut Socket, bound: Duration) -> Result<(Value, Vec<u8>)> {
+    let deadline = Instant::now() + bound;
+    loop {
+        let left = deadline
+            .checked_duration_since(Instant::now())
+            .context("no file bytes arrived")?;
+        let message = tokio::time::timeout(left, socket.next())
+            .await
+            .context("no file bytes arrived")?;
+        match message {
+            Some(Ok(Message::Binary(frame))) => {
+                let length = u32::from_be_bytes(frame[..4].try_into()?) as usize;
+                let header = serde_json::from_slice(&frame[4..4 + length])?;
+                return Ok((header, frame[4 + length..].to_vec()));
+            }
+            Some(Ok(Message::Text(text))) if text.contains("file_bytes") => {
+                bail!("the read was refused: {text}")
+            }
+            Some(Ok(_)) => {}
+            other => bail!("the screen socket ended: {other:?}"),
+        }
+    }
+}
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_node_screen_reads_its_own_checkouts_files_without_the_core() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let project = fixture.screen_home().join("project");
+        std::fs::write(project.join("notes.txt"), "read-on-this-machine")?;
+        fixture.screen.workspace_at(&project)?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            // The Explorer lists the checkout through the core, which opens
+            // its root on this machine's node.
+            send(
+                &mut socket,
+                "file_list",
+                json!({"root": project, "path": project, "device_id": node}),
+            )
+            .await?;
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                let frame = next_frame(&mut socket, deadline)
+                    .await?
+                    .context("the checkout was never listed")?;
+                if frame["type"] == "directory_list" {
+                    break;
+                }
+            }
+            send(
+                &mut socket,
+                "file_bytes",
+                json!({"request_id": "read-1", "path": project.join("notes.txt"), "device_id": node}),
+            )
+            .await?;
+            let (header, bytes) = next_bytes(&mut socket, Duration::from_secs(20)).await?;
+            ensure!(
+                header["request_id"] == "read-1" && header["eof"] == true,
+                "the read answered {header}"
+            );
+            ensure!(bytes == b"read-on-this-machine", "the file read {bytes:?}");
+            // A path outside every checkout is the core's to refuse, as it
+            // refuses any device's.
+            send(
+                &mut socket,
+                "file_bytes",
+                json!({"request_id": "read-2", "path": fixture.screen_home().join(".ssh/client"), "device_id": node}),
+            )
+            .await?;
+            let refused = next_bytes(&mut socket, Duration::from_secs(20)).await;
+            ensure!(refused.is_err(), "a path outside every checkout was read");
+            socket.close(None).await?;
+            Ok::<_, anyhow::Error>(())
+        })?;
+        let ended = wait_for("the screen's end on the node", || {
+            let rows = fixture.node_log("node_daemon", "screen.ended")?;
+            Ok((!rows.is_empty()).then_some(rows))
+        })?;
+        ensure!(
+            ended.iter().any(|row| row["local_file_reads"] == 1),
+            "the read went through the core: {ended:?}"
+        );
+        Ok(())
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}

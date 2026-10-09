@@ -41,6 +41,7 @@ use tokio::sync::{Notify, mpsc, watch};
 use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
+use crate::boundary::{Boundary, Refusal, Root};
 use crate::node_role::{LiveLink, NodeIdentity, NodeRole, Phase};
 use crate::placement::Placement;
 use crate::server::{
@@ -77,6 +78,9 @@ pub struct NodeState {
     pub shutdown: Arc<Notify>,
     /// Frames screens sent while the link was down, dropped.
     pub held_frames: Arc<AtomicU64>,
+    /// This machine's paths a screen may read without the core: the
+    /// checkouts the core opened on this node over the live link.
+    pub boundary: Arc<Boundary>,
 }
 
 /// This machine's panes, as its hub names them: the core's names for them.
@@ -188,6 +192,10 @@ impl NodeDaemon {
     ) -> Result<Self, String> {
         let hub = TerminalHub::new();
         let own_prefix = device_pane_prefix(&identity.node);
+        let boundary = Arc::new(Boundary::for_node(
+            home,
+            herdr_core::node::NodeId::parse(&identity.node)?,
+        )?);
         let role = Arc::new(NodeRole::start(
             home,
             placement,
@@ -227,6 +235,7 @@ impl NodeDaemon {
                 clients: Arc::new(AtomicUsize::new(0)),
                 connections: Arc::new(AtomicU64::new(0)),
                 last_client_gone: Arc::new(Mutex::new(Instant::now())),
+                boundary,
                 shutdown: server.shutdown,
                 held_frames: Arc::new(AtomicU64::new(0)),
             },
@@ -341,12 +350,22 @@ async fn screen(mut socket: WebSocket, state: NodeState, origin: Option<String>,
         return;
     }
     let connection = state.connections.fetch_add(1, Ordering::SeqCst);
-    let ended = attached(&mut socket, &state, handshake, &handshake_text, connection).await;
+    let mut local_reads = 0_u64;
+    let ended = attached(
+        &mut socket,
+        &state,
+        handshake,
+        &handshake_text,
+        connection,
+        &mut local_reads,
+    )
+    .await;
     herdr_core::diagnostic!(json!({
         "component": "node_daemon",
         "kind": "screen.ended",
         "connection": connection,
         "reason": ended,
+        "local_file_reads": local_reads,
     }));
     if ended == "link_ended" {
         let _ = socket
@@ -429,6 +448,7 @@ async fn attached(
     handshake: Handshake,
     handshake_text: &str,
     connection: u64,
+    local_reads: &mut u64,
 ) -> &'static str {
     let Some(link) = hold(socket, state).await else {
         return "screen_closed";
@@ -522,6 +542,13 @@ async fn attached(
                 };
                 match message {
                     Message::Text(text) => {
+                        if let Some((event, opened)) = own_file(state, &link, &text) {
+                            *local_reads += 1;
+                            if crate::server::send_opened_file_bytes(socket, &event, opened).await.is_err() {
+                                return "screen_closed";
+                            }
+                            continue;
+                        }
                         if let Some(reply) = take_terminal_event(state, &text) {
                             match reply {
                                 Ok(Some(pane)) => {
@@ -591,6 +618,46 @@ fn resume(first: FrameStart, handshake: &Handshake) -> Resume {
         (FrameStart::Snapshot, _, _) => Resume::Fresh,
         (FrameStart::Delta, Some(cursor), Some(epoch)) => Resume::After { epoch, cursor },
         (FrameStart::Delta, _, _) => Resume::Redraw,
+    }
+}
+
+/// A screen's read of a file of this machine, under a checkout the core
+/// opened here (PRD core-host-node-remote-core B4, D-05): the event and the
+/// file, opened under its root, or the refusal. `None` for any other event,
+/// and for a path under no root the core opened here, which the core
+/// answers as it answers any device's.
+fn own_file(
+    state: &NodeState,
+    link: &LiveLink,
+    text: &str,
+) -> Option<(Value, crate::server::OpenedFile)> {
+    if !text.contains(r#""kind":"file_bytes""#) {
+        return None;
+    }
+    let event: Value = serde_json::from_str(text).ok()?;
+    let device = event
+        .pointer("/payload/device_id")
+        .and_then(Value::as_str)?;
+    if event.get("kind").and_then(Value::as_str) != Some("file_bytes")
+        || state.boundary.node() != device
+    {
+        return None;
+    }
+    state.boundary.set_roots(
+        link.roots
+            .roots()
+            .into_iter()
+            .map(|root| Root {
+                workspace_id: String::new(),
+                checkout_id: String::new(),
+                path: PathBuf::from(root),
+            })
+            .collect(),
+    );
+    let path = event.pointer("/payload/path").and_then(Value::as_str)?;
+    match state.boundary.open_file(path) {
+        Err(Refusal::OutsideCheckout) => None,
+        opened => Some((event, opened)),
     }
 }
 

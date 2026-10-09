@@ -402,6 +402,7 @@ mod tests {
                     herdr_socket: Some(herdr_socket),
                     heartbeat: false,
                     checkout_callers: false,
+                    opened_roots: None,
                 },
             );
         });

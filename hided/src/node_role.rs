@@ -77,8 +77,11 @@ pub struct LiveLink {
     /// core's port through the link's SSH connection.
     pub relay_port: u16,
     /// This node's terminals for the link's life: the node's screens send
-    /// its own panes' keys and views here, without the link.
+    /// its own panes' keys here, without the link.
     pub terminals: Arc<NodeTerminals>,
+    /// The checkout roots the core opened on this node over the link: the
+    /// node's screens read files under them without the core.
+    pub roots: Arc<hide_host::serve::OpenedRoots>,
 }
 
 /// Where the node's link is.
@@ -541,6 +544,7 @@ fn serve_link(
         Arc::clone(&shared.screen),
         identity.herdr_bin.clone(),
     ));
+    let roots = Arc::new(hide_host::serve::OpenedRoots::default());
     if set_phase(shared, Phase::Live(accepted.clone())) {
         return Err("stopping".to_owned());
     }
@@ -549,8 +553,9 @@ fn serve_link(
         accepted,
         relay_port: forward.port(),
         terminals: Arc::clone(&terminals),
+        roots: Arc::clone(&roots),
     })));
-    let ended = serve(reader, writer, identity, &terminals);
+    let ended = serve(reader, writer, identity, &terminals, &roots);
     shared.live.send_replace(None);
     drop(forward);
     ended
@@ -563,6 +568,7 @@ fn serve(
     writer: LocalStream,
     identity: &NodeIdentity,
     terminals: &NodeTerminals,
+    roots: &hide_host::serve::OpenedRoots,
 ) -> Result<String, String> {
     hide_host::serve::serve_with(
         reader,
@@ -572,6 +578,7 @@ fn serve(
             herdr_socket: Some(identity.herdr_socket.clone()),
             heartbeat: true,
             checkout_callers: true,
+            opened_roots: Some(roots),
         },
     )
     .map(|()| "link_closed".to_owned())
