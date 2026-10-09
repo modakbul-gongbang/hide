@@ -1076,6 +1076,33 @@ fn a_frame_watched_before_its_pane_attaches_is_reported_when_shown() {
     );
 }
 
+/// A new view at the grid its session already runs at asks Herdr for the
+/// whole screen at the node, since the core sends no resize for a size that
+/// did not change; the next frame is that whole screen.
+#[test]
+fn a_new_view_at_the_sessions_grid_asks_for_a_whole_frame() {
+    let harness = harness(RetryPolicy::Automatic);
+    let opened = harness.controlling("w1:p1");
+    // What the attach itself wrote is not the answer.
+    while opened
+        .input
+        .recv_timeout(Duration::from_millis(200))
+        .is_ok()
+    {}
+    harness.service.view("w1:p1", SIZE, true);
+    let line = loop {
+        let line = opened
+            .input
+            .recv_timeout(WAIT)
+            .expect("the node asked Herdr for the whole screen");
+        if line["type"] == "terminal.resize" {
+            break line;
+        }
+    };
+    assert_eq!(line["rows"], SIZE.rows);
+    assert_eq!(line["cols"], SIZE.cols);
+}
+
 #[test]
 fn an_idle_service_has_nothing_due() {
     let harness = harness(RetryPolicy::Automatic);

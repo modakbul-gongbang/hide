@@ -3103,7 +3103,12 @@ impl Runtime {
                     }
                     return false;
                 }
-                self.send_terminal_size(&payload.pane_id, false);
+                // The node asks Herdr for a new view's whole screen itself
+                // when its grid did not change, so an unchanged size goes
+                // nowhere.
+                if previous != Some(size) {
+                    self.send_terminal_size(&payload.pane_id, false);
+                }
                 false
             }
             Event::PaneFind(payload) => {
@@ -3685,15 +3690,13 @@ impl Event {
 impl Runtime {
     /// Sends the size the pane's view last reported to its node, which
     /// resizes its session (an observer attaches again once the size
-    /// settles). `force` sends it even when the session already has it: a
-    /// size held while the layout was drawn ahead.
+    /// settles) and records `terminal.resize_settled`. `force` sends it even
+    /// when the session already has it: a size held while the layout was
+    /// drawn ahead.
     pub(super) fn send_terminal_size(&mut self, pane_id: &str, force: bool) {
         let Some(&(rows, cols)) = self.terminal_sizes.get(pane_id) else {
             return;
         };
-        crate::diagnostic!(
-            serde_json::json!({"kind":"terminal.resize_settled", "pane_id":pane_id, "rows":rows, "cols":cols})
-        );
         self.terminals
             .control(hide_node_link::terminal::TerminalControl::Resize {
                 pane: pane_id.to_owned(),

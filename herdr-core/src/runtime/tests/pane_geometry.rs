@@ -227,6 +227,27 @@ fn a_zoom_is_drawn_at_once_and_its_ptys_keep_their_size_until_herdr_confirms() {
     assert_eq!(resizes(&terminals, LEFT), [(30, 80)]);
 }
 
+/// A view reporting the size its pane already runs at sends its node
+/// nothing (a device's link carries no line for it); a new size goes out
+/// once.
+#[test]
+fn a_view_reporting_the_size_its_pane_runs_at_sends_no_resize() {
+    let herdr = fake_herdr("geometry-same-size");
+    let (mut runtime, terminals) = runtime_on(&herdr, session(None, false));
+    let report = |runtime: &mut Runtime, rows: u16| {
+        dispatch(
+            runtime,
+            "terminal_resize",
+            serde_json::json!({"pane_id": LEFT, "rows": rows, "cols": 40}),
+        );
+    };
+    report(&mut runtime, 24);
+    assert_eq!(resizes(&terminals, LEFT), []);
+    report(&mut runtime, 30);
+    report(&mut runtime, 30);
+    assert_eq!(resizes(&terminals, LEFT), [(30, 40)]);
+}
+
 /// B11: a split is drawn when Herdr names the new pane: the pane split in
 /// half with the new one second, a row the canvas can draw it from, and a
 /// terminal entry that attaches at its own view's size while the pane it

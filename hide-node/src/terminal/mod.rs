@@ -397,8 +397,23 @@ impl TerminalNode for Service {
             }
             let entry = inner.panes.entry(pane.to_owned()).or_default();
             let changed = entry.view.replace(size) != Some(size);
-            if changed || new_view {
-                entry.need_full = true;
+            if !changed && !new_view {
+                return;
+            }
+            entry.need_full = true;
+            // The core sends no resize for a grid that did not change, so a
+            // view at the grid the session runs at asks Herdr for the whole
+            // screen here, as a redraw does; any other grid's resize brings
+            // one.
+            if entry.size == Some(size)
+                && let Some(session) = entry
+                    .session
+                    .as_ref()
+                    .filter(|session| session.mode == Mode::Control)
+                && let Err(refused) = session.resize(size.rows, size.cols)
+            {
+                let message = refused.message(pane);
+                inner.error(pane, "terminal.resize_failed", message);
             }
         });
     }
