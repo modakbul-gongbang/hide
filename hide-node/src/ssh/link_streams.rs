@@ -11,7 +11,9 @@
 //! A stream reads what the node sent, in order, from a bounded queue: one
 //! the reader leaves past [`MAX_HERDR_PENDING`] chunks is ended as stalled,
 //! and a link holds at most [`LinkEnd::cap`] streams to each end at once.
-//! The link ending ends every stream on it.
+//! The link ending ends every stream on it. A stream a runtime thread
+//! closes is told to the node by the link's one close worker, in order,
+//! with at most [`MAX_CLOSE_NOTICES`] waiting.
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -35,6 +37,11 @@ pub const MAX_HERDR_PENDING: usize = 64;
 pub const MAX_BROWSER_PENDING: usize = 128;
 /// How long an open, a write or a close may take on the link.
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
+/// Close notices waiting for the link's close worker: every stream a link
+/// can hold at once. A notice past it is dropped and logged; the node's
+/// end of that stream closes with the link.
+pub const MAX_CLOSE_NOTICES: usize =
+    hide_node_link::panes::MAX_HERDR_STREAMS + hide_node_link::panes::MAX_BROWSER_STREAMS;
 
 fn pending(end: LinkEnd) -> usize {
     match end {
@@ -73,6 +80,9 @@ enum Piece {
 pub(super) struct LinkStreams {
     open: Mutex<HashMap<u64, Entry>>,
     next: AtomicU64,
+    /// The close worker's queue, once a stream closed; dropped with the
+    /// link, which ends the worker.
+    closes: Mutex<Option<mpsc::SyncSender<u64>>>,
 }
 
 struct Entry {
@@ -144,9 +154,53 @@ impl LinkStreams {
         lock_recover(&self.open).get(&stream).map(|entry| entry.end)
     }
 
-    /// The link ended: every stream reads its end.
+    /// The link ended: every stream reads its end, and the close worker
+    /// ends.
     pub(super) fn end_all(&self) {
         lock_recover(&self.open).clear();
+        lock_recover(&self.closes).take();
+    }
+
+    /// Queues the notice that `stream` closed for the link's close worker,
+    /// starting it on the first. The worker holds the link only while it
+    /// tells one notice, so the link's last clone still ends it.
+    fn tell_closed(&self, link: &RemoteHost, stream: u64) {
+        let mut closes = lock_recover(&self.closes);
+        let queue = match closes.as_ref() {
+            Some(queue) => queue,
+            None => {
+                let (queue, notices) = mpsc::sync_channel(MAX_CLOSE_NOTICES);
+                let weak = Arc::downgrade(&link.inner);
+                let started = std::thread::Builder::new()
+                    .name("link-stream-close".into())
+                    .spawn(move || tell_closes(&weak, &notices));
+                if let Err(error) = started {
+                    crate::diagnostic!(json!({
+                        "component": "remote_host",
+                        "kind": "link_stream.close_unsent",
+                        "target": link.target(),
+                        "stream": stream,
+                        "reason": format!("the close worker could not start: {error}"),
+                    }));
+                    return;
+                }
+                closes.insert(queue)
+            }
+        };
+        if let Err(error) = queue.try_send(stream) {
+            let reason = match error {
+                mpsc::TrySendError::Full(_) => "the close queue is full",
+                mpsc::TrySendError::Disconnected(_) => "the close worker ended",
+            };
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "link_stream.close_unsent",
+                "target": link.target(),
+                "stream": stream,
+                "reason": reason,
+                "cap": MAX_CLOSE_NOTICES,
+            }));
+        }
     }
 }
 
@@ -488,8 +542,10 @@ impl LinkStream {
 }
 
 /// Ends `stream` on this side at once, so its reader reads the end, and
-/// tells the node, which closes its connection to the stream's end. Telling the node
-/// waits on the link, so it is done off any runtime thread.
+/// tells the node, which closes its connection to the stream's end. Telling
+/// the node waits on the link: a plain thread tells it before it goes on, so
+/// an open it makes next finds the node's slot free, and a runtime thread,
+/// which must not wait, leaves it to the link's close worker.
 fn close_stream(link: &RemoteHost, stream: u64) {
     let open = lock_recover(&link.inner.streams.open).remove(&stream);
     let Some(Entry { sender, .. }) = open else {
@@ -501,16 +557,37 @@ fn close_stream(link: &RemoteHost, stream: u64) {
     if link.closed_reason().is_some() {
         return;
     }
-    let link = link.clone();
-    let tell = move || {
-        let _ = link.call(Call::LinkClose { stream }, CALL_TIMEOUT);
-    };
     if tokio::runtime::Handle::try_current().is_ok() {
-        let _ = std::thread::Builder::new()
-            .name("link-stream-close".into())
-            .spawn(tell);
+        link.inner.streams.tell_closed(link, stream);
     } else {
-        tell();
+        tell_close(link, stream);
+    }
+}
+
+fn tell_close(link: &RemoteHost, stream: u64) {
+    if let Err(error) = link.call(Call::LinkClose { stream }, CALL_TIMEOUT) {
+        crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "link_stream.close_unanswered",
+            "target": link.target(),
+            "stream": stream,
+            "error": error.to_string(),
+        }));
+    }
+}
+
+/// The link's close worker: tells the node each stream a runtime thread
+/// closed, one at a time, until the link ends or its last clone is dropped.
+fn tell_closes(link: &std::sync::Weak<super::Inner>, notices: &mpsc::Receiver<u64>) {
+    while let Ok(stream) = notices.recv() {
+        let Some(inner) = link.upgrade() else {
+            return;
+        };
+        let link = RemoteHost { inner };
+        if link.closed_reason().is_some() {
+            return;
+        }
+        tell_close(&link, stream);
     }
 }
 
@@ -657,6 +734,94 @@ mod tests {
         assert!(refused.to_string().contains("already carries"), "{refused}");
         open.pop();
         connector.connect().expect("room after a close");
+    }
+
+    /// A node that opens every stream at once and holds its answer to each
+    /// close until the test lets it go; each close it reads is reported.
+    fn node_holding_closes() -> (RemoteHost, mpsc::Receiver<u64>, mpsc::Sender<()>) {
+        use hide_node_link::protocol::{Outcome, Request, Response};
+        let (core_end, node_end) = hide_platform::ipc::LocalStream::pair().expect("a pair");
+        let (closed, closes) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let writer = Arc::new(Mutex::new(node_end.duplicate()));
+        let answer = |writer: &Mutex<hide_platform::ipc::LocalStream>, id: u64| {
+            let response = Response {
+                id,
+                outcome: Outcome::Ok(json!({})),
+            };
+            let mut line = serde_json::to_vec(&response).unwrap();
+            line.push(b'\n');
+            let _ = lock_recover(writer).write_all(&line);
+        };
+        let (held, holding) = mpsc::channel::<u64>();
+        {
+            let writer = Arc::clone(&writer);
+            std::thread::spawn(move || {
+                while let Ok(id) = holding.recv() {
+                    if released.recv().is_err() {
+                        return;
+                    }
+                    answer(&writer, id);
+                }
+            });
+        }
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(node_end);
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|read| read > 0) {
+                let request: Request = serde_json::from_str(&line).unwrap();
+                line.clear();
+                match request.call {
+                    Call::LinkClose { stream } => {
+                        let _ = closed.send(stream);
+                        let _ = held.send(request.id);
+                    }
+                    _ => answer(&writer, request.id),
+                }
+            }
+        });
+        let link =
+            super::super::over_local_stream("inbound:test", core_end, None, Box::new(|_| {}))
+                .expect("a local link");
+        (link, closes, release)
+    }
+
+    /// Streams closed together on a runtime thread are told to the node one
+    /// at a time by the link's one close worker, not by a thread each: while
+    /// the node holds its answer to the first close, no second is sent, and
+    /// every close arrives in turn once it answers (arch review item 4).
+    #[test]
+    fn closes_reach_the_node_one_at_a_time_from_one_worker() {
+        let (link, closes, release) = node_holding_closes();
+        let connector = link.herdr_connector();
+        let streams: Vec<_> = (0..MAX_HERDR_STREAMS)
+            .map(|_| connector.connect().expect("a stream"))
+            .collect();
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async move { drop(streams) });
+        let first = closes
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the first close reaches the node");
+        // A second close would be on its way at once had each its own
+        // thread; with one worker none is until the first is answered.
+        assert_eq!(
+            closes.recv_timeout(Duration::from_millis(300)).ok(),
+            None,
+            "a second close was sent while the first waited"
+        );
+        let mut told = vec![first];
+        for _ in 1..MAX_HERDR_STREAMS {
+            release.send(()).unwrap();
+            told.push(
+                closes
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("the next close once the last was answered"),
+            );
+        }
+        told.sort_unstable();
+        assert_eq!(told, (1..=MAX_HERDR_STREAMS as u64).collect::<Vec<_>>());
     }
 
     /// A stream this side gives up, its reader fallen behind, is closed on
