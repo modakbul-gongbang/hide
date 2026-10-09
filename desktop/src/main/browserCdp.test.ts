@@ -748,6 +748,22 @@ describe("scoped desktop CDP public boundary", () => {
     expect(attached.get("d1")).toBe(false);
   });
 
+  it("revokes everything a node's ended link authorized and stays available for the next", async () => {
+    const { first, address, capability, client } = await fixture();
+    const cap = await capability();
+    const browser = await client(cap.browser_ws_url);
+    await attach(browser);
+    expect(await customRequest(`${address.endpoint}/revoke`, "POST", {})).toBe(401);
+    const lost = new Promise((resolve) => browser.socket.once("close", resolve));
+    expect(await customRequest(`${address.endpoint}/revoke`, "POST", { authorization: `Bearer ${address.token}` })).toBe(200);
+    await lost;
+    expect(first.contents.debugger.isAttached()).toBe(false);
+    expect((await fetch(`${cap.cdp_http_url}/json/version`)).status).toBe(404);
+    const next = await capability();
+    expect(next.cdp_http_url).not.toBe(cap.cdp_http_url);
+    expect((await fetch(`${next.cdp_http_url}/json/version`)).status).toBe(200);
+  });
+
   it("releases leases on disconnect, native detach, daemon loss and app shutdown", async () => {
     const { first, capability, client, gateway, attached } = await fixture();
     const cap = await capability();

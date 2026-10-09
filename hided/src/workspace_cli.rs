@@ -477,7 +477,49 @@ async fn relay_once(
         .await
         .map_err(|_| ("credential_expired".to_owned(), None))?
         .map_err(|reason| (reason, None))?;
-    Ok((socket, answer["result"]["selected"] == true))
+    let selected = answer["result"]["selected"] == true;
+    // The display is shown on this machine, whose daemon relays it: the
+    // CDP runs here and never crosses to the core.
+    if let Some(url) = answer["result"]["relay_url"].as_str() {
+        let _ = socket.close(None).await;
+        return Ok((dial_relay(url).await?, selected));
+    }
+    Ok((socket, selected))
+}
+
+/// Dials this machine's daemon at the one-shot relay URL the core handed
+/// out; a refused dial keeps its reason.
+async fn dial_relay(url: &str) -> Result<WorkspaceSocket, (String, Option<String>)> {
+    let refused = |(reason, next_action): crate::browser_control::Failure| {
+        (reason.to_owned(), Some(next_action.to_owned()))
+    };
+    let unavailable = (
+        "browser_control_unavailable",
+        "Reconnect the Hide desktop app and retry",
+    );
+    if !crate::browser_control::relay_url_valid(url) {
+        return Err(refused(unavailable));
+    }
+    let port = url
+        .parse::<axum::http::Uri>()
+        .ok()
+        .and_then(|uri| uri.port_u16())
+        .ok_or_else(|| refused(unavailable))?;
+    let request = url
+        .into_client_request()
+        .map_err(|_| refused(unavailable))?;
+    let stream = tokio::time::timeout(TIMEOUT, tokio::net::TcpStream::connect(("127.0.0.1", port)))
+        .await
+        .map_err(|_| refused(unavailable))?
+        .map_err(|_| refused(unavailable))?;
+    let transport: Pin<Box<dyn Transport>> = Box::pin(stream);
+    match tokio::time::timeout(TIMEOUT, tokio_tungstenite::client_async(request, transport)).await {
+        Ok(Ok((socket, _))) => Ok(socket),
+        Ok(Err(tokio_tungstenite::tungstenite::Error::Http(response))) => Err(refused(
+            crate::browser_relay::refused(response.status().as_u16()),
+        )),
+        _ => Err(refused(unavailable)),
+    }
 }
 
 pub fn request_action(
@@ -568,7 +610,7 @@ fn run_exchange_within(
 
 /// The bytes under a Workspace socket: a loopback connection, or a stream
 /// through a device's node.
-pub(crate) trait Transport: AsyncRead + AsyncWrite + Send + Unpin {}
+pub trait Transport: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Transport for T {}
 
 pub(crate) type WorkspaceSocket = tokio_tungstenite::WebSocketStream<Pin<Box<dyn Transport>>>;

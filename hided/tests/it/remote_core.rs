@@ -2285,3 +2285,407 @@ fn an_agent_in_a_node_pane_sleeps_and_wakes_there_as_the_cores_own_does() -> Res
         }
     }
 }
+
+/// What the scripted desktop gateway saw.
+#[derive(Default)]
+struct GatewaySeen {
+    /// CDP text bytes it read and wrote.
+    bytes: usize,
+    /// The CDP methods it was asked, in order.
+    methods: Vec<String>,
+    /// Revocations its daemon asked for.
+    revoked: usize,
+}
+
+type Seen = std::sync::Arc<std::sync::Mutex<GatewaySeen>>;
+
+/// A desktop window's CDP gateway on the node's machine, as `browserCdp.ts`
+/// serves one: `/connect` hands out a capability on its own loopback port,
+/// `/revoke` drops them all, and a capability's socket answers the CDP a
+/// page command sends with a page that has one button. Answers its address
+/// and private token.
+async fn desktop_gateway(seen: Seen) -> Result<(String, String)> {
+    use axum::extract::ws::{Message as Frame, WebSocketUpgrade};
+    use axum::extract::{Path, State};
+    use axum::http::{HeaderMap, StatusCode};
+    use axum::response::IntoResponse;
+    use axum::routing::{get, post};
+
+    #[derive(Clone)]
+    struct Gateway {
+        endpoint: String,
+        token: String,
+        seen: Seen,
+        capabilities: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+    fn answer(request: &Value) -> Value {
+        let expression = request["params"]["expression"].as_str().unwrap_or("");
+        // The page script's operation, as `call` names it after the script.
+        let op = |name: &str| expression.contains(&format!(")(\"{name}\","));
+        let value = |value: Value| json!({"result": {"value": value}});
+        let result = match request["method"].as_str().unwrap_or("") {
+            "Target.getTargets" => json!({"targetInfos": [
+                {"type": "page", "targetId": "page-1", "url": "http://page.test/"}]}),
+            "Target.attachToTarget" => json!({"sessionId": "top"}),
+            "Runtime.evaluate" if expression == "0" => {
+                json!({"result": {"type": "number", "value": 0}})
+            }
+            "Runtime.evaluate" if op("probe") => value(json!({"width": 800, "height": 600,
+                "dpr": 1, "vv": {"left": 0, "top": 0, "scale": 1}})),
+            "Runtime.evaluate" if op("rect") => value(json!({"centerX": 10, "centerY": 10})),
+            "Runtime.evaluate" if op("activeOpaqueFrame") => value(json!({"opaque": false})),
+            "Runtime.evaluate" if op("baseline") => {
+                value(json!({"previous": "# T\n# http://page.test/\n"}))
+            }
+            "Runtime.evaluate" if op("waitText") => value(json!({"found": true})),
+            "Runtime.evaluate" => value(json!("# T\n# http://page.test/\n\n@1 button \"Go\"\n")),
+            _ => json!({}),
+        };
+        let mut reply = json!({"id": request["id"], "result": result});
+        if let Some(session) = request["sessionId"].as_str() {
+            reply["sessionId"] = json!(session);
+        }
+        reply
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = format!("http://{}", listener.local_addr()?);
+    let token = format!(
+        "{:032x}{:032x}",
+        std::process::id(),
+        Instant::now().elapsed().as_nanos()
+    );
+    let gateway = Gateway {
+        endpoint: endpoint.clone(),
+        token: token.clone(),
+        seen,
+        capabilities: Default::default(),
+    };
+    let authorized = |gateway: &Gateway, headers: &HeaderMap| {
+        headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            == Some(format!("Bearer {}", gateway.token).as_str())
+    };
+    let app = axum::Router::new()
+        .route(
+            "/connect",
+            post(move |State(gateway): State<Gateway>, headers: HeaderMap| async move {
+                if !authorized(&gateway, &headers) {
+                    return StatusCode::UNAUTHORIZED.into_response();
+                }
+                let path = format!("/cdp/{:040x}", rand_id());
+                gateway.capabilities.lock().unwrap().push(path.clone());
+                axum::Json(json!({
+                    "cdp_http_url": format!("{}{path}", gateway.endpoint),
+                    "browser_ws_url": format!("{}{path}/devtools/browser", gateway.endpoint.replace("http:", "ws:")),
+                }))
+                .into_response()
+            }),
+        )
+        .route(
+            "/revoke",
+            post(move |State(gateway): State<Gateway>, headers: HeaderMap| async move {
+                if !authorized(&gateway, &headers) {
+                    return StatusCode::UNAUTHORIZED;
+                }
+                gateway.capabilities.lock().unwrap().clear();
+                gateway.seen.lock().unwrap().revoked += 1;
+                StatusCode::OK
+            }),
+        )
+        .route(
+            "/cdp/{capability}/devtools/browser",
+            get(
+                |State(gateway): State<Gateway>,
+                 Path(capability): Path<String>,
+                 upgrade: WebSocketUpgrade| async move {
+                    let path = format!("/cdp/{capability}");
+                    if !gateway.capabilities.lock().unwrap().contains(&path) {
+                        return StatusCode::FORBIDDEN.into_response();
+                    }
+                    upgrade.on_upgrade(move |mut socket| async move {
+                        while let Some(Ok(Frame::Text(text))) = socket.recv().await {
+                            let Ok(request) = serde_json::from_str::<Value>(text.as_str()) else {
+                                return;
+                            };
+                            let reply = answer(&request).to_string();
+                            {
+                                let mut seen = gateway.seen.lock().unwrap();
+                                seen.bytes += text.len() + reply.len();
+                                seen.methods
+                                    .push(request["method"].as_str().unwrap_or("").to_owned());
+                            }
+                            if socket.send(Frame::Text(reply.into())).await.is_err() {
+                                return;
+                            }
+                        }
+                    })
+                },
+            ),
+        )
+        .with_state(gateway);
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    Ok((endpoint, token))
+}
+
+fn rand_id() -> u128 {
+    let mut bytes = [0_u8; 16];
+    getrandom::getrandom(&mut bytes).expect("random bytes");
+    u128::from_le_bytes(bytes)
+}
+
+/// The bytes the relays of `way` carried, as `rows` logged them.
+fn relayed(rows: &[Value], way: &str) -> u64 {
+    rows.iter()
+        .filter(|row| row["way"] == way)
+        .filter_map(|row| row["bytes"].as_u64())
+        .sum()
+}
+
+/// B4, B13, B15: a page shown only in the node's desktop window is driven
+/// from both machines. A caller on the node's machine is handed that
+/// machine's own capability and relay, so none of its CDP crosses the link
+/// (the core relays nothing through it); a caller on the core's machine is
+/// relayed through the link to the same window. Revocation follows the
+/// link: when it ends, the gateway is asked to drop what it handed out, and
+/// a caller is answered again once the link is back.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_core_through_it()
+-> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let git_init = |folder: &std::path::Path| -> Result<()> {
+            std::fs::create_dir_all(folder)?;
+            ensure!(
+                std::process::Command::new("git")
+                    .args(["init", "-q"])
+                    .current_dir(folder)
+                    .status()?
+                    .success(),
+                "git init"
+            );
+            Ok(())
+        };
+        let project = fixture.screen_home().join("project");
+        let site = fixture.core_home().join("site");
+        git_init(&project)?;
+        git_init(&site)?;
+        let page = loopback_page("page".to_owned())?;
+        let url = format!("http://localhost:{page}/");
+        let hide = fixture.hided.with_file_name("hide");
+        // A command on the node's machine or the core's, from a checkout.
+        let on = |node_side: bool, cwd: &std::path::Path, args: &[&str]| -> Result<String> {
+            let mut command = if node_side {
+                fixture.screen_command(&hide)
+            } else {
+                fixture.core_command(&hide)
+            };
+            command.args(args).current_dir(cwd);
+            let output = command.output()?;
+            Ok(format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        };
+        let seen = Seen::default();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let (endpoint, gateway_token) = desktop_gateway(std::sync::Arc::clone(&seen)).await?;
+            let mut desktop = screen_socket_of(port, &token, "desktop").await?;
+            first_snapshot(&mut desktop, Duration::from_secs(20)).await?;
+            fixture.create_workspace_on(&node, &project)?;
+            fixture.create_workspace_on(CORE_NODE, &site)?;
+            // The window registers its gateway with its own machine's daemon,
+            // as it does with a core's; the registration stays there.
+            let registration = json!({
+                "owner_pid": std::process::id(),
+                "endpoint": endpoint,
+                "token": gateway_token,
+            })
+            .to_string();
+            tokio::task::block_in_place(|| -> Result<()> {
+                let answer = http_agent()
+                    .post(format!("http://127.0.0.1:{port}/browser-control"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .send(registration.as_bytes())?;
+                ensure!(
+                    answer.status() == 204,
+                    "registration answered {}",
+                    answer.status()
+                );
+                Ok(())
+            })?;
+            // A page opened from the node's machine is connected to its own
+            // window: the capability is on that machine's loopback.
+            let opened = tokio::task::block_in_place(|| {
+                wait_for("the node caller's page connected", || {
+                    let answer =
+                        workspace_answer(&on(true, &project, &["browser", "open", &url])?)?;
+                    Ok(
+                        (answer["ok"] == true && answer["result"]["cdp_http_url"].is_string())
+                            .then_some(answer),
+                    )
+                })
+            })?;
+            ensure!(
+                opened["result"]["cdp_http_url"]
+                    .as_str()
+                    .is_some_and(|capability| capability.starts_with(&format!("{endpoint}/cdp/"))),
+                "the node caller was not handed its own window's capability: {opened}"
+            );
+            let node_display = opened["result"]["view_id"]
+                .as_str()
+                .context("display")?
+                .to_owned();
+            let snapshot = tokio::task::block_in_place(|| {
+                on(true, &project, &["browser", "snapshot", &node_display])
+            })?;
+            ensure!(
+                snapshot.contains("@1 button \"Go\""),
+                "the node caller's snapshot: {snapshot}"
+            );
+            let clicked = tokio::task::block_in_place(|| {
+                on(
+                    true,
+                    &project,
+                    &["browser", "click", &node_display, "@1", "--no-verify"],
+                )
+            })?;
+            ensure!(
+                workspace_answer(&clicked)?["ok"] == true,
+                "the node caller's click: {clicked}"
+            );
+            ensure!(
+                seen.lock()
+                    .unwrap()
+                    .methods
+                    .iter()
+                    .any(|method| method == "Input.dispatchMouseEvent"),
+                "the click never reached the window"
+            );
+            // The count: the node relayed it on its own machine, and the core
+            // carried none of it through the link.
+            let node_rows = tokio::task::block_in_place(|| {
+                wait_for("the node's relays logged", || {
+                    let rows = fixture.node_log("browser_relay", "relay.ended")?;
+                    Ok((rows.len() >= 2).then_some(rows))
+                })
+            })?;
+            let carried = seen.lock().unwrap().bytes as u64;
+            ensure!(
+                relayed(&node_rows, "node") > 0 && carried > 0,
+                "the node relayed nothing: {node_rows:?}"
+            );
+            let core_rows = fixture.core_log("browser_relay", "relay.ended")?;
+            let relay_streams: Vec<Value> = fixture
+                .core_log("remote_host", "link_stream.closed_by_node")?
+                .into_iter()
+                .filter(|row| row["end"] == "browser_relay")
+                .collect();
+            ensure!(
+                core_rows.is_empty() && relay_streams.is_empty(),
+                "the node caller's CDP crossed the link: {core_rows:?} {relay_streams:?}"
+            );
+            // A page of the core's checkout, driven from the core's machine:
+            // the only window is the node's, so the core relays through the
+            // link to it, and it hands out no capability URL of another
+            // machine.
+            let opened = tokio::task::block_in_place(|| {
+                workspace_answer(&on(false, &site, &["browser", "open", &url])?)
+            })?;
+            ensure!(
+                opened["ok"] == true
+                    && opened["result"]["browser_control"]["reason"] == "browser_control_elsewhere",
+                "the core caller's page: {opened}"
+            );
+            let display = opened["result"]["view_id"]
+                .as_str()
+                .context("display")?
+                .to_owned();
+            let methods_before = seen.lock().unwrap().methods.len();
+            let snapshot = tokio::task::block_in_place(|| {
+                on(false, &site, &["browser", "snapshot", &display])
+            })?;
+            ensure!(
+                snapshot.contains("@1 button \"Go\""),
+                "the core caller's snapshot: {snapshot}"
+            );
+            let clicked = tokio::task::block_in_place(|| {
+                on(
+                    false,
+                    &site,
+                    &["browser", "click", &display, "@1", "--no-verify"],
+                )
+            })?;
+            ensure!(
+                workspace_answer(&clicked)?["ok"] == true,
+                "the core caller's click: {clicked}"
+            );
+            ensure!(
+                seen.lock().unwrap().methods[methods_before..]
+                    .iter()
+                    .any(|method| method == "Input.dispatchMouseEvent"),
+                "the core caller's click never reached the window"
+            );
+            let core_rows = tokio::task::block_in_place(|| {
+                fixture.core_log_until("browser_relay", "relay.ended", |rows| rows.len() >= 2)
+            })?;
+            ensure!(
+                relayed(&core_rows, "link") > 0,
+                "the core caller was not relayed through the link: {core_rows:?}"
+            );
+            // The link ends: the window is asked to revoke what it handed out,
+            // and the node's caller is turned away until the link is back.
+            tokio::task::block_in_place(|| fixture.ssh.online(false))?;
+            node_link(port, "waiting", LINK_BOUND).await?;
+            tokio::task::block_in_place(|| {
+                wait_for("the window revoked its capabilities", || {
+                    Ok((seen.lock().unwrap().revoked > 0).then_some(()))
+                })
+            })?;
+            let refused = tokio::task::block_in_place(|| {
+                on(true, &project, &["browser", "snapshot", &node_display])
+            })?;
+            ensure!(
+                workspace_answer(&refused)?["ok"] == false,
+                "answered without a link: {refused}"
+            );
+            tokio::task::block_in_place(|| fixture.ssh.online(true))?;
+            node_link(port, "live", LINK_BOUND).await?;
+            // The window reattaches, as it does after its screen closed with
+            // the link; its gateway's registration stayed on its machine and
+            // reaches the new link's core.
+            drop(desktop);
+            let mut desktop = screen_socket_of(port, &token, "desktop").await?;
+            first_snapshot(&mut desktop, Duration::from_secs(20)).await?;
+            let mut last = String::new();
+            tokio::task::block_in_place(|| {
+                wait_for("the core caller's page driven again", || {
+                    last = on(false, &site, &["browser", "snapshot", &display])?;
+                    Ok(last.contains("@1 button \"Go\"").then_some(()))
+                })
+            })
+            .with_context(|| format!("the last answer: {last}"))?;
+            drop(desktop);
+            Ok::<_, anyhow::Error>(())
+        })
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}

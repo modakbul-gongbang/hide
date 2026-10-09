@@ -114,6 +114,9 @@ struct Shared {
     live: watch::Sender<Option<Arc<LiveLink>>>,
     /// Where the node's own panes' output goes besides the link.
     screen: Arc<dyn OutputSink>,
+    /// This machine's desktop windows' browser gateways, which the core
+    /// asks over each link (`node_browser`).
+    browser: Option<Arc<crate::node_browser::NodeBrowser>>,
 }
 
 /// The node role's link to its core, held for as long as the daemon runs.
@@ -133,6 +136,18 @@ impl NodeRole {
         identity: NodeIdentity,
         screen: Arc<dyn OutputSink>,
     ) -> Result<Self, String> {
+        Self::start_with_browser(home, placement, identity, screen, None)
+    }
+
+    /// [`NodeRole::start`] whose links also answer the core for this
+    /// machine's desktop windows (`browser`).
+    pub fn start_with_browser(
+        home: &Path,
+        placement: Placement,
+        identity: NodeIdentity,
+        screen: Arc<dyn OutputSink>,
+        browser: Option<Arc<crate::node_browser::NodeBrowser>>,
+    ) -> Result<Self, String> {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 phase: Phase::Connecting,
@@ -144,6 +159,7 @@ impl NodeRole {
             upstream: Mutex::new(None),
             live: watch::Sender::new(None),
             screen,
+            browser,
         });
         let config = home.join(".ssh/config");
         let thread = {
@@ -575,7 +591,23 @@ fn serve_link(
         roots: Arc::clone(&roots),
         upstream: Arc::clone(upstream),
     })));
-    let ended = serve(reader, writer, identity, &terminals, &roots);
+    let browser = shared
+        .browser
+        .as_ref()
+        .map(|browser| crate::node_browser::LinkBrowser {
+            browser: Arc::clone(browser),
+            generation,
+        });
+    let ended = serve(
+        reader,
+        writer,
+        identity,
+        &terminals,
+        &roots,
+        browser
+            .as_ref()
+            .map(|browser| browser as &dyn hide_host::link_bridge::BrowserGateway),
+    );
     shared.live.send_replace(None);
     drop(forward);
     ended
@@ -589,6 +621,7 @@ fn serve(
     identity: &NodeIdentity,
     terminals: &NodeTerminals,
     roots: &hide_host::serve::OpenedRoots,
+    browser: Option<&dyn hide_host::link_bridge::BrowserGateway>,
 ) -> Result<String, String> {
     hide_host::serve::serve_with(
         reader,
@@ -599,7 +632,7 @@ fn serve(
             heartbeat: true,
             checkout_callers: true,
             opened_roots: Some(roots),
-            browser: None,
+            browser,
         },
     )
     .map(|()| "link_closed".to_owned())

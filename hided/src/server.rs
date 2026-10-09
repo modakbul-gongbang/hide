@@ -172,6 +172,14 @@ pub fn router(state: AppState) -> Router {
         .route("/relay", get(relay_upgrade))
         .route("/relay/browser-source", post(relay_browser_source))
         .route(
+            "/relay/browser-control",
+            post(relay_browser_control).layer(browser_control_limit),
+        )
+        .route(
+            "/relay/browser-control/action",
+            post(relay_browser_control_action).layer(browser_control_limit),
+        )
+        .route(
             "/browser-route",
             post(resolve_browser_route).delete(release_browser_route),
         )
@@ -285,14 +293,7 @@ async fn relay_browser_source(
     headers: HeaderMap,
     axum::Json(query): axum::Json<BrowserSourceQuery>,
 ) -> Response {
-    if via_tailnet(&headers) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    let admitted = headers
-        .get(RELAY_GRANT_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|grant| state.relay_grants.valid(grant));
-    let Some(admitted) = admitted else {
+    let Some(admitted) = relay_admitted(&headers, &state) else {
         return StatusCode::FORBIDDEN.into_response();
     };
     // One of the answers the node's screens may wait on (B17, D-20).
@@ -372,6 +373,70 @@ async fn release_browser_control(
     }
 }
 
+/// The windows a linked node's daemon has now (PRD core-host-node-remote-core
+/// B4, B13): only their owner pids, taken on the node's live relay grant
+/// and kept for as long as its link lasts.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NodeWindows {
+    owners: Vec<i32>,
+}
+
+async fn relay_browser_control(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<NodeWindows>,
+) -> Response {
+    let Some(admitted) = relay_admitted(&headers, &state) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    match state
+        .browser_control
+        .announce(&admitted.node, admitted.link, request.owners)
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(failure) => browser_control_failure(failure),
+    }
+}
+
+/// A page action of a linked node's window, which its daemon passes on:
+/// the core runs it as that window, as it runs its own window's.
+async fn relay_browser_control_action(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<crate::browser_control::BrowserAction>,
+) -> Response {
+    let Some(admitted) = relay_admitted(&headers, &state) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    // One of the answers the node's screens may wait on (B17, D-20).
+    let Some(slot) = admitted.requests.take(&admitted.node) else {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            axum::Json(json!({"reason":"relay_busy"})),
+        )
+            .into_response();
+    };
+    let node = admitted.node;
+    run_browser_action(state, request, move |control, request| {
+        let _slot = slot;
+        control.node_caller(&node, request.owner_pid, &request.checkout_path)
+    })
+    .await
+}
+
+/// The node and link a relay grant on `headers` belongs to, while the link
+/// lives; never through `tailscale serve`.
+fn relay_admitted(headers: &HeaderMap, state: &AppState) -> Option<crate::attach::Admitted> {
+    if via_tailnet(headers) {
+        return None;
+    }
+    headers
+        .get(RELAY_GRANT_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|grant| state.relay_grants.valid(grant))
+}
+
 /// A desktop gateway never writes View state itself. Its authenticated,
 /// scoped page action uses the same prepare/read/commit boundary as hide CLI.
 async fn browser_control_action(
@@ -379,10 +444,27 @@ async fn browser_control_action(
     headers: HeaderMap,
     axum::Json(request): axum::Json<crate::browser_control::BrowserAction>,
 ) -> Response {
-    use herdr_core::workspace_control::{ActionPreparation, Query};
     if !browser_route_authorized(&headers, &state) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    run_browser_action(state, request, |control, request| {
+        control.caller(request.owner_pid, &request.checkout_path)
+    })
+    .await
+}
+
+/// A window's page action, run as the caller `caller` names for it.
+async fn run_browser_action(
+    state: AppState,
+    request: crate::browser_control::BrowserAction,
+    caller: impl FnOnce(
+        &crate::browser_control::BrowserControl,
+        &crate::browser_control::BrowserAction,
+    ) -> Result<String, crate::browser_control::Failure>
+    + Send
+    + 'static,
+) -> Response {
+    use herdr_core::workspace_control::{ActionPreparation, Query};
     if !request.valid() {
         return StatusCode::BAD_REQUEST.into_response();
     }
@@ -395,9 +477,7 @@ async fn browser_control_action(
         if state.desktop_renderers.load(Ordering::SeqCst) == 0 {
             return Err(("browser_unsupported", "Open the Hide desktop app and retry"));
         }
-        let caller = state
-            .browser_control
-            .caller(request.owner_pid, &request.checkout_path)?;
+        let caller = caller(&state.browser_control, &request)?;
         let source = state
             .core
             .workspace_query(&request.device_id, &caller, Query::ViewList)
@@ -1310,8 +1390,12 @@ async fn scoped_client_loop(
     // Set only for an admitted `browser_relay`: its slot, its display and the
     // gateway socket it pumps once the answer and the claim are through.
     let mut relay = None;
+    let mut relay_way = crate::browser_relay::Way::Core;
     let mut relay_for: Option<String> = None;
     let mut relay_slot = None;
+    // The link a relay to another machine's window runs through, which the
+    // connection's answer leaves here.
+    let through: Arc<std::sync::Mutex<Option<hide_node::ssh::RemoteHost>>> = Arc::default();
     let response = match incoming {
         Ok(Some(Ok(Message::Text(text)))) if text.len() <= 128 * 1024 => {
             match serde_json::from_str::<Value>(&text) {
@@ -1419,6 +1503,8 @@ async fn scoped_client_loop(
                         // fresh native read and engine reply. No stage renews it.
                         let guard_deadline = std::time::Instant::now() + Duration::from_secs(2);
                         let command_source = source.clone();
+                        let caller_node = source.as_ref().map(|(node, _)| node.clone());
+                        let command_through = Arc::clone(&through);
                         let outcome = if let Some(Err((reason, next_action))) = &relay_slot {
                             Ok(Err(((*reason).to_owned(), *next_action)))
                         } else {
@@ -1466,8 +1552,15 @@ async fn scoped_client_loop(
                                         let (reason, next_action) = cap.changed_refusal();
                                         return Err((reason.to_owned(), next_action));
                                     }
-                                    browser_control.connect(&result, display_id.as_deref())
-                                        .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?
+                                    match browser_control.connect(&result, display_id.as_deref(), caller_node.as_deref(), false)
+                                        .map_err(|(reason, next_action)| (reason.to_owned(), next_action))? {
+                                        crate::browser_control::Connection::Core(answer)
+                                        | crate::browser_control::Connection::Own(answer) => answer,
+                                        crate::browser_control::Connection::Through { .. } => return Err((
+                                            "browser_control_unavailable".to_owned(),
+                                            "Reconnect the Hide desktop app and retry",
+                                        )),
+                                    }
                                 }
                                 ScopedRequest::BrowserRelay(display_id) => {
                                     if desktop_renderers.load(Ordering::SeqCst) == 0 {
@@ -1480,8 +1573,15 @@ async fn scoped_client_loop(
                                         let (reason, next_action) = cap.changed_refusal();
                                         return Err((reason.to_owned(), next_action));
                                     }
-                                    let mut capability = browser_control.connect(&result, Some(&display_id))
-                                        .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?;
+                                    let mut capability = match browser_control.connect(&result, Some(&display_id), caller_node.as_deref(), true)
+                                        .map_err(|(reason, next_action)| (reason.to_owned(), next_action))? {
+                                        crate::browser_control::Connection::Core(answer)
+                                        | crate::browser_control::Connection::Own(answer) => answer,
+                                        crate::browser_control::Connection::Through { link, relay_url } => {
+                                            *command_through.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(link);
+                                            json!({ "relay_url": relay_url })
+                                        }
+                                    };
                                     // Only an area's selected View is ever on screen; the
                                     // CLI refuses input to any other before sending it.
                                     capability["selected"] = json!(result.views.iter().flatten()
@@ -1599,25 +1699,49 @@ async fn scoped_client_loop(
                         };
                         // The relay's gateway side opens before the answer,
                         // so a refused upgrade is a reason, not a dropped
-                        // socket; its URL stays in this process.
+                        // socket; its URL stays in this process. A window on
+                        // the caller's own machine is relayed there: the
+                        // caller dials its node's relay URL itself.
                         let outcome = match (outcome, &relay_display) {
                             (Ok(Ok(result)), Some(display_id)) => {
-                                match result["browser_ws_url"].as_str() {
-                                    Some(url) => match crate::browser_relay::connect(url).await {
-                                        Ok(gateway) => {
-                                            relay = Some(gateway);
-                                            Ok(Ok(
-                                                json!({"display_id": display_id, "selected": result["selected"]}),
-                                            ))
-                                        }
-                                        Err((reason, next_action)) => {
-                                            Ok(Err((reason.to_owned(), next_action)))
-                                        }
-                                    },
-                                    None => Ok(Err((
-                                        "browser_control_unavailable".to_owned(),
+                                let ready = json!({"display_id": display_id, "selected": result["selected"]});
+                                let link = through
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                    .take();
+                                let opened = match (
+                                    result["browser_ws_url"].as_str(),
+                                    result["relay_url"].as_str(),
+                                    link,
+                                ) {
+                                    (Some(url), _, _) => {
+                                        crate::browser_relay::connect(url).await.map(Some)
+                                    }
+                                    (None, Some(url), Some(link)) => {
+                                        relay_way = crate::browser_relay::Way::Link;
+                                        crate::browser_relay::connect_through(link, url)
+                                            .await
+                                            .map(Some)
+                                    }
+                                    (None, Some(_), None) => Ok(None),
+                                    (None, None, _) => Err((
+                                        "browser_control_unavailable",
                                         "Reconnect the Hide desktop app and retry",
-                                    ))),
+                                    )),
+                                };
+                                match opened {
+                                    Ok(Some(gateway)) => {
+                                        relay = Some(gateway);
+                                        Ok(Ok(ready))
+                                    }
+                                    Ok(None) => {
+                                        let mut ready = ready;
+                                        ready["relay_url"] = result["relay_url"].clone();
+                                        Ok(Ok(ready))
+                                    }
+                                    Err((reason, next_action)) => {
+                                        Ok(Err((reason.to_owned(), next_action)))
+                                    }
                                 }
                             }
                             (outcome, _) => outcome,
@@ -1666,8 +1790,14 @@ async fn scoped_client_loop(
         // A relay starts only for a caller that completed the claim, and
         // holds its slot until the pump ends.
         if let (Some(gateway), true) = (relay.take(), claimed) {
-            crate::browser_relay::pump(&mut socket, gateway, relay_for.as_deref().unwrap_or(""))
-                .await;
+            crate::browser_relay::pump(
+                &mut socket,
+                gateway,
+                relay_for.as_deref().unwrap_or(""),
+                relay_way,
+                std::future::pending(),
+            )
+            .await;
         }
         drop(relay_slot);
     }

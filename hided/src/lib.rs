@@ -19,6 +19,7 @@ pub mod factory_cli;
 pub mod file_url;
 pub mod index;
 pub mod mobile;
+pub mod node_browser;
 pub mod node_cli;
 pub mod node_daemon;
 pub mod node_pages;
@@ -608,6 +609,7 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
             build: Some(Arc::from(build.as_str())),
             shutdown: Arc::clone(&shutdown),
             state_dir: env.state_dir.clone(),
+            port,
         },
     )?;
     // Recorded once the daemon runs, so a start that failed leaves no record

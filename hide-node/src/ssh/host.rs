@@ -29,7 +29,7 @@ use hide_node_link::panes::{NodeEvent, PanesStarted};
 use hide_node_link::protocol::{Call, Hello, PROTOCOL_VERSION, Request};
 use hide_node_link::{LinkAnswer, NodeLink, call_as};
 pub use link_streams::{
-    LinkHerdrConnector, LinkStream, MAX_HERDR_PENDING, OpenError, StreamCloser,
+    LinkHerdrConnector, LinkStream, LinkWriter, MAX_HERDR_PENDING, OpenError, StreamCloser,
 };
 use russh_sftp::client::{RawSftpSession, error::Error as SftpError};
 use russh_sftp::protocol::{FileAttributes, StatusCode};

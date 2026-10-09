@@ -386,6 +386,11 @@ impl Fixture {
         Ok((port, token))
     }
 
+    /// The core's diagnostic rows of `component` and `kind`, as written now.
+    pub fn core_log(&self, component: &str, kind: &str) -> Result<Vec<Value>> {
+        log_rows(&self.core_state.join("Logs/core.jsonl"), component, kind)
+    }
+
     /// The node role's diagnostic rows of `component` and `kind`.
     pub fn node_log(&self, component: &str, kind: &str) -> Result<Vec<Value>> {
         log_rows(&self._ipc.path().join("s/Logs/core.jsonl"), component, kind)

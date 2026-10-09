@@ -57,6 +57,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use crate::attachments::Attachments;
 use crate::boundary::{Boundary, Refusal, Root};
 use crate::browser_routes::{BrowserRoutes, RouteRequest};
+use crate::node_browser::NodeBrowser;
 use crate::node_pages::NodePages;
 use crate::node_role::{LiveLink, NodeIdentity, NodeRole, Phase};
 use crate::node_uploads::{Handled, ScreenUploads};
@@ -115,6 +116,8 @@ pub struct NodeState {
     /// Files this machine's screens paste or drop, staged here
     /// (`node_uploads`).
     pub attachments: Arc<Attachments>,
+    /// This machine's desktop windows' browser gateways (`node_browser`).
+    pub browser: Arc<NodeBrowser>,
 }
 
 /// This machine's panes, as its hub names them: the core's names for them.
@@ -308,6 +311,7 @@ pub struct NodeDaemon {
     role: Arc<NodeRole>,
     relay: tokio::task::JoinHandle<()>,
     reaper: tokio::task::JoinHandle<()>,
+    browser: tokio::task::JoinHandle<()>,
 }
 
 impl NodeDaemon {
@@ -327,7 +331,8 @@ impl NodeDaemon {
             home,
             herdr_core::node::NodeId::parse(&identity.node)?,
         )?);
-        let role = Arc::new(NodeRole::start(
+        let browser = NodeBrowser::new(server.port);
+        let role = Arc::new(NodeRole::start_with_browser(
             home,
             placement,
             identity,
@@ -335,8 +340,10 @@ impl NodeDaemon {
                 hub: Arc::clone(&hub),
                 prefix: own_prefix.clone(),
             }),
+            Some(Arc::clone(&browser)),
         )?);
         let live = role.live();
+        let follow = browser.spawn_follow(live.clone());
         let terminals = Arc::new(ScreenTerminals::new(own_prefix.clone(), live.clone()));
         let relay = tokio::spawn(keep_terminals_relay(
             live.clone(),
@@ -385,10 +392,12 @@ impl NodeDaemon {
                 browser_routes,
                 desktop_screens,
                 attachments: Arc::new(Attachments::new(&server.state_dir)),
+                browser,
             },
             role,
             relay,
             reaper,
+            browser: follow,
         })
     }
 
@@ -402,6 +411,7 @@ impl Drop for NodeDaemon {
     fn drop(&mut self) {
         self.relay.abort();
         self.reaper.abort();
+        self.browser.abort();
     }
 }
 
@@ -415,6 +425,8 @@ pub struct ServerParts {
     pub shutdown: Arc<Notify>,
     /// This machine's state folder, where its screens' uploads are staged.
     pub state_dir: PathBuf,
+    /// The loopback port the screen server listens on.
+    pub port: u16,
 }
 
 pub fn router(state: NodeState) -> Router {
@@ -425,6 +437,18 @@ pub fn router(state: NodeState) -> Router {
             "/browser-route",
             post(resolve_browser_route).delete(release_browser_route),
         )
+        .route(
+            "/browser-control",
+            post(crate::node_browser::register)
+                .delete(crate::node_browser::release)
+                .layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route(
+            "/browser-control/action",
+            post(crate::node_browser::action)
+                .layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route("/browser-relay/{ticket}", get(crate::node_browser::relay))
         .route("/", get(static_asset))
         .route("/assets/{*path}", get(static_asset))
         .fallback(|| async { axum::http::StatusCode::NOT_FOUND })

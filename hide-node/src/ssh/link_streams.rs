@@ -425,7 +425,43 @@ impl ConnectionShutdown for StreamCloser {
     }
 }
 
+/// Writes to one link stream from another thread than its reader's.
+pub struct LinkWriter {
+    link: RemoteHost,
+    stream: u64,
+}
+
+impl Write for LinkWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let taken = buffer.len().min(MAX_CHUNK);
+        let data = base64::engine::general_purpose::STANDARD.encode(&buffer[..taken]);
+        self.link
+            .call(
+                Call::LinkWrite {
+                    stream: self.stream,
+                    data,
+                },
+                HERDR_CALL_TIMEOUT,
+            )
+            .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))?;
+        Ok(taken)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 impl LinkStream {
+    /// A writer for this stream that another thread holds, while this one
+    /// reads; dropping the stream ends both.
+    pub fn writer(&self) -> LinkWriter {
+        LinkWriter {
+            link: self.link.clone(),
+            stream: self.stream,
+        }
+    }
+
     /// What ends this stream from another thread.
     pub fn closer(&self) -> StreamCloser {
         StreamCloser {
