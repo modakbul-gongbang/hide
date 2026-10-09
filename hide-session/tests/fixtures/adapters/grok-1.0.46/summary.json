@@ -1,0 +1,17 @@
+{
+  "info": {
+    "id": "0199b000-0000-7000-8000-000000000003",
+    "cwd": "/work/app"
+  },
+  "agent_id": "agent-fixture",
+  "session_summary": "요청 보기 만들기",
+  "created_at": "2026-10-03T01:00:00Z",
+  "updated_at": "2026-10-03T01:02:10.500Z",
+  "num_messages": 17,
+  "num_chat_messages": 8,
+  "current_model_id": "grok-build",
+  "next_trace_turn": 4,
+  "chat_format_version": 1,
+  "last_active_at": "2026-10-03T01:02:10.500Z",
+  "generated_title": "요청 보기 만들기"
+}

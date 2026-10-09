@@ -50,7 +50,7 @@ fn home(agent: Agent) -> tempfile::TempDir {
             &fixtures().join("codex-0.160.0"),
             &home.path().join(".codex"),
         ),
-        Agent::Pi | Agent::Omp => {
+        Agent::Grok | Agent::Pi | Agent::Omp => {
             unreachable!("Native file fixtures bind their cwd to an owned checkout")
         }
         Agent::OpenCode => {
@@ -72,6 +72,7 @@ fn request(agent: Agent) -> LabelTranscriptRequest {
     let id = match agent {
         Agent::Claude => "a1b2c3d4-0000-4000-8000-000000000001",
         Agent::Codex => "0199a000-0000-7000-8000-000000000002",
+        Agent::Grok => GROK_ID,
         Agent::Pi => "pi-native-a",
         Agent::Omp => "omp-native-a",
         Agent::OpenCode => "ses_0a1b2c3d4e5f60718293a4b5c6",
@@ -804,6 +805,551 @@ mod omp {
             expected_id: Some("omp-native-a".into()),
         };
         assert!(hide_session::session_activity::read(native.home.path(), &action).is_ok());
+    }
+}
+
+const GROK_ID: &str = "0199b000-0000-7000-8000-000000000003";
+
+mod grok {
+    use super::*;
+    use hide_session::turns::UserTurnKind;
+    use hide_session::{SessionCatalog, SessionIdentity, SessionLocator};
+    use serde_json::json;
+    use std::fs;
+    use std::io::Write;
+
+    struct Native {
+        home: tempfile::TempDir,
+        cwd: PathBuf,
+        path: PathBuf,
+        request: LabelTranscriptRequest,
+    }
+
+    /// The native group name: every byte but `A-Za-z0-9-_.~` as `%XX`.
+    fn group(cwd: &Path) -> String {
+        cwd.to_str()
+            .unwrap()
+            .bytes()
+            .map(|byte| {
+                if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+                    (byte as char).to_string()
+                } else {
+                    format!("%{byte:02X}")
+                }
+            })
+            .collect()
+    }
+
+    impl Native {
+        fn new() -> Self {
+            let home = tempfile::tempdir().unwrap();
+            let cwd = home.path().join("checkout 1");
+            fs::create_dir(&cwd).unwrap();
+            let cwd = fs::canonicalize(cwd).unwrap();
+            let folder = home
+                .path()
+                .join(".grok/sessions")
+                .join(group(&cwd))
+                .join(GROK_ID);
+            fs::create_dir_all(&folder).unwrap();
+            let fixture = fixtures().join("grok-1.0.46");
+            fs::copy(fixture.join("updates.jsonl"), folder.join("updates.jsonl")).unwrap();
+            let native = Self {
+                path: folder.join("updates.jsonl"),
+                request: LabelTranscriptRequest {
+                    cwd: Some(cwd.display().to_string()),
+                    ..request(Agent::Grok)
+                },
+                home,
+                cwd,
+            };
+            native.summary(|_| {});
+            native
+        }
+
+        fn folder(&self) -> &Path {
+            self.path.parent().unwrap()
+        }
+
+        /// Grok rewrites `summary.json` whole and renames it into place.
+        fn summary(&self, change: impl FnOnce(&mut serde_json::Value)) {
+            let mut summary: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(fixtures().join("grok-1.0.46/summary.json")).unwrap(),
+            )
+            .unwrap();
+            summary["info"]["cwd"] = json!(self.cwd);
+            change(&mut summary);
+            let temporary = self.folder().join("summary.json.tmp");
+            fs::write(&temporary, serde_json::to_vec_pretty(&summary).unwrap()).unwrap();
+            fs::rename(temporary, self.folder().join("summary.json")).unwrap();
+        }
+
+        fn read(&self) -> Result<LabelTranscript, String> {
+            read(self.home.path(), &self.request)
+        }
+
+        fn resume(&mut self, answer: &LabelTranscript) {
+            self.request.checkpoint = Some(answer.checkpoint.clone());
+            self.request.turns = answer.turns.clone();
+        }
+
+        fn append(&self, update: serde_json::Value, meta: serde_json::Value) {
+            let method = if update["sessionUpdate"] == "turn_completed" {
+                "_x.ai/session/update"
+            } else {
+                "session/update"
+            };
+            let mut params_meta = json!({"eventId":"e","agentTimestampMs": START + 200_000});
+            params_meta
+                .as_object_mut()
+                .unwrap()
+                .extend(meta.as_object().unwrap().clone());
+            let record = json!({"timestamp": (START + 200_000) / 1000, "method": method,
+                "params": {"sessionId": GROK_ID, "update": update, "_meta": params_meta}});
+            writeln!(
+                fs::OpenOptions::new()
+                    .append(true)
+                    .open(&self.path)
+                    .unwrap(),
+                "{record}"
+            )
+            .unwrap();
+        }
+
+        fn route(&self, cwd: &Path) -> Result<(), String> {
+            hide_session::session_activity::read(
+                self.home.path(),
+                &hide_session::session_activity::SessionActivityRequest {
+                    agent: Agent::Grok,
+                    reference_kind: "id".into(),
+                    reference_value: GROK_ID.into(),
+                    cwd: cwd.to_str().map(str::to_owned),
+                    exact_route: true,
+                    expected_id: None,
+                },
+            )
+            .map(|_| ())
+        }
+    }
+
+    fn user_turn(answer: &LabelTranscript) -> Option<hide_session::turns::UserTurnFact> {
+        answer.turns.as_ref().unwrap().user_turn()
+    }
+
+    #[test]
+    fn native_history_has_the_shared_conversation_facts_with_split_records_joined() {
+        let native = Native::new();
+        let transcript = native.read().unwrap();
+        assert_eq!(transcript.title.as_deref(), Some("요청 보기 만들기"));
+        assert_eq!(transcript.custom_title.as_deref(), Some(""));
+        let people: Vec<_> = transcript
+            .events
+            .iter()
+            .filter(|event| event.kind == LabelEventKind::Human)
+            .collect();
+        assert_eq!(people.len(), 3, "Grok's own wake is no one's request");
+        assert_eq!(people[0].text, "요청 보기를 만들어줘\n긴 요청의 둘째 줄");
+        assert_eq!(people[0].at_unix_ms, START);
+        assert_eq!(people[1].sender.as_deref(), Some("ci-lead"));
+        assert_eq!((people[2].text.as_str(), people[2].images), ("", 1));
+        let replies: Vec<_> = transcript
+            .events
+            .iter()
+            .filter(|event| event.kind == LabelEventKind::Assistant)
+            .collect();
+        assert_eq!(replies.len(), 1, "a turn's text runs are one answer");
+        assert_eq!(
+            replies[0].text,
+            "PR을 열었습니다: https://github.com/acme/app/pull/12\n\n예전 것은 https://github.com/acme/app/pull/99 입니다"
+        );
+        assert_eq!(replies[0].at_unix_ms, START + 129_000);
+        assert_eq!(sighted(&transcript, 12).unwrap().at_unix_ms, START + 30_000);
+        assert!(sighted(&transcript, 99).is_none());
+        assert_eq!(
+            transcript.confirmed.native_session_id.as_deref(),
+            Some(GROK_ID)
+        );
+        assert_eq!(user_turn(&transcript), None);
+        assert_eq!(
+            transcript.turns.as_ref().unwrap().waiting(),
+            Some(Waiting::Nothing)
+        );
+        assert!(transcript.subagents.is_empty());
+    }
+
+    #[test]
+    fn the_blocks_of_one_prompt_are_one_message_even_across_reads() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        let block = |content: serde_json::Value| {
+            json!({"sessionUpdate":"user_message_chunk","content":content,
+                "_meta":{"modelId":"grok-build","promptIndex":4}})
+        };
+        native.append(
+            block(json!({"type":"text","text":"이 화면을 봐줘"})),
+            json!({}),
+        );
+        native.append(
+            block(json!({"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"})),
+            json!({}),
+        );
+        let next = native.read().unwrap();
+        assert_eq!(next.events.len(), 1);
+        assert_eq!(
+            (next.events[0].text.as_str(), next.events[0].images),
+            ("이 화면을 봐줘", 1)
+        );
+        let whole =
+            hide_session::parse_events(Agent::Grok, &fs::read_to_string(&native.path).unwrap());
+        assert_eq!(
+            whole
+                .events
+                .iter()
+                .filter(|event| event.kind == hide_session::EventKind::Human)
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn an_unanswered_question_waits_with_its_choices_until_its_tool_call_ends() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        native.append(
+            json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"배포해줘"},
+                "_meta":{"promptIndex":4}}),
+            json!({}),
+        );
+        let input = json!({"questions":[{"question":"배포 대상을 골라주세요",
+            "options":[{"label":"미리보기","description":"preview"},{"label":"운영"}],"multi_select":false}]});
+        native.append(
+            json!({"sessionUpdate":"tool_call","toolCallId":"call-ask","title":"ask_user_question",
+                "rawInput":input,"_meta":{"x.ai/tool":{"version":1,"name":"ask_user_question","kind":"ask_user"}}}),
+            json!({"promptId":"p-4"}),
+        );
+        native.append(
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"call-ask","title":"Ask: 배포 대상을 골라주세요",
+                "kind":"other","rawInput":input,"_meta":{"x.ai/tool":{"version":1,"name":"ask_user_question","kind":"ask_user"}}}),
+            json!({"promptId":"p-4"}),
+        );
+        let asked = native.read().unwrap();
+        let fact = user_turn(&asked).unwrap();
+        assert_eq!(fact.kind, UserTurnKind::Question);
+        let content = fact.content.unwrap();
+        assert_eq!(content.text(), "배포 대상을 골라주세요");
+        assert_eq!(content.choices(), ["미리보기", "운영"]);
+        native.resume(&asked);
+        native.append(
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"call-ask","status":"completed",
+                "content":[{"type":"content","content":{"type":"text","text":"미리보기"}}]}),
+            json!({"promptId":"p-4"}),
+        );
+        let answered = native.read().unwrap();
+        assert_eq!(user_turn(&answered), None);
+        assert!(answered.events.is_empty(), "an answer is no message");
+
+        native.resume(&answered);
+        native.append(
+            json!({"sessionUpdate":"tool_call","toolCallId":"call-ask-2","title":"ask_user_question",
+                "rawInput":input,"_meta":{"x.ai/tool":{"kind":"ask_user"}}}),
+            json!({"promptId":"p-4"}),
+        );
+        let again = native.read().unwrap();
+        assert_eq!(user_turn(&again).unwrap().kind, UserTurnKind::Question);
+        native.resume(&again);
+        native.append(
+            json!({"sessionUpdate":"turn_completed","prompt_id":"p-4","stop_reason":"cancelled"}),
+            json!({}),
+        );
+        let cancelled = native.read().unwrap();
+        assert_eq!(user_turn(&cancelled), None, "a cancelled turn asks nothing");
+        assert_eq!(cancelled.events[0].kind, LabelEventKind::Interrupted);
+    }
+
+    #[test]
+    fn plan_approval_follows_plan_mode_state_and_carries_the_plan_text() {
+        let mut native = Native::new();
+        let folder = native.folder().to_path_buf();
+        let plan_mode = |awaiting: bool, state: &str| {
+            fs::write(
+                folder.join("plan_mode.json"),
+                serde_json::to_vec_pretty(&json!({"state":state,"was_previously_active":true,
+                    "reminder_count":0,"pending_exit_reminder":false,"awaiting_plan_approval":awaiting}))
+                .unwrap(),
+            )
+            .unwrap();
+        };
+        plan_mode(false, "Active");
+        fs::write(
+            native.folder().join("plan.md"),
+            "## 계획\n요청 보기를 나눈다\n",
+        )
+        .unwrap();
+        let planning = native.read().unwrap();
+        assert_eq!(
+            user_turn(&planning),
+            None,
+            "a plan being written is no wait"
+        );
+        native.resume(&planning);
+
+        plan_mode(true, "Active");
+        let waiting = native.read().unwrap();
+        assert!(
+            waiting.events.is_empty(),
+            "the state is read, no record replayed"
+        );
+        let fact = user_turn(&waiting).unwrap();
+        assert_eq!(fact.kind, UserTurnKind::PlanApproval);
+        assert_eq!(fact.content.unwrap().text(), "## 계획\n요청 보기를 나눈다");
+        native.resume(&waiting);
+
+        let long = "가".repeat(4_000);
+        fs::write(native.folder().join("plan.md"), &long).unwrap();
+        let bounded = user_turn(&native.read().unwrap()).unwrap().content.unwrap();
+        assert!(bounded.truncated());
+        assert!(long.starts_with(bounded.text()));
+
+        plan_mode(false, "Inactive");
+        assert_eq!(user_turn(&native.read().unwrap()), None);
+        fs::write(
+            native.folder().join("plan_mode.json"),
+            "{\"awaiting_plan_approval\":\"yes\"",
+        )
+        .unwrap();
+        assert!(
+            native.read().is_err(),
+            "an unreadable state is refused, never guessed"
+        );
+    }
+
+    #[test]
+    fn current_titles_come_from_the_summary_and_a_cleared_rename_revokes_them() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        native.summary(|summary| {
+            summary["generated_title"] = json!("새 이름");
+            summary["title_is_manual"] = json!(true);
+        });
+        let renamed = native.read().unwrap();
+        assert!(renamed.events.is_empty());
+        assert_eq!(
+            (renamed.title.as_deref(), renamed.custom_title.as_deref()),
+            (Some(""), Some("새 이름"))
+        );
+        native.resume(&renamed);
+        native.summary(|summary| {
+            summary.as_object_mut().unwrap().remove("generated_title");
+        });
+        let cleared = native.read().unwrap();
+        assert_eq!(
+            (cleared.title.as_deref(), cleared.custom_title.as_deref()),
+            (Some(""), Some(""))
+        );
+    }
+
+    #[test]
+    fn id_and_path_prove_one_owner_and_a_wrong_checkout_folder_or_kind_is_refused() {
+        let mut native = Native::new();
+        let by_id = native.read().unwrap();
+        native.request.reference_kind = "path".into();
+        native.request.reference_value = native.path.display().to_string();
+        let by_path = native.read().unwrap();
+        assert_eq!(by_path.confirmed.owner, by_id.confirmed.owner);
+        let other = native.home.path().join("other");
+        fs::create_dir(&other).unwrap();
+        native.request.cwd = Some(other.display().to_string());
+        assert!(native.read().is_err());
+        assert_eq!(
+            hide_session::confirm_session_file(
+                native.home.path(),
+                Agent::Grok,
+                &native.path,
+                None,
+                other.to_str()
+            )
+            .unwrap_err()
+            .to_string(),
+            "label_session_cwd_mismatch"
+        );
+        native.request.cwd = Some(native.cwd.display().to_string());
+
+        let confirm = |path: &Path| {
+            hide_session::confirm_session_file(
+                native.home.path(),
+                Agent::Grok,
+                path,
+                None,
+                native.cwd.to_str(),
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        };
+        // The same files in another group or under another id's folder.
+        let moved = native
+            .home
+            .path()
+            .join(".grok/sessions/%2Felsewhere")
+            .join(GROK_ID);
+        fs::create_dir_all(&moved).unwrap();
+        for name in ["updates.jsonl", "summary.json"] {
+            fs::copy(native.folder().join(name), moved.join(name)).unwrap();
+        }
+        assert_eq!(
+            confirm(&moved.join("updates.jsonl")).unwrap_err(),
+            "label_session_default_directory_required"
+        );
+        let renamed = native
+            .folder()
+            .with_file_name("0199b000-0000-7000-8000-00000000000f");
+        fs::create_dir(&renamed).unwrap();
+        for name in ["updates.jsonl", "summary.json"] {
+            fs::copy(native.folder().join(name), renamed.join(name)).unwrap();
+        }
+        assert_eq!(
+            confirm(&renamed.join("updates.jsonl")).unwrap_err(),
+            "label_session_id_mismatch"
+        );
+        let outside = native.home.path().join("updates.jsonl");
+        fs::copy(&native.path, &outside).unwrap();
+        assert!(confirm(&outside).is_err());
+
+        for kind in ["subagent", "subagent_fork", "headless"] {
+            native.summary(|summary| summary["session_kind"] = json!(kind));
+            assert_eq!(confirm(&native.path).unwrap_err(), "label_session_not_root");
+        }
+        native.summary(|_| {});
+        #[cfg(unix)]
+        {
+            let summary = native.folder().join("summary.json");
+            let target = native.home.path().join("planted.json");
+            fs::rename(&summary, &target).unwrap();
+            std::os::unix::fs::symlink(&target, &summary).unwrap();
+            assert_eq!(confirm(&native.path).unwrap_err(), "label_session_linked");
+        }
+    }
+
+    #[test]
+    fn resume_is_routed_only_from_the_sessions_own_checkout_group() {
+        let native = Native::new();
+        assert_eq!(native.route(&native.cwd), Ok(()));
+        let other = native.home.path().join("other");
+        fs::create_dir(&other).unwrap();
+        assert!(native.route(&other).is_err());
+        let located = SessionLocator::new(native.home.path())
+            .locate(
+                "pane",
+                Agent::Grok,
+                Some(&SessionIdentity::id(GROK_ID)),
+                native.cwd.to_str(),
+            )
+            .unwrap();
+        assert_eq!(located, native.path);
+        assert!(
+            SessionLocator::new(native.home.path())
+                .locate(
+                    "pane",
+                    Agent::Grok,
+                    Some(&SessionIdentity::id("0199b000-0000-7000-8000-0000000000aa")),
+                    native.cwd.to_str()
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn catalog_and_link_reads_list_only_root_conversations() {
+        let native = Native::new();
+        let child = native
+            .folder()
+            .with_file_name("0199b000-0000-7000-8000-0000000000c1");
+        fs::create_dir(&child).unwrap();
+        fs::copy(&native.path, child.join("updates.jsonl")).unwrap();
+        let mut summary: serde_json::Value =
+            serde_json::from_slice(&fs::read(native.folder().join("summary.json")).unwrap())
+                .unwrap();
+        summary["info"]["id"] = json!("0199b000-0000-7000-8000-0000000000c1");
+        summary["session_kind"] = json!("subagent");
+        fs::write(child.join("summary.json"), summary.to_string()).unwrap();
+        let project = hide_project::resolve(&native.cwd, "local").unwrap();
+        let sessions = SessionCatalog::new(native.home.path(), "local")
+            .project_sessions(&project)
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, GROK_ID);
+        assert_eq!(sessions[0].agent, Agent::Grok);
+        assert_eq!(sessions[0].title.as_deref(), Some("요청 보기 만들기"));
+        assert_eq!(
+            sessions[0].first_human_request.as_deref(),
+            Some("요청 보기를 만들어줘 긴 요청의 둘째 줄")
+        );
+        let answer = hide_session::links::read(
+            native.home.path(),
+            &[hide_session::links::ReadRequest {
+                agent: Agent::Grok,
+                path: native.path.display().to_string(),
+                checkpoint: None,
+            }],
+        )
+        .remove(0);
+        assert!(answer.error.is_none());
+        assert_eq!(answer.facts.session_id.as_deref(), Some(GROK_ID));
+        assert_eq!(answer.facts.prs.len(), 1);
+        let candidates = hide_session::links::candidates(native.home.path(), 0, None).unwrap();
+        assert!(
+            candidates
+                .iter()
+                .filter(|candidate| candidate.agent == Agent::Grok)
+                .all(|candidate| candidate.path.ends_with("updates.jsonl"))
+        );
+    }
+
+    #[test]
+    fn a_torn_record_waits_and_replacement_or_truncation_starts_over_without_duplicates() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        let torn = r#"{"timestamp":1790989400,"method":"session/update","params":{"sessionId":"x","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"반"#;
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&native.path)
+            .unwrap()
+            .write_all(torn.as_bytes())
+            .unwrap();
+        let waiting = native.read().unwrap();
+        assert!(waiting.events.is_empty());
+        native.resume(&waiting);
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&native.path)
+            .unwrap()
+            .write_all(
+                "쯤\"}},\"_meta\":{\"promptId\":\"p-5\",\"agentTimestampMs\":1790989400000}}}\n"
+                    .as_bytes(),
+            )
+            .unwrap();
+        let completed = native.read().unwrap();
+        assert_eq!(completed.events.len(), 1);
+        assert_eq!(completed.events[0].text, "반쯤");
+        native.resume(&completed);
+
+        let body = fs::read(&native.path).unwrap();
+        let temporary = native.folder().join("updates.tmp");
+        fs::write(&temporary, &body).unwrap();
+        fs::rename(&temporary, &native.path).unwrap();
+        let replaced = native.read().unwrap();
+        assert_eq!(replaced.rescanned.as_deref(), Some("replaced"));
+        assert_eq!(
+            replaced
+                .events
+                .iter()
+                .filter(|event| event.kind == LabelEventKind::Human)
+                .count(),
+            3
+        );
     }
 }
 

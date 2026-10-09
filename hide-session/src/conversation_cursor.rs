@@ -141,15 +141,20 @@ impl ConversationCursor {
     ) -> Result<ParsedSession> {
         self.has_more = false;
         self.read_bytes = 0;
-        let title = if agent == Agent::Omp {
-            Some(read_current_title(
+        let mut plan_hold = None;
+        let title = match agent {
+            Agent::Omp => Some(read_current_title(
                 path,
                 file,
                 budget,
                 &mut self.read_bytes,
-            )?)
-        } else {
-            None
+            )?),
+            Agent::Grok => {
+                let (title, hold) = read_grok_state(path, budget, &mut self.read_bytes)?;
+                plan_hold = hold;
+                Some(title)
+            }
+            _ => None,
         };
         let remaining = budget.saturating_sub(self.read_bytes);
         let mut appended_read_bytes = 0;
@@ -257,6 +262,8 @@ impl ConversationCursor {
             pending.clear();
         }
         parsed.links = found.finish();
+        parsed.coalesce();
+        parsed.plan_hold = plan_hold;
         if let Some((title, custom_title)) = title {
             parsed.title = Some(title);
             parsed.custom_title = Some(custom_title);
@@ -271,6 +278,25 @@ impl ConversationCursor {
         self.has_more = has_more;
         Ok(parsed)
     }
+}
+
+/// Grok's current title and plan wait live beside its conversation, each
+/// replaced whole by Grok; every byte read is charged to this poll.
+fn read_grok_state(
+    path: &Path,
+    budget: u64,
+    read_bytes: &mut u64,
+) -> Result<((String, String), Option<crate::turns::UserTurnContent>)> {
+    let refused = |error: anyhow::Error| SessionError::Checkpoint(error.to_string());
+    let summary = crate::grok::summary(path, read_bytes).map_err(refused)?;
+    let hold = crate::grok::plan_hold(path, read_bytes).map_err(refused)?;
+    if *read_bytes > budget.min(crate::SESSION_INCREMENT_READ_LIMIT_BYTES) {
+        return Err(SessionError::Capacity {
+            resource: "title_read_bytes",
+            limit: budget,
+        });
+    }
+    Ok((summary.title, hold))
 }
 
 /// Refresh the physical first line through the same descriptor without
@@ -644,7 +670,7 @@ impl LargeRecord {
             return false;
         }
         match agent {
-            Agent::OpenCode | Agent::Pi | Agent::Omp => false,
+            Agent::OpenCode | Agent::Grok | Agent::Pi | Agent::Omp => false,
             Agent::Codex => {
                 let native_turn = match (self.root_kind.as_str(), self.payload_kind.as_str()) {
                     ("response_item", "function_call") => self.payload_question,

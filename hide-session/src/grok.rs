@@ -1,0 +1,400 @@
+//! Grok 1.0.46 sessions: one directory per session,
+//! `~/.grok/sessions/<url-encoded cwd>/<session id>/`.
+//!
+//! `updates.jsonl` is the append-only conversation authority (one
+//! `{timestamp, method, params}` envelope per line); `summary.json` owns the
+//! native id, the cwd and the current title, and is replaced whole on every
+//! change; `plan_mode.json` says whether plan approval is awaited and
+//! `plan.md` holds that plan. Semantics come from xai-org/grok-build
+//! (`xai-grok-shell/src/session/`, `xai-grok-config/src/paths.rs`) and the
+//! bundled user guide, `17-sessions.md` and `19-plan-mode.md`.
+
+use std::fs::File;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Result, anyhow};
+use serde_json::Value;
+
+use crate::turns::{TurnMark, UserTurnContent};
+use crate::{ConversationEvent, EventKind, LineResult, SkipReason};
+
+/// The conversation file inside a session directory.
+pub(crate) const UPDATES: &str = "updates.jsonl";
+const SUMMARY: &str = "summary.json";
+const PLAN_MODE: &str = "plan_mode.json";
+const PLAN: &str = "plan.md";
+/// Grok names a cwd's group by its URL encoding up to this many bytes and
+/// by a slug and a blake3 prefix above it; only the first is proven here.
+const GROUP_NAME_LIMIT: usize = 255;
+const PLAN_MODE_LIMIT_BYTES: u64 = 4 * 1024;
+
+pub(crate) struct Summary {
+    pub id: String,
+    pub cwd: PathBuf,
+    /// The automatic title and the operator's `/rename`, with an empty
+    /// string standing for none so a cleared title revokes an older one.
+    pub title: (String, String),
+}
+
+/// `urlencoding::encode` of the cwd, which Grok uses as the group name.
+pub(crate) fn group_name(cwd: &Path) -> Result<String> {
+    let spelling = cwd
+        .to_str()
+        .ok_or_else(|| anyhow!("label_session_cwd_unconfirmed"))?;
+    let mut name = String::with_capacity(spelling.len());
+    for byte in spelling.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            name.push(byte as char);
+        } else {
+            name.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    if name.len() > GROUP_NAME_LIMIT {
+        return Err(anyhow!("session_route_unsupported_cwd"));
+    }
+    Ok(name)
+}
+
+/// The group directory of a session's conversation file.
+pub(crate) fn group_of(path: &Path) -> Option<&Path> {
+    if path.file_name()? != UPDATES {
+        return None;
+    }
+    path.parent()?.parent()
+}
+
+/// A bounded, nonblocking read of a regular, unlinked sibling of the
+/// conversation file. `Ok(None)` means the file is not there.
+fn sibling(path: &Path, name: &str, limit: u64, read_bytes: &mut u64) -> Result<Option<Vec<u8>>> {
+    let file_path = path
+        .parent()
+        .ok_or_else(|| anyhow!("label_session_metadata_unconfirmed"))?
+        .join(name);
+    match std::fs::symlink_metadata(&file_path) {
+        Ok(metadata) if metadata.file_type().is_file() => {}
+        Ok(_) => return Err(anyhow!("label_session_linked")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(anyhow!("label_session_metadata_read_failed")),
+    }
+    let file: File = match crate::open_session_file(&file_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(anyhow!("label_session_metadata_read_failed")),
+    };
+    if hide_platform::fs::identity::link_count(&file).ok() != Some(1) {
+        return Err(anyhow!("label_session_linked"));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| anyhow!("label_session_metadata_read_failed"))?;
+    *read_bytes += bytes.len() as u64;
+    Ok(Some(bytes))
+}
+
+/// Native identity, cwd and title from `summary.json`. A subagent child,
+/// a headless run or a hidden session is no pane's root conversation.
+pub(crate) fn summary(path: &Path, read_bytes: &mut u64) -> Result<Summary> {
+    let limit = crate::SESSION_LINE_LIMIT_BYTES as u64;
+    let bytes = sibling(path, SUMMARY, limit, read_bytes)?
+        .ok_or_else(|| anyhow!("label_session_metadata_unconfirmed"))?;
+    if bytes.len() as u64 > limit {
+        return Err(anyhow!("label_session_metadata_line_capacity"));
+    }
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| anyhow!("label_session_metadata_unconfirmed"))?;
+    let id = value
+        .pointer("/info/id")
+        .and_then(Value::as_str)
+        .filter(|id| crate::label_owner::valid_native_id(id))
+        .ok_or_else(|| anyhow!("label_session_id_invalid"))?;
+    let directory = path.parent().and_then(Path::file_name);
+    if directory.is_none_or(|name| name != id) {
+        return Err(anyhow!("label_session_id_mismatch"));
+    }
+    let cwd = value
+        .pointer("/info/cwd")
+        .and_then(Value::as_str)
+        .filter(|cwd| !cwd.chars().any(char::is_control))
+        .map(PathBuf::from)
+        .filter(|cwd| cwd.is_absolute())
+        .ok_or_else(|| anyhow!("label_session_cwd_unconfirmed"))?;
+    let kind = value.get("session_kind").and_then(Value::as_str);
+    if kind.is_some_and(|kind| kind.starts_with("subagent") || kind == "headless")
+        || value["hidden"] == true
+    {
+        return Err(anyhow!("label_session_not_root"));
+    }
+    let title = match value.get("generated_title") {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(title)) => title.trim().to_owned(),
+        Some(_) => return Err(anyhow!("label_session_metadata_unconfirmed")),
+    };
+    let title = match value.get("title_is_manual") {
+        None | Some(Value::Bool(false)) => (title, String::new()),
+        Some(Value::Bool(true)) => (String::new(), title),
+        Some(_) => return Err(anyhow!("label_session_metadata_unconfirmed")),
+    };
+    Ok(Summary {
+        id: id.to_owned(),
+        cwd,
+        title,
+    })
+}
+
+/// The plan awaiting the operator's approval, if any: `plan_mode.json`
+/// says `Active` and `awaiting_plan_approval`, the only native record of
+/// the wait (an approval re-parked on resume writes no tool call). Its text
+/// is `plan.md`, bounded by the user-turn content limit.
+pub(crate) fn plan_hold(path: &Path, read_bytes: &mut u64) -> Result<Option<UserTurnContent>> {
+    let Some(bytes) = sibling(path, PLAN_MODE, PLAN_MODE_LIMIT_BYTES, read_bytes)? else {
+        return Ok(None);
+    };
+    if bytes.len() as u64 > PLAN_MODE_LIMIT_BYTES {
+        return Err(anyhow!("label_session_metadata_line_capacity"));
+    }
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| anyhow!("label_session_metadata_unconfirmed"))?;
+    let awaiting = match value.get("awaiting_plan_approval") {
+        None => false,
+        Some(Value::Bool(awaiting)) => *awaiting,
+        Some(_) => return Err(anyhow!("label_session_metadata_unconfirmed")),
+    };
+    if !awaiting || value["state"] != "Active" {
+        return Ok(None);
+    }
+    let limit = (crate::turns::content::TEXT_LIMIT_BYTES + 4) as u64;
+    let text = match sibling(path, PLAN, limit, read_bytes)? {
+        Some(mut bytes) => {
+            bytes.truncate(limit as usize);
+            // A cut inside the last character drops that character only.
+            let valid = match std::str::from_utf8(&bytes) {
+                Ok(_) => bytes.len(),
+                Err(error) if error.error_len().is_none() => error.valid_up_to(),
+                Err(_) => return Err(anyhow!("label_session_metadata_unconfirmed")),
+            };
+            bytes.truncate(valid);
+            String::from_utf8(bytes).expect("checked UTF-8 prefix")
+        }
+        None => String::new(),
+    };
+    Ok(Some(UserTurnContent::new(text.trim(), [])))
+}
+
+fn update(item: &Value) -> Option<(&str, &Value)> {
+    let update = item.pointer("/params/update")?;
+    let kind = update.get("sessionUpdate")?.as_str()?;
+    Some((kind, update))
+}
+
+fn is_extension(item: &Value) -> bool {
+    item["method"] == "_x.ai/session/update"
+}
+
+/// The record's own time: the agent's millisecond stamp, which a fork
+/// keeps, ahead of the envelope's whole seconds, which a fork rewrites.
+fn at(item: &Value) -> std::result::Result<u64, SkipReason> {
+    match item.pointer("/params/_meta/agentTimestampMs") {
+        Some(value) => value
+            .as_u64()
+            .filter(|ms| *ms >= 10_000_000_000)
+            .ok_or(SkipReason::InvalidTimestamp),
+        None => crate::timestamp_ms(item.get("timestamp")),
+    }
+}
+
+/// The native classifier of a tool call, which survives client renames.
+fn tool_kind(update: &Value) -> Option<&str> {
+    update.pointer("/_meta/x.ai~1tool/kind")?.as_str()
+}
+
+fn tool_text(update: &Value) -> Option<String> {
+    let text = update
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter_map(|block| block.pointer("/content/text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.trim().is_empty()).then_some(text)
+}
+
+fn terminal(update: &Value) -> bool {
+    matches!(update["status"].as_str(), Some("completed" | "failed"))
+}
+
+pub(crate) fn parse_line(item: &Value) -> LineResult {
+    let Some((kind, update)) = update(item) else {
+        return LineResult::Ignore;
+    };
+    if is_extension(item) {
+        // A cancelled or crashed turn is the conversation's interruption.
+        return match (kind, update["stop_reason"].as_str()) {
+            ("turn_completed", Some("cancelled" | "interrupted")) => match at(item) {
+                Ok(at) => LineResult::Event(ConversationEvent::new(
+                    "assistant",
+                    EventKind::Interrupted,
+                    at,
+                    "",
+                )),
+                Err(reason) => LineResult::Skip(reason),
+            },
+            _ => LineResult::Ignore,
+        };
+    }
+    match kind {
+        "user_message_chunk" => user_chunk(item, update),
+        "agent_message_chunk" => {
+            let Some(text) = update
+                .pointer("/content/text")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+            else {
+                return LineResult::Ignore;
+            };
+            let at = match at(item) {
+                Ok(at) => at,
+                Err(reason) => return LineResult::Skip(reason),
+            };
+            let turn = item
+                .pointer("/params/_meta/promptId")
+                .and_then(Value::as_str)
+                .map(|turn| format!("a:{turn}"));
+            LineResult::Event(
+                ConversationEvent::new("assistant", EventKind::Assistant, at, text).with_part(turn),
+            )
+        }
+        "tool_call_update" if terminal(update) => {
+            let Some(text) = tool_text(update) else {
+                return LineResult::Ignore;
+            };
+            match at(item) {
+                Ok(at) => LineResult::Sightings(crate::sightings_in(&[&text], at)),
+                Err(_) => LineResult::Ignore,
+            }
+        }
+        // Thoughts, tool calls, the TODO plan, mode and command catalogs
+        // are not conversation messages.
+        _ => LineResult::Ignore,
+    }
+}
+
+/// One record per content block of a prompt; the blocks of one prompt
+/// share its `promptIndex` and become one message.
+fn user_chunk(item: &Value, update: &Value) -> LineResult {
+    let meta = update.get("_meta");
+    let flag = |name: &str| meta.and_then(|meta| meta.get(name)) == Some(&Value::Bool(true));
+    if flag("hostTurn") {
+        return LineResult::Ignore;
+    }
+    let content = &update["content"];
+    let (text, images) = match content["type"].as_str() {
+        Some("text") => {
+            let typed = flag("interjection")
+                .then(|| meta.and_then(|meta| meta.get("displayText")))
+                .flatten();
+            match typed
+                .or_else(|| content.get("text"))
+                .and_then(Value::as_str)
+            {
+                Some(text) => (text.to_owned(), 0),
+                None => return LineResult::Ignore,
+            }
+        }
+        Some("image") => (String::new(), 1),
+        _ => return LineResult::Ignore,
+    };
+    if text.trim().is_empty() && images == 0 {
+        return LineResult::Ignore;
+    }
+    let at = match at(item) {
+        Ok(at) => at,
+        Err(reason) => return LineResult::Skip(reason),
+    };
+    let injected = flag("hideFromScrollback");
+    let kind = if injected || crate::has_injected_prefix(&text) {
+        EventKind::Injected
+    } else {
+        EventKind::Human
+    };
+    let prompt = meta
+        .and_then(|meta| meta.get("promptIndex"))
+        .and_then(Value::as_u64)
+        .map(|index| format!("u:{index}"));
+    LineResult::Event(
+        ConversationEvent::new("user", kind, at, text)
+            .with_images(images)
+            .with_provider_injected(injected)
+            .with_part(prompt),
+    )
+}
+
+/// Grok's waits: an unanswered `ask_user_question` holds a question, its
+/// terminal tool update answers it, and `turn_completed` ends the turn.
+/// Plan approval is read from `plan_mode.json` instead ([`plan_hold`]).
+pub(crate) fn turn(item: &Value) -> std::result::Result<Option<TurnMark>, SkipReason> {
+    use crate::turns::ToolTurnMark;
+    let Some((kind, update)) = update(item) else {
+        return Ok(None);
+    };
+    let call = || crate::turns::native::id(update.get("toolCallId"));
+    if is_extension(item) {
+        if kind != "turn_completed" {
+            return Ok(None);
+        }
+        let turn = crate::turns::native::id(update.get("prompt_id"))?;
+        return Ok(Some(match update["stop_reason"].as_str() {
+            Some("cancelled" | "interrupted" | "error" | "rate_limit") => {
+                TurnMark::Aborted { turn }
+            }
+            _ => TurnMark::Completed { turn },
+        }));
+    }
+    match kind {
+        // A turn the operator did not type (a task completion wake) still
+        // starts a turn; a typed one starts it through its message event.
+        "user_message_chunk"
+            if update.pointer("/_meta/hideFromScrollback") == Some(&Value::Bool(true)) =>
+        {
+            Ok(Some(TurnMark::HumanTurn))
+        }
+        "tool_call" | "tool_call_update" if terminal(update) => {
+            Ok(call()?.map(|call| TurnMark::Tools(vec![ToolTurnMark::Answered { call }])))
+        }
+        "tool_call" | "tool_call_update"
+            if tool_kind(update) == Some("ask_user") || update["title"] == "ask_user_question" =>
+        {
+            let call = call()?.ok_or(SkipReason::UserTurnInvalid)?;
+            let content = update
+                .get("rawInput")
+                .and_then(crate::turns::native::question_content);
+            Ok(Some(TurnMark::Tools(vec![ToolTurnMark::Asked {
+                call,
+                content,
+            }])))
+        }
+        _ => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_group_is_the_url_encoded_cwd_and_a_hashed_name_is_never_guessed() {
+        // urlencoding 2.1.3: every byte but `A-Za-z0-9-_.~`, upper-case hex.
+        assert_eq!(
+            group_name(Path::new("/Users/me/my proj~1/요")).unwrap(),
+            "%2FUsers%2Fme%2Fmy%20proj~1%2F%EC%9A%94"
+        );
+        let longest = format!("/{}", "a".repeat(252));
+        assert_eq!(group_name(Path::new(&longest)).unwrap().len(), 255);
+        let hashed = format!("/{}", "a".repeat(253));
+        assert_eq!(
+            group_name(Path::new(&hashed)).unwrap_err().to_string(),
+            "session_route_unsupported_cwd"
+        );
+    }
+}
