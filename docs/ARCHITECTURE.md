@@ -1188,6 +1188,7 @@ Nothing runs under the runtime mutex: conversation reads run on the worker's rea
   An id past the native bounds is the same reported failure it is in a retained record.
   Only conversation text, an envelope the scan cannot classify, or an escaped or non-ASCII id fails the read, because Claude Code writes a tool result such as a screenshot inline as base64, and refusing it would stop every later read of the session, its labels and its doorbell.
   A checkpoint an older scan took inside such a record kept no ids, so the cursor rereads that record from its start.
+  Grok's records are read by its own scan instead (`grok::LargeLine`, above), which keeps a prompt's, answer's or question's turn effect without its text, because Grok also writes a pasted image inline.
   The tracker rides on the read's request and answer beside the checkpoint, so an incremental read continues the turn it was in, a read from the start or a rescan starts over, and a record replayed from the anchor is not folded twice.
   The record keeps the tracker and the Herdr `state_change_seq` the read was asked under (`PaneRecord::turns`, `turns_seq`, set only once the backlog is read), and the overlay answers the wait (`LabelOverlay::waiting`) only for that state and the proven session, so a fact read for an earlier state never stands for a newer one.
   A failed reread invalidates that proof and publishes no structured fact, while retaining the bounded tracker/checkpoint for a later successful continuation and the existing unavailable-read retry interval.
