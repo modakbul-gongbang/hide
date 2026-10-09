@@ -176,7 +176,11 @@ pub(crate) fn of(
     };
     let demand = matches!(
         tag,
-        Some(super::sessions::Tag::Approval | super::sessions::Tag::Answer)
+        Some(
+            super::sessions::Tag::Approval
+                | super::sessions::Tag::Answer
+                | super::sessions::Tag::Blocked
+        )
     );
     if !demand && let Some(child) = agent.raised_children.first() {
         return Header {
@@ -210,6 +214,7 @@ pub(crate) fn of(
     let (kind, tone, action) = match tag {
         Some(Tag::Approval) => ("approval", "warning", None),
         Some(Tag::Answer) => ("answer", "warning", None),
+        Some(Tag::Blocked) => ("blocked", "warning", None),
         Some(Tag::Fix) => ("fix", "error", duty.map(action)),
         Some(Tag::Review) => {
             let action = duty.map(action);

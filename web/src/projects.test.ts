@@ -24,7 +24,7 @@ function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
   };
 }
 
-const NO_MARKS = { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 };
+const NO_MARKS = { error: 0, approval: 0, question: 0, working: 0, stopped: 0, done: 0, idle: 0 };
 
 describe("projectRows", () => {
   it("draws pinned rows under their header, then the activity list with the device fold", () => {

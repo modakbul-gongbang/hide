@@ -15,10 +15,11 @@ import { parseToken, type LinkTarget } from "../src/terminalLinks";
 // --- groups ------------------------------------------------------------------
 
 /** The verbs that are the operator's to do, the groups the tile counts (D-06). */
-export const TODO_VERBS: readonly RequestVerb[] = ["answer", "fix", "review", "stopped", "result"];
+export const TODO_VERBS: readonly RequestVerb[] = ["answer", "blocked", "fix", "review", "stopped", "result"];
 
 export const VERB_LABEL: Record<RequestVerb, MessageKey> = {
   answer: "requests.verb.answer",
+  blocked: "requests.verb.blocked",
   fix: "requests.verb.fix",
   review: "requests.verb.review",
   stopped: "requests.verb.stopped",
@@ -231,6 +232,7 @@ export function resultLine(row: RequestRow): string {
 const END_LABEL: Record<LabelEnd, MessageKey> = {
   working: "requests.end.working",
   question: "requests.end.question",
+  blocked: "requests.end.blocked",
   done: "requests.end.done",
   waiting: "requests.end.waiting",
   unfinished: "requests.end.unfinished",

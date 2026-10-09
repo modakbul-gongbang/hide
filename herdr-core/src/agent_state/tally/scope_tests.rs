@@ -17,7 +17,7 @@ fn rows() -> Vec<SidebarAgentSnapshot> {
         }
         .into();
         row.delegated = row.pane_id == "child";
-        row.waiting_on_descendants = row.pane_id == "root";
+        row.wait = (row.pane_id == "root").then_some(crate::model::AgentWait::Children);
         row.demand = if matches!(row.pane_id.as_str(), "child" | "read") {
             "question"
         } else {

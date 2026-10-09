@@ -26,14 +26,14 @@ test("roots stay in one sidebar and both badges open direct children by pointer 
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     const parentRow = page.locator(`nav[data-sidebar] [data-pane="${parent}"]`).first();
-    await expect(parentRow).toHaveAttribute("data-waiting", "true", { timeout: 20_000 });
+    await expect(parentRow).toHaveAttribute("data-waiting", "children", { timeout: 20_000 });
     await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
     await expect(page.locator(`nav[data-sidebar] [data-pane="${child}"]`)).toHaveCount(0);
     await expect(parentRow.locator('[data-badge-part="working"]')).toHaveText("1");
     continueFixtureTranscript(herdr, childSession, { task: LONG_TITLE, reply: QUESTION, question: true });
     await setFixtureLifecycle(herdr, child, "idle");
     await expect(parentRow.locator('[data-badge-part="question"]')).toHaveText("?1", { timeout: 20_000 });
-    await expect(parentRow).toHaveAttribute("data-waiting", "true");
+    await expect(parentRow).toHaveAttribute("data-waiting", "children");
     await expect(page.locator('[data-raised-group="needs_you"]')).toHaveCount(0);
     await expect(page.locator("[data-agent-tree-toggle]")).toHaveCount(0);
     const badge = parentRow.locator("[data-descendant-badge]");

@@ -180,9 +180,9 @@ fn a_row_without_a_label_shows_the_sessions_own_title_and_the_request() {
     assert_eq!(row["request"]["request"]["sender"]["kind"], "operator");
 }
 
-/// B14, B18, B21: an unfinished turn stops the row and a wait on something
-/// other than a pull request waits; with agent summaries off the same row
-/// is named by its own title, carries no line and never stops.
+/// B9, B15, B21: an unfinished turn stops the row, and so does a turn that
+/// says it waits when nothing proven wakes the agent; with agent summaries off
+/// the same row is named by its own title, carries no line and never stops.
 #[test]
 fn an_unfinished_turn_stops_the_row_and_summaries_off_take_every_ai_field_away() {
     use crate::labels::analysis::LabelEnd;
@@ -206,7 +206,10 @@ fn an_unfinished_turn_stops_the_row_and_summaries_off_take_every_ai_field_away()
         "idle",
         true,
     ));
-    assert_eq!(waiting["request"]["verb"], "waiting");
+    assert_eq!(
+        waiting["request"]["verb"], "stopped",
+        "a wait with no proven wake device is a stop (B15)"
+    );
 
     let off = row(&runtime_with_record(
         record(LabelEnd::Unfinished),
@@ -217,6 +220,68 @@ fn an_unfinished_turn_stops_the_row_and_summaries_off_take_every_ai_field_away()
     assert!(off["request"].get("line").is_none(), "{off}");
     assert_ne!(off["request"]["verb"], "stopped");
     assert_eq!(off["request"]["request"]["text"], "요청 보기 만들어줘");
+}
+
+/// B1, B2, B3, B4, B10, D-25: a turn that named its cause is a block in Needs
+/// You with its own mark and word and the cause as the second line; reading
+/// it moves it to Seen and keeps the dimmed cause; the agent working again
+/// ends it. An unfinished turn is a half-disc in Done, never a check, and a
+/// turn the agent reported finished keeps the check.
+#[test]
+fn a_blocked_turn_is_a_needs_you_block_and_an_unfinished_one_a_stop_not_a_check() {
+    use crate::labels::analysis::LabelEnd;
+    let record = |end, line: &str| PaneRecord {
+        goal: Some("검증 레인 정리".to_owned()),
+        line: line.to_owned(),
+        end: Some(end),
+        facts: operator_asked("검증 돌려줘"),
+        ..PaneRecord::default()
+    };
+    let blocked = row(&runtime_with_record(
+        record(LabelEnd::Blocked, "디스크 여유가 없어 검증을 못 함"),
+        "done",
+        true,
+    ));
+    assert_eq!(blocked["demand"], "error");
+    assert_eq!(blocked["group"], "needs_you");
+    assert_eq!(blocked["symbol"], "\u{25b2}");
+    assert_eq!(blocked["status_code"], "error");
+    assert_eq!(blocked["detail"], "디스크 여유가 없어 검증을 못 함");
+    assert_eq!(blocked["request"]["verb"], "blocked");
+    assert_eq!(blocked["state"]["chip_tone"]["kind"], "warning");
+    assert_eq!(blocked["state"]["attention_rank"], 0);
+
+    let stopped = row(&runtime_with_record(
+        record(LabelEnd::Unfinished, "배포 단계가 남음"),
+        "done",
+        true,
+    ));
+    assert_eq!(stopped["demand"], "none");
+    assert_eq!(stopped["group"], "done");
+    assert_eq!(stopped["symbol"], "\u{25d0}");
+    assert_eq!(stopped["status_code"], "stopped");
+    assert_eq!(stopped["detail"], "배포 단계가 남음");
+    assert_eq!(stopped["request"]["verb"], "stopped");
+    assert_eq!(stopped["state"]["chip_tone"]["kind"], "subtle");
+
+    let done = row(&runtime_with_record(
+        record(LabelEnd::Done, "검증을 끝냄"),
+        "done",
+        true,
+    ));
+    assert_eq!(done["group"], "done");
+    assert_eq!(done["symbol"], "\u{2713}");
+    assert_eq!(done["status_code"], "done");
+
+    // With no label verdict (summaries off) the same Herdr `done` is the
+    // check it always was (D-16, B17).
+    let off = row(&runtime_with_record(
+        record(LabelEnd::Blocked, "디스크 여유가 없어 검증을 못 함"),
+        "done",
+        false,
+    ));
+    assert_eq!(off["demand"], "none");
+    assert_eq!(off["symbol"], "\u{2713}");
 }
 
 /// B15, D-29: opening a finished row reads the pane as a focus would, and
@@ -513,4 +578,135 @@ fn the_enter_that_approves_a_waiting_plan_is_the_operators_submit() {
     runtime.ingest_session(Ok(projection));
     let before = enter(&mut runtime);
     assert_eq!(enter(&mut runtime), before, "blocked");
+}
+
+/// The overlay a label worker publishes after reading, under Herdr state
+/// `seq`, a Claude Code session whose process started background work.
+fn wake_overlay(seq: u64, marks: &[hide_session::turns::WakeMark]) -> LabelOverlay {
+    wake_overlay_with(seq, marks, false)
+}
+
+fn wake_overlay_with(
+    seq: u64,
+    marks: &[hide_session::turns::WakeMark],
+    summaries: bool,
+) -> LabelOverlay {
+    use hide_session::turns::{TurnMark, TurnTracker};
+    let mut turns = TurnTracker::default();
+    for (offset, mark) in marks.iter().enumerate() {
+        turns.fold(offset as u64, &TurnMark::Wake(vec![mark.clone()]));
+    }
+    let record = PaneRecord {
+        owner: hide_session::label_reference_token("claude", "id", SESSION),
+        facts: operator_asked("빌드를 돌려줘"),
+        turns: Some(turns),
+        turns_seq: Some(seq),
+        goal: Some("빌드 돌리기".to_owned()),
+        line: "CI가 끝나기를 기다림".to_owned(),
+        end: Some(crate::labels::analysis::LabelEnd::Waiting),
+        ..PaneRecord::default()
+    };
+    LabelOverlay::of_records([(&PANE.to_owned(), &record)], true, summaries)
+}
+
+fn claude_projection(status: &str, seq: u64) -> SessionSnapshotPayload {
+    let mut payload = codex_projection(status, seq);
+    for agent in &mut payload.agents {
+        agent.agent = Some("claude".to_owned());
+    }
+    payload
+}
+
+/// B18, D-26: a Claude Code session that proves a running background task
+/// keeps its stopped row waiting, in Working, for the Herdr state the read was
+/// made under; a read for another state, a finished task, or a new process
+/// leaves the row as Herdr reports it.
+#[test]
+fn a_proven_background_task_keeps_a_stopped_claude_row_waiting() {
+    use hide_session::turns::WakeMark;
+    let started = || WakeMark::Started {
+        id: "bg1".into(),
+        expires_at_unix_ms: None,
+    };
+    let mut runtime = runtime();
+
+    runtime.set_label_overlay(wake_overlay(4, &[WakeMark::Boot, started()]));
+    runtime.ingest_session(Ok(claude_projection("done", 4)));
+    let waiting = row(&runtime);
+    assert_eq!(waiting["wait"], "background", "{waiting}");
+    assert_eq!(waiting["group"], "working");
+    assert_eq!(waiting["status_code"], "waiting");
+
+    runtime.ingest_session(Ok(claude_projection("done", 5)));
+    assert_eq!(
+        row(&runtime)["wait"],
+        serde_json::Value::Null,
+        "read for another state"
+    );
+
+    runtime.set_label_overlay(wake_overlay(4, &[started()]));
+    runtime.ingest_session(Ok(claude_projection("done", 4)));
+    assert_eq!(
+        row(&runtime)["wait"],
+        serde_json::Value::Null,
+        "no process start was read"
+    );
+
+    runtime.set_label_overlay(wake_overlay(
+        4,
+        &[
+            WakeMark::Boot,
+            started(),
+            WakeMark::Ended { id: "bg1".into() },
+        ],
+    ));
+    runtime.ingest_session(Ok(claude_projection("done", 4)));
+    assert_eq!(
+        row(&runtime)["wait"],
+        serde_json::Value::Null,
+        "the task ended"
+    );
+
+    // B16: the process that ran the task is gone and nothing has begun since.
+    runtime.set_label_overlay(wake_overlay_with(
+        4,
+        &[WakeMark::Boot, started(), WakeMark::Boot],
+        true,
+    ));
+    runtime.ingest_session(Ok(claude_projection("done", 4)));
+    let gone = row(&runtime);
+    assert_eq!(gone["wait"], serde_json::Value::Null, "{gone}");
+    assert_eq!(gone["status_code"], "stopped", "{gone}");
+    assert_eq!(gone["state"]["line"]["mode"], "vanished");
+
+    let mut passed = wake_overlay(
+        4,
+        &[
+            WakeMark::Boot,
+            WakeMark::Started {
+                id: "mon".into(),
+                expires_at_unix_ms: Some(1),
+            },
+        ],
+    );
+    runtime.set_label_overlay(passed.clone());
+    runtime.ingest_session(Ok(claude_projection("done", 4)));
+    assert_eq!(
+        row(&runtime)["wait"],
+        serde_json::Value::Null,
+        "its own expiry passed"
+    );
+    passed = wake_overlay(
+        4,
+        &[
+            WakeMark::Boot,
+            WakeMark::Started {
+                id: "mon".into(),
+                expires_at_unix_ms: Some(u64::MAX),
+            },
+        ],
+    );
+    runtime.set_label_overlay(passed);
+    runtime.ingest_session(Ok(claude_projection("done", 4)));
+    assert_eq!(row(&runtime)["wait"], "background");
 }

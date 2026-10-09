@@ -23,7 +23,7 @@ it("preserves physical counts, root headings and scope-dependent request exclusi
     request: { verb, verb_since_unix_ms: 10, request: null, later_by: null, reply: null, pull_requests: [] }, ...extra,
   })) as AgentRow;
   const agents = [
-    row("root", "working", "waiting", { waiting_on_descendants: true, lineage_child_pane_ids: ["child"], close_descendant_pane_ids: ["child"] }),
+    row("root", "working", "waiting", { wait: "children", lineage_child_pane_ids: ["child"], close_descendant_pane_ids: ["child"] }),
     row("child", "seen", "answer", { delegated: true, demand: "question", lineage_parent_pane_id: "root" }),
     row("read", "seen", "answer", { demand: "question" }),
     row("done", "done", "result", { unread: true }),

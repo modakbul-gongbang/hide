@@ -76,6 +76,30 @@ pub struct Letter {
     pub bell_line: Option<String>,
 }
 
+impl Ledger {
+    /// When this pane's session sent the newest request or block letter whose
+    /// answer it still waits for at `now`. A letter from another session of
+    /// the same pane does not count: that session ended with its wait.
+    pub(crate) fn reply_awaited_since(
+        &self,
+        pane_id: &str,
+        session: Option<&str>,
+        now: u64,
+    ) -> Option<u64> {
+        session?;
+        self.letters
+            .iter()
+            .filter(|letter| {
+                letter.waiting_answer
+                    && !letter.answer_overdue(now)
+                    && letter.sender.pane_id == pane_id
+                    && letter.sender.session.as_deref() == session
+            })
+            .map(|letter| letter.created_at_unix_ms)
+            .max()
+    }
+}
+
 impl Letter {
     pub fn open(&self) -> bool {
         self.awaiting_intake() || self.waiting_answer

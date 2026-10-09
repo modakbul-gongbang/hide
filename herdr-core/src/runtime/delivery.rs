@@ -584,9 +584,25 @@ impl Runtime {
                     .any(|record| &record.id == id && !record.ended)
             });
         }
+        // Only a change in who waits for a reply moves a row's wait, so the
+        // lineage is not rebuilt for every letter's delivery step.
+        let waiters = |ledger: &Ledger| {
+            ledger
+                .letters
+                .iter()
+                .filter(|letter| letter.waiting_answer)
+                .map(|letter| (letter.sender.pane_id.clone(), letter.sender.session.clone()))
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let waiters_moved = self
+            .delivery_ledger
+            .as_ref()
+            .ok()
+            .is_none_or(|previous| waiters(previous) != waiters(&ledger));
         self.delivery_ledger = Ok(ledger);
         self.feed_link_parents();
-        changed | reopened | self.sync_session_state() | self.refresh_agent_scopes()
+        let lineage = waiters_moved && self.refresh_agent_lineage();
+        changed | reopened | lineage | self.sync_session_state() | self.refresh_agent_scopes()
     }
 
     /// The Factory host publishes which Factories exist.

@@ -86,7 +86,7 @@ describe("the buckets", () => {
   it("reads asking and unseen finished agents as the operator's turn, a quiet root waiting on children apart from working, and the rest resting", () => {
     expect(bucketOf(agent("a", "needs_you", { demand: "question" }))).toBe("turn");
     expect(bucketOf(agent("a", "done"))).toBe("turn");
-    expect(bucketOf(agent("a", "working", { waiting_on_descendants: true }))).toBe("delegating");
+    expect(bucketOf(agent("a", "working", { wait: "children" }))).toBe("delegating");
     expect(bucketOf(agent("a", "working"))).toBe("working");
     expect(bucketOf(agent("a", "seen"))).toBe("resting");
   });
@@ -100,7 +100,7 @@ describe("the tiles", () => {
       agent("d", "done"),
       agent("w", "working"),
       agent("r", "seen"),
-      agent("x", "working", { waiting_on_descendants: true }),
+      agent("x", "working", { wait: "children" }),
       agent("elsewhere", "needs_you"),
     ];
     const tile = agentsTile(scopeAgents(one(project, agents)), { state: "ready" }, t);
@@ -183,7 +183,7 @@ describe("the tiles and ages in English", () => {
     const tile = agentsTile(scopeAgents(one(project, [agent("q", "needs_you", { demand: "question" }), agent("d", "done")])), { state: "ready" }, english);
     expect(tile.label).toBe("Agents");
     expect(tile.badge?.parts.map((part) => part.label)).toEqual(["Question", "Finished"]);
-    expect(tile.bar?.map((segment) => segment.label)).toEqual(["My turn", "Working", "Waiting for children", "Resting"]);
+    expect(tile.bar?.map((segment) => segment.label)).toEqual(["My turn", "Working", "Waiting", "Resting"]);
     const issues = issuesTile(buildTasks(one(workspace([], { tasks: [task(1)] }), []), "project", NOW), NOW, null, "en", english);
     expect(issues).toMatchObject({ label: "Issues", unit: "open" });
     expect(issues.bar?.map((segment) => segment.label)).toEqual(["Backlog", "In progress", "Review"]);

@@ -62,7 +62,7 @@ describe("folded checkout lineage", () => {
     const review = agent("review", { checkout_label: "review-branch-with-a-very-long-name", delegated: true, group: "done", activity: "stopped", symbol: "✓" });
     const remote = agent("remote", { checkout_label: "remote-work", delegated: true, device_id: "mini", device_label: "mini" });
     const fourth = agent("fourth", { checkout_label: "zeta", delegated: true, group: "seen", activity: "stopped", symbol: "○" });
-    const fifth = agent("fifth", { checkout_label: "alpha", delegated: true, group: "needs_you", demand: "error", activity: "stopped", symbol: "×" });
+    const fifth = agent("fifth", { checkout_label: "alpha", delegated: true, group: "needs_you", demand: "error", activity: "stopped", symbol: "▲" });
     const workspaces = [
       workspace("local", [
         { id: "main", branch: "main", panes: ["parent", "same"] },
