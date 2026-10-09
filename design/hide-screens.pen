@@ -1977,15 +1977,6 @@
                       "fill": "$--warning",
                       "enabled": false
                     },
-                    "hideui:sar-blocked-tri": {
-                      "fill": "$--warning"
-                    },
-                    "hideui:sar-blocked-bar": {
-                      "fill": "$--sidebar"
-                    },
-                    "hideui:sar-blocked-dot": {
-                      "fill": "$--sidebar"
-                    },
                     "hideui:sar-stopped-ring": {
                       "stroke": "$--subtle-foreground"
                     },
@@ -2047,6 +2038,9 @@
                     },
                     "hideui:sar-fold": {
                       "enabled": false
+                    },
+                    "hideui:sar-blocked-shape": {
+                      "fill": "$--warning"
                     }
                   }
                 },
@@ -2074,15 +2068,6 @@
                     "hideui:sar-glyph": {
                       "fill": "$--warning",
                       "enabled": false
-                    },
-                    "hideui:sar-blocked-tri": {
-                      "fill": "$--warning"
-                    },
-                    "hideui:sar-blocked-bar": {
-                      "fill": "$--sidebar"
-                    },
-                    "hideui:sar-blocked-dot": {
-                      "fill": "$--sidebar"
                     },
                     "hideui:sar-stopped-ring": {
                       "stroke": "$--subtle-foreground"
@@ -2145,6 +2130,9 @@
                     },
                     "hideui:sar-fold": {
                       "enabled": false
+                    },
+                    "hideui:sar-blocked-shape": {
+                      "fill": "$--warning"
                     }
                   }
                 },
@@ -6838,15 +6826,6 @@
                                           "enabled": true,
                                           "content": "✓"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -6908,6 +6887,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -7138,15 +7120,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -7208,6 +7181,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -7235,15 +7211,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -7305,6 +7272,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -7629,15 +7599,6 @@
                                           "enabled": true,
                                           "content": "✓"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -7699,6 +7660,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -7726,15 +7690,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -7796,6 +7751,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -8882,15 +8840,6 @@
                                       "enabled": true,
                                       "content": "?"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -8952,6 +8901,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -8979,15 +8931,6 @@
                                     "hideui:sar-glyph": {
                                       "fill": "$--warning",
                                       "enabled": false
-                                    },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
                                     },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
@@ -9049,6 +8992,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -9420,15 +9366,6 @@
                                       "enabled": true,
                                       "content": "✓"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -9490,6 +9427,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -9730,15 +9670,6 @@
                                       "enabled": true,
                                       "content": "✓"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -9800,6 +9731,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -9827,15 +9761,6 @@
                                     "hideui:sar-glyph": {
                                       "fill": "$--warning",
                                       "enabled": false
-                                    },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
                                     },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
@@ -9897,6 +9822,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -10096,15 +10024,6 @@
                       "fill": "$--warning",
                       "enabled": false
                     },
-                    "hideui:sar-blocked-tri": {
-                      "fill": "$--warning"
-                    },
-                    "hideui:sar-blocked-bar": {
-                      "fill": "$--sidebar"
-                    },
-                    "hideui:sar-blocked-dot": {
-                      "fill": "$--sidebar"
-                    },
                     "hideui:sar-stopped-ring": {
                       "stroke": "$--subtle-foreground"
                     },
@@ -10166,6 +10085,9 @@
                     },
                     "hideui:sar-fold": {
                       "enabled": false
+                    },
+                    "hideui:sar-blocked-shape": {
+                      "fill": "$--warning"
                     }
                   }
                 },
@@ -10193,15 +10115,6 @@
                     "hideui:sar-glyph": {
                       "fill": "$--warning",
                       "enabled": false
-                    },
-                    "hideui:sar-blocked-tri": {
-                      "fill": "$--warning"
-                    },
-                    "hideui:sar-blocked-bar": {
-                      "fill": "$--sidebar"
-                    },
-                    "hideui:sar-blocked-dot": {
-                      "fill": "$--sidebar"
                     },
                     "hideui:sar-stopped-ring": {
                       "stroke": "$--subtle-foreground"
@@ -10264,6 +10177,9 @@
                     },
                     "hideui:sar-fold": {
                       "enabled": false
+                    },
+                    "hideui:sar-blocked-shape": {
+                      "fill": "$--warning"
                     }
                   }
                 },
@@ -14957,15 +14873,6 @@
                                           "enabled": true,
                                           "content": "✓"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -15027,6 +14934,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -15257,15 +15167,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -15327,6 +15228,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -15354,15 +15258,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -15424,6 +15319,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -15748,15 +15646,6 @@
                                           "enabled": true,
                                           "content": "✓"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -15818,6 +15707,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -15845,15 +15737,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -15915,6 +15798,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -17001,15 +16887,6 @@
                                       "enabled": true,
                                       "content": "?"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -17071,6 +16948,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -17098,15 +16978,6 @@
                                     "hideui:sar-glyph": {
                                       "fill": "$--warning",
                                       "enabled": false
-                                    },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
                                     },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
@@ -17168,6 +17039,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -17539,15 +17413,6 @@
                                       "enabled": true,
                                       "content": "✓"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -17609,6 +17474,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -17849,15 +17717,6 @@
                                       "enabled": true,
                                       "content": "✓"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -17919,6 +17778,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -17946,15 +17808,6 @@
                                     "hideui:sar-glyph": {
                                       "fill": "$--warning",
                                       "enabled": false
-                                    },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
                                     },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
@@ -18016,6 +17869,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -24592,15 +24448,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -24662,6 +24509,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -24689,15 +24539,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -24759,6 +24600,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -24928,15 +24772,6 @@
                                           "fill": "$--warning",
                                           "enabled": false
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -24998,6 +24833,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -25312,15 +25150,6 @@
                                           "enabled": true,
                                           "content": "✓"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -25382,6 +25211,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -25409,15 +25241,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -25479,6 +25302,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -25707,15 +25533,6 @@
                                           "fill": "$--warning",
                                           "enabled": false
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -25776,6 +25593,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -26604,15 +26424,6 @@
                                       "fill": "$--warning",
                                       "enabled": false
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -26674,6 +26485,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -27284,15 +27098,6 @@
                                       "enabled": true,
                                       "content": "?"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -27354,6 +27159,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -27381,15 +27189,6 @@
                                     "hideui:sar-glyph": {
                                       "fill": "$--warning",
                                       "enabled": false
-                                    },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
                                     },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
@@ -27451,6 +27250,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -27820,15 +27622,6 @@
                                       "fill": "$--warning",
                                       "enabled": false
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -27890,6 +27683,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -28940,15 +28736,6 @@
                                       "enabled": true,
                                       "content": "?"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -29010,6 +28797,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -29037,15 +28827,6 @@
                                     "hideui:sar-glyph": {
                                       "fill": "$--warning",
                                       "enabled": false
-                                    },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
                                     },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
@@ -29107,6 +28888,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -29660,15 +29444,6 @@
                                       "enabled": true,
                                       "content": "✓"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -29730,6 +29505,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -29757,15 +29535,6 @@
                                     "hideui:sar-glyph": {
                                       "fill": "$--warning",
                                       "enabled": false
-                                    },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
                                     },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
@@ -29827,6 +29596,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -31167,15 +30939,6 @@
                                               "enabled": true,
                                               "content": "?"
                                             },
-                                            "hideui:sar-blocked-tri": {
-                                              "fill": "$--warning"
-                                            },
-                                            "hideui:sar-blocked-bar": {
-                                              "fill": "$--sidebar"
-                                            },
-                                            "hideui:sar-blocked-dot": {
-                                              "fill": "$--sidebar"
-                                            },
                                             "hideui:sar-stopped-ring": {
                                               "stroke": "$--subtle-foreground"
                                             },
@@ -31237,6 +31000,9 @@
                                             },
                                             "hideui:sar-fold": {
                                               "enabled": false
+                                            },
+                                            "hideui:sar-blocked-shape": {
+                                              "fill": "$--warning"
                                             }
                                           }
                                         },
@@ -31264,15 +31030,6 @@
                                             "hideui:sar-glyph": {
                                               "fill": "$--warning",
                                               "enabled": false
-                                            },
-                                            "hideui:sar-blocked-tri": {
-                                              "fill": "$--warning"
-                                            },
-                                            "hideui:sar-blocked-bar": {
-                                              "fill": "$--sidebar"
-                                            },
-                                            "hideui:sar-blocked-dot": {
-                                              "fill": "$--sidebar"
                                             },
                                             "hideui:sar-stopped-ring": {
                                               "stroke": "$--subtle-foreground"
@@ -31334,6 +31091,9 @@
                                             },
                                             "hideui:sar-fold": {
                                               "enabled": false
+                                            },
+                                            "hideui:sar-blocked-shape": {
+                                              "fill": "$--warning"
                                             }
                                           }
                                         }
@@ -31503,15 +31263,6 @@
                                               "fill": "$--warning",
                                               "enabled": false
                                             },
-                                            "hideui:sar-blocked-tri": {
-                                              "fill": "$--warning"
-                                            },
-                                            "hideui:sar-blocked-bar": {
-                                              "fill": "$--sidebar"
-                                            },
-                                            "hideui:sar-blocked-dot": {
-                                              "fill": "$--sidebar"
-                                            },
                                             "hideui:sar-stopped-ring": {
                                               "stroke": "$--subtle-foreground"
                                             },
@@ -31573,6 +31324,9 @@
                                             },
                                             "hideui:sar-fold": {
                                               "enabled": false
+                                            },
+                                            "hideui:sar-blocked-shape": {
+                                              "fill": "$--warning"
                                             }
                                           }
                                         }
@@ -32135,15 +31889,6 @@
                                       "fill": "$--warning",
                                       "enabled": false
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -32204,6 +31949,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -32232,15 +31980,6 @@
                                       "fill": "$--warning",
                                       "enabled": true,
                                       "content": "?"
-                                    },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
                                     },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
@@ -32303,6 +32042,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -37051,15 +36793,6 @@
                                   "enabled": true,
                                   "content": "✓"
                                 },
-                                "hideui:sar-blocked-tri": {
-                                  "fill": "$--warning"
-                                },
-                                "hideui:sar-blocked-bar": {
-                                  "fill": "$--sidebar"
-                                },
-                                "hideui:sar-blocked-dot": {
-                                  "fill": "$--sidebar"
-                                },
                                 "hideui:sar-stopped-ring": {
                                   "stroke": "$--subtle-foreground"
                                 },
@@ -37121,6 +36854,9 @@
                                 },
                                 "hideui:sar-fold": {
                                   "enabled": false
+                                },
+                                "hideui:sar-blocked-shape": {
+                                  "fill": "$--warning"
                                 }
                               }
                             },
@@ -45055,15 +44791,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -45125,6 +44852,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -45152,15 +44882,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -45222,6 +44943,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -45391,15 +45115,6 @@
                                           "fill": "$--warning",
                                           "enabled": false
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -45461,6 +45176,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -45775,15 +45493,6 @@
                                           "enabled": true,
                                           "content": "✓"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -45845,6 +45554,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -45872,15 +45584,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -45942,6 +45645,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -46170,15 +45876,6 @@
                                           "fill": "$--warning",
                                           "enabled": false
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -46239,6 +45936,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -47067,15 +46767,6 @@
                                       "fill": "$--warning",
                                       "enabled": false
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -47137,6 +46828,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -47747,15 +47441,6 @@
                                       "enabled": true,
                                       "content": "?"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -47817,6 +47502,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -47844,15 +47532,6 @@
                                     "hideui:sar-glyph": {
                                       "fill": "$--warning",
                                       "enabled": false
-                                    },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
                                     },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
@@ -47914,6 +47593,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -48283,15 +47965,6 @@
                                       "fill": "$--warning",
                                       "enabled": false
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -48353,6 +48026,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -49403,15 +49079,6 @@
                                       "enabled": true,
                                       "content": "?"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -49473,6 +49140,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -49500,15 +49170,6 @@
                                     "hideui:sar-glyph": {
                                       "fill": "$--warning",
                                       "enabled": false
-                                    },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
                                     },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
@@ -49570,6 +49231,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -50123,15 +49787,6 @@
                                       "enabled": true,
                                       "content": "✓"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -50193,6 +49848,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -50220,15 +49878,6 @@
                                     "hideui:sar-glyph": {
                                       "fill": "$--warning",
                                       "enabled": false
-                                    },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
                                     },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
@@ -50290,6 +49939,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -51630,15 +51282,6 @@
                                               "enabled": true,
                                               "content": "?"
                                             },
-                                            "hideui:sar-blocked-tri": {
-                                              "fill": "$--warning"
-                                            },
-                                            "hideui:sar-blocked-bar": {
-                                              "fill": "$--sidebar"
-                                            },
-                                            "hideui:sar-blocked-dot": {
-                                              "fill": "$--sidebar"
-                                            },
                                             "hideui:sar-stopped-ring": {
                                               "stroke": "$--subtle-foreground"
                                             },
@@ -51700,6 +51343,9 @@
                                             },
                                             "hideui:sar-fold": {
                                               "enabled": false
+                                            },
+                                            "hideui:sar-blocked-shape": {
+                                              "fill": "$--warning"
                                             }
                                           }
                                         },
@@ -51727,15 +51373,6 @@
                                             "hideui:sar-glyph": {
                                               "fill": "$--warning",
                                               "enabled": false
-                                            },
-                                            "hideui:sar-blocked-tri": {
-                                              "fill": "$--warning"
-                                            },
-                                            "hideui:sar-blocked-bar": {
-                                              "fill": "$--sidebar"
-                                            },
-                                            "hideui:sar-blocked-dot": {
-                                              "fill": "$--sidebar"
                                             },
                                             "hideui:sar-stopped-ring": {
                                               "stroke": "$--subtle-foreground"
@@ -51797,6 +51434,9 @@
                                             },
                                             "hideui:sar-fold": {
                                               "enabled": false
+                                            },
+                                            "hideui:sar-blocked-shape": {
+                                              "fill": "$--warning"
                                             }
                                           }
                                         }
@@ -51966,15 +51606,6 @@
                                               "fill": "$--warning",
                                               "enabled": false
                                             },
-                                            "hideui:sar-blocked-tri": {
-                                              "fill": "$--warning"
-                                            },
-                                            "hideui:sar-blocked-bar": {
-                                              "fill": "$--sidebar"
-                                            },
-                                            "hideui:sar-blocked-dot": {
-                                              "fill": "$--sidebar"
-                                            },
                                             "hideui:sar-stopped-ring": {
                                               "stroke": "$--subtle-foreground"
                                             },
@@ -52036,6 +51667,9 @@
                                             },
                                             "hideui:sar-fold": {
                                               "enabled": false
+                                            },
+                                            "hideui:sar-blocked-shape": {
+                                              "fill": "$--warning"
                                             }
                                           }
                                         }
@@ -52598,15 +52232,6 @@
                                       "fill": "$--warning",
                                       "enabled": false
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -52667,6 +52292,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -52695,15 +52323,6 @@
                                       "fill": "$--warning",
                                       "enabled": true,
                                       "content": "?"
-                                    },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
                                     },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
@@ -52766,6 +52385,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 },
@@ -57514,15 +57136,6 @@
                                   "enabled": true,
                                   "content": "✓"
                                 },
-                                "hideui:sar-blocked-tri": {
-                                  "fill": "$--warning"
-                                },
-                                "hideui:sar-blocked-bar": {
-                                  "fill": "$--sidebar"
-                                },
-                                "hideui:sar-blocked-dot": {
-                                  "fill": "$--sidebar"
-                                },
                                 "hideui:sar-stopped-ring": {
                                   "stroke": "$--subtle-foreground"
                                 },
@@ -57584,6 +57197,9 @@
                                 },
                                 "hideui:sar-fold": {
                                   "enabled": false
+                                },
+                                "hideui:sar-blocked-shape": {
+                                  "fill": "$--warning"
                                 }
                               }
                             },
@@ -119240,15 +118856,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -119311,6 +118918,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -119339,15 +118949,6 @@
                                           "fill": "$--warning",
                                           "enabled": true,
                                           "content": "?"
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -119411,6 +119012,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -119488,15 +119092,6 @@
                                           "enabled": true,
                                           "content": "✓"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -119558,6 +119153,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -119678,15 +119276,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -119747,6 +119336,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -119774,15 +119366,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -119844,6 +119427,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -120305,15 +119891,6 @@
                                               "fill": "$--warning",
                                               "enabled": false
                                             },
-                                            "hideui:sar-blocked-tri": {
-                                              "fill": "$--warning"
-                                            },
-                                            "hideui:sar-blocked-bar": {
-                                              "fill": "$--sidebar"
-                                            },
-                                            "hideui:sar-blocked-dot": {
-                                              "fill": "$--sidebar"
-                                            },
                                             "hideui:sar-stopped-ring": {
                                               "stroke": "$--subtle-foreground"
                                             },
@@ -120374,6 +119951,9 @@
                                             },
                                             "hideui:sar-fold": {
                                               "enabled": false
+                                            },
+                                            "hideui:sar-blocked-shape": {
+                                              "fill": "$--warning"
                                             }
                                           }
                                         },
@@ -120401,15 +119981,6 @@
                                             "hideui:sar-glyph": {
                                               "fill": "$--warning",
                                               "enabled": false
-                                            },
-                                            "hideui:sar-blocked-tri": {
-                                              "fill": "$--warning"
-                                            },
-                                            "hideui:sar-blocked-bar": {
-                                              "fill": "$--sidebar"
-                                            },
-                                            "hideui:sar-blocked-dot": {
-                                              "fill": "$--sidebar"
                                             },
                                             "hideui:sar-stopped-ring": {
                                               "stroke": "$--subtle-foreground"
@@ -120471,6 +120042,9 @@
                                             },
                                             "hideui:sar-fold": {
                                               "enabled": false
+                                            },
+                                            "hideui:sar-blocked-shape": {
+                                              "fill": "$--warning"
                                             }
                                           }
                                         },
@@ -120499,15 +120073,6 @@
                                               "fill": "$--warning",
                                               "enabled": true,
                                               "content": "?"
-                                            },
-                                            "hideui:sar-blocked-tri": {
-                                              "fill": "$--warning"
-                                            },
-                                            "hideui:sar-blocked-bar": {
-                                              "fill": "$--sidebar"
-                                            },
-                                            "hideui:sar-blocked-dot": {
-                                              "fill": "$--sidebar"
                                             },
                                             "hideui:sar-stopped-ring": {
                                               "stroke": "$--subtle-foreground"
@@ -120570,6 +120135,9 @@
                                             },
                                             "hideui:sar-fold": {
                                               "enabled": false
+                                            },
+                                            "hideui:sar-blocked-shape": {
+                                              "fill": "$--warning"
                                             }
                                           }
                                         }
@@ -121526,15 +121094,6 @@
                                   "enabled": true,
                                   "content": "?"
                                 },
-                                "hideui:sar-blocked-tri": {
-                                  "fill": "$--warning"
-                                },
-                                "hideui:sar-blocked-bar": {
-                                  "fill": "$--sidebar"
-                                },
-                                "hideui:sar-blocked-dot": {
-                                  "fill": "$--sidebar"
-                                },
                                 "hideui:sar-stopped-ring": {
                                   "stroke": "$--subtle-foreground"
                                 },
@@ -121595,6 +121154,9 @@
                                 },
                                 "hideui:sar-fold": {
                                   "enabled": false
+                                },
+                                "hideui:sar-blocked-shape": {
+                                  "fill": "$--warning"
                                 }
                               }
                             }
@@ -121713,15 +121275,6 @@
                                   "enabled": true,
                                   "content": "?"
                                 },
-                                "hideui:sar-blocked-tri": {
-                                  "fill": "$--warning"
-                                },
-                                "hideui:sar-blocked-bar": {
-                                  "fill": "$--sidebar"
-                                },
-                                "hideui:sar-blocked-dot": {
-                                  "fill": "$--sidebar"
-                                },
                                 "hideui:sar-stopped-ring": {
                                   "stroke": "$--subtle-foreground"
                                 },
@@ -121782,6 +121335,9 @@
                                 },
                                 "hideui:sar-fold": {
                                   "enabled": false
+                                },
+                                "hideui:sar-blocked-shape": {
+                                  "fill": "$--warning"
                                 }
                               }
                             }
@@ -123344,15 +122900,6 @@
                                       "enabled": true,
                                       "content": "?"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -123414,6 +122961,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -124143,15 +123693,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -124214,6 +123755,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -124242,15 +123786,6 @@
                                           "fill": "$--warning",
                                           "enabled": true,
                                           "content": "?"
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -124314,6 +123849,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -124342,15 +123880,6 @@
                                           "fill": "$--warning",
                                           "enabled": true,
                                           "content": "?"
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -124414,6 +123943,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -124442,15 +123974,6 @@
                                           "fill": "$--warning",
                                           "enabled": true,
                                           "content": "?"
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -124514,6 +124037,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -124542,15 +124068,6 @@
                                           "fill": "$--warning",
                                           "enabled": true,
                                           "content": "?"
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -124614,6 +124131,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -124756,15 +124276,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -124825,6 +124336,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -126352,15 +125866,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -126421,6 +125926,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -126448,15 +125956,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -126518,6 +126017,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -127515,15 +127017,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -127584,6 +127077,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -127611,15 +127107,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -127681,6 +127168,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -128766,15 +128256,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -128837,6 +128318,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -128865,15 +128349,6 @@
                                           "fill": "$--warning",
                                           "enabled": true,
                                           "content": "?"
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -128937,6 +128412,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -129014,15 +128492,6 @@
                                           "enabled": true,
                                           "content": "✓"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -129084,6 +128553,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -129204,15 +128676,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -129273,6 +128736,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -129300,15 +128766,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -129370,6 +128827,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -129831,15 +129291,6 @@
                                               "fill": "$--warning",
                                               "enabled": false
                                             },
-                                            "hideui:sar-blocked-tri": {
-                                              "fill": "$--warning"
-                                            },
-                                            "hideui:sar-blocked-bar": {
-                                              "fill": "$--sidebar"
-                                            },
-                                            "hideui:sar-blocked-dot": {
-                                              "fill": "$--sidebar"
-                                            },
                                             "hideui:sar-stopped-ring": {
                                               "stroke": "$--subtle-foreground"
                                             },
@@ -129900,6 +129351,9 @@
                                             },
                                             "hideui:sar-fold": {
                                               "enabled": false
+                                            },
+                                            "hideui:sar-blocked-shape": {
+                                              "fill": "$--warning"
                                             }
                                           }
                                         },
@@ -129927,15 +129381,6 @@
                                             "hideui:sar-glyph": {
                                               "fill": "$--warning",
                                               "enabled": false
-                                            },
-                                            "hideui:sar-blocked-tri": {
-                                              "fill": "$--warning"
-                                            },
-                                            "hideui:sar-blocked-bar": {
-                                              "fill": "$--sidebar"
-                                            },
-                                            "hideui:sar-blocked-dot": {
-                                              "fill": "$--sidebar"
                                             },
                                             "hideui:sar-stopped-ring": {
                                               "stroke": "$--subtle-foreground"
@@ -129997,6 +129442,9 @@
                                             },
                                             "hideui:sar-fold": {
                                               "enabled": false
+                                            },
+                                            "hideui:sar-blocked-shape": {
+                                              "fill": "$--warning"
                                             }
                                           }
                                         },
@@ -130025,15 +129473,6 @@
                                               "fill": "$--warning",
                                               "enabled": true,
                                               "content": "?"
-                                            },
-                                            "hideui:sar-blocked-tri": {
-                                              "fill": "$--warning"
-                                            },
-                                            "hideui:sar-blocked-bar": {
-                                              "fill": "$--sidebar"
-                                            },
-                                            "hideui:sar-blocked-dot": {
-                                              "fill": "$--sidebar"
                                             },
                                             "hideui:sar-stopped-ring": {
                                               "stroke": "$--subtle-foreground"
@@ -130096,6 +129535,9 @@
                                             },
                                             "hideui:sar-fold": {
                                               "enabled": false
+                                            },
+                                            "hideui:sar-blocked-shape": {
+                                              "fill": "$--warning"
                                             }
                                           }
                                         }
@@ -131052,15 +130494,6 @@
                                   "enabled": true,
                                   "content": "?"
                                 },
-                                "hideui:sar-blocked-tri": {
-                                  "fill": "$--warning"
-                                },
-                                "hideui:sar-blocked-bar": {
-                                  "fill": "$--sidebar"
-                                },
-                                "hideui:sar-blocked-dot": {
-                                  "fill": "$--sidebar"
-                                },
                                 "hideui:sar-stopped-ring": {
                                   "stroke": "$--subtle-foreground"
                                 },
@@ -131121,6 +130554,9 @@
                                 },
                                 "hideui:sar-fold": {
                                   "enabled": false
+                                },
+                                "hideui:sar-blocked-shape": {
+                                  "fill": "$--warning"
                                 }
                               }
                             }
@@ -131239,15 +130675,6 @@
                                   "enabled": true,
                                   "content": "?"
                                 },
-                                "hideui:sar-blocked-tri": {
-                                  "fill": "$--warning"
-                                },
-                                "hideui:sar-blocked-bar": {
-                                  "fill": "$--sidebar"
-                                },
-                                "hideui:sar-blocked-dot": {
-                                  "fill": "$--sidebar"
-                                },
                                 "hideui:sar-stopped-ring": {
                                   "stroke": "$--subtle-foreground"
                                 },
@@ -131308,6 +130735,9 @@
                                 },
                                 "hideui:sar-fold": {
                                   "enabled": false
+                                },
+                                "hideui:sar-blocked-shape": {
+                                  "fill": "$--warning"
                                 }
                               }
                             }
@@ -132870,15 +132300,6 @@
                                       "enabled": true,
                                       "content": "?"
                                     },
-                                    "hideui:sar-blocked-tri": {
-                                      "fill": "$--warning"
-                                    },
-                                    "hideui:sar-blocked-bar": {
-                                      "fill": "$--sidebar"
-                                    },
-                                    "hideui:sar-blocked-dot": {
-                                      "fill": "$--sidebar"
-                                    },
                                     "hideui:sar-stopped-ring": {
                                       "stroke": "$--subtle-foreground"
                                     },
@@ -132940,6 +132361,9 @@
                                     },
                                     "hideui:sar-fold": {
                                       "enabled": false
+                                    },
+                                    "hideui:sar-blocked-shape": {
+                                      "fill": "$--warning"
                                     }
                                   }
                                 }
@@ -133669,15 +133093,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -133740,6 +133155,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -133768,15 +133186,6 @@
                                           "fill": "$--warning",
                                           "enabled": true,
                                           "content": "?"
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -133840,6 +133249,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -133868,15 +133280,6 @@
                                           "fill": "$--warning",
                                           "enabled": true,
                                           "content": "?"
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -133940,6 +133343,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -133968,15 +133374,6 @@
                                           "fill": "$--warning",
                                           "enabled": true,
                                           "content": "?"
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -134040,6 +133437,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -134068,15 +133468,6 @@
                                           "fill": "$--warning",
                                           "enabled": true,
                                           "content": "?"
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -134140,6 +133531,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -134282,15 +133676,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -134351,6 +133736,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -135878,15 +135266,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -135947,6 +135326,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -135974,15 +135356,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -136044,6 +135417,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
@@ -137041,15 +136417,6 @@
                                           "enabled": true,
                                           "content": "?"
                                         },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
-                                        },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
                                         },
@@ -137110,6 +136477,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     },
@@ -137137,15 +136507,6 @@
                                         "hideui:sar-glyph": {
                                           "fill": "$--warning",
                                           "enabled": false
-                                        },
-                                        "hideui:sar-blocked-tri": {
-                                          "fill": "$--warning"
-                                        },
-                                        "hideui:sar-blocked-bar": {
-                                          "fill": "$--sidebar"
-                                        },
-                                        "hideui:sar-blocked-dot": {
-                                          "fill": "$--sidebar"
                                         },
                                         "hideui:sar-stopped-ring": {
                                           "stroke": "$--subtle-foreground"
@@ -137207,6 +136568,9 @@
                                         },
                                         "hideui:sar-fold": {
                                           "enabled": false
+                                        },
+                                        "hideui:sar-blocked-shape": {
+                                          "fill": "$--warning"
                                         }
                                       }
                                     }
