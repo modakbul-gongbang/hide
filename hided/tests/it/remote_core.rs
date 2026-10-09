@@ -1998,8 +1998,13 @@ fn a_node_project_is_measured_on_the_node_as_a_local_one_is() -> Result<()> {
 fn a_node_checkouts_pull_request_is_read_with_the_cores_login_by_repository_name() -> Result<()> {
     let mut fixture = Fixture::start()?;
     let journey = (|| {
+        // The node's own account runs git, so the operator's configuration
+        // (a signing key behind their agent) never reaches the fixture.
         let git = |folder: &std::path::Path, arguments: &[&str]| -> Result<String> {
-            let output = std::process::Command::new("git")
+            let output = fixture
+                .screen
+                .environment
+                .command("/usr/bin/git")
                 .args([
                     "-c",
                     "user.name=fixture",
