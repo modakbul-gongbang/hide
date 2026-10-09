@@ -62,9 +62,432 @@ pub struct Factory {
     pub observer_day: u64,
     #[serde(default)]
     pub observer_calls: u32,
-    /// The local day the daily cap notice was last given (D-34: once a day).
+    /// The local day the daily cap was last reached (D-34: one activity line
+    /// a day).
     #[serde(default)]
     pub observer_cap_notice_day: u64,
+    /// What happened in this Factory that no person has to act on, newest
+    /// last, at most [`FACTORY_ACTIVITY_LIMIT`] (D-32).
+    #[serde(default)]
+    pub activity: Vec<Activity>,
+    /// GitHub refused this Factory for its sign-in or a permission: one
+    /// person's to-do until a recheck passes (D-46).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_block: Option<GithubBlock>,
+    /// The holds the recovery schedule works through, one per hold (D-44).
+    #[serde(default)]
+    pub holds: Vec<Hold>,
+    /// Commands a diagnosis named that only a person can run (D-30).
+    #[serde(default)]
+    pub commands: Vec<CommandToDo>,
+    /// Next `C<n>` number of a command to-do. Never lowered.
+    #[serde(default)]
+    pub next_command: u32,
+}
+
+/// The most activity lines a Factory and a Task keep; the oldest go first.
+pub const FACTORY_ACTIVITY_LIMIT: usize = 500;
+pub const TASK_ACTIVITY_LIMIT: usize = 200;
+
+/// Appends an activity line, dropping the oldest past `limit`.
+pub fn push_activity(log: &mut Vec<Activity>, entry: Activity, limit: usize) {
+    log.push(entry);
+    if log.len() > limit {
+        let over = log.len() - limit;
+        log.drain(..over);
+    }
+}
+
+/// One line of a Task's or a Factory's activity log (D-32, D-35): what
+/// happened, as a kind and its facts, so a screen says it in the operator's
+/// language. Free text in it is the worker's, the AI's or a migrated
+/// notice's own.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Activity {
+    pub at: UnixMs,
+    /// The Task a Factory line is about.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(flatten)]
+    pub event: ActivityEvent,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ActivityEvent {
+    /// The intake review completed the card: how many criteria it holds,
+    /// how many assumptions the review made, and whether a label brought it.
+    Intake {
+        label: bool,
+        criteria: u32,
+        assumptions: u32,
+    },
+    /// A worker started or resumed; `attempt` counts fresh starts.
+    Started { resumed: bool },
+    /// The worker's report of done (D-36).
+    Report { report: WorkerReport },
+    /// A pull request was opened or found for the Task.
+    PullRequest { number: u64, url: String },
+    /// A verification attempt answered: CI or the verify bundle.
+    Verification {
+        number: u32,
+        ci: bool,
+        outcome: VerificationOutcome,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        link: Option<String>,
+    },
+    /// A check sent the work back to the worker with what to fix (D-28).
+    SentBack { text: String },
+    /// An automatic recovery: running while `outcome` is none (B15).
+    Recovery {
+        action: RecoveryAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outcome: Option<RecoveryOutcome>,
+        /// Worktrees a cleanup removed and the bytes it freed (B13).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        removed: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        freed: Option<u64>,
+    },
+    /// A follow-up candidate was turned into an issue, a Task, or discarded.
+    FollowUp {
+        discovery: String,
+        state: FollowUpState,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        issue: Option<String>,
+    },
+    /// Factory AI decided in a person's place (B21).
+    AiDecision { text: String },
+    /// Something outside the Factory moved the Task.
+    Outside {
+        what: OutsideChange,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        link: Option<String>,
+    },
+    /// Main verification failed after a Factory merge or an outside push.
+    MainBroken {
+        by_factory: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        link: Option<String>,
+    },
+    /// A worktree a person has to look at was kept (D-58).
+    CleanupKept { worktree: String, detail: String },
+    /// The watch saw something; `action` ran when it named one (D-29).
+    Watch {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action: Option<RecoveryAction>,
+    },
+    /// Factory AI reached today's cap; the rest of the day goes to a person.
+    DailyLimit { limit: u32 },
+    /// A line in words: a notice from before this log, kept with its words
+    /// (D-39), or what the engine tells a person it cannot act on for them,
+    /// in the operator's language.
+    Note { text: String },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationOutcome {
+    Passed,
+    Failed,
+    Environment,
+}
+
+/// Why a request went to a person other than the mode table (B7, B10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Fallback {
+    /// The judgment failed or its answer was unusable.
+    Failed,
+    /// Today's Factory AI calls are used up.
+    DailyLimit,
+    /// The Factory is paused.
+    Paused,
+    /// Too many judgments were waiting.
+    QueueFull,
+    /// Its Task was taken outside or finished while it was being sorted.
+    Dropped,
+    /// The daemon restarted while it was being sorted.
+    Restart,
+    /// Factory AI was not sure of the kind.
+    Unsure,
+    /// The request touches a permission.
+    Permission,
+    /// Factory AI's answer named none of a closed question's choices.
+    NoChoice,
+}
+
+impl Fallback {
+    pub const ALL: [Self; 9] = [
+        Self::Failed,
+        Self::DailyLimit,
+        Self::Paused,
+        Self::QueueFull,
+        Self::Dropped,
+        Self::Restart,
+        Self::Unsure,
+        Self::Permission,
+        Self::NoChoice,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Failed => "failed",
+            Self::DailyLimit => "daily_limit",
+            Self::Paused => "paused",
+            Self::QueueFull => "queue_full",
+            Self::Dropped => "dropped",
+            Self::Restart => "restart",
+            Self::Unsure => "unsure",
+            Self::Permission => "permission",
+            Self::NoChoice => "no_choice",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryOutcome {
+    /// The hold cleared.
+    Improved,
+    /// Something moved but the hold stays.
+    Partial,
+    Unchanged,
+}
+
+impl RecoveryOutcome {
+    pub const ALL: [Self; 3] = [Self::Improved, Self::Partial, Self::Unchanged];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Improved => "improved",
+            Self::Partial => "partial",
+            Self::Unchanged => "unchanged",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutsideChange {
+    /// An outside pull request closes the Task's issue; the worker stopped.
+    ClosingPr,
+    /// That pull request merged; the Task is done.
+    PrMerged,
+    /// The issue closed with no pull request, or lost its label.
+    IssueClosed,
+    /// A finished Task's issue opened again.
+    IssueReopened,
+}
+
+/// A worker's report of done in four parts, in the operator's language (D-08, D-36).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerReport {
+    /// One line: what came of the work.
+    pub result: String,
+    #[serde(default)]
+    pub changed: Vec<String>,
+    #[serde(default)]
+    pub verified: Vec<String>,
+    #[serde(default)]
+    pub unverified: Vec<String>,
+    /// The letter as the worker wrote it, for a harness that reports by
+    /// letter only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
+}
+
+/// GitHub refused the Factory's sign-in or a permission (D-46).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GithubBlock {
+    /// `false` for a lost sign-in (401), `true` for a missing permission (403).
+    pub forbidden: bool,
+    /// The scope a 403 named, when it named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// The step that was refused first.
+    pub stage: String,
+    pub since: UnixMs,
+}
+
+impl GithubBlock {
+    /// The command a person runs to give the access back.
+    pub fn command(&self) -> String {
+        match (&self.scope, self.forbidden) {
+            (Some(scope), true) if is_scope(scope) => format!("gh auth refresh -s {scope}"),
+            _ => "gh auth login".to_owned(),
+        }
+    }
+}
+
+/// The most bytes a command a person copies may have.
+pub const COPY_COMMAND_LIMIT: usize = 400;
+
+/// A command a person is shown to copy, when it is one: one line no longer
+/// than [`COPY_COMMAND_LIMIT`] made only of characters drawn as themselves.
+/// A diagnosis writes it from facts a worker can shape, and the copy button
+/// writes it as it is, so a second line hidden from the screen, a cut
+/// marker, or a character drawn as nothing, as a space a shell does not
+/// split on, or as a change of direction would make the pasted text differ
+/// from the shown one.
+pub fn copyable_command(text: &str) -> Option<&str> {
+    let text = text.trim();
+    (!text.is_empty() && text.len() <= COPY_COMMAND_LIMIT && text.chars().all(drawn_as_itself))
+        .then_some(text)
+}
+
+/// The plain space, printable ASCII, and letters and digits of any script
+/// except the Hangul fillers, which are letters drawn as nothing. Everything
+/// else, punctuation outside ASCII included, is refused on the safe side.
+fn drawn_as_itself(c: char) -> bool {
+    c == ' '
+        || c.is_ascii_graphic()
+        || (c.is_alphanumeric() && !matches!(c, '\u{115F}' | '\u{1160}' | '\u{3164}' | '\u{FFA0}'))
+}
+
+/// A GitHub token scope as gh names one: lowercase words joined by `_` or
+/// `:`, short. Nothing else reaches the command a person copies.
+pub fn is_scope(scope: &str) -> bool {
+    scope.len() < 40
+        && scope.starts_with(|c: char| c.is_ascii_lowercase())
+        && scope
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == ':')
+}
+
+/// What a hold holds back (D-44).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HoldKey {
+    /// The machine holds new starts.
+    Start { hold: EnvHold },
+    /// A cascade of failures halted new starts.
+    Halt,
+    /// Outside reads keep failing.
+    Reads,
+    /// A Task stopped for a reason a restart can clear.
+    Task { task: String },
+}
+
+impl HoldKey {
+    /// The hold's name in a to-do, as `hide factory resolve hold:<name>`
+    /// takes it.
+    pub fn name(&self) -> String {
+        match self {
+            Self::Start { hold } => format!("start-{}", hold.as_str()),
+            Self::Halt => "halt".into(),
+            Self::Reads => "reads".into(),
+            Self::Task { task } => format!("task-{task}"),
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        if let Some(hold) = name.strip_prefix("start-") {
+            return EnvHold::ALL
+                .into_iter()
+                .find(|h| h.as_str() == hold)
+                .map(|hold| Self::Start { hold });
+        }
+        if let Some(task) = name.strip_prefix("task-").filter(|t| !t.is_empty()) {
+            return Some(Self::Task {
+                task: task.to_owned(),
+            });
+        }
+        match name {
+            "halt" => Some(Self::Halt),
+            "reads" => Some(Self::Reads),
+            _ => None,
+        }
+    }
+}
+
+/// A hold the recovery schedule works through: one step at 30, 90 and 150
+/// minutes, a person at 180 (D-44). Whether a diagnosis is out for its next
+/// step is the engine's judgment in flight, never stored, so a restart that
+/// lost the answer simply asks again.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hold {
+    pub key: HoldKey,
+    pub since: UnixMs,
+    /// Each step taken, in order; its count is the next step's index.
+    #[serde(default)]
+    pub attempts: Vec<RecoveryAttempt>,
+    /// The last diagnosis's cause, for the person's to-do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
+    #[serde(default)]
+    pub phase: HoldPhase,
+}
+
+/// Where a hold is in its schedule.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HoldPhase {
+    /// Its next step runs when that step's time comes.
+    #[default]
+    Due,
+    /// A step ran at `since` and has its time to work before the next; an
+    /// action still unsettled then helped only partly.
+    Settling { since: UnixMs },
+    /// No action is left to try; it waits for the 180-minute mark (B14).
+    Exhausted,
+    /// The hold is a person's.
+    Escalated,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveryAttempt {
+    pub at: UnixMs,
+    /// None when the step found nothing to run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<RecoveryAction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<RecoveryOutcome>,
+}
+
+/// A command only a person can run, which a diagnosis named (B16).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandToDo {
+    /// `C<n>`.
+    pub id: String,
+    pub command: String,
+    /// What running it does, in the operator's language.
+    pub impact: String,
+    /// What needs it, in the operator's language.
+    pub cause: String,
+    pub at: UnixMs,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<UnixMs>,
+}
+
+impl Factory {
+    /// Appends a line to the Factory's activity log (D-32).
+    pub fn log(&mut self, at: UnixMs, task: Option<&str>, event: ActivityEvent) {
+        push_activity(
+            &mut self.activity,
+            Activity {
+                at,
+                task: task.map(str::to_owned),
+                event,
+            },
+            FACTORY_ACTIVITY_LIMIT,
+        );
+    }
+
+    pub fn hold(&self, key: &HoldKey) -> Option<&Hold> {
+        self.holds.iter().find(|hold| &hold.key == key)
+    }
+
+    /// Whether the recovery schedule still works on this Task's stop.
+    pub fn recovering(&self, task: &str) -> bool {
+        self.hold(&HoldKey::Task {
+            task: task.to_owned(),
+        })
+        .is_some_and(|hold| hold.phase != HoldPhase::Escalated)
+    }
 }
 
 /// Who approved a GitHub Factory's access, for which repository, and when,
@@ -425,7 +848,8 @@ impl Default for Config {
             harness: None,
             autonomy: AutonomyScope::presets(),
             autonomy_diff_limit: 200,
-            recovery: Vec::new(),
+            // Every recovery is on until a person turns one off (D-30).
+            recovery: RecoveryAction::ALL.to_vec(),
             risk_paths: Vec::new(),
             checks: Vec::new(),
             prd_in_issue: false,
@@ -771,12 +1195,17 @@ pub enum QuestionKind {
     /// A stop, a main break or a recovery that needs a person; the choices
     /// are the actions.
     Action,
-    /// A label-path card needs a person's confirmation (D-48, B15).
+    /// The fix Task drafted for a main an outside push broke waits for a
+    /// person's confirmation; a labelled issue starts without one (D-01).
     ConfirmCard,
-    /// A recovery proposal with the exact command and impact (B61).
-    Proposal { command: String, impact: String },
-    /// Notification only (unrelated discovery, outside change, watch).
-    Notice,
+}
+
+impl QuestionKind {
+    /// Whether an answer must be one of the listed choices: a worker's
+    /// question and an intake question take any text (D-33).
+    pub fn closed(&self) -> bool {
+        !matches!(self, Self::Intake | Self::Default | Self::Blocking)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -805,12 +1234,28 @@ pub struct Question {
     /// Where a decision request was sent and why (D-14, D-18).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<Routing>,
-    /// What an engine notice says, for the notice group (D-43).
+    /// What the question holds up, in the operator's language, when the
+    /// judgment that asked it said (D-33).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notice: Option<NoticeCode>,
-    /// The question an Observer notice is about, which "다른 답" overrides.
+    pub stopped: Option<String>,
+    /// A worker's question as Factory AI rewrote it for a person who has not
+    /// read the Task, without ids, commands or paths (B22); the worker's own
+    /// words stay in `text`, which its record and its answer quote.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refers_to: Option<String>,
+    pub person_text: Option<String>,
+    /// What each choice leads to, in the operator's language (D-33).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outcomes: Vec<ChoiceOutcome>,
+    /// Links and log paths behind the question.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<String>,
+}
+
+/// What answering with one choice leads to.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChoiceOutcome {
+    pub choice: String,
+    pub result: String,
 }
 
 /// The five kinds the Observer sorts a decision request into (D-14).
@@ -876,10 +1321,9 @@ pub struct Routing {
     /// The Observer's one-line reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// Why it went to a person without the Observer's verdict: `failed`,
-    /// `daily_limit`, `paused`, `queue_full` (B10).
+    /// Why it went to a person other than the mode table (B7, B10).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fallback: Option<String>,
+    pub fallback: Option<Fallback>,
     /// E in assist: the Observer's fix, offered as a choice (D-33).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposal: Option<ObserverProposal>,
@@ -899,54 +1343,13 @@ pub enum ObserverProposal {
 /// The choice an assist-mode E request carries for the Observer's proposal.
 pub const PROPOSAL_CHOICE: &str = "AI 제안 적용";
 
-/// Engine notices the notice group shows (D-32, D-34, D-38).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NoticeCode {
-    AiAnswered,
-    AiCardFixed,
-    AiNewTask,
-    AiRiskMerge,
-    DailyLimit,
-}
-
-impl NoticeCode {
-    pub const ALL: [Self; 5] = [
-        Self::AiAnswered,
-        Self::AiCardFixed,
-        Self::AiNewTask,
-        Self::AiRiskMerge,
-        Self::DailyLimit,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::AiAnswered => "ai_answered",
-            Self::AiCardFixed => "ai_card_fixed",
-            Self::AiNewTask => "ai_new_task",
-            Self::AiRiskMerge => "ai_risk_merge",
-            Self::DailyLimit => "daily_limit",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::AiAnswered => "AI가 답함",
-            Self::AiCardFixed => "AI가 카드를 고침",
-            Self::AiNewTask => "AI가 새 Task를 만듦",
-            Self::AiRiskMerge => "AI가 위험 경로 머지를 승인함",
-            Self::DailyLimit => "오늘 AI 판단 상한에 닿음",
-        }
-    }
-}
-
 impl Question {
     pub fn open(&self) -> bool {
         self.answer.is_none()
     }
 
-    /// Open and a person's to answer: not a notice, and not a request the
-    /// Observer is still sorting.
+    /// Open and a person's to answer: not a request the Observer is still
+    /// sorting.
     pub fn awaits_person(&self) -> bool {
         self.open()
             && self
@@ -1011,6 +1414,63 @@ pub struct Discovery {
     pub at: UnixMs,
     /// The Task a prerequisite proposal created, once it exists.
     pub task: Option<String>,
+    /// An unrelated finding is a follow-up candidate a person may turn into
+    /// an issue or a Task, or discard (D-05, D-31).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_up: Option<FollowUp>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FollowUp {
+    pub state: FollowUpState,
+    /// The issue it became.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<IssueRef>,
+    /// The Task it became.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    /// Why the last attempt to make its issue failed; the person may press
+    /// again (B19).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+    /// When its state last changed.
+    pub at: UnixMs,
+}
+
+impl FollowUp {
+    pub fn open(at: UnixMs) -> Self {
+        Self {
+            state: FollowUpState::Open,
+            issue: None,
+            task: None,
+            failure: None,
+            at,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowUpState {
+    Open,
+    /// An issue without the factory label.
+    Issue,
+    /// A factory-labelled issue that started as a Task.
+    Factory,
+    Discarded,
+}
+
+impl FollowUpState {
+    pub const ALL: [Self; 4] = [Self::Open, Self::Issue, Self::Factory, Self::Discarded];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Issue => "issue",
+            Self::Factory => "factory",
+            Self::Discarded => "discarded",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1023,6 +1483,52 @@ pub struct DecisionRecord {
     pub kind: Option<DecisionKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// What made it; absent on a record from before sources were kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<DecisionSource>,
+    /// The question it answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
+    /// A person replaced Factory AI's decision with another answer (D-35).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<DecisionChange>,
+}
+
+/// Where a decision record came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionSource {
+    /// An answer to a question.
+    Answer,
+    /// What the intake review assumed instead of asking (D-26).
+    Assumption,
+    /// A check sent the work back (D-28).
+    SendBack,
+    /// A worker recorded its own decision.
+    Worker,
+    /// A person asked for changes at merge.
+    RequestChanges,
+    /// Factory AI approved a risk-path merge.
+    RiskMerge,
+}
+
+impl DecisionSource {
+    pub const ALL: [Self; 6] = [
+        Self::Answer,
+        Self::Assumption,
+        Self::SendBack,
+        Self::Worker,
+        Self::RequestChanges,
+        Self::RiskMerge,
+    ];
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecisionChange {
+    pub by: String,
+    pub at: UnixMs,
+    /// The decision as Factory AI made it.
+    pub from: String,
 }
 
 impl DecisionRecord {
@@ -1033,8 +1539,43 @@ impl DecisionRecord {
             at,
             kind: None,
             reason: None,
+            source: None,
+            question: None,
+            changed: None,
         }
     }
+
+    pub fn with_source(mut self, source: DecisionSource) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    /// Factory AI made it and no person replaced it.
+    pub fn by_ai(&self) -> bool {
+        self.by == OBSERVER && self.changed.is_none()
+    }
+
+    /// A person may still replace it: Factory AI's answer to a question, an
+    /// intake assumption or a send-back (B28).
+    pub fn overridable(&self) -> bool {
+        self.by_ai()
+            && matches!(
+                self.source,
+                Some(
+                    DecisionSource::Answer | DecisionSource::Assumption | DecisionSource::SendBack
+                )
+            )
+    }
+}
+
+/// The id a decision is named by: its place in the Task's list, from 1.
+/// Decisions are never removed, so the place is stable.
+pub fn decision_id(index: usize) -> String {
+    format!("R{}", index + 1)
+}
+
+pub fn decision_index(id: &str) -> Option<usize> {
+    id.strip_prefix('R')?.parse::<usize>().ok()?.checked_sub(1)
 }
 
 /// `by` of a decision, an answer or a merge the Observer made (D-19).
@@ -1131,7 +1672,7 @@ impl StopReason {
 }
 
 /// Why no new worker starts on this machine (B57).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvHold {
     /// Free disk is below the Factory's floor.
@@ -1143,6 +1684,14 @@ pub enum EnvHold {
 
 impl EnvHold {
     pub const ALL: [Self; 3] = [Self::DiskFloor, Self::DiskFull, Self::MemoryCritical];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DiskFloor => "disk_floor",
+            Self::DiskFull => "disk_full",
+            Self::MemoryCritical => "memory_critical",
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -1320,6 +1869,68 @@ pub struct Task {
     /// Why the Task is paused, when it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pause_reason: Option<PauseReason>,
+    /// What happened to the Task, newest last, at most
+    /// [`TASK_ACTIVITY_LIMIT`] (D-35).
+    #[serde(default)]
+    pub activity: Vec<Activity>,
+    /// The worker's last report of done (D-36).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<WorkerReport>,
+    /// Each completion criterion as the last check judged it (D-28).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub criteria_check: Vec<CriterionVerdict>,
+    /// 결정 필요 items a person answered or pressed for this Task (D-45).
+    #[serde(default)]
+    pub person_items: u32,
+    /// When its first worker started (D-45).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_started_at: Option<UnixMs>,
+    /// The recovery schedule restarted its worker; once per Task (D-44).
+    #[serde(default)]
+    pub recovery_restarted: bool,
+    /// A GitHub step for it waits for the Factory's access to come back
+    /// (D-46).
+    #[serde(default)]
+    pub permission_wait: bool,
+    /// Its worker's pane runs but the agent has shown no session for ten
+    /// minutes: a person looks at the pane, where a first-run prompt may
+    /// wait.
+    #[serde(default)]
+    pub start_waiting: bool,
+}
+
+/// One completion criterion as a check judged it (D-28).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CriterionVerdict {
+    /// The criterion's place in the card's criteria, from 0.
+    pub index: usize,
+    /// The criterion as the check saw it; a verdict whose criterion the card
+    /// no longer has in that place is shown on none.
+    pub criterion: String,
+    pub state: CriterionState,
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CriterionState {
+    Met,
+    Unmet,
+    Unknown,
+}
+
+impl CriterionState {
+    pub const ALL: [Self; 3] = [Self::Met, Self::Unmet, Self::Unknown];
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "met" => Some(Self::Met),
+            "unmet" => Some(Self::Unmet),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
 }
 
 /// The intake review's candidate, by its place in the list.
@@ -1380,6 +1991,20 @@ pub enum ReviewResult {
 }
 
 impl Task {
+    /// Whether a person may still replace this decision of Factory AI's. An
+    /// answer to a closed question already ran its choice (a split made its
+    /// Tasks, a revert started), which a new record would not undo, so only
+    /// an answer to a question that takes words is changeable (B28, B29).
+    pub fn decision_changeable(&self, record: &DecisionRecord) -> bool {
+        record.overridable()
+            && (record.source != Some(DecisionSource::Answer)
+                || record.question.as_ref().is_some_and(|id| {
+                    self.questions
+                        .iter()
+                        .any(|q| &q.id == id && !q.kind.closed())
+                }))
+    }
+
     /// A new Task in drafting, before its review (D-05).
     pub fn draft(factory: &str, id: &str, seq: u32, card: Card, now: UnixMs) -> Self {
         Self {
@@ -1436,7 +2061,28 @@ impl Task {
             diagnosis: None,
             auto_restarts: 0,
             pause_reason: None,
+            activity: Vec::new(),
+            report: None,
+            criteria_check: Vec::new(),
+            person_items: 0,
+            first_started_at: None,
+            recovery_restarted: false,
+            permission_wait: false,
+            start_waiting: false,
         }
+    }
+
+    /// Appends a line to the Task's activity log (D-35).
+    pub fn log(&mut self, at: UnixMs, event: ActivityEvent) {
+        push_activity(
+            &mut self.activity,
+            Activity {
+                at,
+                task: None,
+                event,
+            },
+            TASK_ACTIVITY_LIMIT,
+        );
     }
 
     pub fn display_id(&self) -> String {
@@ -1483,24 +2129,42 @@ impl Task {
 
     /// The card a person must look at: blocked, stopped, merge waiting, or
     /// an open question (D-28, D-47). A Task blocked only on requests the
-    /// Observer is still sorting is not yet a person's (D-14).
-    pub fn needs_person(&self) -> bool {
+    /// Observer is still sorting is not yet a person's (D-14), and neither
+    /// is a stop the recovery schedule is still working on (D-44):
+    /// `recovering` says whether that is so for this Task.
+    pub fn needs_person(&self, recovering: bool) -> bool {
         let sorting = self.state == TaskState::Blocked && {
-            let mut open = self
-                .open_questions()
-                .filter(|question| !matches!(question.kind, QuestionKind::Notice))
-                .peekable();
+            let mut open = self.open_questions().peekable();
             open.peek().is_some() && open.all(|question| !question.awaits_person())
         };
+        let stop_is_persons = self.state != TaskState::Stopped || !recovering;
         (matches!(
             self.state,
             TaskState::Blocked | TaskState::Stopped | TaskState::MergeWaiting
-        ) && !sorting)
+        ) && !sorting
+            && stop_is_persons)
             || (self.state == TaskState::Paused
                 && self.pause_reason == Some(PauseReason::PaneClosed))
-            || self.open_questions().any(|question| {
-                question.awaits_person() && !matches!(question.kind, QuestionKind::Notice)
-            })
+            || self.open_questions().any(Question::awaits_person)
+    }
+
+    /// Whether a stop is one the recovery schedule restarts (D-44).
+    pub fn recoverable_stop(&self) -> bool {
+        self.state == TaskState::Stopped
+            && matches!(
+                self.stop,
+                Some(
+                    StopReason::WorkerStart
+                        | StopReason::EnvironmentRepeated
+                        | StopReason::NoReport
+                        | StopReason::Stalled
+                )
+            )
+    }
+
+    /// The decisions Factory AI made that stand.
+    pub fn ai_decisions(&self) -> usize {
+        self.decisions.iter().filter(|d| d.by_ai()).count()
     }
 
     pub fn branch_slug(&self) -> String {
@@ -1532,6 +2196,29 @@ impl Task {
 #[cfg(test)]
 mod summary_tests {
     use super::*;
+
+    #[test]
+    fn a_copied_command_is_exactly_the_one_line_drawn() {
+        assert_eq!(copyable_command("  gh auth login "), Some("gh auth login"));
+        assert_eq!(copyable_command("ls ~/작업/빌드"), Some("ls ~/작업/빌드"));
+        for hidden in [
+            "echo \u{202E}txt.hs",
+            "a\u{200B}b",
+            "echo \u{2066}x\u{2069}",
+            "\u{FEFF}gh auth login",
+            "one\u{2028}two",
+            "one\ntwo",
+            "rm\u{E0020}x",
+            "ls\u{FE0F} a",
+            "ls \u{3164}",
+            "ls\u{2800}a",
+            "rm\u{00A0}-rf",
+            "ls\u{3000}a",
+            "a\u{034F}b",
+        ] {
+            assert_eq!(copyable_command(hidden), None, "{hidden:?}");
+        }
+    }
 
     #[test]
     fn factory_sleep_preserves_the_workers_pane() {

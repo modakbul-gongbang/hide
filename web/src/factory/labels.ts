@@ -4,7 +4,7 @@
 // writing fails to compile here before it reaches a screen unlabelled.
 
 import type { MessageKey } from "../i18n/catalogs";
-import type { AttemptOutcome, AttemptStage, CardView, Column, DecisionKind, DiagnosisSource, DiscoveryClass, EnvHold, Gate, InboxGroup, InboxItem, Notice, ObserverMode, PauseReason, QuestionOrigin, ResultCode, StopReason, TaskState, WaitingFor } from "./model";
+import type { Activity, AttemptOutcome, AttemptStage, CardView, Column, CriterionState, DecisionKind, DecisionSource, DiagnosisSource, DiscoveryClass, EnvHold, Fallback, FollowUpState, Gate, Holding, InboxItem, ObserverMode, PauseReason, QuestionOrigin, RecoveryAction, RecoveryOutcome, StopReason, TaskState, WaitingFor } from "./model";
 
 export const STATE_LABEL: Record<TaskState, MessageKey> = {
   drafting: "factory.state.drafting",
@@ -29,13 +29,6 @@ export const COLUMN_LABEL: Record<Column, MessageKey> = {
   done: "factory.column.done",
 };
 
-export const GROUP_LABEL: Record<InboxGroup, MessageKey> = {
-  answer: "factory.group.answer",
-  merge: "factory.group.merge",
-  stopped: "factory.group.stopped",
-  notice: "factory.group.notice",
-};
-
 export const KIND_LABEL: Record<InboxItem["kind"], MessageKey> = {
   intake: "factory.kind.intake",
   split: "factory.kind.split",
@@ -46,11 +39,13 @@ export const KIND_LABEL: Record<InboxItem["kind"], MessageKey> = {
   proposed_task: "factory.kind.proposed_task",
   action: "factory.kind.action",
   confirm_card: "factory.kind.confirm_card",
-  proposal: "factory.kind.proposal",
-  notice: "factory.kind.notice",
   merge: "factory.kind.merge",
   stopped: "factory.kind.stopped",
   paused: "factory.kind.paused",
+  github: "factory.kind.github",
+  command: "factory.kind.command",
+  start: "factory.kind.start",
+  hold: "factory.kind.hold",
 };
 
 export const ORIGIN_LABEL: Record<QuestionOrigin, MessageKey> = {
@@ -95,6 +90,41 @@ export const ACTION_LABEL: Record<string, MessageKey> = {
   "request-changes": "factory.action.requestChanges",
   revive: "factory.action.revive",
 };
+
+/**
+ * The words and result of a choice the engine itself offers, by its code: a
+ * question the engine asks lists codes it answers by, never sentences, and
+ * the screen says them in the operator's language (B22). A choice a worker
+ * or Factory AI wrote is its own words and has none.
+ */
+const REVIEWED_KINDS = new Set<string>(["blocking", "default", "intake", "scope_change"]);
+
+const ENGINE_CHOICE: Record<string, { label: MessageKey; result: MessageKey | null }> = {
+  approve: { label: "factory.choice.approve", result: null },
+  reject: { label: "factory.choice.reject", result: null },
+  split: { label: "factory.choice.split", result: null },
+  proceed: { label: "factory.choice.proceed", result: null },
+  continue: { label: "factory.choice.continue", result: null },
+  stop: { label: "factory.choice.stop", result: null },
+  confirm: { label: "factory.choice.confirm", result: null },
+  retry: { label: "factory.action.retry", result: "factory.choice.retryResult" },
+  cancel: { label: "factory.action.cancel", result: "factory.decide.verb.cancel" },
+  "retry-review": { label: "factory.choice.retryReview", result: "factory.choice.retryReviewResult" },
+  "start-as-is": { label: "factory.choice.startAsIs", result: "factory.choice.startAsIsResult" },
+  "enable-ai": { label: "factory.choice.enableAi", result: "factory.choice.enableAiResult" },
+  "retry-revert": { label: "factory.choice.retryRevert", result: null },
+  "resume-auto": { label: "factory.choice.resumeAuto", result: null },
+};
+
+/** A choice's words and result when the engine offers it by code, or null for words someone wrote. */
+/** An engine choice code in words; a reviewed question's choices are already written for the person and stay as they are. */
+export function engineChoice(item: Pick<InboxItem, "kind">, value: string, t: Translate): { label: string; result: string | null } | null {
+  if (REVIEWED_KINDS.has(item.kind)) return null;
+  const revert = /^revert (\S+)$/.exec(value);
+  if (revert) return { label: t("factory.choice.revert", { id: revert[1]! }), result: null };
+  const known = ENGINE_CHOICE[value];
+  return known ? { label: t(known.label), result: known.result ? t(known.result) : null } : null;
+}
 
 /** An action's words; resuming a Task paused by a closed pane starts its worker again (D-26), so it reads 다시 시작. */
 export function actionKey(value: string, paused = false): MessageKey {
@@ -154,27 +184,76 @@ export const GATE_LABEL: Record<Gate, MessageKey> = {
   merge_refused: "factory.gate.merge_refused",
 };
 
-export const RESULT_LABEL: Record<ResultCode, MessageKey> = {
-  wake_worker: "factory.result.wake_worker",
-  apply_or_merge: "factory.result.apply_or_merge",
-  ready: "factory.result.ready",
-  split: "factory.result.split",
-  drafting: "factory.result.drafting",
-  new_task_cap_choice: "factory.result.new_task_cap_choice",
-  run_action: "factory.result.run_action",
-  acknowledge: "factory.result.acknowledge",
-  merge: "factory.result.merge",
-  restart_worker: "factory.result.restart_worker",
-  resume_worker: "factory.result.resume_worker",
+/** What a 결정 필요 item holds up, said when the asker did not write it (D-33). */
+export const HOLDING_LABEL: Record<Holding, MessageKey> = {
+  worker: "factory.holding.worker",
+  start: "factory.holding.start",
+  merge: "factory.holding.merge",
+  progress: "factory.holding.progress",
+  starts: "factory.holding.starts",
+  github: "factory.holding.github",
+  continues: "factory.holding.continues",
 };
 
-/** A notice's line; the engine's own words follow it. */
-export const NOTICE_LABEL: Record<Notice, MessageKey> = {
-  ai_answered: "factory.notice.ai_answered",
-  ai_card_fixed: "factory.notice.ai_card_fixed",
-  ai_new_task: "factory.notice.ai_new_task",
-  ai_risk_merge: "factory.notice.ai_risk_merge",
-  daily_limit: "factory.notice.daily_limit",
+/** What happens while an item waits for a person, by what it holds up. */
+export const MEANWHILE_LABEL: Record<Holding, MessageKey> = {
+  worker: "factory.meanwhile.worker",
+  start: "factory.meanwhile.start",
+  merge: "factory.meanwhile.merge",
+  progress: "factory.meanwhile.progress",
+  starts: "factory.meanwhile.starts",
+  github: "factory.meanwhile.github",
+  continues: "factory.meanwhile.continues",
+};
+
+/** Why Factory AI left a decision to a person (B7); the engine's `fallback` codes. */
+export const FALLBACK_LABEL: Record<Fallback, MessageKey> = {
+  failed: "factory.fallback.failed",
+  daily_limit: "factory.fallback.daily_limit",
+  paused: "factory.fallback.paused",
+  queue_full: "factory.fallback.queue_full",
+  dropped: "factory.fallback.dropped",
+  restart: "factory.fallback.restart",
+  unsure: "factory.fallback.unsure",
+  permission: "factory.fallback.permission",
+  no_choice: "factory.fallback.noChoice",
+};
+
+export const DECISION_SOURCE_LABEL: Record<DecisionSource, MessageKey> = {
+  answer: "factory.source.answer",
+  assumption: "factory.source.assumption",
+  send_back: "factory.source.send_back",
+  worker: "factory.source.worker",
+  request_changes: "factory.source.request_changes",
+  risk_merge: "factory.source.risk_merge",
+};
+
+export const CRITERION_LABEL: Record<CriterionState, MessageKey> = {
+  met: "factory.criterion.met",
+  unmet: "factory.criterion.unmet",
+  unknown: "factory.criterion.unknown",
+};
+
+export const FOLLOW_UP_STATE_LABEL: Record<FollowUpState, MessageKey> = {
+  open: "factory.followUp.state.open",
+  issue: "factory.followUp.state.issue",
+  factory: "factory.followUp.state.factory",
+  discarded: "factory.followUp.state.discarded",
+};
+
+/** The closed list of automatic recoveries, as the settings name them. */
+export const RECOVERY_ACTION_LABEL: Record<RecoveryAction, MessageKey> = {
+  remove_finished_worktrees: "factory.settings.recovery.remove_finished_worktrees",
+  restart_worker: "factory.settings.recovery.restart_worker",
+  sleep_wake_worker: "factory.settings.recovery.sleep_wake_worker",
+  switch_runtime: "factory.settings.recovery.switch_runtime",
+  retry_reads_and_reconnect: "factory.settings.recovery.retry_reads_and_reconnect",
+};
+
+export const RECOVERY_OUTCOME_LABEL: Record<RecoveryOutcome, MessageKey> = {
+  improved: "factory.recovery.improved",
+  partial: "factory.recovery.partial",
+  unchanged: "factory.recovery.unchanged",
 };
 
 /** The Observer's five kinds of decision request (D-14). */
@@ -285,6 +364,16 @@ export const REFUSAL_REASONS = [
   "verify_command_required",
   "worker_description_too_long",
   "worker_out_of_range",
+  "decision_not_changeable",
+  "decision_not_found",
+  "follow_up_failed",
+  "follow_up_not_found",
+  "follow_up_settled",
+  "github_blocked",
+  "github_still_blocked",
+  "item_not_found",
+  "result_required",
+  "summary_replaced",
 ] as const;
 export type RefusalReason = (typeof REFUSAL_REASONS)[number];
 
@@ -349,9 +438,19 @@ export const REFUSAL_LABEL: Record<RefusalReason, MessageKey> = {
   verify_command_required: "factory.refusal.verify_command_required",
   worker_description_too_long: "factory.refusal.worker_description_too_long",
   worker_out_of_range: "factory.refusal.worker_out_of_range",
+  decision_not_changeable: "factory.refusal.decision_not_changeable",
+  decision_not_found: "factory.refusal.decision_not_found",
+  follow_up_failed: "factory.refusal.follow_up_failed",
+  follow_up_not_found: "factory.refusal.follow_up_not_found",
+  follow_up_settled: "factory.refusal.follow_up_settled",
+  github_blocked: "factory.refusal.github_blocked",
+  github_still_blocked: "factory.refusal.github_still_blocked",
+  item_not_found: "factory.refusal.item_not_found",
+  result_required: "factory.refusal.result_required",
+  summary_replaced: "factory.refusal.summary_replaced",
 };
 
-type Translate = (key: MessageKey, options?: Record<string, unknown>) => string;
+export type Translate = (key: MessageKey, options?: Record<string, unknown>) => string;
 
 /** What a waiting or blocked card waits for, from its code (B15, B17). */
 export function waitingText(card: CardView, t: Translate): string | null {
@@ -367,40 +466,97 @@ export function waitingText(card: CardView, t: Translate): string | null {
   }
 }
 
-/** Why an item is the person's (B9): a question's own words, or a merge's gates and a stop's reason from their codes. */
-export function itemWhy(item: InboxItem, t: Translate): string {
-  if (item.group === "merge") return item.gates.length > 0 ? t("factory.turn.mergeGates", { gates: item.gates.map((gate) => t(GATE_LABEL[gate])).join(", ") }) : t("factory.turn.mergeWhy");
-  if (item.kind === "paused") return t("factory.turn.pausedWhy");
-  if (item.group === "stopped" && item.question === null) {
-    const stop = t("factory.turn.stopWhy", { reason: item.stop ? t(STOP_LABEL[item.stop]) : t("factory.state.stopped") });
-    // Factory AI's reading of a quiet worker, or what a vanished one did (D-23, D-25).
-    if (item.observer_reason) return `${stop} · ${t("factory.turn.diagnosis", { text: item.observer_reason })}`;
-    if (item.stop === "worker_gone") return `${stop} · ${t("factory.turn.goneWhy")}`;
-    return stop;
-  }
-  return item.text;
-}
-
-/** What a notice says: its code's line with the engine's words; the daily cap is said whole. */
-export function noticeText(item: InboxItem, t: Translate, limit: number | null = null): string {
-  if (item.notice === "daily_limit") return limit === null ? t("factory.notice.daily_limit") : t("factory.notice.dailyLimitCount", { limit });
-  return item.notice ? t(NOTICE_LABEL[item.notice], { text: item.text }) : item.text;
-}
-
 /** Why a request the Observer sorted is the person's: its kind, and who decides it in this mode (D-14, D-21). */
 export function decisionWhy(kind: DecisionKind, mode: ObserverMode | null, t: Translate): string {
   const who = kind === "D" ? t("factory.decision.permission") : mode ? t(MODE_MINE[mode]) : null;
   return who ? `${t(DECISION_KIND_LABEL[kind])} · ${who}` : t(DECISION_KIND_LABEL[kind]);
 }
 
-/** What sending the suggestion does, and the Tasks it frees (B9). */
-export function resultText(item: InboxItem, t: Translate): string {
-  const result = t(RESULT_LABEL[item.result_code]);
-  return item.unblocks.length > 0 ? t("factory.result.unblocks", { result, ids: item.unblocks.join(", ") }) : result;
-}
-
 /** A refusal's next action in the screen's language; an unlisted reason names itself. */
 export function refusalText(reason: string | undefined, t: Translate): string {
   if (reason === undefined) return t("factory.noAnswer");
   return (REFUSAL_REASONS as readonly string[]).includes(reason) ? t(REFUSAL_LABEL[reason as RefusalReason]) : t("factory.refusal.unknown", { reason });
+}
+
+/** A recovery action's short name, as an activity line or a 결정 필요 item's 자동 복구 row says it. */
+export const RECOVERY_SHORT: Record<RecoveryAction, MessageKey> = {
+  remove_finished_worktrees: "factory.recovery.action.remove_finished_worktrees",
+  restart_worker: "factory.recovery.action.restart_worker",
+  sleep_wake_worker: "factory.recovery.action.sleep_wake_worker",
+  switch_runtime: "factory.recovery.action.switch_runtime",
+  retry_reads_and_reconnect: "factory.recovery.action.retry_reads_and_reconnect",
+};
+
+const OUTSIDE_LABEL: Record<Extract<Activity, { kind: "outside" }>["what"], MessageKey> = {
+  closing_pr: "factory.activity.outside.closing_pr",
+  pr_merged: "factory.activity.outside.pr_merged",
+  issue_closed: "factory.activity.outside.issue_closed",
+  issue_reopened: "factory.activity.outside.issue_reopened",
+};
+
+const VERIFICATION_LABEL: Record<Extract<Activity, { kind: "verification" }>["outcome"], MessageKey> = {
+  passed: "factory.outcome.passed",
+  failed: "factory.outcome.failed",
+  environment: "factory.outcome.environment",
+};
+
+/** Bytes as the screen says a size: GB with one decimal, else MB. */
+export function bytesText(bytes: number): string {
+  return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)}GB` : `${Math.max(1, Math.round(bytes / 1024 ** 2))}MB`;
+}
+
+/**
+ * One activity line in the operator's language: its sentence and, where it
+ * has one, the smaller line under it. Free text inside is the worker's, the
+ * AI's or a migrated notice's own words. `finding` names a follow-up
+ * candidate's own words where the page has them, so a new candidate is
+ * said by what was found rather than by its state.
+ */
+export function activityText(entry: Activity, t: Translate, finding?: (discovery: string) => string | undefined): { text: string; detail: string | null } {
+  switch (entry.kind) {
+    case "intake":
+      return {
+        text: entry.label ? t("factory.activity.intakeLabel") : t("factory.activity.intake"),
+        detail: t("factory.activity.intakeDetail", { criteria: entry.criteria, assumptions: entry.assumptions }),
+      };
+    case "started":
+      return { text: entry.resumed ? t("factory.activity.resumed") : t("factory.activity.started"), detail: null };
+    case "report":
+      return { text: t("factory.activity.report"), detail: null };
+    case "pull_request":
+      return { text: t("factory.activity.pullRequest", { number: entry.number }), detail: null };
+    case "verification": {
+      const outcome = t(VERIFICATION_LABEL[entry.outcome]);
+      return { text: entry.ci ? t("factory.activity.ci", { check: entry.check ?? "", outcome }) : t("factory.activity.verify", { number: entry.number, outcome }), detail: null };
+    }
+    case "sent_back":
+      return { text: t("factory.activity.sentBack", { text: entry.text }), detail: null };
+    case "recovery": {
+      const action = t(RECOVERY_SHORT[entry.action]);
+      const freed = entry.freed ? t("factory.activity.freed", { size: bytesText(entry.freed) }) : null;
+      const removed = entry.removed && entry.removed.length > 0 ? t("factory.activity.removed", { count: entry.removed.length }) : null;
+      return {
+        text: entry.outcome ? t("factory.activity.recovery", { action, outcome: t(RECOVERY_OUTCOME_LABEL[entry.outcome]) }) : t("factory.activity.recovering", { action }),
+        detail: [removed, freed].filter((part) => part !== null).join(" · ") || null,
+      };
+    }
+    case "follow_up": {
+      const found = entry.state === "open" ? finding?.(entry.discovery)?.split("\n")[0]?.trim() : undefined;
+      return { text: t("factory.activity.followUp", { state: found || t(FOLLOW_UP_STATE_LABEL[entry.state]) }), detail: entry.issue ?? null };
+    }
+    case "ai_decision":
+      return { text: t("factory.activity.aiDecision", { text: entry.text }), detail: null };
+    case "outside":
+      return { text: t(OUTSIDE_LABEL[entry.what]), detail: null };
+    case "main_broken":
+      return { text: entry.by_factory ? t("factory.activity.mainBrokenByFactory") : t("factory.activity.mainBrokenOutside"), detail: null };
+    case "cleanup_kept":
+      return { text: t("factory.activity.cleanupKept", { worktree: entry.worktree.split("/").pop() ?? entry.worktree }), detail: entry.detail };
+    case "watch":
+      return { text: t("factory.activity.watch", { text: entry.text }), detail: entry.action ? t(RECOVERY_SHORT[entry.action]) : null };
+    case "daily_limit":
+      return { text: t("factory.activity.dailyLimit", { limit: entry.limit }), detail: null };
+    case "note":
+      return { text: entry.text, detail: null };
+  }
 }

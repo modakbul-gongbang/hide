@@ -47,3 +47,9 @@
 }
 
 .factory-graph-node .factory-card-title { font-size: var(--text-body); line-height: calc(var(--spacing-sm) + var(--spacing-xs) + var(--spacing-xxs)); }
+
+/* The 라인's table (PRD factory-human-loop B25): title, track, now, elapsed and AI columns. */
+.factory-line-grid { display: grid; grid-template-columns: minmax(0, 2.6fr) minmax(0, 0.9fr) minmax(0, 3fr) minmax(0, 0.6fr) minmax(0, 0.4fr); column-gap: var(--spacing-md); align-items: center; }
+.factory-line-band { width: calc(var(--size-hairline) * 3); }
+.factory-line-track { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--spacing-xxs); width: calc(var(--spacing-md) * 10); max-width: 100%; }
+.factory-line-cell { height: calc(var(--size-hairline) * 3); border-radius: var(--size-hairline); }

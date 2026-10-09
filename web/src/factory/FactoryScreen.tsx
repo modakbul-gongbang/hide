@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
-import { MessageSquareIcon, PauseIcon, PlayIcon, PlusIcon } from "lucide-react";
+import { CircleXIcon, ClockIcon, MessageSquareIcon, PauseIcon, PlayIcon, PlusIcon, SparklesIcon } from "lucide-react";
 import type { Actions } from "../actions";
-import { Elapsed } from "../components/elapsed";
+import { useElapsed } from "../components/elapsed";
 import { Button } from "../components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
@@ -14,28 +14,22 @@ import { CreateSheet } from "./CreateSheet";
 import { FactoryBoard } from "./FactoryBoard";
 import { FactoryGraph } from "./FactoryGraph";
 import { FactorySettings } from "./FactorySettings";
-import { COLUMN_LABEL } from "./labels";
-import type { Column, FactorySummary, FactoryView } from "./model";
-import { MyTurn, Refusal } from "./MyTurn";
+import { Refusal } from "./Decisions";
+import { Line, ReadingTable } from "./Line";
+import type { FactorySummary, FactoryView } from "./model";
 import { useFactoryRequest } from "./request";
 import { TaskPage } from "./TaskPage";
-import { outsideRead, shownFactories, shownFlow } from "./view";
+import { outsideRead, shownFactories } from "./view";
 
-const TAB_LABEL = { turn: "factory.tab.turn", board: "factory.tab.board", graph: "factory.tab.graph", settings: "factory.tab.settings" } as const;
-
-const FLOW_CELLS: readonly { column: Column; count: keyof ReturnType<typeof shownFlow> }[] = [
-  { column: "before", count: "before" },
-  { column: "moving", count: "moving" },
-  { column: "stuck", count: "stuck" },
-  { column: "done", count: "done_today" },
-];
+export const TAB_LABEL = { line: "factory.tab.line", board: "factory.tab.board", graph: "factory.tab.graph", settings: "factory.tab.settings" } as const;
 
 /**
- * The Factory screen (PRD software-factory-ui D-03, B1, B7, B21): one job per
- * screen, 내 차례 · 보드 · 그래프 · 설정 under a header of the project filter,
- * the flow bar and 비서에게 묻기, or one Task's page over them. Everything it
- * shows is the engine's summary; before the first one arrives it draws its
- * frame, and with no Factory it offers only + Factory 만들기.
+ * The Factory screen (PRD factory-human-loop D-34, B24-B26, B31): 라인 ·
+ * 보드 · 그래프 · 설정 under a header of the project filter and 비서에게
+ * 묻기, with the Factory's state at the end of the tabs row, or one Task's
+ * page over them. Everything it shows is the engine's summary; before the
+ * first one arrives it draws its frame, and with no Factory it offers only
+ * + Factory 만들기.
  */
 export function FactoryScreen({ actions }: { actions: Actions }) {
   const place = useUiStore((s) => (s.screen?.kind === "factory" ? s.screen.place : null));
@@ -59,8 +53,7 @@ function FactoryBody({ summary, place, actions }: { summary: FactorySummary; pla
   return (
     <>
       <FactoryHeader factories={open} factory={factory} actions={actions} />
-      <FlowBar factories={factories} />
-      <div className="flex shrink-0 items-center px-lg pb-sm">
+      <div className="flex shrink-0 items-center gap-md px-lg pb-md">
         <Tabs value={place.tab} onValueChange={(value) => useUiStore.getState().setFactoryPlace({ tab: value as FactoryTab })}>
           <TabsList data-factory-tabs="true">
             {FACTORY_TABS.map((tab) => (
@@ -70,9 +63,11 @@ function FactoryBody({ summary, place, actions }: { summary: FactorySummary; pla
             ))}
           </TabsList>
         </Tabs>
+        <span className="flex-1" />
+        <FactoryState factories={factories} />
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-auto" data-factory-body={place.tab}>
-        {place.tab === "turn" ? <MyTurn summary={summary} factory={factory} actions={actions} /> : null}
+        {place.tab === "line" ? <Line summary={summary} factory={factory} actions={actions} /> : null}
         {place.tab === "board" ? <FactoryBoard factories={factories} place={place} actions={actions} inbox={summary.inbox} /> : null}
         {place.tab === "graph" ? <FactoryGraph factories={factories} filtered={factory !== null} /> : null}
         {place.tab === "settings" ? <FactorySettings factories={factories} filtered={factory !== null} actions={actions} /> : null}
@@ -81,14 +76,14 @@ function FactoryBody({ summary, place, actions }: { summary: FactorySummary; pla
   );
 }
 
-/** 내 차례 carries the one person-facing number, the same the sidebar shows for the Factory row or the project row the filter keeps (B12). */
+/** 라인 carries the one person-facing number, the same the sidebar shows for the Factory row or the project row the filter keeps. */
 function TabLabel({ tab, count }: { tab: FactoryTab; count: number }) {
   const { t } = useInterfaceTranslation();
   return (
     <span className="flex items-center gap-xs">
       {t(TAB_LABEL[tab])}
-      {tab === "turn" && count > 0 ? (
-        <span className="text-warning" data-factory-turn-count={count}>
+      {tab === "line" && count > 0 ? (
+        <span className="text-warning" data-factory-line-count={count}>
           {count}
         </span>
       ) : null}
@@ -162,41 +157,34 @@ function PauseFactory({ view, actions }: { view: FactoryView; actions: Actions }
 }
 
 /**
- * The flow bar (B7, B12, B20): the Tasks moving, never a person's-turn cell;
- * a cell opens the board filtered to it. The last outside read sits at its
- * end and turns the warning colour after three failed reads in a row.
+ * The Factory's state at the end of the tabs row (B21, B24, B31): main
+ * broken, today's Factory AI judgments used up, and when GitHub was last
+ * read, dimmed once three reads in a row failed. Each shows only while true.
  */
-function FlowBar({ factories }: { factories: FactoryView[] }) {
-  const { t } = useInterfaceTranslation();
-  const flow = shownFlow(factories);
+function FactoryState({ factories }: { factories: FactoryView[] }) {
+  const { t, i18n } = useInterfaceTranslation();
   const read = outsideRead(factories);
-  // A paused Factory's workers are asleep, so its moving cell says so.
-  const asleep = factories.length > 0 && factories.every((view) => view.paused);
+  const broken = factories.some((view) => view.main_broken);
+  const capped = factories.find((view) => view.observer_capped) ?? null;
   return (
-    <div className="mx-lg flex shrink-0 items-stretch gap-xxs rounded-md bg-muted p-xxs" data-factory-flow="true">
-      {FLOW_CELLS.map((cell) => (
-        <button
-          key={cell.column}
-          type="button"
-          className="flex flex-1 items-baseline gap-sm rounded-sm px-md py-xs text-left text-body text-subtle-foreground outline-none hover:bg-background focus-visible:ring-1 focus-visible:ring-ring"
-          data-factory-flow-cell={cell.column}
-          onClick={() => useUiStore.getState().setFactoryPlace({ tab: "board", column: cell.column, cancelled: false })}
-        >
-          <span className="truncate">{cell.column === "done" ? t("factory.flow.doneToday") : cell.column === "moving" && asleep ? t("factory.flow.asleep") : t(COLUMN_LABEL[cell.column])}</span>
-          <span className="font-semibold text-foreground" data-factory-flow-count={flow[cell.count]}>
-            {flow[cell.count]}
-          </span>
-        </button>
-      ))}
+    <div className="flex min-w-0 shrink items-center gap-md text-caption" data-factory-state-row="true">
+      {broken ? (
+        <span className="flex shrink-0 items-center gap-xxs rounded-full border border-destructive px-sm py-xxs text-destructive" data-factory-main-broken="true">
+          <CircleXIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+          {t("factory.header.mainBroken")}
+        </span>
+      ) : null}
+      {capped ? (
+        <span className="flex min-w-0 items-center gap-xxs text-warning" data-factory-ai-capped="true">
+          <SparklesIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+          <span className="truncate">{t("factory.header.aiCapped", { used: capped.observer_today, limit: capped.observer_limit })}</span>
+        </span>
+      ) : null}
       {read ? (
-        <Hint label={read.stale ? t("factory.flow.staleHint") : t("factory.flow.readHint")}>
-          <span
-            className={cn("flex shrink-0 items-center gap-xxs self-center px-md text-caption", read.stale ? "text-warning" : "text-muted-foreground")}
-            data-factory-outside-read={read.stale ? "stale" : "fresh"}
-            tabIndex={0}
-          >
-            {t("factory.flow.read")}
-            {read.at === null ? <span>{t("factory.flow.notRead")}</span> : <Elapsed since={read.at} />}
+        <Hint label={read.stale ? t("factory.header.staleHint") : t("factory.header.readHint")}>
+          <span className={cn("flex shrink-0 items-center gap-xxs text-muted-foreground", read.stale && "opacity-(--opacity-dimmed)")} data-factory-outside-read={read.stale ? "stale" : "fresh"} tabIndex={0}>
+            {read.stale ? <ClockIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : null}
+            {read.at === null ? t("factory.header.notRead") : read.stale ? t("factory.header.lastRead", { time: new Date(read.at).toLocaleTimeString(i18n.language, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) }) : <ReadAgo at={read.at} />}
           </span>
         </Hint>
       ) : null}
@@ -204,16 +192,20 @@ function FlowBar({ factories }: { factories: FactoryView[] }) {
   );
 }
 
-/** Before the core's first summary: the screen's frame, never an empty state that might be wrong (B21). */
-function FactorySkeleton() {
+/** `GitHub 읽음 3분 전`, counted on the window's one clock. */
+function ReadAgo({ at }: { at: number }) {
   const { t } = useInterfaceTranslation();
+  const ago = useElapsed(at);
+  return <>{t("factory.header.read", { time: ago ?? "" })}</>;
+}
+
+/** Before the core's first summary: the screen's frame, never an empty state that might be wrong. */
+function FactorySkeleton() {
   return (
-    <div className="flex flex-col gap-md px-lg pt-lg" aria-busy="true" aria-label={t("factory.loading")} data-factory-skeleton="true">
+    <div className="flex flex-col gap-lg px-lg pt-lg" data-factory-skeleton="true">
       <div className="h-(--size-control) w-1/5 rounded-sm bg-muted" />
-      <div className="h-(--size-control) rounded-md bg-muted" />
-      <div className="h-(--size-control-sm) w-2/5 rounded-sm bg-muted" />
-      <div className="h-(--size-control-lg) rounded-md bg-muted" />
-      <div className="h-(--size-control-lg) rounded-md bg-muted" />
+      <div className="h-(--size-control-sm) w-1/4 rounded-sm bg-muted" />
+      <ReadingTable />
     </div>
   );
 }

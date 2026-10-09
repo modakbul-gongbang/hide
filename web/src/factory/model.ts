@@ -15,7 +15,7 @@ export const COLUMNS = ["before", "moving", "stuck", "done"] as const;
 export type Column = (typeof COLUMNS)[number];
 
 /** `contracts/snapshot-wire-enums.json`: `factory_question_kind`. */
-export const QUESTION_KINDS = ["intake", "split", "default", "blocking", "scope_change", "new_task_cap", "proposed_task", "action", "confirm_card", "proposal", "notice"] as const;
+export const QUESTION_KINDS = ["intake", "split", "default", "blocking", "scope_change", "new_task_cap", "proposed_task", "action", "confirm_card"] as const;
 export type QuestionKind = (typeof QUESTION_KINDS)[number];
 
 /** `contracts/snapshot-wire-enums.json`: `factory_question_origin`. */
@@ -51,12 +51,39 @@ export const GATES = ["review_directly", "approved_scope_change", "breaking_chan
 export type Gate = (typeof GATES)[number];
 
 /** `contracts/snapshot-wire-enums.json`: `factory_result_code`, what sending an item's suggestion does. */
-export const RESULT_CODES = ["wake_worker", "apply_or_merge", "ready", "split", "drafting", "new_task_cap_choice", "run_action", "acknowledge", "merge", "restart_worker", "resume_worker"] as const;
+export const RESULT_CODES = ["wake_worker", "apply_or_merge", "ready", "split", "drafting", "new_task_cap_choice", "run_action", "merge", "restart_worker", "resume_worker", "resolve"] as const;
 export type ResultCode = (typeof RESULT_CODES)[number];
 
-/** `contracts/snapshot-wire-enums.json`: `factory_notice`, what a notice says. */
-export const NOTICES = ["ai_answered", "ai_card_fixed", "ai_new_task", "ai_risk_merge", "daily_limit"] as const;
-export type Notice = (typeof NOTICES)[number];
+/** `contracts/snapshot-wire-enums.json`: `factory_holding`, what a 결정 필요 item holds up. */
+export const HOLDINGS = ["worker", "start", "merge", "progress", "starts", "github", "continues"] as const;
+export type Holding = (typeof HOLDINGS)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_decision_by`, who made a decision on a Task page. */
+export const DECISION_BYS = ["person", "ai", "worker"] as const;
+export type DecisionBy = (typeof DECISION_BYS)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_decision_source`, where a decision came from. */
+export const DECISION_SOURCES = ["answer", "assumption", "send_back", "worker", "request_changes", "risk_merge"] as const;
+export type DecisionSource = (typeof DECISION_SOURCES)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_follow_up_state`. */
+export const FOLLOW_UP_STATES = ["open", "issue", "factory", "discarded"] as const;
+export type FollowUpState = (typeof FOLLOW_UP_STATES)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_criterion_state`, what the last check said of a criterion. */
+export const CRITERION_STATES = ["met", "unmet", "unknown"] as const;
+export type CriterionState = (typeof CRITERION_STATES)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_fallback`. Why a request went to a person other than the mode table (B7, B10). */
+export const FALLBACKS = ["failed", "daily_limit", "paused", "queue_full", "dropped", "restart", "unsure", "permission", "no_choice"] as const;
+export type Fallback = (typeof FALLBACKS)[number];
+/** `contracts/snapshot-wire-enums.json`: `factory_recovery_outcome`. */
+export const RECOVERY_OUTCOMES = ["improved", "partial", "unchanged"] as const;
+export type RecoveryOutcome = (typeof RECOVERY_OUTCOMES)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_recovery_action`, the closed list of automatic recoveries. */
+export const RECOVERY_ACTIONS = ["remove_finished_worktrees", "restart_worker", "sleep_wake_worker", "switch_runtime", "retry_reads_and_reconnect"] as const;
+export type RecoveryAction = (typeof RECOVERY_ACTIONS)[number];
 
 /** `contracts/snapshot-wire-enums.json`: `factory_decision_kind`, how the Observer sorted a request. */
 export const DECISION_KINDS = ["A", "B", "C", "D", "E"] as const;
@@ -74,15 +101,17 @@ export type DiagnosisSource = (typeof DIAGNOSIS_SOURCES)[number];
 export const OBSERVER_MODES = ["manual", "assist", "autonomous"] as const;
 export type ObserverMode = (typeof OBSERVER_MODES)[number];
 
-/** The inbox groups, in the order the engine ranks them. */
-export const INBOX_GROUPS = ["answer", "merge", "stopped", "notice"] as const;
+/** The 결정 필요 groups, in the order the engine ranks them. */
+export const INBOX_GROUPS = ["answer", "merge", "stopped", "todo"] as const;
 export type InboxGroup = (typeof INBOX_GROUPS)[number];
 
+/** A to-do's kind: a GitHub sign-in, a command a person runs, a start that never showed, a recovery that gave up. */
+export const TODO_KINDS = ["github", "command", "start", "hold"] as const;
+export type TodoKind = (typeof TODO_KINDS)[number];
+
 export type FactorySummary = {
-  /** The one person-facing number: open inbox items across Factories. */
+  /** The one person-facing number: every 결정 필요 item across Factories. */
   my_turn: number;
-  /** Notices to acknowledge across Factories; not part of `my_turn`. */
-  notices: number;
   factories: FactoryView[];
   inbox: InboxItem[];
 };
@@ -112,11 +141,22 @@ export type FactoryView = {
   merge_mode: string;
   /** The whole Factory is paused (D-48). */
   paused: boolean;
-  notices: number;
   observer_mode: ObserverMode;
   /** Factory AI judgments made today, local time, against `observer_limit`. */
   observer_today: number;
   observer_limit: number;
+  /** Today's judgments reached the cap; the rest of the day goes to a person (B21). */
+  observer_capped: boolean;
+  /** GitHub refused the Factory's sign-in or a permission (B33). */
+  github_block: GithubBlock | null;
+  /** Follow-up candidates still open, newest first. */
+  follow_ups: FollowUpView[];
+  /** How many follow-ups are open; the list holds the newest 50. */
+  follow_ups_open: number;
+  /** The Factory's latest activity, newest last. */
+  activity: Activity[];
+  /** The last seven local days' three numbers (D-45). */
+  metrics: Metrics;
   /** The Factory AI's agent, model and effort; null follows Hide AI's own choice. */
   factory_ai: FactoryAi | null;
   /** Worker candidates, the first the default. */
@@ -131,6 +171,12 @@ export type ColumnView = { column: Column; label: string; cards: CardView[] };
 
 export type CardView = {
   task: string;
+  /** Factory AI's decisions that stand on this Task. */
+  ai_decisions: number;
+  /** A GitHub step waits for the Factory's access. */
+  permission_wait: boolean;
+  /** The recovery schedule is working on its stop. */
+  recovering: boolean;
   /** `T-n` before Ready, the issue number after. */
   display_id: string;
   column: Column | null;
@@ -143,6 +189,8 @@ export type CardView = {
   resume_at: UnixMs | null;
   waiting_group: "person" | "other" | null;
   stage: number;
+  /** The track cell the 라인 and the Task page draw, 0 접수 to 3 머지, 4 merged; the engine derives it. */
+  track: number;
   state: TaskState;
   state_label: string;
   needs_person: boolean;
@@ -170,16 +218,32 @@ export type CardView = {
 
 export type InboxItem = {
   group: InboxGroup;
-  /** A question kind, `merge`, `stopped`, or `paused` for a worker whose pane was closed. */
-  kind: QuestionKind | "merge" | "stopped" | "paused";
+  /** A question kind, `merge`, `stopped`, `paused` for a worker whose pane was closed, or a to-do's kind. */
+  kind: QuestionKind | "merge" | "stopped" | "paused" | TodoKind;
   rank: number;
   factory: string;
-  task: string;
-  display_id: string;
+  /** The Task it is about; a Factory's to-do has none. */
+  task: string | null;
+  display_id: string | null;
   title: string;
   project: string;
   question: string | null;
+  /** The question or to-do in one sentence, in the asker's words; empty where only the kind says it. */
   text: string;
+  /** What it holds up, as the asker wrote it. */
+  stopped: string | null;
+  holding: Holding;
+  /** Each choice with what choosing it leads to, where the asker wrote it. */
+  outcomes: ChoiceOutcome[];
+  /** Why Factory AI did not decide it, or null when its kind is a person's. */
+  fallback: Fallback | null;
+  /** What the folded 근거 unfolds: links, checks, the report. */
+  evidence: string[];
+  /** The one button's item for a to-do (`resolve`). */
+  resolve: string | null;
+  /** A to-do's command to copy, and what running it does. */
+  command: string | null;
+  impact: string | null;
   suggestion: string;
   result: string;
   default_action: string | null;
@@ -196,20 +260,80 @@ export type InboxItem = {
   gates: Gate[];
   /** Why a stopped item stopped. */
   stop: StopReason | null;
-  /** What a notice says. */
-  notice: Notice | null;
-  /** The question a notice is about; 다른 답 answers that one. */
-  refers_to: string | null;
+  /** Why the machine holds starts, for a hold to-do. */
+  env_hold: EnvHold | null;
+  /** What the recovery schedule already tried. */
+  attempts: RecoveryAttempt[];
   /** How the Observer sorted this request, and its one-line reason. */
   decision_kind: DecisionKind | null;
   observer_reason: string | null;
-  /** Whether Factory AI's answer can still be changed. */
-  overridable: boolean;
 };
+
+export type ChoiceOutcome = { choice: string; result: string };
+export type RecoveryAttempt = { at: UnixMs; action?: RecoveryAction | null; outcome?: RecoveryOutcome | null };
+export type GithubBlock = { forbidden: boolean; scope?: string | null; stage: string; since: UnixMs };
+export type Metrics = {
+  finished: number;
+  /** 결정 필요 items a person moved per finished Task, in tenths; null with nothing finished. */
+  person_items_tenths: number | null;
+  started: number;
+  start_median_ms: number | null;
+  ai_decisions: number;
+  overridden: number;
+  override_percent: number | null;
+};
+export type FollowUpView = {
+  task: string;
+  display_id: string;
+  discovery: string;
+  text: string;
+  state: FollowUpState;
+  issue: string | null;
+  issue_url: string | null;
+  became: string | null;
+  /** Why the last attempt to make its issue failed. */
+  failure: string | null;
+  at: UnixMs;
+};
+export type WorkerReport = { result: string; changed?: string[]; verified?: string[]; unverified?: string[]; raw?: string | null };
+
+/** One activity line: what happened, as a kind and its facts (docs/factory.md, The activity log). */
+export type ActivityEvent =
+  | { kind: "intake"; label: boolean; criteria: number; assumptions: number }
+  | { kind: "started"; resumed: boolean }
+  | { kind: "report"; report: WorkerReport }
+  | { kind: "pull_request"; number: number; url: string }
+  | { kind: "verification"; number: number; ci: boolean; outcome: "passed" | "failed" | "environment"; check?: string | null; link?: string | null }
+  | { kind: "sent_back"; text: string }
+  | { kind: "recovery"; action: RecoveryAction; outcome?: RecoveryOutcome | null; removed?: string[]; freed?: number | null }
+  | { kind: "follow_up"; discovery: string; state: FollowUpState; issue?: string | null }
+  | { kind: "ai_decision"; text: string }
+  | { kind: "outside"; what: "closing_pr" | "pr_merged" | "issue_closed" | "issue_reopened"; link?: string | null }
+  | { kind: "main_broken"; by_factory: boolean; link?: string | null }
+  | { kind: "cleanup_kept"; worktree: string; detail: string }
+  | { kind: "watch"; text: string; action?: RecoveryAction | null }
+  | { kind: "daily_limit"; limit: number }
+  | { kind: "note"; text: string };
+export type Activity = { at: UnixMs; task?: string | null } & ActivityEvent;
 
 export type Attachment = { path: string; sha256: string; version: number; original: string };
 export type PullRequest = { number: number; url: string; head: string; by_factory: boolean; open: boolean };
-export type DecisionRecord = { text: string; by: string; at: UnixMs; kind?: DecisionKind | null; reason?: string | null };
+export type DecisionView = {
+  /** `R<n>`, what a 다른 답 names. */
+  id: string;
+  text: string;
+  by: DecisionBy;
+  recorded_by: string;
+  source: DecisionSource | null;
+  kind: DecisionKind | null;
+  reason: string | null;
+  at: UnixMs;
+  /** Factory AI's, and the Task is not finished. */
+  overridable: boolean;
+  /** What Factory AI had decided, once a person changed it. */
+  changed: { by: string; at: UnixMs; from: string } | null;
+};
+export type CriterionView = { text: string; state: CriterionState | null; reason: string | null };
 export type Answer = { text: string; chose: string | null; relayed_by: string; at: UnixMs };
 export type Question = {
   id: string;
@@ -223,10 +347,12 @@ export type Question = {
   choices: string[];
   answer: Answer | null;
   letter: string | null;
+  /** A worker's question as Factory AI rewrote it for a person; absent when it already read so. */
+  person_text?: string | null;
   /** How the Observer sorted it, and whether a person replaced its answer. */
   routing?: { kind?: DecisionKind; reason?: string; overridden?: boolean } | null;
 };
-export type Discovery = { id: string; class: DiscoveryClass; text: string; at: UnixMs; task: string | null };
+export type Discovery = { id: string; class: DiscoveryClass; text: string; at: UnixMs; task: string | null; follow_up?: { state: FollowUpState } | null };
 export type AttemptView = {
   number: number;
   stage: AttemptStage;
@@ -251,9 +377,18 @@ export type TaskDetail = {
   /** `n/3`, or the engine's no-verification words. */
   verification: string;
   attempts: AttemptView[];
-  decisions: DecisionRecord[];
+  decisions: DecisionView[];
   questions: Question[];
   discoveries: Discovery[];
+  /** Each completion criterion with what the last check said. */
+  checklist: CriterionView[];
+  /** The worker's last report. */
+  report: WorkerReport | null;
+  /** The Task's activity, oldest first. */
+  activity: Activity[];
+  follow_ups: FollowUpView[];
+  /** The issue as written, folded at the foot; none without an issue. */
+  issue_text: string | null;
   /** The engine's words; the screen labels `gate_codes` instead. */
   gates: string[];
   gate_codes: Gate[];

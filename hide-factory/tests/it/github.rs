@@ -795,13 +795,11 @@ fn another_task_s_pull_request_naming_an_issue_takes_no_task() {
 #[test]
 fn a_worker_s_closing_keyword_in_a_decision_stays_text() {
     let mut t = task("T-1", Some(1));
-    t.decisions.push(DecisionRecord {
-        text: "done: Fixes #2 and ``` too".into(),
-        by: "worker:T-1".into(),
-        at: 0,
-        kind: None,
-        reason: None,
-    });
+    t.decisions.push(DecisionRecord::new(
+        "Fixes #2 and ``` too".into(),
+        "worker:T-1".into(),
+        0,
+    ));
     let body = hide_factory::engine::pr_body(&t, &factory());
     let fence = body
         .find("````text")

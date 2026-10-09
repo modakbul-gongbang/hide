@@ -4,6 +4,7 @@ import type { Actions } from "../actions";
 import { agentAdapter } from "../agentAdapters";
 import { PROVIDER_KINDS } from "../agentPicker";
 import { AgentPicker } from "../components/agent-picker";
+import { formatElapsed } from "../components/elapsed";
 import { Disclosure, Group, Note, Row } from "../components/settings-rows";
 import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
@@ -13,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Switch } from "../components/ui/switch";
 import { CLI_DEFAULT, modelChoices, providerById } from "../hideAi";
 import { useInterfaceTranslation } from "../i18n/client";
+import { requireInterfaceLanguage } from "../i18n/locale";
 import type { MessageKey } from "../i18n/catalogs";
 import { cn } from "../lib/utils";
 import { useShellStore } from "../store";
@@ -20,7 +22,7 @@ import { useUiStore } from "../ui";
 import type { FactoryCommand } from "./commands";
 import { MODE_LABEL, MODE_LINE } from "./labels";
 import { OBSERVER_MODES, type FactoryAi, type FactoryView, type ObserverMode, type WorkerCandidate } from "./model";
-import { Refusal } from "./MyTurn";
+import { Refusal } from "./Decisions";
 import { useFactoryRequest } from "./request";
 
 /** A Factory's settings as `hide factory config` answers them (docs/factory.md, Settings). */
@@ -451,7 +453,38 @@ function ObserverGroup({ factory, config, reset, set, actions }: { factory: Fact
           </span>
         </span>
       </Row>}
+      <Row label={t("factory.settings.metrics")} detail={<Note>{t("factory.settings.metricsHint")}</Note>}>
+        <Metrics metrics={factory.metrics} />
+      </Row>
     </Group>
+  );
+}
+
+/**
+ * The last seven local days in three numbers (D-45, B37): 결정 필요 items a
+ * person moved per finished Task, the median from label to first start, and
+ * the share of Factory AI's decisions a person changed; nothing to count reads '-'.
+ */
+function Metrics({ metrics }: { metrics: FactoryView["metrics"] }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const perTask = metrics.person_items_tenths === null ? "-" : (metrics.person_items_tenths / 10).toLocaleString(i18n.language, { maximumFractionDigits: 1 });
+  const median = metrics.start_median_ms === null ? "-" : formatElapsed(requireInterfaceLanguage(i18n.language), metrics.start_median_ms);
+  const share = metrics.override_percent === null ? "-" : `${metrics.override_percent}%`;
+  const cells: { key: string; label: string; value: string; sub: string }[] = [
+    { key: "items", label: t("factory.settings.metrics.items"), value: perTask, sub: t("factory.settings.metrics.itemsSub", { count: metrics.finished }) },
+    { key: "start", label: t("factory.settings.metrics.start"), value: median, sub: t("factory.settings.metrics.startSub", { count: metrics.started }) },
+    { key: "override", label: t("factory.settings.metrics.override"), value: share, sub: t("factory.settings.metrics.overrideSub", { overridden: metrics.overridden, decided: metrics.ai_decisions }) },
+  ];
+  return (
+    <span className="grid grid-cols-3 gap-lg" data-factory-metrics="true">
+      {cells.map((cell) => (
+        <span key={cell.key} className="flex min-w-0 flex-col" data-factory-metric={cell.key}>
+          <span className="text-caption text-subtle-foreground">{cell.label}</span>
+          <span className="font-mono text-subhead font-semibold" data-factory-metric-value={cell.value}>{cell.value}</span>
+          <span className="text-caption text-muted-foreground">{cell.sub}</span>
+        </span>
+      ))}
+    </span>
   );
 }
 

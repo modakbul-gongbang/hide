@@ -11,7 +11,9 @@ use serde_json::json;
 
 use hide_agent_adapter::Capability;
 
-use super::{Engine, Purpose, Reply, TEXT_LIMIT, attached_prd, refuse};
+use super::{
+    Engine, NewQuestion, Purpose, Reply, TEXT_LIMIT, attached_prd, decision_lines, refuse,
+};
 use crate::adapters::{EnvSignal, Failure};
 use crate::judgment::{
     self, Classification, DecisionRequest, Judgment, JudgmentInput, JudgmentOutcome, Priority,
@@ -19,7 +21,7 @@ use crate::judgment::{
 };
 use crate::model::*;
 use crate::role::Role;
-use crate::words::Language;
+use crate::words::{self, Language};
 
 /// Failure classes of a call the provider never received, not counted
 /// against the daily cap (D-34): the engine's full queue and Hide AI's
@@ -37,19 +39,17 @@ const NOT_SENT: [&str; 6] = [
     "usage_limited",
 ];
 
-/// The most recorded decisions an Observer call carries.
-const DECISIONS_SENT: usize = 50;
-
-const NUDGE: &str = "Factory: 보고 없이 차례가 끝났습니다. 하던 일을 hide factory done, ask, block 중 하나로 보고하세요.";
-const DONE_REQUEST: &str = "Factory: 일이 끝났다면 hide factory done --summary '<한 일>' 로 보고하세요. 아직이면 hide factory ask나 block으로 물어보세요.";
+const NUDGE: &str = "Factory: your turn ended without a report. Report what you were doing with one of hide factory done, ask, block.";
+const DONE_REQUEST: &str = "Factory: if the work is finished, report it with hide factory done --result '<one line>' and --changed, --verified, --unverified. If not, ask with hide factory ask or block.";
 
 /// Where the mode table sends a sorted request (D-14, D-32).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Route {
     /// A person answers; `proposal` attaches the Observer's fix as a choice.
     Person { proposal: bool },
-    /// The Observer answers; `notice` puts a line in the notice group.
-    Observer { notice: bool },
+    /// The Observer answers; its decision is on the Task's record and
+    /// activity in every mode (B21).
+    Observer,
     /// The Observer's fix for a wrong card is applied (autonomous E).
     Apply,
 }
@@ -62,12 +62,10 @@ fn route(mode: ObserverMode, verdict: &Classification) -> Route {
         return Route::Person { proposal: false };
     }
     match (verdict.kind, mode) {
-        (A, Manual) => Route::Observer { notice: true },
-        (A, _) => Route::Observer { notice: false },
+        (A, _) => Route::Observer,
         (B, Manual) => Route::Person { proposal: false },
-        (B, Assist) => Route::Observer { notice: true },
-        (B, Autonomous) => Route::Observer { notice: false },
-        (C, Autonomous) => Route::Observer { notice: true },
+        (B, _) => Route::Observer,
+        (C, Autonomous) => Route::Observer,
         (C, _) => Route::Person { proposal: false },
         (D, _) => Route::Person { proposal: false },
         (E, Manual) => Route::Person { proposal: false },
@@ -84,7 +82,8 @@ impl Engine {
     }
 
     /// Takes one call from today's cap. At the cap nothing is sent, and the
-    /// first refusal of the day leaves one notice on `task` (D-17, D-34).
+    /// first refusal of the day is a line of the Factory's activity, which
+    /// its header marks (B21).
     fn charge_observer(&mut self, factory: &str, task: &str) -> bool {
         let day = self.local_day();
         let Some(f) = self.factories.get_mut(factory) else {
@@ -106,13 +105,7 @@ impl Engine {
                 json!({"limit": limit}),
             );
             if first {
-                self.observer_notice(
-                    factory,
-                    task,
-                    NoticeCode::DailyLimit,
-                    None,
-                    &format!("오늘 AI 판단 {limit}번을 다 써서 남은 결정은 나에게 옵니다."),
-                );
+                self.log_factory(factory, Some(task), ActivityEvent::DailyLimit { limit });
             }
             return false;
         }
@@ -142,16 +135,16 @@ impl Engine {
         task: &str,
         judgment: Judgment,
         purpose: Purpose,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), Fallback> {
         if self.judgments.contains_key(&judgment.id) {
             // The same request asked again is the same judgment (B3).
             return Ok(());
         }
         if self.factories.get(factory).is_none_or(|f| f.paused) {
-            return Err("paused");
+            return Err(Fallback::Paused);
         }
         if !self.charge_observer(factory, task) {
-            return Err("daily_limit");
+            return Err(Fallback::DailyLimit);
         }
         let id = judgment.id.clone();
         match self.submit_judgment(judgment) {
@@ -169,7 +162,7 @@ impl Engine {
                     "observer.not_submitted",
                     json!({"judgment": id, "detail": judgment::cut(&failure.detail, 200)}),
                 );
-                Err("queue_full")
+                Err(Fallback::QueueFull)
             }
         }
     }
@@ -177,14 +170,7 @@ impl Engine {
     /// What every Observer call sees of a Task: its card, its recorded
     /// decisions and its PRD (D-16).
     fn observer_context(&self, task: &Task) -> (Card, Vec<String>, Option<String>) {
-        let skip = task.decisions.len().saturating_sub(DECISIONS_SENT);
-        let decisions = task
-            .decisions
-            .iter()
-            .skip(skip)
-            .map(|d| format!("{}: {}", d.by, judgment::cut(&d.text, 600)))
-            .collect();
-        (task.card.clone(), decisions, attached_prd(task))
+        (task.card.clone(), decision_lines(task), attached_prd(task))
     }
 
     fn set_routing(
@@ -220,47 +206,18 @@ impl Engine {
         factory: &str,
         id: &str,
         question: &str,
-        fallback: &str,
+        fallback: Fallback,
     ) {
         self.set_routing(factory, id, question, |routing| {
             routing.to = RouteTo::Person;
-            routing.fallback = Some(fallback.to_owned());
+            routing.fallback = Some(fallback);
         });
         self.record(
             factory,
             Some(id),
             "observer.to_person",
-            json!({"question": question, "reason": fallback}),
+            json!({"question": question, "reason": fallback.as_str()}),
         );
-    }
-
-    /// A notice line: shown under the inbox, never counted in 내 차례 (D-43).
-    pub(super) fn observer_notice(
-        &mut self,
-        factory: &str,
-        id: &str,
-        code: NoticeCode,
-        refers_to: Option<&str>,
-        text: &str,
-    ) {
-        let question = self.add_question(
-            factory,
-            id,
-            QuestionOrigin::Engine,
-            QuestionKind::Notice,
-            text,
-            "",
-            None,
-            None,
-            vec!["ok".into()],
-            None,
-        );
-        self.with_task(factory, id, |task| {
-            if let Some(q) = task.questions.iter_mut().find(|q| q.id == question) {
-                q.notice = Some(code);
-                q.refers_to = refers_to.map(str::to_owned);
-            }
-        });
     }
 
     // ------------------------------------------------------- decision requests
@@ -344,7 +301,7 @@ impl Engine {
                     "observer.failed",
                     json!({"question": question, "reason": reason}),
                 );
-                self.send_to_person(factory, id, question, "failed");
+                self.send_to_person(factory, id, question, Fallback::Failed);
             }
         }
     }
@@ -365,17 +322,25 @@ impl Engine {
             .unwrap_or_default();
         let kind = verdict.kind;
         let reason = verdict.reason.clone();
+        let answer = verdict.answer.clone();
+        let chosen = (question.choices.contains(&answer)
+            || answer == question.suggestion
+            || Some(&answer) == question.default_action.as_ref())
+        .then(|| answer.clone());
         let mut route = route(mode, &verdict);
-        if matches!(route, Route::Observer { .. }) && verdict.answer.is_empty() {
+        let mut no_choice = None;
+        // An empty answer is unusable, and a closed question runs only a
+        // listed choice, since any other words would settle it with nothing
+        // run; either is a person's (D-33), and the mode is not why.
+        if route == Route::Observer && answer.is_empty() {
             route = Route::Person { proposal: false };
+            no_choice = Some(Fallback::Failed);
+        } else if route == Route::Observer && question.kind.closed() && chosen.is_none() {
+            route = Route::Person { proposal: false };
+            no_choice = Some(Fallback::NoChoice);
         }
         match route {
-            Route::Observer { notice } => {
-                let answer = verdict.answer.clone();
-                let chosen = (question.choices.contains(&answer)
-                    || answer == question.suggestion
-                    || Some(&answer) == question.default_action.as_ref())
-                .then(|| answer.clone());
+            Route::Observer => {
                 self.settle_answer(
                     factory,
                     id,
@@ -391,19 +356,17 @@ impl Engine {
                     "observer.answered",
                     json!({"question": question.id, "kind": kind.as_str()}),
                 );
-                if notice {
-                    self.observer_notice(
-                        factory,
-                        id,
-                        NoticeCode::AiAnswered,
-                        Some(&question.id),
-                        &format!(
-                            "{} → {}",
+                self.log_task(
+                    factory,
+                    id,
+                    ActivityEvent::AiDecision {
+                        text: format!(
+                            "{} -> {}",
                             judgment::cut(&question.text, 200),
                             judgment::cut(&answer, 200)
                         ),
-                    );
-                }
+                    },
+                );
             }
             Route::Apply => {
                 let applied = match verdict.proposal.clone() {
@@ -418,11 +381,11 @@ impl Engine {
                     None => false,
                 };
                 if !applied {
-                    self.person_with_verdict(factory, id, &question.id, &verdict, false);
+                    self.person_with_verdict(factory, id, &question.id, &verdict, false, None);
                 }
             }
             Route::Person { proposal } => {
-                self.person_with_verdict(factory, id, &question.id, &verdict, proposal)
+                self.person_with_verdict(factory, id, &question.id, &verdict, proposal, no_choice)
             }
         }
     }
@@ -434,14 +397,48 @@ impl Engine {
         question: &str,
         verdict: &Classification,
         attach: bool,
+        because: Option<Fallback>,
     ) {
         let proposal = verdict.proposal.clone().filter(|_| attach);
         let offered = proposal.is_some();
+        // Unsure or a permission is a person's whatever the kind and mode,
+        // and so is an answer that names no listed choice, so the kind's
+        // line in the mode table is not why (B7).
+        let fallback = if verdict.permission_signal {
+            Some(Fallback::Permission)
+        } else if verdict.ambiguous {
+            Some(Fallback::Unsure)
+        } else {
+            because
+        };
         self.set_routing(factory, id, question, |routing| {
             routing.to = RouteTo::Person;
             routing.kind = Some(verdict.kind);
             routing.reason = Some(verdict.reason.clone());
+            routing.fallback = fallback;
             routing.proposal = proposal;
+        });
+        // What it holds up and where each choice leads, in the person's
+        // language, where the asker left them out (D-33).
+        self.with_task(factory, id, |task| {
+            if let Some(q) = task.questions.iter_mut().find(|q| q.id == question) {
+                if q.stopped.is_none() {
+                    q.stopped = verdict.stopped.clone();
+                }
+                // A worker writes for itself; the judgments already write for
+                // a person (B22).
+                if q.origin == QuestionOrigin::Worker {
+                    q.person_text = verdict.person_text.clone();
+                }
+                if q.outcomes.is_empty() {
+                    q.outcomes = verdict
+                        .outcomes
+                        .iter()
+                        .filter(|outcome| q.choices.contains(&outcome.choice))
+                        .cloned()
+                        .collect();
+                }
+            }
         });
         if offered {
             self.with_task(factory, id, |task| {
@@ -479,7 +476,7 @@ impl Engine {
         };
         let now = self.now();
         let blocking = matches!(question.kind, QuestionKind::Blocking);
-        let (text, body, notice, prerequisite) = match &proposal {
+        let (text, body, prerequisite) = match &proposal {
             ObserverProposal::CardFix { card } => {
                 let card = (**card).clone();
                 self.with_task(factory, id, |task| {
@@ -488,14 +485,13 @@ impl Engine {
                     task.scope_approved = true;
                 });
                 (
-                    format!("카드 고침: {}", card.title),
+                    words::decided(
+                        self.language(),
+                        words::Decided::CardFixed { title: &card.title },
+                    ),
                     format!(
                         "Factory: 카드가 고쳐졌습니다. 새 카드로 진행하세요.\n새 카드:\n{}",
                         super::card_text(&card)
-                    ),
-                    (
-                        NoticeCode::AiCardFixed,
-                        format!("{}: {}", task.display_id(), card.title),
                     ),
                     false,
                 )
@@ -525,6 +521,7 @@ impl Engine {
                             text: judgment::cut(&card.title, TEXT_LIMIT),
                             at: now,
                             task: None,
+                            follow_up: None,
                         })
                     });
                     self.wait_on_prerequisite(factory, id, &discovery, &new_id);
@@ -535,14 +532,16 @@ impl Engine {
                     "이 Task는 지금 범위로 계속하세요."
                 };
                 (
-                    format!("새 Task {new_id}: {}", card.title),
+                    words::decided(
+                        self.language(),
+                        words::Decided::NewTask {
+                            id: &new_id,
+                            title: &card.title,
+                        },
+                    ),
                     format!(
                         "Factory: 새 Task {new_id}({})를 만들었습니다. {after}",
                         card.title
-                    ),
-                    (
-                        NoticeCode::AiNewTask,
-                        format!("{} → {new_id}: {}", task.display_id(), card.title),
                     ),
                     *prerequisite,
                 )
@@ -565,13 +564,21 @@ impl Engine {
                     routing.reason = Some(reason.clone());
                 }
             }
+            // An applied fix is on the record as it was applied; it is
+            // undone its own way, never by a different answer (B29).
             task.decisions.push(DecisionRecord {
-                text: format!("{} -> {text}", judgment::cut(&question.text, 200)),
-                by: by.to_owned(),
-                at: now,
                 kind: observer.as_ref().map(|(kind, _)| *kind),
                 reason: observer.as_ref().map(|(_, reason)| reason.clone()),
+                question: Some(question.id.clone()),
+                ..DecisionRecord::new(
+                    format!("{} -> {text}", judgment::cut(&question.text, 200)),
+                    by.to_owned(),
+                    now,
+                )
             });
+            if observer.is_none() {
+                task.person_items += 1;
+            }
         });
         self.record(
             factory,
@@ -592,18 +599,24 @@ impl Engine {
             self.set_state(factory, id, TaskState::Waiting);
         }
         if observer.is_some() {
-            self.observer_notice(factory, id, notice.0, Some(&question.id), &notice.1);
+            self.log_task(factory, id, ActivityEvent::AiDecision { text });
         }
         true
     }
 
     /// "다른 답" on a decision the Observer made (D-19, B12).
-    pub(super) fn override_answer(
+    /// "다른 답" on one of Factory AI's decisions (B28), by its id or by the
+    /// question it answered: the one path both `--decision R<n>` and
+    /// `--question <id> --change` take, with `Task::decision_changeable` the
+    /// only rule. An answer is replaced on its question too, and the worker
+    /// hears the new answer; an assumption or a send-back is rewritten as
+    /// the person's.
+    pub(super) fn override_decision(
         &mut self,
         role: &Role,
         factory: &str,
         id: &str,
-        question: Question,
+        decision: &str,
         choice: Option<String>,
         text: Option<String>,
     ) -> Reply {
@@ -611,16 +624,14 @@ impl Engine {
             .task(factory, id)
             .cloned()
             .ok_or_else(|| refuse("task_not_found", "Check hide factory status"))?;
-        if question
-            .answer
-            .as_ref()
-            .is_none_or(|answer| answer.relayed_by != OBSERVER)
-        {
+        let Some((index, record)) = decision_index(decision)
+            .and_then(|index| task.decisions.get(index).map(|record| (index, record)))
+        else {
             return Err(refuse(
-                "already_answered",
-                "This question was answered already; only an answer Factory AI gave can be changed",
+                "decision_not_found",
+                "Name a decision as hide factory show lists it, R<n>",
             ));
-        }
+        };
         if matches!(
             task.state,
             TaskState::Done | TaskState::Landed | TaskState::Cancelled | TaskState::Outside
@@ -631,11 +642,22 @@ impl Engine {
             )
             .with(json!({"state": task.state.label()})));
         }
-        let chosen = match choice.as_deref() {
-            Some("suggestion") => Some(question.suggestion.clone()),
-            Some("default") => question.default_action.clone(),
-            Some(other) => Some(other.to_owned()),
-            None => None,
+        if !task.decision_changeable(record) {
+            return Err(refuse(
+                "decision_not_changeable",
+                "Only Factory AI's answer to a question that takes words, its assumption or its send-back can be changed",
+            ));
+        }
+        let question = record
+            .question
+            .as_ref()
+            .and_then(|qid| task.questions.iter().find(|q| &q.id == qid))
+            .filter(|q| !q.open())
+            .cloned();
+        let chosen = match (&question, choice.as_deref()) {
+            (Some(q), Some("suggestion")) => Some(q.suggestion.clone()),
+            (Some(q), Some("default")) => q.default_action.clone(),
+            (_, other) => other.map(str::to_owned),
         };
         let text = text.or_else(|| chosen.clone()).unwrap_or_default();
         if text.trim().is_empty() {
@@ -644,100 +666,81 @@ impl Engine {
                 "Pass --choose <choice> or --text with the answer that replaces Factory AI's",
             ));
         }
+        let text = judgment::cut(&text, TEXT_LIMIT);
         let now = self.now();
         let by = role.relayed_by();
-        let answer = Answer {
-            text: judgment::cut(&text, TEXT_LIMIT),
-            chose: chosen,
-            relayed_by: by.clone(),
-            at: now,
+        let from = record.text.clone();
+        let changed = match &question {
+            Some(q) => format!("{} -> {text}", judgment::cut(&q.text, 200)),
+            None => text.clone(),
         };
         self.with_task(factory, id, |task| {
-            if let Some(q) = task.questions.iter_mut().find(|q| q.id == question.id) {
-                q.answer = Some(answer.clone());
-                if let Some(routing) = &mut q.routing {
-                    routing.overridden = true;
-                }
-            }
-            // Its notice is settled with it.
-            for notice in task
-                .questions
-                .iter_mut()
-                .filter(|q| q.open() && q.refers_to.as_deref() == Some(question.id.as_str()))
+            if let Some(q) = &question
+                && let Some(asked) = task.questions.iter_mut().find(|asked| asked.id == q.id)
             {
-                notice.answer = Some(Answer {
-                    text: "ok".into(),
-                    chose: Some("ok".into()),
+                asked.answer = Some(Answer {
+                    text: text.clone(),
+                    chose: chosen.clone(),
                     relayed_by: by.clone(),
                     at: now,
                 });
+                if let Some(routing) = &mut asked.routing {
+                    routing.overridden = true;
+                }
             }
-            task.decisions.push(DecisionRecord::new(
-                format!(
-                    "뒤집음: {} -> {}",
-                    judgment::cut(&question.text, 200),
-                    answer.text
-                ),
-                by.clone(),
-                now,
-            ));
+            if let Some(record) = task.decisions.get_mut(index) {
+                change_record(record, changed.clone(), &by, now);
+            }
         });
         self.record(
             factory,
             Some(id),
-            "question.overridden",
-            json!({"question": question.id, "by": by}),
+            "decision.overridden",
+            json!({"decision": decision, "question": question.as_ref().map(|q| q.id.clone()), "by": by}),
         );
-        let body = format!(
-            "Factory: 사람이 Factory AI의 답을 바꿨습니다.\n질문: {}\n새 답: {}\n이 답을 반영한 뒤 다시 hide factory done 하세요.",
-            judgment::cut(&question.text, 400),
-            answer.text
-        );
-        if matches!(task.state, TaskState::Verifying | TaskState::MergeWaiting) {
-            self.cancel_verification(factory, id);
-            self.set_state(factory, id, TaskState::Running);
-            self.wake(factory, id, &body);
-        } else {
-            self.reply(factory, id, question.letter.as_deref(), &body);
-        }
-        Ok(self.task_answer(factory, id, "answer changed"))
+        let body = match &question {
+            Some(q) => format!(
+                "Factory: a person changed Factory AI's answer.\nQuestion: {}\nNew answer: {text}\nWork to the new answer, then report again with hide factory done.",
+                judgment::cut(&q.text, 400)
+            ),
+            None => format!(
+                "Factory: a person changed one of Factory AI's decisions.\nWas: {}\nNow: {text}\nWork to the new decision, then report again with hide factory done.",
+                judgment::cut(&from, 400)
+            ),
+        };
+        let letter = question.as_ref().and_then(|q| q.letter.as_deref());
+        self.tell_changed(factory, id, &task, letter, &body);
+        Ok(self.task_answer(
+            factory,
+            id,
+            if question.is_some() {
+                "answer changed"
+            } else {
+                "decision changed"
+            },
+        ))
     }
 
-    /// "모두 확인": every notice of the Factory at once (D-43).
-    pub(super) fn ack_notices(&mut self, factory: &str, role: &Role) -> usize {
-        let now = self.now();
-        let by = role.relayed_by();
-        let ids: Vec<String> = self
-            .tasks_of(factory)
-            .filter(|t| {
-                t.open_questions()
-                    .any(|q| matches!(q.kind, QuestionKind::Notice))
-            })
-            .map(|t| t.id.clone())
-            .collect();
-        let mut cleared = 0;
-        for id in ids {
-            self.with_task(factory, &id, |task| {
-                for question in task
-                    .questions
-                    .iter_mut()
-                    .filter(|q| q.open() && matches!(q.kind, QuestionKind::Notice))
-                {
-                    question.answer = Some(Answer {
-                        text: "ok".into(),
-                        chose: Some("ok".into()),
-                        relayed_by: by.clone(),
-                        at: now,
-                    });
-                    cleared += 1;
-                }
-                if task.state == TaskState::Done {
-                    task.seen = true;
-                }
-            });
+    /// A worker already at work hears of a changed decision; one that
+    /// reported is sent back with it. A Task not started reads it in its
+    /// first prompt.
+    fn tell_changed(
+        &mut self,
+        factory: &str,
+        id: &str,
+        task: &Task,
+        letter: Option<&str>,
+        body: &str,
+    ) {
+        match task.state {
+            TaskState::Verifying | TaskState::MergeWaiting => {
+                self.cancel_verification(factory, id);
+                self.set_state(factory, id, TaskState::Running);
+                self.wake(factory, id, body);
+            }
+            TaskState::Drafting | TaskState::Waiting => {}
+            _ => self.reply(factory, id, letter, body),
         }
-        self.record(factory, None, "notices.acked", json!({"count": cleared}));
-        cleared
     }
 
     /// A person's choice of the Task's worker candidate (D-41).
@@ -931,7 +934,7 @@ impl Engine {
                 factory,
                 Some(id),
                 "observer.to_person",
-                json!({"purpose": "diagnose", "reason": reason}),
+                json!({"purpose": "diagnose", "reason": reason.as_str()}),
             );
             self.stop_no_report(factory, id, None);
         }
@@ -1012,18 +1015,16 @@ impl Engine {
                         .factories
                         .get(factory)
                         .map_or(24 * HOUR_MS, |f| f.config.question_deadline_ms);
-                let question = self.add_question(
-                    factory,
-                    id,
+                let mut new = NewQuestion::new(
                     QuestionOrigin::Engine,
                     QuestionKind::Blocking,
-                    &text,
-                    &suggestion,
-                    None,
-                    Some(deadline),
-                    choices,
-                    None,
-                );
+                    text,
+                    suggestion,
+                )
+                .deadline(deadline)
+                .sorted();
+                new.choices = choices;
+                let question = self.add_question(factory, id, new);
                 self.with_task(factory, id, |t| t.recovery = None);
                 self.put_to_sleep(factory, id);
                 self.set_state(factory, id, TaskState::Blocked);
@@ -1032,7 +1033,7 @@ impl Engine {
                     .task(factory, id)
                     .and_then(|t| t.questions.iter().find(|q| q.id == question).cloned())
                 {
-                    self.route_verdict(factory, id, &q, classification);
+                    self.route_verdict(factory, id, &q, *classification);
                 }
             }
             Verdict::ForgotDone => {
@@ -1153,17 +1154,26 @@ impl Engine {
             ai: None,
             language: Language::English,
         };
-        if let Err(reason) = self.submit_observer(factory, id, judgment, Purpose::RiskMerge) {
+        let purpose = Purpose::RiskMerge {
+            attempt: task.attempts.len(),
+        };
+        if let Err(reason) = self.submit_observer(factory, id, judgment, purpose) {
             self.record(
                 factory,
                 Some(id),
                 "observer.to_person",
-                json!({"purpose": "risk_merge", "reason": reason}),
+                json!({"purpose": "risk_merge", "reason": reason.as_str()}),
             );
         }
     }
 
-    pub(super) fn apply_risk_merge(&mut self, factory: &str, id: &str, outcome: &JudgmentOutcome) {
+    pub(super) fn apply_risk_merge(
+        &mut self,
+        factory: &str,
+        id: &str,
+        attempt: usize,
+        outcome: &JudgmentOutcome,
+    ) {
         let Some(task) = self.task(factory, id).cloned() else {
             return;
         };
@@ -1195,8 +1205,12 @@ impl Engine {
             );
             return;
         }
-        // A person merged, or the Task moved, first.
-        if task.state != TaskState::MergeWaiting || task.gates != [Gate::RiskPath] {
+        // A person merged, or the Task moved, first; an approval of an
+        // earlier verification is not one of the change verified now.
+        if task.state != TaskState::MergeWaiting
+            || task.gates != [Gate::RiskPath]
+            || task.attempts.len() != attempt
+        {
             self.record(
                 factory,
                 Some(id),
@@ -1235,22 +1249,22 @@ impl Engine {
         match self.manual_merge(&Role::Engine, factory, id) {
             Ok(_) => {
                 let now = self.now();
+                let language = self.language();
+                let reason = judgment::cut(&reason, TEXT_LIMIT);
                 self.with_task(factory, id, |t| {
-                    t.decisions.push(DecisionRecord {
-                        text: "위험 경로 머지 승인".into(),
-                        by: OBSERVER.into(),
-                        at: now,
-                        kind: None,
-                        reason: Some(reason.clone()),
-                    })
+                    t.decisions.push(
+                        DecisionRecord {
+                            reason: Some(reason.clone()),
+                            ..DecisionRecord::new(
+                                words::decided(language, words::Decided::RiskMerge),
+                                OBSERVER.into(),
+                                now,
+                            )
+                        }
+                        .with_source(DecisionSource::RiskMerge),
+                    )
                 });
-                self.observer_notice(
-                    factory,
-                    id,
-                    NoticeCode::AiRiskMerge,
-                    None,
-                    &format!("{}: {}", task.display_id(), judgment::cut(&reason, 200)),
-                );
+                self.log_task(factory, id, ActivityEvent::AiDecision { text: reason });
             }
             Err(refusal) => self.record(
                 factory,
@@ -1383,7 +1397,7 @@ impl Engine {
             .collect();
         for (factory, id, questions) in pending {
             for question in questions {
-                self.send_to_person(&factory, &id, &question, "restart");
+                self.send_to_person(&factory, &id, &question, Fallback::Restart);
             }
         }
         let diagnosing: Vec<(String, String)> = self
@@ -1401,6 +1415,17 @@ impl Engine {
     }
 }
 
+/// A person's answer in place of Factory AI's: the record becomes theirs and
+/// keeps what Factory AI had decided (B28).
+fn change_record(record: &mut DecisionRecord, text: String, by: &str, at: UnixMs) {
+    record.changed = Some(DecisionChange {
+        by: by.to_owned(),
+        at,
+        from: std::mem::replace(&mut record.text, text),
+    });
+    record.by = by.to_owned();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1413,6 +1438,9 @@ mod tests {
             answer: "a".into(),
             proposal: None,
             reason: String::new(),
+            stopped: None,
+            outcomes: Vec::new(),
+            person_text: None,
         }
     }
 
@@ -1422,12 +1450,11 @@ mod tests {
         use DecisionKind::*;
         use ObserverMode::*;
         let person = Route::Person { proposal: false };
-        let quiet = Route::Observer { notice: false };
-        let told = Route::Observer { notice: true };
+        let ai = Route::Observer;
         let expected = [
-            (A, [told, quiet, quiet]),
-            (B, [person, told, quiet]),
-            (C, [person, person, told]),
+            (A, [ai, ai, ai]),
+            (B, [person, ai, ai]),
+            (C, [person, person, ai]),
             (D, [person, person, person]),
             (E, [person, Route::Person { proposal: true }, Route::Apply]),
         ];

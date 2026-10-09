@@ -4,7 +4,7 @@
 // and lay out what the engine gave, never decide a state of their own.
 
 import { layerDependencies, transitiveReduction, type LayeredGraph } from "../projectBoard";
-import type { CardView, Column, DecisionRecord, FactorySummary, FactoryView, Flow, InboxItem, Question } from "./model";
+import type { CardView, Column, FactorySummary, FactoryView, InboxItem, Question } from "./model";
 
 /** The Factories the project filter keeps; a closed Factory leaves the screen. */
 export function shownFactories(summary: FactorySummary, factory: string | null): FactoryView[] {
@@ -16,21 +16,8 @@ export function shownInbox(summary: FactorySummary, factory: string | null): Inb
   return factory === null ? summary.inbox : summary.inbox.filter((item) => item.factory === factory);
 }
 
-/** An inbox item's identity across summaries: a question by its id, a merge or stop by its Task. */
-export function inboxKey(item: Pick<InboxItem, "factory" | "task" | "question" | "group">): string {
-  return `${item.factory}/${item.task}/${item.question ?? item.group}`;
-}
-
-/** The flow bar's four counts over the shown Factories. */
-export function shownFlow(factories: readonly FactoryView[]): Flow {
-  return factories.reduce<Flow>(
-    (sum, view) => ({ before: sum.before + view.flow.before, moving: sum.moving + view.flow.moving, stuck: sum.stuck + view.flow.stuck, done_today: sum.done_today + view.flow.done_today }),
-    { before: 0, moving: 0, stuck: 0, done_today: 0 },
-  );
-}
-
 /**
- * The flow bar's last outside read (B20): the oldest among the shown
+ * The header's last outside read (B31): the oldest among the shown
  * Factories that read GitHub, and whether any of them failed three reads in
  * a row. A local Factory reads nothing outside and has no time here.
  */
@@ -135,7 +122,7 @@ const QUESTION_START = 8;
  * shortened start. Null when the text was not shortened there or no question
  * answered at that moment begins with the shortened part.
  */
-export function wholeDecision(decision: DecisionRecord, questions: Question[]): string | null {
+export function wholeDecision(decision: { text: string; at: number }, questions: Question[]): string | null {
   const mark = new RegExp(CUT_MARK.source).exec(decision.text);
   if (!mark) return null;
   const head = decision.text.slice(0, mark.index);
@@ -147,4 +134,45 @@ export function wholeDecision(decision: DecisionRecord, questions: Question[]): 
     }
   }
   return null;
+}
+
+/** One 라인 row: a Task's card and the Factory it belongs to. */
+export type LineRow = { factory: FactoryView; card: CardView };
+
+/**
+ * The 라인's rows (B25, B26): one per Task, the person's turn first in
+ * 결정 필요's order, then the Tasks moving, the ones waiting on something
+ * else, the ones not started, and the completions the board still shows,
+ * newest first. A folded or archived completion and a cancelled Task stay on
+ * the board and their pages.
+ */
+export function lineRows(factories: readonly FactoryView[], inbox: readonly InboxItem[] = []): LineRow[] {
+  const rank = (card: CardView): number => {
+    if (card.column === "stuck") return card.waiting_group === "person" || card.needs_person ? 0 : 2;
+    if (card.column === "moving") return card.needs_person ? 0 : 1;
+    if (card.column === "before") return 3;
+    return 4;
+  };
+  // A person's row sits where its first item sits in 결정 필요; one with no item follows them.
+  const asked = (factory: FactoryView, card: CardView): number => {
+    const at = inbox.findIndex((item) => item.factory === factory.id && item.task === card.task);
+    return at < 0 ? inbox.length : at;
+  };
+  const rows: (LineRow & { rank: number; order: number; at: number })[] = [];
+  for (const factory of factories) {
+    for (const column of factory.columns) {
+      column.cards.forEach((card, at) => {
+        if (card.folded || card.archived) return;
+        const value = rank(card);
+        rows.push({ factory, card, rank: value, order: value === 0 ? asked(factory, card) : value === 4 ? -card.since : 0, at });
+      });
+    }
+  }
+  // Otherwise the engine's own column order holds.
+  return rows.sort((a, b) => a.rank - b.rank || a.order - b.order || a.at - b.at).map(({ factory, card }) => ({ factory, card }));
+}
+
+/** The 결정 필요 item that makes a row the person's, for its 지금 sentence. */
+export function rowItem(inbox: readonly InboxItem[], row: LineRow): InboxItem | undefined {
+  return inbox.find((item) => item.factory === row.factory.id && item.task === row.card.task);
 }

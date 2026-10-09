@@ -5,7 +5,9 @@
 use std::path::Path;
 
 use hide_factory::Command;
-use hide_factory::command::{CardInput, USAGE, VerificationChoice, render_human};
+use hide_factory::command::{
+    CardInput, FollowUpChoice, ResolveTarget, USAGE, VerificationChoice, render_human,
+};
 use hide_factory::model::{CheckPoint, DiscoveryClass, MergeMode, Runtime};
 
 use crate::env::{self, Env};
@@ -120,19 +122,33 @@ fn parse_words(words: &[&str], cwd: &Path) -> Option<Command> {
         "propose" => parse_propose(rest, cwd),
         "done" => {
             let mut flags = Flags::new(rest);
+            let mut result = None;
+            let mut changed = Vec::new();
+            let mut verified = Vec::new();
+            let mut unverified = Vec::new();
+            // The retired one-line summary still parses, so the engine can
+            // answer with the four parts that replaced it (B34).
             let mut summary = None;
             let mut breaking = false;
             while let Some(flag) = flags.next() {
                 match flag {
+                    "--result" => once(&mut result, flags.value())?,
+                    "--changed" => changed.push(flags.value()?),
+                    "--verified" => verified.push(flags.value()?),
+                    "--unverified" => unverified.push(flags.value()?),
                     "--summary" => once(&mut summary, flags.value())?,
                     "--breaking" if !breaking => breaking = true,
                     _ => return None,
                 }
             }
             Some(Command::Done {
+                result,
+                changed,
+                verified,
+                unverified,
                 summary,
                 breaking,
-                letter: None,
+                raw: None,
             })
         }
         "decide" => match rest {
@@ -186,9 +202,26 @@ fn parse_words(words: &[&str], cwd: &Path) -> Option<Command> {
                 Command::ResumeFactory { project }
             })
         }
-        "ack-notices" => Some(Command::AckNotices {
-            project: project_only(rest, cwd)?,
-        }),
+        "follow-up" => match rest {
+            [task, discovery, choice] if !task.starts_with("--") => Some(Command::FollowUp {
+                task: (*task).to_owned(),
+                discovery: (*discovery).to_owned(),
+                choice: match *choice {
+                    "issue" => FollowUpChoice::Issue,
+                    "factory" => FollowUpChoice::Factory,
+                    "discard" => FollowUpChoice::Discard,
+                    _ => return None,
+                },
+            }),
+            _ => None,
+        },
+        "resolve" => match rest.split_first() {
+            Some((item, rest)) if !item.starts_with("--") => Some(Command::Resolve {
+                project: project_only(rest, cwd)?,
+                target: ResolveTarget::parse(item)?,
+            }),
+            _ => None,
+        },
         "worker" => match rest {
             [task, choice] if !task.starts_with("--") => Some(Command::Worker {
                 task: (*task).to_owned(),
@@ -387,16 +420,21 @@ fn parse_answer(rest: &[&str]) -> Option<Command> {
     let mut choice = None;
     let mut text = None;
     let mut change = false;
+    let mut decision = None;
     while let Some(flag) = flags.next() {
         match flag {
             "--question" => once(&mut question, flags.value())?,
+            "--decision" => once(&mut decision, flags.value())?,
             "--choose" => once(&mut choice, flags.value())?,
             "--text" => once(&mut text, flags.value())?,
             "--change" if !change => change = true,
             _ => return None,
         }
     }
-    if choice.is_none() && text.is_none() {
+    // A decision is changed by its record; a question by its id (D-35).
+    if (choice.is_none() && text.is_none())
+        || (decision.is_some() && (question.is_some() || change))
+    {
         return None;
     }
     Some(Command::Answer {
@@ -405,6 +443,7 @@ fn parse_answer(rest: &[&str]) -> Option<Command> {
         choice,
         text,
         change,
+        decision,
     })
 }
 
@@ -544,7 +583,13 @@ mod tests {
             "block --question q --suggestion s --choice a --choice b",
             "propose --class prerequisite --text t --title a --goal b --criterion c",
             "propose --class decision --text t --reclassify d-1",
-            "done --summary s --breaking",
+            "done --result r --changed a --changed b --verified v --unverified u --breaking",
+            "done --summary s",
+            "answer T-1 --decision R2 --text other",
+            "follow-up T-1 D2 issue",
+            "follow-up T-1 D2 discard",
+            "resolve github",
+            "resolve start:T-3 --project /p",
             "decide --text t",
             "config --set merge_mode=auto --set quick_check=make",
             "priority T-1 -3",
@@ -555,7 +600,6 @@ mod tests {
             "resume --factory --project /p",
             "worker T-1 2",
             "worker T-1 auto",
-            "ack-notices",
             "revive T-1",
             "request-changes T-1 --comment c",
             "check --at after-done --instruction i",
@@ -586,6 +630,12 @@ mod tests {
             "add --worker first",
             "ask --question q --suggestion s --default d --choice",
             "check --at weekly --instruction i",
+            "ack-notices",
+            "follow-up T-1 D2 later",
+            "follow-up T-1",
+            "resolve",
+            "answer T-1 --decision R1 --question q-1 --text x",
+            "done --result a --result b",
             "show",
             "unknown",
         ] {

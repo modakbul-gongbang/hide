@@ -107,7 +107,8 @@ pub fn screen_may_send(command: &Command) -> bool {
             | Command::Check { .. }
             | Command::PauseFactory { .. }
             | Command::ResumeFactory { .. }
-            | Command::AckNotices { .. }
+            | Command::FollowUp { .. }
+            | Command::Resolve { .. }
             | Command::Worker { .. }
     )
 }
@@ -336,7 +337,7 @@ mod tests {
     fn detail(goal: &str) -> TaskDetail {
         let card = serde_json::json!({
             "task": "T-1", "display_id": "T-1", "column": "moving", "title": "t",
-            "summary": "Task summary", "stage": 1,
+            "summary": "Task summary", "stage": 1, "track": 1,
             "state": "running", "state_label": "", "needs_person": false,
             "waiting_on": [], "priority": 0, "since": 0, "unread": false,
             "folded": false, "archived": false, "failures": 0, "external": [],
@@ -345,8 +346,8 @@ mod tests {
             "card": card, "factory": "f-1", "project": "/p", "goal": goal,
             "criteria": [], "out_of_scope": [], "before": [], "after": [],
             "attachments": [], "verification": "0/3", "attempts": [],
-            "decisions": [], "questions": [], "discoveries": [], "gates": [],
-            "gate_codes": [], "allowed": [],
+            "decisions": [], "questions": [], "discoveries": [], "checklist": [],
+            "activity": [], "follow_ups": [], "gates": [], "gate_codes": [], "allowed": [],
         }))
         .expect("a Task page")
     }
@@ -354,9 +355,13 @@ mod tests {
     #[test]
     fn the_screen_sends_a_persons_actions_and_never_a_workers_reports() {
         let done = Command::Done {
+            result: Some("did it".into()),
+            changed: Vec::new(),
+            verified: Vec::new(),
+            unverified: Vec::new(),
             summary: None,
             breaking: false,
-            letter: None,
+            raw: None,
         };
         let add = Command::Add {
             project: None,

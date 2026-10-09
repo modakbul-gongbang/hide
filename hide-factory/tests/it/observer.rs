@@ -102,7 +102,7 @@ fn a_request_carries_at_most_five_choices_of_at_most_120_characters() {
 }
 
 #[test]
-fn a_technical_choice_in_assist_is_answered_by_the_ai_with_a_notice_that_is_not_my_turn() {
+fn a_technical_choice_in_assist_is_answered_by_the_ai_on_the_record_not_my_turn() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
     let t = h.ready("Store", &[]);
@@ -129,19 +129,19 @@ fn a_technical_choice_in_assist_is_answered_by_the_ai_with_a_notice_that_is_not_
             .any(|body| body.contains("Factory AI가") && body.contains("postgres"))
     );
     let inbox = inbox(&mut h);
-    assert_eq!(groups(&inbox), ["notice"], "{inbox}");
-    assert_eq!(inbox["count"], 0, "a notice is not my turn (D-43)");
-    assert_eq!(inbox["notices"], 1);
-    assert_eq!(inbox["items"][0]["notice"], "ai_answered");
-    assert_eq!(inbox["items"][0]["refers_to"], question.id.as_str());
-    assert_eq!(inbox["items"][0]["overridable"], true);
-    // The notice says the kind of decision it is about.
-    assert_eq!(inbox["items"][0]["decision_kind"], "B");
+    assert!(groups(&inbox).is_empty(), "not a person's (B21): {inbox}");
+    assert_eq!(decision.source, Some(DecisionSource::Answer));
+    assert_eq!(decision.question.as_deref(), Some(question.id.as_str()));
+    assert!(decision.overridable());
+    assert!(task.activity.iter().any(|entry| matches!(
+        &entry.event,
+        ActivityEvent::AiDecision { text } if text.ends_with("postgres")
+    )));
 }
 
 #[test]
 fn the_mode_decides_who_answers_a_technical_choice() {
-    for (value, by_ai, notices) in [("manual", false, 0), ("autonomous", true, 0)] {
+    for (value, by_ai) in [("manual", false), ("autonomous", true)] {
         let mut h = Bench::new(false);
         let f = h.factory(true);
         mode(&mut h, value);
@@ -151,7 +151,7 @@ fn the_mode_decides_who_answers_a_technical_choice() {
         h.engine.tick();
         let question = h.task(&f, &t).questions[0].clone();
         assert_eq!(question.answer.is_some(), by_ai, "{value}");
-        assert_eq!(inbox(&mut h)["notices"], notices, "{value}");
+        assert_eq!(h.task(&f, &t).ai_decisions() == 1, by_ai, "{value}");
         if !by_ai {
             let inbox = inbox(&mut h);
             assert_eq!(inbox["count"], 1);
@@ -171,9 +171,116 @@ fn a_permission_or_an_unsure_kind_always_goes_to_a_person() {
     h.world().observer.push_back(permission);
     block(&mut h, &f, &t, "Delete the production bucket?");
     h.engine.tick();
-    let inbox = inbox(&mut h);
-    assert_eq!(inbox["count"], 1, "{inbox}");
+    let first = inbox(&mut h);
+    assert_eq!(first["count"], 1, "{first}");
+    assert_eq!(first["items"][0]["fallback"], "permission", "{first}");
     assert!(h.task(&f, &t).questions[0].open());
+    let mut unsure = classified("B", "yes");
+    unsure["ambiguous"] = json!(true);
+    h.world().observer.push_back(unsure);
+    let u = h.ready("Region", &[]);
+    block(&mut h, &f, &u, "Which region should the bucket live in?");
+    h.engine.tick();
+    let inbox = inbox(&mut h);
+    assert_eq!(inbox["count"], 2, "{inbox}");
+    assert!(
+        inbox["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["fallback"] == "unsure"),
+        "{inbox}"
+    );
+}
+
+#[test]
+fn factory_ai_words_that_are_no_listed_choice_leave_a_closed_question_to_a_person() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    mode(&mut h, "autonomous");
+    // A failed review asks a closed question, which goes to Factory AI first.
+    h.world().judgment_failure = Some("transient".into());
+    let id = h.add("Unreadable", &[])["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    h.engine.tick();
+    h.world().judgment_failure = None;
+    h.world()
+        .observer
+        .push_back(classified("A", "Retry the review"));
+    h.engine.tick();
+    h.engine.tick();
+    let task = h.task(&f, &id);
+    let open: Vec<_> = task.open_questions().collect();
+    assert_eq!(open.len(), 1, "{:?}", task.questions);
+    assert!(open[0].choices.iter().any(|c| c == "retry-review"));
+    assert_eq!(inbox(&mut h)["count"], 1);
+    assert_eq!(
+        open[0].routing.as_ref().and_then(|r| r.fallback),
+        Some(Fallback::NoChoice),
+        "the mode would have let Factory AI decide, so it is not why"
+    );
+}
+
+#[test]
+fn factory_ai_s_choice_on_a_closed_question_already_ran_and_cannot_be_changed() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    mode(&mut h, "autonomous");
+    h.world().judgment_failure = Some("transient".into());
+    let id = h.add("Retried", &[])["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    h.engine.tick();
+    h.world().judgment_failure = None;
+    h.world().observer.push_back(classified("A", "start-as-is"));
+    h.engine.tick();
+    h.engine.tick();
+    let task = h.task(&f, &id);
+    let at = task
+        .decisions
+        .iter()
+        .position(|d| d.by == OBSERVER)
+        .expect("Factory AI chose");
+    assert!(!task.decision_changeable(&task.decisions[at]));
+    let changed = h.op(Command::Answer {
+        task: id.clone(),
+        question: None,
+        choice: None,
+        text: Some("cancel".into()),
+        change: false,
+        decision: Some(format!("R{}", at + 1)),
+    });
+    assert_eq!(changed["reason"], "decision_not_changeable", "{changed}");
+}
+
+#[test]
+fn a_worker_s_question_reaches_the_person_in_factory_ai_s_words_and_keeps_its_own_on_the_record() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Store", &[]);
+    let mut verdict = classified("C", "");
+    verdict["person_text"] = json!("Should the sort order be remembered between visits?");
+    h.world().observer.push_back(verdict);
+    ask(
+        &mut h,
+        &f,
+        &t,
+        "persist sortKey in ui_state.rs or localStorage?",
+        &[],
+    );
+    h.engine.tick();
+    let inbox = inbox(&mut h);
+    assert_eq!(
+        inbox["items"][0]["text"], "Should the sort order be remembered between visits?",
+        "{inbox}"
+    );
+    assert_eq!(
+        h.task(&f, &t).questions[0].text,
+        "persist sortKey in ui_state.rs or localStorage?"
+    );
 }
 
 #[test]
@@ -190,6 +297,7 @@ fn a_person_answering_first_leaves_the_late_verdict_without_effect() {
         choice: None,
         text: Some("sqlite".into()),
         change: false,
+        decision: None,
     });
     assert_eq!(answered["ok"], true, "{answered}");
     h.engine.tick();
@@ -199,7 +307,12 @@ fn a_person_answering_first_leaves_the_late_verdict_without_effect() {
         task.decisions.iter().filter(|d| d.by == OBSERVER).count(),
         0
     );
-    assert_eq!(inbox(&mut h)["notices"], 0);
+    assert!(
+        !task
+            .activity
+            .iter()
+            .any(|entry| matches!(entry.event, ActivityEvent::AiDecision { .. }))
+    );
 }
 
 #[test]
@@ -214,7 +327,7 @@ fn an_observer_failure_sends_the_request_to_a_person_and_logs_why() {
     assert_eq!(inbox["count"], 1, "{inbox}");
     let routing = h.task(&f, &t).questions[0].routing.clone().unwrap();
     assert_eq!(routing.to, RouteTo::Person);
-    assert_eq!(routing.fallback.as_deref(), Some("failed"));
+    assert_eq!(routing.fallback, Some(Fallback::Failed));
     let events = h.engine.events(&f, Some(&t), 50);
     assert!(
         events
@@ -225,7 +338,7 @@ fn an_observer_failure_sends_the_request_to_a_person_and_logs_why() {
 }
 
 #[test]
-fn the_daily_cap_sends_the_rest_of_the_day_to_a_person_with_one_notice() {
+fn the_daily_cap_sends_the_rest_of_the_day_to_a_person_with_one_line() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
     let answer = config(&mut h, "observer_daily_limit", "1");
@@ -242,18 +355,21 @@ fn the_daily_cap_sends_the_rest_of_the_day_to_a_person_with_one_notice() {
     let fallbacks: Vec<_> = task
         .questions
         .iter()
-        .filter_map(|q| q.routing.as_ref().and_then(|r| r.fallback.clone()))
+        .filter_map(|q| q.routing.as_ref().and_then(|r| r.fallback))
         .collect();
-    assert_eq!(fallbacks, ["daily_limit", "daily_limit"]);
-    let inbox = inbox(&mut h);
-    let caps = inbox["items"]
-        .as_array()
+    assert_eq!(fallbacks, [Fallback::DailyLimit, Fallback::DailyLimit]);
+    let caps = h
+        .engine
+        .factories()
+        .next()
         .unwrap()
+        .activity
         .iter()
-        .filter(|item| item["notice"] == "daily_limit")
+        .filter(|entry| matches!(entry.event, ActivityEvent::DailyLimit { limit: 1 }))
         .count();
     assert_eq!(caps, 1, "once a day");
     let view = &h.op(Command::Status { project: None })["factories"][0];
+    assert_eq!(view["observer_capped"], true, "the header marks it (B21)");
     assert_eq!(
         (
             view["observer_today"].clone(),
@@ -323,6 +439,7 @@ fn a_person_overrides_the_ai_answer_and_the_worker_hears_it() {
         choice: None,
         text: Some("sqlite".into()),
         change: false,
+        decision: None,
     });
     assert_eq!(late["reason"], "already_answered", "{late}");
     assert_eq!(letters_to(&h, &t).len(), letters, "no second letter");
@@ -332,17 +449,22 @@ fn a_person_overrides_the_ai_answer_and_the_worker_hears_it() {
         choice: None,
         text: Some("sqlite after all".into()),
         change: true,
+        decision: None,
     });
     assert_eq!(changed["ok"], true, "{changed}");
     let task = h.task(&f, &t);
     assert!(task.questions[0].routing.as_ref().unwrap().overridden);
-    assert!(task.decisions.last().unwrap().text.starts_with("뒤집음"));
+    // Factory AI's record becomes the person's, keeping what it had said.
+    let record = task.decisions.last().unwrap();
+    assert!(record.text.ends_with("sqlite after all"));
+    assert_ne!(record.by, OBSERVER);
+    assert!(record.changed.as_ref().unwrap().from.ends_with("postgres"));
+    assert_eq!(task.ai_decisions(), 0);
     assert!(
         letters_to(&h, &t)
             .iter()
             .any(|body| body.contains("sqlite after all"))
     );
-    assert_eq!(inbox(&mut h)["notices"], 0, "its notice is settled with it");
     // A second change is a person's own answer, not the AI's.
     let again = h.op(Command::Answer {
         task: t.clone(),
@@ -350,6 +472,7 @@ fn a_person_overrides_the_ai_answer_and_the_worker_hears_it() {
         choice: None,
         text: Some("no".into()),
         change: true,
+        decision: None,
     });
     assert_eq!(again["reason"], "already_answered", "{again}");
 }
@@ -377,6 +500,7 @@ fn a_finished_task_s_ai_answer_cannot_be_changed() {
         choice: None,
         text: Some("sqlite".into()),
         change: true,
+        decision: None,
     });
     assert_eq!(refused["reason"], "task_finished", "{refused}");
 }
@@ -478,74 +602,81 @@ fn a_request_still_sorting_when_its_task_went_outside_is_a_person_s_on_revive() 
 }
 
 #[test]
-fn ack_notices_clears_every_notice_and_leaves_the_count() {
+fn an_ai_answer_is_on_the_record_and_activity_and_a_person_can_change_it() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
-    let t = h.ready("Notices", &[]);
-    for answer in ["a", "b"] {
+    let t = h.ready("Records", &[]);
+    for answer in ["postgres", "b"] {
         h.world().observer.push_back(classified("B", answer));
     }
-    ask(&mut h, &f, &t, "One?", &[]);
-    ask(&mut h, &f, &t, "Two?", &[]);
-    block(&mut h, &f, &t, "Three?");
-    h.engine.tick();
-    let before = inbox(&mut h);
-    assert_eq!(
-        (before["count"].clone(), before["notices"].clone()),
-        (json!(1), json!(2))
-    );
-    let acked = h.op(Command::AckNotices { project: None });
-    assert_eq!(acked["cleared"], 2, "{acked}");
-    let after = inbox(&mut h);
-    assert_eq!(
-        (after["count"].clone(), after["notices"].clone()),
-        (json!(1), json!(0))
-    );
-}
-
-#[test]
-fn ack_notices_without_a_project_clears_every_open_factory_in_one_command() {
-    let mut h = Bench::new(false);
-    let f = h.factory(true);
-    let other = h.factory_at("/work/other", true);
-    let here = h.ready("Here", &[]);
-    let added = h.op(Command::Add {
-        project: Some("/work/other".into()),
-        task: None,
-        issue: None,
-        card: card("There", &[]),
-        producer_pane: None,
-    });
-    let there = added["task"]["id"].as_str().unwrap().to_owned();
-    h.engine.tick();
-    for answer in ["a", "b"] {
-        h.world().observer.push_back(classified("B", answer));
-    }
-    ask(&mut h, &f, &here, "Here?", &[]);
-    ask(&mut h, &other, &there, "There?", &[]);
-    h.engine.tick();
-    assert_eq!(inbox(&mut h)["notices"], 2);
-    let acked = h.op(Command::AckNotices { project: None });
-    assert_eq!(acked["cleared"], 2, "{acked}");
-    assert_eq!(inbox(&mut h)["notices"], 0);
-}
-
-#[test]
-fn ack_notices_without_a_project_also_clears_a_closed_factory_s_notices() {
-    let mut h = Bench::new(false);
-    let f = h.factory(true);
-    let t = h.ready("Finished", &[]);
-    h.world().observer.push_back(classified("B", "postgres"));
     ask(&mut h, &f, &t, "Which database?", &[]);
+    ask(&mut h, &f, &t, "Two?", &[]);
     h.engine.tick();
-    h.done(&f, &t);
-    tick_until_state(&mut h, &f, &t, TaskState::Done);
-    let closed = h.op(Command::Close { project: None });
-    assert_eq!(closed["ok"], true, "{closed}");
-    assert_eq!(inbox(&mut h)["notices"], 1);
-    let acked = h.op(Command::AckNotices { project: None });
-    assert_eq!(acked["cleared"], 1, "{acked}");
-    assert_eq!(inbox(&mut h)["notices"], 0);
+    // What Factory AI answered is not a person's item (B20, B21).
+    let items = inbox(&mut h);
+    assert_eq!(items["count"], 0, "{items}");
+    let task = h.task(&f, &t);
+    assert_eq!(task.ai_decisions(), 2);
+    assert_eq!(
+        task.activity
+            .iter()
+            .filter(|entry| matches!(entry.event, ActivityEvent::AiDecision { .. }))
+            .count(),
+        2
+    );
+    let shown = h.op(Command::Show { task: t.clone() });
+    let decision = shown["task"]["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["text"].as_str().unwrap().contains("Which database?"))
+        .cloned()
+        .expect("the AI's decision");
+    assert_eq!(decision["by"], "ai");
+    assert_eq!(decision["overridable"], true);
+    let id = decision["id"].as_str().unwrap().to_owned();
+
+    let changed = h.op(Command::Answer {
+        task: t.clone(),
+        question: None,
+        choice: None,
+        text: Some("mysql".into()),
+        change: false,
+        decision: Some(id.clone()),
+    });
+    assert_eq!(changed["ok"], true, "{changed}");
+    let shown = h.op(Command::Show { task: t.clone() });
+    let after = shown["task"]["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["id"] == id.as_str())
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        after["by"], "person",
+        "the decision is now the person's (B28)"
+    );
+    assert!(after["text"].as_str().unwrap().ends_with("mysql"));
+    assert!(
+        after["changed"]["from"]
+            .as_str()
+            .unwrap()
+            .ends_with("postgres")
+    );
+    assert!(
+        letters_to(&h, &t).iter().any(|body| body.contains("mysql")),
+        "the worker hears the new answer"
+    );
+    let again = h.op(Command::Answer {
+        task: t.clone(),
+        question: None,
+        choice: None,
+        text: Some("sqlite".into()),
+        change: false,
+        decision: Some(id),
+    });
+    assert_eq!(again["reason"], "decision_not_changeable", "{again}");
 }
 
 // ------------------------------------------------------------- wrong cards
@@ -579,8 +710,17 @@ fn an_autonomous_card_fix_changes_the_card_and_waits_for_a_person_at_merge() {
     let task = h.task(&f, &t);
     assert_eq!(task.card.title, "Store in postgres");
     assert!(task.scope_approved, "the merge waits for a person (B8)");
-    assert_eq!(task.decisions.last().unwrap().by, OBSERVER);
-    assert_eq!(inbox(&mut h)["items"][0]["notice"], "ai_card_fixed");
+    let record = task.decisions.last().unwrap();
+    assert_eq!(record.by, OBSERVER);
+    assert!(
+        !record.overridable(),
+        "an applied fix is undone its own way (B29)"
+    );
+    assert!(
+        task.activity
+            .iter()
+            .any(|entry| matches!(entry.event, ActivityEvent::AiDecision { .. }))
+    );
     // The blocked worker gets the new card when it wakes.
     tick_until_state(&mut h, &f, &t, TaskState::Running);
     assert!(
@@ -614,6 +754,7 @@ fn an_assist_wrong_card_offers_the_fix_as_a_choice() {
         choice: Some(PROPOSAL_CHOICE.into()),
         text: None,
         change: false,
+        decision: None,
     });
     assert_eq!(chosen["ok"], true, "{chosen}");
     let child = h
@@ -696,12 +837,12 @@ fn an_autonomous_factory_lets_the_observer_approve_a_lone_risk_path() {
         (decision.by.as_str(), decision.reason.as_deref()),
         (OBSERVER, Some("인프라 변경이 카드 범위"))
     );
+    assert_eq!(decision.source, Some(DecisionSource::RiskMerge));
+    assert!(!decision.overridable(), "merged: a record only (B29)");
     assert!(
-        inbox(&mut h)["items"]
-            .as_array()
-            .unwrap()
+        task.activity
             .iter()
-            .any(|item| item["notice"] == "ai_risk_merge")
+            .any(|entry| matches!(entry.event, ActivityEvent::AiDecision { .. }))
     );
 }
 
@@ -963,6 +1104,14 @@ fn a_diagnosed_stop_tells_the_person_what_factory_ai_read() {
     }
     h.engine.tick();
     assert_eq!(h.task(&f, &t).stop, Some(StopReason::NoReport));
+    // The recovery schedule has it first; past 180 minutes it is a person's.
+    assert_eq!(inbox(&mut h)["count"], 0);
+    h.op(Command::Config {
+        project: None,
+        set: vec![("recovery".into(), "restart_worker=off".into())],
+    });
+    h.advance(181 * MINUTE_MS);
+    h.engine.tick();
     let inbox = inbox(&mut h);
     assert_eq!(inbox["items"][0]["stop"], "no_report", "{inbox}");
     assert_eq!(
@@ -1126,6 +1275,7 @@ fn a_paused_factory_starts_nothing_asks_no_ai_and_delivers_answers_on_resume() {
         choice: Some("approve".into()),
         text: None,
         change: false,
+        decision: None,
     });
     for _ in 0..3 {
         h.engine.tick();

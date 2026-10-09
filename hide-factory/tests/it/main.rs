@@ -5,6 +5,7 @@
 
 mod engine;
 mod github;
+mod human_loop;
 mod local_git;
 mod observer;
 mod support;

@@ -506,6 +506,25 @@ fn a_risk_path_and_a_quick_check_gate_the_merge() {
     seen(&fx.calls, &["factory.git", "factory.check"]);
 }
 
+#[test]
+fn a_risk_path_catches_a_file_whose_name_git_would_quote() {
+    let mut fx = fixture();
+    let mut factory = factory(&fx.project, &[]);
+    factory.config.risk_paths = vec!["migrations/**".into(), "*.yml".into()];
+    let t = task(&fx, "T-3", "m.txt", "x\n");
+    let worktree = PathBuf::from(&t.worker.as_ref().unwrap().worktree);
+    std::fs::create_dir(worktree.join("migrations")).unwrap();
+    write(&worktree, "migrations/é 1.sql", "create\n");
+    write(&worktree, "ci\\\"x\".yml", "on: push\n");
+    git(&worktree, &["add", "."]);
+    git(&worktree, &["commit", "--quiet", "-m", "names"]);
+    let PreMerge::RiskPath { mut paths } = fx.projects.premerge(&factory, &t).unwrap() else {
+        panic!("a quoted name slipped past the risk paths");
+    };
+    paths.sort();
+    assert_eq!(paths, ["ci\\\"x\".yml", "migrations/é 1.sql"]);
+}
+
 /// Real git on the core's own node against a bare remote; `gh` answers
 /// that no pull request is open and opens one when asked.
 struct RealGitFakeGh(Local);

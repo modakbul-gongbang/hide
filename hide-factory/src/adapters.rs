@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::judgment::{Judgment, JudgmentAnswer};
-use crate::model::{Factory, IssueRef, MergeMethod, PullRequest, Runtime, Task, UnixMs};
+use crate::model::{Card, Factory, IssueRef, MergeMethod, PullRequest, Runtime, Task, UnixMs};
 
 pub trait Clock {
     fn now(&self) -> UnixMs;
@@ -192,10 +192,58 @@ pub trait TaskSource {
     /// The PRD file at `path` a Task attaches; `Err` names why it cannot be
     /// read.
     fn read_prd(&mut self, path: &str) -> Result<Vec<u8>, String>;
+    /// What the repository and GitHub say about a card before its review
+    /// (D-02): the files it names and the issues and pull requests that look
+    /// related. What cannot be read is left out.
+    fn intake_facts(&mut self, _factory: &Factory, _card: &Card) -> IntakeFacts {
+        IntakeFacts::default()
+    }
+    /// Creates an issue for a follow-up candidate, with the factory label
+    /// when `labelled` (the Factory picks it up and starts it) and without
+    /// it otherwise; converges on the issue whose body carries `marker`
+    /// (D-31).
+    fn create_follow_up(
+        &mut self,
+        factory: &Factory,
+        title: &str,
+        body: &str,
+        marker: &str,
+        labelled: bool,
+    ) -> Result<IssueRef, Failure>;
+    /// Whether GitHub takes the Factory's sign-in and reads again, for the
+    /// recheck a person presses after signing in (D-46).
+    fn check_access(&mut self, _factory: &Factory) -> Result<(), Failure> {
+        Ok(())
+    }
     /// Whether this machine has the agent a worker candidate names (B28).
     fn installed(&mut self, _agent: Runtime) -> bool {
         true
     }
+}
+
+/// What an intake review checks before it asks (D-02).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IntakeFacts {
+    /// The start of each repository file the card names.
+    pub files: Vec<FileFact>,
+    /// Issues and pull requests that look related.
+    pub related: Vec<RelatedItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileFact {
+    pub path: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelatedItem {
+    /// `issue` or `pull_request`.
+    pub kind: String,
+    pub number: u64,
+    pub title: String,
+    pub state: String,
+    pub url: String,
 }
 
 /// What a review judgment is told of a project (`repo_context`).

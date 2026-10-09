@@ -57,9 +57,9 @@ export type PendingClose = {
 export type Screen = { kind: "main"; deviceId?: string; requests?: RequestLens } | { kind: "workspace" } | { kind: "factory"; place: FactoryPlace };
 
 /** The Factory screen's tabs, left to right; it opens on 내 차례 (PRD software-factory-ui B7). */
-export type FactoryTab = "turn" | "board" | "graph" | "settings";
+export type FactoryTab = "line" | "board" | "graph" | "settings";
 
-export const FACTORY_TABS: readonly FactoryTab[] = ["turn", "board", "graph", "settings"];
+export const FACTORY_TABS: readonly FactoryTab[] = ["line", "board", "graph", "settings"];
 
 /**
  * The Factory screen's page state (PRD software-factory-ui B7, B15-B19): the
@@ -84,7 +84,7 @@ export type FactoryPlace = {
   create: boolean;
 };
 
-export const FACTORY_ENTRY: FactoryPlace = { tab: "turn", factory: null, column: null, cancelled: false, task: null, focus: null, create: false };
+export const FACTORY_ENTRY: FactoryPlace = { tab: "line", factory: null, column: null, cancelled: false, task: null, focus: null, create: false };
 
 /**
  * How All projects is looked at: every Project's tasks, every agent, or the

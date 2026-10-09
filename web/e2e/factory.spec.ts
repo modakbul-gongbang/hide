@@ -74,8 +74,8 @@ test("the create sheet asks three things, writes nothing before Create, and a ca
     await expect(sheet.locator("[data-factory-create-confirm]")).toContainText("fixture");
     await sheet.locator("[data-factory-create-confirm]").click();
     await expect(sheet).toHaveCount(0, { timeout: 30_000 });
-    // Made: the intake line and no button to add a Task (B6).
-    await expect(page.locator('[data-factory-turn-empty="intake"]')).toBeVisible();
+    // Made: the 라인 says how a Task arrives, with no button to add one (B6, B31).
+    await expect(page.locator("[data-factory-line-empty]")).toBeVisible();
     const made = await status(stack);
     expect(made.factories).toHaveLength(1);
     // The secretary row stands under the Factory row once a Factory exists (B23).
@@ -83,39 +83,37 @@ test("the create sheet asks three things, writes nothing before Create, and a ca
   });
 });
 
-test("Enter answers the top item, the arrows open another, and the badge stays the tab's count (B8-B12)", async ({ page }) => {
-  await withStack(page, "factory-turn", async (stack) => {
+test("결정 필요 holds every item open; a pick sent on Enter takes it off, and the badge stays the tab's count (B20-B23)", async ({ page }) => {
+  await withStack(page, "factory-line", async (stack) => {
     await seedDag(stack);
     await openFactory(page);
-    const items = page.locator("[data-factory-item]");
+    const items = page.locator("[data-factory-decisions] [data-factory-item]");
     await expect(items).toHaveCount(2);
     await expect(page.locator("[data-factory-badge]")).toHaveText("2");
-    await expect(page.locator("[data-factory-turn-count]")).toHaveText("2");
-    // The top item opens with the suggestion chosen and the send button focused (B8, B11).
+    await expect(page.locator("[data-factory-line-count]")).toHaveText("2");
+    await expect(page.locator("[data-factory-decide-count]")).toHaveText("2");
+    // Every item is open with its suggestion chosen; a digit picks another in place (B22, B23).
     const first = items.nth(0);
-    await expect(first).toHaveAttribute("data-factory-item-open", "true");
-    await expect(first.locator('[data-factory-choice="1"]')).toHaveAttribute("aria-checked", "true");
-    await expect(first.locator("[data-factory-send]")).toBeFocused();
     const firstKey = await first.getAttribute("data-factory-item");
-
-    await page.keyboard.press("ArrowDown");
-    await expect(items.nth(1)).toHaveAttribute("data-factory-item-open", "true");
-    await page.keyboard.press("ArrowUp");
-    await expect(items.nth(0)).toHaveAttribute("data-factory-item-open", "true");
-    await page.keyboard.press("2");
-    await expect(items.nth(0).locator('[data-factory-choice="2"]')).toHaveAttribute("aria-checked", "true");
+    for (const at of [0, 1]) await expect(items.nth(at).locator('[data-factory-choice="1"]')).toHaveAttribute("aria-checked", "true");
+    await first.locator('[data-factory-choice="2"]').click();
+    await expect(first.locator('[data-factory-choice="2"]')).toHaveAttribute("aria-checked", "true");
     await page.keyboard.press("1");
+    await expect(first.locator('[data-factory-choice="1"]')).toHaveAttribute("aria-checked", "true");
 
     await page.keyboard.press("Enter");
-    // Taken: the item leaves and the next opens; the badge and the tab follow (B10, B12).
+    // Taken: the item leaves; the badge and the tab follow (B10, B24).
     await expect(page.locator(`[data-factory-item="${firstKey}"]`)).toHaveCount(0, { timeout: 20_000 });
     await expect(items).toHaveCount(1);
-    await expect(items.nth(0)).toHaveAttribute("data-factory-item-open", "true");
     await expect(page.locator("[data-factory-badge]")).toHaveText("1");
-    await expect(page.locator("[data-factory-turn-count]")).toHaveText("1");
+    await expect(page.locator("[data-factory-line-count]")).toHaveText("1");
     const after = await status(stack);
     expect(after.my_turn).toBe(1);
     expect(after.inbox.map((item) => `${after.factories[0]!.id}/${item.task}/${item.question}`)).not.toContain(firstKey);
+    // Beneath it, one 라인 row per Task, the asked ones in the warning band (B25, B26).
+    const rows = page.locator("[data-factory-line-table] [data-factory-row]");
+    await expect(rows).toHaveCount((await status(stack)).factories[0]!.columns.flatMap((column) => column.cards).length);
+    await expect(rows.first()).toHaveAttribute("data-factory-row-turn", "true");
 
     // Factory remains directly reachable from the shared sidebar.
     await page.locator("[data-home-destination]").click();
@@ -134,8 +132,8 @@ test("movement columns match the engine, and a card answer uses the inbox comman
     await expect(before.locator("[data-factory-card]")).toHaveCount(5);
     await expect(before.locator("[data-factory-card]").first()).toHaveAttribute("data-factory-card-turn", "true");
     expect((await status(stack)).factories[0]!.columns.map((column) => column.column)).toEqual(["before", "moving", "stuck", "done"]);
-    // The never-run tasks are all before; filtering widens their own cards.
-    await page.locator('[data-factory-flow-cell="before"]').click();
+    // The never-run tasks are all before; the lane's name narrows the board to it.
+    await page.locator('[data-factory-lane-filter="before"]').click();
     await expect(page.locator("[data-factory-column]")).toHaveCount(1);
     await expect(before.locator(`[data-factory-card="${dag.c}"] [data-factory-problem]`)).toBeVisible();
     const answer = before.locator(`[data-factory-card="${dag.a}"] [data-factory-card-send]`);
@@ -191,7 +189,7 @@ test("the graph draws A to B to C without the A to C arrow, and a node opens its
   });
 });
 
-test("a Task page offers only its state's actions and sends its question to 내 차례 (B18, B19)", async ({ page }) => {
+test("a Task page offers only its state's actions and sends its question to 결정 필요 (B18, B19, B27)", async ({ page }) => {
   await withStack(page, "factory-task", async (stack) => {
     const dag = await seedDag(stack);
     await openFactory(page);
@@ -204,14 +202,15 @@ test("a Task page offers only its state's actions and sends its question to 내 
     await expect(page.locator("[data-factory-actions]")).toHaveAttribute("data-factory-actions", "priority cancel");
     await expect(page.locator(`[data-factory-chain-card="${dag.a}"]`)).toBeVisible();
     await expect(page.locator(`[data-factory-chain-card="${dag.c}"]`)).toBeVisible();
-    await expect(page.locator("[data-factory-verification]")).toHaveAttribute("data-factory-verification", /\/3$/);
+    await expect(page.locator("[data-factory-stage-track]")).toBeVisible();
     await page.locator("[data-factory-back]").click();
 
     await open(dag.a);
     await expect(page.locator("[data-factory-actions]")).toHaveAttribute("data-factory-actions", "edit cancel");
-    await page.locator("[data-factory-answer-in-turn]").click();
-    await expect(page.locator('[data-factory-body="turn"]')).toBeVisible();
-    await expect(page.locator(`[data-factory-item^="${(await status(stack)).factories[0]!.id}/${dag.a}/"]`)).toHaveAttribute("data-factory-item-open", "true");
+    await page.locator("[data-factory-answer-in-line]").click();
+    await expect(page.locator('[data-factory-body="line"]')).toBeVisible();
+    // The question's item takes the keyboard, so Enter sends it.
+    await expect(page.locator(`[data-factory-item^="${(await status(stack)).factories[0]!.id}/${dag.a}/"] [data-factory-send]`)).toBeFocused();
 
     // Removing a dependency is the person's: C no longer waits on A in the engine (B19).
     await open(dag.c);

@@ -13,9 +13,9 @@ use std::time::{Duration, Instant};
 
 use hide_node_link::factory::{
     COMMAND_TEXT_LIMIT, FactoryCall, FactoryGh, LOG_TAIL_LIMIT, MemoryPressure, PRD_LIMIT,
-    PROJECT_ENTRY_LIMIT, PROJECT_MARKERS, PROJECT_READ_LIMIT, PROJECT_READS, ProjectFiles,
-    RUN_DEADLINE_MS, RunAnswer, VERIFY_COMMAND_LIMIT, VERIFY_QUEUE_LIMIT, VerifyJob, VerifyOutcome,
-    VerifyStep,
+    PROJECT_ENTRY_LIMIT, PROJECT_FILE_LIMIT, PROJECT_MARKERS, PROJECT_READ_LIMIT, PROJECT_READS,
+    ProjectFiles, RUN_DEADLINE_MS, RunAnswer, VERIFY_COMMAND_LIMIT, VERIFY_QUEUE_LIMIT, VerifyJob,
+    VerifyOutcome, VerifyStep,
 };
 use hide_node_link::git::GitCommand;
 use hide_node_link::git::branch_name;
@@ -75,6 +75,9 @@ pub fn handle(
         FactoryCall::LogTail { path } => to_value(log_tail(&absolute(&path)?)),
         FactoryCall::Project { path } => to_value(project_files(&absolute(&path)?)),
         FactoryCall::ReadPrd { path } => to_value(read_prd(&absolute(&path)?)?),
+        FactoryCall::ProjectFile { project, path } => {
+            to_value(project_file(&absolute(&project)?, &path)?)
+        }
         FactoryCall::WorktreeRoot { checkout } => to_value(worktree_root(&absolute(&checkout)?)?),
         FactoryCall::RemoveWorktree {
             root,
@@ -606,6 +609,69 @@ fn read_prd(path: &Path) -> HostResult<String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
+/// The start of a text file inside the project, at most
+/// [`PROJECT_FILE_LIMIT`] bytes: a path that leaves the project, through
+/// `..`, a root or a link, is refused, and one git does not track or that
+/// is not a text file answers `None`. The card naming it may come from an
+/// issue anyone wrote, so an ignored or untracked file (a `.env`, the
+/// repository's own `.git/config`) is never read for the review.
+fn project_file(project: &Path, relative: &str) -> HostResult<Option<String>> {
+    use std::io::Read;
+    use std::path::Component;
+    let path = Path::new(relative);
+    if relative.is_empty()
+        || !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(invalid(format!(
+            "not a path inside the project: {relative:?}"
+        )));
+    }
+    let Ok(root) = project.canonicalize() else {
+        return Ok(None);
+    };
+    let Ok(file_path) = root.join(path).canonicalize() else {
+        return Ok(None);
+    };
+    let Ok(inside) = file_path.strip_prefix(&root) else {
+        return Err(invalid(format!(
+            "not a path inside the project: {relative:?}"
+        )));
+    };
+    let Some(inside) = inside.to_str() else {
+        return Ok(None);
+    };
+    // A literal pathspec, so a name with glob characters matches only itself.
+    let pathspec = format!(":(literal){inside}");
+    if crate::worktrees::git(&root, &["ls-files", "--error-unmatch", "--", &pathspec]).is_err() {
+        return Ok(None);
+    }
+    let Ok(file) = File::open(&file_path) else {
+        return Ok(None);
+    };
+    if !file.metadata().is_ok_and(|metadata| metadata.is_file()) {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    if file
+        .take(PROJECT_FILE_LIMIT as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.contains(&0)
+    {
+        return Ok(None);
+    }
+    // A cut inside a character keeps what came before it.
+    Ok(Some(match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => {
+            let valid = error.utf8_error().valid_up_to();
+            String::from_utf8_lossy(&error.into_bytes()[..valid]).into_owned()
+        }
+    }))
+}
+
 fn read_capped(path: &Path) -> Option<String> {
     use std::io::Read;
     let file = File::open(path).ok()?;
@@ -976,6 +1042,30 @@ mod tests {
             BTreeMap::from([("AGENTS.md".to_owned(), "guide".to_owned())])
         );
         assert_eq!(files.markers, ["Cargo.toml"]);
+    }
+
+    #[test]
+    fn a_named_file_is_read_only_when_git_tracks_it_inside_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        git(project, &["init", "--quiet", "-b", "main"]);
+        std::fs::create_dir(project.join("src")).unwrap();
+        std::fs::write(project.join("src/lib.rs"), "pub fn tracked() {}").unwrap();
+        std::fs::write(project.join(".gitignore"), ".env.local\n").unwrap();
+        std::fs::write(project.join(".env.local"), "TOKEN=secret").unwrap();
+        std::fs::write(project.join("notes.md"), "untracked").unwrap();
+        // Read as a pattern, this name would match the tracked src/lib.rs.
+        std::fs::write(project.join("src/*.rs"), "untracked").unwrap();
+        git(project, &["add", "src/lib.rs", ".gitignore"]);
+        assert_eq!(
+            project_file(project, "src/lib.rs").unwrap().as_deref(),
+            Some("pub fn tracked() {}")
+        );
+        assert_eq!(project_file(project, ".env.local").unwrap(), None);
+        assert_eq!(project_file(project, "notes.md").unwrap(), None);
+        assert_eq!(project_file(project, "src/*.rs").unwrap(), None);
+        assert_eq!(project_file(project, ".git/config").unwrap(), None);
+        assert!(project_file(project, "../outside").is_err());
     }
 
     fn git(cwd: &Path, args: &[&str]) {

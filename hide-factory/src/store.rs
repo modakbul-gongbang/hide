@@ -15,7 +15,12 @@ use sha2::{Digest, Sha256};
 
 use crate::model::{Attachment, Factory, Task, UnixMs};
 
-pub const SCHEMA_VERSION: i64 = 1;
+/// 2 since the activity log replaced notices (D-39); a schema 1 store is
+/// moved forward once, on first open, after a copy of it is kept beside it
+/// as [`V1_COPY`].
+pub const SCHEMA_VERSION: i64 = 2;
+/// The schema 1 store as it was before the move, never read again.
+pub const V1_COPY: &str = "factory.v1.sqlite3";
 /// A PRD attachment larger than this is refused.
 /// Events kept per Factory; the oldest are dropped past it.
 pub const EVENT_LIMIT: i64 = 20_000;
@@ -159,6 +164,10 @@ impl Store {
             return Err(StoreError(format!(
                 "store schema {version} is newer than this build ({SCHEMA_VERSION})"
             )));
+        }
+        let mut connection = connection;
+        if version == 1 {
+            migrate_v1(&mut connection, path)?;
         }
         connection.execute_batch(SCHEMA)?;
         connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -458,6 +467,70 @@ fn read_only(path: &Path) -> Result<(), StoreError> {
         permissions.set_readonly(true);
         fs::set_permissions(path, permissions)?;
     }
+    Ok(())
+}
+
+/// Moves a schema 1 store to schema 2 (D-39): first a copy of it is kept
+/// beside it as [`V1_COPY`], then every record moves in one transaction, so
+/// a failure leaves the store as it was and refuses to open.
+fn migrate_v1(connection: &mut Connection, path: &Path) -> Result<(), StoreError> {
+    let copy = path.with_file_name(V1_COPY);
+    // A copy an earlier, failed move made is the store as it was, since that
+    // move changed nothing.
+    if !copy.exists() {
+        connection
+            .execute(
+                "VACUUM INTO ?1",
+                params![copy.to_string_lossy().into_owned()],
+            )
+            .map_err(|error| StoreError(format!("migration copy: {error}")))?;
+        private_file(&copy)?;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as UnixMs);
+    let transaction = connection.transaction()?;
+    let tasks: Vec<(String, String, String)> = {
+        let mut statement = transaction.prepare("SELECT factory, id, data FROM tasks")?;
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<Result<_, _>>()?
+    };
+    let mut proposals: std::collections::BTreeMap<String, Vec<crate::migrate::Proposal>> =
+        std::collections::BTreeMap::new();
+    for (factory, id, data) in tasks {
+        let (task, asked) = crate::migrate::task(serde_json::from_str(&data)?, now);
+        // The moved record must load as this build's Task.
+        let typed: Task = serde_json::from_value(task.clone())
+            .map_err(|error| StoreError(format!("migration of {factory}/{id}: {error}")))?;
+        transaction.execute(
+            "UPDATE tasks SET data = ?3 WHERE factory = ?1 AND id = ?2",
+            params![factory, id, serde_json::to_string(&typed)?],
+        )?;
+        proposals.entry(factory).or_default().extend(asked);
+    }
+    let factories: Vec<(String, String)> = {
+        let mut statement = transaction.prepare("SELECT id, data FROM factories")?;
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<_, _>>()?
+    };
+    for (id, data) in factories {
+        let asked = proposals.remove(&id).unwrap_or_default();
+        let factory = crate::migrate::factory(serde_json::from_str(&data)?, &asked);
+        let typed: Factory = serde_json::from_value(factory)
+            .map_err(|error| StoreError(format!("migration of {id}: {error}")))?;
+        transaction.execute(
+            "UPDATE factories SET data = ?2 WHERE id = ?1",
+            params![id, serde_json::to_string(&typed)?],
+        )?;
+        transaction.execute(
+            "INSERT INTO events (factory, task, at, kind, detail) VALUES (?1, NULL, ?2, 'store.migrated', ?3)",
+            params![id, now as i64, serde_json::json!({"from": 1, "to": SCHEMA_VERSION}).to_string()],
+        )?;
+    }
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
     Ok(())
 }
 

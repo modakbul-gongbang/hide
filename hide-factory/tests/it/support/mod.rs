@@ -123,6 +123,12 @@ pub struct World {
     /// Factory AI choices `check_ai` refuses, by provider.
     pub refused_ai: Vec<String>,
     pub producer: Vec<(String, String)>,
+    /// The next follow-up issue fails with this failure.
+    pub follow_up_failure: Option<Failure>,
+    /// GitHub's access check answers this failure while set.
+    pub access_failure: Option<Failure>,
+    /// What the intake review is told the repository and GitHub say.
+    pub facts: IntakeFacts,
 }
 
 #[derive(Clone)]
@@ -209,6 +215,41 @@ impl TaskSource for Shared {
             body: "- [ ] it works".into(),
             open: true,
         })
+    }
+    fn create_follow_up(
+        &mut self,
+        factory: &Factory,
+        title: &str,
+        _body: &str,
+        marker: &str,
+        labelled: bool,
+    ) -> Result<IssueRef, Failure> {
+        let mut world = self.world();
+        if let Some(failure) = world.follow_up_failure.take() {
+            return Err(failure);
+        }
+        world.next_issue += 1;
+        let number = world.next_issue;
+        world.writes.push(format!(
+            "follow_up.create {title} labelled={labelled} {marker}"
+        ));
+        Ok(match factory.source {
+            SourceKind::Github => IssueRef::Github {
+                number: 100 + number,
+            },
+            SourceKind::Local => IssueRef::Local {
+                number: number as u32,
+            },
+        })
+    }
+    fn intake_facts(&mut self, _factory: &Factory, _card: &Card) -> IntakeFacts {
+        self.world().facts.clone()
+    }
+    fn check_access(&mut self, _factory: &Factory) -> Result<(), Failure> {
+        match self.world().access_failure.clone() {
+            Some(failure) => Err(failure),
+            None => Ok(()),
+        }
     }
     fn observe(
         &mut self,
@@ -571,7 +612,7 @@ impl Judge for Shared {
                     .task
                     .as_ref()
                     .and_then(|task| world.drift.get(task).cloned())
-                    .unwrap_or_else(|| json!({"pass": true, "questions": [], "flags": []})),
+                    .unwrap_or_else(passed),
                 JudgmentInput::Watch { .. } => world
                     .watch
                     .pop_front()
@@ -603,6 +644,11 @@ impl Judge for Shared {
         }
         answers
     }
+}
+
+/// A check that passes and asks nothing.
+pub fn passed() -> Value {
+    json!({"verdict": "pass", "send_back": "", "criteria": [], "questions": [], "flags": []})
 }
 
 /// An Observer verdict of `kind` answering `answer`, no proposal.
@@ -804,15 +850,7 @@ impl Bench {
     }
 
     pub fn done(&mut self, factory: &str, id: &str) -> Value {
-        self.as_worker(
-            factory,
-            id,
-            Command::Done {
-                summary: Some(format!("did {id}")),
-                breaking: false,
-                letter: None,
-            },
-        )
+        self.as_worker(factory, id, report(&format!("did {id}")))
     }
 
     pub fn writes(&self, prefix: &str) -> Vec<String> {
@@ -822,6 +860,19 @@ impl Bench {
             .filter(|write| write.starts_with(prefix))
             .cloned()
             .collect()
+    }
+}
+
+/// A worker's report whose one-line result is `result`.
+pub fn report(result: &str) -> Command {
+    Command::Done {
+        result: Some(result.to_owned()),
+        changed: Vec::new(),
+        verified: Vec::new(),
+        unverified: Vec::new(),
+        summary: None,
+        breaking: false,
+        raw: None,
     }
 }
 

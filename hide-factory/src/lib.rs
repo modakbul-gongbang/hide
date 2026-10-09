@@ -5,8 +5,9 @@
 //! This crate knows nothing of Hide's runtime or Herdr. It owns the values
 //! ([`model`]), the store ([`store`]), the dependency graph ([`dag`]), the
 //! roles ([`role`]), the judgment features ([`judgment`]), the command
-//! contract ([`command`]), the stage 2 summary ([`summary`]) and the adapter
-//! traits the engine is generic over ([`adapters`]). `docs/factory.md` is the
+//! contract ([`command`]), the read model ([`summary`]), the store's one-way
+//! schema move ([`migrate`]) and the adapter traits the engine is generic
+//! over ([`adapters`]). `docs/factory.md` is the
 //! owning guide.
 
 pub mod adapters;
@@ -15,6 +16,7 @@ pub mod dag;
 pub mod engine;
 pub mod exec;
 pub mod judgment;
+mod migrate;
 pub mod model;
 pub mod project;
 pub mod role;
