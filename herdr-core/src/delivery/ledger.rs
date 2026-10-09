@@ -69,6 +69,35 @@ pub struct Letter {
     /// Set when the wait for an answer ended without one; null otherwise.
     #[serde(default)]
     pub answer_wait_ended: Option<AnswerWaitEnd>,
+    /// The line the doorbell typed for this letter last, saved with its
+    /// reservation before it was typed; null until the first bell. A
+    /// submitted prompt is that bell exactly when it is this line.
+    #[serde(default)]
+    pub bell_line: Option<String>,
+}
+
+impl Ledger {
+    /// When this pane's session sent the newest request or block letter whose
+    /// answer it still waits for at `now`. A letter from another session of
+    /// the same pane does not count: that session ended with its wait.
+    pub(crate) fn reply_awaited_since(
+        &self,
+        pane_id: &str,
+        session: Option<&str>,
+        now: u64,
+    ) -> Option<u64> {
+        session?;
+        self.letters
+            .iter()
+            .filter(|letter| {
+                letter.waiting_answer
+                    && !letter.answer_overdue(now)
+                    && letter.sender.pane_id == pane_id
+                    && letter.sender.session.as_deref() == session
+            })
+            .map(|letter| letter.created_at_unix_ms)
+            .max()
+    }
 }
 
 impl Letter {
@@ -117,8 +146,13 @@ impl Letter {
             .unwrap_or(if self.bell_sent { 3 } else { self.bell_errors })
     }
 
-    pub(crate) fn reserve_bell(&mut self, now: u64) -> Result<u8, String> {
+    /// Spends one of the letter's three bells on `line`, which the doorbell
+    /// types once this reservation is saved.
+    pub(crate) fn reserve_bell(&mut self, now: u64, line: String) -> Result<u8, String> {
         self.recipient.require_native_identity()?;
+        if !super::bell::valid_line(&line) {
+            return Err("bell_line_invalid".into());
+        }
         if self.state != State::Pending
             || now.saturating_sub(self.created_at_unix_ms) >= super::DELIVERY_EXPIRY_MS
         {
@@ -129,6 +163,7 @@ impl Letter {
         }
         let attempt = self.attempts() + 1;
         self.bell_attempts = Some(attempt);
+        self.bell_line = Some(line);
         Ok(attempt)
     }
 }
@@ -185,6 +220,10 @@ impl Ledger {
                 || letter.body.trim().is_empty()
                 || letter.bell_errors > 3
                 || letter.bell_attempts.is_some_and(|attempts| attempts > 3)
+                || letter
+                    .bell_line
+                    .as_deref()
+                    .is_some_and(|line| !super::bell::valid_line(line))
                 || (letter.hook_confirmed == Some(true)
                     && matches!(
                         letter.state,
@@ -512,11 +551,17 @@ mod tests {
             let path = root.path().join("ledger.json");
             let mut ledger = letter();
             for attempt in 1..=3 {
-                assert_eq!(ledger.letters[0].reserve_bell(2).unwrap(), attempt);
+                let line = format!("🔔 sender 보고: 시도 {attempt}");
+                assert_eq!(
+                    ledger.letters[0].reserve_bell(2, line.clone()).unwrap(),
+                    attempt
+                );
                 save(&path, &ledger).unwrap();
-                // A lost response or a crash here still consumes the reservation.
+                // A lost response or a crash here still consumes the
+                // reservation, and the line it saved is the one typed.
                 ledger = load(&path).unwrap();
                 assert_eq!(ledger.letters[0].attempts(), attempt);
+                assert_eq!(ledger.letters[0].bell_line.as_deref(), Some(line.as_str()));
                 assert_eq!(ledger.letters[0].state, State::Pending);
                 if sent {
                     ledger.letters[0].bell_sent = true;
@@ -528,7 +573,9 @@ mod tests {
             }
             let before = ledger.bytes().unwrap();
             assert_eq!(
-                ledger.letters[0].reserve_bell(2).unwrap_err(),
+                ledger.letters[0]
+                    .reserve_bell(2, "🔔 a 보고: b".into())
+                    .unwrap_err(),
                 "doorbell_attempt_limit"
             );
             assert_eq!(ledger.bytes().unwrap(), before);
@@ -545,7 +592,9 @@ mod tests {
             save(&path, &ledger).unwrap();
             ledger = load(&path).unwrap();
             assert_eq!(
-                ledger.letters[0].reserve_bell(2).unwrap_err(),
+                ledger.letters[0]
+                    .reserve_bell(2, "🔔 a 보고: b".into())
+                    .unwrap_err(),
                 "letter_not_pending"
             );
             assert!(
@@ -564,23 +613,42 @@ mod tests {
             let mut record = serde_json::to_value(&ledger).unwrap();
             let row = record["letters"][0].as_object_mut().unwrap();
             row.remove("bell_attempts");
+            row.remove("bell_line");
             row.insert("bell_sent".into(), serde_json::json!(sent));
             row.insert("bell_errors".into(), serde_json::json!(2));
             let mut restored: Ledger = serde_json::from_value(record).unwrap();
             if sent {
                 assert_eq!(
-                    restored.letters[0].reserve_bell(2).unwrap_err(),
+                    restored.letters[0]
+                        .reserve_bell(2, "🔔 a 보고: b".into())
+                        .unwrap_err(),
                     "doorbell_attempt_limit"
                 );
             } else {
-                assert_eq!(restored.letters[0].reserve_bell(2).unwrap(), 3);
                 assert_eq!(
-                    restored.letters[0].reserve_bell(2).unwrap_err(),
+                    restored.letters[0]
+                        .reserve_bell(2, "🔔 a 보고: b".into())
+                        .unwrap(),
+                    3
+                );
+                assert_eq!(
+                    restored.letters[0]
+                        .reserve_bell(2, "🔔 a 보고: b".into())
+                        .unwrap_err(),
                     "doorbell_attempt_limit"
                 );
             }
         }
         let mut invalid = ledger;
+        assert_eq!(
+            invalid.letters[0]
+                .reserve_bell(2, "🔔 a\n보고".into())
+                .unwrap_err(),
+            "bell_line_invalid"
+        );
+        invalid.letters[0].bell_line = Some("🔔 a\n보고".into());
+        assert_eq!(invalid.validate().unwrap_err(), "ledger_unavailable");
+        invalid.letters[0].bell_line = None;
         invalid.letters[0].bell_attempts = Some(4);
         assert_eq!(invalid.validate().unwrap_err(), "ledger_unavailable");
     }

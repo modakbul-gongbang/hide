@@ -1106,15 +1106,17 @@ pub struct SidebarAgentSnapshot {
     pub descendant_counts: DescendantCountsSnapshot,
     /// Facts for the common direct-child popover, independent of tree folding.
     pub direct_child_counts: DescendantCountsSnapshot,
-    /// A lineage root that is itself quiet - no demand of its own, stopped,
-    /// idle or done - while at least one live descendant is working or holds
-    /// a question, approval or error. The row is waiting on its children, so
-    /// it stays in Working rather than reading as finished, and it reaches
-    /// Done only once it and every descendant are quiet (sidebar-agent-status
-    /// D-01). It travels as this additive flag beside `group: working`, never
-    /// as a new group value, so a decoder that does not know it draws an
-    /// ordinary Working row (D-10).
-    pub waiting_on_descendants: bool,
+    /// What a quiet row, one with no demand of its own that is stopped, idle
+    /// or done, is waiting on: its working or asking descendants, a
+    /// background job its session proves is still running, or the reply to a
+    /// Hide request it sent. A waiting row has not finished, so it stays in
+    /// Working rather than reading as finished, and it reaches Done only
+    /// once nothing it waits on is left (sidebar-agent-status D-01). It
+    /// travels as this additive field beside `group: working`, never as a new
+    /// group value, so a decoder that does not know it draws an ordinary
+    /// Working row (D-10).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait: Option<AgentWait>,
     /// The demands and completions of this row's live descendants, keyed by
     /// the descendant pane. It is what the read record compares against, so
     /// a descendant asking or finishing turns this row unread the same way
@@ -1151,6 +1153,11 @@ pub struct SidebarAgentSnapshot {
     /// block is built from (PRD overview-request-view D-14).
     #[serde(skip_serializing)]
     pub(crate) row_facts: Option<crate::request_view::RowFacts>,
+    /// The agent sent a request or block letter whose answer it still waits
+    /// for. Set by the runtime from the delivery ledger, never by a session
+    /// read, so it does not make `row_facts` present.
+    #[serde(skip_serializing)]
+    pub(crate) reply_wait: bool,
     /// The request view's part of the row: the verb and since when, the
     /// request and reply lines, the pull requests (`request_view.rs`).
     /// Absent until the core has built it.
@@ -1351,6 +1358,7 @@ pub struct MarkCountsSnapshot {
     pub approval: u32,
     pub question: u32,
     pub working: u32,
+    pub stopped: u32,
     pub done: u32,
     pub idle: u32,
 }
@@ -1637,12 +1645,27 @@ pub fn display_tab_label(
         .unwrap_or_else(|| format!("Tab {}", automatic_number.unwrap_or(number)))
 }
 
+/// Why a quiet row is waiting rather than finished or stopped.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentWait {
+    /// A live descendant is working or asking.
+    Children,
+    /// A background command, monitor or task the agent started is still
+    /// running in the process that started it.
+    Background,
+    /// A Hide request the agent sent still waits for its reply.
+    Reply,
+}
+
 /// The status of one agent as a code, never as a sentence: the screen chooses
 /// the word in the operator's language, and `english` is the word for output
 /// that is not a screen (the project context an agent reads).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentStatusCode {
+    /// The agent stopped and named what stopped it (the label's `blocked`
+    /// end). The wire value keeps the name of the demand it rides on.
     Error,
     Question,
     Approval,
@@ -1650,8 +1673,11 @@ pub enum AgentStatusCode {
     Done,
     Idle,
     Unknown,
-    /// A root waiting on its delegated children.
+    /// Waiting on delegated children, a background job or a reply.
     Waiting,
+    /// The turn stopped before the request was done and nothing is left to
+    /// wake the agent.
+    Stopped,
     /// A pane that holds a terminal but no agent.
     Attached,
     Sleeping,
@@ -1662,7 +1688,7 @@ pub enum AgentStatusCode {
 impl AgentStatusCode {
     pub fn english(self) -> &'static str {
         match self {
-            Self::Error => "Error",
+            Self::Error => "Blocked",
             Self::Question => "Question",
             Self::Approval => "Approval",
             Self::Working => "Working",
@@ -1670,6 +1696,7 @@ impl AgentStatusCode {
             Self::Idle => "Idle",
             Self::Unknown => "Unknown",
             Self::Waiting => "Waiting",
+            Self::Stopped => "Stopped",
             Self::Attached => "Attached",
             Self::Sleeping => "Sleeping \u{b7} resumes when opened",
             Self::Waking => "Waking\u{2026}",
@@ -1686,7 +1713,8 @@ pub struct TabAgentSnapshot {
     pub demand: String,
     pub activity: String,
     pub emphasized: bool,
-    pub waiting_on_descendants: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait: Option<AgentWait>,
     pub status_code: AgentStatusCode,
 }
 
@@ -1701,7 +1729,7 @@ impl From<&SidebarAgentSnapshot> for TabAgentSnapshot {
             demand: agent.demand.clone(),
             activity: agent.activity.clone(),
             emphasized: agent.emphasized,
-            waiting_on_descendants: agent.waiting_on_descendants,
+            wait: agent.wait,
             status_code: agent.status_code,
         }
     }
@@ -2605,6 +2633,34 @@ pub enum InterfaceLanguage {
     SimplifiedChinese,
     #[serde(rename = "ja")]
     Japanese,
+}
+
+impl InterfaceLanguage {
+    /// The interface language a system's primary language means, by the
+    /// rules `web/src/i18n/locale.ts` (`systemLanguage`) resolves it with:
+    /// English, Korean and Japanese by their base language, Chinese only in
+    /// the Simplified script, and `None` for anything else.
+    pub fn from_system(tag: &str) -> Option<Self> {
+        let mut subtags = tag.split(['-', '_']);
+        let language = subtags.next()?.to_ascii_lowercase();
+        match language.as_str() {
+            "en" => Some(Self::English),
+            "ko" => Some(Self::Korean),
+            "ja" => Some(Self::Japanese),
+            "zh" => {
+                // The script, else the one the region implies when a tag is
+                // filled in (`zh-TW` is Traditional, `zh` and `zh-CN` Simplified).
+                let next = subtags.next().unwrap_or_default();
+                let simplified = if next.len() == 4 {
+                    next.eq_ignore_ascii_case("hans")
+                } else {
+                    !["tw", "hk", "mo"].contains(&next.to_ascii_lowercase().as_str())
+                };
+                simplified.then_some(Self::SimplifiedChinese)
+            }
+            _ => None,
+        }
+    }
 }
 
 /// The store retains an invalid value; the wire exposes its English fallback.
@@ -4915,6 +4971,34 @@ pub struct TerminalMetaWire<'a> {
 }
 
 #[cfg(test)]
+mod interface_language_tests {
+    use super::InterfaceLanguage;
+
+    /// The cases `web/src/i18n/locale.test.ts` resolves, so a closed-window
+    /// reader in the core and a shell agree on the system's language.
+    #[test]
+    fn a_system_language_resolves_as_the_shell_resolves_it() {
+        for (tag, expected) in [
+            ("en-GB", Some(InterfaceLanguage::English)),
+            ("ko-KR", Some(InterfaceLanguage::Korean)),
+            ("ja-JP", Some(InterfaceLanguage::Japanese)),
+            ("zh-CN", Some(InterfaceLanguage::SimplifiedChinese)),
+            ("zh-Hans", Some(InterfaceLanguage::SimplifiedChinese)),
+            ("zh-Hans-KR", Some(InterfaceLanguage::SimplifiedChinese)),
+            ("zh-SG", Some(InterfaceLanguage::SimplifiedChinese)),
+            ("zh", Some(InterfaceLanguage::SimplifiedChinese)),
+            ("zh-TW", None),
+            ("zh-Hant", None),
+            ("zh-Hant-HK", None),
+            ("fr-FR", None),
+            ("", None),
+        ] {
+            assert_eq!(InterfaceLanguage::from_system(tag), expected, "{tag}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod wire_enum_tests {
     //! The shell decodes these strings strictly, so the values the core emits
     //! are a contract, pinned in `contracts/snapshot-wire-enums.json` and
@@ -5040,6 +5124,7 @@ mod wire_enum_tests {
         use crate::agent_state::RequestVerb;
         let verbs = [
             RequestVerb::Answer,
+            RequestVerb::Blocked,
             RequestVerb::Fix,
             RequestVerb::Review,
             RequestVerb::Stopped,
@@ -5051,6 +5136,7 @@ mod wire_enum_tests {
         for variant in verbs {
             match variant {
                 RequestVerb::Answer
+                | RequestVerb::Blocked
                 | RequestVerb::Fix
                 | RequestVerb::Review
                 | RequestVerb::Stopped
@@ -5063,10 +5149,20 @@ mod wire_enum_tests {
         assert_wire(&contract, "request_verb", &verbs);
         checked.insert("request_verb");
 
+        let waits = [AgentWait::Children, AgentWait::Background, AgentWait::Reply];
+        for variant in waits {
+            match variant {
+                AgentWait::Children | AgentWait::Background | AgentWait::Reply => {}
+            }
+        }
+        assert_wire(&contract, "agent_wait", &waits);
+        checked.insert("agent_wait");
+
         use crate::labels::analysis::LabelEnd;
         let ends = [
             LabelEnd::Working,
             LabelEnd::Question,
+            LabelEnd::Blocked,
             LabelEnd::Done,
             LabelEnd::Waiting,
             LabelEnd::Unfinished,
@@ -5075,6 +5171,7 @@ mod wire_enum_tests {
             match variant {
                 LabelEnd::Working
                 | LabelEnd::Question
+                | LabelEnd::Blocked
                 | LabelEnd::Done
                 | LabelEnd::Waiting
                 | LabelEnd::Unfinished => {}
@@ -5185,6 +5282,7 @@ mod wire_enum_tests {
         let session_tags = [
             Tag::Answer,
             Tag::Approval,
+            Tag::Blocked,
             Tag::Fix,
             Tag::Review,
             Tag::Merge,
@@ -5199,6 +5297,7 @@ mod wire_enum_tests {
             match tag {
                 Tag::Answer
                 | Tag::Approval
+                | Tag::Blocked
                 | Tag::Fix
                 | Tag::Review
                 | Tag::Merge
@@ -5574,6 +5673,7 @@ mod wire_enum_tests {
                 signal: String::new(),
                 check: String::new(),
             }),
+            Some(AttemptOutcome::Cancelled),
             None,
         ]
         .iter()
@@ -5581,7 +5681,8 @@ mod wire_enum_tests {
             Some(
                 outcome @ (AttemptOutcome::Passed
                 | AttemptOutcome::Failed { .. }
-                | AttemptOutcome::Environment { .. }),
+                | AttemptOutcome::Environment { .. }
+                | AttemptOutcome::Cancelled),
             ) => serde_json::to_value(outcome).unwrap()["result"].clone(),
             None => serde_json::json!("running"),
         })

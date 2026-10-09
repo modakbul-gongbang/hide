@@ -53,6 +53,7 @@ A push notification is composed on the phone, not by the daemon: the payload car
 The page hands the worker the two words (`mobile.group.needs_you`, `mobile.group.done`) in the language in effect on load, on every language change and after a subscription is made, and the worker keeps them in the Cache API so a closed app still notifies in the right language.
 A subscription made before the words were ever stored shows the place alone rather than an invented English word.
 The sentence a human-delivery notice carries is composed by the core in English and rides along as the place, untranslated, like the other core-sent text below.
+The Software Factory is a closed-window reader in the core: what it writes for a person (its judgments' questions and answers, its notices, the reports its workers are asked for) is in the core's explicit choice, else the language `hide_platform::host::primary_language` names for this machine, resolved by `InterfaceLanguage::from_system` with the shell's rules, else English; [factory.md](factory.md#the-operators-language) owns which texts that covers.
 The manifest has no description, since a static file cannot follow the language.
 
 ## Hardcoded text guard

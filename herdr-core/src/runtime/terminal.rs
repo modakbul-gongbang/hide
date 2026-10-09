@@ -718,7 +718,7 @@ impl Runtime {
         );
     }
     /// The agent row for a pane on this machine or on a device.
-    fn agent_row(&self, pane_id: &str) -> Option<&SidebarAgentSnapshot> {
+    pub(super) fn agent_row(&self, pane_id: &str) -> Option<&SidebarAgentSnapshot> {
         let local = self.snapshot.navigator.agents.iter();
         let devices = self
             .snapshot

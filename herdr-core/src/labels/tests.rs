@@ -451,6 +451,42 @@ fn a_finished_turn_is_named_once_and_unchanged_panes_spend_nothing() {
 }
 
 #[test]
+fn a_request_repeated_word_for_word_is_a_new_turn_and_is_asked_again() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let first = [("user", "ㅇㅇ"), ("assistant", "첫 조각을 머지했습니다")];
+    let path = harness.session("a", "native-a", &first);
+    harness.backend.answer("라벨 턴 구분 작업", "done", "");
+    observe(&mut worker, &agent(&path, "idle", 3));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 1);
+
+    harness.session(
+        "a",
+        "native-a",
+        &[
+            first[0],
+            first[1],
+            ("user", "ㅇㅇ"),
+            ("assistant", "다음 조각의 CI를 기다립니다"),
+        ],
+    );
+    harness.backend.answer("다음 조각 CI", "waiting", "");
+    let again = agent(&path, "idle", 5);
+    observe(&mut worker, &again);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        harness.backend.calls(),
+        2,
+        "the second ㅇㅇ is its own turn"
+    );
+    assert_eq!(
+        shown(&worker, &again).unwrap().progress.as_deref(),
+        Some("다음 조각 CI 진행")
+    );
+}
+
+#[test]
 fn an_agent_listed_before_its_pane_is_still_read_and_named() {
     let harness = Harness::new();
     let (mut worker, woken, _) = harness.worker(harness.store());
@@ -771,6 +807,22 @@ fn the_providers_answer_is_judged_before_it_is_shown() {
     )
     .unwrap();
     assert_eq!(long.line.chars().count(), 40);
+    let block_without_cause = parse_text(
+        AnalysisPhase::TurnEnd,
+        r#"{"goal":"배포 방식 결정 작업","goal_changed":false,"line":"","end":"blocked"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        block_without_cause.end,
+        LabelEnd::Unfinished,
+        "a block needs a cause to name"
+    );
+    let block = parse_text(
+        AnalysisPhase::TurnEnd,
+        r#"{"goal":"배포 방식 결정 작업","goal_changed":false,"line":"디스크 여유가 없어 검증을 못 함","end":"blocked"}"#,
+    )
+    .unwrap();
+    assert_eq!(block.end, LabelEnd::Blocked);
     assert!(parse_text(AnalysisPhase::TurnEnd, r#"{"goal":"짧음"}"#).is_err());
     for end in ["stuck", "working"] {
         assert!(
@@ -781,7 +833,7 @@ fn the_providers_answer_is_judged_before_it_is_shown() {
                 ),
             )
             .is_err(),
-            "a stopped turn's end outside the four is refused, not read as anything: {end}"
+            "a stopped turn's end outside the five is refused, not read as anything: {end}"
         );
     }
 }
@@ -818,7 +870,22 @@ fn each_turn_boundary_is_asked_only_what_it_can_know() {
     let end = request(AnalysisPhase::TurnEnd, "pane", "r2".to_owned(), "context");
     assert_eq!(
         end.output_schema["properties"]["end"]["enum"],
-        json!(["question", "waiting", "unfinished", "done"])
+        json!(["question", "blocked", "waiting", "unfinished", "done"])
+    );
+    // The order the prompt checks them in is the status model's precedence:
+    // the operator's move, then a stated cause, then something else's move,
+    // then nobody's (docs/status-model.md, Mark precedence).
+    let prompt = &end.system;
+    let at = |word: &str| {
+        prompt
+            .find(&format!("{word}: "))
+            .unwrap_or_else(|| panic!("{word}"))
+    };
+    assert!(at("question") < at("blocked") && at("blocked") < at("waiting"));
+    assert!(at("waiting") < at("unfinished") && at("unfinished") < at("done"));
+    assert!(
+        !prompt.contains("확실하지 않으면 done"),
+        "an unsure stop is unfinished, never done"
     );
 }
 
@@ -1263,6 +1330,38 @@ fn only_a_turn_the_operator_started_moves_the_goal() {
         task(shown(&worker, &working)).as_deref(),
         Some("요청 보기와 설정 화면")
     );
+}
+
+/// B3, D-06: a block lasts until the agent runs again; a working state ends it
+/// and its cause, and a wrongly judged block goes the same way.
+#[test]
+fn a_blocked_turn_ends_when_the_agent_works_again() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[
+            ("user", "검증 돌려줘"),
+            ("assistant", "디스크가 가득 차서 멈췄어요"),
+        ],
+    );
+    harness.backend.answer("검증 레인 정리 작업", "blocked", "");
+    let idle = agent(&path, "idle", 3);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    let blocked = shown(&worker, &idle).expect("the turn is labelled");
+    assert!(blocked.blocked, "the stopped turn names its block");
+    assert_eq!(
+        shown_facts(&worker, &idle).and_then(|facts| facts.end),
+        Some(super::analysis::LabelEnd::Blocked)
+    );
+
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    let running = shown_facts(&worker, &working);
+    assert_eq!(running.as_ref().and_then(|facts| facts.end), None);
+    assert!(!shown(&worker, &working).is_some_and(|label| label.blocked));
 }
 
 /// D-33, B20: a turn's end that ran out of time is asked once more; a second

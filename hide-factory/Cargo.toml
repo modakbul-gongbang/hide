@@ -16,6 +16,7 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 hide-node = { path = "../hide-node" }
+hide-platform = { path = "../hide-platform" }
 tempfile = "=3.27.0"
 
 [lints.rust]

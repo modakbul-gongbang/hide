@@ -191,7 +191,7 @@ fn prompt(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value 
     let intake = delivery::pull(
         deadline,
         &Prompt {
-            bell: false,
+            digest: None,
             session: Some(session),
         },
     )

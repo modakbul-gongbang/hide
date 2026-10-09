@@ -794,6 +794,15 @@ function buildAgentGraphBox(tokens) {
           {type: 'ellipse', id: `${p}-dot`, name: 'Dot', enabled: false, width: DOT, height: DOT, fill: '$--agent-working'},
           {type: 'ellipse', id: `${p}-ring`, name: 'Ring', width: DOT, height: DOT, stroke: '$--muted-foreground', strokeWidth: HAIR, strokeAlignment: 'inner'},
           disabled(text(`${p}-glyph`, '?', {fill: '$--warning', mono: true, size: '$--text-caption'})),
+          // Blocked is a filled triangle with its notch cut out, stopped a ring with its left half filled; both are shapes, as the web draws them.
+          frame(`${p}-blocked`, 'Blocked', {width: MARK, height: MARK, layout: 'none', enabled: false}, [
+            // The exclamation is a hole in the path (opposite winding), as the web cuts it out with evenodd.
+            {type: 'path', id: `${p}-blocked-shape`, name: 'Triangle with notch', x: 0, y: 0, width: MARK, height: MARK, viewBox: [0, 0, 12, 12], geometry: 'M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z', fill: '$--warning'},
+          ]),
+          frame(`${p}-stopped`, 'Stopped', {width: MARK, height: MARK, layout: 'none', enabled: false}, [
+            {type: 'ellipse', id: `${p}-stopped-ring`, x: 3.5, y: 3.5, name: 'Ring', width: DOT, height: DOT, stroke: '$--subtle-foreground', strokeWidth: HAIR, strokeAlignment: 'inner'},
+            {type: 'ellipse', id: `${p}-stopped-half`, x: 3.5, y: 3.5, name: 'Half', startAngle: 90, sweepAngle: 180, width: DOT, height: DOT, fill: '$--subtle-foreground'},
+          ]),
         ]),
         frame(`${p}-provider`, 'Provider artwork', {width: 14, height: 14, fill: {type: 'image', enabled: true, url: '../web/src/assets/agent-claude.png', mode: 'contain'}}, []),
         text(`${p}-title`, 'agent title'),
@@ -821,11 +830,14 @@ function buildAgentGraphBox(tokens) {
   }, [head, rowMaster(1), ...BOX_ROWS.slice(1).map(n => ({...rowMaster(n), enabled: false}))]);
 
   // What a state names about one row; every other part keeps the master's own.
+  const shapes = (p, on) => ({[`${p}-blocked`]: {enabled: on === '▲'}, [`${p}-stopped`]: {enabled: on === '◐'}});
   const mark = (p, symbol, fill) => symbol === '●'
-    ? {[`${p}-dot`]: {enabled: true, fill}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: false}}
+    ? {[`${p}-dot`]: {enabled: true, fill}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: false}, ...shapes(p)}
     : symbol === '○'
-      ? {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: true, stroke: fill}, [`${p}-glyph`]: {enabled: false}}
-      : {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: true, content: symbol, fill}};
+      ? {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: true, stroke: fill}, [`${p}-glyph`]: {enabled: false}, ...shapes(p)}
+      : symbol === '▲' || symbol === '◐'
+        ? {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: false}, ...shapes(p, symbol)}
+        : {[`${p}-dot`]: {enabled: false}, [`${p}-ring`]: {enabled: false}, [`${p}-glyph`]: {enabled: true, content: symbol, fill}, ...shapes(p)};
   const row = (n, {symbol, fill, provider = 'claude', title, age, line, depth = 0, tucked, cross, asking = false}) => {
     const p = `agb-row${n}`;
     return {
@@ -842,7 +854,7 @@ function buildAgentGraphBox(tokens) {
       [`${p}-cross-p`]: {content: cross?.project ?? ''},
       [`${p}-cross-n`]: {enabled: (cross?.count ?? 0) > 1, content: String(cross?.count ?? 0)},
       [`${p}-q`]: line ? {enabled: true, padding: [0, '$--spacing-sm', 0, SM + MARK + depth * INDENT]} : {enabled: false},
-      [`${p}-q-t`]: {content: line ?? ''},
+      [`${p}-q-t`]: {content: line ?? '', ...(symbol === '◐' ? {fill: '$--subtle-foreground'} : {})},
     };
   };
   const rowsOn = (...specs) => Object.assign({}, ...BOX_ROWS.map((n, index) => specs[index] ? {[`agb-row${n}`]: {enabled: true}, ...row(n, specs[index])} : {[`agb-row${n}`]: {enabled: false}}));
@@ -878,6 +890,13 @@ function buildAgentGraphBox(tokens) {
         ...rowsOn(
           {symbol: '?', fill: '$--warning', provider: 'codex', title: 'SIGTERM 처리와 자식 정리', age: '4m', line: '기존 stdin 종료 경로도 남길까요?', asking: true},
           {symbol: '●', fill: '$--agent-working', title: '리뷰: 종료 경로 회귀', age: '2m', depth: 1},
+        ),
+      }),
+      state('blocked', 'Worktree with a blocked and a stopped row', {}, {
+        ...headOf({glyph: 'git-branch', tone: '$--muted-foreground', branch: 'fix/ci-recovery', purpose: 'CI 복구', distance: '↑2'}),
+        ...rowsOn(
+          {symbol: '▲', fill: '$--warning', title: 'CI 복구 시도', age: '2m', line: '디스크 여유가 부족해 검증을 못 함', asking: true},
+          {symbol: '◐', fill: '$--subtle-foreground', title: '어댑터 정리', age: '14m', line: '멈춤 · 테스트 3개 남음'},
         ),
       }),
       state('resting', 'Resting (merged, dimmed)', {opacity: DIMMED}, {

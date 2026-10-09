@@ -158,7 +158,7 @@ describe("the buckets of attention", () => {
   it("colours a line by the child it leads to (D-04, B9)", () => {
     expect(edgeKindOf(agent("a", { demand: "approval" }))).toBe("ask");
     expect(edgeKindOf(agent("a", WORKING))).toBe("flow");
-    expect(edgeKindOf(agent("a", { waiting_on_descendants: true }))).toBe("wait");
+    expect(edgeKindOf(agent("a", { wait: "children" }))).toBe("wait");
     expect(edgeKindOf(agent("a", { descendant_counts: { error: 0, approval: 0, question: 0, working: 2, done: 0 } }))).toBe("wait");
     expect(edgeKindOf(agent("a"))).toBe("rest");
   });
@@ -328,7 +328,7 @@ describe("the filter", () => {
 
   it("lights any of several chips, working with a parent waiting on children, and narrows with the search and the device (B25, B26, D-35, D-36)", () => {
     const value = (row: AgentRow) => scopeAgents(one(project(), [row, ...agents().filter((other) => other.pane_id !== row.pane_id)])).find((candidate) => candidate.agent.pane_id === row.pane_id)!;
-    const waiting = value(agent("m", { ...WORKING, waiting_on_descendants: true }));
+    const waiting = value(agent("m", { ...WORKING, wait: "children" }));
     expect(matchesFilter(waiting, { ...NO_GRAPH_FILTER, chips: ["working"] })).toBe(true);
     expect(matchesFilter(waiting, { ...NO_GRAPH_FILTER, chips: ["turn"] })).toBe(false);
     expect(matchesFilter(waiting, { ...NO_GRAPH_FILTER, chips: ["turn", "working"] })).toBe(true);

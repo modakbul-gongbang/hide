@@ -18,7 +18,7 @@ use std::time::Duration;
 pub(crate) const FEATURE_ID: &str = "context_label";
 /// Bumped whenever a prompt or a schema changes, so a log line can be read
 /// against the pair that produced it.
-pub(crate) const SCHEMA_VERSION: &str = "context_label.v6";
+pub(crate) const SCHEMA_VERSION: &str = "context_label.v7";
 /// Long enough for a provider that has to start a child process, short
 /// enough that a stuck turn does not hold the pane's slot for a whole event
 /// cycle series.
@@ -60,29 +60,31 @@ static START_PROMPT: LazyLock<String> = LazyLock::new(|| {
 });
 
 /// The agent has stopped; how it stopped is a matter of whose move is next:
-/// the operator's (question), something else's (waiting), nobody's on
-/// unfinished work (unfinished) or nobody's on finished work (done).
+/// the operator's (question or, with a stated cause, blocked), something
+/// else's (waiting), nobody's on unfinished work (unfinished) or nobody's on
+/// finished work (done, only when the agent reported it finished).
 static END_PROMPT: LazyLock<String> = LazyLock::new(|| {
     [
         INPUT,
         "<latest-exchange>는 에이전트가 방금 멈춘 턴이며 line과 end는 여기서 정합니다. ",
         "Markdown 없이 정확히 네 개의 필드를 이 순서로 가진 JSON 객체 하나만 반환하세요: ",
-        "{\"goal\":\"...\",\"goal_changed\":false,\"line\":\"...\",\"end\":\"question|waiting|unfinished|done\"}. ",
+        "{\"goal\":\"...\",\"goal_changed\":false,\"line\":\"...\",\"end\":\"question|blocked|waiting|unfinished|done\"}. ",
         GOAL,
         "line은 40자 이내의 한 줄이고 goal을 되풀이하지 않습니다: ",
-        "턴의 결과를 쓰고, question이면 운영자가 답하거나 할 일을 명령형으로(\"~하세요\", \"~을 선택\"), waiting이면 무엇을 기다리는지 쓰세요. ",
+        "턴의 결과를 쓰고, question이면 운영자가 답하거나 할 일을 명령형으로(\"~하세요\", \"~을 선택\"), blocked이면 막은 원인을, waiting이면 무엇을 기다리는지, unfinished이면 남은 일을 쓰세요. ",
         "end는 <latest-exchange>의 마지막 assistant 메시지로 정합니다. 에이전트는 멈춰 있으니 다음에 누가 움직여야 하는지로, ",
-        "아래 넷을 1부터 차례로 확인해 처음 맞는 것을 고르세요. ",
+        "아래 다섯을 1부터 차례로 확인해 처음 맞는 것을 고르세요. ",
         "1. question: 마지막 assistant 메시지가 사용자의 다음 행동(특정 질문에 대한 대답, 선택지 중 선택, 진행 승인, 특정 정보 제공)을 명확하게 요구합니다. ",
         "에이전트가 사용자에게 직접 답하라고 낸 질문이나 문제(퀴즈 출제 포함)는 명시적 요청 문구가 없어도 question이고, 다른 일이 돌고 있어도 question입니다. ",
         "\"무엇을 도와드릴까요?\"처럼 새 작업 지시를 기다리는 열린 인사말, 완료 보고, \"원하면/필요하면 ~도 가능\" 같은 선택적 제안은 question이 아닙니다. ",
         "요구된 행동을 line 한 문장으로 쓸 수 없다면 question이 아닙니다. ",
-        "2. waiting: 테스트, 빌드, CI, 다른 에이전트처럼 PR이 아닌 무언가가 아직 돌고 있어 그 결과를 기다리며 멈췄습니다. ",
+        "2. blocked: 요청한 일을 다 하지 못했고, 마지막 assistant 메시지가 그 원인(디스크 부족, 인증·권한 오류, 네트워크 장애, 실패한 도구나 CI처럼 에이전트 혼자 풀지 못하는 것)을 밝혔습니다. ",
+        "원인을 line 한 문장으로 쓸 수 있을 때만 blocked입니다. 막힌 기색만 있거나 원인이 분명하지 않으면 blocked가 아닙니다. ",
+        "3. waiting: 테스트, 빌드, CI, 다른 에이전트처럼 PR이 아닌 무언가가 아직 돌고 있어 그 결과를 기다리며 멈췄습니다. ",
         "에이전트가 시작했거나 맡긴 일이 아직 돌고 있으면, 턴이 \"진행 중\"이라고 말했거나 진행 보고나 답만 했어도 waiting입니다. ",
-        "3. unfinished: 요청한 일을 다 하지 못하고 기다리는 것 없이 멈췄습니다(막힘, 포기, 돌고 있는 일 없는 중간 보고). ",
-        "4. done: 요청한 일을 끝내고 결과를 보고했으며, 결과를 기다리는 일이 남아 있지 않습니다. ",
-        "확실하지 않으면 done입니다. ",
-        "승인 대기나 오류 상태는 절대 분류하지 마세요. ",
+        "4. unfinished: 요청한 일을 다 하지 못하고 기다리는 것 없이 멈췄으며 원인을 밝히지 않았습니다(포기, 돌고 있는 일 없는 중간 보고, 애매한 멈춤). ",
+        "5. done: 요청한 일을 끝냈다고 보고했고, 결과를 기다리는 일이 남아 있지 않습니다. 끝냈다고 보고한 것이 아니면 done이 아니라 unfinished입니다. ",
+        "승인 프롬프트처럼 Herdr가 이미 아는 상태는 분류하지 마세요. ",
         DATA,
     ]
     .concat()
@@ -102,7 +104,7 @@ static START_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
     })
 });
 
-/// `end` takes only the four ways a stopped turn can stand: approval comes
+/// `end` takes only the five ways a stopped turn can stand: approval comes
 /// from Herdr's own blocked state and a pull request's wait from GitHub,
 /// never from inference. The prompt's length rule and this shape are what
 /// keep the answer short; no provider takes a token ceiling.
@@ -115,7 +117,7 @@ static END_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
             "goal": {"type": "string", "minLength": 8, "maxLength": 30},
             "goal_changed": {"type": "boolean"},
             "line": {"type": "string"},
-            "end": {"type": "string", "enum": ["question", "waiting", "unfinished", "done"]}
+            "end": {"type": "string", "enum": ["question", "blocked", "waiting", "unfinished", "done"]}
         }
     })
 });
@@ -159,9 +161,10 @@ struct StartAnswer {
 struct EndAnswer {
     goal: String,
     goal_changed: bool,
-    /// For a question, the one action the operator is asked to take,
-    /// written before the verdict. A question without one is
-    /// self-contradictory and is read as done.
+    /// For a question, the one action the operator is asked to take, and for
+    /// a block its cause, written before the verdict. Either without one is
+    /// self-contradictory: a question is read as done and a block as an
+    /// unfinished turn.
     line: String,
     end: StoppedEnd,
 }
@@ -172,6 +175,7 @@ struct EndAnswer {
 #[serde(rename_all = "lowercase")]
 enum StoppedEnd {
     Question,
+    Blocked,
     Waiting,
     Unfinished,
     Done,
@@ -181,6 +185,7 @@ impl From<StoppedEnd> for LabelEnd {
     fn from(end: StoppedEnd) -> Self {
         match end {
             StoppedEnd::Question => Self::Question,
+            StoppedEnd::Blocked => Self::Blocked,
             StoppedEnd::Waiting => Self::Waiting,
             StoppedEnd::Unfinished => Self::Unfinished,
             StoppedEnd::Done => Self::Done,
@@ -223,9 +228,12 @@ pub(crate) fn parse(phase: AnalysisPhase, value: Value) -> Result<Analysis> {
         .take(MAX_LINE_CHARS)
         .collect::<String>();
     // A question with no statable action is a surface-pattern match
-    // (greeting, courtesy offer), not a real request.
+    // (greeting, courtesy offer), not a real request. A block with no
+    // statable cause is a stop without a stated reason, the unfinished turn
+    // it would be had the agent given none.
     let end = match end {
         LabelEnd::Question if line.trim().is_empty() => LabelEnd::Done,
+        LabelEnd::Blocked if line.trim().is_empty() => LabelEnd::Unfinished,
         end => end,
     };
     Ok(Analysis {

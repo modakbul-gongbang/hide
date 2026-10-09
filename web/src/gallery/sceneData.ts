@@ -50,7 +50,7 @@ export const REFERENCE_FOLDS: SceneFolds = {
 };
 
 const ROOT = "/work";
-const NO_MARKS: MarkCounts = { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 };
+const NO_MARKS: MarkCounts = { error: 0, approval: 0, question: 0, working: 0, stopped: 0, done: 0, idle: 0 };
 
 const TITLES: Record<SceneContent, Record<string, string>> = {
   reference: {
@@ -239,7 +239,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       status_code: "done",
       activity: "stopped",
       elapsed: "2m",
-      waiting_on_descendants: true,
+      wait: "children",
       lineage_child_pane_ids: ["a2c1", "a2c2"],
       lineage_collapsed: !unfolded("a2"),
       descendant_counts: { error: 0, approval: 0, question: 1, working: 1, done: 0 },

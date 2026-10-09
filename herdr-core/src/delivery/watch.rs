@@ -325,11 +325,13 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
             "status_transition_only"
         };
         let failure = reading.failure.as_deref().unwrap_or("none");
+        // The first line is the letter's summary, which the doorbell types
+        // after the watched agent's name (`bell`).
         let body = format!(
-            "Watch {}: {}. Last activity unix_ms={activity}; inactive {} minutes; Herdr status={}; open requests={open_requests}; activity basis={basis}; read failure={failure}.\nInspect the target before deciding whether it is blocked.",
+            "No activity for {} minutes (watch {}).\nTarget {}. Last activity unix_ms={activity}; Herdr status={}; open requests={open_requests}; activity basis={basis}; read failure={failure}.\nInspect the target before deciding whether it is blocked.",
+            now.saturating_sub(activity) / 60_000,
             watch.id,
             watch.target.name,
-            now.saturating_sub(activity) / 60_000,
             if reading.status_available {
                 reading.status.as_str()
             } else {
@@ -758,6 +760,7 @@ mod tests {
             human_notified: false,
             watch_warning: None,
             answer_wait_ended: None,
+            bell_line: None,
         }
     }
 

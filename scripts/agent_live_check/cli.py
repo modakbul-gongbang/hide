@@ -265,7 +265,8 @@ def main(argv=None):
                                                                scene_overlay, previous_session))
                             if scene == "rest" and provider["scenes"][-1]["arrival"] == "reached":
                                 provider["delivery"] = measure_delivery(runtime, pane, recipe, agent_home,
-                                                                        cwd, contract["bell"], args.scene_seconds, scene_overlay)
+                                                                        cwd, args.scene_seconds,
+                                                                        contract["quiet_seconds"], scene_overlay)
                         except AuthenticationRequired:
                             provider["skipped"] = "not_authenticated"
                             if not evidence.exists():

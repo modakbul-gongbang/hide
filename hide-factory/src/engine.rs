@@ -22,6 +22,7 @@ use crate::model::*;
 use crate::role::{Permission, ROLE_NOT_ALLOWED, Role};
 use crate::store::{Event, Record, Store, StoreError, sha256_hex};
 use crate::summary::{self, FactorySummary};
+use crate::words::{self, Language};
 
 mod observer;
 
@@ -63,8 +64,9 @@ const BACKOFF_MS: [u64; 5] = [
 const PROCESSED_LETTERS: usize = 4_096;
 const CASCADE_WINDOW_MS: u64 = 30 * MINUTE_MS;
 const ENV_RECHECK_MS: u64 = MINUTE_MS;
-/// How often a worker whose agent has not shown a session is asked again,
-/// and when the person is told to look at its pane.
+/// How often a worker whose agent has not shown a session is asked again
+/// once it is no longer young, and how long it stays young (see
+/// [`start_ask_interval`]).
 const START_RETRY_MS: u64 = 30_000;
 /// The most questions, decisions and discoveries one Task keeps; a worker
 /// report past it is refused.
@@ -116,7 +118,13 @@ const START_NOTICE_MS: u64 = 10 * MINUTE_MS;
 struct VerifyState {
     run: VerifyRun,
     stage: AttemptStage,
+    /// Answers of this run the Factory could not read.
+    unread: u32,
 }
+
+/// The unread answers of one run after which a person is told: a read that
+/// fails the same way each time never finishes the run on its own.
+const UNREAD_NOTICE_AFTER: u32 = 3;
 
 /// Failed store writes: a running count, and the ones the host has not
 /// logged yet (at most [`STORE_FAILURE_LIMIT`]).
@@ -579,6 +587,7 @@ impl Engine {
             return Err(Failure::task("judgment", "paused"));
         }
         judgment.ai = factory.config.factory_ai.clone();
+        judgment.language = self.ports.environment.language();
         self.keep(
             &judgment.factory,
             judgment.task.as_deref(),
@@ -2022,6 +2031,7 @@ impl Engine {
                 workers,
             },
             ai: None,
+            language: Language::English,
         };
         self.with_task(factory, id, |task| {
             task.review = ReviewState::Requested { at: now }
@@ -2048,6 +2058,7 @@ impl Engine {
                     diff: None,
                 },
                 ai: None,
+                language: Language::English,
             };
             if self.submit_judgment(judgment).is_ok() {
                 self.judgments.insert(
@@ -2938,7 +2949,8 @@ impl Engine {
                 )
             }
             DiscoveryClass::Unrelated => {
-                self.notice(factory, id, &format!("무관한 발견: {text}"));
+                let notice = words::unrelated_notice(self.ports.environment.language(), text);
+                self.notice(factory, id, &notice);
                 Ok(json!({"message": "sent to the person's inbox", "discovery": discovery_id}))
             }
             DiscoveryClass::Prerequisite => {
@@ -3234,6 +3246,7 @@ impl Engine {
                 decisions,
             },
             ai: None,
+            language: Language::English,
         };
         match self.submit_judgment(drift.clone()) {
             Ok(()) => {
@@ -3263,6 +3276,7 @@ impl Engine {
                     diff: Some(diff.clone()),
                 },
                 ai: None,
+                language: Language::English,
             };
             match self.submit_judgment(judgment.clone()) {
                 Ok(()) => {
@@ -3349,7 +3363,9 @@ impl Engine {
             AttemptStage::PreMerge => self.ports.verifier.start_premerge(&factory, &task),
         };
         let now = self.now();
-        let number = task.failures + 1;
+        // The attempt's place in the Task's list: a run after an environment
+        // failure or a cancelled run is a new attempt with its own number.
+        let number = task.attempts.len() as u32 + 1;
         match started {
             Ok(run) => {
                 self.with_task(factory_id, id, |task| {
@@ -3370,7 +3386,11 @@ impl Engine {
                 );
                 self.verifying.insert(
                     (factory_id.to_owned(), id.to_owned()),
-                    VerifyState { run, stage },
+                    VerifyState {
+                        run,
+                        stage,
+                        unread: 0,
+                    },
                 );
             }
             Err(failure) => self.verification_environment(factory_id, id, &failure, "start"),
@@ -3386,6 +3406,13 @@ impl Engine {
         if let Some(stage) = stage {
             self.with_task(factory, id, |task| {
                 task.attempts.pop();
+                // An older build left a run sent back without closing its
+                // attempt; nothing will answer it now.
+                for attempt in &mut task.attempts {
+                    if attempt.outcome.is_none() {
+                        attempt.outcome = Some(AttemptOutcome::Cancelled);
+                    }
+                }
             });
             self.start_verification(factory, id, stage);
         }
@@ -3398,9 +3425,20 @@ impl Engine {
         }
     }
 
+    /// Ends the run in flight and closes its attempt as cancelled, so a later
+    /// run is never listed beside one still shown as running.
     fn cancel_verification(&mut self, factory: &str, id: &str) {
         if let Some(state) = self.verifying.remove(&(factory.to_owned(), id.to_owned())) {
             self.ports.verifier.cancel(&state.run);
+            self.with_task(factory, id, |task| {
+                if let Some(attempt) = task
+                    .attempts
+                    .last_mut()
+                    .filter(|attempt| attempt.outcome.is_none())
+                {
+                    attempt.outcome = Some(AttemptOutcome::Cancelled);
+                }
+            });
         }
     }
 
@@ -3417,6 +3455,10 @@ impl Engine {
             let poll = self.ports.verifier.poll(&factory, &state.run);
             let outcome = match poll {
                 VerifyPoll::Pending => continue,
+                VerifyPoll::Unread { check, detail } => {
+                    self.verification_unread(&factory_id, &id, &check, &detail);
+                    continue;
+                }
                 VerifyPoll::Passed => AttemptOutcome::Passed,
                 VerifyPoll::Failed { check, link } => AttemptOutcome::Failed { check, link },
                 VerifyPoll::Environment { signal, check } => AttemptOutcome::Environment {
@@ -3454,7 +3496,38 @@ impl Engine {
                     let failure = Failure::environment(&check, signal, "verification");
                     self.verification_environment(&factory_id, &id, &failure, &check);
                 }
+                // A poll answers; only a cancelled run closes as cancelled.
+                AttemptOutcome::Cancelled => {}
             }
+        }
+    }
+
+    /// An answer the Factory could not read decides nothing and is not the
+    /// environment's: the run stays running and is asked again, and the
+    /// third unread answer of a run tells a person what the read answered.
+    fn verification_unread(&mut self, factory: &str, id: &str, check: &str, detail: &str) {
+        let Some(state) = self.verifying.get_mut(&(factory.to_owned(), id.to_owned())) else {
+            return;
+        };
+        state.unread += 1;
+        let unread = state.unread;
+        let detail = judgment::cut(detail, 200);
+        if unread == 1 || unread == UNREAD_NOTICE_AFTER {
+            self.record(
+                factory,
+                Some(id),
+                "verify.unread",
+                json!({"check": check, "unread": unread, "detail": detail}),
+            );
+        }
+        if unread == UNREAD_NOTICE_AFTER {
+            self.once_notice(
+                factory,
+                id,
+                &format!(
+                    "검증 결과를 읽지 못해 검증이 끝나지 않습니다 ({check}): {detail}. 읽히는 대로 이어집니다."
+                ),
+            );
         }
     }
 
@@ -4596,7 +4669,7 @@ impl Engine {
             let bad = || {
                 refuse(
                     "config_invalid",
-                    "Check hide factory config for the keys and values",
+                    format!("{key} does not take {:?}", judgment::cut(value, 80)),
                 )
                 .with(json!({"key": key}))
             };
@@ -4821,7 +4894,16 @@ impl Engine {
                 }
                 "prd_in_issue" => config.prd_in_issue = value == "on",
                 "macos_notifications" => config.macos_notifications = value == "on",
-                _ => return Err(bad()),
+                _ => {
+                    return Err(refuse(
+                        "config_invalid",
+                        format!(
+                            "{key} is not a key --set takes; use one of {}",
+                            CONFIG_KEYS.join(", ")
+                        ),
+                    )
+                    .with(json!({"key": key, "keys": CONFIG_KEYS})));
+                }
             }
         }
         if !set.is_empty() {
@@ -4850,7 +4932,11 @@ impl Engine {
             self.save_factory(&factory_id);
             self.record(&factory_id, None, "config.changed", json!({"keys": set.iter().map(|(k, _)| k).collect::<Vec<_>>(), "by": role.relayed_by()}));
         }
-        Ok(json!({"config": config, "machine": {"max_workers": self.machine_max_workers}}))
+        Ok(json!({
+            "config": config,
+            "settable": settable(&config),
+            "machine": {"max_workers": self.machine_max_workers},
+        }))
     }
 
     /// An agent a worker candidate may name: one whose adapter declares a
@@ -5550,7 +5636,13 @@ impl Engine {
                     runtime,
                     project: factory.project.clone(),
                     branch: worker.branch.clone(),
-                    prompt: worker_prompt(&task, &factory, true, &self.hide_program),
+                    prompt: worker_prompt(
+                        &task,
+                        &factory,
+                        true,
+                        &self.hide_program,
+                        self.ports.environment.language(),
+                    ),
                     args: args.clone(),
                     model: candidate.model.clone(),
                     effort: candidate.effort.clone(),
@@ -5608,7 +5700,13 @@ impl Engine {
                 runtime,
                 project: factory.project.clone(),
                 branch: task.branch_slug(),
-                prompt: worker_prompt(&task, &factory, false, &self.hide_program),
+                prompt: worker_prompt(
+                    &task,
+                    &factory,
+                    false,
+                    &self.hide_program,
+                    self.ports.environment.language(),
+                ),
                 args,
                 model: candidate.model.clone(),
                 effort: candidate.effort.clone(),
@@ -5665,8 +5763,9 @@ impl Engine {
     }
 
     /// The worker's pane runs but its agent has shown no session: ask the
-    /// same spawn again later, and after a while tell the person to look
-    /// at the pane, where a first-run prompt may be waiting.
+    /// same spawn again (see [`start_ask_interval`]), and after a while tell
+    /// the person to look at the pane, where a first-run prompt may be
+    /// waiting.
     fn worker_starting(&mut self, factory: &str, id: &str, failure: &Failure) {
         let now = self.now();
         let key = (factory.to_owned(), id.to_owned());
@@ -5682,7 +5781,9 @@ impl Engine {
                 now
             }
         };
-        let again = failure.again_in_ms.unwrap_or(START_RETRY_MS);
+        let again = failure
+            .again_in_ms
+            .unwrap_or_else(|| start_ask_interval(now.saturating_sub(first)));
         self.starting.insert(key, (first, now + again));
         if now.saturating_sub(first) >= START_NOTICE_MS {
             let name = self
@@ -6329,6 +6430,7 @@ impl Engine {
                 actions: RecoveryAction::ALL.to_vec(),
             },
             ai: None,
+            language: Language::English,
         };
         if self.submit_judgment(judgment.clone()).is_ok() {
             self.judgments
@@ -6438,6 +6540,7 @@ impl Engine {
             .map(|f| f.config.recovery.clone())
             .unwrap_or_default();
         let anchor = self.tasks_of(factory).last().map(|t| t.id.clone());
+        let language = self.ports.environment.language();
         match diagnosis.action {
             Some(action) if enabled.contains(&action) => {
                 self.run_recovery(factory, action);
@@ -6452,11 +6555,7 @@ impl Engine {
                             command: action.as_str().into(),
                             impact: diagnosis.cause.clone(),
                         },
-                        &format!(
-                            "환경 문제: {}. 복구 동작 {}을 실행할까요?",
-                            diagnosis.cause,
-                            action.as_str()
-                        ),
+                        &words::recovery_proposal(language, &diagnosis.cause, action),
                         "approve",
                         None,
                         None,
@@ -6475,10 +6574,7 @@ impl Engine {
                             command: command.clone(),
                             impact: impact.clone(),
                         },
-                        &format!(
-                            "환경 문제: {}. 사람이 실행할 명령: {command} (영향: {impact})",
-                            diagnosis.cause
-                        ),
+                        &words::command_proposal(language, &diagnosis.cause, &command, &impact),
                         "run it yourself",
                         None,
                         None,
@@ -6521,6 +6617,7 @@ impl Engine {
             priority: Priority::Factory,
             input: JudgmentInput::Watch { board },
             ai: None,
+            language: Language::English,
         };
         if let Some(f) = self.factories.get_mut(factory_id) {
             f.watch_last_at = Some(now);
@@ -6569,6 +6666,7 @@ impl Engine {
                         diff: None,
                     },
                     ai: None,
+                    language: Language::English,
                 };
                 match self.submit_judgment(judgment.clone()) {
                     Ok(()) => {
@@ -6667,12 +6765,14 @@ impl Engine {
                 );
                 continue;
             }
+            let notice =
+                words::watch_notice(self.ports.environment.language(), &warning.text, &action);
             self.add_question(
                 factory_id,
                 &anchor,
                 QuestionOrigin::Engine,
                 QuestionKind::Notice,
-                &format!("감시: {} (할 일: {action})", warning.text),
+                &notice,
                 &action,
                 None,
                 None,
@@ -6750,6 +6850,19 @@ fn waits_on_answer(task: &Task) -> bool {
 /// A Task whose worktree waits out the keep period: cancelled, taken over
 /// by an outside pull request, or done through one (its worker's own work was
 /// never merged).
+/// When a worker that has been starting for `age_ms` is asked again and the
+/// host has no opinion. An agent usually shows its session within seconds, so
+/// a young start is asked on the next tick and is accepted that soon after;
+/// an old one more likely waits on a trust or login prompt, which a person
+/// answers, so it is asked every [`START_RETRY_MS`].
+fn start_ask_interval(age_ms: u64) -> u64 {
+    if age_ms < START_RETRY_MS {
+        0
+    } else {
+        START_RETRY_MS
+    }
+}
+
 fn kept_for_revive(task: &Task) -> bool {
     match task.state {
         TaskState::Cancelled | TaskState::Outside => true,
@@ -6997,6 +7110,62 @@ fn worker_name(factory: &Factory, task: &Task) -> String {
     )
 }
 
+/// Every key `hide factory config --set` takes.
+pub const CONFIG_KEYS: &[&str] = &[
+    "merge_mode",
+    "merge_method",
+    "verify",
+    "ci",
+    "no_verification",
+    "quick_check",
+    "max_workers",
+    "question_deadline_hours",
+    "stall_minutes",
+    "no_report_minutes",
+    "watch_interval_minutes",
+    "watch_daily_limit",
+    "outside_read_minutes",
+    "cancel_keep_days",
+    "done_fold_days",
+    "archive_fold_days",
+    "new_task_limit",
+    "verify_failure_limit",
+    "autonomy_diff_limit",
+    "verify_timeout_minutes",
+    "disk_floor_gb",
+    "default_runtime",
+    "workers",
+    "observer_mode",
+    "observer_daily_limit",
+    "factory_ai",
+    "factory_ai_model",
+    "factory_ai_effort",
+    "harness",
+    "autonomy",
+    "recovery",
+    "worker_args",
+    "risk_paths",
+    "prd_in_issue",
+    "macos_notifications",
+];
+
+/// The settings `config` keeps in another unit, under the key and in the
+/// unit `--set` takes them.
+fn settable(config: &Config) -> Value {
+    json!({
+        "question_deadline_hours": config.question_deadline_ms / HOUR_MS,
+        "stall_minutes": config.stall_ms / MINUTE_MS,
+        "no_report_minutes": config.no_report_ms / MINUTE_MS,
+        "watch_interval_minutes": config.watch_interval_ms / MINUTE_MS,
+        "outside_read_minutes": config.outside_read_ms / MINUTE_MS,
+        "cancel_keep_days": config.cancel_keep_ms / DAY_MS,
+        "done_fold_days": config.done_fold_ms / DAY_MS,
+        "archive_fold_days": config.archive_fold_ms / DAY_MS,
+        "verify_timeout_minutes": config.verify_timeout_ms / MINUTE_MS,
+        "disk_floor_gb": config.disk_floor_bytes / (1024 * 1024 * 1024),
+    })
+}
+
 /// The card as a worker reads it: goal, criteria and what is out of scope.
 fn card_text(card: &Card) -> String {
     let mut text = format!("목표:\n{}\n\n완료 조건:\n", card.goal);
@@ -7013,8 +7182,15 @@ fn card_text(card: &Card) -> String {
 }
 
 /// The worker's first prompt (B22): the card, the attachments, the harness
-/// preset and the Factory's reporting rules.
-pub fn worker_prompt(task: &Task, factory: &Factory, resumed: bool, hide: &str) -> String {
+/// preset and the Factory's reporting rules, with the operator's language
+/// every report is written in.
+pub fn worker_prompt(
+    task: &Task,
+    factory: &Factory,
+    resumed: bool,
+    hide: &str,
+    language: Language,
+) -> String {
     let mut prompt = String::new();
     if resumed {
         prompt.push_str("Factory: 같은 worktree에서 이 Task를 이어서 맡습니다. 지금까지 한 일을 확인하고 이어가세요.\n\n");
@@ -7035,6 +7211,7 @@ pub fn worker_prompt(task: &Task, factory: &Factory, resumed: bool, hide: &str) 
         ));
     }
     prompt.push_str(REPORTING_RULES);
+    prompt.push_str(&words::report_language_rule(language));
     if hide != "hide" {
         prompt.push_str(&format!(
             "- 위와 이후 편지의 `hide`는 모두 이 프로그램입니다: '{}'\n",

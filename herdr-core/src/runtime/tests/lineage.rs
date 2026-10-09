@@ -1310,7 +1310,7 @@ fn a_blocked_child_raises_its_own_turn_while_its_parent_keeps_its_own_group() {
     let root = agent_row(&runtime, "w1:p1");
     assert_eq!(root.group, "working");
     assert!(
-        !root.waiting_on_descendants,
+        root.wait.is_none(),
         "a root that is working itself is not waiting"
     );
     assert!(root.unread);
@@ -1348,14 +1348,14 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(root.waiting_on_descendants);
+    assert!(root.wait == Some(crate::model::AgentWait::Children));
     assert_eq!(root.group, "working", "a waiting root is not Done");
     assert_eq!(root.symbol, "\u{25cb}");
     assert_eq!(root.status_code, crate::model::AgentStatusCode::Waiting);
     assert!(!root.emphasized);
     assert_eq!(root.descendant_counts.working, 1);
     let wire = serde_json::to_value(root).unwrap();
-    assert_eq!(wire["waiting_on_descendants"], true);
+    assert_eq!(wire["wait"], "children");
     assert_eq!(
         wire["group"], "working",
         "no new group value reaches the wire"
@@ -1377,7 +1377,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(root.waiting_on_descendants);
+    assert!(root.wait == Some(crate::model::AgentWait::Children));
     assert_eq!(root.group, "working");
     assert_eq!(root.descendant_counts.question, 1);
     assert!(root.unread, "a child's question is news to the root");
@@ -1400,7 +1400,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(!root.waiting_on_descendants);
+    assert!(root.wait.is_none());
     assert_eq!(
         (root.group.as_str(), root.symbol.as_str()),
         ("needs_you", "?")
@@ -1413,7 +1413,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(!root.waiting_on_descendants);
+    assert!(root.wait.is_none());
     assert_eq!(
         (root.group.as_str(), root.symbol.as_str()),
         ("working", "\u{25cf}")
@@ -1428,7 +1428,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(!root.waiting_on_descendants);
+    assert!(root.wait.is_none());
     assert_eq!((root.group.as_str(), root.symbol.as_str()), ("done", "✓"));
 
     // A grandchild keeps the root waiting through a quiet middle row, and
@@ -1442,10 +1442,10 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(root.waiting_on_descendants);
+    assert!(root.wait == Some(crate::model::AgentWait::Children));
     assert_eq!(root.group, "working");
     assert!(
-        !agent_row(&runtime, "w1:p2").waiting_on_descendants,
+        agent_row(&runtime, "w1:p2").wait.is_none(),
         "only a lineage root waits; a delegated row keeps its own mark"
     );
     ingest_lineage(
@@ -1456,7 +1456,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(!root.waiting_on_descendants);
+    assert!(root.wait.is_none());
     assert_ne!(
         root.group, "working",
         "a closed child no longer holds the root"
@@ -1470,7 +1470,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
             ("w1:p2", Some("w1:p1"), "unrecognized", ""),
         ],
     );
-    assert!(!agent_row(&runtime, "w1:p1").waiting_on_descendants);
+    assert!(agent_row(&runtime, "w1:p1").wait.is_none());
     let _ = std::fs::remove_file(&runtime.state_path);
 }
 
@@ -2433,4 +2433,60 @@ fn codex_starts_follow_the_capability_the_machines_kit_read() {
     .unwrap();
     runtime.dispatch_json(&retired);
     assert_eq!(runtime.take_local_kit_job(std::time::Instant::now()), None);
+}
+
+/// B18, B19, D-25: a quiet row waits for its children first, then for a
+/// background task its session proves, then for a reply it asked for, and a
+/// delegated child that waits on its own counts as working for its parent.
+#[test]
+fn a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply() {
+    let mut rows = project_agents(
+        crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
+            {"pane_id":"parent","agent_status":"done","state_change_seq":1},
+            {"pane_id":"child","spawned_from_pane_id":"parent","agent_status":"done","state_change_seq":2},
+        ]}))
+        .unwrap(),
+    )
+    .agents;
+    let wait_of = |rows: &[SidebarAgentSnapshot], id: &str| {
+        rows.iter().find(|row| row.pane_id == id).unwrap().wait
+    };
+
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    assert_eq!(wait_of(&rows, "child"), None);
+    assert_eq!(wait_of(&rows, "parent"), None);
+
+    rows[1].row_facts = None;
+    rows[1].reply_wait = true;
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    let child = rows.iter().find(|row| row.pane_id == "child").unwrap();
+    assert_eq!(child.wait, Some(crate::model::AgentWait::Reply));
+    assert!(
+        child.row_facts.is_none(),
+        "a waiting letter does not stand in for a proven session read"
+    );
+    assert_eq!(child.group, "working", "a delegated row that waits works");
+    assert_eq!(
+        wait_of(&rows, "parent"),
+        Some(crate::model::AgentWait::Children),
+        "the parent waits on a child that waits"
+    );
+
+    rows[1].reply_wait = true;
+    rows[1].row_facts = Some(crate::request_view::RowFacts {
+        wake_devices: 2,
+        ..Default::default()
+    });
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    assert_eq!(
+        wait_of(&rows, "child"),
+        Some(crate::model::AgentWait::Background),
+        "a proven device outranks a reply"
+    );
+
+    rows[1].row_facts = None;
+    rows[1].reply_wait = false;
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    assert_eq!(wait_of(&rows, "child"), None);
+    assert_eq!(wait_of(&rows, "parent"), None);
 }

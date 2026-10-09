@@ -126,5 +126,5 @@ export type AgentGraphScope = {
   recency: string;
   checkouts: Record<string, { primary: boolean; cleanup: "merged" | "missing" | null; fold: "empty" | "cleanup" | "resting" | null; members: string[]; rank: 0 | 1 | 2 | 3 | 4; resting: boolean }>;
   variants: number[];
-  tucked: Record<string, Partial<Record<"error" | "approval" | "question" | "working" | "done" | "idle", number>>>[];
+  tucked: Record<string, Partial<Record<"error" | "approval" | "question" | "working" | "stopped" | "done" | "idle", number>>>[];
 };

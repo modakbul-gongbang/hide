@@ -67,6 +67,11 @@ class HerdrReplies(Runtime):
         self.marker = body.rsplit(" ", 1)[-1]
         return "private-letter"
 
+    def bell_line(self, pane, letter_id, *, seconds=15, deadline=None):
+        # hided rings on the second look, with the line it kept.
+        self.budgets.append(seconds)
+        return "bell" if self.counts.get("agent", 0) >= 2 else None
+
 
 class ObservationDeadlines(unittest.TestCase):
     def test_preemption_before_real_transport_admission_cannot_start_expired_input(self):
@@ -231,7 +236,7 @@ class ObservationDeadlines(unittest.TestCase):
                         file.write_text("\n".join(json.dumps(row) for row in rows))
                 runtime.after_reply = reply
                 with patch("time.monotonic", lambda: runtime.clock[0]):
-                    result = measure(runtime, "owned", self.recipe(), root, root, "bell", 1,
+                    result = measure(runtime, "owned", self.recipe(), root, root, 1, 0,
                                      {"session_root": root})
                 self.assertEqual(result["outcome"], "unknown" if late else "verified")
                 self.assertEqual(runtime.inputs, [])

@@ -54,7 +54,7 @@ Both are private to the user: the file is mode 0600 and the folder 0700 on Unix.
 A store written by a newer build is refused rather than read: the engine does not start, the host logs `store.open_failed`, and commands answer `factory_unavailable`.
 Fields added later load from older rows through serde defaults.
 The engine loads the whole store at start and saves each change before the command that made it answers, so a restart resumes Factories, Tasks, questions, workers and in-flight work.
-A restart starts verification again from the recorded attempt and asks a pending review again.
+A restart starts verification again from the recorded attempt, closes as cancelled any earlier attempt still unfinished, and asks a pending review again.
 A store write that fails does not stop the engine: it is counted, `hide factory status` says how many failed since start, and the host writes each one to the diagnostic log (`store.write_failed`, with the Factory, Task and stage).
 A main recovery the restart cut short is not guessed again, since which merge it was finding or reverting lived only in the old process: it goes to a person with the same choices as a recovery that could not decide.
 The engine opens the store when a store file already exists at start, or on the first command, so a machine that never created a Factory opens nothing.
@@ -207,12 +207,15 @@ The record is registered when needed and converges on the existing one.
   A worker uses only what its agent's adapter declares (D-28): today only Claude Code and Codex take a model and an effort; Factory sleep supports Claude Code and Codex, whose sleep preserves the worker's pane; a Grok, OpenCode, Pi, omp or Cursor worker keeps working through a pause.
   Claude Code, Codex, OpenCode, Pi and omp hear a letter at their next prompt, OpenCode, Pi and omp through Hide's plugin or extension, while a Grok or Cursor worker hears one only by reading its inbox; a worker of any agent but Claude Code and Codex is diagnosed from its screen when it goes quiet.
   An old Factory's `default_runtime` reads as one default candidate on the CLI's defaults until a person changes the list, and `add --runtime <agent>` pins that agent's first candidate.
-- **First prompt.** One argument behind the flag the agent's start declares (`--`, or `--prompt` for OpenCode), at most 6 KiB, cut at a character boundary with a pointer to `hide factory show <task>` for the rest. It holds the Task, goal, criteria, out-of-scope items, the read-only absolute path of each attachment, the harness instruction when one is set, and the reporting rules: commit on the branch, never push or merge to the default branch, finish with `hide factory done`, never ask the person on screen but send every question through `ask` (with a default) or `block`, each with up to five choices of at most 120 characters, report discoveries, and a turn that ends without a report stops the Task. The prompt text is written in Korean. When a `hide` program sits beside the daemon, the prompt names its absolute path and says every `hide` in the rules means that program, so a worker never reaches an older copy on its `PATH`.
+- **First prompt.** One argument behind the flag the agent's start declares (`--`, or `--prompt` for OpenCode), at most 6 KiB, cut at a character boundary with a pointer to `hide factory show <task>` for the rest. It holds the Task, goal, criteria, out-of-scope items, the read-only absolute path of each attachment, the harness instruction when one is set, and the reporting rules: commit on the branch, never push or merge to the default branch, finish with `hide factory done`, never ask the person on screen but send every question through `ask` (with a default) or `block`, each with up to five choices of at most 120 characters, report discoveries, and a turn that ends without a report stops the Task. The prompt text is written in Korean, and a rule after the reporting rules names the operator's language (see [The operator's language](#the-operators-language)) as the one every report a person reads is written in. When a `hide` program sits beside the daemon, the prompt names its absolute path and says every `hide` in the rules means that program, so a worker never reaches an older copy on its `PATH`.
 - **Lineage and watch.** The spawn writes lineage and starts a watch whose observer is the Factory.
 
 A worker whose pane exists but whose agent has not shown a session yet is still starting.
-It holds its slot, the Task stays `waiting`, and the same spawn is asked again every 30 seconds.
+It holds its slot, the Task stays `waiting`, and the same spawn is asked again.
+Each ask itself waits up to 5 seconds for the session, so a young start, in its first 30 seconds, is asked again on the next tick and the worker is accepted that soon after its agent shows; a start older than that is more likely waiting on a trust or login prompt and is asked every 30 seconds.
 After 10 minutes a notice asks the person to look at the pane, where a trust or login prompt may be waiting.
+The starter thread logs why a start has no accepted worker yet as `worker.start_unfinished` (the stage and the reason, such as `native_identity_unavailable`, once per reason), `worker.start_refused` for a start the runtime refused, and `worker.start_accepted` with `waited_ms` once an unfinished start succeeds; a start that works the first time logs nothing.
+A woken worker whose letters are still held logs `worker.wake_waiting` with its reason (`agent_absent`, `agent_asleep` or the delivery's reason), once per reason, and `worker.wake_delivered` when they go out.
 A Codex worker waits for this Mac's install kit to have read the machine since launch: the first start asks the kit to read and reports the worker as still starting.
 
 A start the runtime refuses, other than for an environment signal, stops the Task with the reason "worker start failed" and the runtime's reason (cut at 300 characters) beside it.
@@ -278,6 +281,14 @@ Every judgment is a tool-less, one-shot call whose input the code bundles and cu
 | `factory_watch` | See [The watch](#the-watch) | The Factory's board summary | Warnings, each with an optional action |
 | `factory_env_diagnosis` | See [Environment](#environment) | The collected facts and the closed action list | One action from the list, or an exact command with its impact |
 | `factory_observer` | See [Factory AI](#factory-ai-the-observer) | The request or the worker's text, the card, its recorded decisions (50) and its PRD | Sort a request into a kind with an answer or a fix, read a quiet worker, or approve a risk-path merge |
+
+### The operator's language
+
+Every text the Factory writes for a person is in the operator's language: the language Hide's interface is set to, which the host reads when a judgment is queued or a worker starts, so a change in Settings applies to the next one.
+It is the core's explicit choice (`ui_state.interface_language`, English for a stored value that is invalid), else this machine's primary language resolved as a shell resolves it ([LOCALIZATION.md](LOCALIZATION.md)), else English, with `language.system_fallback` in the diagnostic log.
+Each judgment carries it (`Judgment.language`) and its instructions end by asking for every text a person reads (questions, suggestions, default actions, choices, flags, summaries, warnings, causes, impacts, answers, reasons, card text) in that language whatever the input's language; no instruction names another.
+The worker's first prompt asks for every report (a `done` summary, an `ask` or `block`, a `propose` or `decide` text) in it.
+The few sentences the engine wraps around a judgment's or a worker's words, a watch notice, an environment proposal and an unrelated discovery's notice, are composed in it too (`hide-factory/src/words.rs`); the engine's other fixed sentences are still Korean.
 
 Questions that a drift or check judgment adds always carry a default action, taking the suggestion when the answer has none, so a check can only slow a Task down.
 A drift question keeps the Task in `verifying`, does not wake the worker, and holds auto merge until it is answered or its deadline passes; an answer that differs from the default wakes the worker to apply it.
@@ -385,11 +396,15 @@ A failure wakes the worker with the check name, the log path or CI link, and the
 Environment failures and merge conflicts do not count.
 `retry` resets the count.
 
-**CI.** The check runs of the worktree's head commit are read on each tick with `gh api`.
+**CI.** The check runs of the worktree's head commit are read with `gh api --paginate`, keeping only each run's name, status, conclusion and link, one line per run.
+A whole run is about 3.5 KB and a node keeps 64 KiB of a command's output, so the full answer of a commit with twenty runs would be cut; a line is about 180 bytes.
+A commit whose read decided nothing is read again after 30 seconds.
 Every named check must have a completed run, and only named checks decide; a commit with no run of a named check yet is pending, never passed.
 `--ci` with no names takes the default branch's required checks from its protection, and `init` and `config ci=` refuse a Factory that would name no check (`ci_checks_required`).
 A completed run passes on `success` or `neutral`, decides nothing on `skipped`, `cancelled` or `stale` (still pending), and fails on any other conclusion with the run's link.
-A GitHub error that carries an environment signal is the environment's; any other read error stays pending.
+A GitHub error that carries an environment signal is the environment's.
+Any other read error, a line that is not a check run among them, is an unread answer: it decides nothing and counts as no failure, the run stays running and is read again, and the third unread answer of a run leaves a notice on the Task naming what the read answered, so a read that fails the same way each time is never shown as verifying in silence.
+A verify bundle's poll the node answered in a shape the Factory cannot read is unread the same way.
 
 **Verify bundle.** Bundles run one at a time on the machine, in a queue of at most 256, each command through the shell with its output in the run's log.
 The cap, `verify_timeout_minutes` (60 by default), applies to the whole bundle from its first command, and the command running when it passes fails the run.
@@ -535,6 +550,7 @@ The closed recovery list is the only set of actions the Factory runs without a p
 | `retry_reads_and_reconnect` | Clears the Factory's read back-off and the machine's start hold. |
 
 A diagnosis naming an action that is off becomes a proposal that the Factory runs once a person answers `approve`; any other command becomes a proposal with the exact command and impact, which a person runs themselves or dismisses.
+A proposal reads as the cause and then the action asked in words a person recognises, what it does and what it frees ("끝난 Task와 보관 기간이 지난 취소 Task의 worktree를 지워 디스크 공간을 확보할까요?"), never the action's id, with one sentence end between them; the action's id stays in the question's `kind`.
 Logging in, deleting outside the Factory and installing tools are only ever proposals.
 A Task that alone repeats an environment failure three times is the Task's: it stops as "same environment failure repeated".
 
@@ -544,14 +560,16 @@ The watch reads a Factory's board for what a person cannot already see in the in
 It runs when a Task finishes, when main breaks, when a Task reaches its new-Task limit, and every `watch_interval_minutes` (30 by default, at least 5) for a Factory that has Tasks.
 It asks `factory_watch` with the Factory's board summary.
 A warning without a proposed action goes to the diagnostic log only.
-A warning with an action becomes a notice on the Task it names, or on the Factory's last Task, and counts against `watch_daily_limit` (5) per Factory per UTC day; a warning past the limit is logged as capped.
+A warning with an action becomes a notice on the Task it names, or on the Factory's last Task, reading the warning and its action in the operator's language, and counts against `watch_daily_limit` (5) per Factory per UTC day; a warning past the limit is logged as capped.
 A warning about a Task that already waits on a person is logged and not raised.
 A watch that is slow or fails changes no Task.
 
 ## Configuration
 
 `hide factory config [--project <path>]` prints the Factory's settings and the machine's worker limit, and `--set <key>=<value>` changes them for the next decision.
-Only an operator may set values, and an invalid key or value answers `config_invalid`.
+`config` is the stored record, which keeps durations in milliseconds and the disk floor in bytes; `settable` prints each of those under the key and in the unit `--set` takes (`disk_floor_gb`, `stall_minutes` and the like).
+Only an operator may set values.
+A value a key does not take answers `config_invalid` naming the key, and a key `--set` does not take answers `config_invalid` with the key and every key it takes (`detail.keys`).
 A Factory's `merge_mode` cannot be `auto` while it has no verification (`auto_needs_verification`).
 
 | Key | Value | Default |
@@ -815,10 +833,10 @@ Old Tasks use the fallback when read and are never rewritten just to add the fie
 
 | Field | Meaning |
 | --- | --- |
-| `number` | The attempt, one more than the Task's failures when it started. |
+| `number` | Its place in the Task's attempts, from 1, so a run after an environment failure or a cancelled run is the next number; `n/3` counts failures, not attempts. |
 | `stage` | `task` (after `done`) or `pre_merge`. |
 | `started_at` | When it started. |
-| `outcome` | `passed`, `failed`, `environment` or `running`. |
+| `outcome` | `passed`, `failed`, `environment`, `cancelled` (the run was ended before it answered: the Task went back to its worker, was cancelled or was taken outside, or a restart found it unfinished behind a later attempt) or `running`; only the last attempt can be running. |
 | `check` | The failing check or command. |
 | `link` | The CI link or the log path. |
 | `log_tail` | The last 4 KiB of a local log. |

@@ -150,10 +150,11 @@ pub(super) fn project(
             }
             let agent = by_pane[member.pane_id.as_str()];
             let state = match agent.symbol.as_str() {
-                "×" => "error",
+                "\u{25b2}" => "error",
                 "!" => "approval",
                 "?" => "question",
                 "●" => "working",
+                "\u{25d0}" => "stopped",
                 "✓" => "done",
                 "○" => "idle",
                 _ => continue,

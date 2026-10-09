@@ -327,8 +327,8 @@ impl LabelWorker {
                 self.dirty = true;
             }
             // A running agent is not waiting on anyone: how the last turn
-            // ended (and a question's reply) is over, and the turn's end
-            // writes anew. A
+            // ended (and a question's reply or a block's cause) is over, and
+            // the turn's end writes anew. A
             // stopped agent whose state moved and is stopped again (or at a
             // permission prompt) ran in between, even when its working state
             // came and went inside one burst of Herdr events and was never
@@ -338,7 +338,7 @@ impl LabelWorker {
                     && was_stopped
                     && matches!(status.as_str(), "idle" | "done" | "blocked"));
             if ran && let Some(end) = record.end.filter(|end| *end != LabelEnd::Working) {
-                if end == LabelEnd::Question {
+                if matches!(end, LabelEnd::Question | LabelEnd::Blocked) {
                     record.line.clear();
                 }
                 record.end = None;
@@ -886,10 +886,28 @@ impl LabelWorker {
         record.incarnation = Some(transcript.confirmed.incarnation.clone());
         // The wait is bound to the state the read was asked under, and known
         // only once the backlog is read (D-06).
-        let waited = (record.turn_read(), record.user_turn());
+        let waited = (record.turn_read(), record.user_turn(), record.wake_read());
+        let overflowed = record
+            .turns
+            .as_ref()
+            .is_some_and(hide_session::turns::TurnTracker::wake_overflowed);
         record.turns = transcript.turns.clone();
         record.turns_seq = asked_seq.filter(|_| !transcript.has_more);
-        changed |= (record.turn_read(), record.user_turn()) != waited;
+        changed |= (record.turn_read(), record.user_turn(), record.wake_read()) != waited;
+        if !overflowed
+            && record
+                .turns
+                .as_ref()
+                .is_some_and(hide_session::turns::TurnTracker::wake_overflowed)
+        {
+            crate::diagnostic!(json!({
+                "component": "labels",
+                "kind": "wake_devices.capacity",
+                "pane_id": pane_id,
+                "limit": hide_session::turns::WAKE_DEVICE_LIMIT,
+                "message": "More background tasks ran at once than are tracked; the row does not wait on them",
+            }));
+        }
         self.dirty = true;
         let pane = self.panes.get_mut(pane_id).expect("checked above");
         if verdicts_forgotten {

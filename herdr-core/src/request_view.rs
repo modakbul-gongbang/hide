@@ -52,6 +52,14 @@ pub struct RowFacts {
     /// A native unanswered question or plan, proven for this current session
     /// and Herdr state. Absence conveys no invented question text.
     pub(crate) user_turn: Option<hide_session::turns::UserTurnFact>,
+    /// How many background tasks the session read proves are still running
+    /// and will wake the agent when they end, as read for the agent's current
+    /// Herdr state. Zero is "none proven", which for an agent whose session
+    /// cannot report them is every case.
+    pub(crate) wake_devices: u32,
+    /// The devices the agent waited for died with their process and nothing
+    /// has begun since (B16).
+    pub(crate) wake_vanished: bool,
 }
 
 /// Who sent the request a row shows.

@@ -175,7 +175,7 @@ describe("the Requests tile (B2)", () => {
     const tile = requestsTile(rows, { state: "ready" }, t);
     expect(tile.value).toBe(3);
     expect(tile.badge).toEqual({ count: 1, label: "답할 것", parts: [] });
-    expect(tile.bar?.map((segment) => `${segment.key}:${segment.count}`)).toEqual(["answer:1", "fix:0", "review:1", "stopped:0", "result:1"]);
+    expect(tile.bar?.map((segment) => `${segment.key}:${segment.count}`)).toEqual(["answer:1", "blocked:0", "fix:0", "review:1", "stopped:0", "result:1"]);
     const quiet = requestsTile(requestRows([lens(agent("d", "idle"))], []), { state: "ready" }, t);
     expect(quiet.value).toBe(0);
     expect(quiet.badge).toBeNull();
@@ -292,7 +292,7 @@ describe("the words of a row follow the interface language", () => {
     const tile = requestsTile(rows, { state: "ready" }, english);
     expect(tile.label).toBe("Requests");
     expect(tile.badge?.label).toBe("To answer");
-    expect(tile.bar?.map((segment) => segment.label)).toEqual(["To answer", "To fix", "Review · Merge", "Stopped", "View results"]);
+    expect(tile.bar?.map((segment) => segment.label)).toEqual(["To answer", "Blocked", "To fix", "Review · Merge", "Stopped", "View results"]);
     expect(requestsTile([], { state: "unavailable", text: "ssh refused", retry: "connect" }, english).failure).toBe("Couldn't read agents · ssh refused");
   });
 });

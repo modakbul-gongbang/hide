@@ -936,10 +936,11 @@ pub struct WorkerLine {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttemptView {
+    /// Its place in the Task's attempts, from 1.
     pub number: u32,
     pub stage: String,
     pub started_at: UnixMs,
-    /// `passed`, `failed`, `environment` or `running`.
+    /// `passed`, `failed`, `environment`, `cancelled` or `running`.
     pub outcome: String,
     pub check: Option<String>,
     /// The CI run link or the log path.
@@ -969,12 +970,19 @@ pub fn detail(
         .filter(|other| other.card.depends_on.contains(&task.id))
         .map(Task::display_id)
         .collect();
+    let last = task.attempts.len().saturating_sub(1);
     let attempts = task
         .attempts
         .iter()
-        .map(|attempt| {
+        .enumerate()
+        .map(|(at, attempt)| {
             let (outcome, check, link) = match &attempt.outcome {
+                // Only the last attempt can be in flight; an earlier one
+                // without an answer was ended by a store from before
+                // cancelled runs were closed.
+                None if at < last => ("cancelled", None, attempt.log.clone()),
                 None => ("running", None, attempt.log.clone()),
+                Some(AttemptOutcome::Cancelled) => ("cancelled", None, attempt.log.clone()),
                 Some(AttemptOutcome::Passed) => ("passed", None, attempt.log.clone()),
                 Some(AttemptOutcome::Failed { check, link }) => (
                     "failed",
@@ -988,7 +996,9 @@ pub fn detail(
                 }
             };
             AttemptView {
-                number: attempt.number,
+                // The place in the list, which a store from before attempts
+                // were numbered that way also reads correctly by.
+                number: at as u32 + 1,
                 stage: match attempt.stage {
                     AttemptStage::Task => "task".into(),
                     AttemptStage::PreMerge => "pre_merge".into(),

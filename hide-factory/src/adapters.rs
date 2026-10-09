@@ -228,8 +228,20 @@ pub struct VerifyRun {
 pub enum VerifyPoll {
     Pending,
     Passed,
-    Failed { check: String, link: String },
-    Environment { signal: EnvSignal, check: String },
+    Failed {
+        check: String,
+        link: String,
+    },
+    Environment {
+        signal: EnvSignal,
+        check: String,
+    },
+    /// The answer could not be read, and no environment signal says why: it
+    /// decides nothing, and the run is asked again.
+    Unread {
+        check: String,
+        detail: String,
+    },
 }
 
 /// CI required checks or the verify bundle (D-53).
@@ -448,6 +460,9 @@ pub enum MemoryPressure {
 pub trait Environment {
     fn disk_free(&mut self, project: &str) -> Option<u64>;
     fn memory_pressure(&mut self) -> MemoryPressure;
+    /// The operator's language, read when a judgment is queued or a worker
+    /// starts, so a change in Settings applies to the next one.
+    fn language(&mut self) -> crate::words::Language;
 }
 
 /// Where a person is told (D-30): an inbox item exists in the store; this

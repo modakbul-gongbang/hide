@@ -3034,6 +3034,113 @@ fn a_restart_during_verification_runs_it_again() {
     );
 }
 
+#[test]
+fn an_unread_verification_answer_is_asked_again_and_told_to_a_person() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Unreadable", &[]);
+    let unread = VerifyPoll::Unread {
+        check: "github.checks".into(),
+        detail: "gh answered a line that is not a check run (65536 bytes)".into(),
+    };
+    h.world()
+        .verify
+        .insert(t.clone(), [unread.clone(), unread.clone(), unread].into());
+    h.done(&f, &t);
+    for _ in 0..3 {
+        h.engine.tick();
+    }
+    let task = h.task(&f, &t);
+    assert_eq!(
+        task.state,
+        TaskState::Verifying,
+        "an unread answer decides nothing"
+    );
+    assert_eq!((task.failures, task.environment_failures), (0, 0));
+    let notices: Vec<_> = task
+        .open_questions()
+        .filter(|q| q.text.contains("65536 bytes"))
+        .collect();
+    assert_eq!(
+        notices.len(),
+        1,
+        "the third unread answer tells a person once"
+    );
+    // The read answers again: the same run passes and the Task merges.
+    tick_until(&mut h, &f, &t, TaskState::Done);
+    assert_eq!(
+        h.world().verify_runs.len(),
+        2,
+        "the task run and the pre-merge run"
+    );
+}
+
+#[test]
+fn a_task_stuck_verifying_with_two_unfinished_attempts_concludes_after_a_restart() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Stuck", &[]);
+    h.world()
+        .verify
+        .insert(t.clone(), [VerifyPoll::Pending].into());
+    h.done(&f, &t);
+    h.engine.tick();
+    // The stored record of a Task an older build left verifying: a run sent
+    // back and reported again left its first attempt unfinished beside the
+    // second.
+    let mut task = h.task(&f, &t);
+    let first = task.attempts[0].clone();
+    task.attempts.push(Attempt {
+        started_at: first.started_at + 1,
+        ..first
+    });
+    let mut store = hide_factory::store::Store::open(
+        &h.dir.path().join("factory.sqlite3"),
+        &h.dir.path().join("factory-files"),
+    )
+    .unwrap();
+    store.put_task(&task).unwrap();
+    drop(store);
+    let mut h = h.restart();
+    tick_until(&mut h, &f, &t, TaskState::Done);
+    let attempts = h.task(&f, &t).attempts;
+    assert_eq!(
+        attempts.last().and_then(|a| a.outcome.clone()),
+        Some(AttemptOutcome::Passed),
+        "{attempts:?}"
+    );
+    assert_eq!(
+        attempts[0].outcome,
+        Some(AttemptOutcome::Cancelled),
+        "the attempt nothing answers is no longer shown running"
+    );
+}
+
+#[test]
+fn config_prints_each_setting_under_the_key_set_takes_and_names_a_refused_key() {
+    let mut h = Bench::new(false);
+    h.factory(true);
+    let refused = h.op(Command::Config {
+        project: Some(PROJECT.into()),
+        set: vec![("disk_floor_bytes".into(), "1".into())],
+    });
+    assert_eq!(refused["reason"], "config_invalid", "{refused}");
+    assert_eq!(refused["detail"]["key"], "disk_floor_bytes");
+    assert!(
+        refused["detail"]["keys"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("disk_floor_gb")),
+        "{refused}"
+    );
+    let set = h.op(Command::Config {
+        project: Some(PROJECT.into()),
+        set: vec![("disk_floor_gb".into(), "10".into())],
+    });
+    assert_eq!(set["ok"], true, "{set}");
+    assert_eq!(set["settable"]["disk_floor_gb"], 10, "{set}");
+}
+
 // --------------------------------------------------------------- summary
 
 #[test]
@@ -3264,6 +3371,58 @@ fn a_worker_whose_agent_has_not_started_holds_its_slot_and_is_asked_again_later(
     assert_eq!(h.state(&f, &a), TaskState::Running);
     assert_eq!(h.state(&f, &b), TaskState::Waiting);
     assert_eq!(h.world().spawned.len(), 1);
+}
+
+#[test]
+fn a_young_start_is_accepted_on_the_tick_after_its_agent_shows_not_thirty_seconds_later() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().spawn_failure = Some(Failure::starting(
+        "worker.spawn",
+        "native_identity_unavailable",
+    ));
+    let a = h.ready("A", &[]);
+    for _ in 0..3 {
+        h.advance(2_000);
+        h.engine.tick();
+    }
+    assert_eq!(h.state(&f, &a), TaskState::Waiting);
+    // The agent shows its session ten seconds in, past the wait one ask makes
+    // for it: the next tick, not the next half minute, takes the worker.
+    h.world().spawn_failure = None;
+    h.advance(2_000);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &a), TaskState::Running);
+    assert_eq!(h.world().spawned.len(), 1);
+}
+
+#[test]
+fn an_old_start_is_asked_again_every_thirty_seconds_not_every_tick() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().spawn_failure = Some(Failure::starting(
+        "worker.spawn",
+        "native_identity_unavailable",
+    ));
+    let a = h.ready("A", &[]);
+    let asks = |h: &Bench| h.world().spawn_asks.len();
+    // A minute of ticks takes the young start's asks and then the old one's.
+    for _ in 0..30 {
+        h.advance(2_000);
+        h.engine.tick();
+    }
+    let young = asks(&h);
+    assert!(young >= 10, "a young start is asked on the tick: {young}");
+    for _ in 0..60 {
+        h.advance(2_000);
+        h.engine.tick();
+    }
+    let old = asks(&h) - young;
+    assert!(
+        (3..=5).contains(&old),
+        "two minutes of an old start are four asks: {old}"
+    );
+    assert_eq!(h.state(&f, &a), TaskState::Waiting);
 }
 
 #[test]
@@ -3814,4 +3973,228 @@ fn a_pinned_usage_hold_exposes_its_deadline_until_the_engine_resumes() {
     h.engine.tick();
     assert_eq!(card_json(&h, &id)["column"], "moving");
     assert_eq!(card_json(&h, &id)["resume_at"], serde_json::Value::Null);
+}
+
+// ------------------------------------------------- the operator's language
+
+#[test]
+fn every_judgment_and_worker_prompt_is_in_the_operators_language_read_when_asked() {
+    let mut h = Bench::new(false);
+    h.world().language = Some(Language::English);
+    let f = h.factory(true);
+    h.world().hold_judgments = true;
+    h.add("Card", &[]);
+    let review = h
+        .world()
+        .submitted
+        .last()
+        .cloned()
+        .expect("an intake review");
+    assert_eq!(review.language, Language::English);
+    let system = review.system();
+    assert!(system.contains("in English"), "{system}");
+    assert!(
+        !system.contains("Korean"),
+        "no language but the operator's: {system}"
+    );
+    h.world().hold_judgments = false;
+
+    // A change in Settings applies to the next judgment and the next start.
+    h.world().language = Some(Language::Japanese);
+    let t = h.ready("Started", &[]);
+    let prompt = h
+        .world()
+        .spawned
+        .iter()
+        .find(|spawn| spawn.task == t)
+        .map(|spawn| spawn.prompt.clone())
+        .expect("a start");
+    assert!(prompt.contains("日本語 (ja)"), "{prompt}");
+    let judged = h.world().judged.last().cloned().expect("a review answered");
+    assert_eq!(judged.language, Language::Japanese);
+    assert!(judged.system().contains("in Japanese"));
+    let _ = f;
+}
+
+#[test]
+fn an_environment_question_names_what_the_action_does_in_the_operators_words() {
+    let mut h = Bench::new(false);
+    h.world().language = Some(Language::English);
+    let f = h.factory(true);
+    h.world().disk_free = Some(1 << 30);
+    let held = h.ready("Held", &[]);
+    h.world().env_diagnosis = Some(json!({
+        "cause": "Free disk is about 4.7 GB, under the floor.",
+        "action": "remove_finished_worktrees"
+    }));
+    h.advance(31 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    let question = h
+        .task(&f, &held)
+        .open_questions()
+        .find(|q| matches!(q.kind, QuestionKind::Proposal { .. }))
+        .cloned()
+        .expect("a proposal for a person");
+    assert_eq!(
+        question.text,
+        "Environment problem: Free disk is about 4.7 GB, under the floor. Remove the worktrees of finished Tasks, and of cancelled Tasks past their keep period, to free disk space?"
+    );
+}
+
+#[test]
+fn a_watch_warning_reads_in_the_operators_language() {
+    let mut h = Bench::new(false);
+    h.world().language = Some(Language::English);
+    let f = h.factory(true);
+    let t = h.ready("Quiet", &[]);
+    h.world().watch.push_back(json!({"warnings": [
+        {"text": "T-1 has not moved for an hour.", "action": "Look at its pane.", "task": t},
+    ]}));
+    h.advance(30 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    let notice = h
+        .task(&f, &t)
+        .open_questions()
+        .find(|q| q.kind == QuestionKind::Notice)
+        .map(|q| q.text.clone())
+        .expect("a notice");
+    assert_eq!(
+        notice,
+        "Watch: T-1 has not moved for an hour. (to do: Look at its pane)"
+    );
+}
+
+// ------------------------------------------------------------- attempts
+
+fn attempts(h: &mut Bench, t: &str) -> Vec<(u64, String)> {
+    let shown = h.op(Command::Show { task: t.to_owned() });
+    shown["task"]["attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            (
+                a["number"].as_u64().unwrap(),
+                a["outcome"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_run_after_an_environment_failure_is_the_next_attempt() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Unlucky", &[]);
+    h.world().verify.insert(
+        t.clone(),
+        [
+            VerifyPoll::Environment {
+                signal: EnvSignal::Network,
+                check: "cargo test".into(),
+            },
+            VerifyPoll::Pending,
+        ]
+        .into(),
+    );
+    h.done(&f, &t);
+    h.engine.tick();
+    tick_until(&mut h, &f, &t, TaskState::Running);
+    h.done(&f, &t);
+    h.engine.tick();
+    assert_eq!(
+        attempts(&mut h, &t),
+        vec![(1, "environment".into()), (2, "running".into())]
+    );
+    assert_eq!(h.task(&f, &t).failures, 0, "n/3 still counts failures only");
+}
+
+#[test]
+fn a_run_sent_back_to_the_worker_closes_as_cancelled_and_the_next_takes_the_next_number() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Sent back", &[]);
+    h.world()
+        .verify
+        .insert(t.clone(), vec![VerifyPoll::Pending; 8].into());
+    h.world().drift.insert(
+        t.clone(),
+        json!({"pass": false, "questions": [
+            {"text": "Grok is outside the card. Keep it?", "suggestion": "keep", "default_action": "keep"}
+        ], "flags": []}),
+    );
+    h.done(&f, &t);
+    h.engine.tick();
+    h.engine.tick();
+    assert_eq!(h.state(&f, &t), TaskState::Verifying);
+    h.world().drift.remove(&t);
+    // The drift check asks; a person answers other than its default, which
+    // sends the Task back to its worker (the #857 path).
+    let question = h
+        .task(&f, &t)
+        .open_questions()
+        .find(|q| q.kind == QuestionKind::Default)
+        .map(|q| q.id.clone())
+        .expect("a question for a person");
+    let answered = h.op(Command::Answer {
+        task: t.clone(),
+        question: Some(question),
+        choice: None,
+        text: Some("drop it".into()),
+        change: false,
+    });
+    assert_eq!(answered["ok"], true, "{answered}");
+    assert_eq!(h.state(&f, &t), TaskState::Running);
+    h.done(&f, &t);
+    h.engine.tick();
+    assert_eq!(
+        attempts(&mut h, &t),
+        vec![(1, "cancelled".into()), (2, "running".into())]
+    );
+}
+
+#[test]
+fn a_store_written_with_repeated_numbers_and_an_open_earlier_run_reads_in_order() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Old store", &[]);
+    h.world()
+        .verify
+        .insert(t.clone(), [VerifyPoll::Pending].into());
+    h.done(&f, &t);
+    h.engine.tick();
+    let mut task = h.task(&f, &t);
+    let Bench {
+        dir,
+        shared,
+        engine,
+    } = h;
+    drop(engine);
+    // What a build that numbered by failures and left a sent-back run open
+    // stored for #857: two attempts, both 1, the first without an answer.
+    let first = task.attempts[0].clone();
+    task.attempts = vec![first.clone(), first];
+    let mut store = hide_factory::store::Store::open(
+        &dir.path().join("factory.sqlite3"),
+        &dir.path().join("factory-files"),
+    )
+    .unwrap();
+    store.put_task(&task).unwrap();
+    drop(store);
+    let mut h = Bench {
+        engine: hide_factory::Engine::open(
+            &dir.path().join("factory.sqlite3"),
+            &dir.path().join("factory-files"),
+            ports(&shared),
+        )
+        .unwrap(),
+        dir,
+        shared,
+    };
+    assert_eq!(
+        attempts(&mut h, &t),
+        vec![(1, "cancelled".into()), (2, "running".into())]
+    );
 }

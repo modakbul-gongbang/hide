@@ -546,6 +546,14 @@
                             "minimum": 0.0,
                             "type": "integer"
                         },
+                        "bell_line": {
+                            "default": null,
+                            "description": "The line the doorbell typed for this letter last, saved with its reservation before it was typed; null until the first bell. A submitted prompt is that bell exactly when it is this line.",
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        },
                         "bell_sent": {
                             "type": "boolean"
                         },
@@ -633,7 +641,8 @@
                         "bell_attempts",
                         "human_notified",
                         "watch_warning",
-                        "answer_wait_ended"
+                        "answer_wait_ended",
+                        "bell_line"
                     ],
                     "type": "object"
                 },
@@ -830,6 +839,14 @@
                     "minimum": 0.0,
                     "type": "integer"
                 },
+                "bell_line": {
+                    "default": null,
+                    "description": "The line the doorbell typed for this letter last, saved with its reservation before it was typed; null until the first bell. A submitted prompt is that bell exactly when it is this line.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
                 "bell_sent": {
                     "type": "boolean"
                 },
@@ -917,7 +934,8 @@
                 "bell_attempts",
                 "human_notified",
                 "watch_warning",
-                "answer_wait_ended"
+                "answer_wait_ended",
+                "bell_line"
             ],
             "title": "Letter",
             "type": "object"
@@ -1589,10 +1607,12 @@
             "command": "inbox --hook",
             "options": [
                 {
-                    "name": "--bell",
+                    "name": "--prompt-digest",
                     "required": false,
                     "requires": [],
-                    "value": null
+                    "value": {
+                        "type": "sha256"
+                    }
                 },
                 {
                     "name": "--session",
@@ -1737,7 +1757,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:df4acf17ab7ebce4c7debf3e0fa6f3fc116669d7136184e82cbe4c38c34eab4f",
+    "digest": "sha256:94a1aeed0785e375f702da6e72704f2bad5a6d060d187e6cd38a18855e19347f",
     "envelopes": {
         "agent": {
             "answer": "value",

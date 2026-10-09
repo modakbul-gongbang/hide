@@ -33,12 +33,14 @@ pub enum Command {
         id: String,
     },
     Inbox,
-    /// A prompt hook asks what to hand the agent. `bell` is true only when
-    /// the submitted prompt was Hide's own bell: that turn receives the letter
-    /// bodies, while any other prompt receives at most a count.
+    /// A prompt hook asks what to hand the agent. `prompt_digest` is the
+    /// digest of the submitted prompt (`hide_agent_hooks::delivery::
+    /// prompt_digest`): the turn whose prompt is the line the doorbell typed
+    /// for one of the caller's pending letters receives the letter bodies,
+    /// while any other prompt receives at most a count.
     Pull {
         #[serde(default)]
-        bell: bool,
+        prompt_digest: Option<String>,
         /// The session id the hook's runtime reported. The hook only counts
         /// as a submission in the pane when it is the pane's own session.
         #[serde(default)]
@@ -64,6 +66,22 @@ pub enum Command {
         approval: Option<String>,
     },
     WatchList,
+}
+
+impl Command {
+    /// The command a client sent. A prompt hook of an earlier build names the
+    /// bell with `bell: true`, which proves nothing now that the bell is the
+    /// line the doorbell kept; the field is dropped, so that hook still
+    /// receives a count line, or in an agent no bell rings for its letters,
+    /// until the kit beside it is replaced.
+    pub fn from_wire(mut value: Value) -> serde_json::Result<Self> {
+        if value["op"] == "pull"
+            && let Some(fields) = value.as_object_mut()
+        {
+            fields.remove("bell");
+        }
+        serde_json::from_value(value)
+    }
 }
 
 fn request_kind() -> String {
@@ -141,6 +159,7 @@ pub(crate) fn send(
         human_notified: false,
         watch_warning: None,
         answer_wait_ended: None,
+        bell_line: None,
     };
     ledger.letters.push(letter.clone());
     Ok(letter)
@@ -254,13 +273,14 @@ pub fn apply(
                     .collect::<Vec<_>>()
             ))
         }
-        Command::Pull { bell: true, .. } => Ok(json!(pull(ledger, actor)?)),
+        Command::Pull {
+            prompt_digest: Some(digest),
+            ..
+        } if rang(ledger, actor, digest) => Ok(json!(pull(ledger, actor)?)),
         // An agent no bell rings for takes its letters on its next prompt,
         // whoever typed it: no turn of Hide's own will ever bring them.
-        Command::Pull { bell: false, .. } if next_prompt_letters(&actor.kind) => {
-            Ok(json!(pull(ledger, actor)?))
-        }
-        Command::Pull { bell: false, .. } => Ok(json!(operator_prompt_intake(ledger, actor, now)?)),
+        Command::Pull { .. } if next_prompt_letters(&actor.kind) => Ok(json!(pull(ledger, actor)?)),
+        Command::Pull { .. } => Ok(json!(operator_prompt_intake(ledger, actor, now)?)),
         Command::Confirm { ids } => {
             if ids.len() > HOOK_LETTERS {
                 return Err("capacity".into());
@@ -354,6 +374,21 @@ pub(crate) fn prompt_hook(kind: &str) -> bool {
 /// OpenCode stored the prompt that carries them).
 pub(crate) fn next_prompt_letters(kind: &str) -> bool {
     prompt_hook(kind) && !super::doorbell::bell_target(kind)
+}
+
+/// Whether the submitted prompt, as its digest, is the line the doorbell
+/// typed for one of the caller's pending letters: the line it kept on the
+/// letter before typing it. Text a person typed, a bell line copied into
+/// another pane or a line whose letter was already taken in is not.
+fn rang(ledger: &Ledger, actor: &Actor, digest: &str) -> bool {
+    ledger.letters.iter().any(|letter| {
+        letter.state == State::Pending
+            && letter.recipient.same_identity(actor)
+            && letter
+                .bell_line
+                .as_deref()
+                .is_some_and(|line| hide_agent_hooks::delivery::prompt_digest(line) == digest)
+    })
 }
 
 /// Whether a bell is still coming for the letter. A letter whose three bells
@@ -548,7 +583,7 @@ mod tests {
         for command in [
             Command::Inbox,
             Command::Pull {
-                bell: true,
+                prompt_digest: None,
                 session: None,
             },
             Command::Show {
@@ -772,13 +807,17 @@ mod tests {
             .collect()
     }
 
-    fn pull_for(ledger: &mut Ledger, recipient: &Actor, bell: bool) -> Intake {
+    /// The line a test rings with, standing for what the doorbell typed.
+    const LINE: &str = "🔔 sender 보고: body-0";
+
+    /// What the prompt hook receives when `prompt` was submitted.
+    fn pull_for(ledger: &mut Ledger, recipient: &Actor, prompt: &str) -> Intake {
         let answer = apply(
             ledger,
             recipient,
             None,
             &Command::Pull {
-                bell,
+                prompt_digest: Some(hide_agent_hooks::delivery::prompt_digest(prompt)),
                 session: None,
             },
             100,
@@ -787,19 +826,25 @@ mod tests {
         serde_json::from_value(answer).unwrap()
     }
 
+    /// The doorbell typing `line` for the letter at `index`.
+    fn ring(ledger: &mut Ledger, index: usize, line: &str) {
+        ledger.letters[index].reserve_bell(50, line.into()).unwrap();
+    }
+
     #[test]
     fn an_operator_prompt_gets_a_count_while_a_bell_is_coming_and_the_bell_gets_the_bodies() {
         let mut ledger = Ledger::default();
         let recipient = actor("recipient");
         let ids = pending_for(&mut ledger, &recipient, 2);
-        let operator = pull_for(&mut ledger, &recipient, false);
+        ring(&mut ledger, 0, LINE);
+        let operator = pull_for(&mut ledger, &recipient, "please run the tests");
         assert!(operator.ids.is_empty(), "nothing to confirm");
         assert_eq!(
             operator.context.trim(),
             "Hide 편지 2통 대기 중, 이 턴이 끝난 뒤 전달"
         );
         assert!(!operator.context.contains("body-"));
-        let bell = pull_for(&mut ledger, &recipient, true);
+        let bell = pull_for(&mut ledger, &recipient, &format!("{LINE}\n"));
         assert_eq!(bell.ids, ids);
         assert!(bell.context.contains("body-0") && bell.context.contains("body-1"));
         assert!(!bell.context.contains("대기 중"));
@@ -815,6 +860,58 @@ mod tests {
     }
 
     #[test]
+    fn only_the_line_the_doorbell_typed_for_the_callers_pending_letter_is_the_bell() {
+        let mut ledger = Ledger::default();
+        let recipient = actor("recipient");
+        let other = actor("other");
+        pending_for(&mut ledger, &recipient, 1);
+        send(
+            &mut ledger,
+            &actor("sender-0"),
+            &other,
+            "intent-other",
+            "body-0",
+            "request",
+            None,
+            2,
+        )
+        .unwrap();
+        let counted = |intake: Intake| intake.ids.is_empty() && intake.context.contains("대기 중");
+        // A person typing what a bell would say, before any bell rang.
+        assert!(counted(pull_for(&mut ledger, &recipient, LINE)));
+        ring(&mut ledger, 0, LINE);
+        assert!(counted(pull_for(
+            &mut ledger,
+            &recipient,
+            &format!("{LINE} 그리고")
+        )));
+        assert!(counted(pull_for(
+            &mut ledger,
+            &recipient,
+            "🔔 sender 보고: body-1"
+        )));
+        // The same words in another agent's pane are not its bell.
+        assert!(counted(pull_for(&mut ledger, &other, LINE)));
+        let bell = pull_for(&mut ledger, &recipient, LINE);
+        assert_eq!(bell.ids, [ledger.letters[0].id.clone()]);
+        // A second bell for the letter replaces the line the first typed.
+        ring(&mut ledger, 0, "🔔 sender 보고: body-0 · 외 1통");
+        assert!(counted(pull_for(&mut ledger, &recipient, LINE)));
+        // Once the letter is taken in, its line opens nothing.
+        let id = ledger.letters[0].id.clone();
+        apply(
+            &mut ledger,
+            &recipient,
+            None,
+            &Command::Confirm { ids: vec![id] },
+            100,
+        )
+        .unwrap();
+        let after = pull_for(&mut ledger, &recipient, "🔔 sender 보고: body-0 · 외 1통");
+        assert!(after.ids.is_empty() && after.context.is_empty());
+    }
+
+    #[test]
     fn the_operators_prompt_never_carries_a_body_and_counts_only_letters_a_bell_will_bring() {
         let mut ledger = Ledger::default();
         let recipient = actor("recipient");
@@ -824,14 +921,14 @@ mod tests {
         // Acknowledged before intake: no bell either.
         ledger.letters[1].state = State::Acknowledged;
         ledger.letters[1].hook_confirmed = Some(false);
-        let operator = pull_for(&mut ledger, &recipient, false);
+        let operator = pull_for(&mut ledger, &recipient, "operator");
         assert!(operator.ids.is_empty());
         assert_eq!(
             operator.context.trim(),
             "Hide 편지 1통 대기 중, 이 턴이 끝난 뒤 전달"
         );
         ledger.letters[2].bell_attempts = Some(3);
-        let operator = pull_for(&mut ledger, &recipient, false);
+        let operator = pull_for(&mut ledger, &recipient, "operator");
         assert!(operator.ids.is_empty() && operator.context.is_empty());
     }
 
@@ -842,8 +939,9 @@ mod tests {
             let mut recipient = actor("recipient");
             recipient.kind = kind.into();
             pending_for(&mut ledger, &recipient, 1);
-            for bell in [false, true] {
-                let intake = pull_for(&mut ledger, &recipient, bell);
+            ring(&mut ledger, 0, LINE);
+            for prompt in ["operator", LINE] {
+                let intake = pull_for(&mut ledger, &recipient, prompt);
                 assert!(intake.ids.is_empty() && intake.context.is_empty(), "{kind}");
             }
         }
@@ -855,9 +953,9 @@ mod tests {
         let mut recipient = actor("recipient");
         recipient.kind = "opencode".into();
         let ids = pending_for(&mut ledger, &recipient, 2);
-        for bell in [false, true] {
-            let intake = pull_for(&mut ledger, &recipient, bell);
-            assert_eq!(intake.ids, ids, "bell={bell}");
+        for prompt in ["operator", LINE] {
+            let intake = pull_for(&mut ledger, &recipient, prompt);
+            assert_eq!(intake.ids, ids, "{prompt}");
             assert!(intake.context.contains("body-0") && intake.context.contains("body-1"));
             assert!(!intake.context.contains("대기 중"));
         }
@@ -878,7 +976,7 @@ mod tests {
         )
         .unwrap();
         assert!(ledger.letters.iter().all(Letter::intake_confirmed));
-        assert!(pull_for(&mut ledger, &recipient, false).ids.is_empty());
+        assert!(pull_for(&mut ledger, &recipient, LINE).ids.is_empty());
     }
 
     #[test]
@@ -918,13 +1016,22 @@ mod tests {
 
     #[test]
     fn a_pull_from_an_older_kit_is_an_operator_prompt_pull() {
-        assert_eq!(
-            serde_json::from_str::<Command>(r#"{"op":"pull"}"#).unwrap(),
-            Command::Pull {
-                bell: false,
-                session: None
-            }
-        );
+        for (wire, session) in [
+            (json!({"op":"pull"}), None),
+            (
+                json!({"op":"pull","bell":true,"session":"s"}),
+                Some("s".into()),
+            ),
+            (json!({"op":"pull","bell":false}), None),
+        ] {
+            assert_eq!(
+                Command::from_wire(wire).unwrap(),
+                Command::Pull {
+                    prompt_digest: None,
+                    session
+                }
+            );
+        }
     }
 
     #[test]
@@ -1445,7 +1552,8 @@ mod tests {
             acknowledged_without_receipt(&mut ledger, index);
         }
         let fresh = ledger.letters[HOOK_LETTERS + 1].id.clone();
-        let intake = pull_for(&mut ledger, &recipient, true);
+        ring(&mut ledger, HOOK_LETTERS + 1, LINE);
+        let intake = pull_for(&mut ledger, &recipient, LINE);
         assert_eq!(intake.ids.len(), HOOK_LETTERS);
         assert_eq!(intake.ids[0], fresh, "the letter the bell rang for");
         assert_eq!(

@@ -50,15 +50,20 @@ pub(crate) struct Analysis {
     pub(crate) end: LabelEnd,
 }
 
-/// How the turn stands by the agent's last word (D-08). Only a question,
-/// an unfinished turn and a wait on something other than a pull request
-/// move a row's verb; the rest come from Herdr and GitHub.
+/// How the turn stands by the agent's last word (D-08). Only a question, a
+/// block, an unfinished turn and a wait on something other than a pull
+/// request move a row's verb; the rest come from Herdr and GitHub.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LabelEnd {
     Working,
     /// The agent asks the operator something specific.
     Question,
+    /// It stopped before the request was done and named the cause (a full
+    /// disk, a login that lapsed, a failing tool). This is the label's word;
+    /// Herdr's `blocked` lifecycle is an approval prompt and is another thing.
+    Blocked,
+    /// The agent reported the request finished.
     Done,
     /// It waits on something other than a pull request: a build, another
     /// agent.
@@ -319,14 +324,15 @@ fn hash_event(event: &LabelEvent) -> u64 {
 }
 
 /// Identity of the turn a transcript is in, taken from the user's own last
-/// message: fixed for the whole turn and changing exactly once, at the
-/// boundary. Hashing the growing context instead once spent a day's request
-/// budget by midday. `None` means there is no turn to analyze yet.
+/// message, its time and its words: fixed for the whole turn and changing
+/// exactly once, at the boundary, even when the new message repeats the last
+/// one word for word. Hashing the growing context instead once spent a day's
+/// request budget by midday. `None` means there is no turn to analyze yet.
 pub(crate) fn turn_key(events: &[LabelEvent]) -> Option<u64> {
-    let last = events
+    events
         .iter()
-        .rposition(|event| event.kind == LabelEventKind::Human)?;
-    Some(context_fingerprint(&events[last].text))
+        .rfind(|event| event.kind == LabelEventKind::Human)
+        .map(hash_event)
 }
 
 /// The last human event that fed task analysis. Unlike the byte cursor it is
@@ -586,6 +592,13 @@ mod tests {
         assert_eq!(turn_key(&events), key);
         events.push(human("second", 4));
         assert_ne!(turn_key(&events), key);
+        let key = turn_key(&events);
+        events.extend([assistant("c", 5), human("second", 6)]);
+        assert_ne!(
+            turn_key(&events),
+            key,
+            "the same words again begin a new turn"
+        );
         assert_eq!(turn_key(&[assistant("only output", 1)]), None);
     }
 

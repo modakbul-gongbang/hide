@@ -183,6 +183,11 @@ pub struct AgentLabel {
     /// The agent's last message asks the operator something specific.
     #[serde(default)]
     pub question: bool,
+    /// The agent stopped and named what stopped it (`end: blocked`). This is
+    /// the label's block, not Herdr's `blocked` lifecycle, which is an
+    /// approval prompt.
+    #[serde(default)]
+    pub blocked: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -692,7 +697,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         delegated: false,
         descendant_counts: crate::model::DescendantCountsSnapshot::default(),
         direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
-        waiting_on_descendants: false,
+        wait: None,
         descendant_signals: BTreeSet::new(),
         lineage_parent_pane_id: None,
         lineage_path_pane_ids: Vec::new(),
@@ -709,6 +714,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         lineage_collapsed: false,
         sleep: None,
         row_facts: agent.facts,
+        reply_wait: false,
         request: None,
     };
     Ok(projected)
@@ -1070,8 +1076,9 @@ mod tests {
             {"pane_id":"child", "state_change_seq":1, "agent_status":"blocked", "spawned_from_pane_id":"working"}
         ])))
         .agents;
-        // No input reports an error today (labels-in-hided D-06); the row
-        // is set on the axis so the summary's rule for it stays covered.
+        // The label's `blocked` end is what sets this demand in the product;
+        // the row is set on the axis here so the summary's rule for it stays
+        // covered without a label.
         let error = agents.iter_mut().find(|a| a.pane_id == "error").unwrap();
         error.demand = "error".to_owned();
         error.unread = false;
@@ -1639,6 +1646,7 @@ mod tests {
                     progress: None,
                     expected_reply: None,
                     question: false,
+                    blocked: false,
                 });
                 agent.facts = Some(crate::request_view::RowFacts {
                     native_title: native.map(str::to_owned),

@@ -16,7 +16,7 @@ use hide_session::turns::Waiting;
 
 use super::analysis::LabelEnd;
 use super::facts::SessionFacts;
-use super::store::{self, PaneRecord};
+use super::store::{self, PaneRecord, WakeRead};
 use crate::request_view::RowFacts;
 use crate::sidebar::{AgentLabel, SessionAgentPayload, SessionSnapshotPayload};
 
@@ -48,6 +48,9 @@ struct ProvenLabel {
     /// the Herdr state it was read under.
     turn: Option<(u64, Option<Waiting>)>,
     user_turn: Option<(u64, hide_session::turns::UserTurnFact)>,
+    /// The expiries of the background tasks the session read proves alive,
+    /// with the Herdr state it was read under.
+    wake: Option<(u64, WakeRead)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -79,6 +82,7 @@ impl LabelOverlay {
                     facts: row_facts(&record.facts),
                     turn: record.turn_read(),
                     user_turn: record.user_turn(),
+                    wake: record.wake_read(),
                 });
                 (
                     pane_id.clone(),
@@ -117,6 +121,12 @@ impl LabelOverlay {
     }
 
     pub(crate) fn apply(&self, payload: &mut SessionSnapshotPayload) {
+        self.apply_at(payload, unix_milliseconds());
+    }
+
+    /// [`Self::apply`] at a given time: a task that announced its own expiry
+    /// stops counting when it passes, whatever else changed.
+    fn apply_at(&self, payload: &mut SessionSnapshotPayload, now: u64) {
         for agent in &mut payload.agents {
             let awaiting_operator = matches!(
                 self.waiting(agent),
@@ -173,18 +183,32 @@ impl LabelOverlay {
             facts.user_turn = label.user_turn.as_ref().and_then(|(seq, fact)| {
                 (agent.state_change_seq == Some(*seq)).then(|| fact.clone())
             });
+            if let Some((_, read)) = label
+                .wake
+                .as_ref()
+                .filter(|(seq, _)| agent.state_change_seq == Some(*seq))
+            {
+                let live = read
+                    .expiries
+                    .iter()
+                    .filter(|expiry| expiry.is_none_or(|at| at > now));
+                facts.wake_devices = u32::try_from(live.count()).unwrap_or(u32::MAX);
+                facts.wake_vanished = read.vanished;
+            }
             if let Some(summary) = &label.summary {
                 let working = agent.agent_status.as_deref() == Some("working");
                 let asking = summary.end == Some(LabelEnd::Question);
+                let blocked = summary.end == Some(LabelEnd::Blocked);
                 let line = (!summary.line.trim().is_empty()).then(|| summary.line.clone());
                 // The sidebar's two lines keep their meaning: the line is the
                 // reply asked for when the turn ended on a question, and the
-                // progress otherwise.
+                // progress otherwise, which for a block is its cause.
                 agent.label = Some(AgentLabel {
                     task: summary.goal.clone(),
                     progress: line.clone().filter(|_| !asking),
                     expected_reply: line.clone().filter(|_| asking),
                     question: asking && !working,
+                    blocked: blocked && !working,
                 });
                 facts.end = summary.end;
                 facts.line = line;
@@ -192,6 +216,14 @@ impl LabelOverlay {
             agent.facts = Some(facts);
         }
     }
+}
+
+fn unix_milliseconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 /// The part of a session's facts a row is built from.
@@ -212,6 +244,8 @@ fn row_facts(facts: &SessionFacts) -> RowFacts {
         line: None,
         awaiting_operator: false,
         user_turn: None,
+        wake_devices: 0,
+        wake_vanished: false,
     }
 }
 
