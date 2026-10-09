@@ -669,7 +669,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .and_then(|facts| facts.native_session_id.clone())
             .or_else(|| {
                 if hide_session::Agent::from_kind(agent_kind)
-                    .is_some_and(hide_session::Agent::requires_native_file_proof)
+                    .is_some_and(hide_session::Agent::requires_native_proof)
                 {
                     return None;
                 }

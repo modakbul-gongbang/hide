@@ -35,7 +35,7 @@ mod label_owner;
 pub mod label_transcript;
 pub mod links;
 mod native_file;
-mod opencode;
+pub mod opencode;
 pub mod search;
 pub mod search_read;
 pub mod session_activity;
@@ -55,8 +55,8 @@ pub use conversation_cursor::{
 };
 
 pub use catalog::{
-    ProjectSession, SESSION_DISCOVERY_LIMIT, SessionAvailability, SessionCatalog,
-    SessionCatalogError, SessionFilter,
+    ProjectSession, ProjectSessions, SESSION_DISCOVERY_LIMIT, SessionAvailability, SessionCatalog,
+    SessionCatalogError, SessionFilter, SessionStoreRefusal,
 };
 
 #[cfg(not(unix))]
@@ -322,11 +322,21 @@ impl Agent {
     pub const fn has_session_file(self) -> bool {
         self.format().has_session_file()
     }
-
+    pub const fn requires_native_proof(self) -> bool {
+        self.format().requires_native_proof()
+    }
+    pub const fn proof_reference_kind(self) -> &'static str {
+        self.format().proof_reference_kind()
+    }
+    pub const fn reports_activity(self) -> bool {
+        self.format().reports_activity()
+    }
+    pub const fn searchable(self) -> bool {
+        self.format().searchable()
+    }
     pub const fn is_jsonl(self) -> bool {
         self.format().is_jsonl()
     }
-
     pub const fn requires_native_file_proof(self) -> bool {
         self.format().requires_native_file_proof()
     }

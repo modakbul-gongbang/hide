@@ -257,6 +257,18 @@ impl TurnTracker {
         self.question_capacity
     }
 
+    /// Folds the mark of a record its agent is still writing (OpenCode's
+    /// message while its question waits). The record is not settled: the
+    /// same offset folds again once it is complete, so its answer clears the
+    /// wait its question opened.
+    pub fn fold_unsettled(&mut self, offset: u64, mark: &TurnMark) {
+        if offset < self.through {
+            return;
+        }
+        self.fold(offset, mark);
+        self.through = offset;
+    }
+
     /// Folds the mark of the record at `offset`; a record before what was
     /// already folded is ignored.
     pub fn fold(&mut self, offset: u64, mark: &TurnMark) {
@@ -517,6 +529,30 @@ mod tests {
                 "{settles:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_unsettled_question_waits_and_its_completed_record_answers_it() {
+        let asked = TurnMark::Tools(vec![ToolTurnMark::Asked {
+            call: "call-1".into(),
+            content: None,
+        }]);
+        let mut tracker = TurnTracker::default();
+        tracker.fold(0, &TurnMark::HumanTurn);
+        tracker.fold_unsettled(1, &asked);
+        // A second read of the same unfinished record changes nothing.
+        tracker.fold_unsettled(1, &asked);
+        assert_eq!(tracker.waiting(), Some(Waiting::Question));
+        tracker.fold(
+            1,
+            &TurnMark::Tools(vec![ToolTurnMark::Answered {
+                call: "call-1".into(),
+            }]),
+        );
+        assert_eq!(tracker.waiting(), Some(Waiting::Nothing));
+        // A settled record is never folded again as unsettled.
+        tracker.fold_unsettled(1, &asked);
+        assert_eq!(tracker.waiting(), Some(Waiting::Nothing));
     }
 
     #[test]

@@ -277,7 +277,7 @@ fn labels_archive_and_search_share_native_graph_and_checkpoint_ownership() {
     };
     let project = hide_project::resolve(&fixture.cwd, "fixture").unwrap();
     let catalog = hide_session::SessionCatalog::new(fixture.home.path(), "fixture");
-    let sessions = catalog.project_sessions(&project).unwrap();
+    let sessions = catalog.project_sessions(&project).unwrap().sessions;
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].agent, Agent::Cursor);
     assert_eq!(

@@ -408,6 +408,21 @@ mod tests {
         }
         assert_eq!(
             resume_arguments(&ClosedAgent {
+                kind: "opencode".into(),
+                session_id: Some("ses_native".into()),
+            }),
+            Some(vec!["-s".to_owned(), "ses_native".to_owned()])
+        );
+        assert!(
+            resume_arguments(&ClosedAgent {
+                kind: "opencode".into(),
+                session_id: Some("--fork".into()),
+            })
+            .is_none(),
+            "a flag-shaped id never reaches the command line"
+        );
+        assert_eq!(
+            resume_arguments(&ClosedAgent {
                 kind: "claude".into(),
                 session_id: Some("session-c".into()),
             }),

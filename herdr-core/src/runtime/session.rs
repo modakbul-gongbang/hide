@@ -4411,17 +4411,16 @@ impl Runtime {
                     operation
                         .agent_kind
                         .as_deref()
-                        .and_then(hide_session::Agent::from_kind)
-                        .is_some_and(hide_session::Agent::requires_native_file_proof)
-                        && operation
-                            .agent_kind
-                            .as_deref()
-                            .and_then(hide_agent_adapter::adapter)
-                            .and_then(|adapter| adapter.resume)
-                            .is_some_and(|dialect| {
-                                launch.args.first().map(String::as_str)
-                                    == Some(dialect.resume_flag())
-                            })
+                        .and_then(hide_agent_adapter::adapter)
+                        .filter(|adapter| {
+                            adapter
+                                .session
+                                .is_some_and(|format| format.requires_native_proof())
+                        })
+                        .and_then(|adapter| adapter.resume)
+                        .is_some_and(|dialect| {
+                            launch.args.first().map(String::as_str) == Some(dialect.resume_flag())
+                        })
                 })
                 .and_then(|launch| {
                     Some(hide_session::SessionReadScope {

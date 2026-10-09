@@ -134,7 +134,7 @@ impl DormantRecord {
             return Err("Sleeping-session native identity is unconfirmed");
         }
         if hide_session::Agent::from_kind(&self.kind)
-            .is_some_and(hide_session::Agent::requires_native_file_proof)
+            .is_some_and(hide_session::Agent::requires_native_proof)
             && self.source_reference.as_ref().is_none_or(|reference| {
                 reference.value.len() > 4096
                     || hide_session::label_reference_token(
@@ -551,35 +551,28 @@ mod tests {
         entry.phase = DormantPhase::Sleeping;
         entry.closed = true;
         assert!(store.dormant_snapshots()[0].wake_available);
-        for kind in ["pi", "omp", "grok", "cursor"] {
+        // Each native proof names the reference its reader takes: OpenCode
+        // the session id, a file reader the session file.
+        for (kind, reference) in [
+            ("pi", ("path", "/fixture/native.jsonl")),
+            ("omp", ("path", "/fixture/native.jsonl")),
+            ("grok", ("path", "/fixture/native.jsonl")),
+            ("cursor", ("path", "/fixture/native.jsonl")),
+            ("opencode", ("id", "native-one")),
+        ] {
             let entry = store.dormant.get_mut(&id).unwrap();
             entry.kind = kind.into();
             entry.label_owner =
                 hide_session::label_reference_token(kind, "id", "native-one").unwrap();
             entry.source_reference = Some(crate::sidebar::SessionAgentSessionPayload {
-                kind: "path".into(),
-                value: "/fixture/native.jsonl".into(),
+                kind: reference.0.into(),
+                value: reference.1.into(),
             });
             assert!(store.dormant_snapshots()[0].wake_available, "{kind}");
         }
-        // OpenCode's record is otherwise valid, so only its missing resume
-        // keeps it asleep; an unknown kind has no reader at all.
-        for kind in ["opencode", "unknown"] {
-            let entry = store.dormant.get_mut(&id).unwrap();
-            entry.kind = kind.into();
-            if let Some(owner) = hide_session::label_reference_token(kind, "id", "native-one") {
-                entry.label_owner = owner;
-            }
-            assert!(!store.dormant_snapshots()[0].wake_available, "{kind}");
-        }
-        let entry = store.dormant.get_mut(&id).unwrap();
-        entry.kind = "opencode".into();
-        entry.label_owner =
-            hide_session::label_reference_token("opencode", "id", "native-one").unwrap();
-        assert!(
-            entry.validate().is_ok(),
-            "only the capability gate refuses it"
-        );
+        // An unknown kind has no reader at all.
+        store.dormant.get_mut(&id).unwrap().kind = "unknown".into();
+        assert!(!store.dormant_snapshots()[0].wake_available);
         assert_eq!(store.dormant.len(), 1);
     }
 

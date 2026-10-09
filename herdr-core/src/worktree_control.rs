@@ -1078,11 +1078,14 @@ fn launch_with_prompt_checked(
         resume_scope,
         resume_reference,
     } = start;
-    if hide_session::Agent::from_kind(&kind)
-        .is_some_and(hide_session::Agent::requires_native_file_proof)
-        && hide_agent_adapter::adapter(&kind)
-            .and_then(|adapter| adapter.resume)
-            .is_some_and(|dialect| args.first().map(String::as_str) == Some(dialect.resume_flag()))
+    if hide_agent_adapter::adapter(&kind)
+        .filter(|adapter| {
+            adapter
+                .session
+                .is_some_and(|format| format.requires_native_proof())
+        })
+        .and_then(|adapter| adapter.resume)
+        .is_some_and(|dialect| args.first().map(String::as_str) == Some(dialect.resume_flag()))
         && !resume_scope
             .as_ref()
             .is_some_and(|scope| args.get(1) == Some(&scope.id))
