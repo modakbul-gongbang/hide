@@ -22,6 +22,10 @@ pub const MAX_ATTACHED_PANES: usize = 64;
 /// Key bytes one pane may have on their way to a device before that pane's
 /// flow is ended (D-18).
 pub const MAX_UNSENT_KEY_BYTES: usize = 256 * 1024;
+/// Frame watches ([`TerminalControl::WatchFrame`]) a node keeps: the core
+/// waits on at most this many operations at once, so past it the oldest
+/// watch belongs to an operation the core has already closed.
+pub const MAX_FRAME_WATCHES: usize = 64;
 /// The longest pane or creation id a screen may name to a node. A device
 /// pane's id, `remote:<device>:pane:<Herdr's id>`, is the longest, with a
 /// device id of at most 256 bytes; the node's pane caps count entries, so
@@ -128,7 +132,8 @@ pub enum TerminalControl {
     },
     /// The paste ended without being written: drop the keys held behind it.
     AttachmentRelease { intent: String },
-    /// Report when the pane's next frame reaches the screen.
+    /// Report when the pane's next frame reaches the screen. A node keeps
+    /// at most [`MAX_FRAME_WATCHES`] of them, apart from its panes.
     WatchFrame { pane: String },
 }
 

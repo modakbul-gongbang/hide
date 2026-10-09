@@ -25,6 +25,9 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 pub(super) const OP_TIMING_LIMIT: usize = 64;
+// Each open record watches at most one pane's frame, and a node keeps that
+// many watches.
+const _: () = assert!(OP_TIMING_LIMIT <= hide_node_link::terminal::MAX_FRAME_WATCHES);
 const OP_TIMING_EXPIRY: Duration = Duration::from_secs(10);
 /// Herdr events kept for an operation that learns its tab or pane only from
 /// the answer, when the event can arrive first.

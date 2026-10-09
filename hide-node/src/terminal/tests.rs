@@ -1023,6 +1023,59 @@ fn a_pane_the_core_put_to_sleep_is_not_forgotten_at_the_cap() {
     assert_eq!(opened.next_input(), b"kept");
 }
 
+/// Controls about panes no view or attach named leave nothing counted
+/// against the cap: a pane the core woke without ever putting to sleep, or
+/// whose frame it watched and never attached (a hidden tab, a refused or
+/// failed attach), does not keep a new pane's view from being drawn.
+#[test]
+fn panes_only_watched_or_woken_do_not_keep_a_new_pane_from_being_drawn() {
+    let harness = harness(RetryPolicy::Automatic);
+    for index in 0..=MAX_UNATTACHED_PANES {
+        let pane = format!("ghost{index}");
+        harness.service.control(TerminalControl::Asleep {
+            pane: pane.clone(),
+            asleep: false,
+        });
+        harness
+            .service
+            .control(TerminalControl::WatchFrame { pane: pane.clone() });
+        harness.service.control(TerminalControl::Release {
+            pane,
+            message: "hidden".into(),
+        });
+    }
+    for index in 0..=MAX_UNATTACHED_PANES {
+        harness.service.control(TerminalControl::WatchFrame {
+            pane: format!("watched{index}"),
+        });
+    }
+    harness.service.view("w1:p9", SIZE, true);
+    harness.attach("w1:p9", Some(SIZE));
+    harness.opened();
+    let mut refused = false;
+    harness.report_where(|report| {
+        refused |=
+            matches!(report, TerminalReport::Error { kind, .. } if kind == "terminal.pane_limit");
+        matches!(report, TerminalReport::State { pane, state } if pane == "w1:p9" && state.state == "controlling")
+    });
+    assert!(!refused, "the view of a new pane was refused");
+}
+
+/// The core watches a pane Herdr just created before it attaches it; the
+/// pane's first frame still reports when it reached the screen.
+#[test]
+fn a_frame_watched_before_its_pane_attaches_is_reported_when_shown() {
+    let harness = harness(RetryPolicy::Automatic);
+    harness.service.control(TerminalControl::WatchFrame {
+        pane: "w1:p5".into(),
+    });
+    let opened = harness.controlling("w1:p5");
+    opened.frame(SIZE, true, b"prompt");
+    harness.report_where(
+        |report| matches!(report, TerminalReport::FrameShown { pane, .. } if pane == "w1:p5"),
+    );
+}
+
 #[test]
 fn an_idle_service_has_nothing_due() {
     let harness = harness(RetryPolicy::Automatic);

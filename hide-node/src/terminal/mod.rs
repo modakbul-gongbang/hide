@@ -36,7 +36,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use hide_node_link::terminal::{
     AttachmentInputOutcome, GridSize, KeyTarget, MAX_ATTACHED_PANES, MAX_ATTACHMENT_INPUT_BYTES,
-    PaneTerminalState, TerminalControl, TerminalNode, TerminalReport,
+    MAX_FRAME_WATCHES, PaneTerminalState, TerminalControl, TerminalNode, TerminalReport,
 };
 use serde_json::json;
 
@@ -189,7 +189,6 @@ struct Pane {
     asleep_reported: bool,
     hold: PaneHold,
     first_frame_pending: bool,
-    watch_frame: bool,
     reported: Option<PaneTerminalState>,
 }
 
@@ -211,6 +210,10 @@ struct Attachment {
 #[derive(Default)]
 struct Inner {
     panes: HashMap<String, Pane>,
+    /// Panes whose next frame the core waits on, and when it asked: kept
+    /// apart from `panes`, since the core watches a pane Herdr just created
+    /// before it attaches it, and a watch must not hold a pane's place.
+    watches: HashMap<String, Instant>,
     requests: Requests,
     facts: HashMap<String, InputFacts>,
     /// The pane the core's keyboard is in, as the core last said or as the
@@ -649,9 +652,9 @@ impl Inner {
 
     /// Forgets the panes only a view named: never asked to attach, not on
     /// the core's screen, holding no keys and carrying nothing the core said
-    /// of them (asleep, closing, a watched frame, a paste's target), which it
-    /// says only once. A screen's resize that was on its way when the core
-    /// forgot its pane leaves one.
+    /// of them (asleep, closing, a paste's target), which it says only once.
+    /// A screen's resize that was on its way when the core forgot its pane
+    /// leaves one.
     fn forget_unowned(&mut self) {
         let shown = &self.shown;
         let pasting = self.attachment.as_ref().map(|attachment| &attachment.pane);
@@ -664,7 +667,6 @@ impl Inner {
                     && matches!(entry.hold, PaneHold::Empty)
                     && !entry.asleep
                     && !entry.closing
-                    && !entry.watch_frame
                     && !shown.contains(*pane)
                     && pasting != Some(*pane)
             })
@@ -779,6 +781,7 @@ impl Inner {
                     entry.hold.discard(&pane, "pane_gone");
                 }
                 self.facts.remove(&pane);
+                self.watches.remove(&pane);
                 self.deliveries.push(Delivery::Forget { pane });
             }
             TerminalControl::Closing { pane, closing } => {
@@ -821,13 +824,19 @@ impl Inner {
                 Ok(bytes) => self.write_control(&pane, &bytes, now),
                 Err(message) => self.error(&pane, "terminal.invalid_input", message),
             },
-            TerminalControl::Asleep { pane, asleep } => {
-                let entry = self.panes.entry(pane).or_default();
-                entry.asleep = asleep;
-                if !asleep {
-                    entry.asleep_reported = false;
+            TerminalControl::Asleep { pane, asleep } => match self.panes.get_mut(&pane) {
+                Some(entry) => {
+                    entry.asleep = asleep;
+                    if !asleep {
+                        entry.asleep_reported = false;
+                    }
                 }
-            }
+                // A pane this node never heard of is already awake.
+                None if !asleep => {}
+                None => {
+                    self.panes.entry(pane).or_default().asleep = true;
+                }
+            },
             TerminalControl::RequestOpen { request } => self.requests.open(&request, now),
             TerminalControl::RequestResolve { request, pane } => {
                 let held = self.requests.resolve(&request, &pane, now);
@@ -884,10 +893,28 @@ impl Inner {
                     self.attachment = None;
                 }
             }
-            TerminalControl::WatchFrame { pane } => {
-                self.panes.entry(pane).or_default().watch_frame = true;
-            }
+            TerminalControl::WatchFrame { pane } => self.watch_frame(pane, now),
         }
+    }
+
+    fn watch_frame(&mut self, pane: String, now: Instant) {
+        if self.watches.len() >= MAX_FRAME_WATCHES
+            && !self.watches.contains_key(&pane)
+            && let Some(oldest) = self
+                .watches
+                .iter()
+                .min_by_key(|(_, asked)| **asked)
+                .map(|(pane, _)| pane.clone())
+        {
+            self.watches.remove(&oldest);
+            crate::diagnostic!(json!({
+                "component": "terminal_session",
+                "kind": "terminal.frame_watch_dropped",
+                "pane_id": oldest,
+                "cap": MAX_FRAME_WATCHES,
+            }));
+        }
+        self.watches.insert(pane, now);
     }
 
     /// Hands the paste and what was typed behind it to the pane's writer.
@@ -1688,7 +1715,7 @@ impl Inner {
         // empty canvas is ever shown between the two.
         let reset = std::mem::take(&mut entry.need_full);
         let first = std::mem::take(&mut entry.first_frame_pending);
-        let watched = std::mem::take(&mut entry.watch_frame);
+        let watched = self.watches.remove(pane).is_some();
         if mode == Mode::Control {
             if let Some(recovery) = entry.recovery.take() {
                 crate::diagnostic!(json!({
@@ -1874,6 +1901,8 @@ impl Inner {
         if entry.lifecycle.state == "released" {
             return;
         }
+        // A released pane draws no frame until it attaches again.
+        self.watches.remove(pane);
         let generation = entry.current_generation.unwrap_or_default();
         entry.session = None;
         entry.awaiting_size = false;
