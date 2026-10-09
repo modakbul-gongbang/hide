@@ -581,7 +581,6 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
             .unwrap_or_else(|_| "0".into()),
         pid_started: hide_platform::process::start_time(pid).ok(),
     };
-    write_state(&env.state_dir, &state).map_err(|error| error.to_string())?;
     let shutdown = Arc::new(Notify::new());
     let daemon = node_daemon::NodeDaemon::start(
         &env.home,
@@ -610,6 +609,9 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
             state_dir: env.state_dir.clone(),
         },
     )?;
+    // Recorded once the daemon runs, so a start that failed leaves no record
+    // naming a process that is gone.
+    write_state(&env.state_dir, &state).map_err(|error| error.to_string())?;
     herdr_core::diagnostic!(serde_json::json!({
         "component": "node_daemon",
         "kind": "started",
