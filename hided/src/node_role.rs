@@ -82,6 +82,9 @@ pub struct LiveLink {
     /// The checkout roots the core opened on this node over the link: the
     /// node's screens read files under them without the core.
     pub roots: Arc<hide_host::serve::OpenedRoots>,
+    /// The link's SSH connection, which a page of the core's machine
+    /// reaches the core's loopback through (`node_pages`).
+    pub upstream: Arc<Upstream>,
 }
 
 /// Where the node's link is.
@@ -486,7 +489,7 @@ fn serve_link(
     identity: &NodeIdentity,
     shared: &Shared,
     stderr: &Mutex<Vec<u8>>,
-    upstream: &Upstream,
+    upstream: &Arc<Upstream>,
     generation: u64,
 ) -> Result<String, String> {
     let mut reader = BufReader::new(stream.duplicate());
@@ -554,6 +557,7 @@ fn serve_link(
         relay_port: forward.port(),
         terminals: Arc::clone(&terminals),
         roots: Arc::clone(&roots),
+        upstream: Arc::clone(upstream),
     })));
     let ended = serve(reader, writer, identity, &terminals, &roots);
     shared.live.send_replace(None);

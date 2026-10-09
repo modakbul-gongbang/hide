@@ -143,8 +143,9 @@ pub struct BrowserPage {
 }
 
 /// The current browser target an authenticated desktop host may resolve.
-/// It is read from core-owned View state, never accepted from an IPC caller.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+/// It is read from core-owned View state, never accepted from an IPC caller;
+/// a node whose core runs elsewhere reads it from that core over the link.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BrowserRouteSource {
     pub device_id: String,
     pub checkout_path: String,

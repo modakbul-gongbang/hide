@@ -1089,6 +1089,7 @@ For each screen M opens one relay to C through a local forward on its connection
 Each relay is read on its own task whatever the screen takes: the SSH client stops reading the whole connection while one channel's buffer is full, so a screen left unread would hold up every other screen, the panes and the link.
 A screen may leave at most 4 MiB of C's frames untaken (one frame is always held, since a file read sends 4 MiB at a time); past it the backlog is dropped, the relay closed with `screen.fell_behind`, and the screen drawn again from a fresh snapshot once it reads (`screen.resync`, D-20, B17).
 The answers C runs beside a linked node's screens (a device checkout's file reads and folder listings) hold one of 64 slots per node while they run; past it a new one is refused with `relay_busy` and logged (`relay.requests_full`).
+A Browser View's page shown in an M window is routed by M's own daemon: it asks C for the View's address on the relay port with the same grant (`/relay/browser-source`), and reaches a loopback page of C through the link's SSH connection ([BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md#a-screen-whose-core-runs-on-another-machine)).
 Terminals take another way.
 M's own panes' keys and output never leave M: keys go from M's screen to M's node terminals and output from them to M's hub, and C hears the input facts it always heard.
 Every other pane's output comes down one terminals relay per node (`/relay?mode=terminals`) into M's hub, at most 4 MiB unsent per node before a pane is drawn again whole, and their keys go up it.
@@ -1114,6 +1115,7 @@ The human notice's Herdr toast goes to the first connected node that dialed in, 
 | Crosses between M and C (control) | Stays on M (data) |
 | --- | --- |
 | Each M screen's events, C's snapshots, deltas and answers, through that screen's relay | Keys into M's panes and their output |
+| A Browser View's address, and a page of C's loopback, through the link's SSH connection | Pages of M's own addresses |
 | Output of C's and other devices' panes, and keys into them, through the terminals relay | Bytes of files in M's checkouts under the roots C opened on M |
 | M's Herdr streams, pane and checkout proofs, input facts and the label lock, inside the link | M's screens' tokens and the desktop host's discovery (`hide connect`) |
 | M's panes' output, only while a screen of C looks at them | |

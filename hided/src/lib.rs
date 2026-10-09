@@ -21,6 +21,7 @@ pub mod index;
 pub mod mobile;
 pub mod node_cli;
 pub mod node_daemon;
+pub mod node_pages;
 
 pub mod node_panes;
 pub mod node_role;
@@ -404,9 +405,12 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         Arc::clone(&watch),
         Arc::clone(&index),
     ));
-    let browser_routes = browser_routes::BrowserRoutes::new(Arc::clone(&core));
+    let browser_routes = browser_routes::BrowserRoutes::new(
+        Arc::clone(&core) as Arc<dyn browser_routes::PageSources>
+    );
     let desktop_renderers = Arc::new(AtomicUsize::new(0));
-    browser_routes.spawn_reaper(Arc::clone(&desktop_renderers), Arc::clone(&shutdown));
+    let _reaper =
+        browser_routes.spawn_reaper(Arc::clone(&desktop_renderers), Arc::clone(&shutdown));
     let renderers = Arc::new(AtomicUsize::new(0));
     let start_demand = Arc::new(demand::ObservationDemand::default());
     let mobile = mobile::Mobile::start(mobile::Config {

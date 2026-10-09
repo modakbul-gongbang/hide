@@ -268,6 +268,15 @@ impl Fixture {
         environment.command(program)
     }
 
+    /// `program` run as the core machine's account, on the core's state
+    /// folder.
+    pub fn core_command(&self, program: &Path) -> std::process::Command {
+        let mut environment = self.core.environment.clone();
+        environment.set("HIDE_STATE_DIR", self.core_state.as_os_str());
+        environment.set("HIDE_OPEN_COMMAND", "/usr/bin/true");
+        environment.command(program)
+    }
+
     /// Sends the screen machine's hided `signal` and waits for it to end.
     pub fn signal_node(&mut self, signal: i32) -> Result<()> {
         let mut node = self.node.take().context("no node hided runs")?;

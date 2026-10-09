@@ -10,7 +10,7 @@ There is no Herdr browser pane and no chromux profile behind it, and nothing is 
 | Owner | Holds | Code |
 | --- | --- | --- |
 | The core | Browser View layout, requested address and load stamp, and the native page's reported loading state | `herdr-core/src/view_layout.rs`, `herdr-core/src/runtime/view_areas.rs`, `herdr-core/src/runtime/workspace_control.rs` |
-| hided | The local `file:` event boundary, checkout-scoped Browser commands and gateway discovery, and native routes into consented SSH devices | `hided/src/server.rs`, `hided/src/file_url.rs`, `hided/src/workspace_cli.rs`, `hided/src/browser_control.rs`, `hided/src/browser_routes.rs`, `hided/src/browser_assets.rs` |
+| hided | The local `file:` event boundary, checkout-scoped Browser commands and gateway discovery, and native routes into consented SSH devices and, on a node whose core runs on another machine, into the core's machine | `hided/src/server.rs`, `hided/src/file_url.rs`, `hided/src/workspace_cli.rs`, `hided/src/browser_control.rs`, `hided/src/browser_routes.rs`, `hided/src/node_pages.rs`, `hided/src/browser_assets.rs` |
 | The web shell | Where each page sits, since only it has the geometry, the toolbar, the overlay freeze, and the notice in a plain browser tab | `web/src/BrowserDisplay.tsx`, `web/src/browserViews.ts`, `web/src/host.ts` |
 | The desktop app | The pages: one `WebContentsView` per display it was asked to show, their navigation, route requests, and their lifetime | `desktop/src/main/browser.ts`, `desktop/src/main/browserSync.ts`, `desktop/src/main/host.ts`, `desktop/src/preload/index.ts` |
 
@@ -284,6 +284,17 @@ The complete SSH connection and authentication attempt has a 15-second limit.
 Closing a pending View cancels its SSH connection, and at most four route builds may be in flight even when Views are repeatedly opened and closed.
 Cancellation during SSH key exchange also shuts down the TCP socket before a session handle exists, so the connection cannot outlive its build permit.
 
+### A screen whose core runs on another machine
+
+When this Mac's hided runs in the node role ([ARCHITECTURE.md](ARCHITECTURE.md#a-core-on-another-machine)), the desktop host asks it for routes exactly as it asks a core's daemon, and the same route registry, caps, reservation and reaper answer (`hided/src/node_pages.rs`).
+The View's source comes from the core: the node asks `POST /relay/browser-source` on the link's relay port with its live relay grant, and the core answers the View's current address and load or none.
+A page of this Mac loads as it is.
+A loopback page of the core's machine, such as one an agent there opened with `hide browser open http://localhost:5173`, goes through a local forward on the link's own SSH connection, with the same address rules as a device's.
+A `file:` page of the core's machine is refused with `file_page_unavailable`, and a page of any other device with `host_unavailable`: the node reaches neither, and it never loads the same address on this Mac instead.
+While the link is down every route request answers `core_unavailable`, and the reaper closes each route whose View the core no longer names.
+A Browser View opens on the core only while some window is attached to it, the node's windows counting through their relays; with none, `hide browser open` answers `renderer_unavailable`.
+The node's daemon does not serve `/browser-control` yet, so `hide browser snapshot`, `click` and the other page commands have no gateway for a page shown in a node's window.
+
 A page the operator loaded can still follow its own links.
 A `file:` page that moves to a file outside the checkouts keeps showing it in its view, but its report is refused at the boundary, so the core keeps the last address it accepted and a relaunch opens that one.
 
@@ -421,6 +432,7 @@ Its download witness confines the candidate app and owned page session to a priv
 The spec also replays a native HTML5 drag through the gateway and sees the page receive its data and no files.
 Playwright dismisses a dialog no listener handles, so that test listens and answers it the way the operator would.
 `desktop/e2e/remote-browser-agent.spec.ts` runs the same snapshot and click from a device pane over the isolated SSH server, and the Workspace commands' `renderer_unavailable` once the desktop is gone.
+`hided/tests/it/remote_core.rs` opens a page on the core's machine from its checkout with no window and with the node's desktop window attached, resolves its route on the node's daemon, reads the core machine's loopback page through the routed address, and sees the route close on release.
 `desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server, whose sessions get the private HOME `desktop/e2e/device-home.ts` proves because connecting installs Hide's kit there, and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, absolute loopback subrequests, local and remote cookie separation, remote popup address ownership, relative HTML assets, refusal of undeclared files and external requests, explicit reveal, background View cleanup, route cleanup on close and forced candidate exit, and a return route that comes back after the device's helper connection ends and reconnects, with every remote command run through the `hide` Hide installed and linked on the device.
 
 ## Running Workspace servers

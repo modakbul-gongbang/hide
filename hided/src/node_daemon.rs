@@ -33,9 +33,9 @@ use std::time::{Duration, Instant};
 use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::http::{HeaderMap, Uri};
+use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use futures_util::{SinkExt, StreamExt};
 use hide_node::terminal::OutputSink;
 use hide_node_link::terminal::{
@@ -48,6 +48,8 @@ use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::boundary::{Boundary, Refusal, Root};
+use crate::browser_routes::{BrowserRoutes, RouteRequest};
+use crate::node_pages::NodePages;
 use crate::node_role::{LiveLink, NodeIdentity, NodeRole, Phase};
 use crate::placement::Placement;
 use crate::server::{
@@ -93,6 +95,11 @@ pub struct NodeState {
     /// This machine's paths a screen may read without the core: the
     /// checkouts the core opened on this node over the live link.
     pub boundary: Arc<Boundary>,
+    /// The Browser View routes this machine's desktop host resolves
+    /// (`node_pages`).
+    pub browser_routes: Arc<BrowserRoutes>,
+    /// Desktop windows attached now; with none, every route is closed.
+    pub desktop_screens: Arc<AtomicUsize>,
 }
 
 /// This machine's panes, as its hub names them: the core's names for them.
@@ -191,6 +198,7 @@ pub struct NodeDaemon {
     pub state: NodeState,
     role: Arc<NodeRole>,
     relay: tokio::task::JoinHandle<()>,
+    reaper: tokio::task::JoinHandle<()>,
 }
 
 impl NodeDaemon {
@@ -204,6 +212,8 @@ impl NodeDaemon {
     ) -> Result<Self, String> {
         let hub = TerminalHub::new();
         let own_prefix = device_pane_prefix(&identity.node);
+        let screen_node = identity.node.clone();
+        let core_node = placement.node.clone();
         let boundary = Arc::new(Boundary::for_node(
             home,
             herdr_core::node::NodeId::parse(&identity.node)?,
@@ -233,6 +243,14 @@ impl NodeDaemon {
             let role = Arc::clone(&role);
             Arc::new(move || role.phase()) as Arc<dyn Fn() -> Phase + Send + Sync>
         };
+        let browser_routes = BrowserRoutes::new(Arc::new(NodePages::new(
+            screen_node,
+            core_node,
+            live.clone(),
+        )));
+        let desktop_screens = Arc::new(AtomicUsize::new(0));
+        let reaper =
+            browser_routes.spawn_reaper(Arc::clone(&desktop_screens), Arc::clone(&server.shutdown));
         Ok(Self {
             state: NodeState {
                 token: server.token,
@@ -250,9 +268,12 @@ impl NodeDaemon {
                 boundary,
                 shutdown: server.shutdown,
                 held_frames: Arc::new(AtomicU64::new(0)),
+                browser_routes,
+                desktop_screens,
             },
             role,
             relay,
+            reaper,
         })
     }
 
@@ -265,6 +286,7 @@ impl NodeDaemon {
 impl Drop for NodeDaemon {
     fn drop(&mut self) {
         self.relay.abort();
+        self.reaper.abort();
         lock(&self.state.terminals.relay).take();
     }
 }
@@ -283,6 +305,10 @@ pub fn router(state: NodeState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws_upgrade))
+        .route(
+            "/browser-route",
+            post(resolve_browser_route).delete(release_browser_route),
+        )
         .route("/", get(static_asset))
         .route("/assets/{*path}", get(static_asset))
         .fallback(|| async { axum::http::StatusCode::NOT_FOUND })
@@ -311,6 +337,28 @@ async fn health(State(state): State<NodeState>) -> impl IntoResponse {
         "core_link": link,
         "core_link_reason": reason,
     }))
+}
+
+async fn resolve_browser_route(
+    State(state): State<NodeState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<RouteRequest>,
+) -> Response {
+    if !crate::server::bearer_matches(&headers, &state.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    crate::browser_routes::resolve_answer(&state.browser_routes, request).await
+}
+
+async fn release_browser_route(
+    State(state): State<NodeState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<RouteRequest>,
+) -> Response {
+    if !crate::server::bearer_matches(&headers, &state.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    crate::browser_routes::release_answer(&state.browser_routes, request).await
 }
 
 async fn static_asset(uri: Uri, State(state): State<NodeState>) -> Response {
@@ -363,6 +411,10 @@ async fn screen(mut socket: WebSocket, state: NodeState, origin: Option<String>,
         return;
     }
     let connection = state.connections.fetch_add(1, Ordering::SeqCst);
+    let desktop = handshake.client_kind.as_deref() == Some("desktop");
+    if desktop {
+        state.desktop_screens.fetch_add(1, Ordering::SeqCst);
+    }
     let mut local_reads = 0_u64;
     let ended = attached(
         &mut socket,
@@ -373,6 +425,9 @@ async fn screen(mut socket: WebSocket, state: NodeState, origin: Option<String>,
         &mut local_reads,
     )
     .await;
+    if desktop {
+        state.desktop_screens.fetch_sub(1, Ordering::SeqCst);
+    }
     herdr_core::diagnostic!(json!({
         "component": "node_daemon",
         "kind": "screen.ended",

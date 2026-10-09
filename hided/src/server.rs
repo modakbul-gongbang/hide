@@ -170,6 +170,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/ws", get(ws_upgrade))
         .route("/relay", get(relay_upgrade))
+        .route("/relay/browser-source", post(relay_browser_source))
         .route(
             "/browser-route",
             post(resolve_browser_route).delete(release_browser_route),
@@ -229,89 +230,98 @@ async fn tailnet_gate(request: axum::extract::Request, next: axum::middleware::N
     next.run(request).await
 }
 
-#[derive(Deserialize)]
-struct BrowserRouteRequest {
-    device_id: String,
-    checkout_path: String,
-    id: String,
-    load: u64,
-    owner_pid: i32,
-}
-
-fn browser_route_authorized(headers: &HeaderMap, state: &AppState) -> bool {
+/// Whether `headers` carry this daemon's token, as the desktop host sends
+/// it for a route or a browser control.
+pub(crate) fn bearer_matches(headers: &HeaderMap, token: &str) -> bool {
     let offered = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .unwrap_or("");
-    token_matches(offered, &state.token)
+    token_matches(offered, token)
 }
 
-fn browser_route_request_valid(request: &BrowserRouteRequest) -> bool {
-    !request.device_id.is_empty()
-        && request.device_id.len() <= 256
-        && hide_platform::path::is_wire_absolute(&request.checkout_path)
-        && request.checkout_path.len() <= 8192
-        && !request.id.is_empty()
-        && request.id.len() <= 256
-        && request.owner_pid > 0
+fn browser_route_authorized(headers: &HeaderMap, state: &AppState) -> bool {
+    bearer_matches(headers, &state.token)
 }
 
 async fn resolve_browser_route(
     State(state): State<AppState>,
     headers: HeaderMap,
-    axum::Json(request): axum::Json<BrowserRouteRequest>,
+    axum::Json(request): axum::Json<crate::browser_routes::RouteRequest>,
 ) -> Response {
     if !browser_route_authorized(&headers, &state) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    if !browser_route_request_valid(&request) {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    match state
-        .browser_routes
-        .resolve(
-            request.device_id,
-            request.checkout_path,
-            request.id,
-            request.load,
-            request.owner_pid,
-        )
-        .await
-    {
-        Ok(route) => axum::Json(route).into_response(),
-        Err(reason) => {
-            eprintln!(
-                "{}",
-                json!({"component":"browser_routes","kind":"resolve.refused","reason":reason})
-            );
-            (StatusCode::CONFLICT, axum::Json(json!({"reason":reason}))).into_response()
-        }
-    }
+    crate::browser_routes::resolve_answer(&state.browser_routes, request).await
 }
 
 async fn release_browser_route(
     State(state): State<AppState>,
     headers: HeaderMap,
-    axum::Json(request): axum::Json<BrowserRouteRequest>,
+    axum::Json(request): axum::Json<crate::browser_routes::RouteRequest>,
 ) -> Response {
     if !browser_route_authorized(&headers, &state) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    if !browser_route_request_valid(&request) {
+    crate::browser_routes::release_answer(&state.browser_routes, request).await
+}
+
+/// What a linked node asks for one of its screens' Browser Views.
+#[derive(Deserialize)]
+pub(crate) struct BrowserSourceQuery {
+    pub(crate) device_id: String,
+    pub(crate) checkout_path: String,
+    pub(crate) id: String,
+    pub(crate) load: u64,
+}
+
+/// A linked node's screen resolving a Browser View's page (PRD
+/// core-host-node-remote-core D-17): the core answers the View's current
+/// source, and the node routes it on its own machine (`node_pages`). Taken
+/// only on a live relay grant, never through `tailscale serve`.
+async fn relay_browser_source(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(query): axum::Json<BrowserSourceQuery>,
+) -> Response {
+    if via_tailnet(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let admitted = headers
+        .get(RELAY_GRANT_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|grant| state.relay_grants.valid(grant));
+    if admitted.is_none() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if query.device_id.is_empty()
+        || query.device_id.len() > 256
+        || !hide_platform::path::is_wire_absolute(&query.checkout_path)
+        || query.checkout_path.len() > 8192
+        || query.id.is_empty()
+        || query.id.len() > 256
+    {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    state
-        .browser_routes
-        .release(
-            &request.device_id,
-            &request.checkout_path,
-            &request.id,
-            request.load,
-            request.owner_pid,
+    let core = Arc::clone(&state.core);
+    let source = tokio::task::spawn_blocking(move || {
+        core.browser_route_source(
+            &query.device_id,
+            &query.checkout_path,
+            &query.id,
+            query.load,
         )
-        .await;
-    StatusCode::NO_CONTENT.into_response()
+    })
+    .await;
+    match source {
+        Ok(Ok(source)) => axum::Json(json!({ "source": source })).into_response(),
+        _ => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(json!({"reason":"core_unavailable"})),
+        )
+            .into_response(),
+    }
 }
 
 fn browser_control_failure((reason, next_action): crate::browser_control::Failure) -> Response {

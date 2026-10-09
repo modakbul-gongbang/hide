@@ -162,6 +162,11 @@ type Socket =
 
 /// A screen of the node's machine: the node's `/ws`, as the web shell opens it.
 async fn screen_socket(port: u16, token: &str) -> Result<Socket> {
+    screen_socket_of(port, token, "web").await
+}
+
+/// A screen of the node's machine as a client of `kind` opens it.
+async fn screen_socket_of(port: u16, token: &str, kind: &str) -> Result<Socket> {
     let mut request = format!("ws://127.0.0.1:{port}/ws").into_client_request()?;
     request
         .headers_mut()
@@ -169,7 +174,7 @@ async fn screen_socket(port: u16, token: &str) -> Result<Socket> {
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await?;
     socket
         .send(Message::Text(
-            json!({"token": token, "schema_version": 2, "client_kind": "web"})
+            json!({"token": token, "schema_version": 2, "client_kind": kind})
                 .to_string()
                 .into(),
         ))
@@ -1343,6 +1348,168 @@ fn a_node_that_ends_leaves_no_attach_role_or_ssh_connection() -> Result<()> {
         runtime.block_on(node_link(port, "live", LINK_BOUND))?;
         eprintln!("the attach role ended {ended:?} after its node fell silent");
         Ok(())
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
+
+/// Serves `body` to every request on a loopback port until the test ends.
+fn loopback_page(body: String) -> Result<u16> {
+    use std::io::{Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request);
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    Ok(port)
+}
+
+fn http_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(20)))
+        .http_status_as_error(false)
+        .proxy(None)
+        .build()
+        .into()
+}
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_page_an_agent_of_the_core_opens_shows_on_the_node_and_reaches_the_cores_loopback() -> Result<()>
+{
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        // Its own repository, so the checkout is this folder and not the
+        // repository the run folder sits in.
+        let site = fixture.core_home().join("site");
+        std::fs::create_dir_all(&site)?;
+        ensure!(
+            std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&site)
+                .status()?
+                .success(),
+            "git init"
+        );
+        fixture.create_workspace_on(CORE_NODE, &site)?;
+        let nonce = format!("core-page-{}", std::process::id());
+        let page = loopback_page(nonce.clone())?;
+        let url = format!("http://localhost:{page}/");
+        let hide = fixture.hided.with_file_name("hide");
+        let open = |fixture: &Fixture| -> Result<Value> {
+            let mut command = fixture.core_command(&hide);
+            command
+                .args(["browser", "open", url.as_str()])
+                .current_dir(&site);
+            let output = command.output()?;
+            workspace_answer(&String::from_utf8_lossy(&output.stdout))
+                .with_context(|| format!("stderr: {}", String::from_utf8_lossy(&output.stderr)))
+        };
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            // No window anywhere: the agent is told there is none to show
+            // the page in.
+            let answer = tokio::task::block_in_place(|| open(&fixture))?;
+            ensure!(
+                answer["ok"] == false && answer["reason"] == "renderer_unavailable",
+                "a page opened with no window: {answer}"
+            );
+            // The node's desktop window is the one the page shows in.
+            let mut desktop = screen_socket_of(port, &token, "desktop").await?;
+            first_snapshot(&mut desktop, Duration::from_secs(20)).await?;
+            let answer = tokio::task::block_in_place(|| {
+                wait_for("the page opened in the node's window", || {
+                    let answer = open(&fixture)?;
+                    Ok((answer["ok"] == true).then_some(answer))
+                })
+            })?;
+            let opened = &answer["result"];
+            ensure!(
+                opened["context"]["device_id"] == CORE_NODE
+                    && opened["context"]["checkout_path"] == site.to_str().context("site")?,
+                "the page opened elsewhere: {answer}"
+            );
+            let route = json!({
+                "device_id": CORE_NODE,
+                "checkout_path": site,
+                "id": opened["view_id"],
+                "load": opened["load"],
+                "owner_pid": std::process::id(),
+            })
+            .to_string();
+            let endpoint = format!("http://127.0.0.1:{port}/browser-route");
+            let agent = http_agent();
+            // The node's desktop host resolves it on its own machine's daemon.
+            let resolved: Value = tokio::task::block_in_place(|| -> Result<Value> {
+                let unauthorized = agent
+                    .post(&endpoint)
+                    .header("Content-Type", "application/json")
+                    .send(route.as_bytes())?;
+                ensure!(
+                    unauthorized.status() == 401,
+                    "a route was resolved without the node's token"
+                );
+                let mut answer = agent
+                    .post(&endpoint)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .send(route.as_bytes())?;
+                let status = answer.status();
+                let body = answer.body_mut().read_to_string()?;
+                ensure!(status == 200, "the route answered {status}: {body}");
+                Ok(serde_json::from_str(&body)?)
+            })?;
+            let routed = resolved["url"].as_str().context("routed url")?.to_owned();
+            ensure!(
+                resolved["source_url"] == url.as_str()
+                    && resolved["load"] == opened["load"]
+                    && routed != url
+                    && !routed.contains(&format!(":{page}/")),
+                "the page was not routed through the link: {resolved}"
+            );
+            // The routed address reaches the core machine's loopback page
+            // through the link's SSH connection.
+            let body = tokio::task::block_in_place(|| -> Result<String> {
+                Ok(agent.get(&routed).call()?.body_mut().read_to_string()?)
+            })?;
+            ensure!(body == nonce, "the routed page answered {body:?}");
+            // The window lets the page go: the route closes with it.
+            tokio::task::block_in_place(|| -> Result<()> {
+                let released = agent
+                    .delete(&endpoint)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .force_send_body()
+                    .send(route.as_bytes())?;
+                ensure!(
+                    released.status() == 204,
+                    "release answered {}",
+                    released.status()
+                );
+                wait_for("the routed address closed", || {
+                    Ok(agent.get(&routed).call().is_err().then_some(()))
+                })
+            })?;
+            Ok::<_, anyhow::Error>(())
+        })
     })();
     match journey {
         Ok(()) => fixture.remove_run_dir(),

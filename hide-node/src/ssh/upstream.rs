@@ -192,7 +192,7 @@ impl Upstream {
         let (_cancel, canceled) = oneshot::channel();
         // The sender is kept alive for the call: a dropped sender reads as a
         // cancel.
-        let forward = self.client.start_local_workspace_forward(
+        let forward = self.page_forward(
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
             None,
             true,
@@ -200,6 +200,26 @@ impl Upstream {
         );
         drop(_cancel);
         forward
+    }
+
+    /// A page's way to `remote` on the core machine's loopback, over the
+    /// same connection, as a device's page route reaches its device
+    /// (`start_local_workspace_forward`): `alternate` is the other address
+    /// family a `localhost` page may resolve to, and a numeric HTTPS host
+    /// keeps its address for the certificate.
+    pub fn page_forward(
+        &self,
+        remote: SocketAddr,
+        alternate: Option<SocketAddr>,
+        preserve_numeric_host: bool,
+        canceled: oneshot::Receiver<()>,
+    ) -> RemoteResult<RemoteLocalForward> {
+        self.client.start_local_workspace_forward(
+            remote,
+            alternate,
+            preserve_numeric_host,
+            canceled,
+        )
     }
 
     /// Whether the connection still answers: one SSH ping, answered
