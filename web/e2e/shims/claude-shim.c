@@ -177,7 +177,9 @@ static int copy_seed(const char *seed, const char *destination) {
 /* The native-file fixture writes its own session, rather than having
    the spec plant an already-readable transcript. The private root supplies
    a bounded seed and destination; resumed launches preserve the same file.
-   Grok's session is a folder: its summary seed lands beside the conversation. */
+   Grok's session is a folder: its summary seed lands beside the conversation.
+   Without that configuration the binary is a plain stand-in, as other
+   specs (the Grok and Cursor hook spec) launch it. */
 static int native_session(int argc, char **argv) {
   const char *base = argv[0];
   for (const char *at = argv[0]; *at; at++) if (*at == '/' || *at == '\\') base = at + 1;
@@ -187,13 +189,13 @@ static int native_session(int argc, char **argv) {
   else if (strcmp(base, "grok") == 0 || strcmp(base, "grok.exe") == 0) { kind = "grok"; resume_flag = "--resume"; }
   else return 0;
   const char *root = getenv("HIDE_E2E_ROOT");
-  if (!root) return 1;
+  if (!root) return 0;
   char config[4096], destination[4096], seed[4096], launches[4096];
   if (snprintf(config, sizeof config, "%s/%s-session-path.config", root, kind) >= (int)sizeof config ||
       snprintf(seed, sizeof seed, "%s/%s-session-seed.jsonl", root, kind) >= (int)sizeof seed ||
       snprintf(launches, sizeof launches, "%s/%s-launches.jsonl", root, kind) >= (int)sizeof launches) return 1;
   FILE *file = fopen(config, "rb");
-  if (!file) return 1;
+  if (!file) return errno == ENOENT ? 0 : 1;
   size_t size = fread(destination, 1, sizeof destination - 1, file);
   int complete = !ferror(file) && feof(file);
   fclose(file);
