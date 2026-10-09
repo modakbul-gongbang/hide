@@ -6273,9 +6273,11 @@ impl Engine {
                     t.start_waiting = false;
                     t.person_items += 1;
                 });
-                // Asked again at once rather than at its next retry.
+                // Asked again at once rather than at its next retry, and a
+                // person is asked to look again only after another quiet
+                // stretch (B20).
                 if let Some(entry) = self.starting.get_mut(&(factory.clone(), id.clone())) {
-                    entry.1 = now;
+                    *entry = (now, now);
                 }
                 json!({"message": "the worker's start is asked again"})
             }

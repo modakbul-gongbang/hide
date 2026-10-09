@@ -3486,6 +3486,30 @@ fn a_worker_whose_agent_has_not_started_holds_its_slot_and_is_asked_again_later(
     assert_eq!(todo.task.as_deref(), Some(a.as_str()));
     assert_eq!(todo.resolve.as_deref(), Some("start:T-1"));
 
+    // "I looked": asked again at once, and while it still fails the to-do
+    // stays away for another ten minutes.
+    let pressed = h.op(Command::Resolve {
+        project: None,
+        target: ResolveTarget::parse("start:T-1").unwrap(),
+    });
+    assert_eq!(pressed["ok"], true, "{pressed}");
+    let start_items = |h: &Bench| {
+        h.engine
+            .summary()
+            .inbox
+            .iter()
+            .filter(|item| item.kind == "start")
+            .count()
+    };
+    for _ in 0..3 {
+        h.advance(60_000);
+        h.engine.tick();
+        assert_eq!(start_items(&h), 0, "the press put it away");
+    }
+    h.advance(10 * 60_000);
+    h.engine.tick();
+    assert_eq!(start_items(&h), 1, "still no session: asked again");
+
     // The agent comes up: the same spawn now answers, and B still waits.
     h.world().spawn_failure = None;
     h.advance(30_000);
