@@ -19,6 +19,12 @@ pub(super) struct AttachmentPayload {
     pub clipboard: bool,
     #[serde(default)]
     pub paths: Vec<String>,
+    /// The node whose own screen staged `paths` on its machine, for a pane
+    /// of that machine: they are pasted as they are, never read or copied
+    /// (PRD core-host-node-remote-core D-06). Only that node's relay may
+    /// send it (hided `relay_attachment`).
+    #[serde(default)]
+    pub staged_on: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

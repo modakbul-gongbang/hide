@@ -1607,3 +1607,164 @@ fn a_server_started_in_a_node_pane_is_that_panes_on_the_core() -> Result<()> {
         }
     }
 }
+
+/// Uploads `bytes` from a screen as the web shell does, as one dropped file
+/// for `pane`, after typing `cat ` there, then presses Enter: answers what
+/// the pane drew once `expect` appeared.
+async fn drop_into_cat(
+    socket: &mut Socket,
+    pane: &str,
+    bytes: &[u8],
+    expect: &str,
+) -> Result<String> {
+    type_and_read(socket, pane, "echo drop-\"ready\"", "drop-ready").await?;
+    let key = |text: &str| json!({"pane_id": pane, "bytes_base64": base64::engine::general_purpose::STANDARD.encode(text)});
+    send(socket, "key", key("cat ")).await?;
+    let batch = batch_id();
+    let stage = format!("{batch}-0");
+    send(
+        socket,
+        "attachment_stage",
+        json!({"request_id": stage, "name": "dropped.txt", "size": bytes.len(), "clipboard": false}),
+    )
+    .await?;
+    let header = json!({"request_id": stage, "offset": 0, "eof": true}).to_string();
+    let mut frame = (header.len() as u32).to_be_bytes().to_vec();
+    frame.extend_from_slice(header.as_bytes());
+    frame.extend_from_slice(bytes);
+    socket.send(Message::Binary(frame.into())).await?;
+    send(
+        socket,
+        "attachment_commit",
+        json!({"request_id": batch, "pane_id": pane, "bracketed_paste": true, "clipboard": false, "stages": [stage]}),
+    )
+    .await?;
+    let mut screen = String::new();
+    let mut entered = false;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while let Some(frame) = next_frame(socket, deadline).await? {
+        ensure!(
+            frame["type"] != "attachment_refused",
+            "the drop was refused: {frame}"
+        );
+        for (from, bytes) in chunks(&frame) {
+            if from == pane {
+                screen.push_str(&String::from_utf8_lossy(&bytes));
+            }
+        }
+        if !entered && plain(&screen).contains("dropped.txt") {
+            send(socket, "key", key("\r")).await?;
+            entered = true;
+        }
+        if plain(&screen).contains(expect) {
+            return Ok(plain(&screen));
+        }
+    }
+    bail!(
+        "{expect} never came back on {pane}; the screen read: {:?}",
+        plain(&screen)
+    )
+}
+
+/// A fresh batch id in the UUID shape the daemon requires.
+fn batch_id() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let hex = format!("{nanos:032x}");
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+/// The files a daemon's state folder stages uploads in.
+fn staged_files(state: &std::path::Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(state.join("attachments"))
+        .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_file_dropped_on_the_node_stays_there_for_its_own_pane_and_crosses_once_for_the_cores()
+-> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let project = fixture.screen_home().join("project");
+        let herdr_pane = fixture.screen.workspace_at(&project)?;
+        let pane = format!("remote:{node}:pane:{herdr_pane}");
+        let core_project = fixture.core_home().join("project");
+        let core_pane = fixture.core.workspace_at(&core_project)?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            // Into the node's own pane: the file is pasted from where the
+            // node staged it, and the core never holds a copy.
+            let here = format!("node-drop-{}", std::process::id());
+            drop_into_cat(&mut socket, &pane, here.as_bytes(), &here).await?;
+            ensure!(
+                staged_files(&fixture.node_state())
+                    .iter()
+                    .any(|path| std::fs::read(path).is_ok_and(|bytes| bytes == here.as_bytes())),
+                "the node did not stage the file it pasted"
+            );
+            ensure!(
+                staged_files(&fixture.core_state).is_empty(),
+                "the core holds a copy of a file for the node's own pane: {:?}",
+                staged_files(&fixture.core_state)
+            );
+            // Into a pane of the core's machine: the file reaches the core
+            // once, and the node keeps no copy.
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"path": core_project, "label": "core", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(&fixture, &mut socket, CORE_NODE, &core_project).await?;
+            let there = format!("core-drop-{}", std::process::id());
+            drop_into_cat(&mut socket, &core_pane, there.as_bytes(), &there).await?;
+            ensure!(
+                staged_files(&fixture.core_state)
+                    .iter()
+                    .any(|path| std::fs::read(path).is_ok_and(|bytes| bytes == there.as_bytes())),
+                "the core did not stage the file for its own pane"
+            );
+            ensure!(
+                !staged_files(&fixture.node_state())
+                    .iter()
+                    .any(|path| std::fs::read(path).is_ok_and(|bytes| bytes == there.as_bytes())),
+                "the node kept a copy of a file it sent on"
+            );
+            Ok::<_, anyhow::Error>(())
+        })
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}

@@ -1089,6 +1089,7 @@ For each screen M opens one relay to C through a local forward on its connection
 Each relay is read on its own task whatever the screen takes: the SSH client stops reading the whole connection while one channel's buffer is full, so a screen left unread would hold up every other screen, the panes and the link.
 A screen may leave at most 4 MiB of C's frames untaken (one frame is always held, since a file read sends 4 MiB at a time); past it the backlog is dropped, the relay closed with `screen.fell_behind`, and the screen drawn again from a fresh snapshot once it reads (`screen.resync`, D-20, B17).
 The answers C runs beside a linked node's screens (a device checkout's file reads and folder listings) hold one of 64 slots per node while they run; past it a new one is refused with `relay_busy` and logged (`relay.requests_full`).
+A file an M screen pastes or drops is staged on M (`hided/src/node_uploads.rs`): for one of M's panes C is told only its path on M (`terminal_attachment` with `staged_on`, accepted only from that node's relay) and pastes it as it pastes any device's, keeping its hold on the keys typed behind it; for any other pane M sends the upload on to C as the screen sent it and keeps no copy.
 C reads M's machine as it reads its own wherever the result is M's: M's coordinator asks M's TCP listeners through the link every 5 s (`ports.rs`, `InboundLink`), and they are attributed to M's panes only, as C's own are to C's; an SSH device's listeners are not read, so its panes carry none.
 A Browser View's page shown in an M window is routed by M's own daemon: it asks C for the View's address on the relay port with the same grant (`/relay/browser-source`), and reaches a loopback page of C through the link's SSH connection ([BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md#a-screen-whose-core-runs-on-another-machine)).
 Terminals take another way.
@@ -1115,7 +1116,7 @@ The human notice's Herdr toast goes to the first connected node that dialed in, 
 
 | Crosses between M and C (control) | Stays on M (data) |
 | --- | --- |
-| Each M screen's events, C's snapshots, deltas and answers, through that screen's relay | Keys into M's panes and their output |
+| Each M screen's events, C's snapshots, deltas and answers, through that screen's relay | Keys into M's panes and their output, and files an M screen pastes or drops into them |
 | A Browser View's address, and a page of C's loopback, through the link's SSH connection | Pages of M's own addresses |
 | Output of C's and other devices' panes, and keys into them, through the terminals relay | Bytes of files in M's checkouts under the roots C opened on M |
 | M's Herdr streams, pane and checkout proofs, input facts and the label lock, inside the link | M's screens' tokens and the desktop host's discovery (`hide connect`) |

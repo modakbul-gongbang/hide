@@ -16,6 +16,9 @@ pub(super) struct PendingAttachment {
     /// paste waits for that session until the operation's deadline.
     awaiting_terminal: bool,
     remote: Option<(String, u64)>,
+    /// The files are on the pane's own machine already, staged there by its
+    /// own screen: their paths are pasted as they are (`staged_on`).
+    on_pane_machine: bool,
     clipboard: bool,
     clipboard_preparing: bool,
     bracketed: bool,
@@ -308,6 +311,20 @@ impl Runtime {
                     .get(target)
                     .map(|generation| (target.clone(), *generation))
             });
+        // Only the pane's own machine may say the files are already there.
+        let on_pane_machine = match payload.staged_on.as_deref() {
+            None => false,
+            Some(node) => {
+                if remote.as_ref().is_none_or(|(target, _)| target != node) {
+                    operation.phase = "refused".to_owned();
+                    operation.message = Some("Invalid attachment request identity.".to_owned());
+                    self.attachment_rejection = Some(operation);
+                    self.sync_async_operations();
+                    return true;
+                }
+                true
+            }
+        };
         let awaiting_terminal = remote.is_none()
             && !payload.pane_id.starts_with("remote:")
             && !self.terminal_controlling(&payload.pane_id);
@@ -322,6 +339,7 @@ impl Runtime {
             awaiting_terminal,
             pane_id: payload.pane_id,
             remote,
+            on_pane_machine,
             clipboard: payload.clipboard,
             clipboard_preparing: payload.clipboard,
             bracketed: payload.bracketed_paste,
@@ -565,6 +583,7 @@ impl Runtime {
         let transport = pending
             .remote
             .as_ref()
+            .filter(|_| !pending.on_pane_machine)
             .and_then(|(target, _)| self.remote_file_transports.get(target))
             .cloned();
         let state_path = self.state_path.clone();
@@ -628,7 +647,7 @@ impl Runtime {
         pending.operation.stage = "transfer".to_owned();
         pending.operation.retryable = false;
         pending.operation.message = Some(
-            if pending.remote.is_some() {
+            if pending.remote.is_some() && !pending.on_pane_machine {
                 "Uploading files… Temporary files expire after 24 hours on a later paste."
             } else if pending.clipboard {
                 "Preparing image… Temporary files expire after 24 hours on a later paste."
@@ -642,9 +661,11 @@ impl Runtime {
         let request_id = pending.operation.id.clone();
         let paths = pending.paths.clone();
         let prepared = pending.prepared.clone();
+        let on_pane_machine = pending.on_pane_machine;
         let transport = pending
             .remote
             .as_ref()
+            .filter(|_| !pending.on_pane_machine)
             .and_then(|(target, _)| self.remote_file_transports.get(target))
             .cloned();
         let clipboard = pending.clipboard;
@@ -655,11 +676,16 @@ impl Runtime {
         match thread::Builder::new()
             .name("hide-terminal-attachment".to_owned())
             .spawn(move || {
+                // Files already on the pane's machine are neither read nor
+                // copied: their paths are the paste.
                 let prepared = match prepared {
                     Some(files) => Ok(files),
+                    None if on_pane_machine => Ok(Arc::new(Vec::new())),
                     None => ingress::read_sources(node.as_ref(), &paths, &cancelled).map(Arc::new),
                 };
-                let result =
+                let result = if on_pane_machine {
+                    Ok(paths.clone())
+                } else {
                     prepared
                         .as_ref()
                         .map_err(Clone::clone)
@@ -668,7 +694,8 @@ impl Runtime {
                                 transport.stage_attachments(&request_id, files, &cancelled)
                             }
                             None => Ok(files.iter().map(|file| file.path.clone()).collect()),
-                        });
+                        })
+                };
                 let remote_uploaded = transport.is_some() && result.is_ok();
                 let cleanup_files = prepared.as_ref().ok().cloned();
                 let Some(runtime) = context.runtime.upgrade() else {
@@ -894,8 +921,31 @@ mod tests {
             pane_id: pane.to_owned(),
             bracketed_paste: true,
             clipboard: true,
-            paths: Vec::new()
+            paths: Vec::new(),
+            staged_on: None,
         }));
+    }
+
+    /// Only a pane's own machine may say a paste's files are already there:
+    /// naming another machine is refused before any key is held.
+    #[test]
+    fn files_said_to_be_on_another_machine_than_the_panes_are_refused() {
+        let mut runtime = runtime();
+        assert!(runtime.begin_attachment(AttachmentPayload {
+            request_id: ID.to_owned(),
+            pane_id: "pane-one".to_owned(),
+            bracketed_paste: true,
+            clipboard: false,
+            paths: vec!["/Users/screen/shot.png".to_owned()],
+            staged_on: Some("mini".to_owned()),
+        }));
+        assert!(runtime.attachment.is_none());
+        let refused = runtime.attachment_rejection.as_ref().expect("refused");
+        assert_eq!(refused.phase, "refused");
+        assert_eq!(
+            refused.message.as_deref(),
+            Some("Invalid attachment request identity.")
+        );
     }
 
     /// The routes the runtime reaches its node by, with `pane-one`

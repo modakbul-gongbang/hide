@@ -22,6 +22,7 @@ pub mod mobile;
 pub mod node_cli;
 pub mod node_daemon;
 pub mod node_pages;
+pub mod node_uploads;
 
 pub mod node_panes;
 pub mod node_role;
@@ -605,6 +606,7 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
             version: VERSION,
             build: Some(Arc::from(build.as_str())),
             shutdown: Arc::clone(&shutdown),
+            state_dir: env.state_dir.clone(),
         },
     )?;
     herdr_core::diagnostic!(serde_json::json!({

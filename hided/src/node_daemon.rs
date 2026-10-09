@@ -47,10 +47,12 @@ use tokio::sync::{Notify, mpsc, watch};
 use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
+use crate::attachments::Attachments;
 use crate::boundary::{Boundary, Refusal, Root};
 use crate::browser_routes::{BrowserRoutes, RouteRequest};
 use crate::node_pages::NodePages;
 use crate::node_role::{LiveLink, NodeIdentity, NodeRole, Phase};
+use crate::node_uploads::{Handled, ScreenUploads};
 use crate::placement::Placement;
 use crate::server::{
     CloseReason, FIRST_FRAME_TIMEOUT, Handshake, RELAY_GRANT_HEADER, check_origin, refuse,
@@ -100,6 +102,9 @@ pub struct NodeState {
     pub browser_routes: Arc<BrowserRoutes>,
     /// Desktop windows attached now; with none, every route is closed.
     pub desktop_screens: Arc<AtomicUsize>,
+    /// Files this machine's screens paste or drop, staged here
+    /// (`node_uploads`).
+    pub attachments: Arc<Attachments>,
 }
 
 /// This machine's panes, as its hub names them: the core's names for them.
@@ -270,6 +275,7 @@ impl NodeDaemon {
                 held_frames: Arc::new(AtomicU64::new(0)),
                 browser_routes,
                 desktop_screens,
+                attachments: Arc::new(Attachments::new(&server.state_dir)),
             },
             role,
             relay,
@@ -299,6 +305,8 @@ pub struct ServerParts {
     pub version: &'static str,
     pub build: Option<Arc<str>>,
     pub shutdown: Arc<Notify>,
+    /// This machine's state folder, where its screens' uploads are staged.
+    pub state_dir: PathBuf,
 }
 
 pub fn router(state: NodeState) -> Router {
@@ -536,6 +544,12 @@ async fn attached(
     let mut live = state.live.clone();
     let mut terminals: Option<HubClient> = None;
     let mut told = InputNotices::default();
+    let mut uploads = ScreenUploads::new(
+        Arc::clone(&state.attachments),
+        connection,
+        state.boundary.node().as_str(),
+        &state.terminals.own_prefix,
+    );
     loop {
         let shared = Arc::clone(&relay.shared);
         tokio::select! {
@@ -634,6 +648,25 @@ async fn attached(
                             }
                             continue;
                         }
+                        match uploads.text(&text).await {
+                            Handled::NotUpload => {}
+                            Handled::Answer(frames) => {
+                                for frame in frames {
+                                    if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                                        return "screen_closed";
+                                    }
+                                }
+                                continue;
+                            }
+                            Handled::Up(frames) => {
+                                for frame in frames {
+                                    if relay.up(frame).await.is_err() {
+                                        return "link_ended";
+                                    }
+                                }
+                                continue;
+                            }
+                        }
                         if let Some(reply) = take_terminal_event(state, &text) {
                             match reply {
                                 Ok(Some(pane)) => {
@@ -657,9 +690,13 @@ async fn attached(
                             return "link_ended";
                         }
                     }
+                    // Every binary frame a screen sends is an upload chunk,
+                    // staged on this machine (`node_uploads`).
                     Message::Binary(bytes) => {
-                        if relay.up(tungstenite::Message::Binary(bytes)).await.is_err() {
-                            return "link_ended";
+                        for frame in uploads.chunk(&bytes) {
+                            if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                                return "screen_closed";
+                            }
                         }
                     }
                     Message::Close(_) => return "screen_closed",
