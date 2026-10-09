@@ -50,8 +50,8 @@ pub use label_owner::{
 pub use conversation_cursor::{ConversationCheckpoint, ConversationCursor};
 
 pub use catalog::{
-    ProjectSession, SESSION_DISCOVERY_LIMIT, SessionAvailability, SessionCatalog,
-    SessionCatalogError, SessionFilter,
+    ProjectSession, ProjectSessions, SESSION_DISCOVERY_LIMIT, SessionAvailability, SessionCatalog,
+    SessionCatalogError, SessionFilter, SessionStoreRefusal,
 };
 
 #[cfg(not(unix))]

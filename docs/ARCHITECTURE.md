@@ -677,11 +677,13 @@ Resume is `opencode -s <id>` and fork `opencode -s <id> --fork`; an id that begi
 OpenCode's activity is its newest write (the session row or any of its messages) and its message count, the same answer whose change wakes a sleeping OpenCode row's route proof.
 The project catalog lists root sessions by their own row's directory under the shared entry cap, with the locator `opencode/<id>`; search reads and stamps branch on that locator inside the existing calls, and a stamp is the session's creation, message count and newest write.
 OpenCode's database failing never takes the other agents' history with it: a database Hide cannot open or list contributes no rows, a session whose proof cannot be read is listed unavailable with its reason, and each session's proof has its own SQL work cap.
+A database that is there but cannot be listed rides the node's session answer as a row of its own (`{"agent", "store_refused"}`), which the core logs as `sessions.store_unreadable`; a missing database is no OpenCode sessions and logs nothing, and a core that does not know the row counts it as one refused row.
 Memory's own analysis pass reads only agents with a Memory reader, so an OpenCode row neither fails nor pauses it.
 Archive detail reads OpenCode through bounded label-transcript reads under the Conversation fact instead of `SessionText`; a session rewound or replaced between those reads refuses the detail.
 A message's offset is its index, and a checkpoint keeps the creation time and a digest of the last message read, so a session an OpenCode revert rewound and grew back is read again rather than continued.
 An OpenCode `question` tool part supplies the same structured question as Claude's: running asks, completed or error answers, pending (its input still streaming) asks nothing yet, and an unknown state refuses the read.
-More question parts on the unfinished message than the question cap, or one over the row limit, refuse the read rather than miss the one it waits on.
+More question parts on the unfinished message than the question cap refuse the read rather than miss the one it waits on; a part over the row limit is never parsed to learn whether it is a question and is skipped as `part_capacity`, as a finished message's is.
+Question parts that fit the row limit but not what is left of the read's budget leave the unfinished message to the next read, which starts at it.
 OpenCode keeps the asking assistant message unfinished while it waits, so that unfinished tail is folded without settling it (`TurnTracker::fold_unsettled`), and its completion folds again and clears the wait.
 The phone pages OpenCode by message index with the same page bounds, through the same proven reads.
 OpenCode records no Memory reader fact of its own: its receipts ride the label read.

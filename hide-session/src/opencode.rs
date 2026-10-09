@@ -341,23 +341,26 @@ pub(crate) fn stamp(home: &Path, id: &str, cwd: &str) -> Result<String, String> 
 /// catalog's capacity failure. No database means no OpenCode sessions.
 ///
 /// OpenCode's database failing never takes the other agents' sessions with
-/// it: a database Hide cannot open or list contributes no rows (its labels,
-/// activity and lifecycle reads refuse on their own), and a session whose
-/// proof or first request cannot be read is listed unavailable with why.
-/// Each session's proof has its own SQL work cap.
+/// it: a database Hide cannot open or list contributes no rows and answers
+/// the inner `Err` with why, for the caller to report; a session whose proof
+/// or first request cannot be read is listed unavailable with why. Each
+/// session's proof has its own SQL work cap.
 pub(crate) fn catalog(
     home: &Path,
     device_id: &str,
     project: &hide_project::ProjectIdentity,
     visited: &mut usize,
     limit: usize,
-) -> Result<Vec<crate::ProjectSession>, crate::SessionCatalogError> {
-    let Ok(connection) = open(home) else {
-        return Ok(Vec::new());
+) -> Result<Result<Vec<crate::ProjectSession>, String>, crate::SessionCatalogError> {
+    let connection = match open(home) {
+        Ok(connection) => connection,
+        Err(reason) if reason == "session_file_missing" => return Ok(Ok(Vec::new())),
+        Err(reason) => return Ok(Err(reason)),
     };
     let remaining = limit.saturating_sub(*visited);
-    let Ok(rows) = root_sessions(&connection, remaining) else {
-        return Ok(Vec::new());
+    let rows = match root_sessions(&connection, remaining) {
+        Ok(rows) => rows,
+        Err(reason) => return Ok(Err(reason)),
     };
     if rows.len() > remaining {
         return Err(crate::SessionCatalogError::Capacity { limit });
@@ -415,7 +418,7 @@ pub(crate) fn catalog(
         }
         sessions.push(session);
     }
-    Ok(sessions)
+    Ok(Ok(sessions))
 }
 
 /// Up to `remaining + 1` root sessions, newest first, as `(id, directory,
@@ -740,6 +743,7 @@ pub(crate) fn read_as(
             &connection,
             message_id,
             READ_BUDGET_BYTES.saturating_sub(spent),
+            &mut transcript,
         )? {
             None if next == start => {
                 return Err(SkipReason::UserTurnCapacity.as_str().to_owned());
@@ -782,38 +786,52 @@ pub(crate) fn read_as(
 
 /// The question marks of the message OpenCode is still writing, or `None`
 /// when they do not fit in `budget`. Only its `question` tool parts count:
-/// their sizes are admitted before any is loaded, and more than
-/// [`crate::turns::QUESTION_CALL_LIMIT`] of them, or one over the row limit,
-/// refuses the read rather than missing the question it waits on.
+/// a part over the row limit is never parsed to learn whether it is one and
+/// is skipped as `part_capacity`, as a finished message's is; the others'
+/// sizes are admitted before any is loaded, and more than
+/// [`crate::turns::QUESTION_CALL_LIMIT`] of them refuses the read rather
+/// than missing the question it waits on.
 fn unfinished_questions(
     connection: &Connection,
     message_id: &str,
     budget: u64,
+    transcript: &mut Read,
 ) -> Result<Option<Vec<ToolTurnMark>>, String> {
-    let capacity = || SkipReason::UserTurnCapacity.as_str().to_owned();
+    let oversized: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM part WHERE message_id = ?1 \
+             AND typeof(data) = 'text' AND octet_length(data) > ?2",
+            params![message_id, ROW_LIMIT_BYTES],
+            |row| row.get(0),
+        )
+        .map_err(|error| refusal(&error))?;
+    for _ in 0..oversized {
+        transcript.skip("part_capacity");
+    }
+    // CASE, unlike AND, fixes the order: no row over the limit is parsed.
     let mut headers = connection
         .prepare(
             "SELECT rowid, octet_length(data) FROM part WHERE message_id = ?1 \
-             AND typeof(data) = 'text' AND json_valid(data) \
-             AND json_extract(data, '$.type') = 'tool' \
-             AND json_extract(data, '$.tool') = 'question' \
+             AND typeof(data) = 'text' AND CASE WHEN octet_length(data) <= ?3 \
+             THEN json_valid(data) AND json_extract(data, '$.type') = 'tool' \
+             AND json_extract(data, '$.tool') = 'question' ELSE 0 END \
              ORDER BY time_created, id LIMIT ?2",
         )
         .map_err(|error| refusal(&error))?;
     let headers = headers
         .query_map(
-            params![message_id, crate::turns::QUESTION_CALL_LIMIT as i64 + 1],
+            params![
+                message_id,
+                crate::turns::QUESTION_CALL_LIMIT as i64 + 1,
+                ROW_LIMIT_BYTES
+            ],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, u64>(1)?)),
         )
         .map_err(|error| refusal(&error))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| refusal(&error))?;
-    if headers.len() > crate::turns::QUESTION_CALL_LIMIT
-        || headers
-            .iter()
-            .any(|(_, bytes)| *bytes > ROW_LIMIT_BYTES as u64)
-    {
-        return Err(capacity());
+    if headers.len() > crate::turns::QUESTION_CALL_LIMIT {
+        return Err(SkipReason::UserTurnCapacity.as_str().to_owned());
     }
     let bytes: u64 = headers
         .iter()

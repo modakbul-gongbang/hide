@@ -1964,6 +1964,12 @@ fn project_sessions(
             "project_id": identity.id, "sessions": page.refused,
         }));
     }
+    for refusal in &page.store_refusals {
+        crate::diagnostic!(serde_json::json!({
+            "component": "memory", "kind": "sessions.store_unreadable",
+            "project_id": identity.id, "agent": refusal.agent, "reason": refusal.reason,
+        }));
+    }
     Ok(page.rows)
 }
 

@@ -568,7 +568,8 @@ mod pi {
         let project = hide_project::resolve(&native.cwd, "local").unwrap();
         let sessions = SessionCatalog::new(native.home.path(), "local")
             .project_sessions(&project)
-            .unwrap();
+            .unwrap()
+            .sessions;
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "pi-native-a");
         assert_eq!(sessions[0].agent, Agent::Pi);
@@ -1818,6 +1819,117 @@ fn more_opencode_questions_than_the_cap_refuse_the_read_rather_than_miss_one() {
     );
 }
 
+/// A `part` row of `message` holding `data` padded by `padding` bytes.
+fn opencode_padded_part(
+    writer: &rusqlite::Connection,
+    id: &str,
+    message: &str,
+    at: u64,
+    mut data: serde_json::Value,
+    padding: usize,
+) {
+    data["padding"] = serde_json::json!("x".repeat(padding));
+    writer
+        .execute(
+            "INSERT INTO part VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+            rusqlite::params![id, message, OPENCODE_ROOT, at, data.to_string()],
+        )
+        .unwrap();
+}
+
+fn opencode_running_question() -> serde_json::Value {
+    serde_json::json!({"type": "tool", "tool": "question", "callID": "call_big",
+        "state": {"status": "running", "time": {"start": START},
+            "input": {"questions": [{"question": "어느 브랜치에 올릴까요?",
+                "options": [{"label": "main"}, {"label": "release"}]}]}}})
+}
+
+#[test]
+fn an_oversized_part_beside_an_opencode_question_is_skipped_and_the_question_still_asks() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    opencode_assistant(&writer, "msg_07", START + 400_000, false);
+    opencode_padded_part(
+        &writer,
+        "prt_big",
+        "msg_07",
+        START + 400_050,
+        serde_json::json!({"type": "tool", "tool": "bash", "callID": "call_bash"}),
+        hide_session::SESSION_LINE_LIMIT_BYTES,
+    );
+    opencode_question(&writer, "msg_07", START + 400_100, "running");
+    let asking = read_whole(home.path(), Agent::OpenCode);
+    assert_eq!(
+        asking.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Question)
+    );
+    assert_eq!(asking.skipped_reasons.get("part_capacity"), Some(&1));
+}
+
+#[test]
+fn an_opencode_question_over_the_row_limit_is_skipped_as_part_capacity_not_loaded() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    opencode_assistant(&writer, "msg_07", START + 400_000, false);
+    opencode_padded_part(
+        &writer,
+        "prt_big",
+        "msg_07",
+        START + 400_100,
+        opencode_running_question(),
+        hide_session::SESSION_LINE_LIMIT_BYTES,
+    );
+    let read = read_whole(home.path(), Agent::OpenCode);
+    assert_eq!(read.skipped_reasons.get("part_capacity"), Some(&1));
+    assert_eq!(
+        read.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Nothing)
+    );
+}
+
+#[test]
+fn an_opencode_question_past_the_read_budget_waits_for_the_next_read_and_then_asks() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    // Four finished messages spend nearly the whole read budget, each part
+    // under the row limit, so the unfinished question no longer fits.
+    let part = hide_session::SESSION_LINE_LIMIT_BYTES - 6 * 1024;
+    for index in 0..4u64 {
+        let message = format!("msg_07{index}");
+        let at = START + 400_000 + index * 10;
+        opencode_assistant(&writer, &message, at, true);
+        opencode_padded_part(
+            &writer,
+            &format!("prt_fill{index}"),
+            &message,
+            at + 1,
+            serde_json::json!({"type": "text", "text": "filler"}),
+            part,
+        );
+    }
+    opencode_assistant(&writer, "msg_08", START + 400_100, false);
+    opencode_padded_part(
+        &writer,
+        "prt_big",
+        "msg_08",
+        START + 400_110,
+        opencode_running_question(),
+        64 * 1024,
+    );
+
+    let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
+    assert!(first.has_more);
+    assert_eq!(
+        first.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Nothing)
+    );
+    let next = read(home.path(), &opencode_continued(&first)).unwrap();
+    assert_eq!(
+        next.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Question)
+    );
+}
+
 #[test]
 fn a_dismissed_opencode_question_ends_the_wait_and_a_read_from_the_start_agrees() {
     let home = home(Agent::OpenCode);
@@ -2052,6 +2164,8 @@ fn opencode_catalog_and_search_hold_only_its_root_sessions_in_the_project() {
     let sessions = SessionCatalog::new(home.path(), "local")
         .project_sessions(&project)
         .unwrap();
+    assert!(sessions.refusals.is_empty(), "{:?}", sessions.refusals);
+    let sessions = sessions.sessions;
     assert_eq!(sessions.len(), 1, "{sessions:?}");
     let session = &sessions[0];
     assert_eq!(session.id, OPENCODE_ROOT);

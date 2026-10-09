@@ -102,6 +102,26 @@ impl Error for SessionCatalogError {
     }
 }
 
+/// What one catalog read found: the project's sessions, and each agent
+/// store that contributed none because it could not be read, with why. A
+/// refusal never takes the other agents' sessions with it; it reaches the
+/// core's log, since the operator cannot act on it from the archive.
+#[derive(Debug, Default)]
+pub struct ProjectSessions {
+    pub sessions: Vec<ProjectSession>,
+    pub refusals: Vec<SessionStoreRefusal>,
+}
+
+/// One agent store the catalog could not read. It rides the node's
+/// session list as a row of its own (`{"agent", "store_refused"}`), which a
+/// core that does not know the shape counts as one refused row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionStoreRefusal {
+    pub agent: Agent,
+    #[serde(rename = "store_refused")]
+    pub reason: String,
+}
+
 pub struct SessionCatalog {
     home: PathBuf,
     device_id: String,
@@ -118,7 +138,7 @@ impl SessionCatalog {
     pub fn project_sessions(
         &self,
         project: &ProjectIdentity,
-    ) -> Result<Vec<ProjectSession>, SessionCatalogError> {
+    ) -> Result<ProjectSessions, SessionCatalogError> {
         let mut files = Vec::new();
         let mut visited = 0;
         collect_jsonl(
@@ -148,13 +168,21 @@ impl SessionCatalog {
             )?;
         }
 
+        let mut refusals = Vec::new();
         let mut sessions = crate::opencode::catalog(
             &self.home,
             &self.device_id,
             project,
             &mut visited,
             SESSION_DISCOVERY_LIMIT,
-        )?;
+        )?
+        .unwrap_or_else(|reason| {
+            refusals.push(SessionStoreRefusal {
+                agent: Agent::OpenCode,
+                reason,
+            });
+            Vec::new()
+        });
         for (agent, path) in files {
             if agent == Agent::Pi && crate::pi::inside_root(&self.home, &path).is_err() {
                 continue;
@@ -178,7 +206,7 @@ impl SessionCatalog {
                 .cmp(&left.updated_at_unix_ms)
                 .then_with(|| left.id.cmp(&right.id))
         });
-        Ok(sessions)
+        Ok(ProjectSessions { sessions, refusals })
     }
 
     pub fn filtered(
@@ -440,7 +468,7 @@ mod tests {
             format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"codex-1\",\"cwd\":{}}}}}\n{{\"type\":\"response_item\",\"timestamp\":\"2026-09-21T02:00:00Z\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"beta request\"}}]}}}}\n", serde_json::to_string(&project_root).unwrap()),
         ).unwrap();
         let catalog = SessionCatalog::new(&home, "local");
-        let sessions = catalog.project_sessions(&project).unwrap();
+        let sessions = catalog.project_sessions(&project).unwrap().sessions;
         assert_eq!(
             sessions
                 .iter()
@@ -460,35 +488,60 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_opencode_database_leaves_the_other_agents_sessions_listed() {
+    fn an_unreadable_opencode_database_is_refused_once_and_leaves_the_other_agents_sessions_listed()
+    {
         let root = tempdir().unwrap();
         let home = root.path().join("home");
         let project_root = root.path().join("project");
+        let database = home.join(".local/share/opencode/opencode.db");
         fs::create_dir_all(home.join(".claude/projects/p")).unwrap();
-        fs::create_dir_all(home.join(".local/share/opencode")).unwrap();
+        fs::create_dir_all(database.parent().unwrap()).unwrap();
         fs::create_dir_all(&project_root).unwrap();
         let project = hide_project::resolve(&project_root, "local").unwrap();
         fs::write(
             home.join(".claude/projects/p/claude-1.jsonl"),
             format!("{{\"type\":\"user\",\"cwd\":{},\"timestamp\":\"2026-09-21T01:00:00Z\",\"origin\":{{\"kind\":\"human\"}},\"message\":{{\"role\":\"user\",\"content\":\"alpha request\"}}}}\n", serde_json::to_string(&project_root).unwrap()),
         ).unwrap();
-        fs::write(
-            home.join(".local/share/opencode/opencode.db"),
-            "not a database",
-        )
-        .unwrap();
-
-        let sessions = SessionCatalog::new(&home, "local")
-            .project_sessions(&project)
-            .unwrap();
-
-        assert_eq!(
-            sessions
+        let catalog = SessionCatalog::new(&home, "local");
+        let read = |catalog: &SessionCatalog| {
+            let read = catalog.project_sessions(&project).unwrap();
+            let ids = read
+                .sessions
                 .iter()
-                .map(|session| session.id.as_str())
-                .collect::<Vec<_>>(),
-            ["claude-1"]
+                .map(|session| session.id.clone())
+                .collect::<Vec<_>>();
+            (ids, read.refusals)
+        };
+
+        // No OpenCode database is no OpenCode sessions, and nothing refused.
+        assert_eq!(read(&catalog), (vec!["claude-1".to_owned()], Vec::new()));
+
+        let refused = |reason: &str| {
+            vec![SessionStoreRefusal {
+                agent: Agent::OpenCode,
+                reason: reason.to_owned(),
+            }]
+        };
+        fs::write(&database, "not a database").unwrap();
+        assert_eq!(
+            read(&catalog),
+            (
+                vec!["claude-1".to_owned()],
+                refused("opencode_db_unreadable")
+            )
         );
+
+        #[cfg(unix)]
+        {
+            fs::remove_file(&database).unwrap();
+            let elsewhere = root.path().join("elsewhere.db");
+            fs::write(&elsewhere, "").unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &database).unwrap();
+            assert_eq!(
+                read(&catalog),
+                (vec!["claude-1".to_owned()], refused("label_session_linked"))
+            );
+        }
     }
 
     #[test]
@@ -511,7 +564,8 @@ mod tests {
 
         let sessions = SessionCatalog::new(&home, "local")
             .project_sessions(&project)
-            .unwrap();
+            .unwrap()
+            .sessions;
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(
