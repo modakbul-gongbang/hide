@@ -21,11 +21,15 @@
 //! drawn whole, never left blank or drawn from a broken stream, and the
 //! redraw is counted in the diagnostic log.
 //!
+//! A client's unsent chunks wait pane by pane, taken in the order the hub
+//! numbered them, so a full frame, an overflow or a forget touches only its
+//! own pane's chunks, and frees them after the lock is released.
+//!
 //! A chunk past [`MAX_CHUNK_BYTES`] is not drawn at all: its pane waits for
 //! a full frame that fits, asked for when the long chunk was not full
 //! itself, so a pane whose every frame is that long cannot loop.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -82,8 +86,63 @@ struct PaneRing {
     redraw_asked: Option<Instant>,
 }
 
+/// What waits for one client, pane by pane, taken in the order the hub
+/// numbered it: dropping or replacing one pane's chunks (a full frame, an
+/// overflow, a forget) touches only that pane's, however many of other
+/// panes' wait behind a stalled client.
+#[derive(Default)]
+struct Waiting {
+    panes: HashMap<Arc<str>, VecDeque<Arc<Chunk>>>,
+    /// The first sequence of every pane with chunks waiting.
+    fronts: BTreeMap<u64, Arc<str>>,
+}
+
+impl Waiting {
+    fn push(&mut self, chunk: Arc<Chunk>) {
+        let queue = self.panes.entry(Arc::clone(&chunk.pane)).or_default();
+        if queue.is_empty() {
+            self.fronts.insert(chunk.sequence, Arc::clone(&chunk.pane));
+        }
+        queue.push_back(chunk);
+    }
+
+    /// Takes what of `pane` waits out of the queue; its caller frees it
+    /// once the hub's lock is released.
+    fn clear(&mut self, pane: &str) -> Option<VecDeque<Arc<Chunk>>> {
+        let queue = self.panes.remove(pane)?;
+        if let Some(front) = queue.front() {
+            self.fronts.remove(&front.sequence);
+        }
+        Some(queue)
+    }
+
+    /// The waiting chunk the hub numbered first.
+    fn pop(&mut self) -> Option<Arc<Chunk>> {
+        let (_, pane) = self.fronts.pop_first()?;
+        let queue = self.panes.get_mut(&pane)?;
+        let chunk = queue.pop_front()?;
+        match queue.front() {
+            Some(next) => {
+                self.fronts.insert(next.sequence, pane);
+            }
+            None => {
+                self.panes.remove(&pane);
+            }
+        }
+        Some(chunk)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.fronts.is_empty()
+    }
+
+    fn chunks(&self) -> impl Iterator<Item = &Arc<Chunk>> {
+        self.panes.values().flatten()
+    }
+}
+
 struct Client {
-    queue: VecDeque<Arc<Chunk>>,
+    queue: Waiting,
     /// Each pane's bytes in `queue` after its full frame, if one waits.
     unsent: HashMap<Arc<str>, usize>,
     /// Panes this client gets nothing of until their next full frame.
@@ -151,7 +210,7 @@ impl TerminalHub {
         let id = state.next_client;
         state.next_client += 1;
         let mut client = Client {
-            queue: VecDeque::new(),
+            queue: Waiting::default(),
             unsent: HashMap::new(),
             awaiting_full: HashSet::new(),
             redraw: HashSet::new(),
@@ -194,7 +253,7 @@ impl TerminalHub {
                 state
                     .clients
                     .values()
-                    .flat_map(|client| client.queue.iter()),
+                    .flat_map(|client| client.queue.chunks()),
             );
         for chunk in chunks {
             let key = Arc::as_ptr(chunk);
@@ -243,11 +302,11 @@ fn resume_from(state: &mut HubState, client: &mut Client, cursor: u64) {
         let unsent = client.unsent.entry(Arc::clone(&chunk.pane)).or_default();
         if chunk.full {
             *unsent = 0;
-            client.queue.retain(|queued| queued.pane != chunk.pane);
+            drop(client.queue.clear(&chunk.pane));
         } else {
             *unsent += chunk.size();
         }
-        client.queue.push_back(chunk);
+        client.queue.push(chunk);
     }
 }
 
@@ -265,7 +324,7 @@ fn drop_oversized(state: &mut HubState, pane: &str, bytes: usize, full: bool) {
         ring.redraw_asked = None;
     }
     for client in state.clients.values_mut() {
-        client.queue.retain(|queued| queued.pane != pane);
+        drop(client.queue.clear(&pane));
         client.unsent.remove(&pane);
         client.awaiting_full.insert(Arc::clone(&pane));
         if !full && client.redraw.insert(Arc::clone(&pane)) {
@@ -354,6 +413,8 @@ impl OutputSink for TerminalHub {
             ring.bytes -= trimmed.size();
             ring.trimmed_through = trimmed.sequence;
         }
+        // What a full frame or an overflow drops is freed after the lock.
+        let mut freed = Vec::new();
         let HubState { panes, clients, .. } = &mut *state;
         let ring = panes.get_mut(&pane).expect("present");
         let now = Instant::now();
@@ -377,15 +438,15 @@ impl OutputSink for TerminalHub {
             let unsent = client.unsent.entry(Arc::clone(&pane)).or_default();
             if full {
                 *unsent = 0;
-                client.queue.retain(|queued| queued.pane != pane);
-                client.queue.push_back(Arc::clone(&chunk));
+                freed.extend(client.queue.clear(&pane));
+                client.queue.push(Arc::clone(&chunk));
                 client.wake.notify_one();
                 continue;
             }
             if *unsent + chunk.size() > MAX_UNSENT_OUTPUT_BYTES {
                 let dropped = *unsent;
                 *unsent = 0;
-                client.queue.retain(|queued| queued.pane != pane);
+                freed.extend(client.queue.clear(&pane));
                 herdr_core::diagnostic!(json!({
                     "component": "terminal_hub",
                     "kind": "terminal.output_overflow",
@@ -398,20 +459,26 @@ impl OutputSink for TerminalHub {
                 continue;
             }
             *unsent += chunk.size();
-            client.queue.push_back(Arc::clone(&chunk));
+            client.queue.push(Arc::clone(&chunk));
             client.wake.notify_one();
         }
+        drop(state);
+        drop(freed);
     }
 
     fn forget(&self, pane: &str) {
         let mut state = lock(&self.state);
-        state.panes.remove(pane);
+        let ring = state.panes.remove(pane);
+        let mut freed = Vec::new();
         for client in state.clients.values_mut() {
-            client.queue.retain(|queued| queued.pane.as_ref() != pane);
+            freed.extend(client.queue.clear(pane));
             client.unsent.remove(pane);
             client.awaiting_full.remove(pane);
             client.redraw.remove(pane);
         }
+        // Freed with the lock released.
+        drop(state);
+        drop((ring, freed));
     }
 }
 
@@ -430,7 +497,7 @@ impl HubClient {
         let mut state = lock(&self.hub.state);
         let sequence = state.sequence;
         if let Some(client) = state.clients.get_mut(&self.id) {
-            client.queue.clear();
+            client.queue = Waiting::default();
             client.unsent.clear();
             client.awaiting_full.clear();
             client.redraw.clear();
@@ -476,7 +543,7 @@ impl HubClient {
             if index > 0 && text.len() >= FRAME_TEXT_BYTES {
                 break;
             }
-            let Some(chunk) = client.queue.pop_front() else {
+            let Some(chunk) = client.queue.pop() else {
                 break;
             };
             if !chunk.full
@@ -661,6 +728,29 @@ mod tests {
         let (frame, _) = stalled.take();
         let (chunks, _) = frame_chunks(&frame.unwrap());
         assert_eq!(chunks.last().unwrap().1, b"\x1bcwhole");
+    }
+
+    /// One pane's full frame drops only that pane's waiting chunks; every
+    /// other pane's still go out in the order they came.
+    #[test]
+    fn a_full_frame_keeps_the_other_panes_chunks_in_their_order() {
+        let hub = TerminalHub::new();
+        let client = hub.connect(Resume::Fresh);
+        let _ = client.take();
+        hub.output("w1:p1", b"a", false);
+        hub.output("w1:p2", b"b", false);
+        hub.output("w1:p3", b"c", false);
+        hub.output("w1:p1", b"d", false);
+        hub.output("w1:p2", b"e", false);
+        hub.output("w1:p1", b"F", true);
+        let (frame, _) = client.take();
+        let (chunks, cursor) = frame_chunks(&frame.unwrap());
+        let drawn = chunks
+            .iter()
+            .map(|(pane, bytes)| format!("{pane}={}", String::from_utf8_lossy(bytes)))
+            .collect::<Vec<_>>();
+        assert_eq!(drawn, ["w1:p2=b", "w1:p3=c", "w1:p2=e", "w1:p1=F"]);
+        assert_eq!(cursor, 6);
     }
 
     #[test]
