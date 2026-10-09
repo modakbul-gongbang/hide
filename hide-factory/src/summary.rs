@@ -1482,17 +1482,13 @@ fn decision_views(task: &Task) -> Vec<DecisionView> {
         .collect()
 }
 
-/// The card's criteria with the check's verdicts, matched by text and, when
-/// the check named them differently but counted the same, by place.
+/// The card's criteria with the check's verdict for each, by its place.
 fn checklist(criteria: &[String], verdicts: &[CriterionVerdict]) -> Vec<CriterionView> {
     criteria
         .iter()
         .enumerate()
         .map(|(index, text)| {
-            let verdict = verdicts
-                .iter()
-                .find(|v| v.criterion.trim() == text.trim())
-                .or_else(|| (verdicts.len() == criteria.len()).then(|| &verdicts[index]));
+            let verdict = verdicts.iter().find(|v| v.index == index);
             CriterionView {
                 text: text.clone(),
                 state: verdict.map(|v| v.state),

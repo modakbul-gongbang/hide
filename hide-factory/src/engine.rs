@@ -3541,7 +3541,8 @@ impl Engine {
     /// letter (B67). Each answers pass, send back or questions, with a
     /// verdict per criterion (D-28).
     fn apply_finding(&mut self, factory: &str, id: &str, value: &Value, holds_merge: bool) {
-        let finding = match judgment::parse_finding(value) {
+        let criteria = self.task(factory, id).map_or(0, |t| t.card.criteria.len());
+        let finding = match judgment::parse_finding(value, criteria) {
             Ok(finding) => finding,
             Err(reason) if holds_merge => return self.check_failed(factory, id, &reason),
             Err(_) => return,
@@ -5599,10 +5600,13 @@ impl Engine {
                     let drafting = self
                         .task(&factory, &task)
                         .is_some_and(|t| t.state == TaskState::Drafting);
+                    let criteria = self
+                        .task(&factory, &task)
+                        .map_or(0, |t| t.card.criteria.len());
                     match outcome {
                         JudgmentOutcome::Answered { value } if drafting => {
                             // An intake check only adds questions to the draft.
-                            if let Ok(finding) = judgment::parse_finding(value) {
+                            if let Ok(finding) = judgment::parse_finding(value, criteria) {
                                 for question in &finding.questions {
                                     self.add_question(
                                         &factory,
@@ -5627,7 +5631,10 @@ impl Engine {
                     self.advance_merge(&factory, &task);
                 }
                 (JudgmentOutcome::Answered { value }, Purpose::Periodic, Some(task)) => {
-                    match judgment::parse_finding(value) {
+                    let criteria = self
+                        .task(&factory, &task)
+                        .map_or(0, |t| t.card.criteria.len());
+                    match judgment::parse_finding(value, criteria) {
                         Ok(_) => self.apply_finding(&factory, &task, value, false),
                         Err(_) => self.record(
                             &factory,

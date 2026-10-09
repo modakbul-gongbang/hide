@@ -216,7 +216,7 @@ fn send_back(fix: &str) -> Value {
     json!({
         "verdict": "send_back",
         "send_back": fix,
-        "criteria": [{"criterion": "it works", "state": "unmet", "reason": "no test"}],
+        "criteria": [{"index": 0, "state": "unmet", "reason": "no test"}],
         "questions": [],
         "flags": [],
     })

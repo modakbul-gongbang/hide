@@ -1887,7 +1887,8 @@ pub struct Task {
 /// One completion criterion as a check judged it (D-28).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CriterionVerdict {
-    pub criterion: String,
+    /// The criterion's place in the card's criteria, from 0.
+    pub index: usize,
     pub state: CriterionState,
     #[serde(default)]
     pub reason: String,
