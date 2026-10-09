@@ -435,11 +435,11 @@ impl Shared {
                     break;
                 };
                 drop(deliveries);
-                let handed = panic::catch_unwind(AssertUnwindSafe(|| match delivery {
+                let handed = panic::catch_unwind(AssertUnwindSafe(|| match &delivery {
                     Delivery::Output { pane, bytes, full } => {
-                        self.outputs.output(&pane, &bytes, full)
+                        self.outputs.output(pane, bytes, *full)
                     }
-                    Delivery::Forget { pane } => self.outputs.forget(&pane),
+                    Delivery::Forget { pane } => self.outputs.forget(pane),
                 }));
                 deliveries = self.deliveries_lock();
                 deliveries.handed += 1;
@@ -449,6 +449,16 @@ impl Shared {
                     deliveries.handing = false;
                     drop(deliveries);
                     self.handed.notify_all();
+                    let (pane, forget) = match &delivery {
+                        Delivery::Output { pane, .. } => (pane, false),
+                        Delivery::Forget { pane } => (pane, true),
+                    };
+                    crate::diagnostic!(json!({
+                        "component": "terminal_session",
+                        "kind": "terminal.sink_panicked",
+                        "pane_id": pane,
+                        "forget": forget,
+                    }));
                     panic::resume_unwind(failure);
                 }
             }
