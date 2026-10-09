@@ -408,6 +408,22 @@ impl Fixture {
         log_rows(&self.core_state.join("Logs/core.jsonl"), component, kind)
     }
 
+    /// Whether `text` is in anything either daemon logged: its diagnostic
+    /// log or its standard error.
+    pub fn logs_mention(&self, text: &str) -> Result<bool> {
+        for path in [
+            self.core_state.join("Logs/core.jsonl"),
+            self._ipc.path().join("s/Logs/core.jsonl"),
+            self.root.join("core-hided.log"),
+            self.root.join("node-hided.log"),
+        ] {
+            if path.exists() && String::from_utf8_lossy(&read(&path)?).contains(text) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub fn create_workspace_on(&self, node: &str, path: &Path) -> Result<()> {
         self.event(
             "create_workspace",

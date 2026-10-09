@@ -667,7 +667,25 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
             );
             eprintln!("reattached {returned:?} after SSH answered again");
             Ok::<_, anyhow::Error>(())
-        })
+        })?;
+        // B19: the link's start, end and retries are recorded with the
+        // machines they joined, and nothing typed is.
+        let linked = fixture.core_log("node_link", "attach.linked")?;
+        ensure!(
+            linked.len() >= 2 && linked.iter().all(|row| row["node"] == node.as_str()),
+            "the core's link records: {linked:?}"
+        );
+        let ended = fixture.node_log("node_role", "link.ended")?;
+        ensure!(
+            ended
+                .iter()
+                .all(|row| row["core"] == CORE_NODE && row["retry_ms"].is_u64()),
+            "the node's link records: {ended:?}"
+        );
+        for typed in ["before-", "after-", "held-"] {
+            ensure!(!fixture.logs_mention(typed)?, "{typed} reached a log");
+        }
+        Ok(())
     })();
     match journey {
         Ok(()) => fixture.remove_run_dir(),
@@ -839,6 +857,15 @@ fn a_node_pane_calls_its_core_through_the_link() -> Result<()> {
             ensure!(
                 info["ok"] == false && info["reason"] == "checkout_not_registered",
                 "a caller outside the pane and every checkout was answered: {info}"
+            );
+            // B19: the refusal is recorded with its node and reason; no pane
+            // was proven, so it names none.
+            let refused = fixture.core_log("node_panes", "pane.refused")?;
+            ensure!(
+                refused.iter().any(|row| row["node"] == node.as_str()
+                    && row["reason"] == "checkout_not_registered"
+                    && row["pane_id"].is_null()),
+                "the refusal records: {refused:?}"
             );
             // The link ends: the node's callers are refused at once, and
             // answered again once it is back.
@@ -1115,6 +1142,10 @@ fn a_node_screen_reads_its_own_checkouts_files_without_the_core() -> Result<()> 
         ensure!(
             ended.iter().any(|row| row["local_file_reads"] == 1),
             "the read went through the core: {ended:?}"
+        );
+        ensure!(
+            !fixture.logs_mention("read-on-this-machine")?,
+            "a file's content reached a log"
         );
         Ok(())
     })();
