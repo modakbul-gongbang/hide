@@ -375,7 +375,7 @@ impl Starts {
         key: &str,
         job: &WorkerSpawn,
         began: Instant,
-        result: &Result<WorkerRef, Failure>,
+        result: &Result<StartedWorker, Failure>,
     ) -> Option<Value> {
         let since = self.unfinished.get(key).map_or(began, |entry| entry.since);
         let waited_ms = u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -395,11 +395,11 @@ impl Starts {
             line
         };
         match result {
-            Ok(worker) => {
+            Ok(started) => {
                 self.unfinished.remove(key)?;
                 Some(line(
                     "worker.start_accepted",
-                    json!({"pane_id": worker.pane}),
+                    json!({"pane_id": started.worker.pane}),
                 ))
             }
             Err(failure) if failure.starting => {
@@ -3623,7 +3623,7 @@ mod tests {
         state: &Arc<Mutex<WorkerState>>,
         jobs: Receiver<WorkerSpawn>,
         job: &WorkerSpawn,
-        results: Vec<Result<WorkerRef, Failure>>,
+        results: Vec<Result<StartedWorker, Failure>>,
     ) -> Vec<Value> {
         let queue = state.lock().unwrap().starts.queue.clone().unwrap();
         for _ in &results {
@@ -3660,7 +3660,7 @@ mod tests {
             &state,
             jobs,
             &job,
-            vec![Err(slow()), Err(slow()), Ok(worker(&job))],
+            vec![Err(slow()), Err(slow()), Ok(unbound_start(worker(&job)))],
         );
         assert_eq!(
             kinds(&records),
@@ -3679,7 +3679,7 @@ mod tests {
     fn a_start_that_works_at_once_logs_nothing_and_a_new_reason_is_logged() {
         let (state, jobs) = starter(8);
         let job = request("T-1", None);
-        assert!(run_attempts(&state, jobs, &job, vec![Ok(worker(&job))]).is_empty());
+        assert!(run_attempts(&state, jobs, &job, vec![Ok(unbound_start(worker(&job)))]).is_empty());
         let (state, jobs) = starter(8);
         let records = run_attempts(
             &state,
