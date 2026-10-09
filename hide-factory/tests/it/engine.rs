@@ -2792,6 +2792,35 @@ fn a_restart_while_a_hold_s_diagnosis_is_out_asks_again_at_the_next_step() {
 }
 
 #[test]
+fn a_schedule_that_fell_behind_gives_each_late_step_its_time() {
+    let mut h = Bench::new(false);
+    let _f = h.factory(true);
+    h.world().disk_free = Some(1 << 30);
+    h.ready("Held", &[]);
+    h.world().env_diagnosis = Some(json!({"cause": "disk", "action": "retry_reads_and_reconnect"}));
+    h.engine.tick();
+    // The machine slept past the 30- and 90-minute steps.
+    h.advance(100 * MINUTE_MS);
+    for _ in 0..4 {
+        h.engine.tick();
+    }
+    let attempts = |h: &Bench| h.engine.factories().next().unwrap().holds[0].attempts.len();
+    assert_eq!(attempts(&h), 1, "one step, not two on consecutive ticks");
+    h.advance(6 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    assert_eq!(
+        attempts(&h),
+        2,
+        "the 90-minute step after the first had its time"
+    );
+    h.advance(50 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    assert_eq!(attempts(&h), 3, "the 150-minute step");
+}
+
+#[test]
 fn sleep_wake_reaches_only_a_worker_waiting_on_input() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

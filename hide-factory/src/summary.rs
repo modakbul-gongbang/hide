@@ -969,6 +969,11 @@ pub fn inbox_items(
             items.push(item);
         }
     }
+    // A closed Factory asks GitHub nothing and runs no schedule, so nothing
+    // would ever clear its own to-dos, and nothing is left for them to free.
+    if factory.closed {
+        return items;
+    }
     // One sign-in to-do per Factory, whatever it stopped (B33).
     if let Some(block) = &factory.github_block {
         let mut todo = item("todo", 4, None, String::new(), block.since);

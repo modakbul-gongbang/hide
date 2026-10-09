@@ -194,10 +194,29 @@ impl Engine {
             return;
         }
         let step = hold.attempts.len();
-        if hold.diagnosing || step >= STEPS_MS.len() || elapsed < STEPS_MS[step] {
+        // A step has its time to work before the next, so a schedule that
+        // fell behind (a sleeping machine, a restart) does not run its late
+        // steps on consecutive ticks.
+        let settling = hold
+            .attempts
+            .last()
+            .is_some_and(|last| now.saturating_sub(last.at) < SETTLE_MS);
+        if hold.diagnosing || settling || step >= STEPS_MS.len() || elapsed < STEPS_MS[step] {
             return;
         }
         let actions = self.available_actions(factory, key);
+        if actions.is_empty() && step == 0 {
+            // With every action that could act turned off, nothing would run
+            // before the 180-minute mark, so the hold is a person's now.
+            self.change_hold(factory, key, |hold| hold.escalated = true);
+            self.record(
+                factory,
+                hold_task(key),
+                "recovery.escalated",
+                json!({"hold": key, "reason": "no_action_on"}),
+            );
+            return;
+        }
         if actions.is_empty() {
             // Nothing left to try waits for the 180-minute mark (B14).
             return self.run_step(factory, key, None, now);
@@ -206,9 +225,9 @@ impl Engine {
             self.change_hold(factory, key, |hold| hold.diagnosing = true);
             return;
         }
-        // No diagnosis to ask: the first action not tried yet.
+        // No diagnosis to ask: the first fitting action not tried yet.
         let action = fallback(&hold, &actions);
-        self.run_step(factory, key, Some(action), now);
+        self.run_step(factory, key, action, now);
     }
 
     /// The enabled actions a diagnosis may pick for this hold, the ones
@@ -219,17 +238,7 @@ impl Engine {
         let Some(f) = self.factories.get(factory) else {
             return Vec::new();
         };
-        let fits: &[RecoveryAction] = match key {
-            HoldKey::Start {
-                hold: EnvHold::DiskFloor | EnvHold::DiskFull,
-            } => &[RemoveFinishedWorktrees, RetryReadsAndReconnect],
-            HoldKey::Start {
-                hold: EnvHold::MemoryCritical,
-            } => &[SleepWakeWorker, RetryReadsAndReconnect],
-            HoldKey::Halt => &[RetryReadsAndReconnect, SwitchRuntime],
-            HoldKey::Reads => &[RetryReadsAndReconnect],
-            HoldKey::Task { .. } => &[RestartWorker, SwitchRuntime],
-        };
+        let fits = fits(key);
         let restarted = match key {
             HoldKey::Task { task } => self
                 .task(factory, task)
@@ -359,7 +368,7 @@ impl Engine {
                     "recovery.diagnosis_failed",
                     json!({"reason": reason}),
                 );
-                let action = (!actions.is_empty()).then(|| fallback(&hold, &actions));
+                let action = fallback(&hold, &actions);
                 self.run_step(factory, key, action, now);
             }
         }
@@ -659,14 +668,37 @@ impl Engine {
     }
 }
 
-/// The first action this hold has not tried, or the first of all when
-/// every one was tried; `actions` is never empty.
-fn fallback(hold: &Hold, actions: &[RecoveryAction]) -> RecoveryAction {
-    actions
+/// Without a diagnosis, the first action that fits the hold and has not
+/// been tried, else the first that fits; an action outside the hold's own
+/// list (removing finished worktrees for a stalled worker) is a diagnosis's
+/// to pick, never a default's.
+fn fallback(hold: &Hold, actions: &[RecoveryAction]) -> Option<RecoveryAction> {
+    let fitting: Vec<RecoveryAction> = actions
+        .iter()
+        .copied()
+        .filter(|action| fits(&hold.key).contains(action))
+        .collect();
+    fitting
         .iter()
         .copied()
         .find(|action| !hold.attempts.iter().any(|a| a.action == Some(*action)))
-        .unwrap_or(actions[0])
+        .or_else(|| fitting.first().copied())
+}
+
+/// The actions that fit a hold, the likeliest first.
+fn fits(key: &HoldKey) -> &'static [RecoveryAction] {
+    use RecoveryAction::*;
+    match key {
+        HoldKey::Start {
+            hold: EnvHold::DiskFloor | EnvHold::DiskFull,
+        } => &[RemoveFinishedWorktrees, RetryReadsAndReconnect],
+        HoldKey::Start {
+            hold: EnvHold::MemoryCritical,
+        } => &[SleepWakeWorker, RetryReadsAndReconnect],
+        HoldKey::Halt => &[RetryReadsAndReconnect, SwitchRuntime],
+        HoldKey::Reads => &[RetryReadsAndReconnect],
+        HoldKey::Task { .. } => &[RestartWorker, SwitchRuntime],
+    }
 }
 
 fn hold_task(key: &HoldKey) -> Option<&str> {
