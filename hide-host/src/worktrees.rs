@@ -47,23 +47,61 @@ pub fn read(
     Some(read_project(&root, root_path, bases, base_override))
 }
 
-/// The `url` of the `[remote "origin"]` section of a Git configuration file.
+/// The `url` of the `[remote "origin"]` section of a Git configuration file,
+/// read as Git reads it: the section name and the key in any case, any
+/// spacing inside the header, and comment lines skipped.
 pub fn origin_url(config: &str) -> Option<String> {
     let mut in_origin = false;
     for line in config.lines() {
         let line = line.trim();
-        if line.starts_with('[') {
-            in_origin = line == r#"[remote "origin"]"#;
+        if line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some(header) = line.strip_prefix('[') {
+            in_origin = is_origin_header(header);
             continue;
         }
         if in_origin
             && let Some((key, value)) = line.split_once('=')
-            && key.trim() == "url"
+            && key.trim().eq_ignore_ascii_case("url")
         {
             return Some(value.trim().to_owned()).filter(|value| !value.is_empty());
         }
     }
     None
+}
+
+/// Whether a section header (after its `[`) is `remote "origin"`: the
+/// section name in any case, the subsection exactly.
+fn is_origin_header(header: &str) -> bool {
+    let Some((inside, _)) = header.split_once(']') else {
+        return false;
+    };
+    let mut parts = inside.trim().splitn(2, char::is_whitespace);
+    let section = parts.next().unwrap_or_default();
+    let subsection = parts.next().unwrap_or_default().trim();
+    section.eq_ignore_ascii_case("remote") && subsection == "\"origin\""
+}
+
+/// The largest Git configuration file read for its origin.
+const CONFIG_CAP: u64 = 256 * 1024;
+
+/// A repository's configuration file, read only when it is a regular file
+/// of at most [`CONFIG_CAP`] bytes: a link to something large, or a pipe,
+/// is not read on every worktree read.
+fn read_config(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > CONFIG_CAP {
+        return None;
+    }
+    let mut text = String::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(CONFIG_CAP)
+        .read_to_string(&mut text)
+        .ok()?;
+    Some(text)
 }
 
 /// Reads `root`, already known to be a main worktree.
@@ -156,7 +194,7 @@ pub fn read_project(
     // Read from the repository's own configuration, not another git process.
     let origin_url = shared_git_path
         .as_deref()
-        .and_then(|shared| std::fs::read_to_string(Path::new(shared).join("config")).ok())
+        .and_then(|shared| read_config(&Path::new(shared).join("config")))
         .and_then(|config| origin_url(&config));
     RepositoryWorktrees {
         shared_git_path,
@@ -1964,5 +2002,23 @@ mod tests {
             Some("git@github.com:acme/app.git")
         );
         assert_eq!(origin_url("[remote \"upstream\"]\n\turl = x\n"), None);
+    }
+
+    /// L16: the origin is found however Git lets its header and key be
+    /// spelled, and a configuration that is not a small regular file is not
+    /// read.
+    #[test]
+    fn the_origin_is_read_as_git_spells_it_and_only_from_a_small_file() {
+        assert_eq!(
+            origin_url("[Remote  \"origin\"]\n# a note\n\tURL = git@github.com:acme/app.git\n")
+                .as_deref(),
+            Some("git@github.com:acme/app.git")
+        );
+        assert_eq!(origin_url("[remote \"Origin\"]\n\turl = x\n"), None);
+        let dir = tempfile::tempdir().unwrap();
+        let big = dir.path().join("config");
+        std::fs::write(&big, vec![b'#'; CONFIG_CAP as usize + 1]).unwrap();
+        assert_eq!(read_config(&big), None);
+        assert_eq!(read_config(dir.path()), None, "a folder is not read");
     }
 }

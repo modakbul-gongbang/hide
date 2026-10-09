@@ -16,6 +16,8 @@ use serde::Deserialize;
 
 /// The record's largest size.
 const RECORD_CAP: u64 = 4096;
+/// The longest alias, program or state folder a record may name.
+const MAX_VALUE: usize = 1024;
 
 /// The core's machine, as this machine reaches it.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -71,13 +73,28 @@ pub fn read(state_dir: &Path, own_node: &str) -> Result<Option<Placement>, Strin
     if placement.alias.trim().is_empty() || placement.alias.starts_with('-') {
         return Err("the core placement record names no SSH alias".to_owned());
     }
-    if !placement.program.starts_with('/') {
+    // Each value is written into a command line on the core's machine.
+    let plain = |value: &str| value.len() <= MAX_VALUE && !value.chars().any(char::is_control);
+    if ![
+        placement.alias.as_str(),
+        placement.program.as_str(),
+        placement.state_dir.as_deref().unwrap_or_default(),
+    ]
+    .into_iter()
+    .all(plain)
+    {
+        return Err(
+            "the core placement record holds a control character or an over-long value".to_owned(),
+        );
+    }
+    // Paths on the core's machine, in the spelling between machines.
+    if !hide_platform::path::is_wire_absolute(&placement.program) {
         return Err("the core placement record's program is not an absolute path".to_owned());
     }
     if placement
         .state_dir
         .as_deref()
-        .is_some_and(|dir| !dir.starts_with('/'))
+        .is_some_and(|dir| !hide_platform::path::is_wire_absolute(dir))
     {
         return Err("the core placement record's state folder is not an absolute path".to_owned());
     }

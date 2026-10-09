@@ -229,6 +229,19 @@ impl ScreenUploads {
     /// Another machine's pane: each stage goes to the core as the screen
     /// sent it, then the commit, and the copy here is removed.
     async fn send_on(&mut self, request_id: &str, commit: &str, stages: &[String]) -> Handled {
+        // The batch caps the core holds a commit to, checked before any byte
+        // is read, so a batch the core would refuse never crosses the link.
+        if stages.is_empty() || stages.len() > crate::attachments::MAX_FILES {
+            return Handled::Answer(vec![refused(request_id, "too_many_files")]);
+        }
+        let total: u64 = stages
+            .iter()
+            .filter_map(|stage| self.stages.get(stage))
+            .map(|stage| stage.size)
+            .sum();
+        if total > crate::attachments::MAX_BATCH_BYTES {
+            return Handled::Answer(vec![refused(request_id, "batch_too_large")]);
+        }
         let mut frames = Vec::new();
         for stage_id in stages {
             let Some(stage) = self.stages.get(stage_id) else {
@@ -241,6 +254,9 @@ impl ScreenUploads {
             let Ok(bytes) = read(&path).await else {
                 return Handled::Answer(vec![refused(request_id, "stage_failed")]);
             };
+            if bytes.len() as u64 != stage.size {
+                return Handled::Answer(vec![refused(request_id, "size_mismatch")]);
+            }
             frames.push(tungstenite::Message::Text(
                 json!({
                     "schema_version": SCHEMA_VERSION,

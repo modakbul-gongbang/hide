@@ -745,7 +745,7 @@ pub fn attest_remote_checkout(
     if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("invalid_nonce");
     }
-    if node.is_empty() || !path.starts_with('/') || path.len() > 4096 {
+    if node.is_empty() || !hide_platform::path::is_wire_absolute(path) || path.len() > 4096 {
         return Err("invalid_request");
     }
     let caller_id = checkout_caller_id(nonce, path);
