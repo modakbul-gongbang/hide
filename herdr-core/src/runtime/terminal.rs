@@ -1274,6 +1274,7 @@ impl Runtime {
             &mut self.snapshot.navigator.workspaces,
             &self.snapshot.navigator.agents,
             self.snapshot.focused.pane_id.as_deref(),
+            crate::agent_sleep::SleepMachine::Core,
         );
         self.sync_active_tab_projection();
         self.snapshot.zoomed = zoomed;

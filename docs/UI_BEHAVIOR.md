@@ -335,7 +335,8 @@ The right-click leaves the drag selection as it was, so Copy copies what the ope
 A pane whose agent sleeps (PRD agent-sleep) shows its state in place of the terminal, which stays hidden until the agent is back because the shell under it is not what the operator was talking to: Sleeping with the last progress line and Wake agent; Waking… with how old the resumed conversation is; or `Couldn’t resume this conversation` with the core's plain reason, Retry, and Start new session.
 The core band reads Sleeping, Waking or the resume failure, and typed input to the pane goes nowhere.
 Opening the pane's tab by a committed move (a row, a tab, a checkout, a relation) wakes it in the same pane with its conversation; a Recent Panels preview does not, and neither does a click inside the tab already on screen.
-The pane menu offers Sleep agent on a local agent pane that is awake, disabled with the core's reason when the agent is working, waiting for the operator, of another kind, or has no conversation Herdr reported.
+The pane menu offers Sleep agent on an agent pane that is awake on this machine, or on the machine the window runs on when that machine's core runs on another machine, disabled with the core's reason when the agent is working, waiting for the operator, of another kind, or has no conversation Herdr reported; a device's pane offers none.
+On such a window's own machine, bringing a tab forward wakes what sleeps there once that machine's Herdr has it in front.
 Web owner: `web/src/PaneView.tsx` (`SleepBody`), `web/src/sleep.ts`, `web/src/PaneRelations.tsx`.
 
 An implemented provider whose sleep policy closes its pane retains a separate sleeping conversation row in its checkout's expanded rows.

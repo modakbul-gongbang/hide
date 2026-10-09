@@ -744,6 +744,7 @@ fn sync_pane_status(
     workspaces: &mut [WorkspaceSnapshot],
     agents: &[SidebarAgentSnapshot],
     focused: Option<&str>,
+    machine: crate::agent_sleep::SleepMachine,
 ) -> bool {
     let by_pane = agents
         .iter()
@@ -839,7 +840,10 @@ fn sync_pane_status(
         .map(|agent| {
             (
                 agent.pane_id.as_str(),
-                (agent.sleep.clone(), crate::agent_sleep::sleep_action(agent)),
+                (
+                    agent.sleep.clone(),
+                    crate::agent_sleep::sleep_action(agent, machine),
+                ),
             )
         })
         .collect::<BTreeMap<_, _>>();
@@ -1559,6 +1563,12 @@ pub struct Runtime {
     /// When the agent sleep decision may run next; the coordinator ticks every
     /// 250 ms and the decision runs once a minute (PRD agent-sleep).
     agent_sleep_next_decision_unix_ms: u64,
+    /// The same for each node that dials this core (PRD
+    /// core-host-node-remote-core B13); one entry per registered node.
+    node_sleep_next_decision_unix_ms: HashMap<String, u64>,
+    /// The tabs each such node's screen showed at its last session, so a
+    /// tab its Herdr brings forward is a visit (B12).
+    node_sleep_shown_tabs: HashMap<String, Vec<String>>,
     /// Panes whose agent would not end, and until when they are left alone (B8).
     agent_sleep_backoff: HashMap<String, agent_sleep::Backoff>,
     /// Panes with a Reopen running or just refused, until the pane connects,
@@ -2072,6 +2082,8 @@ impl Runtime {
             unresolved_active_tabs: BTreeSet::new(),
             forks_in_flight: HashSet::new(),
             agent_sleep_next_decision_unix_ms: 0,
+            node_sleep_next_decision_unix_ms: HashMap::new(),
+            node_sleep_shown_tabs: HashMap::new(),
             agent_sleep_backoff: HashMap::new(),
             pane_reopens: HashMap::new(),
             fork_sequence: 0,

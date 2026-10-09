@@ -304,8 +304,17 @@ fn run_coordinator(
                 let changed = match runtime.lock() {
                     Ok(mut guard) => {
                         let changed = guard.tick_async_operations(now_unix_ms);
-                        // Agent sleep is this machine's alone (PRD agent-sleep).
-                        changed | (context.is_local() && guard.tick_agent_sleep(now_unix_ms))
+                        // Each machine decides its own agents' sleep: this
+                        // core's, or a node's that dials it.
+                        changed
+                            | match &context.target {
+                                SessionSyncTarget::Local { .. } => {
+                                    guard.tick_agent_sleep(now_unix_ms)
+                                }
+                                SessionSyncTarget::Remote { target_id, .. } => {
+                                    guard.tick_node_agent_sleep(target_id, now_unix_ms)
+                                }
+                            }
                     }
                     Err(_) => false,
                 };
@@ -1223,7 +1232,10 @@ fn publish_replica(
                 )
             }
             SessionSyncTarget::Remote { target_id, .. } => {
-                guard.observe_delivery(target_id, &payload, None, overlay.as_ref())
+                guard.observe_delivery(target_id, &payload, None, overlay.as_ref());
+                // Sleeping agents Herdr no longer lists are drawn from their
+                // records before the session is scoped to the device.
+                guard.settle_node_agent_sleep(target_id, &mut payload);
             }
         }
     }

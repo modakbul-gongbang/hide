@@ -67,6 +67,14 @@ impl Herdr {
         serde_json::from_slice(&successful(command)?).context("private Herdr answer JSON")
     }
 
+    /// Runs `herdr <args>` against this server, for a command that answers
+    /// nothing.
+    pub fn write(&self, args: &[&str]) -> Result<()> {
+        let mut command = self.environment.command(&self.binary);
+        command.args(args);
+        successful(command).map(|_| ())
+    }
+
     /// A Herdr workspace at `folder`, and its root pane.
     pub fn workspace_at(&self, folder: &Path) -> Result<String> {
         let created = self.run(&[

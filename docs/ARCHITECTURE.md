@@ -569,6 +569,14 @@ A failed wake shows a plain reason (`The working folder … no longer exists.`, 
 The last look is stamped when a visit commits and once a minute while a pane is in the tab on screen, and the stamps are saved through the coalesced state save, never published.
 A relaunch forgets an end that was in flight, because it cannot know whether it landed, and reads a wake that was in flight as still asleep until an agent appears in the pane.
 
+The panes of a node that dials the core (A core on another machine) sleep as the core's own do (PRD core-host-node-remote-core B13); a device the core dials does not, and `agent_sleep::sleep_refusal` says so from the pane's `SleepMachine`.
+That node's coordinator's tick runs the same minute decision for its panes, with its own minute; the four ends in flight are counted over every machine.
+The records and stamps keep a node's pane under its `remote:<node>:pane:` id, and each machine's session settles only its own (`SleepScope`): a node's records are settled against its session as its Herdr names the panes, before the session is scoped to the device, and its rows are marked and stamped when the core takes that session.
+An end or a wake for a node's pane runs on that node's Herdr connection and its link (`SleepTarget`), with the pane id its Herdr knows; the agent's Herdr name comes from the row's `herdr_name`, because a device row's `id` is the core's own.
+A visit is that node's Herdr bringing a tab forward while the node is in front, which the core sees in the node's next session: the tabs that came on screen wake, and the last look of those and of the tabs that left is stamped.
+Removing the node forgets its records and stamps; its panes are not touched.
+A sleep that closes its pane (Pi) is refused on a node, because the dormant record reopens it from the core machine's catalog.
+
 A provider whose implemented sleep dialect declares `closes_pane_when_sleeping` uses a separate dormant conversation record under the same persisted `agent_sleep` store.
 The common mechanism does not grant a provider sleep support; its adapter must declare an implemented reader and resume dialect first.
 The record's `SleepId` names the durable intent, while the captured native session, node, connection generation and execution sequence fence the old execution.

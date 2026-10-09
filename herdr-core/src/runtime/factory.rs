@@ -568,7 +568,7 @@ impl Runtime {
         else {
             return Err("This pane has no agent");
         };
-        match crate::agent_sleep::sleep_refusal(agent) {
+        match crate::agent_sleep::sleep_refusal(agent, crate::agent_sleep::SleepMachine::Core) {
             None => {}
             Some("This agent is working") | Some("Hide cannot tell what this agent is doing") => {
                 return Ok(false);

@@ -1836,6 +1836,9 @@ impl Runtime {
         // so the remote server's own focus is the read signal.
         let mut read_changed = false;
         if let Ok(session) = fetched.as_mut() {
+            // A node that dials this core sleeps as the core's own machine
+            // does (PRD core-host-node-remote-core B13).
+            self.stamp_node_agent_sleep(target_id, &mut session.agents);
             read_changed = self.apply_remote_read_state(target_id, session);
             for workspace in &mut session.workspaces {
                 for checkout in &mut workspace.checkouts {
@@ -1995,6 +1998,7 @@ impl Runtime {
         }
         if session_ok {
             changed |= self.request_device_facts(target_id);
+            changed |= self.node_agent_sleep_visit(target_id);
         }
         changed |= self.refresh_agent_lineage();
         changed |= self.advance_tree_closes();
@@ -3389,6 +3393,7 @@ impl Runtime {
                 &mut self.snapshot.navigator.workspaces,
                 &self.snapshot.navigator.agents,
                 self.snapshot.focused.pane_id.as_deref(),
+                crate::agent_sleep::SleepMachine::Core,
             );
             self.sync_active_tab_projection();
         }

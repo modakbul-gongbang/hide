@@ -2,10 +2,10 @@
 use super::*;
 use crate::agent_sleep::{DormantRecord, SleepId};
 use crate::checkout_owner::OwnerOpen;
+use crate::live::LiveContext;
 use crate::sidebar::SessionSnapshotPayload;
 use hide_herdr_client::{ApiStream, ConnectionShutdown};
 use std::io::{self, Read, Write};
-use std::sync::Arc;
 
 #[derive(Clone)]
 pub(crate) struct DormantWork {

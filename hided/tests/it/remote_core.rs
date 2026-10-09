@@ -1961,3 +1961,213 @@ esac
         }
     }
 }
+
+/// A provider that says which arguments it started with and then waits, as
+/// an idle agent does.
+const SLEEP_PROVIDER: &str = r#"
+#include <stdio.h>
+#include <string.h>
+#include <termios.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], "--version") == 0) { puts("fixture provider"); return 0; }
+  if (argc > 1 && strcmp(argv[1], "auth") == 0) { puts("{\"loggedIn\":false}"); return 0; }
+  struct termios t;
+  if (tcgetattr(0, &t) == 0) {
+    t.c_lflag &= ~(ICANON | ECHO | IEXTEN);
+    t.c_cc[VMIN] = 1; t.c_cc[VTIME] = 0;
+    tcsetattr(0, TCSANOW, &t);
+  }
+  printf("SLEEP_FIXTURE");
+  for (int i = 1; i < argc; i++) printf(" %s", argv[i]);
+  puts(""); fflush(stdout);
+  char byte;
+  while (read(0, &byte, 1) == 1) {}
+  return 0;
+}
+"#;
+
+/// The command lines running in the foreground of a pane of `herdr`.
+fn foreground(
+    herdr: &crate::support::remote_core::Herdr,
+    pane: &str,
+) -> Result<(Value, Vec<String>)> {
+    let info = herdr.run(&["pane", "process-info", "--pane", pane])?;
+    let info = info["result"]["process_info"].clone();
+    let commands = info["foreground_processes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|process| {
+            let argv = process["argv"].as_array()?;
+            Some(
+                argv.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )
+        })
+        .collect();
+    Ok((info, commands))
+}
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn an_agent_in_a_node_pane_sleeps_and_wakes_there_as_the_cores_own_does() -> Result<()> {
+    const SESSION: &str = "11111111-2222-3333-4444-555555555555";
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let source = fixture.root.join("sleep-provider.c");
+        std::fs::write(&source, SLEEP_PROVIDER)?;
+        let mut compiler = fixture.screen.environment.command("/usr/bin/cc");
+        compiler
+            .arg("-O1")
+            .arg(&source)
+            .arg("-o")
+            .arg(fixture.screen_home().join("bin/claude"));
+        ensure!(
+            compiler.status()?.success(),
+            "the fixture provider compiles"
+        );
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let project = fixture.screen_home().join("project");
+        let herdr_pane = fixture.screen.workspace_at(&project)?;
+        let pane = format!("remote:{node}:pane:{herdr_pane}");
+        wait_for("the provider started in the node's pane", || {
+            Ok(fixture
+                .screen
+                .run(&[
+                    "agent",
+                    "start",
+                    "sleeper",
+                    "--kind",
+                    "claude",
+                    "--pane",
+                    &herdr_pane,
+                ])
+                .ok())
+        })?;
+        fixture.screen.write(&[
+            "pane",
+            "report-agent-session",
+            &herdr_pane,
+            "--source",
+            "herdr:claude",
+            "--agent",
+            "claude",
+            "--agent-session-id",
+            SESSION,
+            "--seq",
+            "1",
+        ])?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            let row = |snapshot: &Value| pane_row(snapshot, &pane).cloned().unwrap_or(Value::Null);
+            let mut last = Value::Null;
+            // The node's pane offers Sleep agent as the core's own panes do.
+            tokio::task::block_in_place(|| {
+                wait_for("Sleep agent offered on the node's pane", || {
+                    last = row(&fixture.snapshot()?);
+                    Ok((last["sleep_action"]["available"] == true).then_some(()))
+                })
+            })
+            .with_context(|| format!("the pane's row: {last}"))?;
+            send(&mut socket, "agent_sleep", json!({"pane_id": pane})).await?;
+            // The agent ended on the node's machine, its shell holds the
+            // pane, and the core draws the pane asleep.
+            tokio::task::block_in_place(|| {
+                wait_for("the node's pane asleep", || {
+                    last = row(&fixture.snapshot()?);
+                    Ok((last["sleep"]["state"] == "sleeping").then_some(()))
+                })
+            })
+            .with_context(|| format!("the pane's row: {last}"))?;
+            let (info, _) = foreground(&fixture.screen, &herdr_pane)?;
+            ensure!(
+                info["foreground_process_group_id"] == info["shell_pid"],
+                "the pane's shell holds the terminal once its agent sleeps: {info}"
+            );
+            // The node's Herdr bringing another tab forward and then the
+            // sleeper's again is a visit, which wakes the same conversation
+            // in the same pane.
+            let workspace = fixture.screen.run(&["pane", "get", &herdr_pane])?;
+            let workspace_id = workspace["result"]["pane"]["workspace_id"]
+                .as_str()
+                .context("the node pane's workspace")?
+                .to_owned();
+            let tab_id = workspace["result"]["pane"]["tab_id"]
+                .as_str()
+                .context("the node pane's tab")?
+                .to_owned();
+            let other = fixture.screen.run(&[
+                "tab",
+                "create",
+                "--workspace",
+                &workspace_id,
+                "--cwd",
+                &project.to_string_lossy(),
+                "--label",
+                "other",
+                "--focus",
+            ])?;
+            let other_pane = format!(
+                "remote:{node}:pane:{}",
+                other["result"]["root_pane"]["pane_id"]
+                    .as_str()
+                    .context("the other tab's pane")?
+            );
+            tokio::task::block_in_place(|| {
+                wait_for("the other tab in front on the core", || {
+                    Ok(pane_row(&fixture.snapshot()?, &other_pane).map(|_| ()))
+                })
+            })?;
+            ensure!(
+                row(&fixture.snapshot()?)["sleep"]["state"] == "sleeping",
+                "leaving the tab wakes nothing"
+            );
+            fixture.screen.run(&["tab", "focus", &tab_id])?;
+            let mut commands = Vec::new();
+            tokio::task::block_in_place(|| {
+                wait_for("the conversation resumed in the node's pane", || {
+                    commands = foreground(&fixture.screen, &herdr_pane)?.1;
+                    Ok(commands
+                        .iter()
+                        .any(|command| command.contains(&format!("--resume {SESSION}")))
+                        .then_some(()))
+                })
+            })
+            .with_context(|| format!("the pane runs {commands:?}"))?;
+            tokio::task::block_in_place(|| {
+                wait_for("the node's pane awake on the core", || {
+                    last = row(&fixture.snapshot()?);
+                    Ok(last["sleep"].is_null().then_some(()))
+                })
+            })
+            .with_context(|| format!("the pane's row: {last}"))?;
+            Ok::<_, anyhow::Error>(())
+        })
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
