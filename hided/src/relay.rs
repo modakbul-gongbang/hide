@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use axum::extract::ws::{Message, WebSocket};
+use futures_util::{SinkExt, StreamExt};
 use hide_node::ssh::RemoteHost;
 use hide_node::terminal::OutputSink;
 use hide_node_link::terminal::{
@@ -31,6 +32,9 @@ use serde_json::json;
 
 use crate::terminal_hub::TerminalHub;
 
+/// How long a relay that ended waits for its writer to hand back the
+/// socket for the close frame.
+const WRITER_HANDBACK: std::time::Duration = std::time::Duration::from_millis(100);
 /// The most output one node's terminals relay holds unsent.
 pub const TAP_CAP_BYTES: usize = 4 * 1024 * 1024;
 /// Output items one relay message carries at most.
@@ -54,7 +58,9 @@ pub struct ScreenOutputs {
     /// Which screen each pane's size follows; a pane leaves it when it is
     /// forgotten here.
     pane_sizes: Arc<crate::pane_sizes::PaneSizes>,
-    taps: Mutex<Vec<Arc<RelayTap>>>,
+    /// The taps, replaced whole on every add and remove, so each chunk of
+    /// output takes one reference to the list rather than a copy of it.
+    taps: Mutex<Arc<Vec<Arc<RelayTap>>>>,
     /// How many taps there are, read without the lock: with none, output
     /// costs one load beyond the hub.
     tapped: AtomicUsize,
@@ -70,46 +76,56 @@ impl ScreenOutputs {
         })
     }
 
-    /// Adds a node's tap, ending the one its node had: a node keeps one
-    /// terminals relay, so a second replaces the first rather than double
-    /// what the core sends it.
     pub fn pane_sizes(&self) -> Arc<crate::pane_sizes::PaneSizes> {
         Arc::clone(&self.pane_sizes)
     }
 
+    /// Adds a node's tap, ending the one its node had: a node keeps one
+    /// terminals relay, so a second replaces the first rather than double
+    /// what the core sends it.
     fn add(&self, tap: Arc<RelayTap>) {
         let mut taps = lock(&self.taps);
-        taps.retain(|held| {
-            if held.node == tap.node {
-                held.close();
-                held.wake.notify_one();
-                false
-            } else {
-                true
-            }
-        });
-        taps.push(tap);
-        self.tapped.store(taps.len(), Ordering::SeqCst);
+        let mut next: Vec<_> = taps
+            .iter()
+            .filter(|held| {
+                if held.node == tap.node {
+                    held.close();
+                    held.wake.notify_one();
+                    false
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect();
+        next.push(tap);
+        self.tapped.store(next.len(), Ordering::SeqCst);
+        *taps = Arc::new(next);
     }
 
     fn remove(&self, tap: &Arc<RelayTap>) {
         let mut taps = lock(&self.taps);
-        taps.retain(|held| !Arc::ptr_eq(held, tap));
-        self.tapped.store(taps.len(), Ordering::SeqCst);
+        let next: Vec<_> = taps
+            .iter()
+            .filter(|held| !Arc::ptr_eq(held, tap))
+            .cloned()
+            .collect();
+        self.tapped.store(next.len(), Ordering::SeqCst);
+        *taps = Arc::new(next);
     }
 
-    fn taps(&self) -> Vec<Arc<RelayTap>> {
+    fn taps(&self) -> Option<Arc<Vec<Arc<RelayTap>>>> {
         if self.tapped.load(Ordering::SeqCst) == 0 {
-            return Vec::new();
+            return None;
         }
-        lock(&self.taps).clone()
+        Some(Arc::clone(&lock(&self.taps)))
     }
 }
 
 impl OutputSink for ScreenOutputs {
     fn output(&self, pane: &str, bytes: &[u8], full: bool) {
         self.hub.output(pane, bytes, full);
-        for tap in self.taps() {
+        for tap in self.taps().iter().flat_map(|taps| taps.iter()) {
             tap.output(pane, bytes, full);
         }
     }
@@ -117,7 +133,7 @@ impl OutputSink for ScreenOutputs {
     fn forget(&self, pane: &str) {
         self.hub.forget(pane);
         self.pane_sizes.forget(pane);
-        for tap in self.taps() {
+        for tap in self.taps().iter().flat_map(|taps| taps.iter()) {
             tap.forget(pane);
         }
     }
@@ -181,11 +197,37 @@ impl RelayTap {
         })
     }
 
+    /// Whether the tap keeps a chunk of `pane`, decided before its bytes are
+    /// encoded: a closed tap and a pane awaiting its full frame take none,
+    /// and a pane the node holds nothing of asks one full frame, once.
+    fn takes(&self, pane: &str, full: bool) -> bool {
+        let mut state = lock(&self.state);
+        if state.closed {
+            return false;
+        }
+        if full {
+            return true;
+        }
+        if !state.started_whole.contains(pane) {
+            let asked = state.awaiting_full.insert(pane.to_owned());
+            if asked {
+                state.redraws.push(pane.to_owned());
+            }
+            drop(state);
+            if asked {
+                self.wake.notify_one();
+            }
+            return false;
+        }
+        !state.awaiting_full.contains(pane)
+    }
+
     fn output(&self, pane: &str, bytes: &[u8], full: bool) {
-        if pane.starts_with(&self.own_prefix) {
+        if pane.starts_with(&self.own_prefix) || !self.takes(pane, full) {
             return;
         }
-        // Encoded before the tap's lock, which every pane's output takes.
+        // Encoded between the tap's locks, which every pane's output takes;
+        // what changed in between is decided again below.
         let data = encode_base64(bytes);
         let mut state = lock(&self.state);
         if state.closed {
@@ -444,7 +486,7 @@ impl RelayRequests {
 /// link ends: every pane's output but the node's own goes down it, and the
 /// node's keys and redraws for those panes come up it.
 pub async fn serve_terminals(
-    mut socket: WebSocket,
+    socket: WebSocket,
     outputs: Arc<ScreenOutputs>,
     terminals: Arc<dyn TerminalNode>,
     node: String,
@@ -464,10 +506,40 @@ pub async fn serve_terminals(
             terminals.redraw(&pane);
         }
     }
+    let (sink, stream) = socket.split();
+    let reason = relay_terminals(sink, stream, &tap, terminals, &node, link.closed()).await;
+    outputs.remove(&tap);
+    herdr_core::diagnostic!(json!({
+        "component": "node_relay",
+        "kind": "relay.terminals_closed",
+        "node": node,
+        "reason": reason,
+    }));
+}
+
+/// The relay's two directions until one ends: the tap's output goes down
+/// on a task of its own, so a send the node is slow to take (a 1 MiB message
+/// over a slow forward) never stops this relay reading the node's keys or
+/// the link's end. The node side is split the same way.
+async fn relay_terminals<S, R>(
+    mut sink: S,
+    mut stream: R,
+    tap: &Arc<RelayTap>,
+    terminals: Arc<dyn TerminalNode>,
+    node: &str,
+    link_closed: impl std::future::Future<Output = String>,
+) -> &'static str
+where
+    S: futures_util::Sink<Message> + Unpin + Send + 'static,
+    R: futures_util::Stream<Item = Result<Message, axum::Error>> + Unpin,
+{
     let own_prefix = tap.own_prefix.clone();
-    let reason = loop {
-        tokio::select! {
-            () = tap.wake.notified() => {
+    let mut writer = {
+        let tap = Arc::clone(tap);
+        let terminals = Arc::clone(&terminals);
+        tokio::spawn(async move {
+            let reason = loop {
+                tap.wake.notified().await;
                 if tap.is_closed() {
                     break "replaced";
                 }
@@ -476,12 +548,26 @@ pub async fn serve_terminals(
                     terminals.redraw(&pane);
                 }
                 if let Some(text) = text
-                    && socket.send(Message::Text(text.into())).await.is_err()
+                    && sink.send(Message::Text(text.into())).await.is_err()
                 {
                     break "node_closed";
                 }
-            }
-            incoming = socket.recv() => match incoming {
+            };
+            (reason, sink)
+        })
+    };
+    let mut link_closed = std::pin::pin!(link_closed);
+    let mut closing = None;
+    let reason = loop {
+        tokio::select! {
+            written = &mut writer => match written {
+                Ok((reason, sink)) => {
+                    closing = Some(sink);
+                    break reason;
+                }
+                Err(_) => break "writer_ended",
+            },
+            incoming = stream.next() => match incoming {
                 Some(Ok(Message::Text(text))) => {
                     if let Err(reason) = take_down(&text, terminals.as_ref(), &own_prefix) {
                         herdr_core::diagnostic!(json!({
@@ -495,18 +581,27 @@ pub async fn serve_terminals(
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break "node_closed",
                 Some(Ok(_)) => {}
             },
-            _ = link.closed() => break "link_ended",
+            _ = &mut link_closed => break "link_ended",
         }
     };
     tap.close();
-    outputs.remove(&tap);
-    let _ = socket.send(Message::Close(None)).await;
-    herdr_core::diagnostic!(json!({
-        "component": "node_relay",
-        "kind": "relay.terminals_closed",
-        "node": node,
-        "reason": reason,
-    }));
+    if closing.is_none() {
+        // A writer between sends sees the tap closed and hands its sink back
+        // for the close; one held by a send the node does not take is ended
+        // with the relay.
+        tap.wake.notify_one();
+        closing = match tokio::time::timeout(WRITER_HANDBACK, &mut writer).await {
+            Ok(written) => written.ok().map(|(_, sink)| sink),
+            Err(_) => {
+                writer.abort();
+                None
+            }
+        };
+    }
+    if let Some(mut sink) = closing {
+        let _ = sink.send(Message::Close(None)).await;
+    }
+    reason
 }
 
 /// One line a node's screens sent for a pane of this machine: a key, a view
@@ -547,6 +642,81 @@ fn take_down(text: &str, terminals: &dyn TerminalNode, own_prefix: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The keys a relay took, in order.
+    #[derive(Default)]
+    struct Keys(Mutex<Vec<Vec<u8>>>);
+
+    impl TerminalNode for Keys {
+        fn control(&self, _: hide_node_link::terminal::TerminalControl) {}
+        fn key(&self, _: hide_node_link::terminal::KeyTarget, bytes: Vec<u8>, _: u64) {
+            lock(&self.0).push(bytes);
+        }
+        fn view(&self, _: &str, _: hide_node_link::terminal::GridSize, _: bool) {}
+        fn redraw(&self, _: &str) {}
+    }
+
+    /// A send the node does not take (a large message over a slow forward)
+    /// holds only the relay's writer: the node's keys are still read and
+    /// typed, and the link's end still ends the relay.
+    #[tokio::test]
+    async fn a_send_the_node_does_not_take_never_stops_the_relay_reading_its_keys() {
+        let tap = RelayTap::new("node-b");
+        tap.output("core-pane", b"\x1bcwhole", true);
+        let keys = Arc::new(Keys::default());
+        let (sending, send_started) = tokio::sync::oneshot::channel::<()>();
+        let sending = Mutex::new(Some(sending));
+        let stalled = Box::pin(futures_util::sink::unfold((), move |(), _: Message| {
+            if let Some(sending) = lock(&sending).take() {
+                let _ = sending.send(());
+            }
+            std::future::pending::<Result<(), axum::Error>>()
+        }));
+        let (keys_in, keys_out) = tokio::sync::mpsc::unbounded_channel::<Message>();
+        let stream = Box::pin(futures_util::stream::unfold(
+            keys_out,
+            |mut keys| async move { keys.recv().await.map(|message| (Ok(message), keys)) },
+        ));
+        let (end, ended) = tokio::sync::oneshot::channel::<()>();
+        let relay = {
+            let tap = Arc::clone(&tap);
+            let terminals: Arc<dyn TerminalNode> = keys.clone();
+            tokio::spawn(async move {
+                relay_terminals(stalled, stream, &tap, terminals, "node-b", async move {
+                    let _ = ended.await;
+                    "closed".to_owned()
+                })
+                .await
+            })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), send_started)
+            .await
+            .expect("the relay never sent the output")
+            .unwrap();
+        let key = serde_json::to_string(&TerminalLine {
+            terminal: TerminalDown::Key {
+                target: hide_node_link::terminal::KeyTarget::Pane("core-pane".to_owned()),
+                data: encode_base64(b"k"),
+                typed_at_unix_ms: 1,
+            },
+        })
+        .unwrap();
+        keys_in.send(Message::Text(key.into())).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while lock(&keys.0).is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the key was not read while the send was held");
+        end.send(()).unwrap();
+        let reason = tokio::time::timeout(std::time::Duration::from_secs(5), relay)
+            .await
+            .expect("the link's end did not end the relay")
+            .unwrap();
+        assert_eq!(reason, "link_ended");
+        assert_eq!(lock(&keys.0).as_slice(), [b"k".to_vec()]);
+    }
 
     #[test]
     fn a_nodes_screens_wait_on_at_most_the_cap_of_answers() {
