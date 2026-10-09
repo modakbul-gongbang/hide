@@ -966,7 +966,7 @@ impl LabelWorker {
         if self
             .panes
             .get(pane_id)
-            .is_some_and(|pane| pane.agent == hide_session::Agent::Pi)
+            .is_some_and(|pane| pane.agent.requires_native_proof())
         {
             let changed = self.records.get(pane_id).is_some_and(|record| {
                 record.owner.is_some()

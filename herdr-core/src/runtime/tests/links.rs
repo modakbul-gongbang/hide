@@ -776,10 +776,27 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
         Some(vec!["--session".to_owned(), "native.one".to_owned()])
     );
 
+    runtime.snapshot.task_operation = None;
+    assert!(runtime.dispatch_json(&event("opencode", "ses_native1")));
+    assert_eq!(
+        runtime
+            .task_agent_launch
+            .as_ref()
+            .map(|launch| (launch.args.clone(), launch.resume_reference.clone())),
+        Some((
+            vec!["-s".to_owned(), "ses_native1".to_owned()],
+            Some(crate::sidebar::SessionAgentSessionPayload {
+                kind: "id".into(),
+                value: "ses_native1".into(),
+            })
+        )),
+        "OpenCode's proof reads the id the resume names"
+    );
+
     // Starts do not grant resume support before each complete reader
     // slice lands; an id that is not one token never reaches a command line.
     for (provider, session, kind) in [
-        ("opencode", "ses_1", "agent_start.invalid_resume"),
+        ("opencode", "--fork", "agent_start.invalid_resume"),
         ("pi", "native.jsonl", "agent_start.invalid_resume"),
         ("pi", "../native", "agent_start.invalid_resume"),
         ("omp", "native-one", "agent_start.invalid_resume"),

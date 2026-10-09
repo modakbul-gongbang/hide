@@ -19,15 +19,29 @@ pub struct ConversationCheckpoint {
 
 impl ConversationCheckpoint {
     /// A position that is a count rather than a file offset: OpenCode's
-    /// messages read so far (`opencode`).
-    pub(crate) fn at_offset(offset: u64) -> Self {
+    /// messages read so far, with its witness: the session's creation time
+    /// and a digest of the last message read, so a session rewound and grown
+    /// back to the same count is read again rather than continued.
+    pub(crate) fn at_message(offset: u64, created: u64, last: Option<u64>) -> Self {
         Self {
             cursor: crate::CursorCheckpoint {
                 offset,
-                ..crate::CursorCheckpoint::default()
+                identity: last.map(|last| crate::FileIdentity {
+                    first: created,
+                    second: last,
+                }),
+                pending: Vec::new(),
             },
             ..Self::default()
         }
+    }
+
+    /// The session creation time and last-message digest
+    /// [`Self::at_message`] recorded; `None` from an older checkpoint.
+    pub(crate) fn message_witness(&self) -> Option<(u64, u64)> {
+        self.cursor
+            .identity
+            .map(|identity| (identity.first, identity.second))
     }
 
     pub fn offset(&self) -> u64 {

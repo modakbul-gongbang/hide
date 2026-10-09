@@ -130,7 +130,8 @@ impl DormantRecord {
     /// An over-bound capture is refused, never truncated into another owner.
     pub fn validate(&self) -> Result<(), &'static str> {
         self.validate_context()?;
-        if hide_agent_adapter::canonical_kind(&self.kind) == "pi"
+        if hide_session::Agent::from_kind(&self.kind)
+            .is_some_and(hide_session::Agent::requires_native_proof)
             && self.source_reference.as_ref().is_none_or(|reference| {
                 reference.value.len() > 4096
                     || hide_session::label_reference_token(
@@ -518,9 +519,11 @@ mod tests {
         entry.phase = DormantPhase::Sleeping;
         entry.closed = true;
         assert!(store.dormant_snapshots()[0].wake_available);
-        store.dormant.get_mut(&id).unwrap().kind = "pi".into();
-        assert!(store.dormant_snapshots()[0].wake_available);
-        for kind in ["omp", "grok", "cursor", "opencode", "unknown"] {
+        for kind in ["pi", "opencode"] {
+            store.dormant.get_mut(&id).unwrap().kind = kind.into();
+            assert!(store.dormant_snapshots()[0].wake_available, "{kind}");
+        }
+        for kind in ["omp", "grok", "cursor", "unknown"] {
             store.dormant.get_mut(&id).unwrap().kind = kind.into();
             assert!(!store.dormant_snapshots()[0].wake_available, "{kind}");
         }

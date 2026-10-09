@@ -272,6 +272,18 @@ impl Agent {
     pub const fn has_session_file(self) -> bool {
         self.format().has_session_file()
     }
+    pub const fn requires_native_proof(self) -> bool {
+        self.format().requires_native_proof()
+    }
+    pub const fn proof_reference_kind(self) -> &'static str {
+        self.format().proof_reference_kind()
+    }
+    pub const fn reports_activity(self) -> bool {
+        self.format().reports_activity()
+    }
+    pub const fn searchable(self) -> bool {
+        self.format().searchable()
+    }
 }
 
 /// A session identity reported by Herdr.

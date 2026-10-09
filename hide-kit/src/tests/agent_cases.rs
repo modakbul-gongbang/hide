@@ -760,7 +760,8 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
     // enables starts for the five agents besides Claude Code and Codex
     // without enabling their future reader/sleep/fork features. The complete
     // Pi slice adds native title and exact sleep/fork beside the letters and
-    // spawn guard of Hide's extension.
+    // spawn guard of Hide's extension; the OpenCode slice does the same
+    // beside its plugin.
     let opencode = [
         Skill,
         Guidance,
@@ -769,7 +770,10 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
         Subagents,
         SpawnGuard,
         HerdrIntegration,
+        Sleep,
+        Fork,
         Start,
+        Titles,
     ];
     // pi-omp-extension D-08, D-10: Pi and omp take letters and are refused a
     // launch through Hide's extension; only omp runs subagents, and no bell

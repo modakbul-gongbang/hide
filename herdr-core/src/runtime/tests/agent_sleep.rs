@@ -196,6 +196,89 @@ fn a_pi_dormant_journey_refuses_a_changed_route_before_close_wake_or_start() {
     }
 }
 
+/// OpenCode's proof reads its database row: a session moved to another
+/// checkout or gone refuses every later effect, and nothing is written there.
+#[test]
+#[cfg(unix)]
+fn an_opencode_dormant_journey_refuses_a_changed_route_before_close_wake_or_start() {
+    for phase in [
+        "none",
+        "before-close",
+        "before-wake",
+        "before-start",
+        "missing-source-before-close",
+        "missing-source-before-wake",
+        "missing-source-before-start",
+    ] {
+        durable_dormant_journey("opencode", phase);
+    }
+}
+
+/// What a journey's interference does to the native record its proof reads.
+#[cfg(unix)]
+struct NativeRecord {
+    kind: &'static str,
+    path: std::path::PathBuf,
+    folder: std::path::PathBuf,
+    before: Vec<u8>,
+    other: Vec<u8>,
+}
+
+#[cfg(unix)]
+impl NativeRecord {
+    /// Another session where this one was (Pi), or this session moved to
+    /// another checkout (OpenCode).
+    fn duplicate(&self) {
+        if self.kind == "opencode" {
+            self.database()
+                .execute("UPDATE session SET directory = '/elsewhere/app'", [])
+                .unwrap();
+        } else {
+            std::fs::copy(&self.path, self.folder.join("duplicate.jsonl")).unwrap();
+        }
+    }
+
+    fn remove(&self) {
+        if self.kind == "opencode" {
+            self.database()
+                .execute_batch("DELETE FROM part; DELETE FROM message; DELETE FROM session;")
+                .unwrap();
+        } else {
+            std::fs::write(self.folder.join("other.jsonl"), &self.other).unwrap();
+            std::fs::remove_file(&self.path).unwrap();
+        }
+    }
+
+    fn database(&self) -> rusqlite::Connection {
+        rusqlite::Connection::open(&self.path).unwrap()
+    }
+
+    /// The conversation as the journey left it: never rewritten by Hide.
+    fn assert_untouched(&self, interference: &str) {
+        if self.kind == "opencode" {
+            let rows: i64 = self
+                .database()
+                .query_row("SELECT count(*) FROM message", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(rows, i64::from(!interference.starts_with("missing-source")));
+            return;
+        }
+        assert_eq!(
+            std::fs::read(if self.path.exists() {
+                self.path.clone()
+            } else {
+                self.folder.join("other.jsonl")
+            })
+            .unwrap(),
+            if interference.starts_with("missing-source") {
+                self.other.clone()
+            } else {
+                self.before.clone()
+            }
+        );
+    }
+}
+
 #[cfg(unix)]
 fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     use crate::agent_sleep::DormantPhase;
@@ -209,25 +292,45 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         .to_owned();
     let (mut runtime, _) = live_tab_order_runtime(&cwd);
     let home = tempfile::tempdir().unwrap();
-    let native_folder = home.path().join(".pi/agent/sessions").join(format!(
-        "--{}--",
-        cwd.trim_start_matches(['/', '\\'])
-            .replace(['/', '\\', ':'], "-")
-    ));
-    std::fs::create_dir_all(&native_folder).unwrap();
-    let native_path = native_folder.join("native.jsonl");
     let native_id = "11111111-2222-3333-4444-555555555555";
-    std::fs::write(
-        &native_path,
-        format!(
-            "{}\n",
-            serde_json::json!({"type":"session", "version":3, "id":native_id, "cwd":cwd})
-        ),
-    )
-    .unwrap();
-    let native_before = std::fs::read(&native_path).unwrap();
-    let other_before = [native_before.as_slice(), b"{\"type\":\"message\",\"id\":\"other-message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"different history\"}]}}\n"].concat();
-    if kind == "pi" {
+    let native = if kind == "opencode" {
+        crate::fixture::opencode_database(home.path(), &[(native_id, None, cwd.as_str())]);
+        let path = home.path().join(".local/share/opencode/opencode.db");
+        NativeRecord {
+            kind,
+            folder: path.parent().unwrap().to_path_buf(),
+            before: Vec::new(),
+            other: Vec::new(),
+            path,
+        }
+    } else {
+        let native_folder = home.path().join(".pi/agent/sessions").join(format!(
+            "--{}--",
+            cwd.trim_start_matches(['/', '\\'])
+                .replace(['/', '\\', ':'], "-")
+        ));
+        std::fs::create_dir_all(&native_folder).unwrap();
+        let native_path = native_folder.join("native.jsonl");
+        std::fs::write(
+            &native_path,
+            format!(
+                "{}\n",
+                serde_json::json!({"type":"session", "version":3, "id":native_id, "cwd":cwd})
+            ),
+        )
+        .unwrap();
+        let native_before = std::fs::read(&native_path).unwrap();
+        let other_before = [native_before.as_slice(), b"{\"type\":\"message\",\"id\":\"other-message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"different history\"}]}}\n"].concat();
+        NativeRecord {
+            kind,
+            path: native_path,
+            folder: native_folder,
+            before: native_before,
+            other: other_before,
+        }
+    };
+    let native = Arc::new(native);
+    if kind != "claude" {
         runtime.own_node = Arc::new(hide_node::Local::new(Some(home.path().to_path_buf())));
         runtime.live.as_mut().unwrap().node = runtime.own_node();
     }
@@ -239,9 +342,16 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     initial.agents[0].agent = Some(kind.into());
     initial.agents[0].facts = Some(crate::request_view::RowFacts {
         native_session_id: Some(native_id.into()),
-        native_reference: Some(crate::sidebar::SessionAgentSessionPayload {
-            kind: "path".into(),
-            value: native_path.display().to_string(),
+        native_reference: Some(if kind == "opencode" {
+            crate::sidebar::SessionAgentSessionPayload {
+                kind: "id".into(),
+                value: native_id.into(),
+            }
+        } else {
+            crate::sidebar::SessionAgentSessionPayload {
+                kind: "path".into(),
+                value: native.path.display().to_string(),
+            }
         }),
         ..Default::default()
     });
@@ -259,19 +369,17 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         record.label_owner = hide_session::label_reference_token(kind, "id", native_id).unwrap();
     }
     if interference == "before-close" {
-        std::fs::copy(&native_path, native_folder.join("duplicate.jsonl")).unwrap();
+        native.duplicate();
     }
     if interference == "missing-source-before-close" {
-        std::fs::write(native_folder.join("other.jsonl"), &other_before).unwrap();
-        std::fs::remove_file(&native_path).unwrap();
+        native.remove();
     }
     assert_eq!(runtime.snapshot.ui_state.agent_sleep.dormant[&id].cwd, cwd);
     let path = runtime.state_path.clone();
     let saved_path = path.clone();
     let saved_id = id.clone();
     let saved_cwd = cwd.clone();
-    let create_source = native_path.clone();
-    let create_other = other_before.clone();
+    let create_native = Arc::clone(&native);
     let (effects, observed) = std::sync::mpsc::channel();
     let mut created = false;
     let herdr = FakeHerdr::start("dormant-success", move |method, params| match method {
@@ -304,15 +412,10 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         }
         "layout.apply" => {
             if interference == "missing-source-before-start" {
-                std::fs::write(create_source.with_file_name("other.jsonl"), &create_other).unwrap();
-                std::fs::remove_file(&create_source).unwrap();
+                create_native.remove();
             }
             if interference == "before-start" {
-                std::fs::copy(
-                    &create_source,
-                    create_source.with_file_name("duplicate.jsonl"),
-                )
-                .unwrap();
+                create_native.duplicate();
             }
             assert_eq!(
                 persisted_dormant(&saved_path, &saved_id)["phase"],
@@ -346,10 +449,10 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
             assert_eq!(
                 params["args"],
                 serde_json::json!([
-                    if kind == "pi" {
-                        "--session"
-                    } else {
-                        "--resume"
+                    match kind {
+                        "pi" => "--session",
+                        "opencode" => "-s",
+                        _ => "--resume",
                     },
                     "11111111-2222-3333-4444-555555555555"
                 ])
@@ -367,7 +470,7 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     shared.lock().unwrap().live.as_mut().unwrap().runtime = Arc::downgrade(&shared);
     shared.lock().unwrap().write_ui_state().unwrap();
     if matches!(interference, "before-close" | "missing-source-before-close") {
-        wait_for("refused Pi close", || {
+        wait_for("refused native close", || {
             !shared
                 .lock()
                 .unwrap()
@@ -389,19 +492,7 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
             herdr.methods()
         );
         assert_eq!(row(&shared.lock().unwrap())["pane_id"], SLEEPER);
-        assert_eq!(
-            std::fs::read(if native_path.exists() {
-                native_path.clone()
-            } else {
-                native_folder.join("other.jsonl")
-            })
-            .unwrap(),
-            if interference.starts_with("missing-source") {
-                other_before
-            } else {
-                native_before
-            }
-        );
+        native.assert_untouched(interference);
         return;
     }
     assert_eq!(
@@ -435,17 +526,16 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         );
         assert_eq!(runtime.snapshot.recent_closed.count, 0);
         if interference == "before-wake" {
-            std::fs::copy(&native_path, native_folder.join("duplicate.jsonl")).unwrap();
+            native.duplicate();
         }
         if interference == "missing-source-before-wake" {
-            std::fs::write(native_folder.join("other.jsonl"), &other_before).unwrap();
-            std::fs::remove_file(&native_path).unwrap();
+            native.remove();
         }
         assert!(runtime.request_dormant_wake(&id));
         assert!(!runtime.request_dormant_wake(&id));
     }
     if matches!(interference, "before-wake" | "missing-source-before-wake") {
-        wait_for("refused Pi wake tab", || {
+        wait_for("refused native wake tab", || {
             shared.lock().unwrap().snapshot.ui_state.agent_sleep.dormant[&id].phase
                 == DormantPhase::Failed
         });
@@ -460,19 +550,7 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
                 .wake_pane_id
                 .is_none()
         );
-        assert_eq!(
-            std::fs::read(if native_path.exists() {
-                native_path.clone()
-            } else {
-                native_folder.join("other.jsonl")
-            })
-            .unwrap(),
-            if interference.starts_with("missing-source") {
-                other_before
-            } else {
-                native_before
-            }
-        );
+        native.assert_untouched(interference);
         return;
     }
     assert_eq!(
@@ -480,7 +558,7 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         "create"
     );
     if matches!(interference, "before-start" | "missing-source-before-start") {
-        wait_for("refused Pi wake start", || {
+        wait_for("refused native wake start", || {
             shared.lock().unwrap().snapshot.ui_state.agent_sleep.dormant[&id].phase
                 == DormantPhase::Failed
         });
@@ -491,19 +569,7 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
                 .as_deref(),
             Some("w-order:t3:p")
         );
-        assert_eq!(
-            std::fs::read(if native_path.exists() {
-                native_path.clone()
-            } else {
-                native_folder.join("other.jsonl")
-            })
-            .unwrap(),
-            if interference.starts_with("missing-source") {
-                other_before
-            } else {
-                native_before
-            }
-        );
+        native.assert_untouched(interference);
         return;
     }
     assert_eq!(

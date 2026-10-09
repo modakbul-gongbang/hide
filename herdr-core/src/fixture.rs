@@ -208,3 +208,58 @@ mod tests {
         );
     }
 }
+
+/// An OpenCode 1.18.30 database in `home` holding `sessions` as
+/// `(id, parent_id, directory)`, each with one operator message: the shape
+/// its own `session`, `message` and `part` tables have.
+#[cfg(test)]
+pub(crate) fn opencode_database(home: &std::path::Path, sessions: &[(&str, Option<&str>, &str)]) {
+    let folder = home.join(".local/share/opencode");
+    std::fs::create_dir_all(&folder).unwrap();
+    let database = rusqlite::Connection::open(folder.join("opencode.db")).unwrap();
+    database
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS session (id text PRIMARY KEY, project_id text NOT NULL, \
+             parent_id text, slug text NOT NULL, directory text NOT NULL, title text NOT NULL, \
+             version text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL);
+             CREATE TABLE IF NOT EXISTS message (id text PRIMARY KEY, session_id text NOT NULL, \
+             time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
+             CREATE TABLE IF NOT EXISTS part (id text PRIMARY KEY, message_id text NOT NULL, \
+             session_id text NOT NULL, time_created integer NOT NULL, \
+             time_updated integer NOT NULL, data text NOT NULL);",
+        )
+        .unwrap();
+    for (index, (id, parent, directory)) in sessions.iter().enumerate() {
+        let at = 1_790_989_200_000_i64 + index as i64;
+        database
+            .execute(
+                "INSERT INTO session VALUES (?1, 'prj_1', ?2, 'slug', ?3, 'OpenCode title', \
+                 '1.18.30', ?4, ?4)",
+                rusqlite::params![id, parent, directory, at],
+            )
+            .unwrap();
+        database
+            .execute(
+                "INSERT INTO message VALUES (?1, ?2, ?3, ?3, ?4)",
+                rusqlite::params![
+                    format!("msg_{id}"),
+                    id,
+                    at,
+                    format!(r#"{{"role":"user","time":{{"created":{at}}}}}"#)
+                ],
+            )
+            .unwrap();
+        database
+            .execute(
+                "INSERT INTO part VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+                rusqlite::params![
+                    format!("prt_{id}"),
+                    format!("msg_{id}"),
+                    id,
+                    at,
+                    r#"{"type":"text","text":"OpenCode request"}"#
+                ],
+            )
+            .unwrap();
+    }
+}

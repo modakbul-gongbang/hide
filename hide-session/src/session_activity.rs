@@ -33,6 +33,9 @@ pub struct SessionActivity {
 }
 
 pub fn read(home: &Path, request: &SessionActivityRequest) -> Result<SessionActivity, String> {
+    if request.agent == Agent::OpenCode {
+        return crate::opencode::activity(home, request);
+    }
     let (path, before) = label_transcript::locate_confirmed(
         home,
         request.agent,

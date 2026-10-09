@@ -80,6 +80,7 @@ fn deserialize_native_id<'de, D: serde::Deserializer<'de>>(
 /// Bounded native ID syntax. This validates spelling, never ownership.
 pub fn valid_native_id(id: &str) -> bool {
     !id.is_empty()
+        && !id.starts_with('-')
         && id.len() <= crate::turns::NATIVE_ID_LIMIT_BYTES
         && id != "."
         && id != ".."

@@ -135,10 +135,36 @@ impl SessionFormat {
     }
 
     pub const fn reports_turns(self) -> bool {
-        matches!(self, Self::Claude | Self::Codex)
+        matches!(self, Self::Claude | Self::Codex | Self::OpenCode)
     }
     pub const fn has_session_file(self) -> bool {
         matches!(self, Self::Claude | Self::Codex | Self::Pi)
+    }
+
+    /// The native reader proves the session's owner and checkout before a
+    /// lifecycle effect (wake, fork, resume) uses its id, and Herdr's
+    /// reported id alone grants none of them.
+    pub const fn requires_native_proof(self) -> bool {
+        matches!(self, Self::Pi | Self::OpenCode)
+    }
+
+    /// The reported reference a native proof takes: OpenCode names a session
+    /// by its id in OpenCode's database, a file reader by the file's path.
+    pub const fn proof_reference_kind(self) -> &'static str {
+        match self {
+            Self::OpenCode => "id",
+            Self::Claude | Self::Codex | Self::Pi => "path",
+        }
+    }
+
+    /// The native reader answers a session's modification time and size.
+    pub const fn reports_activity(self) -> bool {
+        self.has_session_file() || matches!(self, Self::OpenCode)
+    }
+
+    /// The native reader feeds the project session catalog and body search.
+    pub const fn searchable(self) -> bool {
+        self.has_session_file() || matches!(self, Self::OpenCode)
     }
 }
 
@@ -206,6 +232,17 @@ impl LaunchDialect {
 
     pub const fn closes_pane_when_sleeping(self) -> bool {
         !matches!(self, Self::Claude | Self::Codex)
+    }
+
+    /// The native selector prefix, independent of whether this build has
+    /// implemented and declared the reader needed to resume that agent.
+    pub const fn resume_flag(self) -> &'static str {
+        match self {
+            Self::Codex => "resume",
+            Self::Pi => "--session",
+            Self::OpenCode => "-s",
+            Self::Claude | Self::Grok | Self::Omp | Self::Cursor => "--resume",
+        }
     }
 }
 
@@ -493,8 +530,8 @@ impl AgentAdapter {
             Feature::Sleep => self.sleep.is_some(),
             Feature::Fork => self.fork.is_some(),
             Feature::Start => self.start.is_some(),
-            // OpenCode's existing label reader is not the session features
-            // offered by Settings; keep that established distinction.
+            // A label reader alone is not the session features offered by
+            // Settings: titles count once the conversation is read too.
             Feature::Titles => self.conversation.is_some() && self.titles.is_some(),
         }
     }

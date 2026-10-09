@@ -47,7 +47,13 @@ impl ReaderFeatures {
             let row = agent.format().adapter();
             let mut features = std::collections::BTreeSet::from([Identity, Labels, Links]);
             if agent.has_session_file() {
-                features.extend([Activity, Search, Memory]);
+                features.insert(Memory);
+            }
+            if agent.reports_activity() {
+                features.insert(Activity);
+            }
+            if agent.searchable() {
+                features.insert(Search);
             }
             if row.titles.is_some() {
                 features.insert(Titles);
@@ -329,6 +335,37 @@ mod reader_tests {
         for provider in ["omp", "grok", "cursor"] {
             assert!(!facts.supports(provider, ReaderFeature::Identity));
         }
+    }
+
+    #[test]
+    fn opencode_has_its_complete_database_reader_while_protocol24_keeps_its_partial_one() {
+        let facts = ReaderFeatures::implemented();
+        for feature in [
+            ReaderFeature::Identity,
+            ReaderFeature::Labels,
+            ReaderFeature::Titles,
+            ReaderFeature::Conversation,
+            ReaderFeature::Search,
+            ReaderFeature::Links,
+            ReaderFeature::Activity,
+            ReaderFeature::Turns,
+            ReaderFeature::UserTurnContent,
+        ] {
+            assert!(facts.supports("opencode", feature), "{feature:?}");
+        }
+        // Its Memory receipts arrive with its labels, not a file pass.
+        assert!(!facts.supports("opencode", ReaderFeature::Memory));
+        let retained = ReaderFeatures::protocol24();
+        for feature in [
+            ReaderFeature::Conversation,
+            ReaderFeature::Search,
+            ReaderFeature::Activity,
+            ReaderFeature::Turns,
+            ReaderFeature::UserTurnContent,
+        ] {
+            assert!(!retained.supports("opencode", feature), "{feature:?}");
+        }
+        assert!(retained.supports("opencode", ReaderFeature::Titles));
     }
 }
 

@@ -1540,6 +1540,11 @@ pub(crate) mod tests {
         );
         assert_eq!(
             observe(&mut guard, "opencode", 2, "recipient-native", None),
+            Turn::Unread,
+            "OpenCode's question reader finishes before a bell too"
+        );
+        assert_eq!(
+            observe(&mut guard, "grok", 2, "recipient-native", None),
             Turn::NotReported
         );
         // Adapter D-08/B5: every spelling of one agent reads the same turn.

@@ -309,14 +309,18 @@ impl ClosedLayoutNode {
 
 pub fn resume_arguments(agent: &ClosedAgent) -> Option<Vec<String>> {
     let session_id = agent.session_id.as_ref()?;
-    match hide_agent_adapter::adapter(&agent.kind)?.resume? {
-        hide_agent_adapter::LaunchDialect::Claude => {
-            Some(vec!["--resume".into(), session_id.clone()])
+    if !hide_session::valid_native_id(session_id) {
+        return None;
+    }
+    let dialect = hide_agent_adapter::adapter(&agent.kind)?.resume?;
+    match dialect {
+        hide_agent_adapter::LaunchDialect::Claude
+        | hide_agent_adapter::LaunchDialect::Codex
+        | hide_agent_adapter::LaunchDialect::Pi
+        | hide_agent_adapter::LaunchDialect::OpenCode => {
+            Some(vec![dialect.resume_flag().into(), session_id.clone()])
         }
-        hide_agent_adapter::LaunchDialect::Codex => Some(vec!["resume".into(), session_id.clone()]),
-        hide_agent_adapter::LaunchDialect::Pi => Some(vec!["--session".into(), session_id.clone()]),
         hide_agent_adapter::LaunchDialect::Grok
-        | hide_agent_adapter::LaunchDialect::OpenCode
         | hide_agent_adapter::LaunchDialect::Omp
         | hide_agent_adapter::LaunchDialect::Cursor => None,
     }
@@ -393,6 +397,21 @@ mod tests {
 
     #[test]
     fn resume_arguments_resume_without_forking() {
+        assert_eq!(
+            resume_arguments(&ClosedAgent {
+                kind: "opencode".into(),
+                session_id: Some("ses_native".into()),
+            }),
+            Some(vec!["-s".to_owned(), "ses_native".to_owned()])
+        );
+        assert!(
+            resume_arguments(&ClosedAgent {
+                kind: "opencode".into(),
+                session_id: Some("--fork".into()),
+            })
+            .is_none(),
+            "a flag-shaped id never reaches the command line"
+        );
         assert_eq!(
             resume_arguments(&ClosedAgent {
                 kind: "claude".into(),

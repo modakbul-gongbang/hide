@@ -4403,8 +4403,19 @@ impl Runtime {
             resume_reference: launch.and_then(|launch| launch.resume_reference.clone()),
             resume_scope: launch
                 .filter(|launch| {
-                    operation.agent_kind.as_deref() == Some("pi")
-                        && launch.args.first().map(String::as_str) == Some("--session")
+                    operation
+                        .agent_kind
+                        .as_deref()
+                        .and_then(hide_agent_adapter::adapter)
+                        .filter(|adapter| {
+                            adapter
+                                .session
+                                .is_some_and(|format| format.requires_native_proof())
+                        })
+                        .and_then(|adapter| adapter.resume)
+                        .is_some_and(|dialect| {
+                            launch.args.first().map(String::as_str) == Some(dialect.resume_flag())
+                        })
                 })
                 .and_then(|launch| {
                     Some(hide_session::SessionReadScope {
