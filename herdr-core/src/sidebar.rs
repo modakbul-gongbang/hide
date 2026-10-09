@@ -668,7 +668,9 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .as_ref()
             .and_then(|facts| facts.native_session_id.clone())
             .or_else(|| {
-                if hide_agent_adapter::canonical_kind(agent_kind) == "pi" {
+                if hide_session::Agent::from_kind(agent_kind)
+                    .is_some_and(hide_session::Agent::requires_native_file_proof)
+                {
                     return None;
                 }
                 agent

@@ -326,9 +326,36 @@ mod reader_tests {
         for feature in [ReaderFeature::Turns, ReaderFeature::UserTurnContent] {
             assert!(!facts.supports("pi", feature));
         }
-        for provider in ["omp", "grok", "cursor"] {
+        for provider in ["grok", "cursor"] {
             assert!(!facts.supports(provider, ReaderFeature::Identity));
         }
+    }
+
+    #[test]
+    fn omp_has_its_native_reader_and_question_content_only_on_a_current_helper() {
+        let facts = ReaderFeatures::implemented();
+        for feature in [
+            ReaderFeature::Identity,
+            ReaderFeature::Labels,
+            ReaderFeature::Titles,
+            ReaderFeature::Conversation,
+            ReaderFeature::Search,
+            ReaderFeature::Memory,
+            ReaderFeature::Links,
+            ReaderFeature::Activity,
+            ReaderFeature::Turns,
+            ReaderFeature::UserTurnContent,
+        ] {
+            assert!(facts.supports("omp", feature), "{feature:?}");
+            assert!(!ReaderFeatures::protocol24().supports("omp", feature));
+        }
+        // A Pi-only intermediate protocol25 helper grants no omp operation.
+        let earlier: ReaderFeatures = serde_json::from_str(
+            r#"[{"provider":"pi","features":["identity","activity","conversation"]}]"#,
+        )
+        .unwrap();
+        assert!(earlier.supports("pi", ReaderFeature::Identity));
+        assert!(!earlier.supports("omp", ReaderFeature::Identity));
     }
 }
 

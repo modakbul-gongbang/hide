@@ -97,6 +97,45 @@ pub(crate) fn claude(item: &Value) -> Mark {
     Ok((!marks.is_empty()).then_some(TurnMark::Tools(marks)))
 }
 
+/// omp records native ask calls inside assistant message blocks and their
+/// toolResult correlation separately. Audit/custom records are not turns.
+pub(crate) fn omp(item: &Value) -> Mark {
+    if item["type"] != "message" {
+        return Ok(None);
+    }
+    let message = &item["message"];
+    if message["role"] == "toolResult" {
+        return Ok(id(message.get("toolCallId"))?
+            .map(|call| TurnMark::Tools(vec![ToolTurnMark::Answered { call }])));
+    }
+    if message["role"] != "assistant" {
+        return Ok(None);
+    }
+    if message["stopReason"] == "aborted" {
+        return Ok(Some(TurnMark::Interrupted));
+    }
+    let mut marks = Vec::new();
+    for block in message
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if block["type"] != "toolCall" || block["name"] != "ask" {
+            continue;
+        }
+        if marks.len() == TOOL_MARK_LIMIT {
+            return Err(SkipReason::UserTurnCapacity);
+        }
+        let call = id(block.get("id"))?.ok_or(SkipReason::UserTurnInvalid)?;
+        marks.push(ToolTurnMark::Asked {
+            call,
+            content: block.get("arguments").and_then(question_content),
+        });
+    }
+    Ok((!marks.is_empty()).then_some(TurnMark::Tools(marks)))
+}
+
 /// Codex 0.160.1 emits task lifecycle records and native function-call
 /// records. A completed plan-mode turn holds approval; an unanswered native
 /// request_user_input holds a question while the turn is still running.

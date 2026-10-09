@@ -153,7 +153,12 @@ impl LabelOverlay {
                 })
                 .cloned();
             facts.native_reference = facts.native_session_id.as_ref().and_then(|_| {
-                if agent.agent.as_deref() == Some("pi") {
+                if agent
+                    .agent
+                    .as_deref()
+                    .and_then(hide_session::Agent::from_kind)
+                    .is_some_and(hide_session::Agent::requires_native_file_proof)
+                {
                     label.native_source_path.as_ref().map(|path| {
                         crate::sidebar::SessionAgentSessionPayload {
                             kind: "path".into(),

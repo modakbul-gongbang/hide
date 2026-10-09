@@ -376,16 +376,19 @@ fn session_read<T: serde::Serialize>(
     let path = session_file(env, &SESSION_FILE_AGENTS, path)?;
     let home = env.home("sessions_home_unavailable")?;
     let home = Path::new(&home);
-    let agent =
-        if hide_session::inside_session_root(home, &[hide_session::Agent::Pi], &path).is_ok() {
-            hide_session::Agent::Pi
-        } else {
-            hide_session::Agent::Claude
-        };
+    let agent = session_file_agent(home, &path)?;
     to_value(
         hide_session::read_session_file(home, agent, &path, scope, || read(&path))
             .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
     )
+}
+
+fn session_file_agent(home: &Path, path: &Path) -> HostResult<hide_session::Agent> {
+    SESSION_FILE_AGENTS
+        .iter()
+        .copied()
+        .find(|agent| hide_session::inside_session_root(home, &[*agent], path).is_ok())
+        .ok_or_else(|| HostError::new(ErrorCode::OutsideRoot, "session_outside_roots"))
 }
 
 fn project_facts(path: &str) -> HostResult<hide_project::ProjectFacts> {
@@ -884,17 +887,7 @@ pub fn handle_with_progress(
                             path,
                         )
                         .ok()?;
-                        let agent = if hide_session::inside_session_root(
-                            Path::new(&home),
-                            &[hide_session::Agent::Pi],
-                            &path,
-                        )
-                        .is_ok()
-                        {
-                            hide_session::Agent::Pi
-                        } else {
-                            hide_session::Agent::Claude
-                        };
+                        let agent = session_file_agent(Path::new(&home), &path).ok()?;
                         let scope = scopes
                             .as_ref()
                             .and_then(|scopes| scopes.get(index))
@@ -1176,15 +1169,39 @@ mod tests {
     }
 
     #[test]
-    fn queued_pi_archive_search_memory_and_stamps_refuse_a_replaced_catalog_owner() {
+    fn queued_native_archive_search_memory_and_stamps_refuse_a_replaced_catalog_owner() {
+        for agent in [hide_session::Agent::Pi, hide_session::Agent::Omp] {
+            queued_native_catalog_owner(agent);
+        }
+    }
+
+    fn queued_native_catalog_owner(agent: hide_session::Agent) {
         let home = tempfile::tempdir().unwrap();
         let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
-        let folder = home.path().join(".pi/agent/sessions").join(format!(
-            "--{}--",
-            cwd.to_string_lossy()
-                .trim_start_matches(['/', '\\'])
-                .replace(['/', '\\', ':'], "-")
-        ));
+        let (root, bucket) = match agent {
+            hide_session::Agent::Pi => (
+                ".pi/agent/sessions",
+                format!(
+                    "--{}--",
+                    cwd.to_string_lossy()
+                        .trim_start_matches(['/', '\\'])
+                        .replace(['/', '\\', ':'], "-")
+                ),
+            ),
+            hide_session::Agent::Omp => {
+                let temporary = std::env::temp_dir().canonicalize().unwrap();
+                let relative = cwd.strip_prefix(temporary).unwrap();
+                (
+                    ".omp/agent/sessions",
+                    format!(
+                        "-tmp-{}",
+                        relative.to_string_lossy().replace(['/', '\\', ':'], "-")
+                    ),
+                )
+            }
+            _ => unreachable!("native-file fixture"),
+        };
+        let folder = home.path().join(root).join(bucket);
         std::fs::create_dir_all(&folder).unwrap();
         let path = folder.join("native.jsonl");
         let env = Env::standalone(Some(home.path().to_path_buf()));
@@ -1208,7 +1225,7 @@ mod tests {
                     checkpoint: None,
                 },
                 Call::SessionIndexRead {
-                    agent: hide_session::Agent::Pi,
+                    agent,
                     path: path.display().to_string(),
                     scope: Some(scope.clone()),
                     saved: None,

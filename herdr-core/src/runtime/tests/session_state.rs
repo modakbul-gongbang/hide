@@ -174,6 +174,27 @@ fn pane_bands_prioritize_connection_then_own_demand_then_raised_children() {
             .kind,
         "approval"
     );
+    agent.user_turn = Some(hide_session::turns::UserTurnFact {
+        kind: hide_session::turns::UserTurnKind::Question,
+        content: None,
+    });
+    assert_eq!(
+        header::of(&pane, Some(&agent), None, &project, None)
+            .band
+            .unwrap()
+            .kind,
+        "answer",
+        "the native question holds for a reply even after it is read"
+    );
+    agent.user_turn.as_mut().unwrap().kind = hide_session::turns::UserTurnKind::PlanApproval;
+    assert_eq!(
+        header::of(&pane, Some(&agent), None, &project, None)
+            .band
+            .unwrap()
+            .kind,
+        "approval",
+        "a native plan wait still asks for approval"
+    );
     let offline = header::of(&pane, Some(&agent), None, &project, Some("mini"))
         .band
         .unwrap();
