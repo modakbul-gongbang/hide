@@ -571,6 +571,16 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
         .local_addr()
         .map_err(|error| error.to_string())?
         .port();
+    // The browser relay listens on its own loopback port, which answers
+    // nothing else: a stream the core opens to it through the link reaches
+    // only a relay ticket, never this daemon's other routes.
+    let relay_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .map_err(|error| format!("the browser relay could not listen: {error}"))?;
+    let browser_relay_port = relay_listener
+        .local_addr()
+        .map_err(|error| error.to_string())?
+        .port();
     let pid = std::process::id();
     let state = DaemonState {
         pid,
@@ -609,7 +619,7 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
             build: Some(Arc::from(build.as_str())),
             shutdown: Arc::clone(&shutdown),
             state_dir: env.state_dir.clone(),
-            port,
+            browser_relay_port,
         },
     )?;
     // Recorded once the daemon runs, so a start that failed leaves no record
@@ -637,6 +647,20 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
         || false,
     );
     let app = node_daemon::router(daemon.state.clone());
+    let relay_app = node_daemon::relay_router(daemon.state.clone());
+    let relay_stopping = Arc::clone(&shutdown);
+    tokio::spawn(async move {
+        let served = axum::serve(relay_listener, relay_app)
+            .with_graceful_shutdown(async move { relay_stopping.notified().await })
+            .await;
+        if let Err(error) = served {
+            herdr_core::diagnostic!(serde_json::json!({
+                "component": "node_daemon",
+                "kind": "browser_relay.exit",
+                "message": error.to_string(),
+            }));
+        }
+    });
     let state_dir = env.state_dir.clone();
     let stopping = Arc::clone(&shutdown);
     tokio::spawn(async move {

@@ -42,7 +42,7 @@ pub const CLOSE_GATEWAY_LOST: u16 = 4011;
 
 /// The gateway side of a relay: the gateway itself, or the browser relay
 /// of a node's daemon through the node's link.
-pub type Gateway = tokio_tungstenite::WebSocketStream<Pin<Box<dyn Transport>>>;
+pub(crate) type Gateway = tokio_tungstenite::WebSocketStream<Pin<Box<dyn Transport>>>;
 
 /// Where a relay's CDP runs, as its diagnostic names it.
 #[derive(Clone, Copy, Debug)]
@@ -74,7 +74,7 @@ fn config() -> WebSocketConfig {
 
 /// Opens the gateway side before the CLI is told the relay is ready, so a
 /// refused upgrade is an answer the caller can act on, not a dropped socket.
-pub async fn connect(browser_ws_url: &str) -> Result<Gateway, Failure> {
+pub(crate) async fn connect(browser_ws_url: &str) -> Result<Gateway, Failure> {
     let address = browser_ws_url
         .parse::<axum::http::Uri>()
         .ok()
@@ -92,7 +92,7 @@ pub async fn connect(browser_ws_url: &str) -> Result<Gateway, Failure> {
 
 /// The same over `transport`, which already reaches the URL's host: a
 /// stream through a node's link to the node's browser relay.
-pub async fn connect_over(
+pub(crate) async fn connect_over(
     url: &str,
     transport: Pin<Box<dyn Transport>>,
 ) -> Result<Gateway, Failure> {
@@ -114,7 +114,7 @@ async fn handshake(url: &str, transport: Pin<Box<dyn Transport>>) -> Result<Gate
 /// of that node's link, for a caller on another machine than the node's
 /// window. The stream's bytes cross the link; at the link's cap of relay
 /// streams the open is refused with its reason.
-pub async fn connect_through(
+pub(crate) async fn connect_through(
     link: hide_node::ssh::RemoteHost,
     relay_url: &str,
 ) -> Result<Gateway, Failure> {
@@ -122,10 +122,14 @@ pub async fn connect_through(
         .await
         .map_err(|_| unavailable())?;
     let stream = opened.map_err(|error| match error {
-        hide_node::ssh::OpenError::Cap(_) => (
-            "browser_relay_limit",
-            "Wait for another hide browser command to finish and retry",
-        ),
+        // This side's cap, or the node's while a stream this side let go is
+        // still closing there.
+        hide_node::ssh::OpenError::Cap(_) => refused(503),
+        hide_node::ssh::OpenError::Refused(hide_node_link::LinkError::Refused(refusal))
+            if refusal.code == hide_node_link::ErrorCode::Busy =>
+        {
+            refused(503)
+        }
         _ => unavailable(),
     })?;
     connect_over(
@@ -147,8 +151,22 @@ fn bridge(stream: hide_node::ssh::LinkStream) -> std::io::Result<tokio::io::Dupl
     let reading = runtime.clone();
     let mut writer = stream.writer();
     let closer = stream.closer();
+    let unstarted = stream.closer();
     let mut reader = stream;
     std::thread::Builder::new()
+        .name("browser-link-write".to_owned())
+        .spawn(move || {
+            let mut buffer = vec![0_u8; hide_node_link::panes::MAX_CHUNK];
+            while let Ok(read) = runtime.block_on(outgoing.read(&mut buffer)) {
+                if read == 0 || writer.write_all(&buffer[..read]).is_err() {
+                    break;
+                }
+            }
+            closer.close();
+        })?;
+    // The writer runs; a reader that cannot start ends the stream, which
+    // ends the writer with it.
+    let started = std::thread::Builder::new()
         .name("browser-link-read".to_owned())
         .spawn(move || {
             let mut buffer = vec![0_u8; hide_node_link::panes::MAX_CHUNK];
@@ -162,24 +180,17 @@ fn bridge(stream: hide_node::ssh::LinkStream) -> std::io::Result<tokio::io::Dupl
                 }
             }
             let _ = reading.block_on(incoming.shutdown());
-        })?;
-    std::thread::Builder::new()
-        .name("browser-link-write".to_owned())
-        .spawn(move || {
-            let mut buffer = vec![0_u8; hide_node_link::panes::MAX_CHUNK];
-            while let Ok(read) = runtime.block_on(outgoing.read(&mut buffer)) {
-                if read == 0 || writer.write_all(&buffer[..read]).is_err() {
-                    break;
-                }
-            }
-            closer.close();
-        })?;
+        });
+    if let Err(error) = started {
+        unstarted.close();
+        return Err(error);
+    }
     Ok(ours)
 }
 
 /// What a refused upgrade means to the caller: a gateway or a node relay
 /// at its cap, or a capability that is gone.
-pub fn refused(status: u16) -> Failure {
+pub(crate) fn refused(status: u16) -> Failure {
     match status {
         429 => (
             "browser_control_busy",
@@ -206,7 +217,7 @@ fn unavailable() -> Failure {
 /// over is gone), which ends it as a lost gateway; a peer that stops reading
 /// is dropped after a bounded send. Every exit closes both sides, and logs
 /// the bytes it carried and why it ended.
-pub async fn pump(
+pub(crate) async fn pump(
     client: &mut WebSocket,
     mut gateway: Gateway,
     display_id: &str,
@@ -420,6 +431,16 @@ mod tests {
                 other => panic!("the relay ended without a close frame: {other:?}"),
             }
         }
+    }
+
+    /// A refused upgrade tells the caller which cap it met: the gateway's
+    /// own clients, or the relays a node runs at once.
+    #[test]
+    fn a_refused_dial_names_the_cap_it_met() {
+        assert_eq!(refused(429).0, "browser_control_busy");
+        assert_eq!(refused(503).0, "browser_relay_limit");
+        assert_eq!(refused(404).0, "browser_control_unavailable");
+        assert_eq!(refused(403).0, "browser_control_unavailable");
     }
 
     #[tokio::test]

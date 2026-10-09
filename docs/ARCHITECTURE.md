@@ -1162,7 +1162,7 @@ Browser control of a page in an M window follows the same split (B4, B13, B15; `
 C keeps the authority: it checks the caller's credential, decides the scope, and asks M for the gateway's capability over the link (`Call::BrowserGateway`, a machine call).
 A caller on M is handed M's own capability URLs, or for a page command a one-shot relay URL on M's daemon, which pumps the CDP to the gateway on M (`relay.ended` with `way: node`); a caller on C or a device whose only window is M's is relayed by C through a link stream whose end is M's browser relay (`way: link`), at most four per link.
 Page actions the gateway asks for go from M's daemon to C (`/relay/browser-control/action`), and C runs them as that window.
-When the link ends, M drops its tickets, ends its relays as a lost gateway and asks the gateway to revoke every capability, and C forgets M's windows ([BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md#a-screen-whose-core-runs-on-another-machine)).
+When the link ends, M drops its tickets, ends its relays as a lost gateway and asks the gateway to revoke every capability (best effort, asked again before a `revoke.failed` diagnostic, the desktop's own lease the backstop), and C stops choosing M's windows ([BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md#a-screen-whose-core-runs-on-another-machine)).
 Terminals take another way.
 M's own panes' keys and output never leave M: keys go from M's screen to M's node terminals and output from them to M's hub, and C hears the input facts it always heard.
 Every other pane's output comes down one terminals relay per node (`/relay?mode=terminals`) into M's hub, at most 4 MiB unsent per node before a pane is drawn again whole, and their keys go up it.
@@ -1191,7 +1191,7 @@ The human notice's Herdr toast goes to the first connected node that dialed in, 
 | --- | --- |
 | Each M screen's events, C's snapshots, deltas and answers, through that screen's relay | Keys into M's panes and their output, and files an M screen pastes or drops into them |
 | A Browser View's address, and a page of C's loopback, through the link's SSH connection | Pages of M's own addresses |
-| The browser authority: a caller's credential check, the scope C decided, M's window's owner pid, and the gateway's page actions; the CDP of a caller off M, through a browser relay stream | The gateway's registration and capability URLs, and the CDP of a caller on M |
+| The browser authority: a caller's credential check, the scope C decided, M's window's owner pid, and the gateway's page actions; the M-loopback capability URLs it passes on to a caller on M; the CDP of a caller off M, through a browser relay stream | The gateway's registration (its address and control token), and the CDP of a caller on M |
 | Output of C's and other devices' panes, and keys into them, through the terminals relay | Bytes of files in M's checkouts under the roots C opened on M |
 | M's Herdr streams, pane and checkout proofs, input facts and the label lock, inside the link | M's screens' tokens and the desktop host's discovery (`hide connect`) |
 | M's panes' output, only while a screen of C looks at them | |

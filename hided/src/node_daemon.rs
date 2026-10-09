@@ -331,7 +331,7 @@ impl NodeDaemon {
             home,
             herdr_core::node::NodeId::parse(&identity.node)?,
         )?);
-        let browser = NodeBrowser::new(server.port);
+        let browser = NodeBrowser::new(server.browser_relay_port);
         let role = Arc::new(NodeRole::start_with_browser(
             home,
             placement,
@@ -425,8 +425,9 @@ pub struct ServerParts {
     pub shutdown: Arc<Notify>,
     /// This machine's state folder, where its screens' uploads are staged.
     pub state_dir: PathBuf,
-    /// The loopback port the screen server listens on.
-    pub port: u16,
+    /// The loopback port the browser relay listens on alone
+    /// ([`relay_router`]).
+    pub browser_relay_port: u16,
 }
 
 pub fn router(state: NodeState) -> Router {
@@ -448,9 +449,17 @@ pub fn router(state: NodeState) -> Router {
             post(crate::node_browser::action)
                 .layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
         )
-        .route("/browser-relay/{ticket}", get(crate::node_browser::relay))
         .route("/", get(static_asset))
         .route("/assets/{*path}", get(static_asset))
+        .fallback(|| async { axum::http::StatusCode::NOT_FOUND })
+        .with_state(state)
+}
+
+/// The browser relay's own listener: one route, a relay ticket, and
+/// nothing else of this daemon (`node_browser`).
+pub fn relay_router(state: NodeState) -> Router {
+    Router::new()
+        .route("/browser-relay/{ticket}", get(crate::node_browser::relay))
         .fallback(|| async { axum::http::StatusCode::NOT_FOUND })
         .with_state(state)
 }

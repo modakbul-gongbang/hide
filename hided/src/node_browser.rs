@@ -20,6 +20,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -35,17 +36,24 @@ use crate::node_daemon::NodeState;
 use crate::node_role::LiveLink;
 use crate::server::RELAY_GRANT_HEADER;
 
-/// Tickets waiting to be dialed at once.
-const MAX_TICKETS: usize = 8;
 /// How long a ticket waits to be dialed.
 const TICKET_LIFE: Duration = Duration::from_secs(10);
-/// Relays this daemon runs at once, as many as a core runs.
+/// Relays this daemon runs at once, as many as a core runs, counting the
+/// tickets handed out and not yet dialed: the refusal comes with the
+/// question, not with the dial.
 const MAX_RELAYS: usize = 4;
-/// How long an announce that failed waits before it is sent again.
+/// How long an announce that failed first waits before it is sent again;
+/// it doubles to [`ANNOUNCE_LONGEST`].
 const ANNOUNCE_RETRY: Duration = Duration::from_secs(2);
+const ANNOUNCE_LONGEST: Duration = Duration::from_secs(60);
+/// How often the windows are looked at again: one that exited without
+/// releasing its registration leaves, and the core is told.
+const OWNERS_EVERY: Duration = Duration::from_secs(5);
 /// The largest answer the core sends a page action.
 const MAX_ACTION_ANSWER: u64 = 64 * 1024;
 const CORE_TIMEOUT: Duration = Duration::from_secs(12);
+/// No link is live, or the last one's capabilities are still being revoked.
+const NO_LINK: u64 = u64::MAX;
 
 struct Ticket {
     browser_ws_url: String,
@@ -59,8 +67,11 @@ pub struct NodeBrowser {
     control: BrowserControl,
     tickets: Mutex<HashMap<String, Ticket>>,
     relays: Arc<Semaphore>,
-    /// This daemon's own loopback port, where its relay listens.
+    /// The browser relay's own loopback port.
     port: u16,
+    /// The link whose questions are answered now ([`NO_LINK`] while there
+    /// is none, and while the last one's capabilities are revoked).
+    generation: AtomicU64,
     /// A window registered or left: the core is told again.
     changed: Notify,
 }
@@ -72,22 +83,49 @@ impl NodeBrowser {
             tickets: Mutex::new(HashMap::new()),
             relays: Arc::new(Semaphore::new(MAX_RELAYS)),
             port,
+            generation: AtomicU64::new(NO_LINK),
             changed: Notify::new(),
         })
     }
 
-    /// The core's question over the link of `generation`.
+    fn answering(&self, generation: u64) -> bool {
+        self.generation.load(Ordering::SeqCst) == generation
+    }
+
+    /// The tickets waiting, past their life dropped, and whether one more
+    /// relay fits beside them and the running ones.
+    fn room(&self, tickets: &mut HashMap<String, Ticket>) -> bool {
+        tickets.retain(|_, ticket| ticket.issued.elapsed() < TICKET_LIFE);
+        tickets.len() < self.relays.available_permits()
+    }
+
+    /// The core's question over the link of `generation`. Everything the
+    /// question can be refused for is checked before the gateway is asked,
+    /// and a capability is issued only on the link that is answered now.
     fn capability(&self, scope: &Value, relay: bool, generation: u64) -> Result<Value, String> {
         let failed = |(reason, _): Failure| reason.to_owned();
         let display_id = scope_valid(scope).ok_or("invalid_browser_scope")?;
-        let (http, ws) = self.control.gateway_capability(scope).map_err(failed)?;
-        if !relay {
-            return Ok(json!({"cdp_http_url": http, "browser_ws_url": ws}));
+        let unanswered = || "browser_control_unavailable".to_owned();
+        if !self.answering(generation) {
+            return Err(unanswered());
         }
-        let display_id = display_id.ok_or("browser_display_missing")?;
+        if relay {
+            if display_id.is_none() {
+                return Err("browser_display_missing".to_owned());
+            }
+            if !self.room(&mut lock(&self.tickets)) {
+                return Err("browser_relay_limit".to_owned());
+            }
+        }
+        let (http, ws) = self.control.gateway_capability(scope).map_err(failed)?;
+        let Some(display_id) = display_id.filter(|_| relay) else {
+            return Ok(json!({"cdp_http_url": http, "browser_ws_url": ws}));
+        };
         let mut tickets = lock(&self.tickets);
-        tickets.retain(|_, ticket| ticket.issued.elapsed() < TICKET_LIFE);
-        if tickets.len() >= MAX_TICKETS {
+        if !self.answering(generation) {
+            return Err(unanswered());
+        }
+        if !self.room(&mut tickets) {
             return Err("browser_relay_limit".to_owned());
         }
         let ticket = crate::state_file::new_token();
@@ -113,8 +151,13 @@ impl NodeBrowser {
     }
 
     /// Follows the link: tells each core that takes it which windows are
-    /// here, again whenever that changes, and revokes everything handed out
-    /// over a link once it is gone.
+    /// here, again whenever that changes (a window registering, leaving, or
+    /// exiting without leaving), and revokes everything handed out over a
+    /// link once it is gone, before the next link is answered. An announce
+    /// the core refuses is sent again after 2 s, doubling to a minute, and
+    /// logged when its reason changes; a link that changes meanwhile is
+    /// followed at once. A daemon that stops aborts this task: the desktop
+    /// host revokes everything itself when its daemon goes.
     pub fn spawn_follow(
         self: &Arc<Self>,
         mut live: watch::Receiver<Option<Arc<LiveLink>>>,
@@ -122,30 +165,69 @@ impl NodeBrowser {
         let browser = Arc::clone(self);
         tokio::spawn(async move {
             let mut current: Option<u64> = None;
-            let mut announced = false;
+            // The windows the current link's core was last told of.
+            let mut told: Option<Vec<i32>> = None;
+            let mut wait = ANNOUNCE_RETRY;
+            let mut retry_at: Option<tokio::time::Instant> = None;
+            let mut failure: Option<String> = None;
             loop {
                 let link = live.borrow_and_update().clone();
                 let generation = link.as_ref().map(|link| link.generation);
-                if current.is_some() && current != generation {
-                    browser.ended().await;
-                    announced = false;
+                if current != generation {
+                    browser.generation.store(NO_LINK, Ordering::SeqCst);
+                    if current.is_some() {
+                        browser.ended().await;
+                    }
+                    current = generation;
+                    told = None;
+                    wait = ANNOUNCE_RETRY;
+                    retry_at = None;
+                    failure = None;
+                    browser
+                        .generation
+                        .store(generation.unwrap_or(NO_LINK), Ordering::SeqCst);
+                    continue;
                 }
-                current = generation;
-                if let Some(link) = link.filter(|_| !announced) {
-                    let owners = browser.control.owners();
-                    let sent = tokio::task::spawn_blocking(move || announce(&link, &owners))
-                        .await
-                        .unwrap_or_else(|_| Err("announce_failed".to_owned()));
+                let owners = browser.control.owners();
+                let due = retry_at.is_none_or(|at| tokio::time::Instant::now() >= at);
+                if let Some(link) = link.filter(|_| due && told.as_ref() != Some(&owners)) {
+                    let sending = owners.clone();
+                    let sent = tokio::select! {
+                        sent = tokio::task::spawn_blocking(move || announce(&link, &sending)) => {
+                            sent.unwrap_or_else(|_| Err("announce_failed".to_owned()))
+                        }
+                        changed = live.changed() => {
+                            if changed.is_err() {
+                                browser.ended().await;
+                                return;
+                            }
+                            continue;
+                        }
+                    };
                     match sent {
-                        Ok(()) => announced = true,
-                        Err(reason) => herdr_core::diagnostic!(json!({
-                            "component": "node_browser",
-                            "kind": "announce.failed",
-                            "generation": generation,
-                            "reason": reason,
-                        })),
+                        Ok(()) => {
+                            told = Some(owners);
+                            wait = ANNOUNCE_RETRY;
+                            retry_at = None;
+                            failure = None;
+                        }
+                        Err(reason) => {
+                            if failure.as_ref() != Some(&reason) {
+                                herdr_core::diagnostic!(json!({
+                                    "component": "node_browser",
+                                    "kind": "announce.failed",
+                                    "generation": generation,
+                                    "reason": reason,
+                                }));
+                                failure = Some(reason);
+                            }
+                            retry_at = Some(tokio::time::Instant::now() + wait);
+                            wait = (wait * 2).min(ANNOUNCE_LONGEST);
+                        }
                     }
                 }
+                let look = tokio::time::Instant::now() + OWNERS_EVERY;
+                let next = retry_at.map_or(look, |at| at.min(look));
                 tokio::select! {
                     changed = live.changed() => {
                         if changed.is_err() {
@@ -153,8 +235,8 @@ impl NodeBrowser {
                             return;
                         }
                     }
-                    () = browser.changed.notified() => announced = false,
-                    () = tokio::time::sleep(ANNOUNCE_RETRY), if !announced && current.is_some() => {}
+                    () = browser.changed.notified() => retry_at = None,
+                    () = tokio::time::sleep_until(next) => {}
                 }
             }
         })
@@ -467,9 +549,51 @@ mod tests {
         assert!(browser.take(&third, None).is_none(), "no link");
     }
 
+    /// A question on a link that is not the one answered now (it ended, or
+    /// the last one's capabilities are still being revoked) issues nothing;
+    /// relays waiting to be dialed count against the relays that may run.
+    #[test]
+    fn nothing_is_issued_off_the_answered_link_or_past_the_relay_cap() {
+        let browser = NodeBrowser::new(4242);
+        let scope = json!({"workspace": "local\u{0}/c", "area_id": "a", "display_id": "d"});
+        assert_eq!(
+            browser.capability(&scope, true, 1).unwrap_err(),
+            "browser_control_unavailable"
+        );
+        browser.generation.store(1, Ordering::SeqCst);
+        assert_eq!(
+            browser.capability(&scope, true, 2).unwrap_err(),
+            "browser_control_unavailable"
+        );
+        let mut tickets = lock(&browser.tickets);
+        for n in 0..MAX_RELAYS {
+            tickets.insert(
+                format!("t{n}"),
+                Ticket {
+                    browser_ws_url: String::new(),
+                    display_id: "d".to_owned(),
+                    generation: 1,
+                    issued: Instant::now(),
+                },
+            );
+        }
+        drop(tickets);
+        assert_eq!(
+            browser.capability(&scope, true, 1).unwrap_err(),
+            "browser_relay_limit"
+        );
+        browser.take("t0", Some(1)).unwrap();
+        // Room again; the gateway is asked next, and there is none.
+        assert_eq!(
+            browser.capability(&scope, true, 1).unwrap_err(),
+            "browser_control_unavailable"
+        );
+    }
+
     #[test]
     fn a_relay_without_a_registered_window_is_refused_with_its_reason() {
         let browser = NodeBrowser::new(4242);
+        browser.generation.store(1, Ordering::SeqCst);
         let scope = json!({"workspace": "local\u{0}/c", "area_id": "a", "display_id": "d"});
         assert_eq!(
             browser.capability(&scope, true, 1).unwrap_err(),

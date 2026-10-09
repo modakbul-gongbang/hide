@@ -79,17 +79,25 @@ impl Default for BrowserControl {
     }
 }
 
-/// Where a caller's browser connection goes.
-pub enum Connection {
-    /// The core's own window: the gateway's capability, which a relay
-    /// dials from the core.
-    Core(Value),
-    /// The window on the caller's own machine, a linked node: its
-    /// capability URLs or, for a relay, the node's one-shot relay URL, all
-    /// on that machine's loopback, which the caller dials itself.
-    Own(Value),
-    /// The one window there is, on another linked node: a relay through
-    /// that node's link to its browser relay.
+/// The window a caller's browser connection goes to.
+enum Window {
+    /// The window on the caller's own machine, a linked node, reached by
+    /// asking that node over its link.
+    Own(RemoteHost),
+    /// The core's own window.
+    Core(Host),
+    /// The one window there is, on another linked node.
+    Elsewhere(RemoteHost),
+}
+
+/// Where a `hide browser` page command's relay runs.
+pub enum Relay {
+    /// From the core to its own window's gateway, at this capability URL.
+    Core(String),
+    /// On the caller's own machine: the node's one-shot relay URL, which
+    /// the caller dials itself.
+    Own(String),
+    /// From the core through `link` to that node's relay URL.
     Through { link: RemoteHost, relay_url: String },
 }
 
@@ -118,8 +126,14 @@ fn live(hosts: &mut HashMap<i32, Host>) {
     hosts.retain(|pid, host| process_start(*pid) == Some(host.started));
 }
 
-fn linked(nodes: &mut HashMap<String, NodeWindows>) {
-    nodes.retain(|_, windows| windows.link.closed_reason().is_none());
+/// The windows of nodes whose link still lives. One whose link ended keeps
+/// its entry, unseen, until its node announces again over a new link (so
+/// each window keeps its caller key, and a retried action stays one
+/// action) or room is needed for another node.
+fn linked(nodes: &HashMap<String, NodeWindows>) -> impl Iterator<Item = (&String, &NodeWindows)> {
+    nodes
+        .iter()
+        .filter(|(_, windows)| windows.link.closed_reason().is_none())
 }
 
 fn ambiguous() -> Failure {
@@ -129,8 +143,9 @@ fn ambiguous() -> Failure {
     )
 }
 
-/// A reason a node's daemon refused with, as this daemon would have: only
-/// the reasons a gateway question can end in pass through.
+/// A reason a node's daemon refused with, as this daemon would have: the
+/// node answers one of these codes as the whole message, and anything else
+/// reads as an unavailable window.
 fn node_failure(message: &str) -> Failure {
     [
         unavailable(),
@@ -149,8 +164,16 @@ fn node_failure(message: &str) -> Failure {
         ),
     ]
     .into_iter()
-    .find(|(reason, _)| message.contains(reason))
+    .find(|(reason, _)| *reason == message)
     .unwrap_or_else(unavailable)
+}
+
+/// The window's machine did not answer over its link.
+fn unreachable_window() -> Failure {
+    (
+        "browser_window_unreachable",
+        "Retry once the machine that shows this page is reachable again",
+    )
 }
 
 /// Numeric IPv4 loopback only, with no credentials, path, query or redirect.
@@ -294,21 +317,22 @@ impl BrowserControl {
             ));
         }
         let mut nodes = self.nodes.lock().map_err(|_| unavailable())?;
-        linked(&mut nodes);
+        let before = nodes
+            .remove(node)
+            .map(|windows| windows.owners)
+            .unwrap_or_default();
         if owners.is_empty() {
-            nodes.remove(node);
             return Ok(());
         }
-        if !nodes.contains_key(node) && nodes.len() >= MAX_NODES {
+        if nodes.len() >= MAX_NODES {
+            nodes.retain(|_, windows| windows.link.closed_reason().is_none());
+        }
+        if nodes.len() >= MAX_NODES {
             return Err((
                 "browser_control_limit",
                 "Close an unused Hide desktop window and retry",
             ));
         }
-        let before = nodes
-            .remove(node)
-            .map(|windows| windows.owners)
-            .unwrap_or_default();
         let owners = owners
             .into_iter()
             .map(|pid| {
@@ -330,11 +354,10 @@ impl BrowserControl {
         pid: i32,
         checkout_path: &str,
     ) -> Result<String, Failure> {
-        let mut nodes = self.nodes.lock().map_err(|_| unavailable())?;
-        linked(&mut nodes);
-        let (_, key) = nodes
-            .get(node)
-            .and_then(|windows| windows.owners.iter().find(|(owner, _)| *owner == pid))
+        let nodes = self.nodes.lock().map_err(|_| unavailable())?;
+        let (_, key) = linked(&nodes)
+            .find(|(name, _)| *name == node)
+            .and_then(|(_, windows)| windows.owners.iter().find(|(owner, _)| *owner == pid))
             .ok_or_else(unavailable)?;
         Ok(herdr_core::workspace_control::checkout_caller_id(
             key,
@@ -355,9 +378,11 @@ impl BrowserControl {
 
     /// The link of `node`'s one window, if it announced any.
     fn node_window(&self, node: &str) -> Result<Option<RemoteHost>, Failure> {
-        let mut nodes = self.nodes.lock().map_err(|_| unavailable())?;
-        linked(&mut nodes);
-        match nodes.get(node) {
+        let nodes = self.nodes.lock().map_err(|_| unavailable())?;
+        match linked(&nodes)
+            .find(|(name, _)| *name == node)
+            .map(|(_, windows)| windows)
+        {
             None => Ok(None),
             Some(windows) if windows.owners.len() == 1 => Ok(Some(windows.link.clone())),
             Some(_) => Err(ambiguous()),
@@ -366,9 +391,8 @@ impl BrowserControl {
 
     /// The link of the one node window there is, if any.
     fn only_node_window(&self) -> Result<Option<RemoteHost>, Failure> {
-        let mut nodes = self.nodes.lock().map_err(|_| unavailable())?;
-        linked(&mut nodes);
-        let mut windows = nodes.values();
+        let nodes = self.nodes.lock().map_err(|_| unavailable())?;
+        let mut windows = linked(&nodes).map(|(_, windows)| windows);
         match (windows.next(), windows.next()) {
             (None, _) => Ok(None),
             (Some(only), None) if only.owners.len() == 1 => Ok(Some(only.link.clone())),
@@ -384,86 +408,150 @@ impl BrowserControl {
     }
 
     /// Asks every window registered here to drop each capability it handed
-    /// out: the link they were handed out over has ended.
+    /// out, the link they were handed out over having ended: all at once,
+    /// each asked again a few times before its failure is logged. The
+    /// desktop host's own lease (it revokes everything when its daemon
+    /// changes or goes) is the backstop for one that never answers.
+    #[allow(clippy::disallowed_methods)] // a production retry wait, not test code
     pub fn revoke_all(&self) {
-        let hosts: Vec<Host> = match self.hosts.lock() {
+        let hosts: Vec<(i32, Host)> = match self.hosts.lock() {
             Ok(mut hosts) => {
                 live(&mut hosts);
-                hosts.values().cloned().collect()
+                hosts
+                    .iter()
+                    .map(|(pid, host)| (*pid, host.clone()))
+                    .collect()
             }
             Err(_) => return,
         };
-        for host in hosts {
-            let revoked = agent()
-                .post(format!("{}/revoke", host.endpoint))
-                .header("Authorization", format!("Bearer {}", host.token))
-                .send_empty();
-            if let Err(error) = revoked {
-                herdr_core::diagnostic!(json!({
-                    "component": "browser_control",
-                    "kind": "revoke.failed",
-                    "reason": error.to_string(),
-                }));
+        std::thread::scope(|scope| {
+            for (pid, host) in &hosts {
+                scope.spawn(move || {
+                    let mut failure = String::new();
+                    for attempt in 0..REVOKE_ATTEMPTS {
+                        if attempt > 0 {
+                            std::thread::sleep(REVOKE_RETRY);
+                        }
+                        let revoked = revoke_agent()
+                            .post(format!("{}/revoke", host.endpoint))
+                            .header("Authorization", format!("Bearer {}", host.token))
+                            .send_empty();
+                        match revoked {
+                            Ok(_) => return,
+                            Err(error) => failure = error.to_string(),
+                        }
+                    }
+                    herdr_core::diagnostic!(json!({
+                        "component": "browser_control",
+                        "kind": "revoke.failed",
+                        "owner_pid": pid,
+                        "attempts": REVOKE_ATTEMPTS,
+                        "reason": failure,
+                    }));
+                });
             }
-        }
+        });
     }
 
-    /// Where `source`'s caller connects for `display_id` (or its active
-    /// area), the caller being on `caller_node` when it reached the core
-    /// through a node's link; `relay` for a `hide browser` page command.
+    /// The window `caller_node`'s caller reaches: the one on its own
+    /// machine, else the core's own, else the one node window there is.
+    fn window(&self, caller_node: Option<&str>) -> Result<Window, Failure> {
+        if let Some(link) = caller_node
+            .map(|node| self.node_window(node))
+            .transpose()?
+            .flatten()
+        {
+            return Ok(Window::Own(link));
+        }
+        if let Some(host) = self.own_host()? {
+            return Ok(Window::Core(host));
+        }
+        self.only_node_window()?
+            .map(Window::Elsewhere)
+            .ok_or_else(unavailable)
+    }
+
+    /// `hide browser connect` and `open`: the capability URLs for
+    /// `display_id` (or the active area) of `source`'s checkout, for a
+    /// caller that reached the core through `caller_node`'s link if it
+    /// names one.
     pub fn connect(
         &self,
         source: &QueryResult,
         display_id: Option<&str>,
         caller_node: Option<&str>,
-        relay: bool,
-    ) -> Result<Connection, Failure> {
+    ) -> Result<Value, Failure> {
         let _slot = self.acquire()?;
-        let (area_id, display_id) = connection_scope(source, display_id)?;
-        let workspace = format!(
-            "{}\0{}",
-            source.context.device_id, source.context.checkout_path
-        );
-        let mut scope = json!({"workspace":workspace,"area_id":area_id});
-        if let Some(id) = &display_id {
-            scope["display_id"] = json!(id);
-        }
+        let (area_id, display_id, scope) = scope_of(source, display_id)?;
+        let (http, ws) = match self.window(caller_node)? {
+            Window::Own(link) => ask_node(&link, &scope)?,
+            Window::Core(host) => ask_gateway(&host, &scope)?,
+            // Its URLs are on another machine's loopback.
+            Window::Elsewhere(_) => {
+                return Err((
+                    "browser_control_elsewhere",
+                    "Use hide browser page commands, which reach that window through Hide",
+                ));
+            }
+        };
         // Return only the bounded public contract, never a registration token
         // or arbitrary fields the desktop sent back.
-        let answer = |http: &str, ws: &str| {
+        Ok(
             json!({"context":source.context,"area_id":area_id,"display_id":display_id,
-            "cdp_http_url":http,"browser_ws_url":ws})
-        };
-        let own = match caller_node {
-            Some(node) => self.node_window(node)?,
-            None => None,
-        };
-        if let Some(link) = own {
-            let answer = if relay {
-                json!({ "relay_url": ask_node_relay(&link, &scope)? })
-            } else {
-                let (http, ws) = ask_node(&link, &scope)?;
-                answer(&http, &ws)
-            };
-            return Ok(Connection::Own(answer));
-        }
-        if let Some(host) = self.own_host()? {
-            let (http, ws) = ask_gateway(&host, &scope)?;
-            return Ok(Connection::Core(answer(&http, &ws)));
-        }
-        match self.only_node_window()? {
-            Some(link) if relay => Ok(Connection::Through {
+            "cdp_http_url":http,"browser_ws_url":ws}),
+        )
+    }
+
+    /// A `hide browser` page command's relay to `display_id` of `source`'s
+    /// checkout.
+    pub fn relay(
+        &self,
+        source: &QueryResult,
+        display_id: &str,
+        caller_node: Option<&str>,
+    ) -> Result<Relay, Failure> {
+        let _slot = self.acquire()?;
+        let (_, _, scope) = scope_of(source, Some(display_id))?;
+        Ok(match self.window(caller_node)? {
+            Window::Own(link) => Relay::Own(ask_node_relay(&link, &scope)?),
+            Window::Core(host) => Relay::Core(ask_gateway(&host, &scope)?.1),
+            Window::Elsewhere(link) => Relay::Through {
                 relay_url: ask_node_relay(&link, &scope)?,
                 link,
-            }),
-            // Its URLs are on another machine's loopback.
-            Some(_) => Err((
-                "browser_control_elsewhere",
-                "Use hide browser page commands, which reach that window through Hide",
-            )),
-            None => Err(unavailable()),
-        }
+            },
+        })
     }
+}
+
+/// The area, display and gateway scope of a connection to `display_id`, or
+/// to `source`'s active area.
+fn scope_of(
+    source: &QueryResult,
+    display_id: Option<&str>,
+) -> Result<(String, Option<String>, Value), Failure> {
+    let (area_id, display_id) = connection_scope(source, display_id)?;
+    let workspace = format!(
+        "{}\0{}",
+        source.context.device_id, source.context.checkout_path
+    );
+    let mut scope = json!({"workspace":workspace,"area_id":area_id});
+    if let Some(id) = &display_id {
+        scope["display_id"] = json!(id);
+    }
+    Ok((area_id, display_id, scope))
+}
+
+/// A revoke is asked again rather than waited on.
+const REVOKE_ATTEMPTS: u32 = 3;
+const REVOKE_RETRY: Duration = Duration::from_millis(500);
+
+fn revoke_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(2)))
+        .max_redirects(0)
+        .proxy(None)
+        .build()
+        .into()
 }
 
 fn agent() -> ureq::Agent {
@@ -523,7 +611,7 @@ fn ask_link(link: &RemoteHost, scope: &Value, relay: bool) -> Result<Value, Fail
             }));
             match error {
                 hide_node_link::LinkError::Refused(refusal) => node_failure(&refusal.message),
-                _ => unavailable(),
+                _ => unreachable_window(),
             }
         })?;
     match answer {

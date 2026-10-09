@@ -610,7 +610,7 @@ fn run_exchange_within(
 
 /// The bytes under a Workspace socket: a loopback connection, or a stream
 /// through a device's node.
-pub trait Transport: AsyncRead + AsyncWrite + Send + Unpin {}
+pub(crate) trait Transport: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Transport for T {}
 
 pub(crate) type WorkspaceSocket = tokio_tungstenite::WebSocketStream<Pin<Box<dyn Transport>>>;
