@@ -986,6 +986,9 @@ fn start_task_agent(
         .as_ref()
         .map(|_| task_session_node(&runtime, id, &start.kind))
         .transpose();
+    // The node that runs the task's pane, this machine's or a device's, which
+    // a long start line asks whether the pane's shell is reading.
+    let pane_node = task_session_node(&runtime, id, &start.kind).ok();
     let outcome = match reader {
         Err(reason) => TaskAgentOutcome::Failed(reason),
         Ok(reader) => {
@@ -1024,6 +1027,7 @@ fn start_task_agent(
             launch_with_prompt_checked(
                 launch_connector,
                 reader.as_deref().or(agent_node),
+                pane_node.as_deref(),
                 id,
                 start,
                 &current_start,
@@ -1054,12 +1058,13 @@ fn launch_with_prompt(
     id: u64,
     start: PendingAgentStart,
 ) -> TaskAgentOutcome {
-    launch_with_prompt_checked(connector, agent_node, id, start, &|| Ok(()))
+    launch_with_prompt_checked(connector, agent_node, agent_node, id, start, &|| Ok(()))
 }
 
 fn launch_with_prompt_checked(
     connector: &dyn ApiConnector,
     agent_node: Option<&dyn crate::node_access::NodeLink>,
+    pane_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
     start: PendingAgentStart,
     current: &dyn Fn() -> Result<(), String>,
@@ -1099,6 +1104,7 @@ fn launch_with_prompt_checked(
     launch_agent(
         connector,
         agent_node,
+        pane_node,
         id,
         &pane_id,
         &kind,
@@ -1207,6 +1213,7 @@ impl From<Launch> for TaskAgentOutcome {
 fn launch_agent(
     connector: &dyn ApiConnector,
     agent_node: Option<&dyn crate::node_access::NodeLink>,
+    pane_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
     pane_id: &str,
     kind: &str,
@@ -1248,6 +1255,7 @@ fn launch_agent(
     };
     match crate::agent_start::start_at_shell_checked(
         connector,
+        pane_node,
         &format!("herdr-core:task:{id}:agent"),
         pane_id,
         params,
@@ -3628,7 +3636,7 @@ mod tests {
         );
         std::fs::write(&path, &header).unwrap();
         assert_eq!(
-            launch_with_prompt_checked(&server, Some(&node), 7, make(), &|| Err(
+            launch_with_prompt_checked(&server, Some(&node), Some(&node), 7, make(), &|| Err(
                 "session_resume_intent_changed".into()
             )),
             TaskAgentOutcome::Failed("session_resume_intent_changed".into())

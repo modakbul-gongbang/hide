@@ -62,8 +62,8 @@ impl Runtime {
     /// Takes the Memory receipts the label reads found in this Mac's sessions
     /// (OpenCode's, whose plugin stores them in a synthetic prompt part) and
     /// records each whose tag Memory signed, on one thread off the lock, as
-    /// the analysis pass records Claude Code's and Codex's (PRD opencode-plugin
-    /// D-12). A later prompt's Memory needs the session start's receipt.
+    /// the analysis pass records Claude Code's, Codex's, Pi's and omp's from
+    /// their session files (PRD opencode-plugin D-12, pi-omp-extension D-09). A later prompt's Memory needs the session start's receipt.
     pub(crate) fn record_memory_receipts(
         &mut self,
         receipts: Vec<crate::labels::worker::SightedMemoryReceipt>,
@@ -1503,6 +1503,120 @@ mod scope_tests {
             ask(HookEvent::UserPromptSubmit, "ses_root").outcome,
             HookMemoryOutcome::Unavailable
         );
+    }
+
+    /// Pi's and omp's receipt rides Hide's extension message in the agent's
+    /// own session file, signed for the host's session id; the Memory pass
+    /// reads it there and the next prompt gets Memory, while a forked session
+    /// that copied its parent's receipt gets none (PRD pi-omp-extension B10,
+    /// D-09).
+    #[test]
+    fn a_pi_or_omp_session_start_receipt_in_its_session_file_unblocks_its_prompt_memory() {
+        use hide_agent_hooks::memory::{MemoryRequest, memory_context_until};
+        let temp = tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project_root = temp.path().join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&project_root).unwrap();
+        let checkout = project_root.canonicalize().unwrap();
+        let project = hide_project::resolve(&project_root, &hook_node()).unwrap();
+        let database = database_path(&home);
+        fs::create_dir_all(database.parent().unwrap()).unwrap();
+        let store = MemoryStore::open(&database).unwrap();
+        store
+            .ensure_project(&project.id, &project.root, &hook_node())
+            .unwrap();
+        store.set_enabled(&project.id, true, true).unwrap();
+        drop(store);
+
+        for (agent, kind) in [(Agent::Pi, "pi"), (Agent::Omp, "omp")] {
+            let session_id = format!("01a11d1d-24ec-71fa-b8b3-{kind}");
+            let ask = |event, session: &str| {
+                memory_context_until(
+                    MemoryRequest {
+                        runtime_id: kind,
+                        event,
+                        cwd: Some(project_root.clone()),
+                        prompt: Some("keep going".to_owned()),
+                        session_id: Some(session.to_owned()),
+                    },
+                    &home,
+                    Instant::now() + FUNCTIONAL_HOOK_TEST_TIMEOUT,
+                )
+            };
+            let start = ask(HookEvent::SessionStart, &session_id);
+            assert_eq!(start.outcome, HookMemoryOutcome::Empty, "{kind}");
+            let start = start.context.unwrap();
+            assert_eq!(
+                ask(HookEvent::UserPromptSubmit, &session_id).outcome,
+                HookMemoryOutcome::Unavailable,
+                "{kind}: no session start receipt yet"
+            );
+
+            // The host keeps the session in its default folder for the
+            // checkout and stores the extension's message as a custom message
+            // beside the prompt; a fork copies the parent's entries into a file
+            // of its own id.
+            let folder = crate::fixture::native_session_folder(&home, kind, &checkout);
+            fs::create_dir_all(&folder).unwrap();
+            let project_session = |id: &str| {
+                let locator = folder.join(format!("2026-10-09T00-00-00-000Z_{id}.jsonl"));
+                let lines = [
+                    json!({"type": "session", "version": 3, "id": id, "timestamp": "2026-10-09T00:00:00.000Z", "cwd": checkout}),
+                    json!({"type": "message", "id": "a1", "parentId": null, "timestamp": "2026-10-09T00:00:01.000Z", "message": {"role": "user", "content": [{"type": "text", "text": "keep going"}]}}),
+                    json!({"type": "custom_message", "customType": "hide", "content": format!("<system-reminder>\n{start}\n</system-reminder>"), "display": false, "details": {"hide": "0011"}, "id": "a2", "parentId": "a1", "timestamp": "2026-10-09T00:00:01.100Z"}),
+                ];
+                fs::write(&locator, lines.map(|line| format!("{line}\n")).concat()).unwrap();
+                ProjectSession {
+                    id: id.to_owned(),
+                    agent,
+                    locator,
+                    checkout_path: project_root.clone(),
+                    first_human_request: None,
+                    started_at_unix_ms: Some(1),
+                    updated_at_unix_ms: 1,
+                    title: None,
+                    event_count: 2,
+                    availability: SessionAvailability::Available,
+                }
+            };
+            let fork_id = format!("{session_id}-fork");
+            let mut store = MemoryStore::open(&database).unwrap();
+            for session in [project_session(&session_id), project_session(&fork_id)] {
+                update_hook_projection(
+                    &mut store,
+                    &hide_node::Local::new(Some(home.clone())),
+                    &project.id,
+                    &session,
+                )
+                .unwrap();
+            }
+            assert_eq!(
+                store
+                    .session_start_receipt_ids(&project.id, kind, &session_id)
+                    .unwrap(),
+                Some(Vec::new()),
+                "{kind}"
+            );
+            assert_eq!(
+                store
+                    .session_start_receipt_ids(&project.id, kind, &fork_id)
+                    .unwrap(),
+                None,
+                "{kind}: a receipt signed for the parent is none of the fork's"
+            );
+            drop(store);
+            assert_eq!(
+                ask(HookEvent::UserPromptSubmit, &session_id).outcome,
+                HookMemoryOutcome::Empty,
+                "{kind}"
+            );
+            assert_eq!(
+                ask(HookEvent::UserPromptSubmit, &fork_id).outcome,
+                HookMemoryOutcome::Unavailable,
+                "{kind}"
+            );
+        }
     }
 
     #[test]

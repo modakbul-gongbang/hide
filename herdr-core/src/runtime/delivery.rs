@@ -827,12 +827,20 @@ impl Runtime {
                     .ok_or("machine_identity_unavailable")?,
             )
         };
+        let node = if on_node {
+            Some(self.own_node())
+        } else {
+            self.ready_device_channels()
+                .into_iter()
+                .find_map(|(ready, node)| (ready == device).then_some(node))
+        };
         Ok(CoordinationContext {
             connector,
             host_scope: scope,
             machine,
             codex: self.codex_daemon(device),
             on_node,
+            node,
         })
     }
 }
@@ -891,6 +899,10 @@ pub(crate) struct CoordinationContext {
     pub(crate) codex: crate::codex_launch::CodexDaemon,
     /// The machine is the core's own node, whose Herdr the core reaches directly.
     pub(crate) on_node: bool,
+    /// The machine's node, which a start with a long line asks whether the
+    /// pane's shell is reading; none for a device whose helper is not
+    /// connected now, since a spawn starts no helper.
+    pub(crate) node: Option<Arc<dyn crate::node_access::NodeLink>>,
 }
 
 #[cfg(test)]

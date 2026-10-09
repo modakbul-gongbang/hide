@@ -18,7 +18,7 @@ use crate::protocol::{
 };
 use crate::root::{Root, relative_path};
 use crate::{bytes, document, git, index, list, mutate, save, worktrees};
-use hide_node_link::process::ProcessStart;
+use hide_node_link::process::{LineInput, ProcessStart};
 
 /// Requests the helper works on at once; the core also admits at most this
 /// many per device, so the helper never queues behind itself.
@@ -802,6 +802,27 @@ pub fn handle_with_progress(
                     format!("the processes under {pid} could not be read: {error}"),
                 )
             })?)
+        }
+        Call::LineInput { pid } => {
+            use hide_platform::process::LineInput as Read;
+            let input = hide_platform::process::line_input(pid).map_err(|error| {
+                let code = match error.kind() {
+                    io::ErrorKind::NotFound => ErrorCode::NotFound,
+                    io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
+                    _ => ErrorCode::Io,
+                };
+                HostError::new(
+                    code,
+                    format!("the terminal of process {pid} could not be read: {error}"),
+                )
+            })?;
+            to_value(match input {
+                Read::Keys => LineInput::Keys,
+                Read::Lines { limit } => LineInput::Lines {
+                    limit: u32::try_from(limit).unwrap_or(u32::MAX),
+                },
+                Read::Console => LineInput::Console,
+            })
         }
         Call::DiskUsage { paths, shared_git } => {
             let request = crate::disk::DiskRequest {

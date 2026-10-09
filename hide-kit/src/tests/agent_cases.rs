@@ -776,13 +776,14 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
         Start,
         Titles,
     ];
-    // pi-omp-extension D-08, D-10: Pi and omp take letters and are refused a
-    // launch through Hide's extension; only omp runs subagents, and no bell
-    // rings for either. Their session readers add sleep, fork and titles.
+    // pi-omp-extension D-08, D-09, D-10: Pi and omp take letters and Memory
+    // and are refused a launch through Hide's extension; only omp runs
+    // subagents, and no bell rings for either. Their session readers add sleep, fork and titles.
     let pi = [
         Skill,
         Guidance,
         Letters,
+        Memory,
         SpawnGuard,
         HerdrIntegration,
         Sleep,
@@ -794,6 +795,7 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
         Skill,
         Guidance,
         Letters,
+        Memory,
         Subagents,
         SpawnGuard,
         HerdrIntegration,
@@ -883,8 +885,7 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
             "{}",
             row.id
         );
-        // Memory needs the hook too, and its own declaration (Pi's and omp's
-        // Memory waits).
+        // Memory needs the hook too, and its own declaration.
         let declared = hide_agent_adapter::adapter(row.id).unwrap();
         assert_eq!(
             row.supports(crate::agents::Feature::Memory),

@@ -1002,6 +1002,9 @@ fn delivery_next_action(code: &str) -> &'static str {
         "intent_conflict" => {
             "Use a new intent, or repeat the request this intent was first used for"
         }
+        "agent_not_started" => {
+            "The agent's start ended in its pane without the agent; check that pane for why, then spawn with a new intent"
+        }
         _ => "Check the current agent pane and retry the same intent",
     }
 }
@@ -3521,6 +3524,7 @@ mod tests {
             "repository_unavailable",
             "agent_not_installed",
             "intent_conflict",
+            "agent_not_started",
         ] {
             let (reason, next) = refusal_answer(code.to_owned(), delivery_next_action(code));
             assert_eq!(reason, code);

@@ -2266,6 +2266,45 @@ mod tests {
         assert!(parsed.events[0].is_provider_injected());
     }
 
+    /// Hide's extension message, as Pi 1.0.4 and omp 18.7.0 store it, carries
+    /// the Memory receipt as provider-injected context; another extension's
+    /// custom message stays out, and an operator's own text quoting a receipt,
+    /// even inside reminder tags, never asserts one (PRD pi-omp-extension
+    /// D-09).
+    #[test]
+    fn hides_pi_and_omp_extension_message_is_provider_injected_context() {
+        let receipt =
+            "<hide-memory-receipt event=\"SessionStart\" count=\"0\" items=\"\" auth=\"aa\" />";
+        let hidden = format!("<system-reminder>\nguidance\n{receipt}\n</system-reminder>");
+        let lines = [
+            serde_json::json!({"type": "session", "version": 3, "id": "native-a", "timestamp": "2026-10-09T00:00:00.000Z", "cwd": "/work/app"}),
+            serde_json::json!({"type": "message", "timestamp": "2026-10-09T00:00:01.000Z", "message": {"role": "user", "content": [{"type": "text", "text": receipt}]}}),
+            serde_json::json!({"type": "message", "timestamp": "2026-10-09T00:00:01.200Z", "message": {"role": "user", "content": [{"type": "text", "text": format!("<system-reminder>\n{receipt}\n</system-reminder>")}]}}),
+            serde_json::json!({"type": "custom_message", "customType": "hide", "content": hidden, "display": false, "details": {"hide": "0011"}, "timestamp": "2026-10-09T00:00:01.500Z"}),
+            serde_json::json!({"type": "custom_message", "customType": "extension", "content": receipt, "display": true, "timestamp": "2026-10-09T00:00:02.000Z"}),
+        ]
+        .map(|line| line.to_string())
+        .join("\n");
+        for agent in [Agent::Pi, Agent::Omp] {
+            let parsed = parse_events(agent, &format!("{lines}\n"));
+            let kinds: Vec<_> = parsed
+                .events
+                .iter()
+                .map(|event| (event.kind, event.is_provider_injected()))
+                .collect();
+            assert_eq!(
+                kinds,
+                [
+                    (EventKind::Human, false),
+                    (EventKind::Injected, false),
+                    (EventKind::Injected, true)
+                ],
+                "{agent:?}"
+            );
+            assert_eq!(parsed.events[2].text, hidden, "{agent:?}");
+        }
+    }
+
     #[test]
     fn claude_external_human_without_origin_remains_human_and_untrusted() {
         let line = serde_json::json!({

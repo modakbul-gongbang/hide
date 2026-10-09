@@ -1517,9 +1517,9 @@ The chip opens a popover with every feature of the kit's feature table, grouped 
 The chip, headings and feature text wrap within the popover in every interface language.
 Every supported agent has Herdr's integration, so no row says its status is judged from the screen; a row whose id this build does not know is omitted and its id and device are diagnosed once.
 The support order, names, links, logo ids and start eligibility come from the shared adapter's generated contract rather than web-owned lists.
-Pi has native titles, Sleep and Fork from its complete session reader beside letters and the spawn guard from Hide's extension; it has no structured question/plan wait, Memory or subagent count.
+Pi has native titles, Sleep and Fork from its complete session reader beside letters, Memory and the spawn guard from Hide's extension; it has no structured question/plan wait or subagent count.
 Pi starts with the existing first-prompt argument boundary and CLI model default, without an extra-folder argument.
-omp has native titles, Sleep and Fork from its complete session reader beside guidance, letters, subagents and the spawn guard from Hide's extension; its row wears no Basic chip.
+omp has native titles, Sleep and Fork from its complete session reader beside guidance, letters, Memory, subagents and the spawn guard from Hide's extension; its row wears no Basic chip.
 Its current native/manual title wins over a generated goal; an explicit clear returns to the existing fallback without replaying the conversation.
 An unanswered native `ask` enters the existing question state with bounded text and choices even with summaries off, and a correlated answer clears it.
 Its question keeps the existing Answer tag in the pane header even while the native session holds for an operator reply.

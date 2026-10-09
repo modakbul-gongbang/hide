@@ -186,11 +186,12 @@ test("a new session's first prompt carries the guidance and the letters in one h
   assert.match(result.message.content, /E2E-BODY/);
   assert.equal(typeof result.message.details.hide, "string");
   const [call] = await until("prompt");
-  const file = sample("before_agent_start").ctx.sessionFile;
+  const { sessionFile: file, sessionId: id } = sample("before_agent_start").ctx;
   assert.equal(call.agent, AGENT);
-  // `lost` counts calls an earlier budget gave up on; a loaded machine may add it.
+  // `lost` counts calls an earlier budget gave up on; a loaded machine may add it. Letters know the session by its
+  // file, as Herdr does; Memory by the host's own id, which its session reader keys a receipt by.
   const { lost: _lost, ...input } = call.input;
-  assert.deepEqual(input, { session_id: file, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, version: 1 });
+  assert.deepEqual(input, { session_id: file, native_session: id, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, memory_first: true, version: 2 });
   assert.equal(call.env.HERDR_PANE_ID, "w1:p1");
 
   // Once the host wrote it, the session's guidance is given.
@@ -295,6 +296,26 @@ test("guidance whose read failed or whose message was never written comes with a
   assert.match((await prompt(host)).message.content, /HIDE-GUIDANCE/);
 });
 
+test("Memory's session-start capsule rides one written message, whether or not the guidance came with it", async () => {
+  const host = await extension();
+  answer({ start: { exit: 1 }, prompt: { context: "MEMORY-START", letters: [], memory_start: true } });
+  await host.emit("session_start", sample("session_start").event, context("session_start"));
+  await until("start");
+  // Asked for, but the message the host never writes leaves it owed.
+  await prompt(host);
+  const carried = await prompt(host);
+  assert.match(carried.message.content, /MEMORY-START/);
+  await written(host, carried.message);
+  answer({ prompt: { context: "MEMORY-PROMPT", letters: [], memory_start: false } });
+  await prompt(host);
+  const calls = await until("prompt", 3);
+  assert.deepEqual(
+    calls.map((call) => [call.input.first, call.input.memory_first]),
+    [[true, true], [true, true], [true, false]],
+    "the guidance is still owed, the Memory start no longer",
+  );
+});
+
 test("a headless run and an unsaved session take no letters", async () => {
   const host = await extension();
   await started(host, "");
@@ -340,7 +361,7 @@ test("a shell call that starts an agent through Herdr is refused with the helper
   assert.deepEqual(await host.emit("tool_call", launch, context("tool_call.bash")), { block: true, reason: "Use hide agent spawn --parent here" });
   const [call] = await until("tool");
   const { lost: _lost, ...input } = call.input;
-  assert.deepEqual(input, { tool: "bash", command: "herdr agent start helper --kind claude", cwd: "/checkouts/fixture", version: 1 });
+  assert.deepEqual(input, { tool: "bash", command: "herdr agent start helper --kind claude", cwd: "/checkouts/fixture", version: 2 });
 
   assert.equal(await host.emit("tool_call", sample("tool_call.bash").event, context("tool_call.bash")), undefined);
   await settled(host);
@@ -368,7 +389,7 @@ if (AGENT === "omp") {
     assert.deepEqual(await host.emit("tool_call", ask.event, context("tool_call.ask")), { block: true, reason: "Ask with hide factory ask" });
     const [call] = await until("tool");
     const { lost: _lost, ...input } = call.input;
-    assert.deepEqual(input, { session_id: ask.ctx.sessionFile, tool: "ask", version: 1 });
+    assert.deepEqual(input, { session_id: ask.ctx.sessionFile, tool: "ask", version: 2 });
     answer({ tool: {} });
     assert.equal(await host.emit("tool_call", ask.event, context("tool_call.ask")), undefined, "outside a worker the question shows");
 
