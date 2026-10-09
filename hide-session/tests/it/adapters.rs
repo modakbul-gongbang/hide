@@ -305,6 +305,187 @@ fn claude_subagent_poll_counts_the_bytes_of_a_skipped_oversized_record() {
     assert!(!next.has_more);
 }
 
+/// PRD agent-blocked-state B18, D-26: only Claude Code's records prove a
+/// background task is running, and a device never outlives the process that
+/// started it. Every other agent reports none, so its wait stays Herdr's.
+mod wake_devices {
+    use super::*;
+    use serde_json::json;
+    use std::io::Write;
+
+    fn session_file(home: &Path, agent: Agent) -> PathBuf {
+        match agent {
+            Agent::Claude => home.join(".claude/projects/-work-app/a1b2c3d4-0000-4000-8000-000000000001.jsonl"),
+            _ => home.join(".codex/sessions/2026/10/03/rollout-2026-10-03T01-00-00-0199a000-0000-7000-8000-000000000002.jsonl"),
+        }
+    }
+
+    fn append(path: &Path, records: &[serde_json::Value]) {
+        let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        for record in records {
+            writeln!(file, "{record}").unwrap();
+        }
+    }
+
+    fn boot(name: &str) -> serde_json::Value {
+        json!({"type": "attachment", "timestamp": "2026-10-03T01:10:00.000Z",
+            "attachment": {"type": "hook_success", "hookName": name}})
+    }
+
+    fn started(text: &str) -> serde_json::Value {
+        json!({"type": "user", "timestamp": "2026-10-03T01:10:00.000Z",
+            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_x", "content": text}]}})
+    }
+
+    fn ended(id: &str) -> serde_json::Value {
+        json!({"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-10-03T01:20:00.000Z",
+            "content": format!("<task-notification>\n<task-id>{id}</task-id>\n<status>completed</status>\n</task-notification>")})
+    }
+
+    fn live(answer: &LabelTranscript) -> Vec<Option<u64>> {
+        answer.turns.as_ref().unwrap().wake_expiries()
+    }
+
+    #[test]
+    fn a_background_task_is_proven_from_its_process_start_until_its_notification() {
+        let home = home(Agent::Claude);
+        let path = session_file(home.path(), Agent::Claude);
+        assert_eq!(
+            live(&read_whole(home.path(), Agent::Claude)),
+            [],
+            "no process start is read"
+        );
+
+        append(
+            &path,
+            &[started("Command running in background with ID: early")],
+        );
+        assert_eq!(
+            live(&read_whole(home.path(), Agent::Claude)),
+            [],
+            "a start before any boundary is unproven"
+        );
+
+        append(
+            &path,
+            &[
+                boot("SessionStart:resume"),
+                started("Command running in background with ID: bg1"),
+            ],
+        );
+        assert_eq!(live(&read_whole(home.path(), Agent::Claude)), [None]);
+
+        append(&path, &[ended("bg1")]);
+        assert_eq!(live(&read_whole(home.path(), Agent::Claude)), []);
+
+        append(
+            &path,
+            &[
+                started("Command running in background with ID: bg2"),
+                started("Monitor started (task mon1, expires in 30m unless the source ends first)"),
+            ],
+        );
+        let two = live(&read_whole(home.path(), Agent::Claude));
+        assert_eq!(two.len(), 2);
+        assert_eq!(two[0], None);
+        assert_eq!(two[1], Some(1_790_989_200_000 + 10 * 60_000 + 30 * 60_000));
+
+        append(&path, &[boot("SessionStart:startup")]);
+        assert_eq!(
+            live(&read_whole(home.path(), Agent::Claude)),
+            [],
+            "a new process ends the old one's tasks"
+        );
+    }
+
+    #[test]
+    fn an_incremental_read_continues_the_devices_of_the_read_before_it() {
+        let home = home(Agent::Claude);
+        let path = session_file(home.path(), Agent::Claude);
+        append(
+            &path,
+            &[
+                boot("SessionStart:startup"),
+                started("Command running in background with ID: bg1"),
+            ],
+        );
+        let first = read_whole(home.path(), Agent::Claude);
+        assert_eq!(live(&first), [None]);
+
+        append(
+            &path,
+            &[started("Command running in background with ID: bg2")],
+        );
+        let mut request = request(Agent::Claude);
+        request.checkpoint = Some(first.checkpoint.clone());
+        request.turns = first.turns.clone();
+        let second = read(home.path(), &request).unwrap();
+        assert_eq!(live(&second).len(), 2, "the first task is remembered");
+        request.checkpoint = Some(second.checkpoint.clone());
+        request.turns = second.turns.clone();
+        append(&path, &[ended("bg1")]);
+        let third = read(home.path(), &request).unwrap();
+        assert_eq!(live(&third).len(), 1);
+
+        // The same read repeated from the earlier checkpoint folds nothing twice.
+        request.checkpoint = Some(first.checkpoint.clone());
+        request.turns = third.turns.clone();
+        assert_eq!(live(&read(home.path(), &request).unwrap()).len(), 1);
+    }
+
+    #[test]
+    fn more_devices_than_the_cap_prove_none_until_the_next_process() {
+        let home = home(Agent::Claude);
+        let path = session_file(home.path(), Agent::Claude);
+        append(&path, &[boot("SessionStart:startup")]);
+        let many: Vec<_> = (0..=hide_session::turns::WAKE_DEVICE_LIMIT)
+            .map(|index| started(&format!("Command running in background with ID: t{index}")))
+            .collect();
+        append(&path, &many);
+        let answer = read_whole(home.path(), Agent::Claude);
+        assert_eq!(live(&answer), []);
+        assert!(answer.turns.as_ref().unwrap().wake_overflowed());
+        append(
+            &path,
+            &[
+                boot("SessionStart:resume"),
+                started("Command running in background with ID: again"),
+            ],
+        );
+        let answer = read_whole(home.path(), Agent::Claude);
+        assert_eq!(live(&answer), [None]);
+        assert!(!answer.turns.as_ref().unwrap().wake_overflowed());
+    }
+
+    #[test]
+    fn no_other_agent_reports_a_device() {
+        for agent in [
+            Agent::Codex,
+            Agent::Grok,
+            Agent::Pi,
+            Agent::Omp,
+            Agent::Cursor,
+            Agent::OpenCode,
+        ] {
+            assert!(!agent.reports_wake_devices(), "{agent:?}");
+        }
+        assert!(Agent::Claude.reports_wake_devices());
+        let home = home(Agent::Codex);
+        let path = session_file(home.path(), Agent::Codex);
+        append(
+            &path,
+            &[
+                boot("SessionStart:startup"),
+                started("Command running in background with ID: bg1"),
+                json!({"type": "response_item", "timestamp": "2026-10-03T01:10:00.000Z",
+                "payload": {"type": "function_call_output", "call_id": "c1", "output": "Process running with session ID 1234"}}),
+            ],
+        );
+        let answer = read_whole(home.path(), Agent::Codex);
+        assert_eq!(live(&answer), [], "Codex records prove no running task");
+    }
+}
+
 #[test]
 fn every_agent_reads_to_the_same_facts() {
     for agent in [Agent::Claude, Agent::Codex, Agent::OpenCode] {

@@ -48,6 +48,9 @@ struct ProvenLabel {
     /// the Herdr state it was read under.
     turn: Option<(u64, Option<Waiting>)>,
     user_turn: Option<(u64, hide_session::turns::UserTurnFact)>,
+    /// The expiries of the background tasks the session read proves alive,
+    /// with the Herdr state it was read under.
+    wake: Option<(u64, Vec<Option<u64>>)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -79,6 +82,7 @@ impl LabelOverlay {
                     facts: row_facts(&record.facts),
                     turn: record.turn_read(),
                     user_turn: record.user_turn(),
+                    wake: record.wake_read(),
                 });
                 (
                     pane_id.clone(),
@@ -117,6 +121,12 @@ impl LabelOverlay {
     }
 
     pub(crate) fn apply(&self, payload: &mut SessionSnapshotPayload) {
+        self.apply_at(payload, unix_milliseconds());
+    }
+
+    /// [`Self::apply`] at a given time: a task that announced its own expiry
+    /// stops counting when it passes, whatever else changed.
+    fn apply_at(&self, payload: &mut SessionSnapshotPayload, now: u64) {
         for agent in &mut payload.agents {
             let awaiting_operator = matches!(
                 self.waiting(agent),
@@ -173,6 +183,15 @@ impl LabelOverlay {
             facts.user_turn = label.user_turn.as_ref().and_then(|(seq, fact)| {
                 (agent.state_change_seq == Some(*seq)).then(|| fact.clone())
             });
+            facts.wake_devices = label.wake.as_ref().map_or(0, |(seq, expiries)| {
+                if agent.state_change_seq != Some(*seq) {
+                    return 0;
+                }
+                let live = expiries
+                    .iter()
+                    .filter(|expiry| expiry.is_none_or(|at| at > now));
+                u32::try_from(live.count()).unwrap_or(u32::MAX)
+            });
             if let Some(summary) = &label.summary {
                 let working = agent.agent_status.as_deref() == Some("working");
                 let asking = summary.end == Some(LabelEnd::Question);
@@ -194,6 +213,14 @@ impl LabelOverlay {
             agent.facts = Some(facts);
         }
     }
+}
+
+fn unix_milliseconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 /// The part of a session's facts a row is built from.

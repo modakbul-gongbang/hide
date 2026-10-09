@@ -191,6 +191,12 @@ impl PaneRecord {
         Some((self.turns_seq?, self.turns.as_ref()?.waiting()))
     }
 
+    /// When each background task the session proves alive expires on its own,
+    /// with the Herdr state the read was made under.
+    pub(crate) fn wake_read(&self) -> Option<(u64, Vec<Option<u64>>)> {
+        Some((self.turns_seq?, self.turns.as_ref()?.wake_expiries()))
+    }
+
     pub(crate) fn user_turn(&self) -> Option<(u64, hide_session::turns::UserTurnFact)> {
         Some((self.turns_seq?, self.turns.as_ref()?.user_turn()?))
     }

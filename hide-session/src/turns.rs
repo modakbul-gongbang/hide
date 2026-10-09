@@ -11,6 +11,7 @@
 
 pub(crate) mod content;
 pub(crate) mod native;
+pub(crate) mod wake;
 pub use content::{UserTurnContent, UserTurnFact, UserTurnKind};
 
 use serde::{Deserialize, Serialize};
@@ -71,6 +72,41 @@ pub enum TurnMark {
     /// turn waits for is not known until the next turn starts or a person
     /// writes.
     Unreadable,
+    /// Background work started or ended, or the process that ran it did.
+    /// These follow their own offset (`wake_through`): a record that also
+    /// carries a turn mark folds both.
+    Wake(Vec<WakeMark>),
+}
+
+/// One record's word about work that outlives the turn that started it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WakeMark {
+    /// A new process began, so nothing a process before it started is alive.
+    Boot,
+    Started {
+        id: String,
+        /// When the source says the task expires on its own.
+        expires_at_unix_ms: Option<u64>,
+    },
+    Ended {
+        id: String,
+    },
+    /// A record about devices this reader could not follow: none is proven
+    /// until the next process starts.
+    Lost,
+}
+
+/// A tracked device. More than [`WAKE_DEVICE_LIMIT`] at once means the
+/// session is being read wrongly or abused: none is proven until the next
+/// process starts.
+pub const WAKE_DEVICE_LIMIT: usize = 32;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct WakeDevice {
+    #[serde(deserialize_with = "content::deserialize_id")]
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires_at_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -166,6 +202,22 @@ pub struct TurnTracker {
     /// (Grok's `plan_mode.json`); its content is `None` when withheld.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     plan_hold: Option<PlanHold>,
+    /// The offset of the first wake record not folded yet.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    wake_through: u64,
+    /// The read saw the record that begins the process now running, so the
+    /// devices below are its own. A session read from a file with none proves
+    /// no device.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    booted: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    wake: Vec<WakeDevice>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    wake_overflow: bool,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,6 +309,64 @@ impl TurnTracker {
         self.question_capacity
     }
 
+    /// When each device proven alive will expire on its own (`None` for one
+    /// that does not); empty when none is proven. Counting the ones left at a
+    /// time is the caller's, because the answer changes with the clock alone.
+    pub fn wake_expiries(&self) -> Vec<Option<u64>> {
+        if !self.booted || self.wake_overflow {
+            return Vec::new();
+        }
+        self.wake
+            .iter()
+            .map(|device| device.expires_at_unix_ms)
+            .collect()
+    }
+
+    /// More devices were running at once than are tracked.
+    pub fn wake_overflowed(&self) -> bool {
+        self.wake_overflow
+    }
+
+    fn fold_wake(&mut self, offset: u64, marks: &[WakeMark]) {
+        if offset < self.wake_through {
+            return;
+        }
+        self.wake_through = offset + 1;
+        for mark in marks {
+            match mark {
+                WakeMark::Boot => {
+                    self.booted = true;
+                    self.wake.clear();
+                    self.wake_overflow = false;
+                }
+                WakeMark::Started {
+                    id,
+                    expires_at_unix_ms,
+                } => {
+                    if !self.booted || self.wake_overflow {
+                        continue;
+                    }
+                    if let Some(known) = self.wake.iter_mut().find(|device| device.id == *id) {
+                        known.expires_at_unix_ms = *expires_at_unix_ms;
+                    } else if self.wake.len() == WAKE_DEVICE_LIMIT {
+                        self.wake_overflow = true;
+                        self.wake.clear();
+                    } else {
+                        self.wake.push(WakeDevice {
+                            id: id.clone(),
+                            expires_at_unix_ms: *expires_at_unix_ms,
+                        });
+                    }
+                }
+                WakeMark::Ended { id } => self.wake.retain(|device| device.id != *id),
+                WakeMark::Lost => {
+                    self.wake_overflow = true;
+                    self.wake.clear();
+                }
+            }
+        }
+    }
+
     /// Folds the mark of a record its agent is still writing (OpenCode's
     /// message while its question waits). The record is not settled: the
     /// same offset folds again once it is complete, so its answer clears the
@@ -272,6 +382,10 @@ impl TurnTracker {
     /// Folds the mark of the record at `offset`; a record before what was
     /// already folded is ignored.
     pub fn fold(&mut self, offset: u64, mark: &TurnMark) {
+        if let TurnMark::Wake(marks) = mark {
+            self.fold_wake(offset, marks);
+            return;
+        }
         if offset < self.through {
             return;
         }
@@ -389,6 +503,7 @@ impl TurnTracker {
                 }
             }
             TurnMark::Unreadable => self.unreadable = true,
+            TurnMark::Wake(_) => unreachable!("wake marks are folded before the turn offset guard"),
         }
     }
 

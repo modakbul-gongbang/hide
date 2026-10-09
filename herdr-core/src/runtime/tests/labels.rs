@@ -579,3 +579,111 @@ fn the_enter_that_approves_a_waiting_plan_is_the_operators_submit() {
     let before = enter(&mut runtime);
     assert_eq!(enter(&mut runtime), before, "blocked");
 }
+
+/// The overlay a label worker publishes after reading, under Herdr state
+/// `seq`, a Claude Code session whose process started background work.
+fn wake_overlay(seq: u64, marks: &[hide_session::turns::WakeMark]) -> LabelOverlay {
+    use hide_session::turns::{TurnMark, TurnTracker};
+    let mut turns = TurnTracker::default();
+    for (offset, mark) in marks.iter().enumerate() {
+        turns.fold(offset as u64, &TurnMark::Wake(vec![mark.clone()]));
+    }
+    let record = PaneRecord {
+        owner: hide_session::label_reference_token("claude", "id", SESSION),
+        facts: operator_asked("빌드를 돌려줘"),
+        turns: Some(turns),
+        turns_seq: Some(seq),
+        ..PaneRecord::default()
+    };
+    LabelOverlay::of_records([(&PANE.to_owned(), &record)], true, false)
+}
+
+fn claude_projection(status: &str, seq: u64) -> SessionSnapshotPayload {
+    let mut payload = codex_projection(status, seq);
+    for agent in &mut payload.agents {
+        agent.agent = Some("claude".to_owned());
+    }
+    payload
+}
+
+/// B18, D-26: a Claude Code session that proves a running background task
+/// keeps its stopped row waiting, in Working, for the Herdr state the read was
+/// made under; a read for another state, a finished task, or a new process
+/// leaves the row as Herdr reports it.
+#[test]
+fn a_proven_background_task_keeps_a_stopped_claude_row_waiting() {
+    use hide_session::turns::WakeMark;
+    let started = || WakeMark::Started {
+        id: "bg1".into(),
+        expires_at_unix_ms: None,
+    };
+    let mut runtime = runtime();
+
+    runtime.set_label_overlay(wake_overlay(4, &[WakeMark::Boot, started()]));
+    runtime.ingest_session(Ok(claude_projection("done", 4)));
+    let waiting = row(&runtime);
+    assert_eq!(waiting["wait"], "background", "{waiting}");
+    assert_eq!(waiting["group"], "working");
+    assert_eq!(waiting["status_code"], "waiting");
+
+    runtime.ingest_session(Ok(claude_projection("done", 5)));
+    assert_eq!(
+        row(&runtime)["wait"],
+        serde_json::Value::Null,
+        "read for another state"
+    );
+
+    runtime.set_label_overlay(wake_overlay(4, &[started()]));
+    runtime.ingest_session(Ok(claude_projection("done", 4)));
+    assert_eq!(
+        row(&runtime)["wait"],
+        serde_json::Value::Null,
+        "no process start was read"
+    );
+
+    runtime.set_label_overlay(wake_overlay(
+        4,
+        &[
+            WakeMark::Boot,
+            started(),
+            WakeMark::Ended { id: "bg1".into() },
+        ],
+    ));
+    runtime.ingest_session(Ok(claude_projection("done", 4)));
+    assert_eq!(
+        row(&runtime)["wait"],
+        serde_json::Value::Null,
+        "the task ended"
+    );
+
+    let mut passed = wake_overlay(
+        4,
+        &[
+            WakeMark::Boot,
+            WakeMark::Started {
+                id: "mon".into(),
+                expires_at_unix_ms: Some(1),
+            },
+        ],
+    );
+    runtime.set_label_overlay(passed.clone());
+    runtime.ingest_session(Ok(claude_projection("done", 4)));
+    assert_eq!(
+        row(&runtime)["wait"],
+        serde_json::Value::Null,
+        "its own expiry passed"
+    );
+    passed = wake_overlay(
+        4,
+        &[
+            WakeMark::Boot,
+            WakeMark::Started {
+                id: "mon".into(),
+                expires_at_unix_ms: Some(u64::MAX),
+            },
+        ],
+    );
+    runtime.set_label_overlay(passed);
+    runtime.ingest_session(Ok(claude_projection("done", 4)));
+    assert_eq!(row(&runtime)["wait"], "background");
+}
