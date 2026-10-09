@@ -10,7 +10,9 @@
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use hide_node_link::device::{RemoteResult, RemoteStage};
 use hide_platform::ipc::LocalStream;
@@ -26,6 +28,56 @@ const CHUNK: usize = 64 * 1024;
 /// The node's connection to its core's machine.
 pub struct Upstream {
     client: RusshRemoteClient,
+    /// Set while a resolution of the core machine's name runs: one at a
+    /// time, however long the system's resolver takes.
+    resolving: Arc<AtomicBool>,
+}
+
+/// A probe of the SSH greeting, bounded as a whole by `within`. The name is
+/// resolved on a thread of its own the probe waits for only until its
+/// deadline: the system's resolver has no bound, and hangs exactly when the
+/// network is down, so it never holds the caller (the node's watch, which
+/// the role's end joins). That thread ends when the resolver answers; while
+/// one runs, a probe answers not reachable rather than start another.
+fn probe<R>(within: Duration, resolving: &Arc<AtomicBool>, resolve: R) -> bool
+where
+    R: FnOnce() -> io::Result<Vec<SocketAddr>> + Send + 'static,
+{
+    let deadline = Instant::now() + within;
+    if resolving.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    let (found, answer) = mpsc::channel();
+    let running = Arc::clone(resolving);
+    let started = std::thread::Builder::new()
+        .name("core-resolve".to_owned())
+        .spawn(move || {
+            let addresses = resolve();
+            running.store(false, Ordering::SeqCst);
+            let _ = found.send(addresses);
+        });
+    if started.is_err() {
+        resolving.store(false, Ordering::SeqCst);
+        return false;
+    }
+    let Ok(Ok(addresses)) = answer.recv_timeout(within) else {
+        return false;
+    };
+    addresses.into_iter().any(|address| {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        let Ok(mut socket) = TcpStream::connect_timeout(&address, left) else {
+            return false;
+        };
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() || socket.set_read_timeout(Some(left)).is_err() {
+            return false;
+        }
+        let mut greeting = [0_u8; 4];
+        socket.read_exact(&mut greeting).is_ok() && &greeting == b"SSH-"
+    })
 }
 
 /// The attach role's channel, as a local stream: what the node writes to it
@@ -46,6 +98,7 @@ impl Upstream {
     pub fn new(alias: SshAlias) -> RemoteResult<Self> {
         Ok(Self {
             client: RusshRemoteClient::new(alias)?,
+            resolving: Arc::default(),
         })
     }
 
@@ -245,29 +298,76 @@ impl Upstream {
         })
     }
 
-    /// Whether the core machine's SSH server answers now: a connection to
-    /// its port that reads the server's `SSH-` greeting within `within`, each
-    /// of the connect and the read. A server that takes the connection and
-    /// closes it, or a port nothing answers, is not reachable.
+    /// Whether the core machine's SSH server answers now: its name resolved,
+    /// a connection to its port, and the server's `SSH-` greeting read, all
+    /// within `within`. A server that takes the connection and closes it, a
+    /// port nothing answers, or a name the resolver has not answered in time
+    /// is not reachable.
     pub fn reachable(&self, within: Duration) -> bool {
         let host = &self.client.host;
-        let Ok(addresses) = (host.hostname.as_str(), host.port).to_socket_addrs() else {
-            return false;
-        };
-        addresses.into_iter().any(|address| {
-            let Ok(mut socket) = TcpStream::connect_timeout(&address, within) else {
-                return false;
-            };
-            if socket.set_read_timeout(Some(within)).is_err() {
-                return false;
-            }
-            let mut greeting = [0_u8; 4];
-            socket.read_exact(&mut greeting).is_ok() && &greeting == b"SSH-"
+        let (name, port) = (host.hostname.clone(), host.port);
+        probe(within, &self.resolving, move || {
+            (name.as_str(), port)
+                .to_socket_addrs()
+                .map(|found| found.collect())
         })
     }
 
     /// Ends the connection and every channel on it.
     pub fn close(&self) {
         self.client.disconnect();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::TcpListener;
+
+    use super::*;
+
+    /// A resolver that does not answer holds the probe only until its
+    /// deadline, and no second resolution starts while it runs; once it has
+    /// answered, a probe reads the server's greeting again.
+    #[test]
+    fn a_resolver_that_hangs_holds_the_probe_only_until_its_deadline() {
+        let resolving = Arc::new(AtomicBool::new(false));
+        let (release, released) = mpsc::channel::<()>();
+        let within = Duration::from_millis(200);
+        let started = Instant::now();
+        let reached = probe(within, &resolving, move || {
+            let _ = released.recv_timeout(Duration::from_secs(30));
+            Ok(Vec::new())
+        });
+        assert!(!reached);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+
+        let asked = Arc::new(AtomicBool::new(false));
+        let second = Arc::clone(&asked);
+        assert!(!probe(within, &resolving, move || {
+            second.store(true, Ordering::SeqCst);
+            Ok(Vec::new())
+        }));
+        assert!(!asked.load(Ordering::SeqCst), "a second resolution started");
+
+        drop(release);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while resolving.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "the resolution never ended");
+            std::thread::yield_now();
+        }
+        let server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = server.local_addr().unwrap();
+        let greeting = std::thread::spawn(move || {
+            let (mut stream, _) = server.accept().unwrap();
+            stream.write_all(b"SSH-2.0-fixture\r\n").unwrap();
+        });
+        assert!(probe(Duration::from_secs(5), &resolving, move || Ok(vec![
+            address
+        ])));
+        greeting.join().unwrap();
     }
 }
