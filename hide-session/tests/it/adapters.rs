@@ -917,15 +917,25 @@ mod grok {
         }
 
         fn route(&self, cwd: &Path) -> Result<(), String> {
+            self.route_by("id", GROK_ID, cwd, None)
+        }
+
+        fn route_by(
+            &self,
+            kind: &str,
+            value: &str,
+            cwd: &Path,
+            expected_id: Option<&str>,
+        ) -> Result<(), String> {
             hide_session::session_activity::read(
                 self.home.path(),
                 &hide_session::session_activity::SessionActivityRequest {
                     agent: Agent::Grok,
-                    reference_kind: "id".into(),
-                    reference_value: GROK_ID.into(),
+                    reference_kind: kind.into(),
+                    reference_value: value.into(),
                     cwd: cwd.to_str().map(str::to_owned),
                     exact_route: true,
-                    expected_id: None,
+                    expected_id: expected_id.map(str::to_owned),
                 },
             )
             .map(|_| ())
@@ -978,7 +988,7 @@ mod grok {
     }
 
     #[test]
-    fn the_blocks_of_one_prompt_are_one_message_even_across_reads() {
+    fn the_blocks_of_one_prompt_appended_after_a_read_are_one_message() {
         let mut native = Native::new();
         let first = native.read().unwrap();
         native.resume(&first);
@@ -1068,6 +1078,121 @@ mod grok {
         let cancelled = native.read().unwrap();
         assert_eq!(user_turn(&cancelled), None, "a cancelled turn asks nothing");
         assert_eq!(cancelled.events[0].kind, LabelEventKind::Interrupted);
+    }
+
+    /// Grok writes a pasted image inline and a tool's output twice, so a
+    /// record over the line cap is ordinary: it is read without its body,
+    /// across as many polls as it takes, and only a question is refused.
+    #[test]
+    fn a_record_over_the_line_cap_keeps_its_turn_and_only_a_question_is_refused() {
+        let mut native = Native::new();
+        let first = native.read().unwrap();
+        native.resume(&first);
+        let block = |index: u64, content: serde_json::Value| {
+            json!({"sessionUpdate":"user_message_chunk","content":content,
+                "_meta":{"modelId":"grok-build","promptIndex":index}})
+        };
+        native.append(
+            block(4, json!({"type":"text","text":"이 화면을 봐줘"})),
+            json!({}),
+        );
+        native.append(
+            block(
+                4,
+                json!({"type":"image","data":"A".repeat(1536 * 1024),"mimeType":"image/png"}),
+            ),
+            json!({}),
+        );
+        native.append(
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"call-read","status":"completed",
+                "content":[{"type":"content","content":{"type":"text",
+                    "text":format!("{} https://github.com/acme/app/pull/77", "x".repeat(300 * 1024))}}]}),
+            json!({"promptId":"p-4"}),
+        );
+        native.append(
+            json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"다 봤습니다"}}),
+            json!({"promptId":"p-4"}),
+        );
+        native.append(
+            json!({"sessionUpdate":"turn_completed","prompt_id":"p-4","stop_reason":"end_turn"}),
+            json!({}),
+        );
+        let mut events = Vec::new();
+        let mut reasons = std::collections::BTreeMap::new();
+        let mut polls = 0;
+        let last = loop {
+            let next = native.read().unwrap();
+            polls += 1;
+            events.extend(
+                next.events
+                    .iter()
+                    .map(|event| (event.kind, event.text.clone(), event.images)),
+            );
+            for (reason, count) in &next.skipped_reasons {
+                *reasons.entry(reason.clone()).or_insert(0) += count;
+            }
+            native.resume(&next);
+            if !next.has_more {
+                break next;
+            }
+        };
+        assert!(polls > 1, "the image spans more than one poll");
+        // Blocks are joined within one poll; a poll boundary between them
+        // leaves two events, which the phone joins again when it pages.
+        assert_eq!(
+            events,
+            [
+                (LabelEventKind::Human, "이 화면을 봐줘".to_owned(), 0),
+                (LabelEventKind::Human, String::new(), 1),
+                (LabelEventKind::Assistant, "다 봤습니다".to_owned(), 0),
+            ]
+        );
+        assert_eq!(reasons.get("body_capacity"), Some(&2));
+        assert!(sighted(&last, 77).is_none(), "a dropped body is never read");
+        assert_eq!(
+            last.turns.as_ref().unwrap().waiting(),
+            Some(Waiting::Nothing)
+        );
+
+        // A prompt whose own text is over the cap still starts its turn,
+        // which answers the question left before it.
+        native.append(
+            json!({"sessionUpdate":"tool_call","toolCallId":"call-ask","title":"ask_user_question",
+                "rawInput":{"questions":[{"question":"계속할까요?","options":[]}]},
+                "_meta":{"x.ai/tool":{"kind":"ask_user"}}}),
+            json!({"promptId":"p-4"}),
+        );
+        let asked = native.read().unwrap();
+        assert_eq!(user_turn(&asked).unwrap().kind, UserTurnKind::Question);
+        native.resume(&asked);
+        native.append(
+            block(5, json!({"type":"text","text":"y".repeat(300 * 1024)})),
+            json!({}),
+        );
+        let long = native.read().unwrap();
+        assert!(long.events.is_empty(), "no text is invented");
+        assert_eq!(user_turn(&long), None, "the typed turn answered it");
+        // A whole-file read keeps the same records without their bodies.
+        let mut whole =
+            hide_session::parse_events(Agent::Grok, &fs::read_to_string(&native.path).unwrap());
+        whole.coalesce();
+        assert!(whole.events.iter().any(|event| {
+            event.kind == hide_session::EventKind::Human
+                && (event.text.as_str(), event.images) == ("이 화면을 봐줘", 1)
+        }));
+
+        // A question's body is the question: it is refused, never skipped.
+        let mut asking = Native::new();
+        let first = asking.read().unwrap();
+        asking.resume(&first);
+        asking.append(
+            json!({"sessionUpdate":"tool_call","toolCallId":"call-ask","title":"ask_user_question",
+                "rawInput":{"questions":[{"question":"z".repeat(300 * 1024),"options":[]}]},
+                "_meta":{"x.ai/tool":{"kind":"ask_user"}}}),
+            json!({"promptId":"p-4"}),
+        );
+        let refused = asking.read().unwrap_err();
+        assert!(refused.contains("line_bytes"), "{refused}");
     }
 
     #[test]
@@ -1241,6 +1366,27 @@ mod grok {
         let other = native.home.path().join("other");
         fs::create_dir(&other).unwrap();
         assert!(native.route(&other).is_err());
+        // A fork or wake names the proven file, as the label overlay hands it.
+        let file = native.path.to_str().unwrap();
+        assert_eq!(
+            native.route_by("path", file, &native.cwd, Some(GROK_ID)),
+            Ok(())
+        );
+        assert!(
+            native
+                .route_by("path", file, &other, Some(GROK_ID))
+                .is_err()
+        );
+        assert!(
+            native
+                .route_by(
+                    "path",
+                    file,
+                    &native.cwd,
+                    Some("0199b000-0000-7000-8000-0000000000aa")
+                )
+                .is_err()
+        );
         let located = SessionLocator::new(native.home.path())
             .locate(
                 "pane",

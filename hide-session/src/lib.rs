@@ -430,6 +430,8 @@ pub enum SkipReason {
     MissingTimestamp,
     InvalidTimestamp,
     NonConversationCapacity,
+    /// A record longer than the line cap was read without its bodies.
+    BodyCapacity,
     UserTurnCapacity,
     UserTurnInvalid,
 }
@@ -441,6 +443,7 @@ impl SkipReason {
             Self::MissingTimestamp => "missing_timestamp",
             Self::InvalidTimestamp => "invalid_timestamp",
             Self::NonConversationCapacity => "non_conversation_capacity",
+            Self::BodyCapacity => "body_capacity",
             Self::UserTurnCapacity => "user_turn_capacity",
             Self::UserTurnInvalid => "user_turn_invalid",
         }
@@ -1310,8 +1313,11 @@ pub(crate) fn parse_events_into(
             base_offset,
             parse_claude_line,
             links::claude_line,
-            Some(turns::native::claude),
-            true,
+            Turns {
+                parser: Some(turns::native::claude),
+                human_starts_turn: true,
+                large: None,
+            },
             found,
         ),
         Agent::Codex => parse_lines_at(
@@ -1319,8 +1325,11 @@ pub(crate) fn parse_events_into(
             base_offset,
             parse_codex_line,
             links::codex_line,
-            Some(turns::native::codex),
-            false,
+            Turns {
+                parser: Some(turns::native::codex),
+                human_starts_turn: false,
+                large: None,
+            },
             found,
         ),
         Agent::Grok => parse_lines_at(
@@ -1328,8 +1337,11 @@ pub(crate) fn parse_events_into(
             base_offset,
             grok::parse_line,
             links::grok_line,
-            Some(grok::turn),
-            true,
+            Turns {
+                parser: Some(grok::turn),
+                human_starts_turn: true,
+                large: Some(grok::reduced_line),
+            },
             found,
         ),
         Agent::Pi => parse_lines_at(
@@ -1337,8 +1349,11 @@ pub(crate) fn parse_events_into(
             base_offset,
             |item| native_file::parse_line(Agent::Pi, item),
             links::pi_line,
-            None,
-            false,
+            Turns {
+                parser: None,
+                human_starts_turn: false,
+                large: None,
+            },
             found,
         ),
         Agent::Omp => parse_lines_at(
@@ -1346,12 +1361,23 @@ pub(crate) fn parse_events_into(
             base_offset,
             |item| native_file::parse_line(Agent::Omp, item),
             links::pi_line,
-            Some(turns::native::omp),
-            true,
+            Turns {
+                parser: Some(turns::native::omp),
+                human_starts_turn: true,
+                large: None,
+            },
             found,
         ),
         Agent::OpenCode => ParsedSession::default(),
     }
+}
+
+/// How a format's records mark turns, and how it reads a record longer
+/// than the line cap.
+struct Turns {
+    parser: Option<turns::native::Parser>,
+    human_starts_turn: bool,
+    large: Option<fn(&str) -> Option<String>>,
 }
 
 /// Each record is parsed once and read by both the conversation parser and
@@ -1362,19 +1388,35 @@ fn parse_lines_at(
     base_offset: u64,
     mut extract: impl FnMut(&Value) -> LineResult,
     link: links::LinkLine,
-    turn: Option<turns::native::Parser>,
-    human_starts_turn: bool,
+    turns: Turns,
     found: &mut links::LinkAccumulator,
 ) -> ParsedSession {
+    let Turns {
+        parser: turn,
+        human_starts_turn,
+        large,
+    } = turns;
     let mut parsed = ParsedSession::default();
     let mut relative_offset = 0_u64;
     for raw_line in contents.split_inclusive('\n') {
         let line_offset = base_offset.saturating_add(relative_offset);
         relative_offset = relative_offset.saturating_add(raw_line.len() as u64);
-        if raw_line.len() > SESSION_LINE_LIMIT_BYTES {
-            parsed.skipped(SkipReason::NonConversationCapacity);
-            continue;
-        }
+        let reduced;
+        let raw_line = if raw_line.len() > SESSION_LINE_LIMIT_BYTES {
+            match large.and_then(|reduce| reduce(raw_line)) {
+                Some(line) => {
+                    parsed.skipped(SkipReason::BodyCapacity);
+                    reduced = line;
+                    reduced.as_str()
+                }
+                None => {
+                    parsed.skipped(SkipReason::NonConversationCapacity);
+                    continue;
+                }
+            }
+        } else {
+            raw_line
+        };
         let line = raw_line.trim_end_matches(['\n', '\r']);
         if line.trim().is_empty() {
             continue;

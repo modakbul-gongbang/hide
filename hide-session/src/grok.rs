@@ -204,6 +204,10 @@ fn at(item: &Value) -> std::result::Result<u64, SkipReason> {
     }
 }
 
+fn flag(update: &Value, name: &str) -> bool {
+    update.get("_meta").and_then(|meta| meta.get(name)) == Some(&Value::Bool(true))
+}
+
 /// The native classifier of a tool call, which survives client renames.
 fn tool_kind(update: &Value) -> Option<&str> {
     update.pointer("/_meta/x.ai~1tool/kind")?.as_str()
@@ -353,9 +357,11 @@ pub(crate) fn turn(item: &Value) -> std::result::Result<Option<TurnMark>, SkipRe
     }
     match kind {
         // A turn the operator did not type (a task completion wake) still
-        // starts a turn; a typed one starts it through its message event.
+        // starts a turn, as does a typed block too long to keep; any other
+        // typed one starts it through its message event.
         "user_message_chunk"
-            if update.pointer("/_meta/hideFromScrollback") == Some(&Value::Bool(true)) =>
+            if flag(update, "hideFromScrollback")
+                || (flag(update, OMITTED_TEXT) && !flag(update, "hostTurn")) =>
         {
             Ok(Some(TurnMark::HumanTurn))
         }
@@ -376,6 +382,250 @@ pub(crate) fn turn(item: &Value) -> std::result::Result<Option<TurnMark>, SkipRe
         }
         _ => Ok(None),
     }
+}
+
+/// The fields of a record kept when its line is longer than the line cap:
+/// which update it is, its call and turn ids, its prompt index and flags,
+/// its times and its block type. Grok writes a pasted image inline and a
+/// tool's output twice, so such lines are ordinary; reading them without
+/// their bodies keeps every turn mark, while a question call, whose body is
+/// the question, is still refused.
+const KEPT: &[&str] = &[
+    "/timestamp",
+    "/method",
+    "/params/sessionId",
+    "/params/_meta/agentTimestampMs",
+    "/params/_meta/promptId",
+    "/params/update/sessionUpdate",
+    "/params/update/toolCallId",
+    "/params/update/status",
+    "/params/update/title",
+    "/params/update/prompt_id",
+    "/params/update/stop_reason",
+    "/params/update/content/type",
+    "/params/update/_meta/promptIndex",
+    "/params/update/_meta/hideFromScrollback",
+    "/params/update/_meta/hostTurn",
+    "/params/update/_meta/interjection",
+    "/params/update/_meta/x.ai~1tool/kind",
+];
+/// Marks a typed prompt block whose text exceeded the line cap: the turn it
+/// starts is kept, its text is not invented.
+const OMITTED_TEXT: &str = "hide.omittedText";
+const LARGE_KEY_BYTES: usize = 64;
+const LARGE_VALUE_BYTES: usize = 256;
+const LARGE_DEPTH: usize = 64;
+
+/// A bounded streaming scan of one oversized `updates.jsonl` line that
+/// retains only the [`KEPT`] scalars, so a checkpoint never carries a body.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct LargeLine {
+    frames: Vec<LargeFrame>,
+    string: Option<LargeScalar>,
+    literal: Option<LargeScalar>,
+    kept: Vec<(String, String)>,
+    invalid: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct LargeFrame {
+    object: bool,
+    /// The current member's JSON-pointer token; `None` for an array, a
+    /// key too long to be kept or one spelled with an escape.
+    key: Option<String>,
+    expecting_key: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct LargeScalar {
+    key: bool,
+    /// The kept pointer this value fills, when it fills one.
+    pointer: Option<String>,
+    raw: String,
+    escaped: bool,
+    plain: bool,
+}
+
+impl LargeLine {
+    fn pointer(&self) -> Option<String> {
+        let mut pointer = String::new();
+        for frame in &self.frames {
+            pointer.push('/');
+            pointer.push_str(frame.key.as_deref()?);
+        }
+        KEPT.contains(&pointer.as_str()).then_some(pointer)
+    }
+
+    fn at_key(&self) -> bool {
+        self.frames
+            .last()
+            .is_some_and(|frame| frame.object && frame.expecting_key)
+    }
+
+    fn finish_literal(&mut self) {
+        if let Some(literal) = self.literal.take()
+            && let Some(pointer) = literal.pointer.filter(|_| literal.plain)
+        {
+            self.kept.push((pointer, literal.raw));
+        }
+    }
+
+    pub(crate) fn feed(&mut self, bytes: &[u8]) -> std::result::Result<(), crate::SessionError> {
+        for &byte in bytes {
+            if let Some(string) = self.string.as_mut() {
+                if string.escaped {
+                    string.escaped = false;
+                } else if byte == b'"' {
+                    let string = self.string.take().unwrap();
+                    if string.key {
+                        if let Some(frame) = self.frames.last_mut() {
+                            frame.key = string
+                                .plain
+                                .then(|| string.raw.replace('~', "~0").replace('/', "~1"));
+                            frame.expecting_key = false;
+                        }
+                    } else if let Some(pointer) = string.pointer.filter(|_| string.plain) {
+                        self.kept.push((pointer, format!("\"{}\"", string.raw)));
+                    }
+                    continue;
+                } else if byte == b'\\' {
+                    string.escaped = true;
+                    // A key spelled with an escape is never one of ours; an
+                    // escaped value keeps its JSON spelling.
+                    string.plain &= !string.key;
+                }
+                let limit = if string.key {
+                    LARGE_KEY_BYTES
+                } else {
+                    LARGE_VALUE_BYTES
+                };
+                if string.plain && (string.key || string.pointer.is_some()) {
+                    // Only ASCII spellings are ever kept: every kept field
+                    // and every key on a kept path is ASCII.
+                    if string.raw.len() < limit && byte.is_ascii() {
+                        string.raw.push(byte as char);
+                    } else {
+                        string.plain = false;
+                    }
+                }
+                continue;
+            }
+            match byte {
+                b'"' => {
+                    self.finish_literal();
+                    let key = self.at_key();
+                    let pointer = if key { None } else { self.pointer() };
+                    self.string = Some(LargeScalar {
+                        key,
+                        pointer,
+                        raw: String::new(),
+                        escaped: false,
+                        plain: true,
+                    });
+                }
+                b'{' | b'[' => {
+                    self.finish_literal();
+                    if self.frames.len() >= LARGE_DEPTH {
+                        return Err(crate::SessionError::Capacity {
+                            resource: "json_depth",
+                            limit: LARGE_DEPTH as u64,
+                        });
+                    }
+                    let object = byte == b'{';
+                    self.frames.push(LargeFrame {
+                        object,
+                        key: None,
+                        expecting_key: object,
+                    });
+                }
+                b'}' | b']' => {
+                    self.finish_literal();
+                    match self.frames.pop() {
+                        Some(frame) => self.invalid |= frame.object != (byte == b'}'),
+                        None => self.invalid = true,
+                    }
+                }
+                b',' => {
+                    self.finish_literal();
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.expecting_key = frame.object;
+                        frame.key = None;
+                    }
+                }
+                b':' | b' ' | b'\t' | b'\r' | b'\n' => self.finish_literal(),
+                _ => {
+                    if self.literal.is_none() {
+                        let pointer = self.pointer();
+                        self.literal = Some(LargeScalar {
+                            key: false,
+                            pointer,
+                            raw: String::new(),
+                            escaped: false,
+                            plain: true,
+                        });
+                    }
+                    let literal = self.literal.as_mut().unwrap();
+                    if literal.raw.len() < 32 && byte.is_ascii() {
+                        literal.raw.push(byte as char);
+                    } else {
+                        literal.plain = false;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// No JSON structure has been seen, so appending cannot make one.
+    pub(crate) fn unclassifiable_prefix(&self) -> bool {
+        self.frames.is_empty() && self.string.is_none() && self.kept.is_empty()
+    }
+
+    /// The record without its bodies, or `None` when it cannot be read
+    /// that way: an unfinished or malformed line, an unknown update, or a
+    /// question call whose body is the question.
+    pub(crate) fn reduced(mut self) -> Option<String> {
+        self.finish_literal();
+        if self.invalid || !self.frames.is_empty() || self.string.is_some() {
+            return None;
+        }
+        let mut record = Value::Object(Default::default());
+        for (pointer, raw) in &self.kept {
+            let value = serde_json::from_str::<Value>(raw).ok()?;
+            let mut at = &mut record;
+            for token in pointer.split('/').skip(1) {
+                let token = token.replace("~1", "/").replace("~0", "~");
+                at = at
+                    .as_object_mut()?
+                    .entry(token)
+                    .or_insert_with(|| Value::Object(Default::default()));
+            }
+            *at = value;
+        }
+        let (kind, update) = update(&record)?;
+        if matches!(kind, "tool_call" | "tool_call_update")
+            && (tool_kind(update) == Some("ask_user") || update["title"] == "ask_user_question")
+        {
+            return None;
+        }
+        if kind == "user_message_chunk" && update.pointer("/content/type") == Some(&"text".into()) {
+            record
+                .pointer_mut("/params/update")?
+                .as_object_mut()?
+                .entry("_meta")
+                .or_insert_with(|| Value::Object(Default::default()))
+                .as_object_mut()?
+                .insert(OMITTED_TEXT.into(), Value::Bool(true));
+        }
+        serde_json::to_string(&record).ok()
+    }
+}
+
+/// [`LargeLine`] over a line already in memory.
+pub(crate) fn reduced_line(line: &str) -> Option<String> {
+    let mut scan = LargeLine::default();
+    scan.feed(line.as_bytes()).ok()?;
+    scan.reduced()
 }
 
 #[cfg(test)]

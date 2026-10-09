@@ -203,6 +203,7 @@ impl ConversationCursor {
                     // JSON discriminators survive a checkpoint, never bodies.
                     let mut scan = LargeRecord {
                         user_turn_scanned: true,
+                        grok: (agent == Agent::Grok).then(Default::default),
                         ..LargeRecord::default()
                     };
                     scan.feed(&pending)?;
@@ -229,15 +230,31 @@ impl ConversationCursor {
                 continue;
             }
             if discarded_bytes > 0 {
-                if !classifier.take().is_some_and(|scan| scan.tool_only(agent)) {
-                    return Err(SessionError::Capacity {
-                        resource: "line_bytes",
-                        limit: SESSION_LINE_LIMIT_BYTES as u64,
-                    });
-                }
-                parsed.skipped(SkipReason::NonConversationCapacity);
+                let scan = classifier.take();
                 discarded_bytes = 0;
-                continue;
+                if agent == Agent::Grok {
+                    // The record still counts, without its bodies.
+                    let Some(line) = scan
+                        .and_then(|scan| scan.grok)
+                        .and_then(|grok| grok.reduced())
+                    else {
+                        return Err(SessionError::Capacity {
+                            resource: "line_bytes",
+                            limit: SESSION_LINE_LIMIT_BYTES as u64,
+                        });
+                    };
+                    parsed.skipped(SkipReason::BodyCapacity);
+                    pending = line.into_bytes();
+                } else {
+                    if !scan.is_some_and(|scan| scan.tool_only(agent)) {
+                        return Err(SessionError::Capacity {
+                            resource: "line_bytes",
+                            limit: SESSION_LINE_LIMIT_BYTES as u64,
+                        });
+                    }
+                    parsed.skipped(SkipReason::NonConversationCapacity);
+                    continue;
+                }
             }
             let line = parse_events_into(
                 agent,
@@ -466,6 +483,9 @@ struct LargeRecord {
     payload_call_id: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     plan_item: bool,
+    /// Grok's oversized records are read without their bodies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    grok: Option<Box<crate::grok::LargeLine>>,
 }
 #[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq)]
 enum Scope {
@@ -517,6 +537,9 @@ impl LargeRecord {
         }
     }
     fn feed(&mut self, bytes: &[u8]) -> Result<()> {
+        if let Some(grok) = self.grok.as_mut() {
+            grok.feed(bytes)?;
+        }
         for &byte in bytes {
             if let Some(token) = self.token.as_mut() {
                 if token.escaped {
@@ -658,7 +681,10 @@ impl LargeRecord {
         Ok(())
     }
     fn unclassifiable_prefix(&self) -> bool {
-        self.frames.is_empty() && self.token.is_none() && self.root_kind.is_empty()
+        match &self.grok {
+            Some(grok) => grok.unclassifiable_prefix(),
+            None => self.frames.is_empty() && self.token.is_none() && self.root_kind.is_empty(),
+        }
     }
 
     fn tool_only(self, agent: Agent) -> bool {
