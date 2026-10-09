@@ -1284,6 +1284,38 @@ fn only_a_turn_the_operator_started_moves_the_goal() {
     );
 }
 
+/// B3, D-06: a block lasts until the agent runs again; a working state ends it
+/// and its cause, and a wrongly judged block goes the same way.
+#[test]
+fn a_blocked_turn_ends_when_the_agent_works_again() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let path = harness.session(
+        "a",
+        "native-a",
+        &[
+            ("user", "검증 돌려줘"),
+            ("assistant", "디스크가 가득 차서 멈췄어요"),
+        ],
+    );
+    harness.backend.answer("검증 레인 정리 작업", "blocked", "");
+    let idle = agent(&path, "idle", 3);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    let blocked = shown(&worker, &idle).expect("the turn is labelled");
+    assert!(blocked.blocked, "the stopped turn names its block");
+    assert_eq!(
+        shown_facts(&worker, &idle).and_then(|facts| facts.end),
+        Some(super::analysis::LabelEnd::Blocked)
+    );
+
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    let running = shown_facts(&worker, &working);
+    assert_eq!(running.as_ref().and_then(|facts| facts.end), None);
+    assert!(!shown(&worker, &working).is_some_and(|label| label.blocked));
+}
+
 /// D-33, B20: a turn's end that ran out of time is asked once more; a second
 /// timeout leaves the row on its facts and asks nothing else.
 #[test]
