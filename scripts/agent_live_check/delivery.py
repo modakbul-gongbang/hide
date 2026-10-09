@@ -9,6 +9,9 @@ from .scenes import transcript
 from .timing import Deadline, ObservationTimeout
 
 
+SUMMARY = "@src/main.rs $HOME /review !ls #881 `cargo test` 진행 상황 C:\\"
+
+
 def measure(runtime, pane, recipe, home, cwd, seconds, quiet_seconds, overlay):
     initial = runtime.agent(pane)
     session = initial.get("agent_session") if initial else None
@@ -22,8 +25,10 @@ def measure(runtime, pane, recipe, home, cwd, seconds, quiet_seconds, overlay):
     # is no native helper, marker receipt or pre-bell marker-bearing prompt.
     offset = len(messages(file, recipe["kind"]))
     marker = "LIVE_MAIL_" + secrets.token_hex(16)
+    # The first line is what the bell types, so it carries the characters a
+    # composer acts on: the bell must still arrive as one submitted prompt.
     letter_id = runtime.send_letter(pane, "live-proof-" + secrets.token_hex(8),
-                                    "Reply with this marker in your own assistant text: " + marker)
+                                    SUMMARY + "\nReply with this marker in your own assistant text: " + marker)
     # The controller types nothing: only the line hided's doorbell typed and
     # kept on the letter opens the turn its hook hands the letter to, and the
     # doorbell waits for the pane to be quiet first.

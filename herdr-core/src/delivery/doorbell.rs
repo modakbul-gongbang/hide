@@ -432,6 +432,7 @@ fn bell_line(owner: &Mutex<Runtime>, ledger: &Ledger, letter: &Letter, others: u
         kind: &letter.kind,
         body: &letter.body,
         others,
+        inbox: super::bell::names_inbox(&letter.recipient.kind),
     })
 }
 
@@ -912,12 +913,19 @@ mod tests {
             let typed = bell.typed();
             assert_eq!(typed.len(), 1, "{flags}");
             assert_eq!(typed[0]["pane_id"], "recipient");
-            assert_eq!(typed[0]["text"], "🔔 sender 보고: private", "{flags}");
+            // The recipient is a Codex, so the line names where the letter is.
+            assert_eq!(
+                typed[0]["text"], "🔔 sender 보고: private · hide inbox",
+                "{flags}"
+            );
             assert_eq!(typed[0]["keys"], json!(["enter"]));
             assert_eq!(bell.attempts(), 1, "{flags}");
             // The letter keeps the line it was rung with, which is what
             // recognizes the turn the bell opens.
-            assert_eq!(bell.line().as_deref(), Some("🔔 sender 보고: private"));
+            assert_eq!(
+                bell.line().as_deref(),
+                Some("🔔 sender 보고: private · hide inbox")
+            );
         }
     }
 
@@ -1039,7 +1047,7 @@ mod tests {
         let line = |ledger: &Ledger, letter: &Letter| bell_line(&runtime, ledger, letter, 1);
         assert_eq!(
             line(&ledger, &letter),
-            "🔔 sender 보고: 리뷰 끝났습니다 · 외 1통"
+            "🔔 sender 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
         );
         // The sidebar's title for the pane, while the pane still hosts it.
         let titled: crate::sidebar::SessionSnapshotPayload = serde_json::from_value(json!({
@@ -1051,13 +1059,13 @@ mod tests {
         crate::runtime::delivery::tests::show_agents(&mut runtime.lock().unwrap(), titled);
         assert_eq!(
             line(&ledger, &letter),
-            "🔔 라벨 제목 보고: 리뷰 끝났습니다 · 외 1통"
+            "🔔 라벨 제목 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
         );
         let mut moved_on = letter.clone();
         moved_on.sender.session = Some("an-earlier-session".into());
         assert_eq!(
             line(&ledger, &moved_on),
-            "🔔 sender 보고: 리뷰 끝났습니다 · 외 1통"
+            "🔔 sender 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
         );
         // The name it registered under comes first.
         ledger.agents.push(crate::coordination::AgentRecord {
@@ -1077,7 +1085,7 @@ mod tests {
         });
         assert_eq!(
             line(&ledger, &letter),
-            "🔔 label-end-fix 보고: 리뷰 끝났습니다 · 외 1통"
+            "🔔 label-end-fix 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
         );
         // A watch warning is about the agent it watches, not its parent.
         let mut warning = letter.clone();
@@ -1091,7 +1099,7 @@ mod tests {
         });
         assert_eq!(
             line(&ledger, &warning),
-            "🔔 label-end-fix 감시: 리뷰 끝났습니다 · 외 1통"
+            "🔔 label-end-fix 감시: 리뷰 끝났습니다 · 외 1통 · hide inbox"
         );
     }
 

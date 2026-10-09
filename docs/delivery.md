@@ -150,7 +150,7 @@ That residual limit is the approved D-18 boundary; external input is not represe
 
 ### The bell line
 
-The doorbell types `🔔 <writer> <kind>: <the letter's first line>`, and ` · 외 N통` when N more letters wait for the same recipient:
+The doorbell types `🔔 <writer> <kind>: <the letter's first line>`, then ` · 외 N통` when N more letters wait for the same recipient, then ` · hide inbox` for a Codex recipient:
 
 ```
 🔔 label-end-fix 보고: label end 수정 PR #881을 열었습니다
@@ -161,7 +161,11 @@ The kind reads 요청 for a request, 막힘 for a block, 보고 for a report, �
 The writer is the name the sender registered under (`hide agent register`, `hide agent spawn --name`), else the title Hide's screens give it while its pane still hosts that session, else its Herdr agent id; a watch warning is named by the agent it watches, and its first line says for how long nothing moved.
 Both are looked up in memory when the bell rings, on the doorbell's thread, never on the session-sync thread.
 The first line is the body's first line that has anything to show, cut to 60 characters with `…`, and the writer is cut to 32; a body with no such line leaves the colon and summary out.
-Agents learn from their session guidance that this first line is the letter's one-line summary.
+Agents learn from their session guidance that this first line is the letter's one-line summary, and that a prompt beginning with `🔔` brings a letter that `hide inbox` shows if the prompt did not.
+
+Whether the line names `hide inbox` is decided per runtime (`bell::names_inbox`), by whether its bell turn can arrive without Hide's hooks having run in the pane.
+Claude Code runs every user-level hook it is given, so its prompt hook hands the turn the letter and its session guidance has already said what `🔔` means; its line ends at the summary.
+Codex runs a user-level hook only once its own trust review approved that exact entry, so another tool's change to `hooks.json` silently stops Hide's, and a Codex attached to its shared app-server daemon runs hooks in the daemon's environment rather than the pane's ([agent-hooks.md](agent-hooks.md)); its bell turn can then arrive with neither the letter nor the guidance, so its line ends with ` · hide inbox`.
 
 The line is typed into a composer and submitted with Enter, so it carries nothing a composer acts on while it is typed.
 Control characters become spaces, characters that draw nothing or reorder text are dropped (`display_text::one_line`), and runs of whitespace become one space.

@@ -164,6 +164,7 @@ Supported per-command config roots use bounded private copies of existing authen
 Private copies have mode 0600, never update the account's login, and are removed on controlled exit even if another teardown step fails.
 An uncatchable controller kill can retain private copies in the ignored run directory; remove a stale run only after confirming its owned processes have ended.
 Authenticated probing currently requires macOS `sandbox-exec`; a real declared-file write denial, permitted native-state write and socket denial self-test must pass before a provider starts.
+The profile denies every outbound Unix socket except the run's own and the system resolver's (`/private/var/run/mDNSResponder`), through which macOS resolves every host name; without that one a native agent cannot reach its own API.
 Unsupported hosts fail closed.
 The process guardian supports macOS and the trusted Linux fixture lane; Linux authenticated probing remains unsupported.
 Every direct child starts in its own session and process group.
@@ -221,7 +222,7 @@ Supported native readers first observe a real previous user/assistant turn.
 Other providers seed a real prompt and require a positive native identity and a working-to-ready transition; that weaker history evidence cannot verify assistant text or mail.
 Resume arrival additionally requires that owned session's label, filename or identity on the picker screen.
 Missing history, an empty picker or an unobserved native transition remains unknown.
-The tool checks scene arrival independently of Herdr status, types the exact current bell and Enter only when the observed status is not `blocked`, then observes the effect.
+The tool checks scene arrival independently of Herdr status, types the source's sample bell line (`SAMPLE` in `herdr-core/src/delivery/bell.rs`, a line the bell types for a letter whose first line carries `@`, `$`, `/`, `!`, `#`, backticks and Korean past the 60-character cut) and Enter only when the observed status is not `blocked`, then observes the effect.
 Approval work stays within `probe-N.txt` in the disposable checkout.
 A confirmed selection, approval, session replacement, settings write or unsubmitted draft is unsafe, even when other scenes remain unknown.
 An unrecognized, inaccessible or timed-out scene never counts as safe.
@@ -263,7 +264,9 @@ The command cap remains 15 seconds regardless of history count.
 Unexpected or concurrent changes to nonshared known configuration/trust files are preserved and fail the run; observing a diff never authorizes overwriting the operator.
 Only the test lane's exclusively owned disposable HOME permits attributed restoration.
 
-Delivery is verified only by a fresh marker sent through the private hided mailbox and then found in the native assistant reply to the exact bell turn.
+Delivery is verified only by a fresh marker sent through the private hided mailbox and then found in the native assistant reply to the turn the line hided's own doorbell typed opened.
+The controller types nothing for it: a bell is recognized only by the line the doorbell kept on the letter, which the tool reads back with `hide request show`, so the delivery window adds the doorbell's 30-second quiet period (`QUIET_MS`) to the scene seconds.
+The letter's first line carries `@`, `$`, `/`, `!`, `#`, backticks, Korean and a trailing backslash, so a verified delivery also shows that line arrived as one submitted prompt.
 The controller generates the marker after the earlier prompt and holds it only in memory; it writes no helper or marker receipt for the agent to read.
 The native sandbox denies other-process argument inspection and private mailbox storage access; its exact candidate capability and claim files remain available for ordinary `hide inbox`.
 Only the run root's own metadata is readable so native settings readers can vet every ancestor of a private probe path.

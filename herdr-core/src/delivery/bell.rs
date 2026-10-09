@@ -17,16 +17,20 @@ const SUMMARY_CHARS: usize = 60;
 const LINE_LIMIT: usize = 512;
 
 /// What one bell says. `sender` is the name the operator knows the writer
-/// by, `others` the letters waiting for the same recipient besides this one.
+/// by, `others` the letters waiting for the same recipient besides this one,
+/// and `inbox` whether the line names where the letter is, for a recipient
+/// whose prompt can arrive without its hook having run.
 pub(crate) struct Ring<'a> {
     pub sender: &'a str,
     pub kind: &'a str,
     pub body: &'a str,
     pub others: usize,
+    pub inbox: bool,
 }
 
 /// `🔔 <sender> <kind>: <first line of the letter>`, then ` · 외 N통` when
-/// other letters wait for the same recipient.
+/// other letters wait for the same recipient and ` · hide inbox` when the
+/// ring asks for it.
 pub(crate) fn line(ring: &Ring) -> String {
     let mut line = format!("🔔 {} {}", inert(ring.sender, NAME_CHARS), word(ring.kind));
     let summary = ring
@@ -41,7 +45,22 @@ pub(crate) fn line(ring: &Ring) -> String {
     if ring.others > 0 {
         line.push_str(&format!(" · 외 {}통", ring.others));
     }
+    if ring.inbox {
+        line.push_str(" · hide inbox");
+    }
     line
+}
+
+/// Whether a bell for an agent of `kind` names `hide inbox`. Codex runs a
+/// user-level hook only once its own trust review approved that exact entry,
+/// so another tool's hook change silently stops Hide's, and a Codex attached
+/// to its shared app-server daemon runs hooks in the daemon's environment
+/// rather than the pane's (`docs/agent-hooks.md`); either way its bell turn
+/// arrives with neither the letter nor the session guidance that says what
+/// the line means. Claude Code runs every user-level hook it is given.
+pub(crate) fn names_inbox(kind: &str) -> bool {
+    hide_agent_adapter::adapter(kind)
+        .is_some_and(|row| row.key == hide_agent_adapter::AgentId::Codex)
 }
 
 /// Whether a letter may keep `line` as its bell.
@@ -115,7 +134,25 @@ mod tests {
             kind,
             body,
             others,
+            inbox: false,
         })
+    }
+
+    #[test]
+    fn a_codex_bell_names_where_the_letter_is_and_a_claude_code_bell_does_not() {
+        assert!(names_inbox("codex"));
+        assert!(!names_inbox("claude"));
+        assert!(!names_inbox("claude-code"));
+        assert_eq!(
+            line(&Ring {
+                sender: "label-end-fix",
+                kind: "report",
+                body: "PR #881을 열었습니다",
+                others: 1,
+                inbox: true,
+            }),
+            "🔔 label-end-fix 보고: PR #881을 열었습니다 · 외 1통 · hide inbox"
+        );
     }
 
     #[test]
