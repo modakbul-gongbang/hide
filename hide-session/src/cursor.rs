@@ -25,6 +25,7 @@ const STEP_LIMIT: usize = 256;
 const QUERY_LIMIT: usize = 512;
 const EVENT_LIMIT: usize = 200;
 const SQL_STEPS: usize = 1_000_000;
+const ANCESTOR_LIMIT: usize = 64;
 
 fn invalid(reason: &'static str) -> SessionError {
     SessionError::Checkpoint(reason.to_owned())
@@ -177,13 +178,17 @@ fn mark(path: &Path) -> Result<FileMark> {
     if hide_platform::fs::identity::link_count(&file).ok() != Some(1) {
         return Err(invalid("cursor_source_linked"));
     }
-    let id = hide_platform::fs::identity::file_id_of(&file)
+    mark_handle(&file)
+}
+
+fn mark_handle(file: &std::fs::File) -> Result<FileMark> {
+    let id = hide_platform::fs::identity::file_id_of(file)
         .map_err(|_| invalid("cursor_source_unavailable"))?;
     Ok(FileMark {
         id: format!("{}:{}", id.volume(), id.index()),
         stamp: format!(
             "{:?}",
-            hide_platform::fs::identity::stamp_of(&file)
+            hide_platform::fs::identity::stamp_of(file)
                 .map_err(|_| invalid("cursor_source_unavailable"))?
         ),
     })
@@ -220,11 +225,33 @@ fn marks(home: &Path, path: &Path) -> Result<Vec<Option<FileMark>>> {
     if result[4].is_some() {
         return Err(invalid("cursor_recovery_required"));
     }
+    // HOME is the caller's trusted local root. Fence that anchor and all
+    // native descendants; unrelated changes in /tmp or /Users are not source
+    // changes. A temporary rename of one of these directories changes its
+    // own stamp even when every contained file remains unchanged.
+    let anchor = hide_platform::fs::identity::canonical(home)
+        .map_err(|_| invalid("cursor_source_unavailable"))?;
+    for (index, parent) in path
+        .ancestors()
+        .skip(1)
+        .take_while(|parent| parent.starts_with(&anchor))
+        .enumerate()
+    {
+        if index >= ANCESTOR_LIMIT {
+            return Err(capacity("cursor_path_components", ANCESTOR_LIMIT));
+        }
+        let folder = hide_platform::fs::open_dir_nofollow(parent)
+            .map_err(|_| invalid("cursor_source_unavailable"))?;
+        result.push(Some(mark_handle(&folder)?));
+    }
     Ok(result)
 }
 
 struct Database {
     connection: Connection,
+    source: std::fs::File,
+    cwd_proof: (PathBuf, PathBuf, hide_platform::fs::identity::FileId),
+    requested_cwd: Option<PathBuf>,
     home: PathBuf,
     path: PathBuf,
     before: Vec<Option<FileMark>>,
@@ -241,15 +268,23 @@ impl Database {
     fn open(home: &Path, path: &Path, scope: Option<(&str, &str)>, budget: usize) -> Result<Self> {
         let path = checked_path(home, path)?;
         let before = marks(home, &path)?;
-        if std::fs::metadata(&path)
-            .map_err(|_| invalid("cursor_source_unavailable"))?
-            .len()
-            > crate::SESSION_READ_LIMIT_BYTES
-        {
-            return Err(capacity(
-                "cursor_database_bytes",
-                crate::SESSION_READ_LIMIT_BYTES as usize,
-            ));
+        let source = crate::open_session_file_nofollow(&path)
+            .map_err(|_| invalid("cursor_source_unavailable"))?;
+        if Some(mark_handle(&source)?) != before[0] {
+            return Err(invalid("cursor_source_changed"));
+        }
+        for suffix in ["store.db", "store.db-wal", "store.db-shm"] {
+            match std::fs::symlink_metadata(path.with_file_name(suffix)) {
+                Ok(metadata) if metadata.len() > crate::SESSION_READ_LIMIT_BYTES => {
+                    return Err(capacity(
+                        "cursor_database_bytes",
+                        crate::SESSION_READ_LIMIT_BYTES as usize,
+                    ));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err(invalid("cursor_source_unavailable")),
+            }
         }
         let sidecar_file = crate::open_session_file_nofollow(&path.with_file_name("meta.json"))
             .map_err(|_| invalid("cursor_sidecar_unavailable"))?;
@@ -287,6 +322,14 @@ impl Database {
         let connection =
             Connection::open_with_flags(database_uri(&path, before[2].is_some())?, flags)
                 .map_err(|_| invalid("cursor_database_unavailable"))?;
+        // This applies inside SQLite, before a builtin or a row can allocate
+        // its result. A VM-instruction limit alone cannot bound randomblob.
+        use rusqlite::limits::Limit;
+        connection.set_limit(Limit::SQLITE_LIMIT_LENGTH, (BLOB_BYTES + 4096) as i32);
+        connection.set_limit(Limit::SQLITE_LIMIT_SQL_LENGTH, 4096);
+        connection.set_limit(Limit::SQLITE_LIMIT_COLUMN, 16);
+        connection.set_limit(Limit::SQLITE_LIMIT_EXPR_DEPTH, 32);
+        connection.set_limit(Limit::SQLITE_LIMIT_ATTACHED, 0);
         connection
             .busy_timeout(Duration::from_millis(50))
             .map_err(|_| invalid("cursor_database_unavailable"))?;
@@ -296,7 +339,7 @@ impl Database {
             Some(move || work.fetch_add(1000, Ordering::Relaxed) >= SQL_STEPS),
         );
         connection
-            .execute_batch("PRAGMA query_only=ON; BEGIN")
+            .execute_batch("PRAGMA query_only=ON; PRAGMA cache_size=-1024; PRAGMA mmap_size=0; PRAGMA temp_store=MEMORY; BEGIN")
             .map_err(|_| invalid("cursor_database_unavailable"))?;
         let version: u32 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -304,8 +347,24 @@ impl Database {
         if version != 1 {
             return Err(invalid("cursor_schema_unsupported"));
         }
+        for (table, key, value, value_type) in [
+            ("meta", "key", "value", "TEXT"),
+            ("blobs", "id", "data", "BLOB"),
+        ] {
+            let ordinary: bool = connection.query_row(
+                "SELECT count(*)=1 FROM pragma_table_list WHERE schema='main' AND name=?1 AND type='table' AND ncol=2",
+                [table], |row| row.get(0),
+            ).map_err(|_| invalid("cursor_schema_unconfirmed"))?;
+            let columns: bool = connection.query_row(
+                "SELECT count(*)=2 FROM pragma_table_xinfo(?1) WHERE hidden=0 AND ((cid=0 AND name=?2 AND type='TEXT' AND pk=1) OR (cid=1 AND name=?3 AND type=?4 AND pk=0))",
+                [table, key, value, value_type], |row| row.get(0),
+            ).map_err(|_| invalid("cursor_schema_unconfirmed"))?;
+            if !ordinary || !columns {
+                return Err(invalid("cursor_schema_unconfirmed"));
+            }
+        }
         let size: usize = connection
-            .query_row("SELECT length(value) FROM meta WHERE key='0'", [], |row| {
+            .query_row("SELECT length(CAST(value AS BLOB)) FROM meta WHERE key='0' AND typeof(value)='text'", [], |row| {
                 row.get(0)
             })
             .map_err(|_| invalid("cursor_metadata_unavailable"))?;
@@ -333,9 +392,11 @@ impl Database {
         {
             return Err(invalid("cursor_session_identity_mismatch"));
         }
+        let actual = hide_platform::fs::identity::canonical(&sidecar.cwd)
+            .map_err(|_| invalid("cursor_cwd_unconfirmed"))?;
+        let cwd_identity = hide_platform::fs::identity::file_id(&actual)
+            .map_err(|_| invalid("cursor_cwd_unconfirmed"))?;
         if let Some((expected_id, expected_cwd)) = scope {
-            let actual = hide_platform::fs::identity::canonical(&sidecar.cwd)
-                .map_err(|_| invalid("cursor_cwd_unconfirmed"))?;
             let expected = hide_platform::fs::identity::canonical(Path::new(expected_cwd))
                 .map_err(|_| invalid("cursor_cwd_unconfirmed"))?;
             if expected_id != id || actual != expected {
@@ -348,6 +409,9 @@ impl Database {
         }
         Ok(Self {
             connection,
+            source,
+            cwd_proof: (sidecar.cwd.clone(), actual, cwd_identity),
+            requested_cwd: scope.map(|(_, cwd)| PathBuf::from(cwd)),
             home: home.to_path_buf(),
             path,
             before,
@@ -376,7 +440,7 @@ impl Database {
         let size: Option<usize> = self
             .connection
             .query_row(
-                "SELECT length(data) FROM blobs WHERE id=?1",
+                "SELECT length(data) FROM blobs WHERE id=?1 AND typeof(data)='blob'",
                 [&key],
                 |row| row.get(0),
             )
@@ -413,7 +477,21 @@ impl Database {
         self.connection
             .execute_batch("ROLLBACK")
             .map_err(|_| invalid("cursor_read_failed"))?;
-        if marks(&self.home, &self.path)? != self.before {
+        let (native_cwd, admitted_cwd, admitted_identity) = &self.cwd_proof;
+        if hide_platform::fs::identity::canonical(native_cwd)
+            .ok()
+            .as_ref()
+            != Some(admitted_cwd)
+            || hide_platform::fs::identity::file_id(native_cwd)
+                .ok()
+                .as_ref()
+                != Some(admitted_identity)
+            || self.requested_cwd.as_ref().is_some_and(|cwd| {
+                hide_platform::fs::identity::canonical(cwd).ok().as_ref() != Some(admitted_cwd)
+            })
+            || Some(mark_handle(&self.source)?) != self.before[0]
+            || marks(&self.home, &self.path)? != self.before
+        {
             return Err(invalid("cursor_source_changed"));
         }
         Ok(())
@@ -439,6 +517,30 @@ pub struct Checkpoint {
 impl Checkpoint {
     pub fn offset(&self) -> u64 {
         self.offset
+    }
+
+    fn validate(&self) -> Result<()> {
+        let hash = |value: &str| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        };
+        if !hash(&self.owner)
+            || self
+                .incarnation
+                .as_ref()
+                .is_none_or(|value| value.is_empty() || value.len() > 64)
+            || self.turn >= TURN_LIMIT
+            || self.steps > STEP_LIMIT
+            || self.offset > (TURN_LIMIT * (STEP_LIMIT + 1)) as u64
+            || !matches!(self.user.len(), 0 | 32)
+            || (!self.closed.is_empty() && !hash(&self.closed))
+            || (!self.step_prefix.is_empty() && !hash(&self.step_prefix))
+        {
+            return Err(invalid("cursor_checkpoint_invalid"));
+        }
+        Ok(())
     }
 }
 
@@ -467,6 +569,9 @@ fn minute(value: Option<u64>) -> u64 {
 /// Read native conversation units under one transaction and byte allowance.
 /// Missing timing is zero (the common unknown-time sentinel); recorded timing
 /// is rounded down to a minute. Tools and thoughts never become conversation.
+/// `home` is the node-owned stable account root, never a request-supplied path.
+/// Callers keep that anchor stable for the read; its native descendants and
+/// the still-current checkout scope are independently fenced here.
 pub fn read(
     home: &Path,
     path: &Path,
@@ -475,6 +580,9 @@ pub fn read(
     saved: Option<Checkpoint>,
     budget: u64,
 ) -> Result<ReadResult> {
+    if let Some(checkpoint) = &saved {
+        checkpoint.validate()?;
+    }
     let budget =
         usize::try_from(budget.min(crate::SESSION_INCREMENT_READ_LIMIT_BYTES)).map_err(|_| {
             capacity(
@@ -587,7 +695,10 @@ pub fn read(
                 );
                 parsed.event_offsets.push(checkpoint.offset);
             }
-            checkpoint.offset += 1;
+            checkpoint.offset = checkpoint
+                .offset
+                .checked_add(1)
+                .ok_or_else(|| invalid("cursor_checkpoint_invalid"))?;
             checkpoint.user = agent.user_message;
             checkpoint.user_read = true;
         }
@@ -611,7 +722,10 @@ pub fn read(
                 Some(_) => {}
                 None => return Err(invalid("cursor_step_invalid")),
             }
-            checkpoint.offset += 1;
+            checkpoint.offset = checkpoint
+                .offset
+                .checked_add(1)
+                .ok_or_else(|| invalid("cursor_checkpoint_invalid"))?;
             checkpoint.steps += 1;
         }
         checkpoint.closed = prefix(&root.turns[..checkpoint.turn])?;
@@ -738,3 +852,68 @@ struct Assistant {
 
 #[derive(Clone, PartialEq, Message)]
 struct Ignored {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restored_ancestor_names_do_not_restore_read_authority() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().join("project");
+        std::fs::create_dir(&cwd).unwrap();
+        let id = "a1b2c3d4-0000-4000-8000-000000000001";
+        let path = home
+            .path()
+            .join(SESSIONS)
+            .join(directory(&cwd).unwrap())
+            .join(id)
+            .join("store.db");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch("PRAGMA user_version=1; CREATE TABLE blobs(id TEXT PRIMARY KEY, data BLOB); CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);").unwrap();
+        let metadata = serde_json::json!({"agentId":id,"latestRootBlobId":"","createdAt":1});
+        connection
+            .execute(
+                "INSERT INTO meta VALUES ('0',?1)",
+                [hex(metadata.to_string().as_bytes())],
+            )
+            .unwrap();
+        drop(connection);
+        std::fs::write(path.with_file_name("meta.json"), serde_json::json!({"schemaVersion":1,"createdAtMs":1,"hasConversation":false,"cwd":cwd}).to_string()).unwrap();
+        let database = Database::open(
+            home.path(),
+            &path,
+            None,
+            crate::SESSION_INCREMENT_READ_LIMIT_BYTES as usize,
+        )
+        .unwrap();
+        let original_file = mark(&path).unwrap();
+        let folder = path.parent().unwrap();
+        let saved = folder.with_file_name("saved");
+        std::fs::rename(folder, &saved).unwrap();
+        std::fs::create_dir(folder).unwrap();
+        std::fs::remove_dir(folder).unwrap();
+        std::fs::rename(&saved, folder).unwrap();
+        assert_eq!(mark(&path).unwrap(), original_file);
+        assert!(database.finish().is_err());
+        #[cfg(unix)]
+        {
+            let aliases = tempfile::tempdir().unwrap();
+            let alias = aliases.path().join("checkout");
+            std::os::unix::fs::symlink(&cwd, &alias).unwrap();
+            let database = Database::open(
+                home.path(),
+                &path,
+                Some((id, alias.to_str().unwrap())),
+                crate::SESSION_INCREMENT_READ_LIMIT_BYTES as usize,
+            )
+            .unwrap();
+            let other = aliases.path().join("other");
+            std::fs::create_dir(&other).unwrap();
+            std::fs::remove_file(&alias).unwrap();
+            std::os::unix::fs::symlink(&other, &alias).unwrap();
+            assert!(database.finish().is_err());
+        }
+    }
+}

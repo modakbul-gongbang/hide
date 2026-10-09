@@ -226,6 +226,41 @@ fn read_budget_is_a_refusal_when_native_headers_do_not_fit() {
     );
 }
 
+#[test]
+fn non_native_schema_and_nul_hidden_metadata_fail_before_publishing() {
+    for mutation in [
+        "DROP TABLE blobs; CREATE VIEW blobs AS SELECT 'unused' AS id, randomblob(100000000) AS data",
+        "UPDATE meta SET value='00' || char(0) || printf('%200000s','') WHERE key='0'",
+        "UPDATE meta SET value=zeroblob(100) WHERE key='0'",
+        "UPDATE blobs SET data='not a native blob'",
+    ] {
+        let fixture = Fixture::new();
+        let database = Connection::open(&fixture.path).unwrap();
+        database.execute_batch(mutation).unwrap();
+        drop(database);
+        assert!(fixture.read(None).is_err());
+    }
+}
+
+#[test]
+fn malformed_restored_graph_positions_fail_without_panicking() {
+    let fixture = Fixture::new();
+    let valid = fixture.read(None).unwrap().checkpoint;
+    for (field, value) in [
+        ("offset", json!(u64::MAX)),
+        ("turn", json!(usize::MAX)),
+        ("steps", json!(usize::MAX)),
+        ("owner", json!("")),
+        ("incarnation", Value::Null),
+        ("closed", json!("not a digest")),
+    ] {
+        let mut restored = serde_json::to_value(&valid).unwrap();
+        restored[field] = value;
+        let restored = serde_json::from_value(restored).unwrap();
+        assert!(fixture.read(Some(restored)).is_err(), "{field}");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn linked_store_and_sidecar_are_not_reader_authority() {

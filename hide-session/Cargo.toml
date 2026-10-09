@@ -16,7 +16,7 @@ sha2 = "=0.10.9"
 md5 = "=0.8.1"
 prost = "=0.14.4"
 percent-encoding = "=2.3.2"
-rusqlite = { version = "=0.32.1", features = ["bundled", "hooks"] }
+rusqlite = { version = "=0.32.1", features = ["bundled", "hooks", "limits"] }
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]

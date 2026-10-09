@@ -31,6 +31,7 @@ hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "server", "service"] }
 memchr = { version = "2" }
 once_cell = { version = "1" }
+rusqlite = { version = "0.32", default-features = false, features = ["bundled", "hooks", "limits"] }
 schemars = { version = "0.8", features = ["preserve_order"] }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", features = ["alloc"] }

@@ -4229,6 +4229,7 @@ dependencies = [
  "once_cell",
  "proc-macro2",
  "quote",
+ "rusqlite",
  "rustix",
  "schemars",
  "semver",
