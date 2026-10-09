@@ -183,6 +183,51 @@ fn a_rows_verb_follows_its_demand_its_activity_and_its_pull_requests() {
 }
 
 #[test]
+fn a_turn_that_said_it_waits_is_waiting_on_pending_checks_and_stopped_without_them() {
+    let mut rows = rows(&[
+        ("with-ci", "idle"),
+        ("without", "idle"),
+        ("unfinished", "idle"),
+    ]);
+    for row in &mut rows {
+        let end = if row.pane_id == "unfinished" {
+            crate::labels::analysis::LabelEnd::Unfinished
+        } else {
+            crate::labels::analysis::LabelEnd::Waiting
+        };
+        row.row_facts.as_mut().unwrap().end = Some(end);
+    }
+    let github = github(vec![
+        pull_request(
+            1,
+            "with-ci",
+            PullRequestBadge::Open,
+            PullRequestChecks::Pending,
+        ),
+        pull_request(
+            2,
+            "unfinished",
+            PullRequestBadge::Open,
+            PullRequestChecks::Pending,
+        ),
+    ]);
+    run(
+        &mut rows,
+        &[("with-ci", "with-ci"), ("unfinished", "unfinished")],
+        &github,
+    );
+    let verbs: Vec<_> = rows.iter().map(verb).collect();
+    assert_eq!(
+        verbs,
+        [
+            RequestVerb::Waiting,
+            RequestVerb::Stopped,
+            RequestVerb::Stopped
+        ]
+    );
+}
+
+#[test]
 fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder() {
     use crate::agent_state::sessions::{Group, Tag};
     let mut rows = rows(&[

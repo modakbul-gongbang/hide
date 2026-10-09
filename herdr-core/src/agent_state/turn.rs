@@ -684,10 +684,14 @@ pub(crate) fn verb_of(
     // Only the label analysis reads a turn as not finished (D-33); a row
     // without one never stops here. A block the operator has read stops here
     // too, keeping its cause.
-    if stopped_unfinished(row) || row.demand == "error" {
+    // A turn that only said it waits is explained by checks that are still
+    // running, so those outrank the stop.
+    let pending = open(&[PullRequestChecks::Pending]);
+    if (stopped_unfinished(row) && !(pending && stopped_only_waiting(row))) || row.demand == "error"
+    {
         return RequestVerb::Stopped;
     }
-    if open(&[PullRequestChecks::Pending]) {
+    if pending {
         return RequestVerb::Waiting;
     }
     // A settled pull request is a result until the operator opens it.
