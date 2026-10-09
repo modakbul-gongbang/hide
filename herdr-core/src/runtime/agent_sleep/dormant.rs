@@ -1,9 +1,66 @@
 //! Close-pane sleeping sessions use the existing writer and close owner.
 use super::*;
-use crate::agent_sleep::{AgentSleepStore, DormantPhase, DormantRecord, SleepId};
+use crate::agent_sleep::{
+    AgentSleepStore, DORMANT_BUDGET_SPENT, DormantPhase, DormantRecord, FactoryWorker, SleepId,
+};
+
+/// How long a woken Factory worker may wait for the Factory to bind its pane.
+const WOKEN_BINDING_LIMIT_MS: u64 = 60 * 60 * 1000;
+
+/// Why a dormant sleep was not admitted: the words and code `set_error`
+/// shows the operator who asked, and whether asking again later can succeed.
+pub(in crate::runtime) struct SleepRefusal {
+    pub(in crate::runtime) code: &'static str,
+    pub(in crate::runtime) message: &'static str,
+    /// The agent is working or the transition budget is spent: the same ask
+    /// succeeds once that passes.
+    pub(in crate::runtime) transient: bool,
+    retryable: bool,
+}
+
+impl SleepRefusal {
+    const fn new(code: &'static str, message: &'static str, retryable: bool) -> Self {
+        Self {
+            code,
+            message,
+            transient: false,
+            retryable,
+        }
+    }
+
+    const fn transient(mut self) -> Self {
+        self.transient = true;
+        self
+    }
+}
+
+/// Why a wake was not started. `kept`: the record is still there, so the
+/// refusal is written on it; `transient`: asking again later can succeed.
+pub(in crate::runtime) struct WakeRefusal {
+    pub(in crate::runtime) code: &'static str,
+    pub(in crate::runtime) message: &'static str,
+    kept: bool,
+    pub(in crate::runtime) transient: bool,
+}
 
 impl Runtime {
     pub(super) fn begin_dormant_sleep(&mut self, pane_id: &str, now: u64) -> bool {
+        match self.admit_dormant_sleep(pane_id, now) {
+            Ok(admitted) => admitted,
+            Err(refusal) => {
+                self.set_error(refusal.code, refusal.message, refusal.retryable);
+                true
+            }
+        }
+    }
+
+    /// Saves the intent to close `pane_id` and keep its conversation. `Ok(false)`
+    /// when this execution already has one; the close itself follows the save.
+    pub(in crate::runtime) fn admit_dormant_sleep(
+        &mut self,
+        pane_id: &str,
+        now: u64,
+    ) -> Result<bool, SleepRefusal> {
         let Some(agent) = self
             .snapshot
             .navigator
@@ -12,36 +69,33 @@ impl Runtime {
             .find(|agent| agent.pane_id == pane_id)
             .cloned()
         else {
-            return false;
+            return Ok(false);
         };
         // Row facts are laid only by the current reference-proven overlay.
         // A path is never treated as a native session id.
         let native_id = agent.row_facts.as_ref().and(agent.session_id.clone());
         let Some(native_session_id) = native_id else {
-            self.set_error(
+            return Err(SleepRefusal::new(
                 "agent_sleep.identity_unconfirmed",
                 "This session has no confirmed native identity",
                 true,
-            );
-            return true;
+            ));
         };
         if agent.state_change_seq.is_none() {
-            self.set_error(
+            return Err(SleepRefusal::new(
                 "agent_sleep.execution_unconfirmed",
                 "This session has no confirmed execution identity",
                 true,
-            );
-            return true;
+            ));
         }
         let Some(label_owner) =
             hide_session::label_reference_token(&agent.agent_kind, "id", &native_session_id)
         else {
-            self.set_error(
+            return Err(SleepRefusal::new(
                 "agent_sleep.identity_unconfirmed",
                 "This session's reader cannot confirm its native identity",
                 true,
-            );
-            return true;
+            ));
         };
         if self
             .snapshot
@@ -56,11 +110,10 @@ impl Runtime {
                     && !record.closed
             })
         {
-            return false;
+            return Ok(false);
         }
         if let Some(reason) = crate::agent_state::rest_refusal(&agent) {
-            self.set_error("agent_sleep.refused", reason, false);
-            return true;
+            return Err(SleepRefusal::new("agent_sleep.refused", reason, false).transient());
         }
         let Some(tab) = self
             .snapshot
@@ -72,29 +125,36 @@ impl Runtime {
             .flat_map(|checkout| &checkout.tabs)
             .find(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
         else {
-            self.set_error(
+            return Err(SleepRefusal::new(
                 "agent_sleep.context_unavailable",
                 "This session has no current local tab",
                 true,
-            );
-            return true;
+            ));
         };
         let Some(context) = self.close_context(tab) else {
-            self.set_error(
+            return Err(SleepRefusal::new(
                 "agent_sleep.context_unavailable",
                 "This session's checkout context is incomplete",
                 true,
-            );
-            return true;
+            ));
         };
         let Some(cwd) = self.agent_sleep_pane_cwd(pane_id) else {
-            self.set_error(
+            return Err(SleepRefusal::new(
                 "agent_sleep.context_unavailable",
                 "This session has no working folder",
                 true,
-            );
-            return true;
+            ));
         };
+        // A Factory worker's conversation keeps the way back to its worker,
+        // whoever asked for the sleep (#857).
+        let factory = self
+            .factory_panes
+            .get(pane_id)
+            .filter(|pane| {
+                hide_agent_adapter::canonical_kind(&pane.kind)
+                    == hide_agent_adapter::canonical_kind(&agent.agent_kind)
+            })
+            .map(|pane| pane.worker.clone());
         let record = DormantRecord {
             phase: DormantPhase::SavingClose,
             revision: 1,
@@ -116,16 +176,23 @@ impl Runtime {
             closed: false,
             wake_pane_id: None,
             wake_tab_id: None,
+            factory,
             since_unix_ms: now,
             transition_started_unix_ms: now,
             reason: None,
         };
         if let Err(reason) = self.snapshot.ui_state.agent_sleep.admit_dormant(record) {
-            self.set_error("agent_sleep.admission_refused", reason, false);
-            return true;
+            // The transition budget frees as the pending ones settle; a full
+            // archive does not.
+            let refusal = SleepRefusal::new("agent_sleep.admission_refused", reason, false);
+            return Err(if reason == DORMANT_BUDGET_SPENT {
+                refusal.transient()
+            } else {
+                refusal
+            });
         }
         self.persist_ui_state();
-        true
+        Ok(true)
     }
 
     fn dormant_execution_matches(&self, record: &DormantRecord) -> bool {
@@ -233,14 +300,16 @@ impl Runtime {
         true
     }
 
-    pub(in crate::runtime) fn confirm_dormant_close(&mut self, operation: &PendingClose) {
+    /// Settles the sleep a confirmed close belongs to. True when Hide's own
+    /// sleep close landed, which is no operator closing a pane.
+    pub(in crate::runtime) fn confirm_dormant_close(&mut self, operation: &PendingClose) -> bool {
         // An external/manual disappearance during capture is not proof of
         // an intentional sleep close. Only an issued effect can settle it.
         if !matches!(
             operation.phase.as_str(),
             "transmitting" | "awaiting_topology" | "unknown"
         ) {
-            return;
+            return false;
         }
         if let Some(record) = self
             .snapshot
@@ -265,7 +334,9 @@ impl Runtime {
             }
             self.refresh_dormant_rows();
             self.persist_ui_state();
+            return true;
         }
+        false
     }
 
     fn fail_dormant(&mut self, id: &SleepId, reason: &str) {
@@ -519,25 +590,50 @@ impl Runtime {
     }
 
     pub(in crate::runtime) fn request_dormant_wake(&mut self, id: &SleepId) -> bool {
+        match self.begin_dormant_wake(id, None) {
+            Ok(started) => started,
+            Err(refusal) if refusal.kept => {
+                self.reject_dormant_action(id, refusal.code, refusal.message);
+                true
+            }
+            Err(refusal) => {
+                self.set_error(refusal.code, refusal.message, false);
+                true
+            }
+        }
+    }
+
+    /// Saves the intent to wake a sleeping session in its own tab, for the
+    /// Factory worker it belongs to when `worker` names one. `Ok(false)` when
+    /// a transition of it is already running.
+    pub(in crate::runtime) fn begin_dormant_wake(
+        &mut self,
+        id: &SleepId,
+        worker: Option<FactoryWorker>,
+    ) -> Result<bool, WakeRefusal> {
         let Some(record) = self.snapshot.ui_state.agent_sleep.dormant.get(id).cloned() else {
-            self.set_error(
-                "agent_sleep.not_found",
-                "This sleeping session is no longer available",
-                false,
-            );
-            return true;
+            return Err(WakeRefusal {
+                code: "agent_sleep.not_found",
+                message: "This sleeping session is no longer available",
+                kept: false,
+                transient: false,
+            });
         };
         if record.phase.in_flight() {
-            return false;
+            return Ok(false);
         }
+        let refuse = |code, message| WakeRefusal {
+            code,
+            message,
+            kept: true,
+            transient: false,
+        };
         if !record.closed || !matches!(record.phase, DormantPhase::Sleeping | DormantPhase::Failed)
         {
-            self.reject_dormant_action(
-                id,
+            return Err(refuse(
                 "agent_sleep.wake_refused",
                 "The session's close has not been confirmed",
-            );
-            return true;
+            ));
         }
         let args = crate::recent_closed::resume_arguments(&ClosedAgent {
             kind: record.kind.clone(),
@@ -549,12 +645,10 @@ impl Runtime {
             || record.node_id != self.node.as_str()
             || self.live.is_none()
         {
-            self.reject_dormant_action(
-                id,
+            return Err(refuse(
                 "agent_sleep.wake_unavailable",
                 "This session's reader, checkout or connection is unavailable",
-            );
-            return true;
+            ));
         }
         if let Err(reason) = self
             .snapshot
@@ -562,15 +656,22 @@ impl Runtime {
             .agent_sleep
             .admit_dormant_transition()
         {
-            self.reject_dormant_action(id, "agent_sleep.admission_refused", reason);
-            return true;
+            return Err(WakeRefusal {
+                transient: true,
+                ..refuse("agent_sleep.admission_refused", reason)
+            });
         }
         if !self.reserve_agent_effect(
             &record.context.checkout_path,
             &format!("sleep:{}", id.as_str()),
         ) {
-            self.reject_dormant_action(id, "agent_sleep.admission_refused", "This checkout already has pending agent operations. Wait for them to finish, then try again.");
-            return true;
+            return Err(WakeRefusal {
+                transient: true,
+                ..refuse(
+                    "agent_sleep.admission_refused",
+                    "This checkout already has pending agent operations. Wait for them to finish, then try again.",
+                )
+            });
         }
         let current = self
             .snapshot
@@ -579,19 +680,22 @@ impl Runtime {
             .dormant
             .get_mut(id)
             .unwrap();
+        if worker.is_some() {
+            current.factory = worker;
+        }
         if let Err(reason) = current.transition(DormantPhase::SavingWake) {
             self.finish_agent_effect(
                 &record.context.checkout_path,
                 &format!("sleep:{}", id.as_str()),
             );
             self.fail_dormant(id, reason);
-            return true;
+            return Ok(true);
         }
         current.connection_generation = self.live_generation;
         current.transition_started_unix_ms = unix_milliseconds();
         self.refresh_dormant_rows();
         self.persist_ui_state();
-        true
+        Ok(true)
     }
 
     pub(in crate::runtime) fn request_dormant_status(&mut self, id: &SleepId) -> bool {
@@ -947,13 +1051,38 @@ impl Runtime {
                                     == Some(record.native_session_id.as_str())
                         })
             })
-            .map(|(id, record)| (id.clone(), record.context.checkout_path.clone()))
+            .map(|(id, record)| {
+                (
+                    id.clone(),
+                    record.context.checkout_path.clone(),
+                    record.factory.is_some(),
+                )
+            })
             .collect::<Vec<_>>();
         if confirmed.is_empty() {
             return;
         }
-        for (id, path) in confirmed {
-            self.snapshot.ui_state.agent_sleep.dormant.remove(&id);
+        for (id, path, bound) in confirmed {
+            if bound {
+                // A Factory worker's way back stays until the Factory has
+                // bound the wake pane to it (#857).
+                let record = self
+                    .snapshot
+                    .ui_state
+                    .agent_sleep
+                    .dormant
+                    .get_mut(&id)
+                    .unwrap();
+                match record.transition(DormantPhase::Woken) {
+                    Ok(()) => record.transition_started_unix_ms = unix_milliseconds(),
+                    Err(reason) => {
+                        record.phase = DormantPhase::Failed;
+                        record.reason = Some(reason.into());
+                    }
+                }
+            } else {
+                self.snapshot.ui_state.agent_sleep.dormant.remove(&id);
+            }
             self.finish_agent_effect(&path, &format!("sleep:{}", id.as_str()));
             crate::diagnostic!(
                 serde_json::json!({"component":"agent_sleep", "kind":"agent_sleep.wake_confirmed", "sleep_id":id.as_str()})
@@ -965,6 +1094,20 @@ impl Runtime {
 
     pub(super) fn expire_dormant_confirmation(&mut self, now: u64) -> bool {
         let mut changed = false;
+        // A Factory that never bound its woken worker (it is gone, or its
+        // worker was removed) does not hold the archive forever.
+        let before = self.snapshot.ui_state.agent_sleep.dormant.len();
+        self.snapshot.ui_state.agent_sleep.dormant.retain(|id, record| {
+            let expired = record.phase == DormantPhase::Woken
+                && now.saturating_sub(record.transition_started_unix_ms) > WOKEN_BINDING_LIMIT_MS;
+            if expired {
+                crate::diagnostic!(
+                    serde_json::json!({"component":"agent_sleep", "kind":"agent_sleep.woken_unbound", "sleep_id":id.as_str()})
+                );
+            }
+            !expired
+        });
+        changed |= self.snapshot.ui_state.agent_sleep.dormant.len() != before;
         for record in self.snapshot.ui_state.agent_sleep.dormant.values_mut() {
             if record.phase.in_flight()
                 && !matches!(

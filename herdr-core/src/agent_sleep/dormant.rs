@@ -6,6 +6,9 @@ use crate::recent_closed::ClosedContext;
 pub const MAX_DORMANT_RECORDS: usize = 256;
 /// Manual and automatic dormant transitions share this global admission cap.
 pub const MAX_DORMANT_IN_FLIGHT: usize = 4;
+/// The refusal that waiting out a pending transition cures.
+pub const DORMANT_BUDGET_SPENT: &str =
+    "Resolve a pending sleeping-session operation before starting another";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
@@ -70,6 +73,10 @@ pub enum DormantPhase {
     Starting,
     WakeUnknown,
     Failed,
+    /// A Factory worker's conversation runs in its wake pane, and the
+    /// Factory has not bound that pane to the worker yet (#857). The record
+    /// holds the way back to the worker until the Factory releases it.
+    Woken,
 }
 
 impl DormantPhase {
@@ -87,6 +94,19 @@ impl DormantPhase {
                 | Self::WakeUnknown
         )
     }
+}
+
+/// The Factory worker a dormant conversation belongs to, set when the Factory
+/// asks for its wake (#857). The core confirms the conversation in the wake
+/// pane and keeps the record until the Factory has bound that pane.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FactoryWorker {
+    pub factory: String,
+    /// The worker's coordination registration before its pane closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    pub name: String,
+    pub worktree: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -118,6 +138,8 @@ pub struct DormantRecord {
     pub wake_pane_id: Option<String>,
     #[serde(default)]
     pub wake_tab_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub factory: Option<FactoryWorker>,
     pub since_unix_ms: u64,
     #[serde(default)]
     pub transition_started_unix_ms: u64,
@@ -190,6 +212,19 @@ impl DormantRecord {
                 .as_ref()
                 .is_some_and(|value| value.len() > 128)
             || self.reason.as_ref().is_some_and(|value| value.len() > 4096)
+            || self.factory.as_ref().is_some_and(|worker| {
+                [
+                    Some(worker.factory.as_str()),
+                    worker.agent.as_deref(),
+                    Some(worker.name.as_str()),
+                    Some(worker.worktree.as_str()),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|value| {
+                    value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control)
+                })
+            })
         {
             return Err("Sleeping-session identity or context is invalid or exceeds its capacity");
         }
@@ -325,7 +360,7 @@ impl AgentSleepStore {
             .count()
             >= MAX_DORMANT_IN_FLIGHT
         {
-            Err("Resolve a pending sleeping-session operation before starting another")
+            Err(DORMANT_BUDGET_SPENT)
         } else {
             Ok(())
         }
@@ -365,11 +400,12 @@ impl AgentSleepStore {
             // While saving/closing, the original live row still exists.
             // An unknown close needs its own explicit status action.
             .filter(|(_, record)| {
-                record.closed
-                    || matches!(
-                        record.phase,
-                        DormantPhase::CloseUnknown | DormantPhase::WakeUnknown
-                    )
+                record.phase != DormantPhase::Woken
+                    && (record.closed
+                        || matches!(
+                            record.phase,
+                            DormantPhase::CloseUnknown | DormantPhase::WakeUnknown
+                        ))
             })
             .map(|(id, record)| record.snapshot(id))
             .collect()
@@ -427,6 +463,7 @@ mod tests {
             closed: false,
             wake_pane_id: None,
             wake_tab_id: None,
+            factory: None,
             since_unix_ms: 1,
             transition_started_unix_ms: 1,
             reason: None,

@@ -139,6 +139,7 @@ fn dormant_intent(runtime: &mut Runtime) -> crate::agent_sleep::SleepId {
             closed: false,
             wake_pane_id: None,
             wake_tab_id: None,
+            factory: None,
             since_unix_ms: 1,
             transition_started_unix_ms: 1,
             reason: None,
@@ -333,6 +334,18 @@ impl NativeRecord {
     }
 }
 
+/// A Factory worker's conversation, saved when its pane closed and bound to
+/// it again once the Factory has taken the wake pane (#857): Hide's own sleep
+/// close is no operator closing a worker, and the way back to the worker
+/// outlives the wake until the Factory lets go of it.
+#[test]
+#[cfg(unix)]
+fn a_factory_workers_sleep_is_no_operator_close_and_keeps_its_way_back_until_bound() {
+    for kind in ["pi", "omp"] {
+        durable_dormant_journey(kind, "factory-bound");
+    }
+}
+
 #[cfg(unix)]
 fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     use crate::agent_sleep::DormantPhase;
@@ -444,6 +457,25 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         record.kind = kind.into();
         record.label_owner = hide_session::label_reference_token(kind, "id", native_id).unwrap();
     }
+    let bound = crate::agent_sleep::FactoryWorker {
+        factory: "f-1".into(),
+        agent: Some("agent-7".into()),
+        name: "factory-fixture-T-1".into(),
+        worktree: cwd.clone(),
+    };
+    let factory_port = (interference == "factory-bound").then(|| {
+        runtime
+            .snapshot
+            .ui_state
+            .agent_sleep
+            .dormant
+            .get_mut(&id)
+            .unwrap()
+            .factory = Some(bound.clone());
+        let (port, watch) = crate::factory::ScreenPort::watched();
+        runtime.set_factory_screen_port(port);
+        watch
+    });
     if interference == "before-close" {
         native.duplicate();
     }
@@ -658,6 +690,20 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
             DormantPhase::Sleeping
         );
         assert_eq!(runtime.snapshot.recent_closed.count, 0);
+        if let Some(port) = &factory_port {
+            assert_eq!(
+                port.closes_announced(),
+                0,
+                "Hide's sleep close is no operator closing a worker"
+            );
+            assert!(
+                runtime.factory_worker_probe(SLEEPER).asleep,
+                "the worker's pane is asleep, not gone"
+            );
+            // The same port does hear an operator's close.
+            runtime.factory_panes_closed(&["w-order:t9:p".to_owned()]);
+            assert_eq!(port.closes_announced(), 1);
+        }
         if interference == "before-wake" {
             native.duplicate();
         }
@@ -753,6 +799,32 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         confirmed.agents.push(agent);
         runtime.ingest_session(Ok(confirmed));
         assert!(runtime.snapshot.navigator.sleeping_sessions.is_empty());
+        if factory_port.is_some() {
+            // The conversation runs in its wake pane; the record stays, with
+            // its worker, until the Factory has bound that pane.
+            assert_eq!(
+                runtime.snapshot.ui_state.agent_sleep.dormant[&id].phase,
+                DormantPhase::Woken
+            );
+            assert_eq!(
+                runtime.factory_dormant_workers(),
+                [crate::runtime::DormantWorker {
+                    id: id.clone(),
+                    worker: bound,
+                    old_pane: SLEEPER.into(),
+                    kind: kind.into(),
+                    state: crate::runtime::DormantState::Woken {
+                        pane: "w-order:t3:p".into()
+                    },
+                }]
+            );
+            assert!(
+                runtime.factory_worker_probe(SLEEPER).asleep,
+                "the Task names the old pane until the Factory binds the new one"
+            );
+            assert!(!runtime.factory_worker_probe("w-order:t3:p").asleep);
+            runtime.factory_dormant_release(&id);
+        }
         assert!(runtime.snapshot.ui_state.agent_sleep.dormant.is_empty());
         assert_eq!(runtime.snapshot.recent_closed.count, 0);
         assert!(persisted_dormant(&path, &id).is_null());
@@ -786,6 +858,211 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
             "{calls:?}"
         );
     }
+}
+
+fn factory_worker(agent: &str) -> crate::agent_sleep::FactoryWorker {
+    crate::agent_sleep::FactoryWorker {
+        factory: "f-1".into(),
+        agent: Some(agent.into()),
+        name: "factory-fixture-T-1".into(),
+        worktree: CHECKOUT.into(),
+    }
+}
+
+/// A live runtime whose agent in t2 is a `kind` session with a proven native
+/// file, idle and past the minute decision.
+fn close_pane_runtime(kind: &str) -> Runtime {
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    let mut payload = session(Some(4));
+    payload.agents[0].agent = Some(kind.into());
+    runtime.ingest_session(Ok(payload));
+    // The row of a kind whose conversation needs its file's proof carries
+    // the session id only once that file was read.
+    let row = runtime
+        .snapshot
+        .navigator
+        .agents
+        .iter_mut()
+        .find(|agent| agent.pane_id == SLEEPER)
+        .unwrap();
+    let id = "11111111-2222-3333-4444-555555555555";
+    row.session_id = Some(id.into());
+    let facts = row.row_facts.get_or_insert_with(Default::default);
+    facts.native_session_id = Some(id.into());
+    facts.native_reference = Some(crate::sidebar::SessionAgentSessionPayload {
+        kind: "path".into(),
+        value: "/fixture/native.jsonl".into(),
+    });
+    runtime
+}
+
+/// A Factory asks a worker that closes its pane to sleep: the same intent a
+/// person's Sleep saves, and it keeps whose conversation it is (#857).
+#[test]
+fn factory_sleep_saves_a_close_pane_agents_intent_bound_to_its_worker() {
+    use crate::agent_sleep::DormantPhase;
+    for kind in ["pi", "omp", "grok"] {
+        for published in [true, false] {
+            let mut runtime = close_pane_runtime(kind);
+            let worker = factory_worker("agent-7");
+            if published {
+                runtime.set_factory_panes(std::collections::HashMap::from([(
+                    SLEEPER.to_owned(),
+                    crate::runtime::FactoryPane {
+                        kind: kind.into(),
+                        started_at: 1,
+                        worker: worker.clone(),
+                    },
+                )]));
+            }
+            assert_eq!(runtime.factory_sleep(SLEEPER), Ok(true), "{kind}");
+            let store = &runtime.snapshot.ui_state.agent_sleep;
+            assert!(store.records.is_empty(), "no keep-pane record, {kind}");
+            let record = store.dormant.values().next().expect("the saved intent");
+            assert!(
+                matches!(
+                    record.phase,
+                    DormantPhase::SavingClose | DormantPhase::Closing
+                ),
+                "{kind}: {:?}",
+                record.phase
+            );
+            assert_eq!(
+                (record.old_pane_id.as_str(), record.kind.as_str()),
+                (SLEEPER, kind)
+            );
+            assert_eq!(record.factory, published.then_some(worker), "{kind}");
+            // Asked again while the save is in flight: the same intent.
+            assert_eq!(runtime.factory_sleep(SLEEPER), Ok(true));
+            assert_eq!(runtime.snapshot.ui_state.agent_sleep.dormant.len(), 1);
+            assert!(runtime.factory_worker_probe(SLEEPER).asleep);
+        }
+    }
+}
+
+/// Sessions are not saved past the in-flight budget: the Factory asks again
+/// later, and no error reaches the screen for it.
+#[test]
+fn factory_sleep_waits_for_the_transition_budget_instead_of_failing() {
+    let mut runtime = close_pane_runtime("pi");
+    assert_eq!(runtime.factory_sleep(SLEEPER), Ok(true));
+    let template = {
+        let store = &mut runtime.snapshot.ui_state.agent_sleep;
+        let id = store.dormant.keys().next().unwrap().clone();
+        store.dormant.remove(&id).unwrap()
+    };
+    let mut index = 0;
+    while runtime
+        .snapshot
+        .ui_state
+        .agent_sleep
+        .admit_dormant_transition()
+        .is_ok()
+    {
+        let mut busy = template.clone();
+        busy.old_pane_id = format!("busy-{index}");
+        runtime
+            .snapshot
+            .ui_state
+            .agent_sleep
+            .admit_dormant(busy)
+            .unwrap();
+        index += 1;
+    }
+    assert!(index > 0);
+    assert_eq!(runtime.factory_sleep(SLEEPER), Ok(false));
+    assert!(runtime.snapshot.status.last_error.is_none());
+}
+
+/// A Factory wakes a worker whose pane closed: the saved conversation is
+/// bound to the worker as the wake begins, once its sleep has landed.
+#[test]
+fn factory_wake_binds_the_saved_conversation_to_its_worker_as_the_wake_begins() {
+    use crate::agent_sleep::DormantPhase;
+    use crate::runtime::FactoryWake;
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    runtime.ingest_session(Ok(session(Some(4))));
+    let id = dormant_intent(&mut runtime);
+    let worker = hide_factory::model::WorkerRef {
+        factory: "f-1".into(),
+        agent: Some("agent-7".into()),
+        name: "factory-fixture-T-1".into(),
+        pane: Some(SLEEPER.into()),
+        runtime: hide_factory::model::Runtime::CLAUDE,
+        worktree: CHECKOUT.into(),
+        branch: "factory/T-1".into(),
+        started_at: 1,
+        asleep: true,
+        model: None,
+        effort: None,
+    };
+    // The close has not landed: ask again later, change nothing.
+    let before = runtime.snapshot.ui_state.agent_sleep.clone();
+    assert_eq!(runtime.factory_wake(&worker), FactoryWake::Later);
+    assert_eq!(runtime.snapshot.ui_state.agent_sleep, before);
+
+    // Slept and closed; the agent is gone from Herdr.
+    {
+        let record = runtime
+            .snapshot
+            .ui_state
+            .agent_sleep
+            .dormant
+            .get_mut(&id)
+            .unwrap();
+        record.phase = DormantPhase::Sleeping;
+        record.closed = true;
+        record.close_key = Some("close-1".into());
+    }
+    runtime.ingest_session(Ok(tab_order_payload(
+        CHECKOUT,
+        &["w-order:t1"],
+        &["w-order:t1"],
+        "w-order:t1",
+    )));
+    // Another worker's pane id, a worker started after the sleep, and a
+    // different kind of agent are not this conversation's.
+    for other in [
+        hide_factory::model::WorkerRef {
+            pane: Some("w-order:t9:p".into()),
+            ..worker.clone()
+        },
+        hide_factory::model::WorkerRef {
+            started_at: 5,
+            ..worker.clone()
+        },
+        hide_factory::model::WorkerRef {
+            runtime: hide_factory::model::Runtime::parse("pi").unwrap(),
+            ..worker.clone()
+        },
+    ] {
+        assert_eq!(
+            runtime.factory_wake(&other),
+            FactoryWake::Awake,
+            "{other:?}"
+        );
+    }
+    assert_eq!(
+        runtime.snapshot.ui_state.agent_sleep.dormant[&id].phase,
+        DormantPhase::Sleeping
+    );
+
+    assert_eq!(runtime.factory_wake(&worker), FactoryWake::Asked);
+    let record = &runtime.snapshot.ui_state.agent_sleep.dormant[&id];
+    assert!(record.phase.in_flight(), "{:?}", record.phase);
+    assert_eq!(record.factory, Some(factory_worker("agent-7")));
+    // Asked again while it runs, and by a worker the record is bound to
+    // another than.
+    assert_eq!(runtime.factory_wake(&worker), FactoryWake::Asked);
+    let other = hide_factory::model::WorkerRef {
+        agent: Some("agent-8".into()),
+        ..worker
+    };
+    assert_eq!(runtime.factory_wake(&other), FactoryWake::Awake);
+    assert_eq!(
+        runtime.snapshot.ui_state.agent_sleep.dormant[&id].factory,
+        Some(factory_worker("agent-7"))
+    );
 }
 
 /// An uncertain close is inspected through the real worker, never repaired.

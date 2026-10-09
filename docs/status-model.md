@@ -293,6 +293,7 @@ The Wake action is available only when this build declares the provider's resume
 A retained unsupported sleeping record stays visible without a Wake action or a loading spinner; only an active transition or status check spins.
 Unknown work survives restart without replaying external effects; an intent saved before close admission can be released without touching a pane.
 `agent_sleep/dormant.rs` owns the bounded archive and row values, while `runtime/agent_sleep/dormant.rs` owns its transitions and exact save/connection/execution fences.
+A Factory worker's sleep is such a record bound to its Factory; Hide's own close of that pane is not an operator close and pauses no Task, and after the wake the record stays unpublished until the Factory has moved the Task's worker to the new pane (`docs/factory.md`, The worker lifecycle).
 
 ### Workspace aggregation
 
