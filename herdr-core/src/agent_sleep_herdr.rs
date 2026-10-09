@@ -206,6 +206,7 @@ pub(crate) fn start_agent(
     };
     match crate::agent_start::start_at_shell_reusing_name(
         connector,
+        Some(node),
         &format!("herdr-core:agent-sleep:{}:wake", request.pane_id),
         &request.pane_id,
         params,

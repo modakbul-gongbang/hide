@@ -608,6 +608,7 @@ fn spawn(
         machine: native_machine,
         codex: codex_daemon,
         on_node,
+        node,
     } = context(client, &child_device).map_err(|reason| {
         if reserved.machine.is_some() {
             "machine_unavailable".to_owned()
@@ -739,6 +740,7 @@ fn spawn(
             }
             crate::live::start_agent(
                 connector.as_ref(),
+                node.as_deref(),
                 &reserved.id,
                 pane,
                 name,
