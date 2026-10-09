@@ -11,13 +11,19 @@
 //! terminals relay the node keeps to the core. So a key into one of this
 //! machine's panes and its output never leave the machine.
 //!
+//! Each screen's relay is read as fast as its core sends, whatever the
+//! screen takes: a screen that stalls holds at most 4 MiB of core frames,
+//! and past that it is drawn again once from a fresh snapshot (D-20, B17),
+//! so it never stops the SSH connection every other screen, pane and the
+//! link share.
+//!
 //! While the link is down a screen is held: its socket stays open, every
 //! frame it sends is dropped and counted, and nothing reaches it until the
 //! link is back; a screen that was attached when the link ended is closed
 //! once, so its next attempt is the held one (amendment 4 of the plan's
 //! review). Keys typed meanwhile are never delivered later (B8).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -59,6 +65,12 @@ const RELAY_LINES: usize = 1024;
 const RELAY_RETRY: Duration = Duration::from_secs(1);
 /// The largest message a relay of the core may send this daemon.
 const RELAY_MAX_MESSAGE: usize = 16 * 1024 * 1024;
+/// Core frames one screen may leave untaken before its backlog is dropped
+/// and it is drawn again from a fresh snapshot (D-20).
+const SCREEN_BACKLOG_BYTES: usize = 4 * 1024 * 1024;
+/// A screen's frames waiting to go up its relay; past it the screen's
+/// socket is read no further until the relay takes them.
+const SCREEN_TO_CORE: usize = 64;
 
 /// What the node role's screen server holds.
 #[derive(Clone)]
@@ -453,8 +465,8 @@ async fn attached(
     let Some(link) = hold(socket, state).await else {
         return "screen_closed";
     };
-    let mut upstream = match open_relay(&link, "screen").await {
-        Ok(upstream) => upstream,
+    let mut relay = match ScreenRelay::open(&link, handshake_text, connection).await {
+        Ok(relay) => relay,
         Err(message) => {
             herdr_core::diagnostic!(json!({
                 "component": "node_daemon",
@@ -465,17 +477,11 @@ async fn attached(
             return "link_ended";
         }
     };
-    if upstream
-        .send(tungstenite::Message::Text(handshake_text.into()))
-        .await
-        .is_err()
-    {
-        return "link_ended";
-    }
     let mut live = state.live.clone();
     let mut terminals: Option<HubClient> = None;
     let mut told = InputNotices::default();
     loop {
+        let shared = Arc::clone(&relay.shared);
         tokio::select! {
             changed = live.changed() => {
                 let same = changed.is_ok()
@@ -504,41 +510,64 @@ async fn attached(
                     return "screen_closed";
                 }
             }
-            from_core = upstream.next() => {
-                let message = match from_core {
-                    Some(Ok(message)) => message,
-                    _ => return "link_ended",
-                };
-                match message {
-                    tungstenite::Message::Text(text) => {
-                        let kind = frame_kind(&text);
-                        match (kind, &terminals) {
-                            (Some(kind), None) => {
-                                terminals = Some(state.hub.connect(resume(kind, &handshake)));
+            () = shared.ready.notified() => {
+                loop {
+                    let next = lock(&shared.backlog).pop();
+                    let Some(message) = next else { break };
+                    match message {
+                        tungstenite::Message::Text(text) => {
+                            let kind = frame_kind(&text);
+                            match (kind, &terminals) {
+                                (Some(kind), None) => {
+                                    terminals = Some(state.hub.connect(resume(kind, &handshake)));
+                                }
+                                (Some(FrameStart::Snapshot), Some(client)) => client.restart(),
+                                _ => {}
                             }
-                            (Some(FrameStart::Snapshot), Some(client)) => client.restart(),
-                            _ => {}
+                            if socket.send(Message::Text(text.as_str().into())).await.is_err() {
+                                return "screen_closed";
+                            }
                         }
-                        if socket.send(Message::Text(text.as_str().into())).await.is_err() {
-                            return "screen_closed";
+                        tungstenite::Message::Binary(bytes) => {
+                            if socket.send(Message::Binary(bytes)).await.is_err() {
+                                return "screen_closed";
+                            }
                         }
+                        _ => {}
                     }
-                    tungstenite::Message::Binary(bytes) => {
-                        if socket.send(Message::Binary(bytes)).await.is_err() {
-                            return "screen_closed";
-                        }
+                }
+                let end = lock(&shared.backlog).end;
+                match end {
+                    None => {}
+                    Some(RelayEnd::Closed) => return "link_ended",
+                    // The screen fell behind: what it missed is dropped and
+                    // it is drawn again from a fresh snapshot.
+                    Some(RelayEnd::Overflowed) => {
+                        herdr_core::diagnostic!(json!({
+                            "component": "node_daemon",
+                            "kind": "screen.resync",
+                            "connection": connection,
+                            "cap": SCREEN_BACKLOG_BYTES,
+                        }));
+                        relay = match ScreenRelay::open(&link, &without_revision(handshake_text), connection).await {
+                            Ok(relay) => relay,
+                            Err(message) => {
+                                herdr_core::diagnostic!(json!({
+                                    "component": "node_daemon",
+                                    "kind": "screen.relay_failed",
+                                    "connection": connection,
+                                    "message": message,
+                                }));
+                                return "link_ended";
+                            }
+                        };
                     }
-                    tungstenite::Message::Close(_) => return "link_ended",
-                    _ => {}
                 }
             }
             from_screen = socket.recv() => {
                 let message = match from_screen {
                     Some(Ok(message)) => message,
-                    _ => {
-                        let _ = upstream.close(None).await;
-                        return "screen_closed";
-                    }
+                    _ => return "screen_closed",
                 };
                 match message {
                     Message::Text(text) => {
@@ -553,7 +582,7 @@ async fn attached(
                             match reply {
                                 Ok(Some(pane)) => {
                                     if let Some(notice) = told.notice(&pane, Instant::now())
-                                        && upstream.send(tungstenite::Message::Text(notice.into())).await.is_err()
+                                        && relay.up(tungstenite::Message::Text(notice.into())).await.is_err()
                                     {
                                         return "link_ended";
                                     }
@@ -568,24 +597,169 @@ async fn attached(
                             }
                             continue;
                         }
-                        if upstream.send(tungstenite::Message::Text(text.as_str().into())).await.is_err() {
+                        if relay.up(tungstenite::Message::Text(text.as_str().into())).await.is_err() {
                             return "link_ended";
                         }
                     }
                     Message::Binary(bytes) => {
-                        if upstream.send(tungstenite::Message::Binary(bytes)).await.is_err() {
+                        if relay.up(tungstenite::Message::Binary(bytes)).await.is_err() {
                             return "link_ended";
                         }
                     }
-                    Message::Close(_) => {
-                        let _ = upstream.close(None).await;
-                        return "screen_closed";
-                    }
+                    Message::Close(_) => return "screen_closed",
                     _ => {}
                 }
             }
         }
     }
+}
+
+/// Why a screen's relay gives no more frames.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RelayEnd {
+    /// The core or the link closed it.
+    Closed,
+    /// The screen left more than [`SCREEN_BACKLOG_BYTES`] untaken.
+    Overflowed,
+}
+
+/// The core frames one screen's relay read that the screen has not taken.
+#[derive(Default)]
+struct Backlog {
+    frames: VecDeque<tungstenite::Message>,
+    bytes: usize,
+    end: Option<RelayEnd>,
+}
+
+impl Backlog {
+    /// Holds `frame`, or, past the cap, drops every frame held and ends the
+    /// relay. One frame is always held, however large (a file read sends
+    /// 4 MiB at a time), so only a screen that leaves frames untaken falls
+    /// behind. Answers whether the relay goes on.
+    fn push(&mut self, frame: tungstenite::Message) -> bool {
+        if !self.frames.is_empty() && self.bytes + frame.len() > SCREEN_BACKLOG_BYTES {
+            self.frames.clear();
+            self.bytes = 0;
+            self.end = Some(RelayEnd::Overflowed);
+            return false;
+        }
+        self.bytes += frame.len();
+        self.frames.push_back(frame);
+        true
+    }
+
+    fn pop(&mut self) -> Option<tungstenite::Message> {
+        let frame = self.frames.pop_front()?;
+        self.bytes -= frame.len();
+        Some(frame)
+    }
+
+    fn end(&mut self, end: RelayEnd) {
+        self.end.get_or_insert(end);
+    }
+}
+
+#[derive(Default)]
+struct RelayShared {
+    backlog: Mutex<Backlog>,
+    ready: Notify,
+}
+
+/// One screen's relay to its core. Its task reads the core whatever the
+/// screen takes: russh stops reading the whole SSH connection while one
+/// channel's buffer is full, so a relay left unread would stall every other
+/// screen, the panes and the link.
+struct ScreenRelay {
+    shared: Arc<RelayShared>,
+    to_core: mpsc::Sender<tungstenite::Message>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl ScreenRelay {
+    /// The relay of the screen `connection`, opened with `handshake`.
+    async fn open(link: &LiveLink, handshake: &str, connection: u64) -> Result<Self, String> {
+        let mut upstream = open_relay(link, "screen").await?;
+        upstream
+            .send(tungstenite::Message::Text(handshake.into()))
+            .await
+            .map_err(|error| error.to_string())?;
+        let shared = Arc::new(RelayShared::default());
+        let (to_core, mut from_screen) = mpsc::channel(SCREEN_TO_CORE);
+        let task = tokio::spawn({
+            let shared = Arc::clone(&shared);
+            async move {
+                let (mut sink, mut stream) = upstream.split();
+                let read = async {
+                    loop {
+                        match stream.next().await {
+                            Some(Ok(
+                                frame @ (tungstenite::Message::Text(_)
+                                | tungstenite::Message::Binary(_)),
+                            )) => {
+                                if !lock(&shared.backlog).push(frame) {
+                                    // Logged now: the screen may not read for a while.
+                                    herdr_core::diagnostic!(json!({
+                                        "component": "node_daemon",
+                                        "kind": "screen.fell_behind",
+                                        "connection": connection,
+                                        "cap": SCREEN_BACKLOG_BYTES,
+                                    }));
+                                    shared.ready.notify_one();
+                                    return;
+                                }
+                                shared.ready.notify_one();
+                            }
+                            Some(Ok(tungstenite::Message::Close(_))) | None | Some(Err(_)) => {
+                                return;
+                            }
+                            Some(Ok(_)) => {}
+                        }
+                    }
+                };
+                let write = async {
+                    while let Some(frame) = from_screen.recv().await {
+                        if sink.send(frame).await.is_err() {
+                            return;
+                        }
+                    }
+                    let _ = sink.close().await;
+                };
+                tokio::select! {
+                    () = read => {}
+                    () = write => {}
+                }
+                lock(&shared.backlog).end(RelayEnd::Closed);
+                shared.ready.notify_one();
+            }
+        });
+        Ok(Self {
+            shared,
+            to_core,
+            task,
+        })
+    }
+
+    /// Sends a screen's frame up, waiting while the relay is full.
+    async fn up(&self, frame: tungstenite::Message) -> Result<(), ()> {
+        self.to_core.send(frame).await.map_err(|_| ())
+    }
+}
+
+impl Drop for ScreenRelay {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// A screen's handshake asking for a whole snapshot: what it had is gone.
+fn without_revision(handshake: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<Value>(handshake) else {
+        return handshake.to_owned();
+    };
+    if let Some(fields) = value.as_object_mut() {
+        fields.remove("have_revision");
+    }
+    value.to_string()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -832,6 +1006,42 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_screen_that_falls_behind_drops_its_backlog_past_the_cap() {
+        let mut backlog = Backlog::default();
+        let whole = tungstenite::Message::Binary(vec![0_u8; SCREEN_BACKLOG_BYTES + 64].into());
+        assert!(backlog.push(whole), "one frame is held however large");
+        assert!(backlog.pop().is_some());
+        let frame = || tungstenite::Message::Binary(vec![0_u8; 1024 * 1024].into());
+        for _ in 0..4 {
+            assert!(backlog.push(frame()));
+        }
+        assert_eq!(backlog.end, None);
+        assert!(backlog.pop().is_some(), "a frame taken makes room");
+        assert!(backlog.push(frame()));
+        assert!(!backlog.push(tungstenite::Message::Text("x".into())));
+        assert_eq!(backlog.end, Some(RelayEnd::Overflowed));
+        assert!(backlog.pop().is_none(), "what the screen missed is dropped");
+        backlog.end(RelayEnd::Closed);
+        assert_eq!(
+            backlog.end,
+            Some(RelayEnd::Overflowed),
+            "the first end stands"
+        );
+    }
+
+    #[test]
+    fn a_screen_drawn_again_asks_for_a_whole_snapshot() {
+        let fresh: Value = serde_json::from_str(&without_revision(
+            r#"{"token":"t","schema_version":2,"have_revision":7,"have_terminal_sequence":3}"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            fresh,
+            json!({"token":"t","schema_version":2,"have_terminal_sequence":3})
+        );
+    }
 
     #[test]
     fn a_screen_tells_its_core_it_types_into_a_pane_once_a_second() {

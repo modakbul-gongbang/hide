@@ -924,7 +924,9 @@ async fn pane_grid(
     mark: u32,
 ) -> Result<String> {
     // The typed line reads `G$((N))`, which only the shell turns into `GN`.
-    let line = format!("echo G$(({mark})) $(stty size) end\r");
+    // The answer has no spaces, which a whole redraw of the pane (another
+    // window's view of it) may draw as cursor moves.
+    let line = format!("echo G$(({mark}))x$(stty size | tr ' ' x)xend\r");
     let keys = base64::engine::general_purpose::STANDARD.encode(line);
     let event = json!({"pane_id": pane, "bytes_base64": keys});
     match typing {
@@ -933,7 +935,7 @@ async fn pane_grid(
     }
     let mut screen = String::new();
     let deadline = Instant::now() + Duration::from_secs(30);
-    let marked = format!("G{mark} ");
+    let marked = format!("G{mark}x");
     while let Some(frame) = next_frame(reading, deadline).await? {
         for (from, bytes) in chunks(&frame) {
             if from == pane {
@@ -942,10 +944,9 @@ async fn pane_grid(
         }
         let text = plain(&screen);
         if let Some(at) = text.find(&marked)
-            && let Some(answer) = text[at + marked.len()..].split(" end").next()
-            && text[at..].contains(" end")
+            && let Some((answer, _)) = text[at + marked.len()..].split_once("xend")
         {
-            return Ok(answer.trim().to_owned());
+            return Ok(answer.replace('x', " "));
         }
     }
     bail!("{pane} never answered its size: {:?}", plain(&screen))
@@ -1116,6 +1117,84 @@ fn a_node_screen_reads_its_own_checkouts_files_without_the_core() -> Result<()> 
             "the read went through the core: {ended:?}"
         );
         Ok(())
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
+
+/// B17: a screen that stops reading while its core sends it a large file
+/// holds up neither another screen nor a pane of the core's machine, and is
+/// drawn again from a fresh snapshot once it reads again.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_screen_that_stops_reading_holds_up_no_other_screen() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        let core_project = fixture.core_home().join("project");
+        let core_pane = fixture.core.workspace_at(&core_project)?;
+        let big = core_project.join("big.bin");
+        std::fs::write(&big, vec![b'x'; 64 * 1024 * 1024])?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"path": core_project, "label": "core", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(&fixture, &mut socket, CORE_NODE, &core_project).await?;
+            type_and_read(&mut socket, &core_pane, "echo before-\"ok\"", "before-ok").await?;
+
+            // A second screen asks the core for the file and reads no more.
+            let mut stalled = screen_socket(port, &token).await?;
+            first_snapshot(&mut stalled, Duration::from_secs(20)).await?;
+            send(
+                &mut stalled,
+                "file_bytes",
+                json!({"request_id": "big", "path": big}),
+            )
+            .await?;
+            tokio::task::block_in_place(|| {
+                wait_for("the stalled screen's backlog to be dropped", || {
+                    let rows = fixture.node_log("node_daemon", "screen.fell_behind")?;
+                    Ok((!rows.is_empty()).then_some(rows))
+                })
+            })?;
+            let started = Instant::now();
+            type_and_read(&mut socket, &core_pane, "echo during-\"ok\"", "during-ok").await?;
+            ensure!(
+                started.elapsed() < Duration::from_secs(10),
+                "the core's pane answered the other screen after {:?}",
+                started.elapsed()
+            );
+
+            // Reading again, the stalled screen is drawn from a whole snapshot.
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                let frame = next_frame(&mut stalled, deadline)
+                    .await?
+                    .context("the stalled screen was never drawn again")?;
+                if frame["type"] == "snapshot" {
+                    break;
+                }
+            }
+            ensure!(
+                !fixture.node_log("node_daemon", "screen.resync")?.is_empty(),
+                "the stalled screen's resync was not logged"
+            );
+            Ok::<_, anyhow::Error>(())
+        })
     })();
     match journey {
         Ok(()) => fixture.remove_run_dir(),
