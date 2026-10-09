@@ -322,17 +322,21 @@ impl Engine {
             .unwrap_or_default();
         let kind = verdict.kind;
         let reason = verdict.reason.clone();
+        let answer = verdict.answer.clone();
+        let chosen = (question.choices.contains(&answer)
+            || answer == question.suggestion
+            || Some(&answer) == question.default_action.as_ref())
+        .then(|| answer.clone());
         let mut route = route(mode, &verdict);
-        if route == Route::Observer && verdict.answer.is_empty() {
+        // A closed question runs only a listed choice; any other words would
+        // settle it with nothing run, so they are a person's (D-33).
+        if route == Route::Observer
+            && (answer.is_empty() || (question.kind.closed() && chosen.is_none()))
+        {
             route = Route::Person { proposal: false };
         }
         match route {
             Route::Observer => {
-                let answer = verdict.answer.clone();
-                let chosen = (question.choices.contains(&answer)
-                    || answer == question.suggestion
-                    || Some(&answer) == question.default_action.as_ref())
-                .then(|| answer.clone());
                 self.settle_answer(
                     factory,
                     id,
@@ -392,10 +396,20 @@ impl Engine {
     ) {
         let proposal = verdict.proposal.clone().filter(|_| attach);
         let offered = proposal.is_some();
+        // Unsure or a permission is a person's whatever the kind and mode,
+        // so the kind's line in the mode table is not why (B7).
+        let fallback = if verdict.permission_signal {
+            Some("permission")
+        } else if verdict.ambiguous {
+            Some("unsure")
+        } else {
+            None
+        };
         self.set_routing(factory, id, question, |routing| {
             routing.to = RouteTo::Person;
             routing.kind = Some(verdict.kind);
             routing.reason = Some(verdict.reason.clone());
+            routing.fallback = fallback.map(str::to_owned);
             routing.proposal = proposal;
         });
         // What it holds up and where each choice leads, in the person's

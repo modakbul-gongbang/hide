@@ -171,9 +171,51 @@ fn a_permission_or_an_unsure_kind_always_goes_to_a_person() {
     h.world().observer.push_back(permission);
     block(&mut h, &f, &t, "Delete the production bucket?");
     h.engine.tick();
-    let inbox = inbox(&mut h);
-    assert_eq!(inbox["count"], 1, "{inbox}");
+    let first = inbox(&mut h);
+    assert_eq!(first["count"], 1, "{first}");
+    assert_eq!(first["items"][0]["fallback"], "permission", "{first}");
     assert!(h.task(&f, &t).questions[0].open());
+    let mut unsure = classified("B", "yes");
+    unsure["ambiguous"] = json!(true);
+    h.world().observer.push_back(unsure);
+    let u = h.ready("Region", &[]);
+    block(&mut h, &f, &u, "Which region should the bucket live in?");
+    h.engine.tick();
+    let inbox = inbox(&mut h);
+    assert_eq!(inbox["count"], 2, "{inbox}");
+    assert!(
+        inbox["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["fallback"] == "unsure"),
+        "{inbox}"
+    );
+}
+
+#[test]
+fn factory_ai_words_that_are_no_listed_choice_leave_a_closed_question_to_a_person() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    mode(&mut h, "autonomous");
+    // A failed review asks a closed question, which goes to Factory AI first.
+    h.world().judgment_failure = Some("transient".into());
+    let id = h.add("Unreadable", &[])["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    h.engine.tick();
+    h.world().judgment_failure = None;
+    h.world()
+        .observer
+        .push_back(classified("A", "Retry the review"));
+    h.engine.tick();
+    h.engine.tick();
+    let task = h.task(&f, &id);
+    let open: Vec<_> = task.open_questions().collect();
+    assert_eq!(open.len(), 1, "{:?}", task.questions);
+    assert!(open[0].choices.iter().any(|c| c == "retry-review"));
+    assert_eq!(inbox(&mut h)["count"], 1);
 }
 
 #[test]

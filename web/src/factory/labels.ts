@@ -207,7 +207,7 @@ export const MEANWHILE_LABEL: Record<Holding, MessageKey> = {
 };
 
 /** Why Factory AI left a decision to a person (B7); the engine's `fallback` codes. */
-export const FALLBACK_REASONS = ["failed", "daily_limit", "paused", "queue_full", "dropped", "restart"] as const;
+export const FALLBACK_REASONS = ["failed", "daily_limit", "paused", "queue_full", "dropped", "restart", "unsure", "permission"] as const;
 export type FallbackReason = (typeof FALLBACK_REASONS)[number];
 export const FALLBACK_LABEL: Record<FallbackReason, MessageKey> = {
   failed: "factory.fallback.failed",
@@ -216,6 +216,8 @@ export const FALLBACK_LABEL: Record<FallbackReason, MessageKey> = {
   queue_full: "factory.fallback.queue_full",
   dropped: "factory.fallback.dropped",
   restart: "factory.fallback.restart",
+  unsure: "factory.fallback.unsure",
+  permission: "factory.fallback.permission",
 };
 
 export const DECISION_SOURCE_LABEL: Record<DecisionSource, MessageKey> = {
