@@ -19,7 +19,10 @@ pub struct Band {
     pub action: Option<Action>,
     pub more: usize,
     pub exit_code: Option<i32>,
-    pub child_tag: Option<super::sessions::Tag>,
+    /// A raised descendant's band (PRD D-43): the lead ask, whose verb, what,
+    /// who and path the band draws; `more` counts the others.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raised: Option<super::escalation::RaisedAsk>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub facts: Option<ReasonFacts>,
 }
@@ -59,7 +62,7 @@ pub(crate) fn of(
     workspace: &WorkspaceSnapshot,
     offline: Option<&str>,
 ) -> Header {
-    let tag = agent.map(|agent| super::sessions::tag(agent, agent.state.verb));
+    let tag = agent.map(task_kind);
     let links = agent
         .and_then(|agent| agent.request.as_ref())
         .map(|request| &request.pull_requests);
@@ -80,7 +83,6 @@ pub(crate) fn of(
     let pull = links.and_then(|links| links.iter().find(live)).map(action);
     let duty = links.and_then(|links| {
         links.iter().filter(live).find(|pull| {
-            use super::sessions::Tag;
             use crate::model::PullRequestChecks;
             match tag {
                 Some(Tag::Fix) => pull.duty && pull.checks == PullRequestChecks::Failed,
@@ -108,7 +110,7 @@ pub(crate) fn of(
             action,
             more,
             exit_code,
-            child_tag: None,
+            raised: None,
             facts: None,
         })
     };
@@ -174,39 +176,29 @@ pub(crate) fn of(
     let Some(agent) = agent else {
         return Header::default();
     };
-    let demand = matches!(
-        tag,
-        Some(super::sessions::Tag::Approval | super::sessions::Tag::Answer)
-    );
-    if !demand && let Some(child) = agent.raised_children.first() {
+    let demand = matches!(tag, Some(Tag::Approval | Tag::Answer));
+    if !demand && let Some(lead) = agent.raised.first() {
         return Header {
             pull,
             working: false,
             band: band(
-                "raised_child",
+                "raised",
                 "warning",
-                Some(
-                    [Some(child.title.clone()), child.reason.clone()]
-                        .into_iter()
-                        .flatten()
-                        .collect::<Vec<_>>()
-                        .join(" · "),
-                ),
-                child.since_unix_ms,
+                None,
+                lead.since_unix_ms,
                 Some(Action::Child {
-                    pane_id: child.pane_id.clone(),
-                    label: child.title.clone(),
+                    pane_id: lead.open_pane_id.clone(),
+                    label: lead.title.clone(),
                 }),
-                agent.raised_children.len().saturating_sub(1),
+                agent.raised.len() - 1,
                 None,
             )
             .map(|mut band| {
-                band.child_tag = Some(child.tag);
+                band.raised = Some(lead.clone());
                 band
             }),
         };
     }
-    use super::sessions::Tag;
     let (kind, tone, action) = match tag {
         Some(Tag::Approval) => ("approval", "warning", None),
         Some(Tag::Answer) => ("answer", "warning", None),
@@ -241,7 +233,7 @@ pub(crate) fn of(
                 .and_then(|request| request.line.clone()),
             agent.state.request_since,
             action,
-            0,
+            if demand { agent.raised.len() } else { 0 },
             None,
         )
         .map(|mut band| {
@@ -260,6 +252,48 @@ pub(crate) fn of(
             }
             band
         }),
+    }
+}
+
+/// The band a row's own task takes, from its request verb (docs/status-model.md,
+/// Quiet pane headers).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Tag {
+    Answer,
+    Approval,
+    Fix,
+    Review,
+    Merge,
+    Stopped,
+    Result,
+    Quiet,
+}
+
+fn task_kind(agent: &SidebarAgentSnapshot) -> Tag {
+    use super::RequestVerb;
+    use super::escalation::Verb;
+    match agent.state.verb {
+        RequestVerb::Answer => match super::turn::demand_verb(agent) {
+            Some(Verb::Approval) => Tag::Approval,
+            _ => Tag::Answer,
+        },
+        RequestVerb::Fix => Tag::Fix,
+        RequestVerb::Review => {
+            let mut duties = agent
+                .request
+                .iter()
+                .flat_map(|request| &request.pull_requests)
+                .filter(|pull| pull.live && pull.duty && !pull.badge.is_settled())
+                .peekable();
+            if duties.peek().is_some() && duties.all(super::sessions::mergeable) {
+                Tag::Merge
+            } else {
+                Tag::Review
+            }
+        }
+        RequestVerb::Stopped => Tag::Stopped,
+        RequestVerb::Result => Tag::Result,
+        RequestVerb::Working | RequestVerb::Waiting | RequestVerb::Idle => Tag::Quiet,
     }
 }
 

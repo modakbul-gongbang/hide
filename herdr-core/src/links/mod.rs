@@ -243,9 +243,6 @@ pub struct LinkedIssue {
 /// The small per-project values ⌘K and the Sessions tab read (D-45).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct ProjectLinkSummary {
-    /// Open PRs with recorded sessions but no currently attached session.
-    /// The existing links worker computes this outside the runtime mutex.
-    pub closed_session_prs: BTreeSet<u32>,
     /// Pull request number → its recorded session lines.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub prs: BTreeMap<u64, u32>,
@@ -266,8 +263,7 @@ pub struct ProjectLinkSummary {
 
 impl ProjectLinkSummary {
     pub fn is_empty(&self) -> bool {
-        self.closed_session_prs.is_empty()
-            && self.prs.is_empty()
+        self.prs.is_empty()
             && self.issues.is_empty()
             && self.sessions.is_empty()
             && self.landed.is_empty()

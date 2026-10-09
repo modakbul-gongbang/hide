@@ -1,9 +1,13 @@
-//! The Sessions tool's groups and tags, derived once from the row's verb.
+//! The Sessions tool's groups, lines and order, from the row's own state
+//! (docs/status-model.md, The Sessions tool), and each row's own PR summary.
 //! Memory and conversation history are separate readers, not session state.
-use crate::model::{PullRequestChecks, ReviewDecision, SidebarAgentSnapshot};
+use crate::labels::analysis::LabelEnd;
+use crate::model::{PullRequestBadge, PullRequestChecks, ReviewDecision, SidebarAgentSnapshot};
+use crate::request_view::AgentPullRequestSnapshot;
 use serde::{Deserialize, Serialize};
 
-use super::RequestVerb;
+/// How long a resolved session stays under Resolved (PRD D-23).
+pub const RESOLVED_WINDOW_MS: u64 = 24 * 60 * 60 * 1000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -12,11 +16,12 @@ pub enum ResolveSource {
     Automatic,
 }
 
+/// A record written before the 24-hour window also carried its local date;
+/// serde ignores that field on read and the next save drops it.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Resolution {
     pub at_unix_ms: u64,
     pub source: ResolveSource,
-    pub local_date: String,
     pub session: Option<String>,
     pub activity: String,
 }
@@ -38,150 +43,141 @@ pub(crate) fn auto_resolvable(agent: &SidebarAgentSnapshot, input_after: Option<
         })
 }
 
+/// The agent's own state names the group, the same names the sidebar uses
+/// (PRD D-16): no PR stage and no tag decides it.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Group {
-    MyTurn,
-    ReviewMerge,
-    InProgress,
+    NeedsYou,
+    Working,
+    Done,
     #[default]
-    Resting,
-    ResolvedToday,
+    Idle,
+    Resolved,
 }
 
 pub const GROUPS: [Group; 5] = [
-    Group::MyTurn,
-    Group::ReviewMerge,
-    Group::InProgress,
-    Group::Resting,
-    Group::ResolvedToday,
+    Group::NeedsYou,
+    Group::Working,
+    Group::Done,
+    Group::Idle,
+    Group::Resolved,
 ];
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Tag {
-    Answer,
-    Approval,
-    Fix,
-    Review,
-    Merge,
-    Stopped,
-    Result,
-    Working,
-    CiWait,
-    Waiting,
-    Idle,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Row {
     pub group: Group,
-    /// An unlabelled row keeps its outline without inventing a task line.
-    pub tag: Option<Tag>,
+    /// What the session is doing or has done (PRD B31); absent rather than
+    /// invented. A Needs You row draws its `ask` instead.
+    pub line: Option<String>,
+    /// The line is the remaining work of an unfinished turn (◐).
+    pub unfinished: bool,
 }
 
-pub(crate) fn row(agent: &SidebarAgentSnapshot, verb: RequestVerb) -> Row {
+pub(crate) fn row(agent: &SidebarAgentSnapshot) -> Row {
+    let label_line = || agent.request.as_ref().and_then(|r| r.line.clone());
+    let unfinished = agent
+        .request
+        .as_ref()
+        .is_some_and(|r| r.end == Some(LabelEnd::Unfinished));
     if agent.resolved.is_some() {
         return Row {
-            group: Group::ResolvedToday,
-            tag: None,
+            group: Group::Resolved,
+            ..Row::default()
         };
     }
-    if agent.escalation.is_some() {
-        return Row {
-            group: Group::MyTurn,
-            tag: Some(demand_tag(agent).unwrap_or_else(|| {
-                if agent
-                    .escalation
-                    .as_ref()
-                    .is_some_and(|e| e.cause != super::escalation::Cause::ObserverUnconfirmed)
-                {
-                    Tag::Answer
-                } else {
-                    Tag::Stopped
-                }
-            })),
-        };
-    }
-    let tag = tag(agent, verb);
-    // My turn holds only what stays stopped until the operator moves; a
-    // result, a failed check or an unfinished turn rests with its tag and
-    // the row's unread mark (docs/status-model.md, The Sessions tool).
-    let group = match verb {
-        RequestVerb::Answer => Group::MyTurn,
-        RequestVerb::Review => Group::ReviewMerge,
-        RequestVerb::Working | RequestVerb::Waiting => Group::InProgress,
-        RequestVerb::Fix | RequestVerb::Stopped | RequestVerb::Result | RequestVerb::Idle => {
-            Group::Resting
-        }
-    };
-    Row {
-        group,
-        tag: agent
-            .request
-            .as_ref()
-            .and_then(|request| request.line.as_ref().map(|_| tag)),
+    match agent.group.as_str() {
+        "needs_you" => Row {
+            group: Group::NeedsYou,
+            ..Row::default()
+        },
+        "working" => Row {
+            group: Group::Working,
+            line: if agent.waiting_on_descendants {
+                agent.descendant_line.clone()
+            } else {
+                label_line()
+            },
+            unfinished: false,
+        },
+        "done" => Row {
+            group: Group::Done,
+            line: label_line(),
+            unfinished: false,
+        },
+        _ => Row {
+            group: Group::Idle,
+            line: label_line().filter(|_| unfinished),
+            unfinished,
+        },
     }
 }
 
-pub(super) fn mergeable(pull: &crate::request_view::AgentPullRequestSnapshot) -> bool {
+pub(crate) fn mergeable(pull: &AgentPullRequestSnapshot) -> bool {
     pull.checks == PullRequestChecks::Passing
         && matches!(pull.review, None | Some(ReviewDecision::Approved))
 }
 
-/// A native unanswered question also holds the pane blocked until a reply.
-/// Only that proven native wait overrides the approval of a blocked menu;
-/// an AI question alone never changes what the menu asks the operator to do.
-fn demand_tag(agent: &SidebarAgentSnapshot) -> Option<Tag> {
-    let native_question = agent.demand == "question"
-        && agent
-            .user_turn
-            .as_ref()
-            .is_some_and(|turn| turn.kind == hide_session::turns::UserTurnKind::Question);
-    if agent.blocked && !native_question {
-        Some(Tag::Approval)
-    } else if agent.demand == "question" {
-        Some(Tag::Answer)
-    } else {
-        None
+/// One PR's state as a chip or icon draws it, worst first (PRD D-30).
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrState {
+    Failed,
+    /// Checks running, or waiting on a review.
+    Pending,
+    Mergeable,
+    Merged,
+}
+
+pub(crate) fn pr_state(pull: &AgentPullRequestSnapshot) -> Option<PrState> {
+    match pull.badge {
+        PullRequestBadge::Closed => None,
+        PullRequestBadge::Merged => Some(PrState::Merged),
+        PullRequestBadge::Open | PullRequestBadge::Review => {
+            Some(if pull.checks == PullRequestChecks::Failed {
+                PrState::Failed
+            } else if mergeable(pull) {
+                PrState::Mergeable
+            } else {
+                PrState::Pending
+            })
+        }
     }
 }
 
-pub(crate) fn tag(agent: &SidebarAgentSnapshot, verb: RequestVerb) -> Tag {
-    match verb {
-        RequestVerb::Answer => demand_tag(agent).unwrap_or(Tag::Answer),
-        RequestVerb::Fix => Tag::Fix,
-        RequestVerb::Review => {
-            let mut duties = agent
-                .request
-                .iter()
-                .flat_map(|request| &request.pull_requests)
-                .filter(|pull| pull.live && pull.duty && !pull.badge.is_settled())
-                .peekable();
-            if duties.peek().is_some() && duties.all(mergeable) {
-                Tag::Merge
-            } else {
-                Tag::Review
-            }
-        }
-        RequestVerb::Stopped => Tag::Stopped,
-        RequestVerb::Result => Tag::Result,
-        RequestVerb::Working => Tag::Working,
-        RequestVerb::Waiting
-            if agent.request.iter().any(|request| {
-                request.pull_requests.iter().any(|pull| {
-                    pull.live
-                        && pull.duty
-                        && !pull.badge.is_settled()
-                        && pull.checks == PullRequestChecks::Pending
-                })
-            }) =>
-        {
-            Tag::CiWait
-        }
-        RequestVerb::Waiting => Tag::Waiting,
-        RequestVerb::Idle => Tag::Idle,
-    }
+/// The PRs this row holds the duty of, never its descendants' (PRD D-18,
+/// D-39): how many, the worst state and how many share it, and each PR as an
+/// index into `request.pull_requests`, worst first. Closed PRs are not counted.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrSummary {
+    pub count: usize,
+    pub worst: PrState,
+    pub worst_count: usize,
+    pub pulls: Vec<OwnPr>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct OwnPr {
+    pub index: usize,
+    pub state: PrState,
+}
+
+pub(crate) fn own_prs(agent: &SidebarAgentSnapshot) -> Option<PrSummary> {
+    let mut pulls: Vec<OwnPr> = agent
+        .request
+        .iter()
+        .flat_map(|request| request.pull_requests.iter().enumerate())
+        .filter(|(_, pull)| pull.duty && pull.live)
+        .filter_map(|(index, pull)| pr_state(pull).map(|state| OwnPr { index, state }))
+        .collect();
+    pulls.sort_by_key(|pull| pull.state);
+    let worst = pulls.first()?.state;
+    Some(PrSummary {
+        count: pulls.len(),
+        worst,
+        worst_count: pulls.iter().filter(|pull| pull.state == worst).count(),
+        pulls,
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -189,102 +185,23 @@ pub struct Section {
     pub group: Group,
     /// Member indices, in the order the panel draws them.
     pub members: Vec<usize>,
+    /// Idle rows with neither a PR nor unfinished work, folded as "N more".
+    pub more: Vec<usize>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Scope {
-    pub counts: std::collections::BTreeMap<Group, usize>,
+    /// Nonempty groups only, in `GROUPS` order.
     pub groups: Vec<Section>,
-    pub closed_prs: Vec<ClosedPr>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ClosedPr {
-    pub project_id: String,
-    pub number: u32,
-    pub tag: Tag,
-}
-
-impl Default for Scope {
-    fn default() -> Self {
-        Self {
-            counts: GROUPS.into_iter().map(|group| (group, 0)).collect(),
-            groups: Vec::new(),
-            closed_prs: Vec::new(),
-        }
-    }
-}
-
-pub(crate) fn add_closed_prs(
-    scope: &mut Scope,
-    project: &crate::model::WorkspaceSnapshot,
-    numbers: Option<&std::collections::BTreeSet<u32>>,
-    agents: &[&SidebarAgentSnapshot],
-) {
-    let before = scope.closed_prs.len();
-    let live_urls: std::collections::HashSet<_> = agents
-        .iter()
-        .flat_map(|agent| {
-            agent
-                .request
-                .iter()
-                .flat_map(|request| &request.pull_requests)
-        })
-        .filter(|pull| pull.live)
-        .map(|pull| pull.url.as_str())
-        .collect();
-    for pr in &project.pull_requests {
-        if pr.badge.is_settled()
-            || !numbers.is_some_and(|numbers| numbers.contains(&pr.number))
-            || live_urls.contains(pr.url.as_str())
-        {
-            continue;
-        }
-        scope.closed_prs.push(ClosedPr {
-            project_id: project.id.clone(),
-            number: pr.number,
-            tag: if pr.checks == PullRequestChecks::Passing
-                && matches!(pr.review, None | Some(ReviewDecision::Approved))
-            {
-                Tag::Merge
-            } else {
-                Tag::Review
-            },
-        });
-    }
-    if !scope.closed_prs.is_empty() {
-        *scope
-            .counts
-            .get_mut(&Group::ReviewMerge)
-            .expect("all session groups counted") += scope.closed_prs.len() - before;
-        if !scope
-            .groups
-            .iter()
-            .any(|section| section.group == Group::ReviewMerge)
-        {
-            let at = scope
-                .groups
-                .iter()
-                .position(|section| section.group > Group::ReviewMerge)
-                .unwrap_or(scope.groups.len());
-            scope.groups.insert(
-                at,
-                Section {
-                    group: Group::ReviewMerge,
-                    members: Vec::new(),
-                },
-            );
-        }
-    }
 }
 
 pub(crate) fn scope<'a>(members: impl Iterator<Item = (usize, &'a SidebarAgentSnapshot)>) -> Scope {
     let members: Vec<_> = members
         .filter(|(_, row)| {
             if row.resolved.is_some() {
-                row.resolved_today
+                row.resolved_recent
             } else {
-                !row.delegated || row.escalation.is_some()
+                !row.delegated
             }
         })
         .collect();
@@ -295,25 +212,58 @@ pub(crate) fn scope<'a>(members: impl Iterator<Item = (usize, &'a SidebarAgentSn
             .filter(|(_, row)| row.state.session.group == group)
             .copied()
             .collect();
-        rows.sort_by(|(a_index, a), (b_index, b)| {
-            if matches!(group, Group::MyTurn | Group::ReviewMerge) {
-                a.state
-                    .request_since
-                    .cmp(&b.state.request_since)
-                    .then_with(|| a_index.cmp(b_index))
+        let failed = |row: &SidebarAgentSnapshot| {
+            row.state
+                .pr
+                .as_ref()
+                .is_some_and(|pr| pr.worst == PrState::Failed)
+        };
+        let idle_rank = |row: &SidebarAgentSnapshot| {
+            if row.state.session.unfinished {
+                0
             } else {
+                match row.state.pr.as_ref().map(|pr| pr.worst) {
+                    Some(PrState::Failed) => 1,
+                    Some(PrState::Mergeable) => 2,
+                    Some(PrState::Pending) => 3,
+                    Some(PrState::Merged) => 4,
+                    None => 5,
+                }
+            }
+        };
+        rows.sort_by(|(a_index, a), (b_index, b)| {
+            let recent = || {
                 b.last_activity
                     .cmp(&a.last_activity)
                     .then_with(|| a_index.cmp(b_index))
+            };
+            match group {
+                Group::NeedsYou => a
+                    .state
+                    .request_since
+                    .cmp(&b.state.request_since)
+                    .then_with(|| a_index.cmp(b_index)),
+                Group::Working => failed(b).cmp(&failed(a)).then_with(recent),
+                Group::Done => recent(),
+                Group::Idle => idle_rank(a).cmp(&idle_rank(b)).then_with(recent),
+                Group::Resolved => {
+                    let at =
+                        |row: &SidebarAgentSnapshot| row.resolved.as_ref().map(|r| r.at_unix_ms);
+                    at(b).cmp(&at(a)).then_with(|| a_index.cmp(b_index))
+                }
             }
         });
-        result.counts.insert(group, rows.len());
-        if !rows.is_empty() {
-            result.groups.push(Section {
-                group,
-                members: rows.into_iter().map(|(member, _)| member).collect(),
-            });
+        if rows.is_empty() {
+            continue;
         }
+        let (shown, more): (Vec<_>, Vec<_>) = rows
+            .into_iter()
+            .partition(|(_, row)| group != Group::Idle || idle_rank(row) < 5);
+        result.groups.push(Section {
+            group,
+            members: shown.into_iter().map(|(member, _)| member).collect(),
+            more: more.into_iter().map(|(member, _)| member).collect(),
+        });
     }
     result
 }

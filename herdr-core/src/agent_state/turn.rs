@@ -81,6 +81,62 @@ pub struct RowState {
     pub request_todo: bool,
     pub descendant_asking: u32,
     pub request_since: Option<u64>,
+    /// What a Needs You row asks the operator (PRD B2): its own demand, else
+    /// its lead raised descendant; absent outside Needs You.
+    pub ask: Option<Ask>,
+    /// Where the row stands among its siblings in a tree (PRD B11): asking or
+    /// raised, working, finished unread, then the rest.
+    pub tree_rank: u8,
+    /// The row's own PRs (PRD D-18, D-39).
+    pub pr: Option<super::sessions::PrSummary>,
+}
+
+/// A Needs You row's second line: a verb and what to do, nothing else (PRD
+/// D-37). `what` is absent when no label line or letter says it; the shell
+/// then words the verb's own fallback. `more` counts the other asks under
+/// the same root, which only its pane band names.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct Ask {
+    pub verb: super::escalation::Verb,
+    pub what: Option<String>,
+    pub more: usize,
+}
+
+/// The verb of the row's own demand. A native unanswered question also holds
+/// the pane blocked until a reply; only that proven native wait overrides
+/// the approval of a blocked menu.
+pub(crate) fn demand_verb(agent: &SidebarAgentSnapshot) -> Option<super::escalation::Verb> {
+    use super::escalation::Verb;
+    let native_question = agent.demand == "question"
+        && agent
+            .user_turn
+            .as_ref()
+            .is_some_and(|turn| turn.kind == hide_session::turns::UserTurnKind::Question);
+    if (agent.blocked || agent.demand == "approval") && !native_question {
+        Some(Verb::Approval)
+    } else if matches!(agent.demand.as_str(), "question" | "error") {
+        Some(Verb::Answer)
+    } else {
+        None
+    }
+}
+
+fn ask_of(agent: &SidebarAgentSnapshot, needs_you: bool) -> Option<Ask> {
+    if !needs_you {
+        return None;
+    }
+    if let Some(verb) = demand_verb(agent) {
+        return Some(Ask {
+            verb,
+            what: agent.detail.clone(),
+            more: agent.raised.len(),
+        });
+    }
+    agent.raised.first().map(|lead| Ask {
+        verb: lead.verb,
+        what: lead.what.clone(),
+        more: agent.raised.len() - 1,
+    })
 }
 
 pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
@@ -93,7 +149,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
     let chip_kind = match demand {
         "error" => "error",
         "question" | "approval" => "warning",
-        _ if agent.escalation.is_some() => "warning",
+        _ if agent.escalation.is_some() || !agent.raised.is_empty() => "warning",
         _ if activity == "working" => "working",
         _ if activity == "stopped" && agent.emphasized => "success",
         _ => "subtle",
@@ -110,7 +166,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
     } else {
         chip_tone
     };
-    let mut line = agent
+    let line = agent
         .detail
         .as_deref()
         .map(str::trim)
@@ -139,19 +195,6 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
                 },
             }
         });
-    if let Some(child) = agent.raised_children.first() {
-        line = Some(RowLine {
-            text: child.reason.as_ref().map_or_else(
-                || format!("↳ {}", child.title),
-                |reason| format!("↳ {}: {reason}", child.title),
-            ),
-            mode: "raised_child",
-            tone: Tone {
-                kind: "warning",
-                read: false,
-            },
-        });
-    }
     let bucket = if needs_you || group == "done" {
         "turn"
     } else if agent.waiting_on_descendants {
@@ -183,7 +226,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             | RequestVerb::Result
     );
     RowState {
-        session: super::sessions::row(agent, verb),
+        session: super::sessions::row(agent),
         attention,
         needs_you,
         root: !agent.delegated,
@@ -269,8 +312,11 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         verb,
         request_todo,
         descendant_asking: agent.descendant_counts.question + agent.descendant_counts.approval,
-        request_since: if let Some(escalation) = &agent.escalation {
-            escalation.since_unix_ms
+        request_since: if needs_you
+            && demand_verb(agent).is_none()
+            && let Some(lead) = agent.raised.first()
+        {
+            lead.since_unix_ms
         } else if request_todo {
             agent
                 .request
@@ -279,6 +325,17 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         } else {
             agent.changed_at_unix_ms
         },
+        ask: ask_of(agent, needs_you),
+        tree_rank: if asking || agent.escalation.is_some() || !agent.raised.is_empty() {
+            0
+        } else if activity == "working" || agent.waiting_on_descendants {
+            1
+        } else if agent.symbol == "✓" {
+            2
+        } else {
+            3
+        },
+        pr: super::sessions::own_prs(agent),
     }
 }
 
@@ -553,7 +610,7 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
         ownership_of(agent),
         waiting,
     );
-    let group = if agent.escalation.is_some() {
+    let group = if !agent.raised.is_empty() {
         AgentGroup::NeedsYou
     } else {
         group
@@ -747,9 +804,10 @@ pub mod push {
         pub place: String,
     }
 
-    /// Root rows and escalated children use their core group. Ordinary child
-    /// questions stay with their parent. Existing human delivery notices own
-    /// undelivered-letter and unconfirmed-watch notifications.
+    /// Root rows use their core group, which a raised descendant already moved
+    /// to Needs You; a delegated row never notifies on its own (PRD B9).
+    /// Existing human delivery notices own undelivered-letter and
+    /// unconfirmed-watch notifications.
     fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, String, String)> {
         let mut roots: BTreeMap<AgentKey, (Effective, String, String)> = BTreeMap::new();
         for agent in projection.agents() {
@@ -758,9 +816,9 @@ pub mod push {
                 .as_deref()
                 .map(|place| place.split(" · ").next().unwrap_or(place).to_owned())
                 .unwrap_or_default();
-            let state = if agent.root_pane_id != agent.pane_id && !agent.escalated {
-                // Still present, but no longer the operator's responsibility:
-                // clear its previous escalation without a disappearance grace.
+            let state = if agent.root_pane_id != agent.pane_id {
+                // Its root carries any raise; clear a delegated row's previous
+                // state without a disappearance grace.
                 Effective::Seen
             } else if agent.human_notice {
                 Effective::Other

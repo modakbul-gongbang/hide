@@ -27,44 +27,13 @@ impl Runtime {
             )
             .collect()
     }
-    /// Uses the existing runtime clock; idle ticks compare one deadline.
-    pub(super) fn tick_session_day(&mut self, at: u64) -> bool {
-        if at < self.session_next_day_unix_ms {
+    /// Uses the existing runtime clock; idle ticks compare one deadline, the
+    /// moment the oldest Resolved row leaves the 24-hour window (PRD D-23).
+    pub(super) fn tick_session_window(&mut self, at: u64) -> bool {
+        if at < self.session_window_deadline_unix_ms {
             return false;
         }
-        let next = self.session_day_zone.as_ref().ok().and_then(|zone| {
-            jiff::Timestamp::from_millisecond(i64::try_from(at).ok()?)
-                .ok()?
-                .to_zoned(zone.clone())
-                .tomorrow()
-                .ok()?
-                .start_of_day()
-                .ok()?
-                .timestamp()
-                .as_millisecond()
-                .try_into()
-                .ok()
-        });
-        let Some(next) = next else {
-            self.session_next_day_unix_ms = u64::MAX;
-            self.push_diagnostic(
-                "session.resolve.date_unavailable",
-                "Local calendar rollover could not be determined".to_owned(),
-            );
-            return false;
-        };
-        self.session_next_day_unix_ms = next;
         self.project_session_state_at(at) | self.refresh_agent_scopes()
-    }
-    fn session_date(&self, at: u64) -> Option<String> {
-        let zone = self.session_day_zone.as_ref().ok()?;
-        Some(
-            jiff::Timestamp::from_millisecond(i64::try_from(at).ok()?)
-                .ok()?
-                .to_zoned(zone.clone())
-                .date()
-                .to_string(),
-        )
     }
 
     fn session_rows(&self) -> impl Iterator<Item = &SidebarAgentSnapshot> {
@@ -91,18 +60,9 @@ impl Runtime {
         {
             return false;
         }
-        let now = unix_milliseconds();
-        let Some(local_date) = self.session_date(now) else {
-            self.push_diagnostic(
-                "session.resolve.date_unavailable",
-                "Local calendar date could not be read".to_owned(),
-            );
-            return false;
-        };
         let record = sessions::Resolution {
-            at_unix_ms: now,
+            at_unix_ms: unix_milliseconds(),
             source,
-            local_date,
             session: row.lineage_session.clone(),
             activity: row.last_activity.clone(),
         };
@@ -228,16 +188,15 @@ impl Runtime {
     }
 
     fn project_session_state_at(&mut self, at: u64) -> bool {
-        let today = self.session_date(at);
         let mut rows = self.session_rows().cloned().collect::<Vec<_>>();
         let mut invalid = Vec::new();
+        let mut deadline = u64::MAX;
         for row in &mut rows {
             row.escalation = escalation::of(
                 row,
                 self.delivery_ledger.as_ref().ok().map(AsRef::as_ref),
                 &self.delivery_holds,
             );
-            row.raised_children.clear();
             let record = self.snapshot.ui_state.resolved_sessions.get(&row.pane_id);
             let pending = self.pending_session_resolutions.get(&row.pane_id);
             if record.or(pending).is_some_and(|record| {
@@ -249,47 +208,34 @@ impl Runtime {
             } else {
                 row.resolved = record.cloned();
             }
-            row.resolved_today = row
-                .resolved
-                .as_ref()
-                .is_some_and(|record| Some(&record.local_date) == today.as_ref());
-            crate::agent_state::rederive(row);
-        }
-        let mut raised: HashMap<String, Vec<escalation::RaisedChild>> = HashMap::new();
-        for row in &rows {
-            if row.escalation.is_none() || row.resolved.is_some() {
-                continue;
-            }
-            if let (Some(parent), Some(tag)) = (&row.lineage_parent_pane_id, row.state.session.tag)
-            {
-                raised
-                    .entry(parent.clone())
-                    .or_default()
-                    .push(escalation::RaisedChild {
-                        pane_id: row.pane_id.clone(),
-                        title: row.identity_label.clone(),
-                        tag,
-                        reason: row.request.as_ref().and_then(|r| r.line.clone()),
-                        since_unix_ms: row.escalation.as_ref().and_then(|e| e.since_unix_ms),
-                    });
-            }
-        }
-        for children in raised.values_mut() {
-            children.sort_by_key(|child| {
-                (
-                    match child.tag {
-                        sessions::Tag::Approval => 0,
-                        sessions::Tag::Answer => 1,
-                        _ => 2,
-                    },
-                    child.since_unix_ms,
-                )
+            let leaves = row.resolved.as_ref().map(|record| {
+                record
+                    .at_unix_ms
+                    .saturating_add(sessions::RESOLVED_WINDOW_MS)
             });
+            row.resolved_recent = leaves.is_some_and(|leaves| leaves > at);
+            if let Some(leaves) = leaves.filter(|&leaves| leaves > at) {
+                deadline = deadline.min(leaves);
+            }
         }
+        let ledger = self.delivery_ledger.as_ref().ok();
+        escalation::lift(&mut rows, |id| {
+            ledger?
+                .letters
+                .iter()
+                .find(|letter| letter.id == id)
+                .and_then(|letter| crate::display_text::one_line(letter.body.lines().next()?, 80))
+        });
         for row in &mut rows {
-            row.raised_children = raised.remove(&row.pane_id).unwrap_or_default();
+            // A raise brings a resolved root back, as a new letter would.
+            if !row.raised.is_empty() && row.resolved.is_some() {
+                invalid.push(row.pane_id.clone());
+                row.resolved = None;
+                row.resolved_recent = false;
+            }
             crate::agent_state::rederive(row);
         }
+        self.session_window_deadline_unix_ms = deadline;
         let mut changed = false;
         for (row, next) in self
             .snapshot
@@ -332,6 +278,7 @@ impl Runtime {
             .filter(|row| {
                 row.resolved.is_none()
                     && row.escalation.is_none()
+                    && row.raised.is_empty()
                     && sessions::auto_resolvable(
                         row,
                         self.snapshot
@@ -359,29 +306,26 @@ impl Runtime {
             .collect();
         // Queue one batch, rather than recursively deriving each row.
         let now = unix_milliseconds();
-        if let Some(local_date) = self.session_date(now) {
-            for (pane, session, activity) in &automatic {
-                self.pending_session_resolutions.insert(
-                    pane.clone(),
-                    sessions::Resolution {
-                        at_unix_ms: now,
-                        source: sessions::ResolveSource::Automatic,
-                        local_date: local_date.clone(),
-                        session: session.clone(),
-                        activity: activity.clone(),
-                    },
-                );
-            }
-            if !automatic.is_empty()
-                && let Err(message) = self.write_ui_state()
-            {
-                for (pane, _, _) in automatic {
-                    self.pending_session_resolutions.remove(&pane);
-                }
-                self.push_diagnostic("session.resolve.save_failed", message);
-            }
-            changed |= self.project_session_state();
+        for (pane, session, activity) in &automatic {
+            self.pending_session_resolutions.insert(
+                pane.clone(),
+                sessions::Resolution {
+                    at_unix_ms: now,
+                    source: sessions::ResolveSource::Automatic,
+                    session: session.clone(),
+                    activity: activity.clone(),
+                },
+            );
         }
+        if !automatic.is_empty()
+            && let Err(message) = self.write_ui_state()
+        {
+            for (pane, _, _) in automatic {
+                self.pending_session_resolutions.remove(&pane);
+            }
+            self.push_diagnostic("session.resolve.save_failed", message);
+        }
+        changed |= self.project_session_state();
         changed
     }
 }

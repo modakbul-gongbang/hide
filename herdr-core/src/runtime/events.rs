@@ -1260,6 +1260,7 @@ pub(super) enum Event {
     CheckSleepingSession(SleepingSessionPayload),
     PaneReopen(PaneTargetPayload),
     AgentTreeToggle(PaneTargetPayload),
+    SessionTreeToggle(PaneTargetPayload),
     RemoteControl(RemoteControlPayload),
     RemoteFileList(RemoteFileListPayload),
     FileOpen(FileOpenPayload),
@@ -1474,6 +1475,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "check_sleeping_session" => decode!(SleepingSessionPayload, CheckSleepingSession),
         "pane_reopen" => decode!(PaneTargetPayload, PaneReopen),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
+        "session_tree_toggle" => decode!(PaneTargetPayload, SessionTreeToggle),
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
         "remote_file_list" => decode!(RemoteFileListPayload, RemoteFileList),
         "file_open" => decode!(FileOpenPayload, FileOpen),
@@ -1603,6 +1605,47 @@ impl Runtime {
             changed |= self.settle_creation_request(&request_id);
         }
         changed
+    }
+
+    /// Opens or folds one agent's children in the sidebar tree, or in
+    /// Sessions, whose folds are kept apart (PRD D-25).
+    fn toggle_agent_tree(&mut self, pane_id: String, sessions: bool) -> bool {
+        let exists = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .any(|agent| agent.pane_id == pane_id)
+            || self
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .filter_map(|remote| remote.session.as_ref())
+                .any(|session| session.agents.iter().any(|agent| agent.pane_id == pane_id));
+        if !exists {
+            self.set_error(
+                "agent_tree.parent_unavailable",
+                format!("Agent pane {} is no longer available", pane_id),
+                true,
+            );
+            return true;
+        }
+        let expanded = if sessions {
+            &mut self.snapshot.ui_state.sessions_expanded_agent_pane_ids
+        } else {
+            &mut self.snapshot.ui_state.expanded_agent_pane_ids
+        };
+        if expanded.contains(&pane_id) {
+            expanded.retain(|pane| pane != &pane_id);
+        } else {
+            expanded.push(pane_id);
+        }
+        if !sessions {
+            self.refresh_agent_lineage();
+        }
+        self.persist_ui_state();
+        true
     }
 
     fn apply_event(&mut self, event: Event) -> bool {
@@ -3431,43 +3474,8 @@ impl Runtime {
                 self.persist_current_ui_state();
                 true
             }
-            Event::AgentTreeToggle(payload) => {
-                let exists = self
-                    .snapshot
-                    .navigator
-                    .agents
-                    .iter()
-                    .any(|agent| agent.pane_id == payload.pane_id)
-                    || self
-                        .snapshot
-                        .status
-                        .remote
-                        .iter()
-                        .filter_map(|remote| remote.session.as_ref())
-                        .any(|session| {
-                            session
-                                .agents
-                                .iter()
-                                .any(|agent| agent.pane_id == payload.pane_id)
-                        });
-                if !exists {
-                    self.set_error(
-                        "agent_tree.parent_unavailable",
-                        format!("Agent pane {} is no longer available", payload.pane_id),
-                        true,
-                    );
-                    return true;
-                }
-                let expanded = &mut self.snapshot.ui_state.expanded_agent_pane_ids;
-                if expanded.contains(&payload.pane_id) {
-                    expanded.retain(|pane| pane != &payload.pane_id);
-                } else {
-                    expanded.push(payload.pane_id);
-                }
-                self.refresh_agent_lineage();
-                self.persist_ui_state();
-                true
-            }
+            Event::AgentTreeToggle(payload) => self.toggle_agent_tree(payload.pane_id, false),
+            Event::SessionTreeToggle(payload) => self.toggle_agent_tree(payload.pane_id, true),
             Event::UiStateUpdate(payload) => {
                 let payload = *payload;
                 if let Some(visible) = payload.usage_window_visible {
@@ -3527,6 +3535,7 @@ impl Runtime {
                         .expanded_inactive_project_device_ids,
                     project_base_branches: current.project_base_branches,
                     expanded_agent_pane_ids: current.expanded_agent_pane_ids,
+                    sessions_expanded_agent_pane_ids: current.sessions_expanded_agent_pane_ids,
                     selected_path: payload.selected_path,
                     // The keyboard's pane, checkout and device are the
                     // core's: it moves them on the event that asks for the

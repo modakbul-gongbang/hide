@@ -41,10 +41,22 @@ pub struct TreeRow {
     pub depth: usize,
 }
 
-/// The sidebar lists operator sessions only. Delegated agents remain available
-/// through their parent's direct-child badge and the unchanged graph tree.
-pub(super) fn sidebar_tree(agents: &[&SidebarAgentSnapshot]) -> Tree {
+/// The sidebar lists operator sessions as roots (`rows`, which the digit
+/// shortcuts number) and, under a root the operator opened, its children and
+/// grandchildren wherever they work (`visible_rows`, PRD D-12, D-38): two
+/// levels only, siblings most urgent first. A grandchild's own children open
+/// in its popover instead (D-28).
+pub(super) fn sidebar_tree(
+    agents: &[&SidebarAgentSnapshot],
+    all: &[&SidebarAgentSnapshot],
+) -> Tree {
     let references = row_references(agents);
+    let all_references = row_references(all);
+    let by_pane: HashMap<_, _> = all
+        .iter()
+        .rev()
+        .map(|row| (row.pane_id.as_str(), *row))
+        .collect();
     let roots: Vec<_> = agents
         .iter()
         .copied()
@@ -58,6 +70,38 @@ pub(super) fn sidebar_tree(agents: &[&SidebarAgentSnapshot]) -> Tree {
             depth: 0,
         })
         .collect();
+    fn open(
+        parent: &SidebarAgentSnapshot,
+        depth: usize,
+        by_pane: &HashMap<&str, &SidebarAgentSnapshot>,
+        references: &HashMap<*const SidebarAgentSnapshot, RowRef>,
+        out: &mut Vec<TreeRow>,
+    ) {
+        if parent.lineage_collapsed || depth > 2 {
+            return;
+        }
+        let mut children: Vec<_> = parent
+            .lineage_child_pane_ids
+            .iter()
+            .filter_map(|id| by_pane.get(id.as_str()).copied())
+            .collect();
+        children.sort_by_key(|child| child.state.tree_rank);
+        for child in children {
+            out.push(TreeRow {
+                pane_id: child.pane_id.clone(),
+                occurrence: references[&(child as *const _)].occurrence,
+                depth,
+            });
+            if depth < 2 {
+                open(child, depth + 1, by_pane, references, out);
+            }
+        }
+    }
+    let mut visible_rows = Vec::new();
+    for (root, row) in roots.iter().zip(&rows) {
+        visible_rows.push(row.clone());
+        open(root, 1, &by_pane, &all_references, &mut visible_rows);
+    }
     let needs_you = roots
         .iter()
         .any(|row| row.state.needs_you || row.group == "done");
@@ -71,7 +115,7 @@ pub(super) fn sidebar_tree(agents: &[&SidebarAgentSnapshot]) -> Tree {
     let mut priority = roots;
     priority.sort_by_key(|row| row.state.attention_rank);
     Tree {
-        visible_rows: rows.clone(),
+        visible_rows,
         rows,
         shown: priority
             .iter()

@@ -29,6 +29,14 @@ pub(crate) enum RowMark {
 
 impl RowMark {
     pub(crate) fn of(agent: &SidebarAgentSnapshot) -> Self {
+        // A root raised by a descendant asks with its lead's mark, unless its
+        // own demand already does (PRD B1).
+        if let (None, Some(lead)) = (super::turn::demand_verb(agent), agent.raised.first()) {
+            return match lead.verb {
+                super::escalation::Verb::Answer => Self::Question,
+                _ => Self::Approval,
+            };
+        }
         // A root waiting on its children keeps the hollow ring and says so:
         // its own completion is not the news while a child is still busy, and
         // the badge beside it says what the children are doing (D-01, D-02).
@@ -349,9 +357,8 @@ pub mod phone {
         /// Whether opening the phone keeps this root notification. A read root
         /// question deliberately holds it even when the server clears its push.
         pub holds_notification: bool,
-        /// A delegated row reaches the operator only through core escalation.
-        pub escalated: bool,
-        /// The delivery notice is already responsible for this transition.
+        /// The delivery notice is already responsible for this transition: a
+        /// root in Needs You only for raised causes that notice announces.
         pub human_notice: bool,
     }
 
@@ -615,13 +622,20 @@ pub mod phone {
                 emphasized: matches!(str_of(agent, "group"), "needs_you" | "done"),
                 holds_notification: matches!(str_of(agent, "group"), "needs_you" | "done")
                     || matches!(str_of(agent, "demand"), "question" | "approval" | "error"),
-                escalated: agent
-                    .get("escalation")
-                    .is_some_and(|value| !value.is_null()),
-                human_notice: agent
-                    .pointer("/escalation/human_notice")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
+                human_notice: str_of(agent, "demand") == "none"
+                    && !agent
+                        .get("blocked")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    && agent
+                        .get("raised")
+                        .and_then(Value::as_array)
+                        .is_some_and(|raised| {
+                            !raised.is_empty()
+                                && raised.iter().all(|ask| {
+                                    ask.get("human_notice").and_then(Value::as_bool) == Some(true)
+                                })
+                        }),
                 agent_kind: str_of(agent, "agent_kind").to_owned(),
                 title: title.to_owned(),
                 place: places.get(pane_id).cloned(),
