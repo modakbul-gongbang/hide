@@ -31,6 +31,16 @@ pub struct Herdr {
 }
 
 impl Herdr {
+    /// Makes `folder` a repository with this account's git, so the
+    /// operator's git configuration never reaches the fixture.
+    pub fn git_init(&self, folder: &Path) -> Result<()> {
+        fs::create_dir_all(folder)?;
+        let mut init = self.environment.command("/usr/bin/git");
+        init.args(["init", "-q"]).current_dir(folder);
+        successful(init)?;
+        Ok(())
+    }
+
     fn start(
         root: &Path,
         environment: Environment,

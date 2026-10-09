@@ -83,6 +83,7 @@ impl Environment {
                     "CLAUDE_",
                     "CODEX_",
                     "OPENCODE_",
+                    "GIT_",
                 ]
                 .iter()
                 .any(|prefix| name.starts_with(prefix))
@@ -90,6 +91,9 @@ impl Environment {
             .collect();
         for (name, value) in [
             ("HOME", home.clone().into_os_string()),
+            // The account's git reads only its own home: no operator signing
+            // key or hook arrives through the machine's configuration.
+            ("GIT_CONFIG_NOSYSTEM", "1".into()),
             ("SHELL", "/bin/zsh".into()),
             (
                 "PATH",

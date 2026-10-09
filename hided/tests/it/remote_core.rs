@@ -1529,15 +1529,7 @@ fn a_page_an_agent_of_the_core_opens_shows_on_the_node_and_reaches_the_cores_loo
         // Its own repository, so the checkout is this folder and not the
         // repository the run folder sits in.
         let site = fixture.core_home().join("site");
-        std::fs::create_dir_all(&site)?;
-        ensure!(
-            std::process::Command::new("git")
-                .args(["init", "-q"])
-                .current_dir(&site)
-                .status()?
-                .success(),
-            "git init"
-        );
+        fixture.core.git_init(&site)?;
         fixture.create_workspace_on(CORE_NODE, &site)?;
         let nonce = format!("core-page-{}", std::process::id());
         let page = loopback_page(nonce.clone())?;
@@ -1931,14 +1923,7 @@ fn a_node_project_is_measured_on_the_node_as_a_local_one_is() -> Result<()> {
         // A repository of the node's, with a file whose size the
         // measurement has to count.
         let project = fixture.screen_home().join("project");
-        ensure!(
-            std::process::Command::new("git")
-                .args(["init", "-q"])
-                .current_dir(&project)
-                .status()?
-                .success(),
-            "git init"
-        );
+        fixture.screen.git_init(&project)?;
         std::fs::write(project.join("weight.bin"), vec![1_u8; 512 * 1024])?;
         fixture.screen.workspace_at(&project)?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -2519,22 +2504,10 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
             .map_err(anyhow::Error::msg)?
             .as_str()
             .to_owned();
-        let git_init = |folder: &std::path::Path| -> Result<()> {
-            std::fs::create_dir_all(folder)?;
-            ensure!(
-                std::process::Command::new("git")
-                    .args(["init", "-q"])
-                    .current_dir(folder)
-                    .status()?
-                    .success(),
-                "git init"
-            );
-            Ok(())
-        };
         let project = fixture.screen_home().join("project");
         let site = fixture.core_home().join("site");
         std::fs::create_dir_all(&project)?;
-        git_init(&site)?;
+        fixture.core.git_init(&site)?;
         let page = loopback_page("page".to_owned())?;
         let url = format!("http://localhost:{page}/");
         let hide = fixture.hided.with_file_name("hide");
