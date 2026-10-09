@@ -39057,6 +39057,1699 @@
       "width": "fit_content",
       "x": 1200,
       "y": 8281
+    },
+    {
+      "type": "frame",
+      "id": "cmp-agent-tree-parts",
+      "name": "Component / Agent tree parts",
+      "children": [
+        {
+          "type": "text",
+          "id": "cmp-agent-tree-parts-title",
+          "name": "Agent tree parts",
+          "content": "Agent tree parts",
+          "fill": "$--foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "cmp-agent-tree-parts-spec",
+          "name": "web/src/components/agent-tre",
+          "content": "web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the sidebar PR icon in the worst state of the agent's own PRs (failed red, pending amber, mergeable green, merged purple) and dimmed while GitHub cannot be read; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header's tree button, a tree icon and the direct child count; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. The Sessions and pane header PR chip and its list are the existing PR chip.",
+          "fill": "$--subtle-foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "400",
+          "textGrowth": "fixed-width",
+          "width": 820
+        },
+        {
+          "type": "frame",
+          "id": "cmp-agent-tree-parts-masters",
+          "name": "Masters",
+          "children": [
+            {
+              "type": "frame",
+              "id": "ath-verb",
+              "name": "Verb",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-verb-t",
+                  "name": "승인",
+                  "content": "승인",
+                  "fill": "$--warning",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "600"
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-pr-icon",
+              "name": "PR icon",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "ath-pr-g",
+                  "name": "Glyph",
+                  "enabled": true,
+                  "width": 14,
+                  "height": 14,
+                  "icon": "git-pull-request",
+                  "library": "lucide",
+                  "fill": "$--destructive"
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "width": 14,
+              "height": 14,
+              "justifyContent": "center",
+              "alignItems": "center"
+            },
+            {
+              "type": "frame",
+              "id": "ath-mark",
+              "name": "Descendant mark",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-mark-bang",
+                  "name": "!",
+                  "content": "!",
+                  "fill": "$--warning",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "ellipse",
+                  "id": "ath-mark-dot",
+                  "name": "Dot",
+                  "enabled": false,
+                  "width": 7,
+                  "height": 7,
+                  "fill": "$--agent-working"
+                },
+                {
+                  "type": "text",
+                  "id": "ath-mark-n",
+                  "name": "2",
+                  "content": "2",
+                  "fill": "$--warning",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "600"
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "gap": "$--spacing-xxs",
+              "alignItems": "center",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-tree-button",
+              "name": "Tree button",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "ath-tb-tree",
+                  "name": "Glyph",
+                  "enabled": true,
+                  "width": 12,
+                  "height": 12,
+                  "icon": "list-tree",
+                  "library": "lucide",
+                  "fill": "$--muted-foreground"
+                },
+                {
+                  "type": "text",
+                  "id": "ath-tb-n",
+                  "name": "8",
+                  "content": "8",
+                  "fill": "$--subtle-foreground",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "400"
+                },
+                {
+                  "type": "icon",
+                  "id": "ath-tb-chev",
+                  "name": "Glyph",
+                  "enabled": true,
+                  "width": 12,
+                  "height": 12,
+                  "icon": "chevron-down",
+                  "library": "lucide",
+                  "fill": "$--muted-foreground"
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "gap": "$--spacing-xxs",
+              "alignItems": "center",
+              "height": 16,
+              "padding": [
+                0,
+                "$--spacing-xs"
+              ],
+              "cornerRadius": "$--radius-xs",
+              "stroke": "$--border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            {
+              "type": "frame",
+              "id": "ath-row",
+              "name": "Tree row",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ath-row-rail",
+                  "name": "Ancestor rail",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ath-row-rail-v",
+                      "name": "Rail",
+                      "children": [],
+                      "fill": "$--lineage-rail",
+                      "x": 8,
+                      "y": 0,
+                      "width": 1,
+                      "height": 28
+                    }
+                  ],
+                  "layout": "none",
+                  "width": 18,
+                  "height": 28,
+                  "enabled": false
+                },
+                {
+                  "type": "frame",
+                  "id": "ath-row-elbow",
+                  "name": "Elbow",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ath-row-elbow-v",
+                      "name": "Rail",
+                      "children": [],
+                      "fill": "$--lineage-rail",
+                      "x": 8,
+                      "y": 0,
+                      "width": 1,
+                      "height": 13
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ath-row-elbow-h",
+                      "name": "Rail",
+                      "children": [],
+                      "fill": "$--lineage-rail",
+                      "x": 8,
+                      "y": 13,
+                      "width": 10,
+                      "height": 1
+                    }
+                  ],
+                  "layout": "none",
+                  "width": 18,
+                  "height": 28,
+                  "enabled": false
+                },
+                {
+                  "type": "frame",
+                  "id": "ath-row-lane",
+                  "name": "Chevron lane",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ath-row-chev",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 12,
+                      "height": 12,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "width": 16,
+                  "height": 28,
+                  "justifyContent": "center",
+                  "padding": [
+                    "$--spacing-xs",
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ath-row-body",
+                  "name": "Body",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ath-row-l1",
+                      "name": "Line one",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ath-row-mark",
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "ath-row-dot",
+                              "name": "Dot",
+                              "enabled": false,
+                              "width": 7,
+                              "height": 7,
+                              "fill": "$--agent-working"
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "ath-row-ring",
+                              "name": "Ring",
+                              "width": 7,
+                              "height": 7,
+                              "stroke": "$--agent-working",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ath-row-glyph",
+                              "name": "!",
+                              "content": "!",
+                              "fill": "$--warning",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "600",
+                              "enabled": false
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ath-row-provider",
+                          "name": "Provider artwork",
+                          "children": [],
+                          "width": 14,
+                          "height": 14,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "contain"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "ath-row-title",
+                          "name": "에이전트 제목",
+                          "content": "에이전트 제목",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        },
+                        {
+                          "id": "ath-row-pr",
+                          "type": "ref",
+                          "ref": "ath-pr-icon",
+                          "name": "PR icon"
+                        },
+                        {
+                          "id": "ath-row-desc",
+                          "type": "ref",
+                          "ref": "ath-mark",
+                          "name": "Descendant mark",
+                          "enabled": false
+                        },
+                        {
+                          "type": "text",
+                          "id": "ath-row-age",
+                          "name": "3m",
+                          "content": "3m",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "width": "fill_container",
+                      "height": 20
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ath-row-device",
+                      "name": "Device line",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ath-row-device-g",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "server",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ath-row-device-t",
+                          "name": "Mac mini",
+                          "content": "Mac mini",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xxs",
+                      "alignItems": "center",
+                      "height": 16,
+                      "padding": [
+                        0,
+                        "$--spacing-xs"
+                      ],
+                      "cornerRadius": "$--radius-xs",
+                      "stroke": "$--border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "enabled": false
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0,
+                  "width": "fill_container",
+                  "padding": [
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    "$--spacing-xs"
+                  ]
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "alignItems": "start",
+              "width": 260,
+              "cornerRadius": "$--radius-sm"
+            }
+          ],
+          "layout": "horizontal",
+          "gap": "$--spacing-xl",
+          "alignItems": "start"
+        },
+        {
+          "type": "frame",
+          "id": "cmp-agent-tree-parts-light",
+          "name": "Light",
+          "children": [
+            {
+              "type": "frame",
+              "id": "ath-l-verb-0-cell",
+              "name": "Verb 1",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-verb-0-cap",
+                  "name": "Verb 1",
+                  "content": "Verb 1",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-verb-0",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "승인"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-verb-1-cell",
+              "name": "Verb 2",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-verb-1-cap",
+                  "name": "Verb 2",
+                  "content": "Verb 2",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-verb-1",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "답변"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-verb-2-cell",
+              "name": "Verb 3",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-verb-2-cap",
+                  "name": "Verb 3",
+                  "content": "Verb 3",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-verb-2",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "확인"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-verb-3-cell",
+              "name": "Verb 4",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-verb-3-cap",
+                  "name": "Verb 4",
+                  "content": "Verb 4",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-verb-3",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "초안"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-failed-cell",
+              "name": "CI 실패",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-failed-cap",
+                  "name": "CI 실패",
+                  "content": "CI 실패",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-failed",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--destructive"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-pending-cell",
+              "name": "CI 도는 중 · 리뷰 대기",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-pending-cap",
+                  "name": "CI 도는 중 · 리뷰 대기",
+                  "content": "CI 도는 중 · 리뷰 대기",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-pending",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--pr-pending"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-mergeable-cell",
+              "name": "머지 가능",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-mergeable-cap",
+                  "name": "머지 가능",
+                  "content": "머지 가능",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-mergeable",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--success"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-merged-cell",
+              "name": "머지됨",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-merged-cap",
+                  "name": "머지됨",
+                  "content": "머지됨",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-merged",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-merge",
+                      "fill": "$--pr-merged"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-stale-cell",
+              "name": "흐림 (GitHub 못 읽음)",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-stale-cap",
+                  "name": "흐림 (GitHub 못 읽음)",
+                  "content": "흐림 (GitHub 못 읽음)",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-stale",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "opacity": 0.5,
+                  "descendants": {
+                    "ath-pr-g": {
+                      "fill": "$--destructive"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-mark-raised-cell",
+              "name": "! N raised",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-mark-raised-cap",
+                  "name": "! N raised",
+                  "content": "! N raised",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-mark-raised",
+                  "type": "ref",
+                  "ref": "ath-mark",
+                  "name": "Descendant mark"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-mark-working-cell",
+              "name": "● N working",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-mark-working-cap",
+                  "name": "● N working",
+                  "content": "● N working",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-mark-working",
+                  "type": "ref",
+                  "ref": "ath-mark",
+                  "name": "Descendant mark",
+                  "descendants": {
+                    "ath-mark-bang": {
+                      "enabled": false
+                    },
+                    "ath-mark-dot": {
+                      "enabled": true
+                    },
+                    "ath-mark-n": {
+                      "content": "3",
+                      "fill": "$--agent-working"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-tb-rest-cell",
+              "name": "Tree button rest",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-tb-rest-cap",
+                  "name": "Tree button rest",
+                  "content": "Tree button rest",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-tb-rest",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-tb-open-cell",
+              "name": "Tree button open",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-tb-open-cap",
+                  "name": "Tree button open",
+                  "content": "Tree button open",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-tb-open",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button",
+                  "fill": "$--secondary",
+                  "descendants": {
+                    "ath-tb-n": {
+                      "content": "2"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-row-root-cell",
+              "name": "Root, opened",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-row-root-cap",
+                  "name": "Root, opened",
+                  "content": "Root, opened",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-row-root",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-chev": {
+                      "icon": "chevron-down"
+                    },
+                    "ath-row-ring": {
+                      "enabled": false
+                    },
+                    "ath-row-dot": {
+                      "enabled": true
+                    },
+                    "ath-row-title": {
+                      "content": "루트 에이전트",
+                      "fill": "$--foreground"
+                    },
+                    "ath-row-pr/ath-pr-g": {
+                      "fill": "$--success"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-row-child-cell",
+              "name": "Child, folded with a raised descendant",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-row-child-cap",
+                  "name": "Child, folded with a raised ",
+                  "content": "Child, folded with a raised descendant",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-row-child",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-title": {
+                      "content": "자식"
+                    },
+                    "ath-row-desc": {
+                      "enabled": true
+                    },
+                    "ath-row-age": {
+                      "content": "19h"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-row-grand-cell",
+              "name": "Grandchild, no children",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-row-grand-cap",
+                  "name": "Grandchild, no children",
+                  "content": "Grandchild, no children",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-row-grand",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-rail": {
+                      "enabled": true
+                    },
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-chev": {
+                      "enabled": false
+                    },
+                    "ath-row-ring": {
+                      "enabled": false
+                    },
+                    "ath-row-glyph": {
+                      "enabled": true,
+                      "content": "✓",
+                      "fill": "$--success"
+                    },
+                    "ath-row-title": {
+                      "content": "손자"
+                    },
+                    "ath-row-pr": {
+                      "enabled": false
+                    },
+                    "ath-row-age": {
+                      "content": "40m"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-row-remote-cell",
+              "name": "Child on another device",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-row-remote-cap",
+                  "name": "Child on another device",
+                  "content": "Child on another device",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-row-remote",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-chev": {
+                      "enabled": false
+                    },
+                    "ath-row-ring": {
+                      "stroke": "$--muted-foreground"
+                    },
+                    "ath-row-title": {
+                      "content": "다른 기기의 자식"
+                    },
+                    "ath-row-pr": {
+                      "enabled": false
+                    },
+                    "ath-row-device": {
+                      "enabled": true
+                    },
+                    "ath-row-age": {
+                      "content": "5h"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            }
+          ],
+          "theme": {
+            "Mode": "Light"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "end",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "width": "fit_content",
+          "cornerRadius": "$--radius-md"
+        },
+        {
+          "type": "frame",
+          "id": "cmp-agent-tree-parts-dark",
+          "name": "Dark",
+          "children": [
+            {
+              "type": "frame",
+              "id": "ath-d-verb-0-cell",
+              "name": "Verb 1",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-verb-0-cap",
+                  "name": "Verb 1",
+                  "content": "Verb 1",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-verb-0",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "승인"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-verb-1-cell",
+              "name": "Verb 2",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-verb-1-cap",
+                  "name": "Verb 2",
+                  "content": "Verb 2",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-verb-1",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "답변"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-verb-2-cell",
+              "name": "Verb 3",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-verb-2-cap",
+                  "name": "Verb 3",
+                  "content": "Verb 3",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-verb-2",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "확인"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-verb-3-cell",
+              "name": "Verb 4",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-verb-3-cap",
+                  "name": "Verb 4",
+                  "content": "Verb 4",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-verb-3",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "초안"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-failed-cell",
+              "name": "CI 실패",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-failed-cap",
+                  "name": "CI 실패",
+                  "content": "CI 실패",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-failed",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--destructive"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-pending-cell",
+              "name": "CI 도는 중 · 리뷰 대기",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-pending-cap",
+                  "name": "CI 도는 중 · 리뷰 대기",
+                  "content": "CI 도는 중 · 리뷰 대기",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-pending",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--pr-pending"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-mergeable-cell",
+              "name": "머지 가능",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-mergeable-cap",
+                  "name": "머지 가능",
+                  "content": "머지 가능",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-mergeable",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--success"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-merged-cell",
+              "name": "머지됨",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-merged-cap",
+                  "name": "머지됨",
+                  "content": "머지됨",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-merged",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-merge",
+                      "fill": "$--pr-merged"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-stale-cell",
+              "name": "흐림 (GitHub 못 읽음)",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-stale-cap",
+                  "name": "흐림 (GitHub 못 읽음)",
+                  "content": "흐림 (GitHub 못 읽음)",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-stale",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "opacity": 0.5,
+                  "descendants": {
+                    "ath-pr-g": {
+                      "fill": "$--destructive"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-mark-raised-cell",
+              "name": "! N raised",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-mark-raised-cap",
+                  "name": "! N raised",
+                  "content": "! N raised",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-mark-raised",
+                  "type": "ref",
+                  "ref": "ath-mark",
+                  "name": "Descendant mark"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-mark-working-cell",
+              "name": "● N working",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-mark-working-cap",
+                  "name": "● N working",
+                  "content": "● N working",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-mark-working",
+                  "type": "ref",
+                  "ref": "ath-mark",
+                  "name": "Descendant mark",
+                  "descendants": {
+                    "ath-mark-bang": {
+                      "enabled": false
+                    },
+                    "ath-mark-dot": {
+                      "enabled": true
+                    },
+                    "ath-mark-n": {
+                      "content": "3",
+                      "fill": "$--agent-working"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-tb-rest-cell",
+              "name": "Tree button rest",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-tb-rest-cap",
+                  "name": "Tree button rest",
+                  "content": "Tree button rest",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-tb-rest",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-tb-open-cell",
+              "name": "Tree button open",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-tb-open-cap",
+                  "name": "Tree button open",
+                  "content": "Tree button open",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-tb-open",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button",
+                  "fill": "$--secondary",
+                  "descendants": {
+                    "ath-tb-n": {
+                      "content": "2"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-row-root-cell",
+              "name": "Root, opened",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-row-root-cap",
+                  "name": "Root, opened",
+                  "content": "Root, opened",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-row-root",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-chev": {
+                      "icon": "chevron-down"
+                    },
+                    "ath-row-ring": {
+                      "enabled": false
+                    },
+                    "ath-row-dot": {
+                      "enabled": true
+                    },
+                    "ath-row-title": {
+                      "content": "루트 에이전트",
+                      "fill": "$--foreground"
+                    },
+                    "ath-row-pr/ath-pr-g": {
+                      "fill": "$--success"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-row-child-cell",
+              "name": "Child, folded with a raised descendant",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-row-child-cap",
+                  "name": "Child, folded with a raised ",
+                  "content": "Child, folded with a raised descendant",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-row-child",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-title": {
+                      "content": "자식"
+                    },
+                    "ath-row-desc": {
+                      "enabled": true
+                    },
+                    "ath-row-age": {
+                      "content": "19h"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-row-grand-cell",
+              "name": "Grandchild, no children",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-row-grand-cap",
+                  "name": "Grandchild, no children",
+                  "content": "Grandchild, no children",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-row-grand",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-rail": {
+                      "enabled": true
+                    },
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-chev": {
+                      "enabled": false
+                    },
+                    "ath-row-ring": {
+                      "enabled": false
+                    },
+                    "ath-row-glyph": {
+                      "enabled": true,
+                      "content": "✓",
+                      "fill": "$--success"
+                    },
+                    "ath-row-title": {
+                      "content": "손자"
+                    },
+                    "ath-row-pr": {
+                      "enabled": false
+                    },
+                    "ath-row-age": {
+                      "content": "40m"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-row-remote-cell",
+              "name": "Child on another device",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-row-remote-cap",
+                  "name": "Child on another device",
+                  "content": "Child on another device",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-row-remote",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-chev": {
+                      "enabled": false
+                    },
+                    "ath-row-ring": {
+                      "stroke": "$--muted-foreground"
+                    },
+                    "ath-row-title": {
+                      "content": "다른 기기의 자식"
+                    },
+                    "ath-row-pr": {
+                      "enabled": false
+                    },
+                    "ath-row-device": {
+                      "enabled": true
+                    },
+                    "ath-row-age": {
+                      "content": "5h"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            }
+          ],
+          "theme": {
+            "Mode": "Dark"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "end",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "width": "fit_content",
+          "cornerRadius": "$--radius-md"
+        }
+      ],
+      "layout": "vertical",
+      "gap": "$--spacing-xl",
+      "padding": "$--spacing-xl",
+      "fill": "$--card",
+      "cornerRadius": "$--radius-lg",
+      "width": "fit_content",
+      "x": 8800,
+      "y": 7264
     }
   ],
   "themes": {

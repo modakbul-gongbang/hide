@@ -50,6 +50,8 @@
 // gives each its own `Component / Panel Tab` / `Component / Keycap` sheet instead,
 // generated the same way as every other sheet here.
 
+import {buildAgentTreeParts} from './pen-agent-tree.mjs';
+
 const UI = '$--font-ui';
 const MONO = '$--font-mono';
 
@@ -919,6 +921,7 @@ function buildAgentGraphBox(tokens) {
 export function componentSheets(tokens) {
   return [
     {name: 'Component / Agent graph box', build: () => buildAgentGraphBox(tokens), at: {x: 1200, y: 8281}},
+    {name: 'Component / Agent tree parts', build: () => buildAgentTreeParts(tokens), at: {x: 8800, y: 7264}},
   ];
 }
 
