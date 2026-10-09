@@ -1697,11 +1697,10 @@ impl Runtime {
                 continue;
             };
             self.report_prediction_mismatch(&operation, &current_signature);
-            self.op_timings.stamp(
-                &id,
-                super::op_timing::Stage::Applied,
-                std::time::Instant::now(),
-            );
+            if let Some(pane) = self.op_timings.applied(&id, std::time::Instant::now()) {
+                self.terminals
+                    .control(hide_node_link::terminal::TerminalControl::WatchFrame { pane });
+            }
             self.push_diagnostic(
                 "pane.operation.topology_confirmed",
                 format!(

@@ -1656,12 +1656,10 @@ impl Runtime {
                 let at = Instant::now()
                     .checked_sub(std::time::Duration::from_millis(age))
                     .unwrap_or_else(Instant::now);
-                self.op_timings.note_frame(&pane, at);
                 // A grid change counts only a frame after Herdr applied it;
-                // one before that leaves the record waiting for the next.
-                if self.op_timings.awaits_frame(&pane) {
-                    self.terminals.control(TerminalControl::WatchFrame { pane });
-                }
+                // one before that leaves the record waiting, and its node is
+                // asked to watch again when the layout applies it.
+                self.op_timings.note_frame(&pane, at);
                 false
             }
             TerminalReport::Input {

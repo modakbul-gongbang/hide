@@ -189,6 +189,52 @@ fn zoom_action(pane: &str) -> PaneControlAction {
     }
 }
 
+/// Frames the zoomed pane shows before Herdr's layout confirms the zoom do
+/// not end its timing record and ask its node for nothing: the core watches
+/// for a frame when Herdr accepts the zoom and once more when the layout
+/// confirms it, however many frames come between.
+#[test]
+fn frames_before_herdr_confirms_a_zoom_ask_the_node_for_no_watch() {
+    let herdr = fake_herdr("geometry-frame-watch");
+    let (mut runtime, terminals) = runtime_on(&herdr, session(Some(0.5), false));
+    let watches = |terminals: &RecordedTerminals| {
+        terminals
+            .take()
+            .into_iter()
+            .filter(
+                |control| matches!(control, TerminalControl::WatchFrame { pane } if pane == LEFT),
+            )
+            .count()
+    };
+    let shown = |runtime: &mut Runtime| {
+        runtime.ingest_terminal_reports(vec![TerminalReport::FrameShown {
+            pane: LEFT.to_owned(),
+            at_unix_ms: crate::runtime::unix_milliseconds(),
+        }]);
+    };
+    zoom(&mut runtime, LEFT);
+    herdr.wait_for_requests(1, Duration::from_secs(5));
+    answer(&mut runtime, zoom_action(LEFT), accepted());
+    assert_eq!(watches(&terminals), 1, "watched once Herdr accepted");
+    for _ in 0..3 {
+        shown(&mut runtime);
+    }
+    assert_eq!(
+        watches(&terminals),
+        0,
+        "frames before the layout ask nothing"
+    );
+    runtime.ingest_session(Ok(session(Some(0.5), true)));
+    assert_eq!(
+        watches(&terminals),
+        1,
+        "watched again once Herdr applied it"
+    );
+    shown(&mut runtime);
+    shown(&mut runtime);
+    assert_eq!(watches(&terminals), 0, "the frame after it ends the record");
+}
+
 /// B14, B12: a zoom is drawn at the request, the panes of its tab keep
 /// their PTY size while Herdr has not confirmed, and the size the view
 /// reported meanwhile reaches the PTY once when Herdr's layout arrives.

@@ -294,15 +294,16 @@ impl OpTimings {
         }
     }
 
-    /// Whether a record waits for a frame of `pane_id`.
-    pub(super) fn awaits_frame(&self, pane_id: &str) -> bool {
-        self.open.iter().any(|record| {
-            !record.has(Stage::FirstFrame)
-                && record
-                    .frame_pane
-                    .as_ref()
-                    .is_some_and(|(pane, _)| pane == pane_id)
-        })
+    /// Herdr's layout applied operation `id`: stamps `applied`, and names
+    /// the pane whose first frame after it the record waits for. A frame
+    /// shown before it did not count, so its node is asked to watch again.
+    pub(super) fn applied(&mut self, id: &str, at: Instant) -> Option<String> {
+        let record = self.record(id)?;
+        record.stamp(Stage::Applied, at);
+        match &record.frame_pane {
+            Some((pane, true)) if !record.has(Stage::FirstFrame) => Some(pane.clone()),
+            _ => None,
+        }
     }
 
     /// A terminal frame of `pane_id` was published at `at`.
