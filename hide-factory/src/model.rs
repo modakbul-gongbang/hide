@@ -2204,10 +2204,7 @@ mod summary_tests {
     #[test]
     fn a_copied_command_is_exactly_the_one_line_drawn() {
         assert_eq!(copyable_command("  gh auth login "), Some("gh auth login"));
-        assert_eq!(
-            copyable_command("ls ~/작업/빌드"),
-            Some("ls ~/작업/빌드")
-        );
+        assert_eq!(copyable_command("ls ~/작업/빌드"), Some("ls ~/작업/빌드"));
         for hidden in [
             "echo \u{202E}txt.hs",
             "a\u{200B}b",
