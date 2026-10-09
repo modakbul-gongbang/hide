@@ -256,10 +256,20 @@ async function onPrompt(state, event, ctx) {
   // SessionStart does for a new or resumed session.
   const first = !state.guided.has(session);
   if (first) state.guidance ??= startGuidance(state, ctx);
+  // Memory's session-start capsule is its own: it rides one written message per session, as Claude Code's SessionStart
+  // capsule does, whether or not the guidance has arrived yet, and the prompt capsule follows it.
+  const memoryFirst = !state.memoryStarted.has(session);
   const answer = await helper(
     state,
     "prompt",
-    { session_id: session, native_session: nativeSession(ctx), prompt: clip(event?.prompt), cwd: ctx?.cwd, first },
+    {
+      session_id: session,
+      native_session: nativeSession(ctx),
+      prompt: clip(event?.prompt),
+      cwd: ctx?.cwd,
+      first,
+      memory_first: memoryFirst,
+    },
     Math.max(0, deadline - Date.now()),
   );
   const sections = [];
@@ -284,7 +294,8 @@ async function onPrompt(state, event, ctx) {
   }
   // A letter left out stays pending in Hide and reaches the next prompt, and guidance left out comes again.
   if (state.pending.size >= PENDING_LIMIT) state.pending.delete(state.pending.keys().next().value);
-  state.pending.set(id, { session, letters, guided, at: now });
+  const memoryStarted = memoryFirst && answer?.memory_start === true;
+  state.pending.set(id, { session, letters, guided, memoryStarted, at: now });
   // Hidden: the host keeps it out of the conversation on screen and out of the title, and the reminder tags tell the
   // model it is not the operator's text. Hide writes those tags itself, so a letter cannot close them.
   const text = `<system-reminder>\n${sections.join("\n\n").replace(REMINDER_TAG, "<\u200b$1")}\n</system-reminder>`;
@@ -301,6 +312,7 @@ function onMessageEnd(state, event, ctx) {
     if (pending) {
       state.pending.delete(id);
       if (pending.guided) remember(state.guided, pending.session);
+      if (pending.memoryStarted) remember(state.memoryStarted, pending.session);
       if (pending.letters.length > 0) state.written.push(pending);
     }
     return;
@@ -392,6 +404,7 @@ export default function hide(pi) {
     root: false,
     guidance: null,
     guided: new Set(),
+    memoryStarted: new Set(),
     pending: new Map(),
     written: [],
     confirmed: new Set(),

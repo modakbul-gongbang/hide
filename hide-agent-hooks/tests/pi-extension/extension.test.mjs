@@ -191,7 +191,7 @@ test("a new session's first prompt carries the guidance and the letters in one h
   // `lost` counts calls an earlier budget gave up on; a loaded machine may add it. Letters know the session by its
   // file, as Herdr does; Memory by the host's own id, which its session reader keys a receipt by.
   const { lost: _lost, ...input } = call.input;
-  assert.deepEqual(input, { session_id: file, native_session: id, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, version: 2 });
+  assert.deepEqual(input, { session_id: file, native_session: id, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, memory_first: true, version: 2 });
   assert.equal(call.env.HERDR_PANE_ID, "w1:p1");
 
   // Once the host wrote it, the session's guidance is given.
@@ -294,6 +294,26 @@ test("guidance whose read failed or whose message was never written comes with a
   const unwritten = await prompt(host);
   assert.match(unwritten.message.content, /HIDE-GUIDANCE/);
   assert.match((await prompt(host)).message.content, /HIDE-GUIDANCE/);
+});
+
+test("Memory's session-start capsule rides one written message, whether or not the guidance came with it", async () => {
+  const host = await extension();
+  answer({ start: { exit: 1 }, prompt: { context: "MEMORY-START", letters: [], memory_start: true } });
+  await host.emit("session_start", sample("session_start").event, context("session_start"));
+  await until("start");
+  // Asked for, but the message the host never writes leaves it owed.
+  await prompt(host);
+  const carried = await prompt(host);
+  assert.match(carried.message.content, /MEMORY-START/);
+  await written(host, carried.message);
+  answer({ prompt: { context: "MEMORY-PROMPT", letters: [], memory_start: false } });
+  await prompt(host);
+  const calls = await until("prompt", 3);
+  assert.deepEqual(
+    calls.map((call) => [call.input.first, call.input.memory_first]),
+    [[true, true], [true, true], [true, false]],
+    "the guidance is still owed, the Memory start no longer",
+  );
 });
 
 test("a headless run and an unsaved session take no letters", async () => {

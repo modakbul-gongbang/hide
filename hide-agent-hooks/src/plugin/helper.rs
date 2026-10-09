@@ -46,6 +46,10 @@ struct Input {
     prompt: Option<String>,
     cwd: Option<PathBuf>,
     first: bool,
+    /// Whether Memory's session-start capsule is still to be given; Pi's and
+    /// omp's extension tracks it apart from the guidance, and OpenCode's
+    /// plugin, which sends none, gives both on its first prompt.
+    memory_first: Option<bool>,
     letters: Vec<String>,
     tool: Option<String>,
     command: Option<String>,
@@ -182,13 +186,19 @@ fn prompt(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value 
         return json!({});
     };
     let memory_session = agent.memory_session(&input, &session);
+    if agent.adapter.memory.is_some() && memory_session.is_none() {
+        // A script of this build always sends the host's id; Memory without
+        // it would be signed for a session no reader knows.
+        delivery::diagnose(home, "plugin");
+    }
+    let memory_start = input.memory_first.unwrap_or(input.first);
     let memory = if agent.adapter.memory.is_some()
         && let Some(memory_session) = memory_session
     {
         memory_context_until(
             MemoryRequest {
                 runtime_id: agent.runtime(),
-                event: if input.first {
+                event: if memory_start {
                     HookEvent::SessionStart
                 } else {
                     HookEvent::UserPromptSubmit
@@ -215,13 +225,16 @@ fn prompt(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value 
         delivery::diagnose_failure(home, &failure);
         None
     });
+    // A session-start capsule given here tells the script to stop asking for
+    // one once the message carrying it is written.
+    let memory_start = memory_start && memory.is_some();
     let mut context = memory.unwrap_or_default();
     let mut letters = Vec::new();
     if let Some(Intake { context: text, ids }) = intake {
         context.push_str(&text);
         letters = ids;
     }
-    json!({ "context": context, "letters": letters })
+    json!({ "context": context, "letters": letters, "memory_start": memory_start })
 }
 
 fn confirm(home: &Path, input: Input, deadline: Instant) -> Value {

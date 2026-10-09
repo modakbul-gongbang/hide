@@ -613,11 +613,9 @@ pub(crate) fn parse_line(agent: Agent, item: &Value) -> LineResult {
             at,
             text,
         )
-        .with_images(images)
-        // Only what the host itself recorded as context is the provider's;
-        // an operator's message that merely starts like a reminder is shown
-        // as injected but never asserts a Memory receipt, as with Claude
-        // Code's transcripts.
-        .with_provider_injected(role != "user" && kind == EventKind::Injected),
+        // Only Hide's own custom message above is provider-injected: a
+        // message entry, even one that starts like a reminder, is shown as
+        // injected but never asserts a Memory receipt.
+        .with_images(images),
     )
 }

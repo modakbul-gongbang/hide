@@ -648,7 +648,7 @@ The leaf selects dialects but does not implement them.
 `hide-session` owns session location and parsing, including whether a format reports user turns; the delivery gate conservatively holds a letter when such a reader cannot establish the current turn.
 `hide-kit` projects the shared rows into pieces and owns installation policy, while core feature gates read the relevant independent capability.
 OpenCode's existing title reader remains distinct from the session-file features offered for Claude Code and Codex; its letters, Memory, spawn guard and subagent count come from Hide's plugin ([agent-hooks.md: OpenCode: Hide's plugin](agent-hooks.md#opencode-hides-plugin)), not from its sessions.
-Pi's and omp's letters and spawn guard, and omp's subagent count and `ask` guard, come the same way from Hide's extension ([agent-hooks.md: Pi and omp: Hide's extension](agent-hooks.md#pi-and-omp-hides-extension)).
+Pi's and omp's letters, Memory and spawn guard, and omp's subagent count and `ask` guard, come the same way from Hide's extension ([agent-hooks.md: Pi and omp: Hide's extension](agent-hooks.md#pi-and-omp-hides-extension)).
 Pi 1.0.4 and omp 18.7.0 extend the shared file reader through `hide-session::native_file`: the first version3 session header proves the native ID and exact cwd under the respective default `.pi/agent/sessions` or `.omp/agent/sessions` root.
 The native default cwd directory is additionally required because Pi's ID lookup outside it prompts to fork instead of resuming the same session; lossy folder encoding still never proves ownership.
 Filename suffixes never supply an ID, and links below home and custom session directories confer no read authority.

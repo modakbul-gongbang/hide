@@ -1,6 +1,8 @@
 //! `hide-agent-hooks opencode <operation>`, what Hide's OpenCode plugin asks
-//! (PRD opencode-plugin B3, B4, B7, B9, B11, B19): the compiled helper beside a
-//! stand-in `hide` that records every call, run with the JSON the plugin sends.
+//! (PRD opencode-plugin B3, B4, B7, B9, B11, B19), and the Memory Pi's and
+//! omp's extension asks for (PRD pi-omp-extension B10): the compiled helper
+//! beside a stand-in `hide` that records every call, run with the JSON the
+//! script sends.
 
 #![cfg(unix)]
 
@@ -55,13 +57,21 @@ impl Machine {
     }
 
     fn run(&self, operation: &str, input: &Value, in_pane: bool) -> Value {
-        self.run_bytes(operation, input.to_string().as_bytes(), in_pane)
+        self.run_as("opencode", operation, input, in_pane)
+    }
+
+    fn run_as(&self, agent: &str, operation: &str, input: &Value, in_pane: bool) -> Value {
+        self.run_bytes_as(agent, operation, input.to_string().as_bytes(), in_pane)
     }
 
     fn run_bytes(&self, operation: &str, input: &[u8], in_pane: bool) -> Value {
+        self.run_bytes_as("opencode", operation, input, in_pane)
+    }
+
+    fn run_bytes_as(&self, agent: &str, operation: &str, input: &[u8], in_pane: bool) -> Value {
         let mut command = Command::new(&self.helper);
         command
-            .args(["opencode", operation])
+            .args([agent, operation])
             .env(hide_platform::host::HOME_VARIABLE, &self.home)
             .env("PATH", "/usr/bin:/bin")
             .env("HERDR_SOCKET_PATH", self.home.join("no-herdr.sock"))
@@ -236,5 +246,95 @@ fn start_answers_hides_session_guidance() {
     assert!(
         context.contains(hide_agent_hooks::guidance::GUIDANCE_LINE),
         "{context}"
+    );
+}
+
+/// A Memory-enabled Project beside the machine's HOME, in the store the
+/// helper reads.
+fn memory_project(machine: &Machine) -> (PathBuf, String, hide_memory::MemoryStore) {
+    let root = machine.home.parent().unwrap().join("project");
+    std::fs::create_dir_all(&root).unwrap();
+    let node = hide_platform::host::machine_id().unwrap();
+    let project = hide_project::resolve(&root, &node).unwrap();
+    let database = hide_agent_hooks::memory::database_path(&machine.home);
+    std::fs::create_dir_all(database.parent().unwrap()).unwrap();
+    let store = hide_memory::MemoryStore::open(&database).unwrap();
+    store
+        .ensure_project(&project.id, &project.root, &node)
+        .unwrap();
+    store.set_enabled(&project.id, true, true).unwrap();
+    (root, project.id, store)
+}
+
+/// The `event`, `items` and `auth` of the receipt line in `context`.
+fn receipt(context: &str) -> Option<(String, String, String)> {
+    let line = context
+        .lines()
+        .find(|line| line.starts_with("<hide-memory-receipt "))?;
+    let field = |name: &str| {
+        let start = line.find(&format!("{name}=\""))? + name.len() + 2;
+        Some(line[start..].split_once('"')?.0.to_owned())
+    };
+    Some((field("event")?, field("items")?, field("auth")?))
+}
+
+/// Pi's and omp's extension names the session by its file for letters and by
+/// the host's own id for Memory: the receipt is signed for the id, which is
+/// what their session reader keys it by, never for the file; with no usable id
+/// the prompt carries no Memory but still its letters. OpenCode's session id
+/// is its own.
+#[test]
+fn pi_and_omp_memory_receipts_are_signed_for_the_hosts_session_id_and_opencodes_for_its_own() {
+    let machine = Machine::new();
+    let (project, project_id, store) = memory_project(&machine);
+    let version = hide_agent_hooks::pi_extension::VERSION;
+    for agent in ["pi", "omp"] {
+        let file = format!("/home/sessions/-work-/2026-10-09T00-00-00-000Z_{agent}.jsonl");
+        let id = format!("01a11d1d-{agent}");
+        let answer = machine.run_as(
+            agent,
+            "prompt",
+            &json!({"session_id": file, "native_session": id, "prompt": "Fix it", "cwd": project,
+                "first": true, "memory_first": true, "version": version}),
+            true,
+        );
+        assert_eq!(answer["memory_start"], json!(true), "{agent}");
+        assert_eq!(answer["letters"], json!(["letter-1"]), "{agent}");
+        let (event, items, auth) = receipt(answer["context"].as_str().unwrap()).expect(agent);
+        assert_eq!(event, "SessionStart");
+        let verifies = |session: &str| {
+            store
+                .verify_receipt_auth(&project_id, agent, session, &event, &items, &auth)
+                .unwrap()
+        };
+        assert!(verifies(&id), "{agent}: signed for the host's id");
+        assert!(!verifies(&file), "{agent}: never for the session file");
+
+        // An id that would read as an option is no session: no Memory, the letters still ride.
+        let answer = machine.run_as(
+            agent,
+            "prompt",
+            &json!({"session_id": file, "native_session": "-x", "prompt": "Fix it", "cwd": project,
+                "first": true, "memory_first": true, "version": version}),
+            true,
+        );
+        assert_eq!(answer["memory_start"], json!(false), "{agent}");
+        assert_eq!(answer["letters"], json!(["letter-1"]), "{agent}");
+        assert!(
+            receipt(answer["context"].as_str().unwrap()).is_none(),
+            "{agent}"
+        );
+    }
+
+    let answer = machine.run(
+        "prompt",
+        &json!({"session_id": "ses_root", "prompt": "Fix it", "cwd": project, "first": true}),
+        true,
+    );
+    let (event, items, auth) = receipt(answer["context"].as_str().unwrap()).unwrap();
+    assert!(
+        store
+            .verify_receipt_auth(&project_id, "opencode", "ses_root", &event, &items, &auth)
+            .unwrap()
     );
 }
