@@ -228,14 +228,44 @@ impl Proven {
     }
 }
 
-/// The proven owner of `id` in `cwd`, read in one transaction.
-pub(crate) fn confirm(
+/// A checkpoint at message `index` of the root session `id` in `cwd`, for
+/// a reader that pages by message (the phone): a read from it continues at
+/// that message, and finds the session rewound if the message before it is
+/// gone. Read in one transaction with the session's proof.
+pub fn message_checkpoint(
     home: &Path,
     id: &str,
-    cwd: Option<&str>,
-) -> Result<ConfirmedLabelSession, String> {
+    cwd: &str,
+    index: u64,
+) -> Result<(ConversationCheckpoint, ConfirmedLabelSession), String> {
     let connection = open(home)?;
-    prove(&connection, id, Owner::Root { cwd })?.confirmed(id)
+    let proven = prove(&connection, id, Owner::Root { cwd: Some(cwd) })?;
+    if index > proven.messages {
+        return Err("label_session_read_changed".to_owned());
+    }
+    let previous = match index.checked_sub(1) {
+        Some(last) => message_at(&connection, id, last)?.map(|message| witness(&message)),
+        None => None,
+    };
+    Ok((
+        ConversationCheckpoint::at_message(index, proven.created, previous),
+        proven.confirmed(id)?,
+    ))
+}
+
+/// Whether `checkpoint` still names the same messages of the root session
+/// `id` in `cwd`: the session was not replaced or rewound past it.
+pub fn holds(
+    home: &Path,
+    id: &str,
+    cwd: &str,
+    checkpoint: &ConversationCheckpoint,
+) -> Result<ConfirmedLabelSession, String> {
+    let (current, confirmed) = message_checkpoint(home, id, cwd, checkpoint.offset())?;
+    if current.message_witness() != checkpoint.message_witness() {
+        return Err("label_session_read_changed".to_owned());
+    }
+    Ok(confirmed)
 }
 
 /// A session's activity: its newest write (the session row or any of its

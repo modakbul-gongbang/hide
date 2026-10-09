@@ -1990,7 +1990,7 @@ fn opencode_catalog_and_search_hold_only_its_root_sessions_in_the_project() {
         cwd: checkout.display().to_string(),
     };
     let locator = session.locator.display().to_string();
-    let mut index_all = |index: &mut SearchIndex| loop {
+    let index_all = |index: &mut SearchIndex| loop {
         let saved = index.saved(&project.id, OPENCODE_ROOT).unwrap();
         let step = search_read::read_opencode_step(home.path(), saved.as_ref(), &scope).unwrap();
         if !index

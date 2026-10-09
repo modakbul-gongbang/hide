@@ -51,6 +51,8 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile = "=3.27.0"
+# The phone's OpenCode conversation tests write OpenCode's own database.
+rusqlite = { version = "=0.32.1", features = ["bundled"] }
 anyhow = "=1.0.104"
 hide-agent-hooks = { path = "../hide-agent-hooks" }
 # The loopback SSH server of the device link's tests (tests/support).

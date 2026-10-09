@@ -31,7 +31,7 @@ mod envelope;
 mod label_owner;
 pub mod label_transcript;
 pub mod links;
-mod opencode;
+pub mod opencode;
 mod pi;
 pub mod search;
 pub mod search_read;

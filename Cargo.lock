@@ -1444,6 +1444,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "ring",
+ "rusqlite",
  "russh",
  "serde",
  "serde_json",
