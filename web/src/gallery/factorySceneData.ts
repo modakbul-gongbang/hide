@@ -479,13 +479,13 @@ function decisionsScene(base: FactorySceneFixture, now: number): FactorySceneFix
   const herdrItems = base.summary.inbox.filter((row) => row.factory === herdr.id);
   const added: InboxItem[] = [
     item({ group: "stopped", kind: "action", factory: herdr.id, task: t438.task, display_id: t438.display_id, title: t438.title, project: "herdr-ide", question: "q-438", text: "Hide AI가 꺼져 있어 접수 리뷰를 하지 못했습니다. 켜서 카드를 검토할지, 이슈 그대로 시작할지 골라 주세요.", holding: "start", suggestion: "enable-ai", choices: ["start-as-is"], evidence: ["disabled"], result_code: "drafting" }, 20 * MINUTE),
-    item({ group: "todo", kind: "hold", factory: herdr.id, task: null, display_id: null, title: "", project: "herdr-ide", text: "", holding: "starts", env_hold: "disk_floor", resolve: "hold:disk", result_code: "resolve", evidence: ["여유 3.1GB · 기준 5GB"], attempts: [
+    item({ group: "todo", kind: "hold", factory: herdr.id, task: null, display_id: null, title: "", project: "herdr-ide", text: "", holding: "starts", env_hold: "disk_floor", resolve: "hold:start-disk_floor", result_code: "resolve", evidence: ["여유 3.1GB · 기준 5GB"], attempts: [
       { at: clock(now, 10, 40), action: "remove_finished_worktrees", outcome: "partial" },
       { at: clock(now, 11, 10), action: "sleep_wake_worker", outcome: "unchanged" },
       { at: clock(now, 12, 10), action: "remove_finished_worktrees", outcome: "unchanged" },
       { at: clock(now, 13, 10), action: "sleep_wake_worker", outcome: "unchanged" },
     ] }, 3 * HOUR),
-    item({ group: "todo", kind: "command", factory: herdr.id, task: null, display_id: null, title: "", project: "herdr-ide", text: `이전 시작이 남긴 터미널이 ${issue(412)} 작업자 이름을 쥐고 있어 작업자를 띄울 수 없습니다. 그 터미널을 닫아 주세요`, holding: "starts", command: "herdr pane close w4:p2", impact: `누르면 ${issue(412)} 작업자를 다시 띄웁니다`, resolve: "command-1", result_code: "resolve", evidence: ["같은 worktree의 터미널 하나가 작업자 이름을 쥐고 있음 · 보드에는 이 Task의 작업자 창이 없음"] }, 15 * MINUTE),
+    item({ group: "todo", kind: "command", factory: herdr.id, task: null, display_id: null, title: "", project: "herdr-ide", text: `이전 시작이 남긴 터미널이 ${issue(412)} 작업자 이름을 쥐고 있어 작업자를 띄울 수 없습니다. 그 터미널을 닫아 주세요`, holding: "starts", command: "herdr pane close w4:p2", impact: `누르면 ${issue(412)} 작업자를 다시 띄웁니다`, resolve: "C1", result_code: "resolve", evidence: ["같은 worktree의 터미널 하나가 작업자 이름을 쥐고 있음 · 보드에는 이 Task의 작업자 창이 없음"] }, 15 * MINUTE),
     item({ group: "todo", kind: "github", factory: herdr.id, task: null, display_id: null, title: "", project: "herdr-ide", text: "", holding: "github", command: "gh auth login", resolve: "github", result_code: "resolve", unblocks: [issue(398)], evidence: ["CI 결과 읽기"] }, 9 * MINUTE),
   ];
   const inbox = [...herdrItems, ...added, ...base.summary.inbox.filter((row) => row.factory !== herdr.id)].map((row, rank) => ({ ...row, rank }));
@@ -549,7 +549,7 @@ function referenceScene(content: SceneContent, now: number): FactorySceneFixture
           { choice: "WS snapshot에 합치기", result: "Task마다 snapshot이 약 2 KB 커지고, 새 route는 없습니다" },
           { choice: "REST 엔드포인트", result: "hided에 route가 하나 생기고, 웹은 Task 페이지를 열 때 따로 읽습니다" },
         ],
-        fallback: "failed",
+        fallback: "unsure",
         observer_reason: "WS에 합치면 Task마다 snapshot이 약 2 KB 커지고, REST는 hided에 route가 하나 생깁니다. 어느 쪽도 카드의 완료 기준을 바꾸지 않습니다",
         evidence: ["완료 기준 2 \"Task 페이지가 1초 안에 열린다\"", "작업자가 잰 snapshot 크기 · Task 40개에서 81 KB, 합치면 163 KB"],
         unblocks: [issue(421), issue(422)],
