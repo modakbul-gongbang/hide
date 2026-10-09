@@ -212,23 +212,15 @@ impl Engine {
             }
             json!({"message": "the worker's start is asked again"})
         } else if let Some(slug) = item.strip_prefix("hold:") {
-            let Some(f) = self.factories.get_mut(&factory) else {
-                return Err(refuse("factory_not_found", "Check hide factory status"));
-            };
-            let Some(hold) = f
-                .holds
-                .iter_mut()
-                .find(|hold| hold.escalated && crate::summary::hold_name(&hold.key) == slug)
-            else {
+            let key = self.factories.get(&factory).and_then(|f| {
+                f.holds
+                    .iter()
+                    .find(|hold| crate::summary::hold_name(&hold.key) == slug)
+                    .map(|hold| hold.key.clone())
+            });
+            if !key.is_some_and(|key| self.restart_hold(&factory, &key)) {
                 return Err(refuse("item_not_found", "Check hide factory inbox"));
-            };
-            // The schedule starts over from now (D-44).
-            hold.since = now;
-            hold.attempts.clear();
-            hold.escalated = false;
-            hold.diagnosing = false;
-            self.hold_checked_at = None;
-            self.save_factory(&factory);
+            }
             json!({"message": "the automatic recovery starts over"})
         } else {
             let Some(f) = self.factories.get_mut(&factory) else {

@@ -2771,23 +2771,24 @@ fn a_restart_while_a_hold_s_diagnosis_is_out_asks_again_at_the_next_step() {
     h.advance(31 * MINUTE_MS);
     h.engine.tick();
     h.engine.tick();
-    let diagnosing = |h: &Bench| {
-        h.engine
-            .factories()
-            .next()
-            .unwrap()
-            .holds
+    let attempts = |h: &Bench| h.engine.factories().next().unwrap().holds[0].attempts.len();
+    let asked = |h: &Bench| {
+        h.world()
+            .submitted
             .iter()
-            .any(|hold| hold.diagnosing)
+            .filter(|j| matches!(j.input, JudgmentInput::EnvDiagnosis { .. }))
+            .count()
     };
-    assert!(diagnosing(&h), "the diagnosis is out");
+    assert_eq!((attempts(&h), asked(&h)), (0, 1), "the diagnosis is out");
     let mut h = h.restart();
     h.world().hold_judgments = false;
-    assert!(!diagnosing(&h), "the answer went with the process");
     h.engine.tick();
     h.engine.tick();
-    let attempts = h.engine.factories().next().unwrap().holds[0].attempts.len();
-    assert_eq!(attempts, 1, "the 30-minute step ran after the restart");
+    assert_eq!(
+        attempts(&h),
+        1,
+        "asked again and the 30-minute step ran after the restart"
+    );
     let _ = f;
 }
 

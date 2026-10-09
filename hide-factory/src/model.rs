@@ -357,24 +357,38 @@ pub enum HoldKey {
     Task { task: String },
 }
 
-/// A hold the recovery schedule works through: one action at 30, 90 and 150
-/// minutes, a person at 180 (D-44).
+/// A hold the recovery schedule works through: one step at 30, 90 and 150
+/// minutes, a person at 180 (D-44). Whether a diagnosis is out for its next
+/// step is the engine's judgment in flight, never stored, so a restart that
+/// lost the answer simply asks again.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hold {
     pub key: HoldKey,
     pub since: UnixMs,
-    /// Each automatic action, in order.
+    /// Each step taken, in order; its count is the next step's index.
     #[serde(default)]
     pub attempts: Vec<RecoveryAttempt>,
-    /// A diagnosis was asked for the next step and has not answered.
-    #[serde(default)]
-    pub diagnosing: bool,
     /// The last diagnosis's cause, for the person's to-do.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<String>,
-    /// 180 minutes passed: the hold is a person's.
     #[serde(default)]
-    pub escalated: bool,
+    pub phase: HoldPhase,
+}
+
+/// Where a hold is in its schedule.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum HoldPhase {
+    /// Its next step runs when that step's time comes.
+    #[default]
+    Due,
+    /// A step ran at `since` and has its time to work before the next; an
+    /// action still unsettled then helped only partly.
+    Settling { since: UnixMs },
+    /// No action is left to try; it waits for the 180-minute mark (B14).
+    Exhausted,
+    /// The hold is a person's.
+    Escalated,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -425,7 +439,7 @@ impl Factory {
         self.hold(&HoldKey::Task {
             task: task.to_owned(),
         })
-        .is_some_and(|hold| !hold.escalated)
+        .is_some_and(|hold| hold.phase != HoldPhase::Escalated)
     }
 }
 

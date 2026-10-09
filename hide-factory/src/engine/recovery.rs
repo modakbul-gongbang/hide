@@ -142,9 +142,8 @@ impl Engine {
                     key,
                     since: now,
                     attempts: Vec::new(),
-                    diagnosing: false,
                     cause: None,
-                    escalated: false,
+                    phase: HoldPhase::Due,
                 });
             }
         }
@@ -152,7 +151,7 @@ impl Engine {
     }
 
     fn step_hold(&mut self, factory: &str, key: &HoldKey, now: UnixMs) {
-        let Some(hold) = self
+        let Some(mut hold) = self
             .factories
             .get(factory)
             .and_then(|f| f.hold(key))
@@ -160,74 +159,99 @@ impl Engine {
         else {
             return;
         };
-        // An action that had its time and left the hold in place helped
-        // only partly.
-        if let Some(last) = hold.attempts.last()
-            && last.outcome.is_none()
-            && let Some(action) = last.action
-            && now.saturating_sub(last.at) >= SETTLE_MS
-        {
-            self.settle_attempt(factory, key, RecoveryOutcome::Partial);
-            self.log_recovery(
-                factory,
-                key,
-                action,
-                Some(RecoveryOutcome::Partial),
-                &Effect::default(),
-            );
+        if let HoldPhase::Settling { since } = hold.phase {
+            // A step has its time to work before the next, so a schedule
+            // that fell behind (a sleeping machine, a restart) does not run
+            // its late steps on consecutive ticks.
+            if now.saturating_sub(since) < SETTLE_MS {
+                return;
+            }
+            // An action that had its time and left the hold in place helped
+            // only partly.
+            if let Some(last) = hold.attempts.last()
+                && last.outcome.is_none()
+                && let Some(action) = last.action
+            {
+                self.settle_attempt(factory, key, RecoveryOutcome::Partial);
+                self.log_recovery(
+                    factory,
+                    key,
+                    action,
+                    Some(RecoveryOutcome::Partial),
+                    &Effect::default(),
+                );
+            }
+            hold.phase = HoldPhase::Due;
+            self.change_hold(factory, key, |hold| hold.phase = HoldPhase::Due);
         }
-        if hold.escalated {
+        if hold.phase == HoldPhase::Escalated {
             return;
         }
         let elapsed = now.saturating_sub(hold.since);
         if elapsed >= ESCALATE_MS {
-            self.change_hold(factory, key, |hold| {
-                hold.escalated = true;
-                hold.diagnosing = false;
-            });
-            self.record(
-                factory,
-                hold_task(key),
-                "recovery.escalated",
-                json!({"hold": key}),
-            );
-            return;
+            return self.escalate(factory, key, "schedule_done");
         }
         let step = hold.attempts.len();
-        // A step has its time to work before the next, so a schedule that
-        // fell behind (a sleeping machine, a restart) does not run its late
-        // steps on consecutive ticks.
-        let settling = hold
-            .attempts
-            .last()
-            .is_some_and(|last| now.saturating_sub(last.at) < SETTLE_MS);
-        if hold.diagnosing || settling || step >= STEPS_MS.len() || elapsed < STEPS_MS[step] {
+        if hold.phase != HoldPhase::Due
+            || self.diagnosing(factory, key)
+            || step >= STEPS_MS.len()
+            || elapsed < STEPS_MS[step]
+        {
             return;
         }
         let actions = self.available_actions(factory, key);
-        if actions.is_empty() && step == 0 {
-            // With every action that could act turned off, nothing would run
-            // before the 180-minute mark, so the hold is a person's now.
-            self.change_hold(factory, key, |hold| hold.escalated = true);
-            self.record(
-                factory,
-                hold_task(key),
-                "recovery.escalated",
-                json!({"hold": key, "reason": "no_action_on"}),
-            );
+        if actions.is_empty() {
+            if step == 0 {
+                // With every action that could act turned off, nothing would
+                // run before the 180-minute mark, so it is a person's now.
+                return self.escalate(factory, key, "no_action_on");
+            }
+            self.change_hold(factory, key, |hold| hold.phase = HoldPhase::Exhausted);
             return;
         }
-        if actions.is_empty() {
-            // Nothing left to try waits for the 180-minute mark (B14).
-            return self.run_step(factory, key, None, now);
-        }
         if self.ask_recovery(factory, key, &hold, &actions, now) {
-            self.change_hold(factory, key, |hold| hold.diagnosing = true);
             return;
         }
         // No diagnosis to ask: the first fitting action not tried yet.
         let action = fallback(&hold, &actions);
         self.run_step(factory, key, action, now);
+    }
+
+    fn escalate(&mut self, factory: &str, key: &HoldKey, reason: &str) {
+        self.change_hold(factory, key, |hold| hold.phase = HoldPhase::Escalated);
+        self.record(
+            factory,
+            hold_task(key),
+            "recovery.escalated",
+            json!({"hold": key, "reason": reason}),
+        );
+    }
+
+    /// A diagnosis for this hold's next step is out.
+    fn diagnosing(&self, factory: &str, key: &HoldKey) -> bool {
+        self.judgments.values().any(|(f, _, purpose)| {
+            f == factory && matches!(purpose, Purpose::Recovery { key: k } if k == key)
+        })
+    }
+
+    /// A person's press on an escalated hold: its schedule starts over from
+    /// now (D-44).
+    pub(super) fn restart_hold(&mut self, factory: &str, key: &HoldKey) -> bool {
+        let now = self.now();
+        let Some(hold) = self
+            .factories
+            .get_mut(factory)
+            .and_then(|f| f.holds.iter_mut().find(|hold| &hold.key == key))
+            .filter(|hold| hold.phase == HoldPhase::Escalated)
+        else {
+            return false;
+        };
+        hold.since = now;
+        hold.attempts.clear();
+        hold.phase = HoldPhase::Due;
+        self.hold_checked_at = None;
+        self.save_factory(factory);
+        true
     }
 
     /// The enabled actions a diagnosis may pick for this hold, the ones
@@ -341,8 +365,7 @@ impl Engine {
             // The hold cleared while it was asked.
             return;
         };
-        self.change_hold(factory, key, |hold| hold.diagnosing = false);
-        if hold.escalated {
+        if hold.phase != HoldPhase::Due {
             return;
         }
         let actions = self.available_actions(factory, key);
@@ -392,7 +415,8 @@ impl Engine {
                 at: now,
                 action,
                 outcome: action.and(outcome),
-            })
+            });
+            hold.phase = HoldPhase::Settling { since: now };
         });
         if let Some(action) = action {
             self.log_recovery(factory, key, action, outcome, &effect);

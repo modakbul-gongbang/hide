@@ -17,9 +17,10 @@ use crate::judgment::WorkerTextSource;
 use crate::model::{
     Activity, Attachment, AttemptOutcome, AttemptStage, ChoiceOutcome, Column, CriterionState,
     CriterionVerdict, DAY_MS, DecisionChange, DecisionKind, DecisionSource, Discovery, EnvHold,
-    Factory, FactoryAi, Fallback, FollowUpState, Gate, GithubBlock, HoldKey, MergeMode, OBSERVER,
-    PauseReason, PullRequest, Question, QuestionKind, RecoveryAttempt, Runtime, SourceKind,
-    StopReason, Task, TaskState, UnixMs, Verification, WorkerCandidate, WorkerReport, decision_id,
+    Factory, FactoryAi, Fallback, FollowUpState, Gate, GithubBlock, HoldKey, HoldPhase, MergeMode,
+    OBSERVER, PauseReason, PullRequest, Question, QuestionKind, RecoveryAttempt, Runtime,
+    SourceKind, StopReason, Task, TaskState, UnixMs, Verification, WorkerCandidate, WorkerReport,
+    decision_id,
 };
 
 /// What a card waits for, as a code beside `waiting_for`'s words, so a
@@ -1009,7 +1010,11 @@ pub fn inbox_items(
     }
     // A Factory hold the schedule could not clear (B14); a Task's is its
     // stopped item above.
-    for hold in factory.holds.iter().filter(|hold| hold.escalated) {
+    for hold in factory
+        .holds
+        .iter()
+        .filter(|hold| hold.phase == HoldPhase::Escalated)
+    {
         if matches!(hold.key, HoldKey::Task { .. }) {
             continue;
         }

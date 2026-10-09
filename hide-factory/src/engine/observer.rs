@@ -1468,22 +1468,6 @@ impl Engine {
                 }
             });
         }
-        // A hold's diagnosis was in memory too; waiting on it would stop the
-        // schedule until its person's mark, so the next step asks again.
-        let stranded: Vec<String> = self
-            .factories
-            .values()
-            .filter(|f| f.holds.iter().any(|hold| hold.diagnosing))
-            .map(|f| f.id.clone())
-            .collect();
-        for factory in stranded {
-            if let Some(f) = self.factories.get_mut(&factory) {
-                for hold in &mut f.holds {
-                    hold.diagnosing = false;
-                }
-            }
-            self.save_factory(&factory);
-        }
     }
 }
 
