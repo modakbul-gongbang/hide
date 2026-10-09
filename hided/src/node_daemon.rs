@@ -307,6 +307,7 @@ async fn health(State(state): State<NodeState>) -> impl IntoResponse {
         "open_handlers_in_flight": 0,
         "idle_remaining_secs": Value::Null,
         "role": "node",
+        "node": state.boundary.node().as_str(),
         "core_link": link,
         "core_link_reason": reason,
     }))

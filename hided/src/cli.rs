@@ -1170,7 +1170,32 @@ fn attached_json(state: &DaemonState, flag: &str) -> serde_json::Value {
 }
 
 fn daemon_url(state: &DaemonState) -> String {
-    format!("http://127.0.0.1:{}/#token={}", state.port, state.token)
+    let url = format!("http://127.0.0.1:{}/#token={}", state.port, state.token);
+    match screen_node(state) {
+        Some(node) => format!("{url}&node={node}"),
+        None => url,
+    }
+}
+
+/// The machine a node-role daemon's screens run on, which the page reads
+/// from its hash to tell this machine's panes and checkouts from the
+/// core's (PRD core-host-node-remote-core B13); `None` for a daemon that is
+/// its own core, whose screens' machine is the core's.
+fn screen_node(state: &DaemonState) -> Option<String> {
+    let health = health_json(state.port, HEALTH_REQUEST).ok()?;
+    if health["role"] != "node" {
+        return None;
+    }
+    health["node"]
+        .as_str()
+        .filter(|node| {
+            !node.is_empty()
+                && node.len() <= 128
+                && node
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        })
+        .map(str::to_owned)
 }
 
 fn status(state_dir: &Path, idle_secs: u64) -> Result<(), String> {

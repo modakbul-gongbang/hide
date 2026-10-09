@@ -723,6 +723,14 @@ fn a_screen_whose_core_is_not_running_attaches_and_waits_for_it() -> Result<()> 
         let cli = fixture.hided.parent().context("the CLI folder")?.to_owned();
         let answer = screen_connect(&fixture, &cli)?;
         ensure!(answer["ok"] == true, "hide connect refused: {answer}");
+        // B13: the screen's page learns which machine it runs on.
+        let node = herdr_core::node::NodeId::of_this_machine().map_err(anyhow::Error::msg)?;
+        ensure!(
+            answer["url"]
+                .as_str()
+                .is_some_and(|url| url.ends_with(&format!("&node={}", node.as_str()))),
+            "the screen's address names no machine: {answer}"
+        );
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;

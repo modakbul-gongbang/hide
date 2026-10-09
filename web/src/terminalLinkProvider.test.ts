@@ -3,7 +3,8 @@ import type { ProbedPath } from "./host";
 import type { CellRow } from "./selection";
 import { useShellStore } from "./store";
 import { linkCandidates } from "./terminalLinks";
-import { PROBE_CACHE_CAP, PROBE_NEW_LIMIT, PROBE_TTL_MS, clearProbeCache, owningCheckout, pathLookups, probePaths, resolveGroups } from "./terminalLinkProvider";
+import type { SnapshotRest } from "./snapshot";
+import { PROBE_CACHE_CAP, PROBE_NEW_LIMIT, PROBE_TTL_MS, clearProbeCache, owningCheckout, paneContext, pathLookups, probePaths, resolveGroups } from "./terminalLinkProvider";
 
 function row(text: string, width: number): CellRow {
   const cells: CellRow = [];
@@ -20,6 +21,34 @@ function host(files: string[], dirs: string[] = []) {
 }
 
 beforeEach(() => clearProbeCache());
+
+describe("paneContext", () => {
+  // The core runs on `core`; this screen's machine `mac` dials it, so its
+  // panes are a device's in the core's snapshot (PRD core-host-node-remote-core B13).
+  const pane = "remote:mac:pane:w1:p1";
+  const rest = {
+    navigator: {
+      devices: [{ id: "core", kind: "local" }, { id: "mac", kind: "remote" }],
+      workspaces: [{ id: "w-core", device_id: "core", checkouts: [{ id: "c-core", path: "/c/proj", tabs: [{ panes: [{ id: "w9:p1", cwd: "/c/proj" }] }] }] }],
+    },
+    status: {
+      remote: [{
+        target_id: "mac",
+        session: { workspaces: [{ id: "w-mac", device_id: "mac", checkouts: [{ id: "c-mac", path: "/m/proj", tabs: [{ panes: [{ id: pane, cwd: "/m/proj/sub" }] }] }] }] },
+      }],
+    },
+  } as unknown as SnapshotRest;
+
+  it("reads a pane of the screen's own machine, whichever machine runs the core", () => {
+    expect(paneContext(rest, pane, "mac")).toEqual({ cwd: "/m/proj/sub", root: "/m/proj" });
+    expect(paneContext(rest, "w9:p1", "core")).toEqual({ cwd: "/c/proj", root: "/c/proj" });
+  });
+
+  it("reads no pane of another machine than the screen's", () => {
+    expect(paneContext(rest, "w9:p1", "mac")).toBeNull();
+    expect(paneContext(rest, pane, "core")).toBeNull();
+  });
+});
 
 describe("pathLookups", () => {
   it("looks a relative path up under the pane's folder, then the checkout's root", () => {
