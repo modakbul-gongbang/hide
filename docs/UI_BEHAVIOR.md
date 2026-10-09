@@ -1517,7 +1517,7 @@ Every supported agent has Herdr's integration, so no row says its status is judg
 The support order, names, links, logo ids and start eligibility come from the shared adapter's generated contract rather than web-owned lists.
 Pi has native titles, Sleep and Fork from its complete session reader beside letters and the spawn guard from Hide's extension; it has no structured question/plan wait, Memory or subagent count.
 Pi starts with the existing first-prompt argument boundary and CLI model default, without an extra-folder argument.
-omp's Basic popover also includes native titles, Sleep and Fork from its complete session reader, while hook and collaboration capabilities remain unavailable.
+omp has native titles, Sleep and Fork from its complete session reader beside guidance, letters, subagents and the spawn guard from Hide's extension; its row wears no Basic chip.
 Its current native/manual title wins over a generated goal; an explicit clear returns to the existing fallback without replaying the conversation.
 An unanswered native `ask` enters the existing question state with bounded text and choices even with summaries off, and a correlated answer clears it.
 Its question keeps the existing Answer tag in the pane header even while the native session holds for an operator reply.
