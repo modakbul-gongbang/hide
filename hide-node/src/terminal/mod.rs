@@ -441,9 +441,17 @@ impl Shared {
                     }
                     Delivery::Forget { pane } => self.outputs.forget(pane),
                 }));
+                // A frame's bytes are freed before the queue's lock is taken.
+                let failed = match handed {
+                    Ok(()) => {
+                        drop(delivery);
+                        None
+                    }
+                    Err(failure) => Some((failure, delivery)),
+                };
                 deliveries = self.deliveries_lock();
                 deliveries.handed += 1;
-                if let Err(failure) = handed {
+                if let Some((failure, delivery)) = failed {
                     // The sink's failure ends this thread, not the handing
                     // over: the next thread takes the queue from here.
                     deliveries.handing = false;
