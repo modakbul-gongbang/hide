@@ -104,6 +104,7 @@ pub(crate) fn of(
                 || letter.sender.session != child.lineage_session
                 || letter.recipient.pane_id != parent
                 || !matches!(letter.kind.as_str(), "request" | "block")
+                || took_up_request_after(child, letter.created_at_unix_ms)
             {
                 continue;
             }
@@ -128,6 +129,20 @@ pub(crate) fn of(
         });
     }
     None
+}
+
+/// Whether the child's session took up a request written after `at`: a new
+/// turn means the child moved on without the answer, so its letter no longer
+/// raises it, however the turn ends. The time is the session's own record,
+/// which the label store keeps across restarts (and reads again for a
+/// device), never this daemon's view of the pane.
+fn took_up_request_after(child: &SidebarAgentSnapshot, at: u64) -> bool {
+    child.row_facts.as_ref().is_some_and(|facts| {
+        [&facts.operator_request, &facts.other_request]
+            .into_iter()
+            .flatten()
+            .any(|request| request.at_unix_ms > at)
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -220,6 +235,85 @@ mod tests {
                 of(&child, Some(&ledger), &holds).is_none(),
                 "a causal parent answer clears the request"
             );
+        }
+    }
+
+    // status-model.md, Delegated escalation: a child that took up a new turn
+    // after its letter moved on without the answer, so stopping again does
+    // not bring the letter's raise back. The 2026-10-09 case: a block letter
+    // went undelivered, the child carried on and merged its PR, and stayed
+    // in Needs You after it stopped.
+    #[test]
+    fn session_letter_raise_ends_for_good_once_the_child_takes_up_a_later_request() {
+        use crate::labels::facts::{Request, Requester};
+        use crate::request_view::RowFacts;
+        let request = |at, requester| Request {
+            text: "next".into(),
+            cut: false,
+            images: 0,
+            at_unix_ms: at,
+            requester,
+            first: false,
+        };
+        let cases = [
+            (State::Undelivered, None, Cause::Undelivered),
+            (State::Pending, Some(Hold::Blocked), Cause::ParentBlocked),
+            (State::Pending, Some(Hold::Draft), Cause::Draft),
+            (State::Pending, Some(Hold::Exhausted), Cause::BellExhausted),
+        ];
+        for (state, hold, cause) in cases {
+            for requester in [Requester::Agent, Requester::Operator] {
+                let mut child = child();
+                let mut ledger = Ledger::default();
+                mailbox::send(
+                    &mut ledger,
+                    &actor("child"),
+                    &actor("parent"),
+                    "block",
+                    "question",
+                    "block",
+                    None,
+                    100,
+                )
+                .unwrap();
+                ledger.letters[0].state = state;
+                let holds = hold
+                    .map(|hold| BTreeMap::from([(ledger.letters[0].id.clone(), hold)]))
+                    .unwrap_or_default();
+                let facts = |at| RowFacts {
+                    other_request: (requester == Requester::Agent)
+                        .then(|| request(at, requester.clone())),
+                    operator_request: (requester == Requester::Operator)
+                        .then(|| request(at, requester.clone())),
+                    ..RowFacts::default()
+                };
+                child.row_facts = Some(facts(90));
+                assert_eq!(
+                    of(&child, Some(&ledger), &holds).map(|raised| raised.cause),
+                    Some(cause),
+                    "the turn that wrote the letter is still the one waiting"
+                );
+                child.row_facts = Some(facts(100));
+                assert_eq!(
+                    of(&child, Some(&ledger), &holds).map(|raised| raised.cause),
+                    Some(cause),
+                    "a request no later than the letter is not a new turn"
+                );
+                child.row_facts = Some(facts(101));
+                child.activity = "working".into();
+                assert!(of(&child, Some(&ledger), &holds).is_none());
+                child.activity = "stopped".into();
+                assert!(
+                    of(&child, Some(&ledger), &holds).is_none(),
+                    "{cause:?} does not come back when the child stops again"
+                );
+                child.blocked = true;
+                assert_eq!(
+                    of(&child, Some(&ledger), &holds).map(|raised| raised.cause),
+                    Some(Cause::ChildBlocked),
+                    "the child's own menu still raises it"
+                );
+            }
         }
     }
 
