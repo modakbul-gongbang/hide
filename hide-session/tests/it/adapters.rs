@@ -529,7 +529,8 @@ mod omp {
                 .unwrap();
         let catalog = hide_session::SessionCatalog::new(native.home.path(), "local")
             .project_sessions(&project)
-            .unwrap();
+            .unwrap()
+            .sessions;
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].agent, Agent::Omp);
         assert_eq!(catalog[0].id, "omp-native-a");
@@ -1463,7 +1464,8 @@ mod grok {
         let project = hide_project::resolve(&native.cwd, "local").unwrap();
         let sessions = SessionCatalog::new(native.home.path(), "local")
             .project_sessions(&project)
-            .unwrap();
+            .unwrap()
+            .sessions;
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, GROK_ID);
         assert_eq!(sessions[0].agent, Agent::Grok);
@@ -1748,7 +1750,8 @@ mod pi {
         let project = hide_project::resolve(&native.cwd, "local").unwrap();
         let sessions = SessionCatalog::new(native.home.path(), "local")
             .project_sessions(&project)
-            .unwrap();
+            .unwrap()
+            .sessions;
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "pi-native-a");
         assert_eq!(sessions[0].agent, Agent::Pi);
@@ -2833,4 +2836,598 @@ fn hides_receipt_in_an_opencode_synthetic_part_is_reported_and_kept_out_of_the_c
             text: receipt.to_owned(),
         }]
     );
+}
+
+const OPENCODE_ROOT: &str = "ses_0a1b2c3d4e5f60718293a4b5c6";
+
+fn opencode_writer(home: &Path) -> rusqlite::Connection {
+    rusqlite::Connection::open(home.join(".local/share/opencode/opencode.db")).unwrap()
+}
+
+/// OpenCode's assistant message as 1.18.30 writes it: `completed` absent
+/// while it is still being written.
+fn opencode_assistant(writer: &rusqlite::Connection, id: &str, at: u64, completed: bool) {
+    let time = if completed {
+        format!(r#"{{"created":{at},"completed":{}}}"#, at + 1)
+    } else {
+        format!(r#"{{"created":{at}}}"#)
+    };
+    writer
+        .execute(
+            // OpenCode updates a message in place; a replacement would
+            // drop its parts with it.
+            "INSERT INTO message VALUES (?1, ?2, ?3, ?3, ?4) \
+             ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+            rusqlite::params![
+                id,
+                OPENCODE_ROOT,
+                at,
+                format!(r#"{{"role":"assistant","mode":"build","time":{time}}}"#)
+            ],
+        )
+        .unwrap();
+}
+
+/// OpenCode's `question` tool part in `status`, as its question tool writes it.
+fn opencode_question(writer: &rusqlite::Connection, message: &str, at: u64, status: &str) {
+    let input = serde_json::json!({"questions": [{
+        "question": "어느 브랜치에 올릴까요?",
+        "header": "Branch",
+        "options": [
+            {"label": "main", "description": "기본 브랜치"},
+            {"label": "release", "description": "배포 브랜치"}
+        ]
+    }]});
+    let state = match status {
+        // OpenCode streams the call's input before it runs it.
+        "pending" => serde_json::json!({"status": "pending", "input": {}, "raw": ""}),
+        "running" => {
+            serde_json::json!({"status": "running", "input": input, "time": {"start": at}})
+        }
+        "completed" => serde_json::json!({"status": "completed", "input": input,
+            "output": "User has answered your questions: main", "metadata": {}, "title": "Asked 1 question",
+            "time": {"start": at, "end": at + 5}}),
+        _ => serde_json::json!({"status": "error", "input": input, "error": "dismissed",
+            "time": {"start": at, "end": at + 5}}),
+    };
+    let part = serde_json::json!({"type": "tool", "tool": "question", "callID": "call_q1", "state": state});
+    writer
+        .execute(
+            "INSERT INTO part VALUES ('prt_q1', ?1, ?2, ?3, ?3, ?4) \
+             ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+            rusqlite::params![message, OPENCODE_ROOT, at, part.to_string()],
+        )
+        .unwrap();
+}
+
+fn opencode_continued(answer: &LabelTranscript) -> LabelTranscriptRequest {
+    let mut next = request(Agent::OpenCode);
+    next.checkpoint = Some(answer.checkpoint.clone());
+    next.turns = answer.turns.clone();
+    next
+}
+
+#[test]
+fn an_opencode_question_waits_with_its_text_and_choices_until_it_is_answered() {
+    use hide_session::turns::UserTurnKind;
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
+    assert_eq!(
+        first.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Nothing)
+    );
+
+    // The question waits while its message is unfinished.
+    opencode_assistant(&writer, "msg_07", START + 400_000, false);
+    opencode_question(&writer, "msg_07", START + 400_100, "running");
+    let asking = read(home.path(), &opencode_continued(&first)).unwrap();
+    assert!(
+        asking.events.is_empty(),
+        "the unfinished message is no event yet"
+    );
+    let fact = asking.turns.as_ref().unwrap().user_turn().unwrap();
+    assert_eq!(fact.kind, UserTurnKind::Question);
+    let content = serde_json::to_value(fact.content.unwrap())
+        .unwrap()
+        .to_string();
+    assert!(content.contains("어느 브랜치에 올릴까요?"), "{content}");
+    assert!(content.contains("release"), "{content}");
+
+    // An idle reread of the same unfinished message keeps the same wait.
+    let again = read(home.path(), &opencode_continued(&asking)).unwrap();
+    assert_eq!(
+        again.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Question)
+    );
+
+    // The operator answers: the part completes and OpenCode finishes the message.
+    opencode_question(&writer, "msg_07", START + 400_100, "completed");
+    opencode_assistant(&writer, "msg_07", START + 400_000, true);
+    let answered = read(home.path(), &opencode_continued(&again)).unwrap();
+    assert_eq!(
+        answered.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Nothing)
+    );
+    assert!(answered.turns.as_ref().unwrap().user_turn().is_none());
+}
+
+#[test]
+fn a_pending_opencode_question_is_asked_with_its_choices_once_it_runs() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
+    opencode_assistant(&writer, "msg_07", START + 400_000, false);
+    opencode_question(&writer, "msg_07", START + 400_100, "pending");
+    let streaming = read(home.path(), &opencode_continued(&first)).unwrap();
+    assert_eq!(
+        streaming.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Nothing)
+    );
+    opencode_question(&writer, "msg_07", START + 400_100, "running");
+    let asking = read(home.path(), &opencode_continued(&streaming)).unwrap();
+    let fact = asking.turns.as_ref().unwrap().user_turn().unwrap();
+    let content = serde_json::to_value(fact.content.unwrap())
+        .unwrap()
+        .to_string();
+    assert!(content.contains("release"), "{content}");
+}
+
+#[test]
+fn more_opencode_questions_than_the_cap_refuse_the_read_rather_than_miss_one() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    opencode_assistant(&writer, "msg_07", START + 400_000, false);
+    let part = serde_json::json!({"type": "tool", "tool": "question", "callID": "call_q",
+        "state": {"status": "running", "input": {"questions": []}, "time": {"start": START}}});
+    for index in 0..=hide_session::turns::QUESTION_CALL_LIMIT {
+        let mut part = part.clone();
+        part["callID"] = serde_json::json!(format!("call_q{index}"));
+        writer
+            .execute(
+                "INSERT INTO part VALUES (?1, 'msg_07', ?2, ?3, ?3, ?4)",
+                rusqlite::params![
+                    format!("prt_q{index:02}"),
+                    OPENCODE_ROOT,
+                    START + 400_100 + index as u64,
+                    part.to_string()
+                ],
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        read(home.path(), &request(Agent::OpenCode)).unwrap_err(),
+        "user_turn_capacity"
+    );
+}
+
+/// A `part` row of `message` holding `data` padded by `padding` bytes.
+fn opencode_padded_part(
+    writer: &rusqlite::Connection,
+    id: &str,
+    message: &str,
+    at: u64,
+    mut data: serde_json::Value,
+    padding: usize,
+) {
+    data["padding"] = serde_json::json!("x".repeat(padding));
+    writer
+        .execute(
+            "INSERT INTO part VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+            rusqlite::params![id, message, OPENCODE_ROOT, at, data.to_string()],
+        )
+        .unwrap();
+}
+
+fn opencode_running_question() -> serde_json::Value {
+    serde_json::json!({"type": "tool", "tool": "question", "callID": "call_big",
+        "state": {"status": "running", "time": {"start": START},
+            "input": {"questions": [{"question": "어느 브랜치에 올릴까요?",
+                "options": [{"label": "main"}, {"label": "release"}]}]}}})
+}
+
+#[test]
+fn an_oversized_part_beside_an_opencode_question_is_skipped_and_the_question_still_asks() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    opencode_assistant(&writer, "msg_07", START + 400_000, false);
+    opencode_padded_part(
+        &writer,
+        "prt_big",
+        "msg_07",
+        START + 400_050,
+        serde_json::json!({"type": "tool", "tool": "bash", "callID": "call_bash"}),
+        hide_session::SESSION_LINE_LIMIT_BYTES,
+    );
+    opencode_question(&writer, "msg_07", START + 400_100, "running");
+    let asking = read_whole(home.path(), Agent::OpenCode);
+    assert_eq!(
+        asking.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Question)
+    );
+    assert_eq!(asking.skipped_reasons.get("part_capacity"), Some(&1));
+}
+
+#[test]
+fn an_opencode_question_over_the_row_limit_is_skipped_as_part_capacity_not_loaded() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    opencode_assistant(&writer, "msg_07", START + 400_000, false);
+    opencode_padded_part(
+        &writer,
+        "prt_big",
+        "msg_07",
+        START + 400_100,
+        opencode_running_question(),
+        hide_session::SESSION_LINE_LIMIT_BYTES,
+    );
+    let read = read_whole(home.path(), Agent::OpenCode);
+    assert_eq!(read.skipped_reasons.get("part_capacity"), Some(&1));
+    assert_eq!(
+        read.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Nothing)
+    );
+}
+
+#[test]
+fn an_opencode_question_past_the_read_budget_waits_for_the_next_read_and_then_asks() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    // Four finished messages spend nearly the whole read budget, each part
+    // under the row limit, so the unfinished question no longer fits.
+    let part = hide_session::SESSION_LINE_LIMIT_BYTES - 6 * 1024;
+    for index in 0..4u64 {
+        let message = format!("msg_07{index}");
+        let at = START + 400_000 + index * 10;
+        opencode_assistant(&writer, &message, at, true);
+        opencode_padded_part(
+            &writer,
+            &format!("prt_fill{index}"),
+            &message,
+            at + 1,
+            serde_json::json!({"type": "text", "text": "filler"}),
+            part,
+        );
+    }
+    opencode_assistant(&writer, "msg_08", START + 400_100, false);
+    opencode_padded_part(
+        &writer,
+        "prt_big",
+        "msg_08",
+        START + 400_110,
+        opencode_running_question(),
+        64 * 1024,
+    );
+
+    let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
+    assert!(first.has_more);
+    assert_eq!(
+        first.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Nothing)
+    );
+    let next = read(home.path(), &opencode_continued(&first)).unwrap();
+    assert_eq!(
+        next.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Question)
+    );
+}
+
+#[test]
+fn a_dismissed_opencode_question_ends_the_wait_and_a_read_from_the_start_agrees() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    opencode_assistant(&writer, "msg_07", START + 400_000, false);
+    opencode_question(&writer, "msg_07", START + 400_100, "running");
+    let asking = read_whole(home.path(), Agent::OpenCode);
+    assert_eq!(
+        asking.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Question)
+    );
+    opencode_question(&writer, "msg_07", START + 400_100, "error");
+    opencode_assistant(&writer, "msg_07", START + 400_000, true);
+    // A reader that lost its state folds the whole session to the same answer.
+    let fresh = read_whole(home.path(), Agent::OpenCode);
+    assert_eq!(
+        fresh.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Nothing)
+    );
+}
+
+#[test]
+fn an_unknown_opencode_question_state_refuses_the_read_rather_than_guessing() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    opencode_assistant(&writer, "msg_07", START + 400_000, true);
+    opencode_question(&writer, "msg_07", START + 400_100, "running");
+    writer
+        .execute(
+            "UPDATE part SET data = json_set(data, '$.state.status', 'future') WHERE id = 'prt_q1'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        read(home.path(), &request(Agent::OpenCode)).unwrap_err(),
+        "user_turn_invalid"
+    );
+}
+
+#[test]
+fn an_opencode_child_session_is_never_read_into_or_as_the_root_conversation() {
+    let home = home(Agent::OpenCode);
+    let root = read_whole(home.path(), Agent::OpenCode);
+    assert!(
+        root.events
+            .iter()
+            .all(|event| !event.text.contains("subagent")),
+        "the child's records stay out of the root"
+    );
+    assert!(sighted(&root, 77).is_none());
+    assert_eq!(root.title.as_deref(), Some("요청 보기 만들기"));
+    let mut child = request(Agent::OpenCode);
+    child.reference_value = "ses_0a1b2c3d4e5f60718293child".into();
+    assert_eq!(
+        read(home.path(), &child).unwrap_err(),
+        "label_session_not_root"
+    );
+}
+
+#[test]
+fn an_opencode_session_proves_its_checkout_and_refuses_another_one() {
+    let home = home(Agent::OpenCode);
+    let mut other = request(Agent::OpenCode);
+    other.cwd = Some("/work/other".into());
+    assert_eq!(
+        read(home.path(), &other).unwrap_err(),
+        "label_session_cwd_mismatch"
+    );
+    other.cwd = None;
+    assert_eq!(
+        read(home.path(), &other).unwrap_err(),
+        "label_session_cwd_unconfirmed"
+    );
+    other.cwd = Some("/work/app/".into());
+    let confirmed = read(home.path(), &other).unwrap().confirmed;
+    assert_eq!(confirmed.native_session_id.as_deref(), Some(OPENCODE_ROOT));
+    assert_eq!(confirmed.incarnation, "opencode:1790989200000");
+    let mut path = request(Agent::OpenCode);
+    path.reference_kind = "path".into();
+    path.reference_value = "/work/app/.opencode/session".into();
+    assert_eq!(
+        read(home.path(), &path).unwrap_err(),
+        "session_kind_unsupported"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_opencode_database_is_refused() {
+    let home = home(Agent::OpenCode);
+    let folder = home.path().join(".local/share/opencode");
+    std::fs::rename(folder.join("opencode.db"), home.path().join("elsewhere.db")).unwrap();
+    std::os::unix::fs::symlink(home.path().join("elsewhere.db"), folder.join("opencode.db"))
+        .unwrap();
+    assert_eq!(
+        read(home.path(), &request(Agent::OpenCode)).unwrap_err(),
+        "label_session_linked"
+    );
+}
+
+#[test]
+fn a_skipped_opencode_message_still_witnesses_where_a_read_ended() {
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    // A message too large to load ends the session: its id still witnesses it.
+    writer
+        .execute(
+            "INSERT INTO message VALUES ('msg_07', ?1, ?2, ?2, ?3)",
+            rusqlite::params![
+                OPENCODE_ROOT,
+                START + 140_000,
+                format!(
+                    r#"{{"role":"user","time":{{"created":{}}},"pad":"{}"}}"#,
+                    START + 140_000,
+                    "x".repeat(70 * 1024)
+                )
+            ],
+        )
+        .unwrap();
+    let whole = read_whole(home.path(), Agent::OpenCode);
+    assert!(whole.skipped_reasons.contains_key("message_capacity"));
+    let held =
+        hide_session::opencode::holds(home.path(), OPENCODE_ROOT, "/work/app", &whole.checkpoint);
+    assert!(held.is_ok(), "{held:?}");
+    // Once that message is gone the same checkpoint no longer holds.
+    writer
+        .execute("DELETE FROM message WHERE id = 'msg_07'", [])
+        .unwrap();
+    assert!(
+        hide_session::opencode::holds(home.path(), OPENCODE_ROOT, "/work/app", &whole.checkpoint)
+            .is_err()
+    );
+}
+
+#[test]
+fn an_opencode_session_rewound_and_grown_back_is_read_again_not_continued() {
+    let home = home(Agent::OpenCode);
+    let first = read_whole(home.path(), Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    // An OpenCode revert drops the last message and a new one takes its place.
+    writer
+        .execute_batch("DELETE FROM part WHERE message_id = 'msg_06'; DELETE FROM message WHERE id = 'msg_06';")
+        .unwrap();
+    writer
+        .execute(
+            "INSERT INTO message VALUES ('msg_06b', ?1, ?2, ?2, ?3)",
+            rusqlite::params![
+                OPENCODE_ROOT,
+                START + 130_000,
+                r#"{"role":"user","time":{"created":1790989330000}}"#
+            ],
+        )
+        .unwrap();
+    writer
+        .execute(
+            "INSERT INTO part VALUES ('prt_06b', 'msg_06b', ?1, ?2, ?2, ?3)",
+            rusqlite::params![
+                OPENCODE_ROOT,
+                START + 130_000,
+                r#"{"type":"text","text":"다른 방향으로 다시 해줘"}"#
+            ],
+        )
+        .unwrap();
+    let again = read(home.path(), &opencode_continued(&first)).unwrap();
+    assert_eq!(again.rescanned.as_deref(), Some("replaced"));
+    assert_eq!(
+        again.events.first().map(|event| event.text.as_str()),
+        Some("요청 보기를 만들어줘\n긴 요청의 둘째 줄")
+    );
+    assert!(
+        again
+            .events
+            .iter()
+            .any(|event| event.text == "다른 방향으로 다시 해줘")
+    );
+}
+
+#[test]
+fn opencode_activity_answers_its_newest_write_and_count_only_for_its_proven_owner() {
+    use hide_session::session_activity::{SessionActivityRequest, read as activity};
+    let home = home(Agent::OpenCode);
+    let request = |cwd: &str| SessionActivityRequest {
+        agent: Agent::OpenCode,
+        reference_kind: "id".into(),
+        reference_value: OPENCODE_ROOT.into(),
+        cwd: Some(cwd.into()),
+        exact_route: true,
+        expected_id: Some(OPENCODE_ROOT.into()),
+    };
+    let answer = activity(home.path(), &request("/work/app")).unwrap();
+    assert_eq!(answer.bytes, 6);
+    assert_eq!(answer.modified_at_unix_ms, 1_790_989_331_000);
+    assert_eq!(
+        activity(home.path(), &request("/work/other")).unwrap_err(),
+        "label_session_cwd_mismatch"
+    );
+    let mut changed = request("/work/app");
+    changed.expected_id = Some("ses_other".into());
+    assert_eq!(
+        activity(home.path(), &changed).unwrap_err(),
+        "session_route_owner_changed"
+    );
+    let value = serde_json::to_string(&answer).unwrap();
+    assert!(!value.contains(OPENCODE_ROOT) && !value.contains("/work/app"));
+}
+
+#[test]
+fn opencode_catalog_and_search_hold_only_its_root_sessions_in_the_project() {
+    use hide_session::search::SearchIndex;
+    use hide_session::{SessionCatalog, SessionReadScope, search_read};
+    let home = home(Agent::OpenCode);
+    let checkout = home.path().join("checkout");
+    std::fs::create_dir(&checkout).unwrap();
+    let checkout = std::fs::canonicalize(checkout).unwrap();
+    let writer = opencode_writer(home.path());
+    writer
+        .execute(
+            "UPDATE session SET directory = ?1",
+            [checkout.display().to_string()],
+        )
+        .unwrap();
+    writer
+        .execute(
+            "INSERT INTO session (id, project_id, slug, directory, title, version, \
+             time_created, time_updated) VALUES ('ses_elsewhere', 'prj_1', 'far', \
+             '/elsewhere/app', 'elsewhere', '1.18.30', 1, 1)",
+            [],
+        )
+        .unwrap();
+    let project = hide_project::resolve(&checkout, "local").unwrap();
+
+    let sessions = SessionCatalog::new(home.path(), "local")
+        .project_sessions(&project)
+        .unwrap();
+    assert!(sessions.refusals.is_empty(), "{:?}", sessions.refusals);
+    let sessions = sessions.sessions;
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    let session = &sessions[0];
+    assert_eq!(session.id, OPENCODE_ROOT);
+    assert_eq!(session.agent, Agent::OpenCode);
+    assert_eq!(
+        session.locator,
+        PathBuf::from(format!("opencode/{OPENCODE_ROOT}"))
+    );
+    assert_eq!(session.title.as_deref(), Some("요청 보기 만들기"));
+    assert!(
+        session
+            .first_human_request
+            .as_deref()
+            .is_some_and(|text| text.starts_with("요청 보기를 만들어줘")),
+        "{session:?}"
+    );
+
+    let mut index = SearchIndex::open(&home.path().join("index.sqlite3")).unwrap();
+    let scope = SessionReadScope {
+        id: OPENCODE_ROOT.to_owned(),
+        cwd: checkout.display().to_string(),
+    };
+    let locator = session.locator.display().to_string();
+    let index_all = |index: &mut SearchIndex| loop {
+        let saved = index.saved(&project.id, OPENCODE_ROOT).unwrap();
+        let step = search_read::read_opencode_step(home.path(), saved.as_ref(), &scope).unwrap();
+        if !index
+            .apply(&project.id, OPENCODE_ROOT, &locator, 0, step)
+            .unwrap()
+        {
+            break;
+        }
+    };
+    index_all(&mut index);
+    let saved = index.saved(&project.id, OPENCODE_ROOT).unwrap();
+    assert!(matches!(
+        search_read::read_opencode_step(home.path(), saved.as_ref(), &scope).unwrap(),
+        hide_session::search::IndexStep::Done
+    ));
+    let mut stamps = |paths: &[String]| {
+        Ok(paths
+            .iter()
+            .map(|_| search_read::opencode_stamp(home.path(), &scope).ok())
+            .collect())
+    };
+    let page = index
+        .search_scoped(&project.id, "pull/12", 0, None, &mut stamps)
+        .unwrap();
+    assert_eq!(page.hits.len(), 1, "{page:?}");
+    assert_eq!(page.hits[0].session_id, OPENCODE_ROOT);
+    assert!(!page.stale);
+    // The child session's answer is its own conversation, never the root's.
+    let child = index
+        .search_scoped(&project.id, "subagent", 0, None, &mut stamps)
+        .unwrap();
+    assert!(child.hits.is_empty(), "{child:?}");
+
+    // A new message moves the stamp: the copy is stale until it is read on.
+    writer
+        .execute(
+            "INSERT INTO message VALUES ('msg_07', ?1, 1790989400000, 1790989400000, \
+             '{\"role\":\"user\",\"time\":{\"created\":1790989400000}}')",
+            [OPENCODE_ROOT],
+        )
+        .unwrap();
+    writer
+        .execute(
+            "INSERT INTO part VALUES ('prt_09', 'msg_07', ?1, 1790989400000, 1790989400000, \
+             '{\"type\":\"text\",\"text\":\"배포 노트도 붙여줘\"}')",
+            [OPENCODE_ROOT],
+        )
+        .unwrap();
+    let stale = index
+        .search_scoped(&project.id, "pull/12", 0, None, &mut stamps)
+        .unwrap();
+    assert!(stale.stale && stale.hits.is_empty(), "{stale:?}");
+    index_all(&mut index);
+    let fresh = index
+        .search_scoped(&project.id, "배포 노트", 0, None, &mut stamps)
+        .unwrap();
+    assert_eq!(fresh.hits.len(), 1, "{fresh:?}");
+    assert!(!fresh.stale);
 }

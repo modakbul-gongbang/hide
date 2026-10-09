@@ -312,3 +312,45 @@ fn a_refused_file_is_unreadable_and_only_a_missing_one_is_gone() {
     let gone = links::read(home.path(), &[request(&file)]).remove(0);
     assert_eq!(gone.error.as_deref(), Some("session_file_missing"));
 }
+
+/// The link graph reads each OpenCode session as its own row records it: the
+/// root in its checkout, and a subagent's child session as a subagent line
+/// of that root, never as part of the root's conversation.
+#[test]
+fn an_opencode_root_and_its_child_session_are_separate_link_lines() {
+    let home = tempfile::tempdir().unwrap();
+    let folder = home.path().join(".local/share/opencode");
+    fs::create_dir_all(&folder).unwrap();
+    rusqlite::Connection::open(folder.join("opencode.db"))
+        .unwrap()
+        .execute_batch(&fs::read_to_string(fixture("opencode-1.18.30/opencode.sql")).unwrap())
+        .unwrap();
+    let answers = links::read(
+        home.path(),
+        &[
+            ReadRequest {
+                agent: Agent::OpenCode,
+                path: "opencode/ses_0a1b2c3d4e5f60718293a4b5c6".into(),
+                checkpoint: None,
+            },
+            ReadRequest {
+                agent: Agent::OpenCode,
+                path: "opencode/ses_0a1b2c3d4e5f60718293child".into(),
+                checkpoint: None,
+            },
+        ],
+    );
+    let [root, child] = answers.as_slice() else {
+        panic!("two answers");
+    };
+    assert_eq!(root.error, None);
+    assert_eq!(child.error, None);
+    assert_eq!(root.facts.cwd.as_deref(), Some("/work/app"));
+    assert!(!root.facts.subagent);
+    assert!(child.facts.subagent);
+    assert_eq!(
+        child.facts.session_id.as_deref(),
+        Some("ses_0a1b2c3d4e5f60718293a4b5c6"),
+        "a child line belongs to its root session"
+    );
+}

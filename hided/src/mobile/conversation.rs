@@ -16,7 +16,11 @@
 //! is read the same way down to where the last read ended, so a transcript
 //! line of any size is passed over rather than stopping the reader. Only the
 //! operator's messages, the agent's text and an interruption leave hided:
-//! tool calls, tool output and injected context never do.
+//! tool calls, tool output and injected context never do. OpenCode keeps
+//! its sessions in a database rather than a transcript file; its pages are
+//! read by message ([`opencode`]).
+
+mod opencode;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -105,8 +109,8 @@ pub struct Source {
     cwd: Option<String>,
 }
 
-/// The pane's transcript source; `None` when it is not a Claude or Codex
-/// agent with a reported session.
+/// The pane's transcript source; `None` when its agent has no conversation
+/// reader or reported no session.
 pub fn source(
     connector: &Arc<dyn ApiConnector>,
     pane_id: &str,
@@ -142,9 +146,22 @@ pub fn source(
     }))
 }
 
-/// One pane's open transcript.
+/// One pane's open conversation.
 #[derive(Debug)]
-pub struct Transcript {
+pub struct Transcript(Open);
+
+// One per open phone conversation and never collected, so its size is
+// not worth a box.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+enum Open {
+    File(FileTranscript),
+    OpenCode(Source, opencode::Transcript),
+}
+
+/// One pane's open transcript file.
+#[derive(Debug)]
+struct FileTranscript {
     source: Source,
     path: PathBuf,
     /// Where the messages the phone holds end: a line boundary.
@@ -243,9 +260,48 @@ pub enum Tail {
 }
 
 impl Transcript {
-    /// Finds the transcript and reads its newest page. `SessionFileMissing`
+    /// Finds the conversation and reads its newest page. `SessionFileMissing`
     /// means the session is reported but has written nothing yet.
     pub fn open(home: &Path, pane_id: &str, source: Source) -> Result<(Self, Page), SessionError> {
+        if source.agent == Agent::OpenCode {
+            // OpenCode reports its session by id; a path names nothing here.
+            let SessionIdentity::Id(id) = &source.identity else {
+                return Err(SessionError::UnsupportedSessionKind);
+            };
+            let (open, page) = opencode::Transcript::open(home, id, source.cwd.as_deref())?;
+            return Ok((Self(Open::OpenCode(source, open)), page));
+        }
+        let (open, page) = FileTranscript::open(home, pane_id, source)?;
+        Ok((Self(Open::File(open)), page))
+    }
+
+    pub fn source(&self) -> &Source {
+        match &self.0 {
+            Open::File(open) => &open.source,
+            Open::OpenCode(source, _) => source,
+        }
+    }
+
+    /// What reads the page before a cursor, apart from the transcript, so it
+    /// can run while the transcript keeps polling.
+    pub fn pager(&self) -> Pager {
+        Pager(match &self.0 {
+            Open::File(open) => Paging::File(open.pager()),
+            Open::OpenCode(_, open) => Paging::OpenCode(open.pager()),
+        })
+    }
+
+    /// The messages appended since the last read.
+    pub fn poll(&mut self) -> Result<Tail, SessionError> {
+        match &mut self.0 {
+            Open::File(open) => open.poll(),
+            Open::OpenCode(_, open) => open.poll(),
+        }
+    }
+}
+
+impl FileTranscript {
+    fn open(home: &Path, pane_id: &str, source: Source) -> Result<(Self, Page), SessionError> {
         let path = SessionLocator::new(home).locate(
             pane_id,
             source.agent,
@@ -285,22 +341,15 @@ impl Transcript {
         ))
     }
 
-    pub fn source(&self) -> &Source {
-        &self.source
-    }
-
-    /// What reads the page before a cursor, apart from the transcript, so it
-    /// can run while the transcript keeps polling.
-    pub fn pager(&self) -> Pager {
-        Pager {
+    fn pager(&self) -> FilePager {
+        FilePager {
             path: self.path.clone(),
             agent: self.source.agent,
             proof: self.proof.clone(),
         }
     }
 
-    /// The messages appended since the last read.
-    pub fn poll(&mut self) -> Result<Tail, SessionError> {
+    fn poll(&mut self) -> Result<Tail, SessionError> {
         let proof = self
             .proof
             .as_ref()
@@ -429,16 +478,35 @@ impl Transcript {
     }
 }
 
-/// Reads older pages of one transcript.
+/// Reads older pages of one conversation.
 #[derive(Clone, Debug)]
-pub struct Pager {
+pub struct Pager(Paging);
+
+#[derive(Clone, Debug)]
+enum Paging {
+    File(FilePager),
+    OpenCode(opencode::Pager),
+}
+
+impl Pager {
+    pub fn before(&self, cursor: u64) -> Result<Page, SessionError> {
+        match &self.0 {
+            Paging::File(pager) => pager.before(cursor),
+            Paging::OpenCode(pager) => pager.before(cursor),
+        }
+    }
+}
+
+/// Reads older pages of one transcript file.
+#[derive(Clone, Debug)]
+struct FilePager {
     path: PathBuf,
     agent: Agent,
     proof: Option<NativeProof>,
 }
 
-impl Pager {
-    pub fn before(&self, cursor: u64) -> Result<Page, SessionError> {
+impl FilePager {
+    fn before(&self, cursor: u64) -> Result<Page, SessionError> {
         let proof = self
             .proof
             .as_ref()
@@ -556,27 +624,45 @@ fn messages_from(parsed: hide_session::ParsedSession) -> Vec<Message> {
                 EventKind::Interrupted => "stopped",
                 EventKind::Injected => return None,
             };
-            let text = event.text.trim();
-            // A message of images alone has no text a phone can show.
-            if text.is_empty() {
-                return None;
-            }
-            let truncated = text.chars().nth(MESSAGE_CHARS).is_some();
-            let text = if truncated {
-                text.chars().take(MESSAGE_CHARS).collect()
-            } else {
-                text.to_owned()
-            };
-            Some(Message {
+            message(
                 id,
                 who,
-                text,
-                truncated,
-                at_ms: event.at_unix_ms,
-                part: event.part().map(str::to_owned),
-            })
+                &event.text,
+                event.at_unix_ms,
+                event.part().map(str::to_owned),
+            )
         })
         .collect()
+}
+
+/// The message a phone shows, cut at `MESSAGE_CHARS`; `None` for one with
+/// no text, such as a message of images alone. `part` names the native
+/// message a split record belongs to.
+fn message(
+    id: u64,
+    who: &'static str,
+    text: &str,
+    at_ms: u64,
+    part: Option<String>,
+) -> Option<Message> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let truncated = text.chars().nth(MESSAGE_CHARS).is_some();
+    let text = if truncated {
+        text.chars().take(MESSAGE_CHARS).collect()
+    } else {
+        text.to_owned()
+    };
+    Some(Message {
+        id,
+        who,
+        text,
+        truncated,
+        at_ms,
+        part,
+    })
 }
 
 #[cfg(test)]
@@ -671,7 +757,7 @@ mod tests {
         cursor_root(&path, &graph, "rewrite");
         assert_eq!(transcript.poll().unwrap(), Tail::Reset);
         let (mut restored, _) =
-            Transcript::open(home.path(), "fixture", transcript.source.clone()).unwrap();
+            Transcript::open(home.path(), "fixture", transcript.source().clone()).unwrap();
         std::fs::remove_file(path.with_file_name("meta.json")).unwrap();
         assert!(restored.poll().is_err());
     }
@@ -728,7 +814,7 @@ mod tests {
         let (newest, _) = page_before(&path, Agent::Claude, None).unwrap();
         assert_eq!(newest.messages.len(), PAGE_MESSAGES);
         assert_eq!(newest.messages.last().unwrap().text, "m69");
-        let older = Pager {
+        let older = FilePager {
             path: path.clone(),
             agent: Agent::Claude,
             proof: None,
@@ -737,7 +823,7 @@ mod tests {
         .unwrap();
         assert_eq!(texts(&older.messages).first(), Some(&"m10"));
         assert_eq!(texts(&older.messages).last(), Some(&"m39"));
-        let oldest = Pager {
+        let oldest = FilePager {
             path,
             agent: Agent::Claude,
             proof: None,
@@ -780,7 +866,7 @@ mod tests {
         let (_directory, path) = transcript(&[human("첫 질문", 1), assistant("첫 답", 2)]);
         let length = file_length(&path).unwrap();
         let (_, end) = page_before(&path, Agent::Claude, None).unwrap();
-        let mut open = Transcript {
+        let mut open = FileTranscript {
             source: Source {
                 agent: Agent::Claude,
                 identity: SessionIdentity::id("s"),

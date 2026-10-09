@@ -45,7 +45,7 @@ export function foldLines<T>(lines: readonly T[], unfolded: boolean): { shown: r
 }
 
 /** Why a button is off, as its message; null when it works. */
-export type Blocked = { key: "links.why.worktree" | "links.why.opencode" | "links.why.file" } | { key: "links.why.deviceOffline" | "links.why.deviceView"; device: string } | null;
+export type Blocked = { key: "links.why.worktree" | "links.why.agent" | "links.why.file" } | { key: "links.why.deviceOffline" | "links.why.deviceView"; device: string } | null;
 
 /** A device's name for its chip and its tooltips, or its id when the snapshot no longer lists it. */
 export function deviceLabel(devices: readonly Device[] | undefined, id: string): string {
@@ -75,7 +75,7 @@ export function resumable(agent: string): boolean {
 
 /** `Resume` (B12-B15, B20-B22): the agent, the file, the device and the worktree, in that order. */
 export function resumeBlock(line: LinkedSession, checkout: Checkout | null, devices: readonly Device[] | undefined, node: string): Blocked {
-  if (!resumable(line.agent)) return { key: "links.why.opencode" };
+  if (!resumable(line.agent)) return { key: "links.why.agent" };
   if (line.file === "missing") return { key: "links.why.file" };
   if (!connected(devices, line.device_id, node)) return { key: "links.why.deviceOffline", device: deviceLabel(devices, line.device_id) };
   if (!checkout) return { key: "links.why.worktree" };

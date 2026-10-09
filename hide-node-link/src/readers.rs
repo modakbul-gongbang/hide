@@ -19,6 +19,8 @@ pub struct ReaderPage<T> {
     pub scanned: usize,
     pub oldest_unix_ms: Option<u64>,
     pub refused: usize,
+    /// Agent stores the node could not list at all, each with why.
+    pub store_refusals: Vec<hide_session::SessionStoreRefusal>,
 }
 
 fn facts(link: &(impl NodeLink + ?Sized)) -> Result<&ReaderFeatures, LinkError> {
@@ -116,6 +118,7 @@ pub fn link_files(
         scanned: raw.len(),
         oldest_unix_ms: None,
         refused: 0,
+        store_refusals: Vec::new(),
     };
     for row in raw {
         let header: Header<'_> = serde_json::from_str(row.get()).map_err(|_| shape())?;
@@ -153,8 +156,13 @@ pub fn project_sessions(
         scanned: raw.len(),
         oldest_unix_ms: None,
         refused: 0,
+        store_refusals: Vec::new(),
     };
     for row in raw {
+        if let Ok(refusal) = serde_json::from_str::<hide_session::SessionStoreRefusal>(row.get()) {
+            page.store_refusals.push(refusal);
+            continue;
+        }
         let header: Header<'_> = match serde_json::from_str(row.get()) {
             Ok(header) => header,
             Err(_) => {
@@ -395,6 +403,36 @@ mod tests {
         assert_eq!(page.rows[0].id, "native-working");
         assert!(page.rows[0].title.is_none());
         assert_eq!(page.refused, 2);
+    }
+
+    #[test]
+    fn a_store_the_node_could_not_read_is_reported_beside_the_sessions_it_did_list() {
+        let peer = Peer::new(r#"[
+            {"id":"native-working","agent":"claude","locator":"session.jsonl","checkout_path":"/work/app","first_human_request":null,"started_at_unix_ms":1,"updated_at_unix_ms":2,"title":null,"event_count":1,"availability":"available"},
+            {"agent":"opencode","store_refused":"opencode_db_unreadable"}
+        ]"#.to_owned());
+        let page = project_sessions(
+            &peer,
+            hide_project::ProjectIdentity {
+                id: "project".to_owned(),
+                root: "/work/app".into(),
+                checkout_root: "/work/app".into(),
+                device_id: "fixture".to_owned(),
+                kind: hide_project::ProjectKind::Folder,
+            },
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        assert_eq!(page.rows.len(), 1);
+        assert_eq!(page.rows[0].id, "native-working");
+        assert_eq!(page.refused, 0);
+        assert_eq!(
+            page.store_refusals,
+            [hide_session::SessionStoreRefusal {
+                agent: hide_session::Agent::OpenCode,
+                reason: "opencode_db_unreadable".to_owned(),
+            }]
+        );
     }
 
     #[test]

@@ -148,7 +148,7 @@ impl Runtime {
                     && agent.state_change_seq == record.old_state_change_seq
                     && agent.row_facts.is_some()
                     && (!hide_session::Agent::from_kind(&record.kind)
-                        .is_some_and(hide_session::Agent::requires_native_file_proof)
+                        .is_some_and(hide_session::Agent::requires_native_proof)
                         || agent
                             .row_facts
                             .as_ref()

@@ -1536,6 +1536,15 @@ mod summary_tests {
         ] {
             assert_eq!(Runtime::parse(kind).unwrap().sleeps(), supported, "{kind}");
         }
+        // Their manual sleep is declared and closes the pane, so the guard,
+        // not a missing declaration, keeps Factory from sleeping them.
+        for kind in ["pi", "omp", "opencode"] {
+            let sleep = Runtime::parse(kind).unwrap().adapter().sleep;
+            assert!(
+                sleep.is_some_and(|dialect| dialect.closes_pane_when_sleeping()),
+                "{kind}"
+            );
+        }
     }
 
     #[test]

@@ -873,6 +873,25 @@ pub fn handle_with_progress(
             to_value(listed)
         }
         Call::SessionIndexRead {
+            agent: hide_session::Agent::OpenCode,
+            path,
+            saved,
+            scope,
+        } => {
+            // OpenCode's sessions live in its database, named `opencode/<id>`.
+            let home = env.home("sessions_home_unavailable")?;
+            let step = hide_session::search_read::opencode_session(&path, scope.as_ref())
+                .and_then(|scope| {
+                    hide_session::search_read::read_opencode_step(
+                        Path::new(&home),
+                        saved.as_ref(),
+                        scope,
+                    )
+                })
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
+            to_value(step)
+        }
+        Call::SessionIndexRead {
             agent,
             path,
             saved,
@@ -914,6 +933,20 @@ pub fn handle_with_progress(
                     .iter()
                     .enumerate()
                     .map(|(index, path)| {
+                        let scope = scopes
+                            .as_ref()
+                            .and_then(|scopes| scopes.get(index))
+                            .and_then(Option::as_ref);
+                        if path.starts_with(hide_session::links::OPENCODE_PREFIX) {
+                            return hide_session::search_read::opencode_session(path, scope)
+                                .and_then(|scope| {
+                                    hide_session::search_read::opencode_stamp(
+                                        Path::new(&home),
+                                        scope,
+                                    )
+                                })
+                                .ok();
+                        }
                         let path = Path::new(path);
                         if !path.is_absolute() {
                             return None;
@@ -925,10 +958,6 @@ pub fn handle_with_progress(
                         )
                         .ok()?;
                         let agent = session_file_agent(Path::new(&home), &path).ok()?;
-                        let scope = scopes
-                            .as_ref()
-                            .and_then(|scopes| scopes.get(index))
-                            .and_then(Option::as_ref);
                         hide_session::read_session_file(
                             Path::new(&home),
                             agent,
@@ -944,11 +973,20 @@ pub fn handle_with_progress(
         }
         Call::ProjectSessions { project } => {
             let home = env.home("sessions_home_unavailable")?;
-            let sessions =
+            let read =
                 hide_session::SessionCatalog::new(Path::new(&home), project.device_id.clone())
                     .project_sessions(&project)
                     .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?;
-            to_value(sessions)
+            // A store that listed nothing rides the answer as a row of its
+            // own, so the core logs why its sessions are absent.
+            let mut rows = Vec::with_capacity(read.sessions.len() + read.refusals.len());
+            for session in read.sessions {
+                rows.push(to_value(session)?);
+            }
+            for refusal in read.refusals {
+                rows.push(to_value(refusal)?);
+            }
+            Ok(Value::Array(rows))
         }
         Call::SessionStat { path, scope } => session_read(env, &path, scope.as_ref(), |path| {
             crate::sessions::stat(path).map_err(|e| e.to_string())

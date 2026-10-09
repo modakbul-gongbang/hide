@@ -115,7 +115,7 @@ impl Runtime {
         if payload.query.chars().count() > 256
             || (payload.provider != "all"
                 && !hide_session::Agent::from_kind(&payload.provider)
-                    .is_some_and(|agent| agent.has_session_file()))
+                    .is_some_and(|agent| agent.searchable()))
             || payload.days.is_some_and(|d| ![0, 30, 90, 365].contains(&d))
         {
             if let Some(client) = &self.search_client {
@@ -466,7 +466,7 @@ fn run(
                 };
                 let row = &request.rows[i];
                 let Some(agent) = hide_session::Agent::from_kind(&row.provider)
-                    .filter(|agent| agent.has_session_file())
+                    .filter(|agent| agent.searchable())
                 else {
                     state.failure = Some(format!("Unsupported session provider: {}", row.provider));
                     state.indexed += 1;
@@ -670,6 +670,80 @@ mod tests {
     use super::*;
     use crate::model::ProjectSessionsSnapshot;
     use std::fs;
+    #[test]
+    fn an_opencode_index_read_and_stamp_answer_only_for_the_queued_root_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = temp.path().join("work");
+        fs::create_dir_all(&checkout).unwrap();
+        let checkout = checkout.to_string_lossy().into_owned();
+        crate::fixture::opencode_database(
+            temp.path(),
+            &[
+                ("ses_root", None, checkout.as_str()),
+                ("ses_child", Some("ses_root"), checkout.as_str()),
+            ],
+        );
+        let node = hide_node::Local::new(Some(temp.path().to_path_buf()));
+        let scope = |id: &str, cwd: &str| hide_session::SessionReadScope {
+            id: id.to_owned(),
+            cwd: cwd.to_owned(),
+        };
+        let read = |locator: &str, scope| {
+            read_on_node(
+                &node,
+                hide_session::Agent::OpenCode,
+                locator,
+                Some(scope),
+                None,
+            )
+        };
+        let stamps = |locator: &str, scope| -> Vec<Option<String>> {
+            call_as(
+                &node,
+                Call::SessionStamps {
+                    paths: vec![locator.to_owned()],
+                    scopes: Some(vec![Some(scope)]),
+                },
+                NODE_READ_TIMEOUT,
+            )
+            .unwrap()
+        };
+
+        let Ok(IndexStep::Read { messages, .. }) =
+            read("opencode/ses_root", scope("ses_root", &checkout))
+        else {
+            panic!("the proven root session is read");
+        };
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "OpenCode request");
+        assert!(stamps("opencode/ses_root", scope("ses_root", &checkout))[0].is_some());
+
+        let elsewhere = temp.path().to_string_lossy().into_owned();
+        for (locator, scope, reason) in [
+            (
+                "opencode/ses_root",
+                scope("ses_other", &checkout),
+                "label_session_id_mismatch",
+            ),
+            (
+                "opencode/ses_root",
+                scope("ses_root", &elsewhere),
+                "label_session_cwd_mismatch",
+            ),
+            (
+                "opencode/ses_child",
+                scope("ses_child", &checkout),
+                "label_session_not_root",
+            ),
+        ] {
+            match read(locator, scope.clone()) {
+                Err(Failure::Index(refused)) => assert_eq!(refused, reason),
+                _ => panic!("{locator} is refused with {reason}"),
+            }
+            assert_eq!(stamps(locator, scope), vec![None]);
+        }
+    }
+
     #[test]
     fn drop_drains_off_that_was_still_queued_with_copied_rows() {
         let temp = tempfile::tempdir().unwrap();

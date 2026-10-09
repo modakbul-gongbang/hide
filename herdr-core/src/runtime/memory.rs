@@ -1107,6 +1107,50 @@ mod scope_tests {
     }
 
     #[test]
+    fn an_opencode_detail_reads_only_its_proven_root_session_in_its_checkout() {
+        let temp = tempdir().unwrap();
+        let checkout = temp.path().join("work");
+        fs::create_dir_all(&checkout).unwrap();
+        let checkout = checkout.to_string_lossy().into_owned();
+        crate::fixture::opencode_database(
+            temp.path(),
+            &[
+                ("ses_root", None, checkout.as_str()),
+                ("ses_child", Some("ses_root"), checkout.as_str()),
+            ],
+        );
+        let node = hide_node::Local::new(Some(temp.path().to_path_buf()));
+        let row = |id: &str, checkout: &str| crate::model::SessionRowSnapshot {
+            id: id.to_owned(),
+            provider: "opencode".to_owned(),
+            provider_label: "OpenCode".to_owned(),
+            locator: format!("opencode/{id}"),
+            checkout_path: checkout.to_owned(),
+            first_human_request: None,
+            started_at_unix_ms: None,
+            updated_at_unix_ms: 1,
+            title: Some("OpenCode title".to_owned()),
+            unavailable_reason: None,
+        };
+        let database = temp.path().join("missing.sqlite3");
+
+        let detail =
+            load_session_detail(&node, &database, "project-1", row("ses_root", &checkout)).unwrap();
+        assert_eq!(detail.provider.as_deref(), Some("OpenCode"));
+        assert_eq!(detail.events.len(), 1);
+        assert_eq!(detail.events[0].role, "user");
+        assert_eq!(detail.events[0].text, "OpenCode request");
+
+        let child = load_session_detail(&node, &database, "project-1", row("ses_child", &checkout))
+            .unwrap_err();
+        assert!(child.contains("label_session_not_root"), "{child}");
+        let elsewhere = temp.path().to_string_lossy().into_owned();
+        let other = load_session_detail(&node, &database, "project-1", row("ses_root", &elsewhere))
+            .unwrap_err();
+        assert!(other.contains("label_session_cwd_mismatch"), "{other}");
+    }
+
+    #[test]
     fn reversed_session_load_completion_cannot_replace_the_newer_generation() {
         assert!(!sessions_load_matches_scope(
             7,
@@ -1576,6 +1620,52 @@ mod scope_tests {
     }
 
     #[test]
+    fn an_opencode_session_in_the_project_does_not_pause_memory_analysis() {
+        let temp = tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project_root = temp.path().join("project");
+        fs::create_dir_all(&project_root).unwrap();
+        let project_root = fs::canonicalize(project_root).unwrap();
+        let checkout = project_root.display().to_string();
+        crate::fixture::opencode_database(&home, &[("ses_root", None, checkout.as_str())]);
+        let folder = home.join(hide_session::CLAUDE_SESSIONS).join("-project");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(
+            folder.join("claude-session.jsonl"),
+            format!(
+                "{}\n",
+                serde_json::json!({"type":"user","sessionId":"claude-session","cwd":checkout,
+                    "timestamp":"2026-09-18T00:00:00Z","origin":{"kind":"human"},
+                    "message":{"role":"user","content":"analyze me"}})
+            ),
+        )
+        .unwrap();
+        let node: std::sync::Arc<dyn crate::node_access::NodeLink> =
+            std::sync::Arc::new(hide_node::Local::new(Some(home.clone())));
+        let mut seen = Vec::new();
+        let outcome = super::analyze_project(
+            &crate::node::NodeId::parse(&hook_node()).unwrap(),
+            node.as_ref(),
+            &crate::ai::memory_router(&node, &Default::default()),
+            &home.join("memory.sqlite3"),
+            &checkout,
+            &hide_ai::CancelToken::new(),
+            |snapshot| seen.push(snapshot),
+        );
+
+        // Only the Claude session is Memory's to read; OpenCode's receipts
+        // ride its label read, and its row neither fails nor pauses the pass.
+        assert_eq!(seen.first().map(|snapshot| snapshot.discovered), Some(1));
+        assert!(
+            seen.iter()
+                .chain(outcome.analysis.as_ref())
+                .all(|snapshot| snapshot.state != "paused" && snapshot.failed == 0),
+            "{seen:?} {:?}",
+            outcome.analysis
+        );
+    }
+
+    #[test]
     fn empty_session_start_projection_unblocks_later_prompt_memory_for_both_providers() {
         let temp = tempdir().unwrap();
         let home = temp.path().join("home");
@@ -1827,7 +1917,19 @@ fn analyze_project_inner(
 ) -> Result<MemoryMutationOutcome, AnalysisFailure> {
     let identity =
         project_identity(sessions_node, node, checkout_path).map_err(AnalysisFailure::Local)?;
-    let sessions = project_sessions(sessions_node, &identity).map_err(AnalysisFailure::Local)?;
+    // Memory reads its own pass only from agents whose sessions this build has
+    // a Memory reader for; OpenCode's receipts ride its label read instead.
+    let readers = hide_node_link::sessions::ReaderFeatures::implemented();
+    let sessions = project_sessions(sessions_node, &identity)
+        .map_err(AnalysisFailure::Local)?
+        .into_iter()
+        .filter(|session| {
+            readers.supports(
+                session.agent.as_str(),
+                hide_node_link::sessions::ReaderFeature::Memory,
+            )
+        })
+        .collect::<Vec<_>>();
     let discovered = sessions.len();
     let mut store =
         MemoryStore::open(database).map_err(|error| AnalysisFailure::Local(error.to_string()))?;
@@ -2027,6 +2129,12 @@ fn project_sessions(
         crate::diagnostic!(serde_json::json!({
             "component": "memory", "kind": "sessions.reader_refused",
             "project_id": identity.id, "sessions": page.refused,
+        }));
+    }
+    for refusal in &page.store_refusals {
+        crate::diagnostic!(serde_json::json!({
+            "component": "memory", "kind": "sessions.store_unreadable",
+            "project_id": identity.id, "agent": refusal.agent, "reason": refusal.reason,
         }));
     }
     Ok(page.rows)
@@ -2746,6 +2854,9 @@ pub(super) fn load_session_detail(
             memory: None,
         });
     }
+    if Agent::from_kind(&row.provider) == Some(Agent::OpenCode) {
+        return load_opencode_detail(sessions_node, database, project_id, row);
+    }
     let agent = Agent::from_kind(&row.provider)
         .filter(|agent| agent.has_session_file())
         .ok_or_else(|| format!("Unsupported session provider: {}", row.provider))?;
@@ -2867,6 +2978,116 @@ pub(super) fn load_session_detail(
                 },
                 memory_attached_count: attached,
                 memory_attached_item_ids: item_ids,
+            }
+        })
+        .collect();
+    Ok(ArchiveDetailSnapshot {
+        id: row.id,
+        kind: "session".to_owned(),
+        title: row
+            .title
+            .or(row.first_human_request)
+            .unwrap_or_else(|| "Session".to_owned()),
+        provider: Some(row.provider_label),
+        unavailable_reason: None,
+        events,
+        memory: None,
+    })
+}
+
+/// The most bounded reads one OpenCode archive detail takes: a session read
+/// a budget at a time, as large as one session file the detail parses.
+const OPENCODE_DETAIL_READS: usize = (hide_session::SESSION_READ_LIMIT_BYTES
+    / hide_session::SESSION_INCREMENT_READ_LIMIT_BYTES)
+    as usize;
+
+/// An OpenCode session's archive detail, read from OpenCode's database in
+/// the bounded reads its label reader makes, each between the root and
+/// checkout proof of the catalog row. Hide's Memory receipt rides in a part
+/// only Hide's plugin writes, so it is checked as provider-injected text.
+fn load_opencode_detail(
+    sessions_node: &dyn NodeLink,
+    database: &Path,
+    project_id: &str,
+    row: SessionRowSnapshot,
+) -> Result<ArchiveDetailSnapshot, String> {
+    let mut request = hide_session::label_transcript::LabelTranscriptRequest {
+        agent: Agent::OpenCode,
+        reference_kind: "id".into(),
+        reference_value: row.id.clone(),
+        cwd: Some(row.checkout_path.clone()),
+        checkpoint: None,
+        subagents: Default::default(),
+        turns: None,
+    };
+    let mut events = Vec::new();
+    let mut receipts = Vec::new();
+    let mut owner = None;
+    for read in 0.. {
+        if read == OPENCODE_DETAIL_READS {
+            return Err("Session unavailable: session_too_large".to_owned());
+        }
+        let transcript: hide_session::label_transcript::LabelTranscript =
+            hide_node_link::link::call_as_reader(
+                sessions_node,
+                Agent::OpenCode,
+                hide_node_link::sessions::ReaderFeature::Conversation,
+                Call::LabelTranscript {
+                    request: request.clone(),
+                },
+                SESSION_CALL_TIMEOUT,
+            )
+            .map_err(|error| format!("Session unavailable: {error}"))?;
+        // A session rewound or replaced between reads is not one history.
+        if transcript.rescanned.is_some()
+            || owner.get_or_insert_with(|| transcript.confirmed.incarnation.clone())
+                != &transcript.confirmed.incarnation
+        {
+            return Err("Session unavailable: label_session_read_changed".to_owned());
+        }
+        events.extend(transcript.events);
+        receipts.extend(transcript.memory_receipts);
+        if !transcript.has_more {
+            break;
+        }
+        request.checkpoint = Some(transcript.checkpoint);
+    }
+    let store = MemoryStore::exists(database)
+        .then(|| MemoryStore::open_read_only(database).map_err(|error| error.to_string()))
+        .transpose()?;
+    let events = events
+        .into_iter()
+        .map(|event| {
+            let receipt = store.as_ref().and_then(|store| {
+                receipts
+                    .iter()
+                    .filter(|receipt| receipt.offset == event.offset)
+                    .find_map(|receipt| {
+                        trusted_memory_receipt(
+                            store,
+                            project_id,
+                            &row.provider,
+                            &row.id,
+                            true,
+                            &receipt.text,
+                        )
+                    })
+            });
+            ArchiveEventSnapshot {
+                source_offset: Some(event.offset),
+                role: event.kind.role().to_owned(),
+                kind: match event.kind {
+                    hide_session::label_transcript::LabelEventKind::Human => "human",
+                    hide_session::label_transcript::LabelEventKind::Assistant => "assistant",
+                    hide_session::label_transcript::LabelEventKind::Interrupted => "interrupted",
+                }
+                .to_owned(),
+                at_unix_ms: event.at_unix_ms,
+                memory_attached_count: receipt.as_ref().map(|receipt| receipt.count),
+                memory_attached_item_ids: receipt
+                    .map(|receipt| receipt.items.into_iter().map(|(id, _)| id).collect())
+                    .unwrap_or_default(),
+                text: event.text,
             }
         })
         .collect();

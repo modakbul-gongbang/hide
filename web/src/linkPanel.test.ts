@@ -37,7 +37,7 @@ describe("the sessions section", () => {
 
   it("says why a line cannot resume, the agent first and the worktree last", () => {
     const here = checkout("/repo/task");
-    expect(resumeBlock(line("a", { agent: "opencode" }), here, [], "local")).toEqual({ key: "links.why.opencode" });
+    expect(resumeBlock(line("a", { agent: "future-agent" }), here, [], "local")).toEqual({ key: "links.why.agent" });
     expect(resumeBlock(line("a", { file: "missing" }), here, [], "local")).toEqual({ key: "links.why.file" });
     expect(resumeBlock(line("a", { device_id: "mini" }), here, [{ ...MINI, state: "unavailable" }], "local")).toEqual({ key: "links.why.deviceOffline", device: "mini" });
     expect(resumeBlock(line("a"), null, [], "local")).toEqual({ key: "links.why.worktree" });

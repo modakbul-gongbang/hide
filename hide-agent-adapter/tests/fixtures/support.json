@@ -104,7 +104,10 @@
       "subagents",
       "spawn_guard",
       "herdr_integration",
-      "start"
+      "sleep",
+      "fork",
+      "start",
+      "titles"
     ],
     "factory": {
       "direct_ask": "available",

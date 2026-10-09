@@ -16,6 +16,7 @@ pub enum ForkableAgent {
     Grok,
     Pi,
     Omp,
+    OpenCode,
 }
 
 impl ForkableAgent {
@@ -26,8 +27,8 @@ impl ForkableAgent {
             hide_agent_adapter::LaunchDialect::Grok => Some(Self::Grok),
             hide_agent_adapter::LaunchDialect::Pi => Some(Self::Pi),
             hide_agent_adapter::LaunchDialect::Omp => Some(Self::Omp),
-            hide_agent_adapter::LaunchDialect::OpenCode
-            | hide_agent_adapter::LaunchDialect::Cursor => None,
+            hide_agent_adapter::LaunchDialect::OpenCode => Some(Self::OpenCode),
+            hide_agent_adapter::LaunchDialect::Cursor => None,
         }
     }
 
@@ -48,6 +49,12 @@ impl ForkableAgent {
             Self::Grok => hide_agent_adapter::LaunchDialect::Grok.adapter().herdr.name,
             Self::Pi => hide_agent_adapter::LaunchDialect::Pi.adapter().herdr.name,
             Self::Omp => hide_agent_adapter::LaunchDialect::Omp.adapter().herdr.name,
+            Self::OpenCode => {
+                hide_agent_adapter::LaunchDialect::OpenCode
+                    .adapter()
+                    .herdr
+                    .name
+            }
         }
     }
 
@@ -64,6 +71,8 @@ impl ForkableAgent {
             ],
             Self::Codex => vec!["fork".to_owned(), session_id.to_owned()],
             Self::Pi | Self::Omp => vec!["--fork".to_owned(), session_id.to_owned()],
+            // OpenCode 1.18.30 `--help`: `--fork` forks the session `-s` names.
+            Self::OpenCode => vec!["-s".to_owned(), session_id.to_owned(), "--fork".to_owned()],
         }
     }
 }
@@ -300,6 +309,17 @@ mod tests {
             ["--fork", "3f2b1c00-0000-4000-8000-000000000001"]
         );
         assert!(is_forkable(Some("omp"), Some("native-session")));
+    }
+
+    #[test]
+    fn an_opencode_fork_continues_the_confirmed_session_as_a_new_one() {
+        let request = request(ForkableAgent::OpenCode);
+        assert_eq!(request.agent.kind(), "opencode");
+        assert_eq!(
+            request.agent.resume_arguments(&request.session_id),
+            ["-s", "3f2b1c00-0000-4000-8000-000000000001", "--fork"]
+        );
+        assert!(is_forkable(Some("OpenCode"), Some("ses_native")));
     }
 
     #[test]

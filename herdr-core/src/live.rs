@@ -2285,7 +2285,7 @@ pub(crate) fn confirm_session_launch(
     source_reference: Option<&crate::sidebar::SessionAgentSessionPayload>,
 ) -> Result<(), String> {
     let Some(agent) =
-        hide_session::Agent::from_kind(kind).filter(|agent| agent.requires_native_file_proof())
+        hide_session::Agent::from_kind(kind).filter(|agent| agent.requires_native_proof())
     else {
         return Ok(());
     };
@@ -2299,7 +2299,7 @@ pub(crate) fn confirm_session_launch(
     };
     check()?;
     let source_reference = source_reference.ok_or("session_route_reference_unconfirmed")?;
-    if source_reference.kind != "path" {
+    if source_reference.kind != agent.proof_reference_kind() {
         return Err("session_route_reference_unconfirmed".into());
     }
     let _: hide_session::session_activity::SessionActivity = crate::node_access::call_as(
@@ -2926,7 +2926,7 @@ pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<()
 
 fn fork_execution_current(context: &LiveContext, request: &ForkRequest) -> Result<(), String> {
     if !hide_session::Agent::from_kind(request.agent.kind())
-        .is_some_and(hide_session::Agent::requires_native_file_proof)
+        .is_some_and(hide_session::Agent::requires_native_proof)
     {
         return Ok(());
     }
@@ -2940,8 +2940,8 @@ fn fork_execution_current(context: &LiveContext, request: &ForkRequest) -> Resul
     Ok(())
 }
 
-/// Starts a native-file fork without changing the parent's tab. Legacy providers
-/// retain their sibling split. A pane whose agent never started is closed;
+/// Starts a natively proven fork without changing the parent's tab. Legacy
+/// providers retain their sibling split. A pane whose agent never started is closed;
 /// registration never turns a working fork into a failure.
 fn run_agent_fork_with_registration(
     connector: &dyn ApiConnector,
@@ -2951,9 +2951,9 @@ fn run_agent_fork_with_registration(
     register: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> Result<String, String> {
     let checked = CurrentSessionConnector { connector, current };
-    let native_file = hide_session::Agent::from_kind(request.agent.kind())
-        .is_some_and(hide_session::Agent::requires_native_file_proof);
-    let mutation_connector: &dyn ApiConnector = if native_file { &checked } else { connector };
+    let proven = hide_session::Agent::from_kind(request.agent.kind())
+        .is_some_and(hide_session::Agent::requires_native_proof);
+    let mutation_connector: &dyn ApiConnector = if proven { &checked } else { connector };
     let check = || {
         current()?;
         confirm_session_launch(
@@ -2966,7 +2966,7 @@ fn run_agent_fork_with_registration(
         current()
     };
     check()?;
-    let child_pane_id = if native_file {
+    let child_pane_id = if proven {
         let cwd = request
             .cwd
             .as_deref()
@@ -3736,6 +3736,142 @@ mod tests {
             } else if refused {
                 expected.push("pane.close");
             }
+            assert_eq!(herdr.methods(), expected, "{case}");
+        }
+    }
+
+    #[test]
+    fn an_opencode_fork_proves_its_root_session_and_checkout_before_and_after_its_tab() {
+        for case in [
+            "success",
+            "refused",
+            "other-checkout",
+            "child-session",
+            "removed-after",
+            "execution-after",
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
+            let checkout = cwd.display().to_string();
+            let directory = if case == "other-checkout" {
+                "/elsewhere/app".to_owned()
+            } else {
+                checkout.clone()
+            };
+            crate::fixture::opencode_database(
+                home.path(),
+                &[
+                    ("ses_root", None, directory.as_str()),
+                    ("ses_child", Some("ses_root"), directory.as_str()),
+                ],
+            );
+            let session = if case == "child-session" {
+                "ses_child"
+            } else {
+                "ses_root"
+            };
+            let database = home.path().join(".local/share/opencode/opencode.db");
+            let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let observed_changed = Arc::clone(&changed);
+            let node = hide_node::Local::new(Some(home.path().to_path_buf()));
+            let expected_cwd = checkout.clone();
+            let herdr = FakeHerdr::start_with_errors("opencode-fork-tab", move |method, params| {
+                Ok(match method {
+                    "session.snapshot" => json!({"type": "session_snapshot", "snapshot": {
+                        "version": "fixture", "protocol": HERDR_PROTOCOL_REVISION,
+                        "workspaces": [], "tabs": [], "panes": [], "agents": [],
+                        "layouts": [{"workspace_id": "w1", "tab_id": "w1:t1", "zoomed": false,
+                            "area": {"x":0,"y":0,"width":80,"height":24},
+                            "focused_pane_id": "parent-pane",
+                            "panes": [{"pane_id":"parent-pane", "focused":true,
+                                "rect":{"x":0,"y":0,"width":80,"height":24}}], "splits": []}]
+                    }}),
+                    "tab.create" => {
+                        if case == "removed-after" {
+                            rusqlite::Connection::open(&database)
+                                .unwrap()
+                                .execute("DELETE FROM session WHERE id = 'ses_root'", [])
+                                .unwrap();
+                        }
+                        if case == "execution-after" {
+                            observed_changed.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        assert_eq!(params["cwd"], expected_cwd);
+                        assert_eq!(params["focus"], false);
+                        json!({"type":"tab_created",
+                            "tab":{"tab_id":"w1:t2","workspace_id":"w1","number":2,"label":"fork", "focused":false,"pane_count":1,"agent_status":"idle"},
+                            "root_pane":{"pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":1}})
+                    }
+                    "pane.process_info" => json!({"type":"pane_process_info","process_info":{
+                        "pane_id":"child-pane","shell_pid":42,"foreground_process_group_id":42,
+                        "foreground_processes":[{"pid":42,"name":"zsh"}]}}),
+                    "agent.start" => {
+                        assert_eq!(params["kind"], "opencode");
+                        assert_eq!(params["args"], json!(["-s", "ses_root", "--fork"]));
+                        if case == "refused" {
+                            return Err(("start_refused".into(), "fixture refused".into()));
+                        }
+                        json!({"type":"agent_started","argv":[],"agent":{
+                            "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":2}})
+                    }
+                    "pane.close" => {
+                        assert_eq!(params["pane_id"], "child-pane");
+                        json!({"type":"ok"})
+                    }
+                    other => panic!("unexpected {other}"),
+                })
+            });
+            let request = ForkRequest {
+                source_reference: Some(crate::sidebar::SessionAgentSessionPayload {
+                    kind: "id".into(),
+                    value: session.into(),
+                }),
+                parent_state_change_seq: None,
+                connection_generation: 0,
+                codex_daemon: Default::default(),
+                parent_pane_id: "parent-pane".into(),
+                agent: crate::fork::ForkableAgent::OpenCode,
+                session_id: session.into(),
+                cwd: Some(checkout.clone()),
+                name: "fork-opencode-1".into(),
+            };
+            let result = run_agent_fork_with_registration(
+                &herdr.connector(),
+                &node,
+                &request,
+                &|| {
+                    if changed.load(std::sync::atomic::Ordering::SeqCst) {
+                        Err("session_fork_execution_changed".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_, _| Ok(()),
+            );
+            assert_eq!(result.is_err(), case != "success", "{case}");
+            let expected: &[&str] = match case {
+                "success" => &[
+                    "session.snapshot",
+                    "tab.create",
+                    "pane.process_info",
+                    "agent.start",
+                ],
+                "refused" => &[
+                    "session.snapshot",
+                    "tab.create",
+                    "pane.process_info",
+                    "agent.start",
+                    "pane.close",
+                ],
+                "other-checkout" | "child-session" => &[],
+                "removed-after" => &[
+                    "session.snapshot",
+                    "tab.create",
+                    "pane.process_info",
+                    "pane.close",
+                ],
+                _ => &["session.snapshot", "tab.create", "pane.close"],
+            };
             assert_eq!(herdr.methods(), expected, "{case}");
         }
     }

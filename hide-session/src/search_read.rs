@@ -146,6 +146,83 @@ pub fn stamp_at(path: &Path) -> Option<String> {
     }
 }
 
+/// The scope of the OpenCode session a catalog locator (`opencode/<id>`)
+/// names, held to the id its queued row was proven with.
+pub fn opencode_session<'a>(
+    locator: &str,
+    scope: Option<&'a crate::SessionReadScope>,
+) -> Result<&'a crate::SessionReadScope, String> {
+    let id = locator
+        .strip_prefix(crate::links::OPENCODE_PREFIX)
+        .ok_or_else(|| "label_session_outside_roots".to_owned())?;
+    let scope = scope.ok_or_else(|| "label_session_scope_required".to_owned())?;
+    if scope.id != id {
+        return Err("label_session_id_mismatch".to_owned());
+    }
+    Ok(scope)
+}
+
+/// An OpenCode session's stamp: its creation, its message count and its
+/// newest write, between the same root and checkout proof as its reads.
+pub fn opencode_stamp(home: &Path, scope: &crate::SessionReadScope) -> Result<String, String> {
+    crate::opencode::stamp(home, &scope.id, &scope.cwd)
+}
+
+/// One bounded read of an OpenCode session past what the index saved. The
+/// stamp is taken before the read, so a write that lands during it moves
+/// the stamp and the next refresh reads on from the saved position.
+pub fn read_opencode_step(
+    home: &Path,
+    saved: Option<&SavedFile>,
+    scope: &crate::SessionReadScope,
+) -> Result<IndexStep, String> {
+    let stamp = opencode_stamp(home, scope)?;
+    let checkpoint = saved
+        .map(|saved| serde_json::from_str::<ConversationCheckpoint>(&saved.cursor))
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    if let (Some(saved), Some(checkpoint)) = (saved, &checkpoint)
+        && saved.stamp == stamp
+        && !checkpoint.has_more()
+    {
+        return Ok(IndexStep::Done);
+    }
+    let transcript = crate::opencode::read(
+        home,
+        &crate::label_transcript::LabelTranscriptRequest {
+            agent: Agent::OpenCode,
+            reference_kind: "id".into(),
+            reference_value: scope.id.clone(),
+            cwd: Some(scope.cwd.clone()),
+            checkpoint,
+            subagents: Default::default(),
+            turns: None,
+        },
+    )?;
+    let messages = transcript
+        .events
+        .into_iter()
+        .filter(|event| event.kind != crate::label_transcript::LabelEventKind::Interrupted)
+        .map(|event| IndexedMessage {
+            offset: event.offset,
+            role: event.kind.role().to_owned(),
+            at_unix_ms: event.at_unix_ms,
+            text: event.text,
+        })
+        .collect();
+    let cursor = transcript.checkpoint.with_more(transcript.has_more);
+    Ok(IndexStep::Read {
+        reset: transcript.rescanned.is_some(),
+        messages,
+        cursor: serde_json::to_string(&cursor).map_err(|e| e.to_string())?,
+        stamp,
+        // OpenCode's database keeps no prefix to witness; the checkpoint's
+        // own message witness detects a rewound session.
+        witness: String::new(),
+        more: transcript.has_more,
+    })
+}
+
 fn read_opened(
     saved: Option<&SavedFile>,
     agent: Agent,

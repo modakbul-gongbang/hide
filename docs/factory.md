@@ -222,7 +222,7 @@ A start that fails with an environment signal leaves the Task `waiting` and is h
 
 A Task's worker is put to sleep when the Task blocks, pauses, goes to `verifying`, or waits for a slot, and woken when it runs again.
 Sleep goes through agent sleep and is deferred until the agent's turn ends; a worker that never slept is sent the message instead, and a worker without Factory-supported same-pane sleep is never counted asleep.
-Pi's, omp's and Grok's manual Sleep/Wake closes the original pane and resumes in a fresh one; Factory cannot bind that new execution's worker, coordination, letter and watch identities yet, so Factory pause keeps their live panes.
+Pi's, omp's, Grok's and OpenCode's manual Sleep/Wake closes the original pane and resumes in a fresh one; Factory cannot bind that new execution's worker, coordination, letter and watch identities yet, so Factory pause keeps their live panes.
 Stopping a worker, when its Task is cancelled or an outside pull request takes it over, ends its ledger record at once and puts its agent to sleep the same way, so the pane and session stay for `revive`; an agent that cannot sleep is left awake in its pane.
 For Pi, omp and Grok, that stop is refused with `agent_cannot_sleep` before changing the ledger or pane.
 A wake restarts the agent in the same pane and session.
