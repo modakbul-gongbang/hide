@@ -259,6 +259,53 @@ fn the_core_never_redials_a_node_and_takes_its_next_link() {
     drop(release);
 }
 
+/// B16: a doorbell, a warning or a phone reply for an agent on a node goes
+/// to that node's Herdr through its link; while the link is down there is
+/// no way to it, and none is ever the core's own Herdr instead.
+#[test]
+fn a_node_s_agents_are_reached_only_through_its_link() {
+    let shared = shared_runtime();
+    {
+        // The core's own Herdr, which a node's agent must never be sent to.
+        let mut runtime = shared.lock().unwrap();
+        let socket = std::env::temp_dir()
+            .join(format!(
+                "herdr-core-inbound-own-{}.sock",
+                std::process::id()
+            ))
+            .to_string_lossy()
+            .into_owned();
+        runtime.live = Some(crate::live::LiveContext {
+            socket_path: socket.clone().into(),
+            runtime: std::sync::Weak::new(),
+            notifier: crate::handle::ChangeNotifier::noop(),
+            api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket)),
+            node: Arc::new(hide_node::Local::of_process()),
+        });
+        let own = runtime.node.as_str().to_owned();
+        assert!(runtime.delivery_connector(&own).is_some());
+    }
+    let (link, release) = HeldLink::new();
+    shared
+        .lock()
+        .unwrap()
+        .accept_inbound_node(NODE, "MacBook", link)
+        .expect("the link");
+    assert!(
+        shared.lock().unwrap().delivery_connector(NODE).is_none(),
+        "a link still connecting reaches no Herdr"
+    );
+    drop(release);
+    wait(&shared, "the link ending", |runtime| {
+        runtime.host_snapshot(NODE).state == "unavailable"
+    });
+    let runtime = shared.lock().unwrap();
+    assert!(
+        runtime.delivery_connector(NODE).is_none(),
+        "a node whose link is down is reached through nothing"
+    );
+}
+
 /// The machines the operator works at are the nodes that dialed this core
 /// and are connected now: a node still connecting is not one, and neither
 /// is a device this core dials (D-18).
