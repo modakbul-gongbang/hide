@@ -566,7 +566,9 @@ Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull
 ### The Sessions tool
 
 `agent_state/sessions.rs` maps the verb to one group and one task tag in `row.state.session`.
-Answer, Fix, Stopped and Result belong to My turn; Review to Review · Merge; Working and Waiting to In progress; Idle to Resting.
+Answer belongs to My turn; Review to Review · Merge; Working and Waiting to In progress; Fix, Stopped, Result and Idle to Resting.
+My turn holds only what stays stopped until the operator moves: an answer, a menu or plan approval, and a raised child (design principle #13).
+A result, a failed check or an unfinished turn is news the operator may read, not a wait on them, so it rests with its tag and the row's unread mark, and the pane's band still carries it.
 A blocked menu takes Approval before an unread AI question's Answer.
 A current native `user_turn.kind = question` instead takes Answer while its session holds for a reply, including after it is read and when its content is absent.
 Native plan approval keeps Approval; the typed native wait, rather than a provider name or an AI question label, distinguishes these cases.
@@ -595,7 +597,9 @@ An idle or done parent still owns the child; only a closed parent pane or absent
 The parent keeps its group and gets a warning second line naming the first raised child and additional count; the child is a My turn row that opens its own pane.
 Menu blocking uses Approval, a letter or question uses Answer, and an unanswered watch uses Stopped.
 The first three causes clear on receipt or a successful bell, menu blocking on answer, and watch escalation on response, cancellation or a new child activity episode.
-Working activity, a causal reply or child disappearance clears any cause.
+A letter's cause (the first three and an undelivered letter) also ends for good once the child's session takes up a request written after the letter, from the operator or a letter: the child started a new turn without the answer, so stopping again does not bring the raise back.
+That time is the session's own request record (`RowFacts` `operator_request` and `other_request`), which `labels.json` keeps and a device's helper reads again after a restart, so a restarted daemon gives the same answer; an agent whose session Hide cannot read keeps the cause until receipt, reply, cancellation or expiry.
+Working activity hides a letter or watch cause while it lasts, and a causal reply or child disappearance clears any cause.
 Doorbell hold reasons remain diagnostics and never become UI copy.
 Phone groups follow these same core values: the first three causes and menu blocking send one Needs You push; undelivered letters and unanswered watches retain their existing human notice without another push.
 An ordinary delegated question produces no root push, and clearing an escalation resets the existing effective push state immediately.

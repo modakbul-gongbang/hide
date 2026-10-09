@@ -505,6 +505,8 @@ Sessions belongs to the project of the front checkout; All checkouts and the `<c
 At Home it covers all projects on the selected device and adds the project to each row.
 The core supplies My turn, Review · Merge, In progress, Resting and Resolved today in that order, leaving empty groups out and folding the last two initially.
 The four counts above the list are My turn, Review · Merge, In progress and Resolved today.
+My turn holds only what waits for the operator to move: an answer, a menu or plan approval, and a raised child.
+A Result, Fix or Stopped row rests in Resting with its tag and unread mark; Resting stays folded because the sidebar row's mark and the pane's band already show that news where the operator would open it.
 
 Each row has two lines: status mark, provider, stable task name, issue, PR/CI, direct-child badge and elapsed time; then its task tag, result line and checkout.
 The checkout in front has a left bar.
