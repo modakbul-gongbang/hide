@@ -343,14 +343,24 @@ impl NodeDaemon {
             Arc::clone(&hub),
             Arc::clone(&terminals),
         ));
+        // The screen server reads the phase without keeping the role: the
+        // role ends with this daemon, whatever the server still holds.
         let phase = {
-            let role = Arc::clone(&role);
-            Arc::new(move || role.phase()) as Arc<dyn Fn() -> Phase + Send + Sync>
+            let role = Arc::downgrade(&role);
+            Arc::new(move || {
+                role.upgrade().map_or_else(
+                    || Phase::Waiting {
+                        reason: "stopping".to_owned(),
+                    },
+                    |role| role.phase(),
+                )
+            }) as Arc<dyn Fn() -> Phase + Send + Sync>
         };
         let browser_routes = BrowserRoutes::new(Arc::new(NodePages::new(
             screen_node,
             core_node,
             live.clone(),
+            Arc::clone(&boundary),
         )));
         let desktop_screens = Arc::new(AtomicUsize::new(0));
         let reaper =

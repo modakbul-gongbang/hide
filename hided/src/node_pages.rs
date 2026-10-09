@@ -29,8 +29,10 @@ struct SourceAnswer {
 }
 
 pub struct NodePages {
-    /// This machine's node id: its pages load as they are.
+    /// This machine's node id: its pages load as they are, a `file:` page
+    /// only inside a checkout the core opened here.
     node: String,
+    boundary: Arc<crate::boundary::Boundary>,
     /// The core's machine, whose loopback pages go through the link.
     core: String,
     live: watch::Receiver<Option<Arc<LiveLink>>>,
@@ -38,9 +40,15 @@ pub struct NodePages {
 }
 
 impl NodePages {
-    pub fn new(node: String, core: String, live: watch::Receiver<Option<Arc<LiveLink>>>) -> Self {
+    pub fn new(
+        node: String,
+        core: String,
+        live: watch::Receiver<Option<Arc<LiveLink>>>,
+        boundary: Arc<crate::boundary::Boundary>,
+    ) -> Self {
         Self {
             node,
+            boundary,
             core,
             live,
             agent: ureq::Agent::config_builder()
@@ -54,6 +62,41 @@ impl NodePages {
 
     fn link(&self) -> Result<Arc<LiveLink>, &'static str> {
         self.live.borrow().clone().ok_or("core_unavailable")
+    }
+}
+
+impl NodePages {
+    /// A page of this machine as the desktop loads it: a `file:` page only
+    /// inside a checkout the core opened here over the live link, at the
+    /// path that was checked, as a core's own `file:` pages are judged; the
+    /// core passes this machine's addresses through unread.
+    fn own_page(
+        &self,
+        link: &LiveLink,
+        mut source: BrowserRouteSource,
+    ) -> Result<BrowserRouteSource, &'static str> {
+        if !crate::file_url::is_file_url(&source.url) {
+            return Ok(source);
+        }
+        let (path, suffix) =
+            crate::file_url::file_path(&source.url).ok_or("file_page_outside_checkout")?;
+        self.boundary.set_roots(
+            link.roots
+                .roots()
+                .into_iter()
+                .map(|root| crate::boundary::Root {
+                    workspace_id: String::new(),
+                    checkout_id: String::new(),
+                    path: std::path::PathBuf::from(root),
+                })
+                .collect(),
+        );
+        let real = self
+            .boundary
+            .resolve_target(&path)
+            .map_err(|_| "file_page_outside_checkout")?;
+        source.url = crate::file_url::file_url(&hide_platform::path::to_wire_lossy(&real), suffix);
+        Ok(source)
     }
 }
 
@@ -104,7 +147,10 @@ impl PageSources for NodePages {
         })?;
         let answer: SourceAnswer =
             serde_json::from_slice(&bytes).map_err(|_| "core_unavailable")?;
-        Ok(answer.source)
+        match answer.source {
+            Some(source) if device == self.node => self.own_page(&link, source).map(Some),
+            source => Ok(source),
+        }
     }
 
     fn way(&self, device: &str) -> Result<Way, &'static str> {
