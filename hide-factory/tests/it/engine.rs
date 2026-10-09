@@ -3565,6 +3565,25 @@ fn a_watch_action_about_a_task_that_moved_since_the_board_was_read_does_not_run(
 }
 
 #[test]
+fn a_watch_warning_naming_a_task_the_factory_does_not_hold_runs_nothing() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let a = h.ready("A", &[]);
+    h.world()
+        .worker_status
+        .insert(a.clone(), WorkerStatus::Blocked);
+    h.world().watch.push_back(json!({"warnings": [
+        {"text": "T-99 waits on input", "action": "sleep_wake_worker", "task": "T-99"},
+    ]}));
+    h.advance(30 * 60_000);
+    h.engine.tick();
+    h.engine.tick();
+    assert_eq!(watch_lines(&h), vec![("T-99 waits on input".into(), None)]);
+    assert!(!h.world().sleeps.contains(&a), "not widened to the Factory");
+    let _ = f;
+}
+
+#[test]
 fn the_watch_runs_closed_actions_within_the_daily_cap_and_logs_the_rest() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
@@ -3588,6 +3607,17 @@ fn the_watch_runs_closed_actions_within_the_daily_cap_and_logs_the_rest() {
         ]
     );
     assert!(h.task(&f, &a).open_questions().next().is_none(), "B11");
+    assert!(
+        h.task(&f, &a).activity.iter().any(|entry| matches!(
+            entry.event,
+            ActivityEvent::Recovery {
+                action: RecoveryAction::RetryReadsAndReconnect,
+                outcome: Some(_),
+                ..
+            }
+        )),
+        "what the action did is on the record (B13)"
+    );
 
     // At most five actions a day; the rest are lines only.
     for n in 0..6 {

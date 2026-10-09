@@ -639,17 +639,18 @@ impl Engine {
             .collect();
         for factory in factories {
             let effect = self.clean_worktrees(&factory);
-            let outcome = if effect.acted {
-                RecoveryOutcome::Improved
-            } else {
-                RecoveryOutcome::Unchanged
-            };
+            // A full disk is signalled again and again; a cleanup with
+            // nothing to remove would fill the activity with the same line.
+            if !effect.acted {
+                self.record(&factory, None, "recovery.nothing_to_clean", json!({}));
+                continue;
+            }
             self.log_factory(
                 &factory,
                 None,
                 ActivityEvent::Recovery {
                     action: RecoveryAction::RemoveFinishedWorktrees,
-                    outcome: Some(outcome),
+                    outcome: Some(RecoveryOutcome::Improved),
                     removed: effect.removed,
                     freed: effect.freed,
                 },

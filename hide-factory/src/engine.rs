@@ -6758,13 +6758,23 @@ impl Engine {
         let now = self.now();
         let today = now / DAY_MS;
         for warning in warnings {
-            let task = match &warning.task {
+            // A Task the warning names but the Factory does not hold is not
+            // the whole Factory: the warning is kept and nothing runs.
+            let (task, unresolved) = match &warning.task {
                 Some(reference) => match self.resolve_within(Some(factory_id), reference) {
-                    Ok((_, id)) => Some(id),
-                    Err(_) => None,
+                    Ok((_, id)) => (Some(id), false),
+                    Err(_) => (None, true),
                 },
-                None => None,
+                None => (None, false),
             };
+            if unresolved {
+                self.record(
+                    factory_id,
+                    None,
+                    "watch.unresolved",
+                    json!({"task": warning.task}),
+                );
+            }
             // The board was read before the judgment answered; a Task that
             // moved since is no longer what the warning describes.
             let stale = task.as_deref().is_some_and(|id| {
@@ -6777,7 +6787,7 @@ impl Engine {
                     .is_some_and(|f| f.config.recovery.contains(action))
             });
             let action = match enabled {
-                Some(action) if !stale => {
+                Some(action) if !stale && !unresolved => {
                     let Some(f) = self.factories.get_mut(factory_id) else {
                         return;
                     };
@@ -6795,9 +6805,6 @@ impl Engine {
                 }
                 _ => None,
             };
-            if let Some(action) = action {
-                self.run_recovery(factory_id, action, task.as_deref());
-            }
             self.log_factory(
                 factory_id,
                 task.as_deref(),
@@ -6806,6 +6813,25 @@ impl Engine {
                     action,
                 },
             );
+            // What the action did is a recovery line like the schedule's, so
+            // a cleanup without a person names what it removed (B13).
+            if let Some(action) = action {
+                let effect = self.run_recovery(factory_id, action, task.as_deref());
+                let event = ActivityEvent::Recovery {
+                    action,
+                    outcome: Some(if effect.acted {
+                        RecoveryOutcome::Improved
+                    } else {
+                        RecoveryOutcome::Unchanged
+                    }),
+                    removed: effect.removed,
+                    freed: effect.freed,
+                };
+                match task.as_deref() {
+                    Some(id) => self.log_task(factory_id, id, event),
+                    None => self.log_factory(factory_id, None, event),
+                }
+            }
         }
     }
 
