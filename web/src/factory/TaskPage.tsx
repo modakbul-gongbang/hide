@@ -565,7 +565,7 @@ function OpenQuestion({ question, factory, task }: { question: Question; factory
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-sm text-body" data-factory-open-question={question.id}>
       <MessageSquareIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-warning" />
-      <span className="min-w-0 [overflow-wrap:anywhere]">{t("factory.task.toAnswer", { question: question.text })}</span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">{t("factory.task.toAnswer", { question: question.person_text ?? question.text })}</span>
       {left && left !== "past" ? <span className="text-caption text-muted-foreground">{t("factory.turn.left", { time: left.text })}</span> : null}
       <Button
         variant="link"

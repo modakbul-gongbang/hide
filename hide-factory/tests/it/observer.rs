@@ -252,6 +252,33 @@ fn factory_ai_s_choice_on_a_closed_question_already_ran_and_cannot_be_changed() 
 }
 
 #[test]
+fn a_worker_s_question_reaches_the_person_in_factory_ai_s_words_and_keeps_its_own_on_the_record() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Store", &[]);
+    let mut verdict = classified("C", "");
+    verdict["person_text"] = json!("Should the sort order be remembered between visits?");
+    h.world().observer.push_back(verdict);
+    ask(
+        &mut h,
+        &f,
+        &t,
+        "persist sortKey in ui_state.rs or localStorage?",
+        &[],
+    );
+    h.engine.tick();
+    let inbox = inbox(&mut h);
+    assert_eq!(
+        inbox["items"][0]["text"], "Should the sort order be remembered between visits?",
+        "{inbox}"
+    );
+    assert_eq!(
+        h.task(&f, &t).questions[0].text,
+        "persist sortKey in ui_state.rs or localStorage?"
+    );
+}
+
+#[test]
 fn a_person_answering_first_leaves_the_late_verdict_without_effect() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

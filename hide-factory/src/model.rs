@@ -1127,6 +1127,11 @@ pub struct Question {
     /// judgment that asked it said (D-33).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stopped: Option<String>,
+    /// A worker's question as Factory AI rewrote it for a person who has not
+    /// read the Task, without ids, commands or paths (B22); the worker's own
+    /// words stay in `text`, which its record and its answer quote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_text: Option<String>,
     /// What each choice leads to, in the operator's language (D-33).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outcomes: Vec<ChoiceOutcome>,

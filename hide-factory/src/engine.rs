@@ -811,6 +811,7 @@ impl Engine {
             letter: new.letter,
             routing: None,
             stopped: new.stopped,
+            person_text: None,
             outcomes: new.outcomes,
             evidence: new.evidence,
         };
@@ -7295,6 +7296,7 @@ Factory 보고 규약 (반드시 지키세요):
 - 기본 행동으로 계속할 수 있는 질문: hide factory ask --question '<질문>' --suggestion '<제안>' --default '<그동안 할 행동>' --deadline-hours 24 [--choice '<선택지>']...
 - 답 없이는 진행할 수 없는 질문: hide factory block --question '<질문>' --suggestion '<제안>' --deadline-hours 24 [--choice '<선택지>']...  (차례를 끝내세요)
   선택지는 5개까지, 하나에 120자까지입니다.
+  질문과 선택지는 이 Task를 읽지 않은 사람이 답할 수 있게 쓰세요. 내부 id, 명령 이름, 파일 경로는 넣지 마세요.
 - 작업 중 발견: hide factory propose --class in-scope|decision|scope-change|prerequisite|unrelated --text '<내용>'
   범위를 스스로 넓히지 마세요. 선행 작업은 prerequisite로 제안하고(--title --goal --criterion), 무관한 발견은 unrelated로 남기세요.
 - 보고 없이 차례를 끝내면 Task가 멈춥니다.

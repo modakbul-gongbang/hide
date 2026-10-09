@@ -340,6 +340,8 @@ export type Question = {
   choices: string[];
   answer: Answer | null;
   letter: string | null;
+  /** A worker's question as Factory AI rewrote it for a person; absent when it already read so. */
+  person_text?: string | null;
   /** How the Observer sorted it, and whether a person replaced its answer. */
   routing?: { kind?: DecisionKind; reason?: string; overridden?: boolean } | null;
 };

@@ -833,7 +833,12 @@ pub fn inbox_items(
                 QuestionKind::Action => ("stopped", 3),
                 _ => ("answer", 1),
             };
-            let mut item = base(group, rank, question.text.clone(), question.asked_at);
+            let text = question
+                .person_text
+                .as_ref()
+                .unwrap_or(&question.text)
+                .clone();
+            let mut item = base(group, rank, text, question.asked_at);
             item.kind = question_kind(&question.kind).to_owned();
             item.result = answer_result(task, &question.kind, tasks);
             item.result_code = answer_code(&question.kind);

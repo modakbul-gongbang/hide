@@ -419,6 +419,11 @@ impl Engine {
                 if q.stopped.is_none() {
                     q.stopped = verdict.stopped.clone();
                 }
+                // A worker writes for itself; the judgments already write for
+                // a person (B22).
+                if q.origin == QuestionOrigin::Worker {
+                    q.person_text = verdict.person_text.clone();
+                }
                 if q.outcomes.is_empty() {
                     q.outcomes = verdict
                         .outcomes
@@ -1494,6 +1499,7 @@ mod tests {
             reason: String::new(),
             stopped: None,
             outcomes: Vec::new(),
+            person_text: None,
         }
     }
 
