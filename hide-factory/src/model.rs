@@ -263,10 +263,34 @@ impl GithubBlock {
     /// The command a person runs to give the access back.
     pub fn command(&self) -> String {
         match (&self.scope, self.forbidden) {
-            (Some(scope), true) => format!("gh auth refresh -s {scope}"),
+            (Some(scope), true) if is_scope(scope) => format!("gh auth refresh -s {scope}"),
             _ => "gh auth login".to_owned(),
         }
     }
+}
+
+/// The most bytes a command a person copies may have.
+pub const COPY_COMMAND_LIMIT: usize = 400;
+
+/// A command a person is shown to copy, when it is one: one line with no
+/// control characters and no longer than [`COPY_COMMAND_LIMIT`]. A
+/// diagnosis writes it from facts a worker can shape, and the copy button
+/// writes it as it is, so a second line hidden from the screen or a cut
+/// marker would run too when pasted.
+pub fn copyable_command(text: &str) -> Option<&str> {
+    let text = text.trim();
+    (!text.is_empty() && text.len() <= COPY_COMMAND_LIMIT && !text.chars().any(char::is_control))
+        .then_some(text)
+}
+
+/// A GitHub token scope as gh names one: lowercase words joined by `_` or
+/// `:`, short. Nothing else reaches the command a person copies.
+pub fn is_scope(scope: &str) -> bool {
+    scope.len() < 40
+        && scope.starts_with(|c: char| c.is_ascii_lowercase())
+        && scope
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == ':')
 }
 
 /// What a hold holds back (D-44).
@@ -1181,8 +1205,10 @@ pub struct Routing {
     /// The Observer's one-line reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// Why it went to a person without the Observer's verdict: `failed`,
-    /// `daily_limit`, `paused`, `queue_full` (B10).
+    /// Why it went to a person other than the mode table: without the
+    /// Observer's verdict `failed`, `daily_limit`, `paused`, `queue_full`,
+    /// `dropped` or `restart` (B10), and with it `unsure` or `permission`
+    /// (B7).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback: Option<String>,
     /// E in assist: the Observer's fix, offered as a choice (D-33).

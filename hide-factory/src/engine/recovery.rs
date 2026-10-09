@@ -28,6 +28,8 @@ const SETTLE_MS: u64 = 5 * MINUTE_MS;
 const READ_FAILURES: u32 = 3;
 /// The most command to-dos a Factory keeps unresolved.
 const COMMAND_LIMIT: usize = 20;
+/// The most resolved command to-dos a Factory keeps for its record.
+const RESOLVED_COMMANDS_KEPT: usize = 50;
 
 /// What one recovery action did.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -438,10 +440,15 @@ impl Engine {
         cause: &str,
         now: UnixMs,
     ) {
-        let command = judgment::cut(command.trim(), 400);
-        if command.is_empty() {
+        let Some(command) = copyable_command(command).map(str::to_owned) else {
+            self.record(
+                factory,
+                None,
+                "command.refused",
+                json!({"bytes": command.len()}),
+            );
             return;
-        }
+        };
         let Some(f) = self.factories.get_mut(factory) else {
             return;
         };
@@ -465,6 +472,17 @@ impl Engine {
             cause: judgment::cut(cause, 600),
             at: now,
             resolved_at: None,
+        });
+        let resolved = f
+            .commands
+            .iter()
+            .filter(|c| c.resolved_at.is_some())
+            .count();
+        let mut drop = resolved.saturating_sub(RESOLVED_COMMANDS_KEPT);
+        f.commands.retain(|c| {
+            let oldest_resolved = drop > 0 && c.resolved_at.is_some();
+            drop -= usize::from(oldest_resolved);
+            !oldest_resolved
         });
         self.save_factory(factory);
     }

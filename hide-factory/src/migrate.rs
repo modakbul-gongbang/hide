@@ -7,7 +7,7 @@
 use serde_json::{Value, json};
 
 use crate::judgment::cut;
-use crate::model::{RecoveryAction, UnixMs};
+use crate::model::{RecoveryAction, UnixMs, copyable_command};
 
 /// Who a migrated answer names as its relay.
 pub const MIGRATION: &str = "migration";
@@ -45,9 +45,13 @@ pub fn task(mut task: Value, now: UnixMs) -> (Value, Vec<Proposal>) {
                 let action = RecoveryAction::ALL
                     .into_iter()
                     .any(|action| action.as_str() == command);
-                if open && !action && !command.trim().is_empty() {
+                // One that is not a single line a person can copy stays only a note.
+                if open
+                    && !action
+                    && let Some(command) = copyable_command(&command)
+                {
                     proposals.push(Proposal {
-                        command,
+                        command: command.to_owned(),
                         impact: question["kind"]["impact"]
                             .as_str()
                             .unwrap_or_default()

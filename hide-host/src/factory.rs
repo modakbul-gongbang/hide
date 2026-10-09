@@ -611,8 +611,10 @@ fn read_prd(path: &Path) -> HostResult<String> {
 
 /// The start of a text file inside the project, at most
 /// [`PROJECT_FILE_LIMIT`] bytes: a path that leaves the project, through
-/// `..`, a root or a link, is refused, and one that is not a text file
-/// answers `None`.
+/// `..`, a root or a link, is refused, and one git does not track or that
+/// is not a text file answers `None`. The card naming it may come from an
+/// issue anyone wrote, so an ignored or untracked file (a `.env`, the
+/// repository's own `.git/config`) is never read for the review.
 fn project_file(project: &Path, relative: &str) -> HostResult<Option<String>> {
     use std::io::Read;
     use std::path::Component;
@@ -632,10 +634,16 @@ fn project_file(project: &Path, relative: &str) -> HostResult<Option<String>> {
     let Ok(file_path) = root.join(path).canonicalize() else {
         return Ok(None);
     };
-    if !file_path.starts_with(&root) {
+    let Ok(inside) = file_path.strip_prefix(&root) else {
         return Err(invalid(format!(
             "not a path inside the project: {relative:?}"
         )));
+    };
+    let Some(inside) = inside.to_str() else {
+        return Ok(None);
+    };
+    if crate::worktrees::git(&root, &["ls-files", "--error-unmatch", "--", inside]).is_err() {
+        return Ok(None);
     }
     let Ok(file) = File::open(&file_path) else {
         return Ok(None);
@@ -1032,6 +1040,27 @@ mod tests {
             BTreeMap::from([("AGENTS.md".to_owned(), "guide".to_owned())])
         );
         assert_eq!(files.markers, ["Cargo.toml"]);
+    }
+
+    #[test]
+    fn a_named_file_is_read_only_when_git_tracks_it_inside_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        git(project, &["init", "--quiet", "-b", "main"]);
+        std::fs::create_dir(project.join("src")).unwrap();
+        std::fs::write(project.join("src/lib.rs"), "pub fn tracked() {}").unwrap();
+        std::fs::write(project.join(".gitignore"), ".env.local\n").unwrap();
+        std::fs::write(project.join(".env.local"), "TOKEN=secret").unwrap();
+        std::fs::write(project.join("notes.md"), "untracked").unwrap();
+        git(project, &["add", "src/lib.rs", ".gitignore"]);
+        assert_eq!(
+            project_file(project, "src/lib.rs").unwrap().as_deref(),
+            Some("pub fn tracked() {}")
+        );
+        assert_eq!(project_file(project, ".env.local").unwrap(), None);
+        assert_eq!(project_file(project, "notes.md").unwrap(), None);
+        assert_eq!(project_file(project, ".git/config").unwrap(), None);
+        assert!(project_file(project, "../outside").is_err());
     }
 
     fn git(cwd: &Path, args: &[&str]) {
