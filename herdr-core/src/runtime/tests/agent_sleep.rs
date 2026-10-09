@@ -210,6 +210,36 @@ fn a_native_dormant_journey_refuses_a_changed_route_before_close_wake_or_start()
 #[test]
 #[cfg(unix)]
 fn cursor_durable_sleep_wakes_exactly_once_and_refuses_a_lost_native_owner() {
+    const CHILD: &str = "HIDE_TEST_CURSOR_SLEEP_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // The native fixture owns a default-root account, independent of any
+        // Cursor roots exported by the test runner. Never mutate the shared
+        // process environment after the reader has captured its startup roots.
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "runtime::tests::agent_sleep::cursor_durable_sleep_wakes_exactly_once_and_refuses_a_lost_native_owner",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .env_remove("CURSOR_CONFIG_DIR")
+            .env_remove("XDG_CONFIG_HOME");
+        let output = hide_platform::process::run_to_end(
+            &mut command,
+            Duration::from_secs(60),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(
+            output.succeeded(),
+            "private default-root sleep test failed:\n{}\n{}",
+            output.stdout,
+            output.stderr
+        );
+        return;
+    }
     for phase in [
         "none",
         "missing-source-before-close",

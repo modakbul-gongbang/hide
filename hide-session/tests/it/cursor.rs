@@ -235,6 +235,36 @@ fn native_pages_refuse_bad_cursors_and_budget_without_publishing_text() {
 
 #[test]
 fn labels_archive_and_search_share_native_graph_and_checkpoint_ownership() {
+    const CHILD: &str = "HIDE_TEST_CURSOR_CONSUMERS_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // This is a default-root fixture. Capture that environment in an owned
+        // child before the reader's process-wide root selection is initialized.
+        // Other tests retain their explicit override and duplicate-root cases.
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "cursor::labels_archive_and_search_share_native_graph_and_checkpoint_ownership",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .env_remove("CURSOR_CONFIG_DIR")
+            .env_remove("XDG_CONFIG_HOME");
+        let output = hide_platform::process::run_to_end(
+            &mut command,
+            std::time::Duration::from_secs(60),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(
+            output.succeeded(),
+            "private default-root consumer test failed:\n{}\n{}",
+            output.stdout,
+            output.stderr
+        );
+        return;
+    }
     use hide_session::{
         Agent, SessionReadScope, label_transcript,
         search::{IndexStep, SearchIndex},
