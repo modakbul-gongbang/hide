@@ -101,6 +101,7 @@ The verdict's reasons are `working`, `blocked`, `awaiting_operator`, `session_un
 Between the verdict and the input the doorbell asks Herdr again and checks its own memory last, and each refusal there has its own reason: `launch_pending` and `not_ready` (Herdr's readiness), `identity_changed` (Herdr's agent in the pane has another name, kind or native session), `sequence_moved` (Herdr's status or state sequence moved), `input_after_verdict` (hide routed input to the pane) and `letter_changed` (the letter was confirmed, cancelled, expired or reserved meanwhile).
 A letter refused there is tried again in the same pane episode after 5 seconds, then 10, 20, 40 and 80, then every two minutes, because readiness and the letter are facts the pane episode does not carry; a change of the pane's status, sequence, input or session tries it at once.
 A failed Herdr call is not retried on that schedule, since the bell may already have been typed; it waits for the pane to move.
+If the pane or its device's link goes away after such a failure (`pane_unavailable`), the wait ends: a bell that started a turn would have moved the pane, so a pane that comes back idle at the same state sequence is tried again rather than waiting for a move that never comes.
 A letter still held when its deadline passes is logged once as `doorbell.expired` with the reason it last waited for.
 After a hided restart every pane starts with no key known and a 30 second grace; a draft typed before the restart cannot be known.
 The adapter never copies, clears or restores a draft.
