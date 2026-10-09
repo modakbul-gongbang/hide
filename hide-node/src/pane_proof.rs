@@ -203,10 +203,17 @@ mod tests {
     #[test]
     fn a_recorded_listener_leaves_no_folder_behind() {
         let state = tempfile::tempdir().unwrap();
+        // The folder takes the token's first 24 characters, and the record's
+        // staging file its first 16, so both vary within them: a folder a
+        // failed run left never collides with the next run's.
+        let started = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
         let tokens = std::sync::atomic::AtomicU64::new(0);
         let token = || {
             let next = tokens.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            format!("{:032x}{next:032x}", std::process::id())
+            format!("{next:04x}{started:016x}{:08x}", std::process::id())
         };
         let (listener, socket) =
             bind_recorded(&state.path().join("record"), "hide-test", "t.sock", token).unwrap();
