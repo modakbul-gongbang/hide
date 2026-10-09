@@ -1049,6 +1049,17 @@ mod tests {
             line(&ledger, &letter),
             "🔔 sender 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
         );
+        // A row with no title is called by its runtime, which names no one.
+        let untitled: crate::sidebar::SessionSnapshotPayload = serde_json::from_value(json!({
+            "agents": [{"id":"sender","pane_id":"sender","agent":"codex",
+                "agent_status":"working","state_change_seq":1}]
+        }))
+        .unwrap();
+        crate::runtime::delivery::tests::show_agents(&mut runtime.lock().unwrap(), untitled);
+        assert_eq!(
+            line(&ledger, &letter),
+            "🔔 sender 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
+        );
         // The sidebar's title for the pane, while the pane still hosts it.
         let titled: crate::sidebar::SessionSnapshotPayload = serde_json::from_value(json!({
             "agents": [{"id":"sender","pane_id":"sender","agent":"codex",

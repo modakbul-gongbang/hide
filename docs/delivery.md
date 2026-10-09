@@ -158,7 +158,7 @@ The doorbell types `🔔 <writer> <kind>: <the letter's first line>`, then ` · 
 ```
 
 The kind reads 요청 for a request, 막힘 for a block, 보고 for a report, 답장 for a reply and 감시 for a watch warning.
-The writer is the name the sender registered under (`hide agent register`, `hide agent spawn --name`), else the title Hide's screens give it while its pane still hosts that session, else its Herdr agent id; a watch warning is named by the agent it watches, and its first line says for how long nothing moved.
+The writer is the name the sender registered under (`hide agent register`, `hide agent spawn --name`), else the title Hide's screens give it while its pane still hosts that session (not the runtime's name, such as Codex, that a row without a title shows), else its Herdr agent id; a watch warning is named by the agent it watches, and its first line says for how long nothing moved.
 Both are looked up in memory when the bell rings, on the doorbell's thread, never on the session-sync thread.
 The first line is the body's first line that has anything to show, cut to 60 characters with `…`, and the writer is cut to 32; a body with no such line leaves the colon and summary out.
 Agents learn from their session guidance that this first line is the letter's one-line summary, and that a prompt beginning with `🔔` brings a letter that `hide inbox` shows if the prompt did not.

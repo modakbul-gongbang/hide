@@ -668,12 +668,17 @@ impl Runtime {
     }
 
     /// The title Hide's screens give `actor` while its pane still hosts it,
-    /// for the bell line that names it as a letter's writer.
+    /// for the bell line that names it as a letter's writer. A row with no
+    /// title is called by its runtime's name, which tells the operator
+    /// nothing about who wrote, so it has none here.
     pub(crate) fn delivery_title(&self, actor: &Actor) -> Option<String> {
         if !self.delivery_identity_current(actor) {
             return None;
         }
         self.agent_row(&actor.pane_id)
+            .filter(|row| {
+                row.identity_label != crate::sidebar::provider_name(Some(&row.agent_kind))
+            })
             .map(|row| row.identity_label.clone())
     }
 
