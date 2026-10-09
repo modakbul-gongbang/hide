@@ -842,6 +842,8 @@ The following table describes Hide's current macOS startup path, not an operator
 | Herdr server | The packaged desktop host checks server status and starts a detached bundled server only when status confirms none is running; explicit overrides/unpackaged hosts supply their own server. Herdr owns PTYs, panes and agent processes. | Explicit Herdr server stop, session stop targeting that server, or process/OS termination; stopping a different named session leaves this server running. Hide does not replace an already answering Herdr as part of daemon discovery. | Continues independently; the host does not signal it. | The old process is gone; the next packaged app discovery can start a missing server. This startup path installs no login service for Herdr. |
 | hided | `hide connect` serializes discovery in its state folder, returns a matching healthy daemon or starts the sibling `hided`; the daemon owns the core and its background work. | `hide stop`, a stop signal or idle expiry; default idle expiry is 600 s with no clients and an unreachable Herdr, unless daemon keep-alive or paired-phone Mobile keep-alive holds it. A bundled connect also replaces a healthy daemon of another build in that same state folder; an unbundled CLI refuses it. | Continues; no-window screen readers pause, while label work and the daemon's own lifetime policy remain active. | The old process is gone; `hide connect` starts another on demand. These discovery paths install no hided login service. |
 | Device node (`hided node serve`) | The core opens an SSH exec channel on the device's one connection for a consented device; the node serves that channel's stdin/stdout and, for the channel's life only, its panes' bootstrap socket (`hide-host/src/panes.rs`). | EOF, unusable request framing or output failure ends admission and closes the pane socket, its streams and its folder; scoped workers finish before node exit. Core close/revoke closes the channel, not the connection; consent revocation drains admitted work up to its bound. | A helper may continue while the surviving daemon retains its connection; window closure alone is not helper shutdown. | The process/channel is gone. A later consented connection starts another helper; this helper path installs no login service. |
+| Node-role hided (M) | `hide connect` on a machine whose state folder has a placement record starts the sibling `hided`, which runs the node role; it owns its one SSH connection to C, the attach channel, the relays, the local forward and the watch thread, all ended with it. | `hide stop`, a stop signal, or idle: no screen open and its Herdr not answering, by the same rule as the core role (`server::watch_idle`). | Continues; the host does not signal it. | Gone; the next `hide connect` starts it. Nothing is installed to start it. |
+| Attach role (`hided attach`, C) | C's sshd starts it on the exec channel M opens; it starts no core and pipes the channel to C's running core. | Its channel ends, C's core socket closes, or 30 s pass without a byte from M. | Not the app's. | Gone with sshd; M dials again. |
 
 The local executable authorities are `desktop/src/main/{host,herdr,spawn}.ts`, `hided/src/{cli,env,lib,server}.rs`, `hide-node/src/ssh/host.rs` and `hide-host/src/serve.rs` with `hided/src/node_cli.rs`.
 The one-release kit retirement stage is `hide-kit/src/coordination_retirement.rs`; it does not start a resident service.
@@ -1044,13 +1046,77 @@ The core's own node is `hide_node::Local`, which answers in hided's process thro
 `scripts/check-core-touches-no-machine.py` holds the line: production code under `herdr-core/src`, or under `hide-factory/src`, the Factory engine the core runs, that opens a file, starts a process, opens a socket or reads a session file fails it, unless the file is one of the core's stores, listed with its reason, or something a later layer of the PRD moves out, listed with that layer; each listed file carries how many machine touches it keeps, so a new one in a listed file fails too.
 The SSH transport is the node's (`hide-node/src/ssh/`).
 The core reaches a device only through `hide_node_link::device::{DeviceConnector, DeviceTransport}` (`hided` builds the connector, `Core::create` takes it) and keeps the decoding of what a device's Herdr sends (`remote.rs`); the check bans `russh` by name.
-Until layer 4 the label generator's lock, which is keyed by the Herdr server it labels, stays listed; layer 3 moved the terminal attach child and the clipboard image's removal to the node, so neither is listed, and an entry that no longer reaches a machine fails the check, so none outlives its layer.
+No later layer is listed any more: layer 3 moved the terminal attach child and the clipboard image's removal to the node, and layer 4 moved the label generator's lock (`Call::LabelLock`); an entry that no longer reaches a machine fails the check, so none outlives its layer.
 The Factory decides on the core's machine and its machine work is the core's own node's (D-01): one `Call::Factory` (`hide_node_link::factory`) carries its git and `gh` commands, each a typed shape the node turns into one fixed command line so a request names values and never arguments, the project's quick check, its verify bundles, which the node queues one at a time and ends with the engine (`hide-host/src/factory.rs`), the project files its probe and review judgments read, a Task's attached PRD, a worker's worktree removal, and the memory, `hide` program and time zone offset reads (the summary's done-today day is the core machine's local day); free space and installed runtimes reuse `Call::VolumeFree` and `Call::AgentInstalled`.
 What an answer means for a Task stays the Factory's (`hide-factory/src/project.rs`), and its own store and the AI choice are core stores.
 hided runs both roles in one process, and its core role keeps two readers of its own.
 The Explorer watcher (`watch.rs`) asks a node by id, so a second node serves an Explorer on its machine without the watcher changing.
-The credential registry (`pane_auth.rs`) reads a local pane's kernel proof through `hide_node::pane_proof` in this process; a device pane's proof already arrives over that device's link (`hided/src/node_panes.rs`), and layer 4 does the same for this machine's panes.
+The credential registry (`pane_auth.rs`) reads a local pane's kernel proof through `hide_node::pane_proof` in this process; a device pane's proof arrives over that device's link (`hided/src/node_panes.rs`), and so does the proof of a pane on a screen machine whose core runs elsewhere (below).
 The file opener's launcher is the node's (`hide-node/src/opener.rs`), but its safety rule, which refuses an executable or a file a handler would run, stays with the open handler in `server.rs` (`openable`); that handler is unwired on `main`, and the change that wires it moves the rule beside the launcher.
+
+### A core on another machine
+
+Layer 4 of the core-host-node PRD lets the machine with the screen run its daemon without a core, attached to the core on another machine (PRD core-host-node-remote-core).
+Nothing the operator does writes the record that turns it on yet: the move of layer 5 and the test fixtures write it, so a machine without it runs exactly as before.
+Below, M is the screen's machine and C the core's.
+
+One program takes three roles.
+
+| Role | Runs | Started by |
+| --- | --- | --- |
+| Core and node | The core, its own node, the screens on loopback: every machine without a placement record | `hide connect` (`start_daemon`) |
+| Node | No core: the node's link to C, M's screens on loopback, M's terminals and file reads (`hided/src/node_role.rs`, `node_daemon.rs`) | `hide connect`, when `<state>/core-placement.json` names C (`start_node_daemon`) |
+| Attach | No core: pipes the node's SSH channel to C's running core, byte for byte (`hided/src/attach.rs`) | C's sshd, as `hided attach` on the channel M opens |
+
+The placement record (`hided/src/placement.rs`) names C's SSH alias in M's `~/.ssh/config`, C's node id, the `hided` C runs as its attach role, and C's state folder when it is not the default.
+It is the account's private file, at most 4 KiB, and one that is anything else, or names M's own node id, is refused at start with a diagnostic rather than read; `start_daemon` refuses a state folder that has one, so the core role never starts beside it.
+
+M dials, C never does (D-04).
+M's node opens one SSH connection to C with the device transport of layer 2b in the other direction, known hosts and keepalive included, and runs `hided attach` on an exec channel.
+The attach role finds C's core through the attach socket the core records in its state folder (`node-attach-socket`, in a fresh owner-only folder; the accept checks the peer is this account's process, `LocalStream::peer_is_this_account`), and answers `no_core` and exits when none answers, so a node never starts a core (D-07).
+On the socket the core and the node trade one line each: the core names its node and build, the node its own node id, build and Herdr socket.
+A different build is refused as `other_build` (D-23), and so are C's own node id, a device C dials, and a node whose earlier link still stands; otherwise the core hands back a relay grant and the stream becomes the node's link, the same `RemoteHost` a dialed device's channel builds, marked `dialed_by_node`.
+The core registers the node as an inbound device, by its node id, named by its host name: it is never dialed, no kit is pushed to it, Retry is refused because it reconnects itself, and Remove ends its link, which takes its screens and every credential with it; it registers again on its next attach.
+The attach role ends with its channel, with the core's socket, or after 30 s without a byte from its node (three missed heartbeats), so a half-open connection or a stopped core leaves nothing running on C (B20).
+
+What crosses the link is the node contract of the other layers, in the other direction (NodeLink protocol 27).
+C reaches M's Herdr through link streams (`Call::HerdrOpen`, `HerdrWrite`, `HerdrClose` down, `herdr_data` and `herdr_closed` up), at most 32 per link with 64 chunks waiting each, so C's session sync, controls, doorbell, find and phone reply reach M's Herdr with no socket file on C (D-18).
+M's pane proofs go up the link as a device's do, and so do its checkout callers: a process outside every pane whose kernel cwd is inside a checkout C lists for M is proven by M's kernel (`NodeEvent::CheckoutProof`), which C accepts only from a link a node dialed (amendment 6).
+While the link is down M's pane bootstrap answers `hide_unavailable` at once, so a hook's `hide inbox` returns within its budget.
+
+M's screens keep the `/ws` contract byte for byte (D-05).
+For each screen M opens one relay to C through a local forward on its connection (`/relay?mode=screen`, admitted only by the link's grant header and ended with the link), and passes the screen's events up and C's snapshots, deltas and answers down unparsed.
+Each relay is read on its own task whatever the screen takes: the SSH client stops reading the whole connection while one channel's buffer is full, so a screen left unread would hold up every other screen, the panes and the link.
+A screen may leave at most 4 MiB of C's frames untaken (one frame is always held, since a file read sends 4 MiB at a time); past it the backlog is dropped, the relay closed with `screen.fell_behind`, and the screen drawn again from a fresh snapshot once it reads (`screen.resync`, D-20, B17).
+The answers C runs beside a linked node's screens (a device checkout's file reads and folder listings) hold one of 64 slots per node while they run; past it a new one is refused with `relay_busy` and logged (`relay.requests_full`).
+Terminals take another way.
+M's own panes' keys and output never leave M: keys go from M's screen to M's node terminals and output from them to M's hub, and C hears the input facts it always heard.
+Every other pane's output comes down one terminals relay per node (`/relay?mode=terminals`) into M's hub, at most 4 MiB unsent per node before a pane is drawn again whole, and their keys go up it.
+M's panes' output goes up the link only while C has a screen of its own looking (`TerminalControl::Mirror`).
+A file read of M's checkout is served by M itself, under the roots C opened on M over the live link (`hide_host::serve::OpenedRoots`, confined by M's `Boundary`); any other path goes to C (B4).
+
+A pane runs at the grid of the screen that last sent it input (D-11, `hided/src/pane_sizes.rs`).
+Every screen of the core, its own windows and M's through their relays, says the grid it draws each pane at; input is a key, a mouse report or an attachment's paste, never a view, a scroll or a focus.
+The core forwards a screen's `terminal_resize` only while that screen sizes the pane, draws every other screen's view of it at the grid it runs at, and on a switch sends the new grid's view and resize together; with one screen this is exactly the rule before it.
+M forwards its screens' views to C with their other events, and tells C at most once a second per pane that a screen of M types into one of M's panes (`terminal_input`), since C never sees those keys.
+
+M waits for C rather than run without it (D-08).
+When the link ends M closes each screen once with 1012 `core_link_lost`; a screen that opens while the link is down is held, its frames dropped and counted and nothing sent to it, until the link is live and its relay's snapshot arrives, so the web shell's ordinary reconnect is the attempt that attaches and its keys typed meanwhile are never delivered later (B8).
+Dials back off from 2 s to 60 s, and the wait starts over after a link that lived 30 s.
+A watch thread on M looks every 2 s for a gap of more than 5 s between the wall clock and the monotonic one (the machine slept) or a change in its network address set (`hide_platform::host::network_addresses`): with the link down it wakes the dial at once, with the link up it pings C within 3 s and redials when no answer comes.
+While the last failure was `unreachable`, the watch also reads C's SSH banner within 1 s on each look, and dials as soon as it answers, so M is back within seconds of SSH answering again, whatever the backoff had reached (B9).
+`hide connect` in the node role waits up to 20 s for the first link outcome and answers `other_build` for a build C refused, so the desktop host shows the failure it shows for any daemon of another build (B18).
+
+The label generator's lock and the human notice follow the machine.
+Each label worker asks the node of the machine that runs its Herdr server for the lock (`Call::LabelLock`, see [Agent labels in the core](#agent-labels-in-the-core)), so C labeling M's Herdr takes the lock beside M's socket, held while the link lives.
+The human notice's Herdr toast goes to the first connected node that dialed in, the machine the operator works at, and to C's own Herdr when none is linked ([delivery.md](delivery.md)).
+
+| Crosses between M and C (control) | Stays on M (data) |
+| --- | --- |
+| Each M screen's events, C's snapshots, deltas and answers, through that screen's relay | Keys into M's panes and their output |
+| Output of C's and other devices' panes, and keys into them, through the terminals relay | Bytes of files in M's checkouts under the roots C opened on M |
+| M's Herdr streams, pane and checkout proofs, input facts and the label lock, inside the link | M's screens' tokens and the desktop host's discovery (`hide connect`) |
+| M's panes' output, only while a screen of C looks at them | |
 
 ### The terminal path
 
@@ -1121,7 +1187,7 @@ Past 16,384 waiting reports a report takes the place of the waiting one about th
 | Goes to the core (control) | Goes between the screen and a node without the core (data) |
 | --- | --- |
 | Which panes attach and are released (`ATTACHED_TAB_LIMIT`, `released`), shown, asleep or closing; Reconnect | Keys (`key`), from the web socket to the router to the pane's writer |
-| PTY size (`terminal_resize`), after Herdr confirms the geometry | Pane output, from the session's reader to the hub to the client (`terminal` frames) |
+| PTY size (`terminal_resize`), from the screen that last sent the pane input (`pane_sizes.rs`), after Herdr confirms the geometry | Pane output, from the session's reader to the hub to the client (`terminal` frames) |
 | Wheel (`terminal_scroll`) and a click's mouse report (`terminal_click`) | A view's grid and whether it has nothing drawn (`terminal_viewport`), which the node's attach rules read |
 | Creation requests keys are sent against: opened, resolved to a pane, discarded | Held keys and a paste's text with the keys behind it, written by the node's writer |
 | Input facts: when the operator typed and whether it submitted; attach state, first frame, notes and errors | Redraw requests from the hub to the pane's node |

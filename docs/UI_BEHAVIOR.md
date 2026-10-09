@@ -1309,6 +1309,10 @@ The hidden state is the core's `ui_state.device_rail_visible`, kept beside `left
 
 A device's Workspace in front wears the device color, `--device-remote`: a band at the start of the Workspace toolbar with the server glyph and the device's name, truncated, and a border of the same color around its panes; this machine's Workspace has neither.
 
+A machine whose core runs on another machine (ARCHITECTURE.md, A core on another machine) is a device on that core's rail like any other, named by its host name.
+Its `다시 연결` is answered that the machine reconnects by itself, and removing it ends its connection until it attaches again; neither adds a state or a line of its own.
+A window on that machine shows its core's state; while the core cannot be reached it shows the shell's own connecting state, in the place and size it takes when hided is gone, takes no input, and sends none of what was typed meanwhile once the core is back.
+
 ## Start panel
 
 Web owner: `web/src/StartPanel.tsx`, `web/src/startTargets.ts`, `web/src/startDraft.ts`, `web/src/startAnswer.ts`, `web/src/agentPicker.ts`, `web/src/components/agent-picker.tsx`.
