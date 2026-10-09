@@ -3194,7 +3194,6 @@ mod tests {
         );
         let replacement_live = crate::live::LiveContext {
             socket_path: replacement_server.socket_path().into(),
-            herdr_bin: None,
             runtime: Arc::downgrade(&runtime),
             notifier: crate::handle::ChangeNotifier::noop(),
             api_connector: Arc::new(replacement_server.connector()),
@@ -3301,7 +3300,6 @@ mod tests {
             current.publish_delivery(Arc::new(ledger), false);
             current.set_live(crate::live::LiveContext {
                 socket_path: herdr.socket_path().into(),
-                herdr_bin: None,
                 runtime: Arc::downgrade(&runtime),
                 notifier: crate::handle::ChangeNotifier::noop(),
                 api_connector: if replacement == Some(StartReplacement::ControlOnCloseConnect) {
