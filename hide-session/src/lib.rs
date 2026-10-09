@@ -29,6 +29,7 @@ mod catalog;
 mod conversation_cursor;
 pub mod cursor;
 mod envelope;
+mod grok;
 mod label_owner;
 pub mod label_transcript;
 pub mod links;
@@ -125,6 +126,8 @@ pub const CLAUDE_SESSIONS: &str = ".claude/projects";
 pub const CODEX_SESSIONS: &str = ".codex/sessions";
 /// Pi's default native session root. Custom session directories grant no trust.
 pub const PI_SESSIONS: &str = ".pi/agent/sessions";
+/// Grok's default native root; a `GROK_HOME` elsewhere grants no trust.
+pub const GROK_SESSIONS: &str = ".grok/sessions";
 /// omp's default native root; profiles and custom session roots grant no trust.
 pub const OMP_SESSIONS: &str = ".omp/agent/sessions";
 
@@ -134,6 +137,7 @@ pub fn session_root(home: &Path, agent: Agent) -> Option<PathBuf> {
     match agent {
         Agent::Claude => Some(home.join(CLAUDE_SESSIONS)),
         Agent::Codex => Some(home.join(CODEX_SESSIONS)),
+        Agent::Grok => Some(home.join(GROK_SESSIONS)),
         Agent::Pi => Some(home.join(PI_SESSIONS)),
         Agent::Omp => Some(home.join(OMP_SESSIONS)),
         Agent::OpenCode => None,
@@ -257,6 +261,7 @@ fn open_session_file_with_links(path: &Path, follow: bool) -> io::Result<File> {
 pub enum Agent {
     Codex,
     Claude,
+    Grok,
     Pi,
     Omp,
     #[serde(rename = "opencode")]
@@ -276,6 +281,7 @@ impl Agent {
         match self {
             Self::Claude => hide_agent_adapter::SessionFormat::Claude,
             Self::Codex => hide_agent_adapter::SessionFormat::Codex,
+            Self::Grok => hide_agent_adapter::SessionFormat::Grok,
             Self::Pi => hide_agent_adapter::SessionFormat::Pi,
             Self::Omp => hide_agent_adapter::SessionFormat::Omp,
             Self::OpenCode => hide_agent_adapter::SessionFormat::OpenCode,
@@ -286,6 +292,7 @@ impl Agent {
         match format {
             hide_agent_adapter::SessionFormat::Claude => Self::Claude,
             hide_agent_adapter::SessionFormat::Codex => Self::Codex,
+            hide_agent_adapter::SessionFormat::Grok => Self::Grok,
             hide_agent_adapter::SessionFormat::Pi => Self::Pi,
             hide_agent_adapter::SessionFormat::Omp => Self::Omp,
             hide_agent_adapter::SessionFormat::OpenCode => Self::OpenCode,
@@ -365,6 +372,10 @@ pub struct ConversationEvent {
     /// Images attached to the message; their bytes never enter `text`, and
     /// a message of images alone has empty `text`.
     pub images: u32,
+    /// The native message this record is a part of, for a format that
+    /// writes one message as several records (Grok's prompt blocks and an
+    /// answer's text runs); consecutive parts become one event.
+    part: Option<String>,
 }
 
 impl ConversationEvent {
@@ -381,12 +392,43 @@ impl ConversationEvent {
             at_unix_ms,
             text: text.into(),
             images: 0,
+            part: None,
         }
     }
 
     fn with_images(mut self, images: u32) -> Self {
         self.images = images;
         self
+    }
+
+    fn with_part(mut self, part: Option<String>) -> Self {
+        self.part = part;
+        self
+    }
+
+    /// The native message this record is a part of, when the format
+    /// splits messages; records of one message share it.
+    pub fn part(&self) -> Option<&str> {
+        self.part.as_deref()
+    }
+
+    fn continued_by(&self, next: &Self) -> bool {
+        self.part.is_some() && self.part == next.part && self.kind == next.kind
+    }
+
+    fn absorb(&mut self, next: Self) {
+        if !next.text.is_empty() {
+            if !self.text.is_empty() {
+                self.text.push_str(if self.kind == EventKind::Assistant {
+                    "\n\n"
+                } else {
+                    "\n"
+                });
+            }
+            self.text.push_str(&next.text);
+        }
+        self.images += next.images;
+        self.provider_injected |= next.provider_injected;
     }
 
     pub const fn is_provider_injected(&self) -> bool {
@@ -406,6 +448,8 @@ pub enum SkipReason {
     MissingTimestamp,
     InvalidTimestamp,
     NonConversationCapacity,
+    /// A record longer than the line cap was read without its bodies.
+    BodyCapacity,
     UserTurnCapacity,
     UserTurnInvalid,
 }
@@ -417,6 +461,7 @@ impl SkipReason {
             Self::MissingTimestamp => "missing_timestamp",
             Self::InvalidTimestamp => "invalid_timestamp",
             Self::NonConversationCapacity => "non_conversation_capacity",
+            Self::BodyCapacity => "body_capacity",
             Self::UserTurnCapacity => "user_turn_capacity",
             Self::UserTurnInvalid => "user_turn_invalid",
         }
@@ -467,6 +512,9 @@ pub struct ParsedSession {
     /// The turn records of an agent that reports them, each with its record's
     /// offset, in record order (`turns`); empty for every other agent.
     pub turn_marks: Vec<(u64, turns::TurnMark)>,
+    /// A plan awaiting approval that the session's current state, not one
+    /// of its records, says is pending (Grok's `plan_mode.json`).
+    pub plan_hold: Option<turns::UserTurnContent>,
     pub skipped_lines: usize,
     pub skipped_reasons: BTreeMap<SkipReason, usize>,
     pub rescan_reason: Option<RescanReason>,
@@ -476,6 +524,23 @@ impl ParsedSession {
     fn skipped(&mut self, reason: SkipReason) {
         self.skipped_lines += 1;
         *self.skipped_reasons.entry(reason).or_default() += 1;
+    }
+
+    /// Join the consecutive parts of one native message, keeping the first
+    /// part's offset and time. A reader that pages or polls by record
+    /// offset joins its own boundaries instead (`ConversationEvent::part`).
+    pub fn coalesce(&mut self) {
+        let events = std::mem::take(&mut self.events);
+        let offsets = std::mem::take(&mut self.event_offsets);
+        for (event, offset) in events.into_iter().zip(offsets) {
+            match self.events.last_mut() {
+                Some(last) if last.continued_by(&event) => last.absorb(event),
+                _ => {
+                    self.events.push(event);
+                    self.event_offsets.push(offset);
+                }
+            }
+        }
     }
 }
 
@@ -845,7 +910,7 @@ impl SessionLocator {
             SessionIdentity::Id(id) => match agent {
                 Agent::Claude => self.claude_path_for_id(cwd, id, budget),
                 Agent::Codex => self.codex_path_for_id(id, budget),
-                Agent::Pi | Agent::Omp => {
+                Agent::Grok | Agent::Pi | Agent::Omp => {
                     native_file::locate(&self.home, agent, Some(identity), cwd, budget)
                 }
                 Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
@@ -910,7 +975,7 @@ impl SessionLocator {
                 budget,
             )?)),
             Agent::Codex => self.newest_codex_session(cwd, budget),
-            Agent::Pi | Agent::Omp => {
+            Agent::Grok | Agent::Pi | Agent::Omp => {
                 native_file::locate(&self.home, agent, None, Some(cwd), budget).map(Some)
             }
             Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
@@ -1266,8 +1331,11 @@ pub(crate) fn parse_events_into(
             base_offset,
             parse_claude_line,
             links::claude_line,
-            Some(turns::native::claude),
-            true,
+            Turns {
+                parser: Some(turns::native::claude),
+                human_starts_turn: true,
+                large: None,
+            },
             found,
         ),
         Agent::Codex => parse_lines_at(
@@ -1275,8 +1343,23 @@ pub(crate) fn parse_events_into(
             base_offset,
             parse_codex_line,
             links::codex_line,
-            Some(turns::native::codex),
-            false,
+            Turns {
+                parser: Some(turns::native::codex),
+                human_starts_turn: false,
+                large: None,
+            },
+            found,
+        ),
+        Agent::Grok => parse_lines_at(
+            contents,
+            base_offset,
+            grok::parse_line,
+            links::grok_line,
+            Turns {
+                parser: Some(grok::turn),
+                human_starts_turn: true,
+                large: Some(grok::reduced_line),
+            },
             found,
         ),
         Agent::Pi => parse_lines_at(
@@ -1284,8 +1367,11 @@ pub(crate) fn parse_events_into(
             base_offset,
             |item| native_file::parse_line(Agent::Pi, item),
             links::pi_line,
-            None,
-            false,
+            Turns {
+                parser: None,
+                human_starts_turn: false,
+                large: None,
+            },
             found,
         ),
         Agent::Omp => parse_lines_at(
@@ -1293,12 +1379,23 @@ pub(crate) fn parse_events_into(
             base_offset,
             |item| native_file::parse_line(Agent::Omp, item),
             links::pi_line,
-            Some(turns::native::omp),
-            true,
+            Turns {
+                parser: Some(turns::native::omp),
+                human_starts_turn: true,
+                large: None,
+            },
             found,
         ),
         Agent::OpenCode => ParsedSession::default(),
     }
+}
+
+/// How a format's records mark turns, and how it reads a record longer
+/// than the line cap.
+struct Turns {
+    parser: Option<turns::native::Parser>,
+    human_starts_turn: bool,
+    large: Option<fn(&str) -> Option<String>>,
 }
 
 /// Each record is parsed once and read by both the conversation parser and
@@ -1309,19 +1406,35 @@ fn parse_lines_at(
     base_offset: u64,
     mut extract: impl FnMut(&Value) -> LineResult,
     link: links::LinkLine,
-    turn: Option<turns::native::Parser>,
-    human_starts_turn: bool,
+    turns: Turns,
     found: &mut links::LinkAccumulator,
 ) -> ParsedSession {
+    let Turns {
+        parser: turn,
+        human_starts_turn,
+        large,
+    } = turns;
     let mut parsed = ParsedSession::default();
     let mut relative_offset = 0_u64;
     for raw_line in contents.split_inclusive('\n') {
         let line_offset = base_offset.saturating_add(relative_offset);
         relative_offset = relative_offset.saturating_add(raw_line.len() as u64);
-        if raw_line.len() > SESSION_LINE_LIMIT_BYTES {
-            parsed.skipped(SkipReason::NonConversationCapacity);
-            continue;
-        }
+        let reduced;
+        let raw_line = if raw_line.len() > SESSION_LINE_LIMIT_BYTES {
+            match large.and_then(|reduce| reduce(raw_line)) {
+                Some(line) => {
+                    parsed.skipped(SkipReason::BodyCapacity);
+                    reduced = line;
+                    reduced.as_str()
+                }
+                None => {
+                    parsed.skipped(SkipReason::NonConversationCapacity);
+                    continue;
+                }
+            }
+        } else {
+            raw_line
+        };
         let line = raw_line.trim_end_matches(['\n', '\r']);
         if line.trim().is_empty() {
             continue;

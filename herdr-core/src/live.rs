@@ -3705,6 +3705,116 @@ mod tests {
     }
 
     #[test]
+    fn a_grok_fork_resumes_its_proven_session_as_a_new_one_in_its_own_tab() {
+        let id = "0199b000-0000-7000-8000-0000000000f0";
+        for case in [
+            "success",
+            "refused",
+            "summary-changed-before",
+            "execution-after",
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
+            let source = crate::fixture::grok_session(home.path(), &cwd, id);
+            let summary = source.with_file_name("summary.json");
+            if case == "summary-changed-before" {
+                let other = std::fs::read_to_string(&summary)
+                    .unwrap()
+                    .replace(id, "0199b000-0000-7000-8000-0000000000f1");
+                std::fs::write(&summary, other).unwrap();
+            }
+            let before = std::fs::read(&summary).unwrap();
+            let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let observed_changed = Arc::clone(&changed);
+            let node = hide_node::Local::new(Some(home.path().to_path_buf()));
+            let herdr = FakeHerdr::start_with_errors("grok-fork-tab", move |method, params| {
+                Ok(match method {
+                    "session.snapshot" => json!({"type": "session_snapshot", "snapshot": {
+                        "version": "fixture", "protocol": HERDR_PROTOCOL_REVISION,
+                        "workspaces": [], "tabs": [], "panes": [], "agents": [],
+                        "layouts": [{"workspace_id": "w1", "tab_id": "w1:t1", "zoomed": false,
+                            "area": {"x":0,"y":0,"width":80,"height":24},
+                            "focused_pane_id": "parent-pane",
+                            "panes": [{"pane_id":"parent-pane", "focused":true,
+                                "rect":{"x":0,"y":0,"width":80,"height":24}}], "splits": []}]
+                    }}),
+                    "tab.create" => {
+                        if case == "execution-after" {
+                            observed_changed.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        assert_eq!(params["focus"], false);
+                        json!({"type":"tab_created",
+                            "tab":{"tab_id":"w1:t2","workspace_id":"w1","number":2,"label":"fork", "focused":false,"pane_count":1,"agent_status":"idle"},
+                            "root_pane":{"pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":1}})
+                    }
+                    "pane.process_info" => json!({"type":"pane_process_info","process_info":{
+                        "pane_id":"child-pane","shell_pid":42,"foreground_process_group_id":42,
+                        "foreground_processes":[{"pid":42,"name":"zsh"}]}}),
+                    "agent.start" => {
+                        assert_eq!(params["kind"], "grok");
+                        assert_eq!(params["args"], json!(["--resume", id, "--fork-session"]));
+                        if case == "refused" {
+                            return Err(("start_refused".into(), "fixture refused".into()));
+                        }
+                        json!({"type":"agent_started","argv":[],"agent":{
+                            "pane_id":"child-pane","terminal_id":"child-terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":2}})
+                    }
+                    "pane.close" => json!({"type":"ok"}),
+                    other => panic!("unexpected {other}"),
+                })
+            });
+            // The label overlay hands a native-file agent its proven file.
+            let request = ForkRequest {
+                source_reference: Some(crate::sidebar::SessionAgentSessionPayload {
+                    kind: "path".into(),
+                    value: source.display().to_string(),
+                }),
+                parent_state_change_seq: None,
+                connection_generation: 0,
+                codex_daemon: Default::default(),
+                parent_pane_id: "parent-pane".into(),
+                agent: crate::fork::ForkableAgent::Grok,
+                session_id: id.into(),
+                cwd: Some(cwd.display().to_string()),
+                name: "fork-grok-1".into(),
+            };
+            let result = run_agent_fork_with_registration(
+                &herdr.connector(),
+                &node,
+                &request,
+                &|| {
+                    if changed.load(std::sync::atomic::Ordering::SeqCst) {
+                        Err("session_fork_execution_changed".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_, _| Ok(()),
+            );
+            assert_eq!(result.is_err(), case != "success", "{case}: {result:?}");
+            assert_eq!(std::fs::read(&summary).unwrap(), before, "{case}");
+            let expected: &[&str] = match case {
+                "success" => &[
+                    "session.snapshot",
+                    "tab.create",
+                    "pane.process_info",
+                    "agent.start",
+                ],
+                "refused" => &[
+                    "session.snapshot",
+                    "tab.create",
+                    "pane.process_info",
+                    "agent.start",
+                    "pane.close",
+                ],
+                "summary-changed-before" => &[],
+                _ => &["session.snapshot", "tab.create", "pane.close"],
+            };
+            assert_eq!(herdr.methods(), expected, "{case}");
+        }
+    }
+
+    #[test]
     fn internal_registration_failure_keeps_the_started_fork() {
         let herdr = FakeHerdr::start("fork-registration-failure", |method, _| match method {
             "pane.split" => json!({"type": "pane_info", "pane": {
