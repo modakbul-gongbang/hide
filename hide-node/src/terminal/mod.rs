@@ -620,11 +620,14 @@ impl Inner {
             .count()
     }
 
-    /// Forgets the panes a view named that nothing else owns: never asked to
-    /// attach, not on the core's screen and holding no keys. A screen's
-    /// resize that was on its way when the core forgot its pane leaves one.
+    /// Forgets the panes only a view named: never asked to attach, not on
+    /// the core's screen, holding no keys and carrying nothing the core said
+    /// of them (asleep, closing, a watched frame, a paste's target), which it
+    /// says only once. A screen's resize that was on its way when the core
+    /// forgot its pane leaves one.
     fn forget_unowned(&mut self) {
         let shown = &self.shown;
+        let pasting = self.attachment.as_ref().map(|attachment| &attachment.pane);
         let unowned = self
             .panes
             .iter()
@@ -632,7 +635,11 @@ impl Inner {
                 entry.session.is_none()
                     && entry.lifecycle.state == "idle"
                     && matches!(entry.hold, PaneHold::Empty)
+                    && !entry.asleep
+                    && !entry.closing
+                    && !entry.watch_frame
                     && !shown.contains(*pane)
+                    && pasting != Some(*pane)
             })
             .map(|(pane, _)| pane.clone())
             .collect::<Vec<_>>();

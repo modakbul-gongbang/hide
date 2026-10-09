@@ -923,6 +923,33 @@ fn views_that_land_after_their_pane_was_forgotten_do_not_keep_a_new_pane_from_be
     assert!(!refused, "the view of a pane on screen was refused");
 }
 
+/// What the core said of a pane it has not attached is kept at the cap: a
+/// sleeping agent's pane still drops the keys typed into it once it attaches.
+#[test]
+fn a_pane_the_core_put_to_sleep_is_not_forgotten_at_the_cap() {
+    let harness = harness(RetryPolicy::Automatic);
+    harness.service.control(TerminalControl::Asleep {
+        pane: "w1:p9".into(),
+        asleep: true,
+    });
+    for index in 1..MAX_UNATTACHED_PANES {
+        let pane = format!("closed{index}");
+        harness
+            .service
+            .control(TerminalControl::Forget { pane: pane.clone() });
+        harness.service.view(&pane, SIZE, false);
+    }
+    harness.service.view("w1:p10", SIZE, true);
+    let opened = harness.controlling("w1:p9");
+    harness.key("w1:p9", b"lost");
+    harness.service.control(TerminalControl::Asleep {
+        pane: "w1:p9".into(),
+        asleep: false,
+    });
+    harness.key("w1:p9", b"kept");
+    assert_eq!(opened.next_input(), b"kept");
+}
+
 #[test]
 fn an_idle_service_has_nothing_due() {
     let harness = harness(RetryPolicy::Automatic);
