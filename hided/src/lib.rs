@@ -611,6 +611,19 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
         "alias": placement.alias,
         "port": port,
     }));
+    // The node lives as the core's daemon does: while a screen is open or
+    // its Herdr server answers, so its agents keep reaching their core.
+    let idle = server::watch_idle(
+        server::Idle {
+            idle_secs: env.idle_secs,
+            keep_alive: env.keep_alive,
+            clients: Arc::clone(&daemon.state.clients),
+            last_client_gone: Arc::clone(&daemon.state.last_client_gone),
+            shutdown: Arc::clone(&shutdown),
+            herdr_socket: Some(std::path::PathBuf::from(&herdr_socket)),
+        },
+        || false,
+    );
     let app = node_daemon::router(daemon.state.clone());
     let state_dir = env.state_dir.clone();
     let stopping = Arc::clone(&shutdown);
@@ -618,6 +631,7 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
         let served = axum::serve(listener, app)
             .with_graceful_shutdown(async move { stopping.notified().await })
             .await;
+        idle.abort();
         if let Err(error) = served {
             eprintln!(
                 "{}",

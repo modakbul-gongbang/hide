@@ -3589,58 +3589,22 @@ fn log_refusal(reason: CloseReason, extra: Option<usize>) {
 }
 
 pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result<(), String> {
-    let idle_secs = state.idle_secs;
-    let keep_alive = state.keep_alive;
-    let last_client_gone = Arc::clone(&state.last_client_gone);
-    let clients = Arc::clone(&state.clients);
     let shutdown = Arc::clone(&state.shutdown);
     let mobile = Arc::clone(&state.mobile);
-    let herdr_socket = state.herdr_socket.clone();
-    let idle_task = {
-        let shutdown = Arc::clone(&shutdown);
-        tokio::spawn(async move {
-            if keep_alive {
-                return;
-            }
-            let mut herdr_probed: Option<Instant> = None;
-            let mut herdr_up = false;
-            loop {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                if clients.load(Ordering::SeqCst) != 0 {
-                    continue;
-                }
-                // Mobile on with a phone paired: the phone may come back at
-                // any time and push has to keep going (PRD D-10). The idle
-                // clock starts over when that ends.
-                if mobile.keep_alive() {
-                    *last_client_gone.lock().expect("client timestamp") = Instant::now();
-                    continue;
-                }
-                // The daemon lives as long as its Herdr server: labels keep
-                // being made with no window open (PRD labels-in-hided D-18).
-                // The idle clock runs only while the server is unreachable,
-                // so a restart or a live handoff, which brings it back within
-                // the idle window, never ends the daemon.
-                if let Some(socket) = herdr_socket.clone()
-                    && herdr_probed.is_none_or(|at| at.elapsed() >= HERDR_PROBE_INTERVAL)
-                {
-                    herdr_probed = Some(Instant::now());
-                    herdr_up = tokio::task::spawn_blocking(move || herdr_reachable(&socket))
-                        .await
-                        .unwrap_or(false);
-                }
-                if herdr_up {
-                    *last_client_gone.lock().expect("client timestamp") = Instant::now();
-                    continue;
-                }
-                let gone = *last_client_gone.lock().expect("client timestamp");
-                if gone.elapsed() >= Duration::from_secs(idle_secs) {
-                    shutdown.notify_waiters();
-                    return;
-                }
-            }
-        })
-    };
+    let idle_task = watch_idle(
+        Idle {
+            idle_secs: state.idle_secs,
+            keep_alive: state.keep_alive,
+            clients: Arc::clone(&state.clients),
+            last_client_gone: Arc::clone(&state.last_client_gone),
+            shutdown: Arc::clone(&shutdown),
+            herdr_socket: state.herdr_socket.clone(),
+        },
+        // Mobile on with a phone paired: the phone may come back at any
+        // time and push has to keep going (PRD D-10). The idle clock starts
+        // over when that ends.
+        move || mobile.keep_alive(),
+    );
     let app = router(state);
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
@@ -3650,6 +3614,66 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
         .map_err(|error| format!("server: {error}"))?;
     idle_task.abort();
     Ok(())
+}
+
+/// What decides when a daemon with no screen ends.
+pub(crate) struct Idle {
+    pub idle_secs: u64,
+    pub keep_alive: bool,
+    pub clients: Arc<AtomicUsize>,
+    pub last_client_gone: Arc<Mutex<Instant>>,
+    pub shutdown: Arc<Notify>,
+    pub herdr_socket: Option<PathBuf>,
+}
+
+/// Ends the daemon once it had no screen for `idle_secs` while `held` was
+/// false and its Herdr server could not be reached; never with
+/// `keep_alive`. Aborted by its owner when the daemon stops another way.
+pub(crate) fn watch_idle(
+    idle: Idle,
+    held: impl Fn() -> bool + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        if idle.keep_alive {
+            return;
+        }
+        let mut herdr_probed: Option<Instant> = None;
+        let mut herdr_up = false;
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if idle.clients.load(Ordering::SeqCst) != 0 {
+                continue;
+            }
+            if held() {
+                *idle.last_client_gone.lock().expect("client timestamp") = Instant::now();
+                continue;
+            }
+            // The daemon lives as long as its Herdr server: labels keep
+            // being made with no window open (PRD labels-in-hided D-18), and
+            // a screen machine's agents keep reaching their core through its
+            // node (PRD core-host-node-remote-core D-08). The idle clock runs
+            // only while the server is unreachable, so a restart or a live
+            // handoff, which brings it back within the idle window, never
+            // ends the daemon.
+            if let Some(socket) = idle.herdr_socket.clone()
+                && herdr_probed.is_none_or(|at| at.elapsed() >= HERDR_PROBE_INTERVAL)
+            {
+                herdr_probed = Some(Instant::now());
+                herdr_up = tokio::task::spawn_blocking(move || herdr_reachable(&socket))
+                    .await
+                    .unwrap_or(false);
+            }
+            if herdr_up {
+                *idle.last_client_gone.lock().expect("client timestamp") = Instant::now();
+                continue;
+            }
+            let gone = *idle.last_client_gone.lock().expect("client timestamp");
+            if gone.elapsed() >= Duration::from_secs(idle.idle_secs) {
+                idle.shutdown.notify_waiters();
+                return;
+            }
+        }
+    })
 }
 
 /// How often an idle daemon asks whether its Herdr server is still there.
