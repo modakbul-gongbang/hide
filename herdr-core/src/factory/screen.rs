@@ -337,7 +337,7 @@ mod tests {
     fn detail(goal: &str) -> TaskDetail {
         let card = serde_json::json!({
             "task": "T-1", "display_id": "T-1", "column": "moving", "title": "t",
-            "summary": "Task summary", "stage": 1,
+            "summary": "Task summary", "stage": 1, "track": 1,
             "state": "running", "state_label": "", "needs_person": false,
             "waiting_on": [], "priority": 0, "since": 0, "unread": false,
             "folded": false, "archived": false, "failures": 0, "external": [],
