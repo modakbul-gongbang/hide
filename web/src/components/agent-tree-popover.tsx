@@ -34,8 +34,11 @@ type Line =
   | { kind: "agent"; agent: AgentRow; depth: number; hasChildren: boolean; open: boolean }
   | { kind: "more" | "finished"; parent: string; depth: number; count: number };
 
-/** A child that finished and was read waits folded below its siblings (B18, D-13). */
-const finishedAndRead = (row: AgentRow) => row.status_code === "done" && !row.unread;
+/**
+ * A child that finished and was read waits folded below its siblings (B18,
+ * D-13), unless a descendant below it still asks or works.
+ */
+const finishedAndRead = (row: AgentRow) => row.status_code === "done" && !row.unread && !row.descendant_mark;
 
 /**
  * The tree popover (PRD D-13, D-27, D-28, D-40; B6, B13, B18, B19): its head
@@ -296,6 +299,14 @@ function TreeItem({
   const deviceLabel = child.device_label ?? rest?.navigator?.devices?.find((row) => row.id === device)?.label;
   const unavailable = !deviceConnected(rest, device);
   const reason = unavailable ? rest?.status?.remote?.find((row) => row.target_id === device)?.message ?? t("devices.rail.notConnected") : null;
+  // A draft's Open goes to the parent holding it, which can sit on another device.
+  const askDevice =
+    ask === null || ask.open_pane_id === child.pane_id
+      ? device
+      : ask.open_pane_id === parent.pane_id
+        ? parentDevice
+        : remoteTargetOfPane(rest, ask.open_pane_id) ?? localDeviceId(rest);
+  const askUnavailable = !deviceConnected(rest, askDevice);
   const branch = child.state.branch_badge;
   const staleness = prStaleness(rest, child);
   const minutes = ask?.since_unix_ms == null ? null : Math.max(0, Math.floor((Date.now() - ask.since_unix_ms) / 60_000));
@@ -328,7 +339,7 @@ function TreeItem({
             <AskLine ask={{ verb: ask.verb, what: ask.what, more: 0 }} className="flex-1" />
             <button
               type="button"
-              disabled={pending || unavailable}
+              disabled={pending || askUnavailable}
               data-tree-ask-open={ask.open_pane_id}
               className="shrink-0 rounded-xs bg-secondary px-xs py-xxs text-micro text-secondary-foreground outline-none hover:brightness-95 focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
               onClick={(event) => {

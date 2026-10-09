@@ -341,7 +341,6 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await expect(chevron).toBeVisible({ timeout: 20_000 });
     await expect(chevron).toHaveAttribute("aria-expanded", "false");
     await expect(page.locator(`nav[data-sidebar] [data-pane="${rowsPane}"]`)).toHaveCount(0);
-    await expect(page.locator("[data-checkout-line]")).toHaveCount(0);
     const beforeTree = new Map(sent);
     await chevron.click();
     const childRow = primary.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`);

@@ -303,7 +303,9 @@ pub(crate) fn lift(
             agent_kind: named.agent_kind.clone(),
             open_pane_id: named.pane_id.clone(),
             since_unix_ms: escalation.since_unix_ms,
-            unreceived_by: (verb == Verb::Answer)
+            // Only a letter can wait unreceived; a child's own native
+            // question was never sent to its parent.
+            unreceived_by: (verb == Verb::Answer && escalation.cause != Cause::ChildBlocked)
                 .then(|| parent.map(|p| p.identity_label.clone()))
                 .flatten(),
             path,
@@ -419,6 +421,7 @@ mod tests {
         assert_eq!(ask.verb, Verb::Answer);
         assert_eq!(ask.what.as_deref(), Some("Keep the old stdin path?"));
         assert_eq!(ask.path, ["Root", "Middle", "Raised"]);
+        assert_eq!(ask.unreceived_by, None);
     }
 
     // B3, B6: a blocked menu stays an approval; a draft names and opens the

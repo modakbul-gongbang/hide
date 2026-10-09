@@ -207,7 +207,7 @@ The sidebar tree under an opened root is `agent_scope.sidebar_tree.visible_rows`
 The shell shows five siblings per parent and folds the rest behind `N개 더` (`web/src/sidebarTree.ts`).
 A grandchild's own children open in the tree popover instead of a third level.
 The tree popover (`web/src/components/agent-tree-popover.tsx`) opens from the pane header's tree button, a grandchild's chevron and an ask band's `외 N건`.
-Its head names the parent with its direct child count, and its body draws the same rows two levels deep with five siblings each, the children that finished and were read folded below them behind `끝난 자식 N`; choosing a grandchild that has children re-roots the popover on it.
+Its head names the parent with its direct child count, and its body draws the same rows two levels deep with five siblings each, the children that finished and were read, with nothing below them raised or working, folded below them behind `끝난 자식 N`; choosing a grandchild that has children re-roots the popover on it.
 Arrows move, Right and Left open and fold a branch, Enter opens the agent's pane, and Escape closes it and returns focus to what opened it.
 Opened from an ask band it starts with the raised branches open and draws each ask on the row it raised (`raised_pane_id`) with its verb, what to do and Open, which for a draft goes to the parent holding it.
 A pending or failed move shows at its footer with the retry rules of the relation, and the last line opens the Overview Agents graph.
