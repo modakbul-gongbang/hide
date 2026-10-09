@@ -1472,7 +1472,7 @@ mod scope_tests {
                         "content": [{"type": "input_text", "text": context}],
                     },
                 }),
-                Agent::Pi | Agent::Omp | Agent::OpenCode => {
+                Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
                     unreachable!("legacy hook-only fixture")
                 }
             };

@@ -3532,6 +3532,7 @@ mod tests {
     #[test]
     fn a_native_fork_gets_its_own_unfocused_tab_and_failed_start_closes_only_its_pane() {
         for agent in [
+            crate::fork::ForkableAgent::Grok,
             crate::fork::ForkableAgent::Pi,
             crate::fork::ForkableAgent::Omp,
         ] {

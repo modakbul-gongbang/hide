@@ -1000,8 +1000,10 @@ mod grok {
             (next.events[0].text.as_str(), next.events[0].images),
             ("이 화면을 봐줘", 1)
         );
-        let whole =
+        let mut whole =
             hide_session::parse_events(Agent::Grok, &fs::read_to_string(&native.path).unwrap());
+        assert_eq!(whole.events.len(), 8, "one event per native record");
+        whole.coalesce();
         assert_eq!(
             whole
                 .events

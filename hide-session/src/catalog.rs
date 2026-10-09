@@ -363,6 +363,7 @@ fn read_project_session(
         (_, Some(_)) => match read_bounded(&path, SESSION_READ_LIMIT_BYTES) {
             Ok(contents) => {
                 let mut parsed = parse_events(agent, &contents);
+                parsed.coalesce();
                 if agent == Agent::Grok {
                     // Grok keeps its current title beside the conversation.
                     let summary = crate::grok::summary(&path, &mut 0).ok();

@@ -388,14 +388,17 @@ impl ConversationEvent {
         self
     }
 
-    /// Whether `next` continues this native message, so a reader that
-    /// shows messages joins it to this one rather than adding a message.
-    pub fn continued_by(&self, next: &Self) -> bool {
+    /// The native message this record is a part of, when the format
+    /// splits messages; records of one message share it.
+    pub fn part(&self) -> Option<&str> {
+        self.part.as_deref()
+    }
+
+    fn continued_by(&self, next: &Self) -> bool {
         self.part.is_some() && self.part == next.part && self.kind == next.kind
     }
 
-    /// Append the next part of the same native message.
-    pub fn absorb(&mut self, next: Self) {
+    fn absorb(&mut self, next: Self) {
         if !next.text.is_empty() {
             if !self.text.is_empty() {
                 self.text.push_str(if self.kind == EventKind::Assistant {
@@ -503,8 +506,9 @@ impl ParsedSession {
     }
 
     /// Join the consecutive parts of one native message, keeping the first
-    /// part's offset and time.
-    fn coalesce(&mut self) {
+    /// part's offset and time. A reader that pages or polls by record
+    /// offset joins its own boundaries instead (`ConversationEvent::part`).
+    pub fn coalesce(&mut self) {
         let events = std::mem::take(&mut self.events);
         let offsets = std::mem::take(&mut self.event_offsets);
         for (event, offset) in events.into_iter().zip(offsets) {
@@ -1287,7 +1291,6 @@ pub fn parse_events_at(agent: Agent, contents: &str, base_offset: u64) -> Parsed
     let mut found = links::LinkAccumulator::default();
     let mut parsed = parse_events_into(agent, contents, base_offset, &mut found);
     parsed.links = found.finish();
-    parsed.coalesce();
     parsed
 }
 
