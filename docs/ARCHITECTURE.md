@@ -111,7 +111,7 @@ Prompt retrieval confirms lexical or meaningful cwd/path overlap before ranking;
 The app owns the only writer connection.
 Hook helpers and render-facing reads open read-only connections, fail closed on schema or projection drift, and never rebuild the index in the prompt path.
 The same SQLite store owns one random authentication key per Project, and each hook receipt is authenticated over Project, runtime, session, event, and the exact ordered item revisions before the core accepts it as provided-history.
-Transcript text prefixes remain display classification only: receipt authority additionally requires Claude provider-owned metadata, a Codex developer message or an OpenCode synthetic user part, so human or Project instruction text cannot assert a receipt.
+Transcript text prefixes remain display classification only: receipt authority additionally requires Claude provider-owned metadata, a Codex developer message, an OpenCode synthetic user part or a Pi or omp custom message of Hide's own extension (`customType` `hide`), so human or Project instruction text cannot assert a receipt.
 OpenCode keeps its sessions in a database the label read already opens, so its receipts come from that read rather than a session-file poll: `LabelTranscript.memory_receipts` carries the receipt lines of the synthetic parts Hide's plugin added (at most 64 a read), the label worker hands them up with its result, and `Runtime::record_memory_receipts` verifies and records them on one owned thread off the lock, at most 256 waiting.
 
 The coordinator's existing worker context owns session refresh, the five-second due-work poll, and one Memory analysis intent at a time.
@@ -656,7 +656,7 @@ The leaf selects dialects but does not implement them.
 `hide-session` owns session location and parsing, including whether a format reports user turns; the delivery gate conservatively holds a letter when such a reader cannot establish the current turn.
 `hide-kit` projects the shared rows into pieces and owns installation policy, while core feature gates read the relevant independent capability.
 OpenCode's existing title reader remains distinct from the session-file features offered for Claude Code and Codex; its letters, Memory, spawn guard and subagent count come from Hide's plugin ([agent-hooks.md: OpenCode: Hide's plugin](agent-hooks.md#opencode-hides-plugin)), not from its sessions.
-Pi's and omp's letters and spawn guard, and omp's subagent count and `ask` guard, come the same way from Hide's extension ([agent-hooks.md: Pi and omp: Hide's extension](agent-hooks.md#pi-and-omp-hides-extension)).
+Pi's and omp's letters, Memory and spawn guard, and omp's subagent count and `ask` guard, come the same way from Hide's extension ([agent-hooks.md: Pi and omp: Hide's extension](agent-hooks.md#pi-and-omp-hides-extension)).
 Pi 1.0.4 and omp 18.7.0 extend the shared file reader through `hide-session::native_file`: the first version3 session header proves the native ID and exact cwd under the respective default `.pi/agent/sessions` or `.omp/agent/sessions` root.
 The native default cwd directory is additionally required because Pi's ID lookup outside it prompts to fork instead of resuming the same session; lossy folder encoding still never proves ownership.
 Filename suffixes never supply an ID, and links below home and custom session directories confer no read authority.

@@ -214,7 +214,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         spawn_guard: Some(HookDialect::Pi),
         // Pi runs no subagents.
         subagent_counts: None,
-        memory: None,
+        memory: Some(HookDialect::Pi),
         // Pi's previous-session picker reads `done` and a bell's Enter there
         // resumes another session; its trust dialog reads `idle` and Enter
         // picks the highlighted item (measured 2026-10-07). Letters reach it on
@@ -263,7 +263,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         prompt_hook: Some(HookDialect::Omp),
         spawn_guard: Some(HookDialect::Omp),
         subagent_counts: Some(HookDialect::Omp),
-        memory: None,
+        memory: Some(HookDialect::Omp),
         // omp's previous-session picker reads `done` and a bell's Enter there
         // resumes another session (measured 2026-10-07). Letters reach it on
         // its next prompt instead.
