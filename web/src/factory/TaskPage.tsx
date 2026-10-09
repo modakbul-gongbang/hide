@@ -451,7 +451,7 @@ function Timeline({ detail, actions }: { detail: TaskDetail; actions: Actions })
     <Field title={t("factory.task.activity")}>
       <ol className="flex flex-col gap-sm" data-factory-timeline={detail.activity.length}>
         {detail.activity.map((entry, at) => {
-          const { text, detail: under } = activityText(entry, t);
+          const { text, detail: under } = activityText(entry, t, (discovery) => detail.follow_ups.find((row) => row.discovery === discovery)?.text);
           const Icon = entry.kind === "verification" && entry.outcome !== "passed" ? CircleXIcon : ACTIVITY_ICON[entry.kind];
           const tone = entry.kind === "verification" ? (entry.outcome === "passed" ? "text-success" : "text-warning") : entry.kind === "main_broken" ? "text-destructive" : entry.kind === "pull_request" ? "text-success" : "text-muted-foreground";
           const attempt = entry.kind === "verification" ? detail.attempts.find((row) => row.number === entry.number && row.stage === "task") : undefined;

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { english } from "../i18n/catalogs";
 import { factoryCatalogs } from "../i18n/resources/factory";
 import { itemSentence, stoppedText } from "./Decisions";
-import { COLUMN_LABEL, CRITERION_LABEL, DECISION_KIND_LABEL, DECISION_SOURCE_LABEL, DIAGNOSIS_SOURCE_LABEL, DISCOVERY_LABEL, ENV_HOLD_LABEL, FALLBACK_LABEL, FOLLOW_UP_STATE_LABEL, GATE_LABEL, HOLDING_LABEL, KIND_LABEL, MODE_LABEL, ORIGIN_LABEL, OUTCOME_LABEL, PAUSE_REASON_LABEL, RECOVERY_ACTION_LABEL, RECOVERY_OUTCOME_LABEL, REFUSAL_LABEL, REFUSAL_REASONS, STAGE_LABEL, STATE_LABEL, STOP_LABEL, WAITING_LABEL, refusalText, waitingText } from "./labels";
+import { activityText, COLUMN_LABEL, CRITERION_LABEL, DECISION_KIND_LABEL, DECISION_SOURCE_LABEL, DIAGNOSIS_SOURCE_LABEL, DISCOVERY_LABEL, ENV_HOLD_LABEL, FALLBACK_LABEL, FOLLOW_UP_STATE_LABEL, GATE_LABEL, HOLDING_LABEL, KIND_LABEL, MODE_LABEL, ORIGIN_LABEL, OUTCOME_LABEL, PAUSE_REASON_LABEL, RECOVERY_ACTION_LABEL, RECOVERY_OUTCOME_LABEL, REFUSAL_LABEL, REFUSAL_REASONS, STAGE_LABEL, STATE_LABEL, STOP_LABEL, WAITING_LABEL, refusalText, waitingText } from "./labels";
 import { type CardView, type FactoryView, type InboxItem, ATTEMPT_OUTCOMES, ATTEMPT_STAGES, COLUMNS, CRITERION_STATES, DECISION_BYS, DECISION_KINDS, DECISION_SOURCES, DIAGNOSIS_SOURCES, DISCOVERY_CLASSES, ENV_HOLDS, FALLBACKS, FOLLOW_UP_STATES, GATES, HOLDINGS, OBSERVER_MODES, PAUSE_REASONS, QUESTION_KINDS, QUESTION_ORIGINS, RECOVERY_ACTIONS, RECOVERY_OUTCOMES, RESULT_CODES, STOP_REASONS, TASK_STATES, WAITING_FOR } from "./model";
 
 // The reading side of contracts/snapshot-wire-enums.json for the Factory
@@ -103,6 +103,14 @@ describe("the Factory's code sentences", () => {
     expect(waitingText(card({ waiting_code: "predecessors", waiting_on: ["#420", "T-3"] }), t)).toBe("Waiting for #420, T-3");
     expect(waitingText(card({ waiting_code: "environment", env_hold: "disk_floor" }), t)).toBe("Starts held: free disk below the floor");
     expect(waitingText(card({}), t)).toBeNull();
+  });
+
+  it("says a new follow-up candidate by what was found where the page has it (B30)", () => {
+    const entry = { at: 0, kind: "follow_up", discovery: "D-1", state: "open", issue: null } as const;
+    const found = (discovery: string) => (discovery === "D-1" ? "The index never shrinks\nmore detail" : undefined);
+    expect(activityText(entry, t, found).text).toBe(t("factory.activity.followUp", { state: "The index never shrinks" }));
+    expect(activityText(entry, t).text).toBe(t("factory.activity.followUp", { state: english["factory.followUp.state.open"] }));
+    expect(activityText({ ...entry, state: "issue", issue: "#12" }, t, found)).toEqual({ text: t("factory.activity.followUp", { state: english["factory.followUp.state.issue"] }), detail: "#12" });
   });
 
   it("names a refusal it has no words for rather than hiding it (B10)", () => {

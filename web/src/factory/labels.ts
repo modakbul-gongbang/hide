@@ -508,9 +508,11 @@ export function bytesText(bytes: number): string {
 /**
  * One activity line in the operator's language: its sentence and, where it
  * has one, the smaller line under it. Free text inside is the worker's, the
- * AI's or a migrated notice's own words.
+ * AI's or a migrated notice's own words. `finding` names a follow-up
+ * candidate's own words where the page has them, so a new candidate is
+ * said by what was found rather than by its state.
  */
-export function activityText(entry: Activity, t: Translate): { text: string; detail: string | null } {
+export function activityText(entry: Activity, t: Translate, finding?: (discovery: string) => string | undefined): { text: string; detail: string | null } {
   switch (entry.kind) {
     case "intake":
       return {
@@ -538,8 +540,10 @@ export function activityText(entry: Activity, t: Translate): { text: string; det
         detail: [removed, freed].filter((part) => part !== null).join(" · ") || null,
       };
     }
-    case "follow_up":
-      return { text: t("factory.activity.followUp", { state: t(FOLLOW_UP_STATE_LABEL[entry.state]) }), detail: entry.issue ?? null };
+    case "follow_up": {
+      const found = entry.state === "open" ? finding?.(entry.discovery)?.split("\n")[0]?.trim() : undefined;
+      return { text: t("factory.activity.followUp", { state: found || t(FOLLOW_UP_STATE_LABEL[entry.state]) }), detail: entry.issue ?? null };
+    }
     case "ai_decision":
       return { text: t("factory.activity.aiDecision", { text: entry.text }), detail: null };
     case "outside":
