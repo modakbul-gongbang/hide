@@ -194,18 +194,31 @@ pub fn allowed(arguments: &[&str]) -> bool {
 
 /// Whether `value` names a repository as `gh` takes it, `[HOST/]OWNER/NAME`:
 /// two or three plain components, none of which can be read as a flag or a
-/// path step.
+/// path step (`.` or `..`). A name may start with a dot (`acme/.github`),
+/// and a host may carry its port (`ghe.example.com:8443`).
 pub fn valid_repository(value: &str) -> bool {
     let parts: Vec<&str> = value.split('/').collect();
+    let plain = |part: &str| {
+        !part.is_empty()
+            && !part.starts_with('-')
+            && part != "."
+            && part != ".."
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+    };
+    let host = |part: &str| match part.split_once(':') {
+        Some((name, port)) => {
+            plain(name) && !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
+        }
+        None => plain(part),
+    };
     value.len() <= 256
-        && (parts.len() == 2 || parts.len() == 3)
-        && parts.iter().all(|part| {
-            !part.is_empty()
-                && !part.starts_with(['-', '.'])
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
-        })
+        && match parts.as_slice() {
+            [owner, name] => plain(owner) && plain(name),
+            [server, owner, name] => host(server) && plain(owner) && plain(name),
+            _ => false,
+        }
 }
 
 /// The repository an `origin` URL names, as [`valid_repository`] takes it:
@@ -214,11 +227,16 @@ pub fn valid_repository(value: &str) -> bool {
 /// forms. `None` for any other shape.
 pub fn repository_of_remote(url: &str) -> Option<String> {
     let url = url.trim();
-    let (host, path) = if let Some(rest) = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("ssh://"))
+    let (host, path) = if let Some(rest) = url.strip_prefix("https://") {
+        // An HTTPS port is the server's own (a GitHub Enterprise Server on
+        // 8443), which `gh` needs to reach its API.
+        let rest = rest.rsplit_once('@').map_or(rest, |(_, rest)| rest);
+        rest.split_once('/')?
+    } else if let Some(rest) = url
+        .strip_prefix("ssh://")
         .or_else(|| url.strip_prefix("git://"))
     {
+        // An SSH or git port is not the API's, so it is left out.
         let rest = rest.rsplit_once('@').map_or(rest, |(_, rest)| rest);
         let (host, path) = rest.split_once('/')?;
         (host.split(':').next()?, path)
@@ -236,7 +254,7 @@ pub fn repository_of_remote(url: &str) -> Option<String> {
         return None;
     }
     let host = host.to_ascii_lowercase();
-    let repository = if host == "github.com" {
+    let repository = if host == "github.com" || host == "github.com:443" {
         format!("{owner}/{name}")
     } else {
         format!("{host}/{owner}/{name}")
@@ -272,6 +290,15 @@ mod tests {
                 "git@ghe.example.com:acme/app.git",
                 "ghe.example.com/acme/app",
             ),
+            ("git@github.com:acme/.github.git", "acme/.github"),
+            (
+                "https://ghe.example.com:8443/acme/app.git",
+                "ghe.example.com:8443/acme/app",
+            ),
+            (
+                "ssh://git@ghe.example.com:2222/acme/app.git",
+                "ghe.example.com/acme/app",
+            ),
         ] {
             assert_eq!(
                 repository_of_remote(url).as_deref(),
@@ -288,7 +315,13 @@ mod tests {
             assert_eq!(repository_of_remote(url), None, "{url}");
         }
         assert!(!valid_repository("acme/../app"));
+        assert!(!valid_repository("acme/.."));
+        assert!(!valid_repository("./app"));
         assert!(!valid_repository("--repo/app"));
+        assert!(!valid_repository("ghe.example.com:/acme/app"));
+        assert!(!valid_repository("ghe.example.com:84a3/acme/app"));
+        assert!(!valid_repository("acme:1/app"), "a port only on a host");
+        assert!(valid_repository("acme/.github"));
     }
 
     #[test]
