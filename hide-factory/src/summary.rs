@@ -1551,6 +1551,28 @@ mod tests {
     }
 
     #[test]
+    fn the_track_lights_work_for_a_task_past_intake_that_has_not_run() {
+        let at = |state: TaskState, stop: Option<StopReason>, ran: bool| {
+            let mut task = Task::draft("F", "T-1", 1, crate::model::Card::default(), 0);
+            task.state = state;
+            task.stop = stop;
+            task.last_report_at = ran.then_some(1);
+            (board_stage(&task), track_cell(&task))
+        };
+        assert_eq!(at(TaskState::Drafting, None, false), (0, 0));
+        assert_eq!(at(TaskState::Waiting, None, false), (0, 1));
+        assert_eq!(at(TaskState::Waiting, None, true), (1, 1));
+        assert_eq!(at(TaskState::Running, None, true), (1, 1));
+        assert_eq!(at(TaskState::Verifying, None, true), (2, 2));
+        assert_eq!(
+            at(TaskState::Stopped, Some(StopReason::VerifyFailed), true),
+            (2, 2)
+        );
+        assert_eq!(at(TaskState::MergeWaiting, None, true), (3, 3));
+        assert_eq!(at(TaskState::Done, None, true), (4, 4));
+    }
+
+    #[test]
     fn a_task_done_before_nine_in_seoul_is_done_today_there() {
         const HOUR: i64 = 3_600_000;
         // 2026-10-07 05:00 UTC is 14:00 in Seoul; 2026-10-06 23:30 UTC is 08:30 there.
