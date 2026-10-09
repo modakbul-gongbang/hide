@@ -3405,6 +3405,13 @@ impl Engine {
         if let Some(stage) = stage {
             self.with_task(factory, id, |task| {
                 task.attempts.pop();
+                // An older build left a run sent back without closing its
+                // attempt; nothing will answer it now.
+                for attempt in &mut task.attempts {
+                    if attempt.outcome.is_none() {
+                        attempt.outcome = Some(AttemptOutcome::Cancelled);
+                    }
+                }
             });
             self.start_verification(factory, id, stage);
         }

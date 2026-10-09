@@ -3109,6 +3109,11 @@ fn a_task_stuck_verifying_with_two_unfinished_attempts_concludes_after_a_restart
         Some(AttemptOutcome::Passed),
         "{attempts:?}"
     );
+    assert_eq!(
+        attempts[0].outcome,
+        Some(AttemptOutcome::Cancelled),
+        "the attempt nothing answers is no longer shown running"
+    );
 }
 
 // --------------------------------------------------------------- summary

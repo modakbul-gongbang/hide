@@ -54,7 +54,7 @@ Both are private to the user: the file is mode 0600 and the folder 0700 on Unix.
 A store written by a newer build is refused rather than read: the engine does not start, the host logs `store.open_failed`, and commands answer `factory_unavailable`.
 Fields added later load from older rows through serde defaults.
 The engine loads the whole store at start and saves each change before the command that made it answers, so a restart resumes Factories, Tasks, questions, workers and in-flight work.
-A restart starts verification again from the recorded attempt and asks a pending review again.
+A restart starts verification again from the recorded attempt, closes as cancelled any earlier attempt still unfinished, and asks a pending review again.
 A store write that fails does not stop the engine: it is counted, `hide factory status` says how many failed since start, and the host writes each one to the diagnostic log (`store.write_failed`, with the Factory, Task and stage).
 A main recovery the restart cut short is not guessed again, since which merge it was finding or reverting lived only in the old process: it goes to a person with the same choices as a recovery that could not decide.
 The engine opens the store when a store file already exists at start, or on the first command, so a machine that never created a Factory opens nothing.
@@ -831,7 +831,7 @@ Old Tasks use the fallback when read and are never rewritten just to add the fie
 | `number` | Its place in the Task's attempts, from 1, so a run after an environment failure or a cancelled run is the next number; `n/3` counts failures, not attempts. |
 | `stage` | `task` (after `done`) or `pre_merge`. |
 | `started_at` | When it started. |
-| `outcome` | `passed`, `failed`, `environment`, `cancelled` (the run was ended before it answered: the Task went back to its worker, was cancelled or was taken outside) or `running`; only the last attempt can be running. |
+| `outcome` | `passed`, `failed`, `environment`, `cancelled` (the run was ended before it answered: the Task went back to its worker, was cancelled or was taken outside, or a restart found it unfinished behind a later attempt) or `running`; only the last attempt can be running. |
 | `check` | The failing check or command. |
 | `link` | The CI link or the log path. |
 | `log_tail` | The last 4 KiB of a local log. |
