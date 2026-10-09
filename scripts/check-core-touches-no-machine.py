@@ -90,8 +90,9 @@ STORES = {
         "AI choice, both core stores beside the core's state file",
     ),
     "hide-factory/src/store.rs": (
-        12,
-        "the Factory's store, which the core keeps beside its state file",
+        13,
+        "the Factory's store, which the core keeps beside its state file, and"
+        " the one copy of a schema 1 store its migration keeps beside it",
     ),
     "hide-factory/src/engine.rs": (
         1,
