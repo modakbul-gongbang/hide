@@ -17,7 +17,7 @@ use crate::judgment::WorkerTextSource;
 use crate::model::{
     Activity, Attachment, AttemptOutcome, AttemptStage, ChoiceOutcome, Column, CriterionState,
     CriterionVerdict, DAY_MS, DecisionChange, DecisionKind, DecisionSource, Discovery, EnvHold,
-    Factory, FactoryAi, FollowUpState, Gate, GithubBlock, HoldKey, MergeMode, OBSERVER,
+    Factory, FactoryAi, Fallback, FollowUpState, Gate, GithubBlock, HoldKey, MergeMode, OBSERVER,
     PauseReason, PullRequest, Question, QuestionKind, RecoveryAttempt, Runtime, SourceKind,
     StopReason, Task, TaskState, UnixMs, Verification, WorkerCandidate, WorkerReport, decision_id,
 };
@@ -358,7 +358,7 @@ pub struct InboxItem {
     /// Why Factory AI did not decide it: `failed`, `daily_limit`,
     /// `paused`, `queue_full`, `dropped`, or none when its kind is a
     /// person's (B7).
-    pub fallback: Option<String>,
+    pub fallback: Option<Fallback>,
     /// What the item's evidence row unfolds: links, checks, the report.
     pub evidence: Vec<String>,
     /// The one button's item for `hide factory resolve`.
@@ -862,7 +862,7 @@ pub fn inbox_items(
             if let Some(routing) = &question.routing {
                 item.decision_kind = routing.kind;
                 item.observer_reason = routing.reason.clone();
-                item.fallback = routing.fallback.clone();
+                item.fallback = routing.fallback;
             }
             item.suggestion = question.suggestion.clone();
             item.default_action = question.default_action.clone();
@@ -1740,6 +1740,32 @@ mod tests {
         assert_eq!(
             wire(&crate::model::RecoveryOutcome::ALL),
             ["improved", "partial", "unchanged"]
+        );
+        complete(&crate::model::Fallback::ALL, |fallback| {
+            use crate::model::Fallback::*;
+            match fallback {
+                Failed => 0,
+                DailyLimit => 1,
+                Paused => 2,
+                QueueFull => 3,
+                Dropped => 4,
+                Restart => 5,
+                Unsure => 6,
+                Permission => 7,
+            }
+        });
+        assert_eq!(
+            wire(&crate::model::Fallback::ALL),
+            [
+                "failed",
+                "daily_limit",
+                "paused",
+                "queue_full",
+                "dropped",
+                "restart",
+                "unsure",
+                "permission"
+            ]
         );
         complete(&DecisionKind::ALL, |kind| match kind {
             DecisionKind::A => 0,

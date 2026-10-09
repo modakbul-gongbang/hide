@@ -4,7 +4,7 @@
 // writing fails to compile here before it reaches a screen unlabelled.
 
 import type { MessageKey } from "../i18n/catalogs";
-import type { Activity, AttemptOutcome, AttemptStage, CardView, Column, CriterionState, DecisionKind, DecisionSource, DiagnosisSource, DiscoveryClass, EnvHold, FollowUpState, Gate, Holding, InboxItem, ObserverMode, PauseReason, QuestionOrigin, RecoveryAction, RecoveryOutcome, StopReason, TaskState, WaitingFor } from "./model";
+import type { Activity, AttemptOutcome, AttemptStage, CardView, Column, CriterionState, DecisionKind, DecisionSource, DiagnosisSource, DiscoveryClass, EnvHold, Fallback, FollowUpState, Gate, Holding, InboxItem, ObserverMode, PauseReason, QuestionOrigin, RecoveryAction, RecoveryOutcome, StopReason, TaskState, WaitingFor } from "./model";
 
 export const STATE_LABEL: Record<TaskState, MessageKey> = {
   drafting: "factory.state.drafting",
@@ -207,9 +207,7 @@ export const MEANWHILE_LABEL: Record<Holding, MessageKey> = {
 };
 
 /** Why Factory AI left a decision to a person (B7); the engine's `fallback` codes. */
-export const FALLBACK_REASONS = ["failed", "daily_limit", "paused", "queue_full", "dropped", "restart", "unsure", "permission"] as const;
-export type FallbackReason = (typeof FALLBACK_REASONS)[number];
-export const FALLBACK_LABEL: Record<FallbackReason, MessageKey> = {
+export const FALLBACK_LABEL: Record<Fallback, MessageKey> = {
   failed: "factory.fallback.failed",
   daily_limit: "factory.fallback.daily_limit",
   paused: "factory.fallback.paused",

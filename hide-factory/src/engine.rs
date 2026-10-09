@@ -5555,7 +5555,7 @@ impl Engine {
                         .task(&factory, id)
                         .is_some_and(|t| t.questions.iter().any(|q| &q.id == question && q.open()))
                 {
-                    self.send_to_person(&factory, id, question, "dropped");
+                    self.send_to_person(&factory, id, question, Fallback::Dropped);
                 }
                 self.record(
                     &factory,

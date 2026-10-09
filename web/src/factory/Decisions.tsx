@@ -10,7 +10,7 @@ import { cn } from "../lib/utils";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
 import { choiceCommand, inboxKey, itemChoices, singleAction, singleCommand, takesOwnWords, type Choice } from "./choices";
-import { actionKey, decisionWhy, engineChoice, ENV_HOLD_LABEL, FALLBACK_LABEL, FALLBACK_REASONS, GATE_LABEL, HOLDING_LABEL, MEANWHILE_LABEL, RECOVERY_OUTCOME_LABEL, RECOVERY_SHORT, refusalText, STOP_LABEL, type FallbackReason, type Translate } from "./labels";
+import { actionKey, decisionWhy, engineChoice, ENV_HOLD_LABEL, FALLBACK_LABEL, GATE_LABEL, HOLDING_LABEL, MEANWHILE_LABEL, RECOVERY_OUTCOME_LABEL, RECOVERY_SHORT, refusalText, STOP_LABEL, type Translate } from "./labels";
 import type { CardView, FactoryView, InboxItem } from "./model";
 import { useFactoryRequest, type RequestState } from "./request";
 import { factoryCards } from "./view";
@@ -308,7 +308,7 @@ function CommandLine({ command, actions }: { command: string; actions: Actions }
 
 /** Why Factory AI left it to a person, in this Factory's mode. */
 function whyMine(item: InboxItem, view: FactoryView | null, t: Translate): string | null {
-  if (item.fallback !== null) return (FALLBACK_REASONS as readonly string[]).includes(item.fallback) ? t(FALLBACK_LABEL[item.fallback as FallbackReason]) : t("factory.fallback.failed");
+  if (item.fallback !== null) return t(FALLBACK_LABEL[item.fallback]);
   if (item.decision_kind) return decisionWhy(item.decision_kind, view?.observer_mode ?? null, t);
   return null;
 }

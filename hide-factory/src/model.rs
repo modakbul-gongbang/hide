@@ -196,6 +196,54 @@ pub enum VerificationOutcome {
     Environment,
 }
 
+/// Why a request went to a person other than the mode table (B7, B10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Fallback {
+    /// The judgment failed or its answer was unusable.
+    Failed,
+    /// Today's Factory AI calls are used up.
+    DailyLimit,
+    /// The Factory is paused.
+    Paused,
+    /// Too many judgments were waiting.
+    QueueFull,
+    /// Its Task was taken outside or finished while it was being sorted.
+    Dropped,
+    /// The daemon restarted while it was being sorted.
+    Restart,
+    /// Factory AI was not sure of the kind.
+    Unsure,
+    /// The request touches a permission.
+    Permission,
+}
+
+impl Fallback {
+    pub const ALL: [Self; 8] = [
+        Self::Failed,
+        Self::DailyLimit,
+        Self::Paused,
+        Self::QueueFull,
+        Self::Dropped,
+        Self::Restart,
+        Self::Unsure,
+        Self::Permission,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Failed => "failed",
+            Self::DailyLimit => "daily_limit",
+            Self::Paused => "paused",
+            Self::QueueFull => "queue_full",
+            Self::Dropped => "dropped",
+            Self::Restart => "restart",
+            Self::Unsure => "unsure",
+            Self::Permission => "permission",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecoveryOutcome {
@@ -1212,12 +1260,9 @@ pub struct Routing {
     /// The Observer's one-line reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// Why it went to a person other than the mode table: without the
-    /// Observer's verdict `failed`, `daily_limit`, `paused`, `queue_full`,
-    /// `dropped` or `restart` (B10), and with it `unsure` or `permission`
-    /// (B7).
+    /// Why it went to a person other than the mode table (B7, B10).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fallback: Option<String>,
+    pub fallback: Option<Fallback>,
     /// E in assist: the Observer's fix, offered as a choice (D-33).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposal: Option<ObserverProposal>,

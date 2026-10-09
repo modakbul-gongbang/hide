@@ -5596,8 +5596,8 @@ mod wire_enum_tests {
         assert_wire(&contract, "factory_result_code", &ResultCode::ALL);
         checked.insert("factory_result_code");
         use hide_factory::model::{
-            CriterionState, DecisionKind, DecisionSource, FollowUpState, ObserverMode, PauseReason,
-            RecoveryAction, RecoveryOutcome,
+            CriterionState, DecisionKind, DecisionSource, Fallback, FollowUpState, ObserverMode,
+            PauseReason, RecoveryAction, RecoveryOutcome,
         };
         use hide_factory::summary::{DecisionBy, Holding};
         assert_wire(&contract, "factory_holding", &Holding::ALL);
@@ -5612,6 +5612,8 @@ mod wire_enum_tests {
         checked.insert("factory_criterion_state");
         assert_wire(&contract, "factory_recovery_outcome", &RecoveryOutcome::ALL);
         checked.insert("factory_recovery_outcome");
+        assert_wire(&contract, "factory_fallback", &Fallback::ALL);
+        checked.insert("factory_fallback");
         assert_wire(&contract, "factory_recovery_action", &RecoveryAction::ALL);
         checked.insert("factory_recovery_action");
         assert_wire(&contract, "factory_decision_kind", &DecisionKind::ALL);

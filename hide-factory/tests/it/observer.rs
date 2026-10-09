@@ -322,7 +322,7 @@ fn an_observer_failure_sends_the_request_to_a_person_and_logs_why() {
     assert_eq!(inbox["count"], 1, "{inbox}");
     let routing = h.task(&f, &t).questions[0].routing.clone().unwrap();
     assert_eq!(routing.to, RouteTo::Person);
-    assert_eq!(routing.fallback.as_deref(), Some("failed"));
+    assert_eq!(routing.fallback, Some(Fallback::Failed));
     let events = h.engine.events(&f, Some(&t), 50);
     assert!(
         events
@@ -352,7 +352,7 @@ fn the_daily_cap_sends_the_rest_of_the_day_to_a_person_with_one_line() {
         .iter()
         .filter_map(|q| q.routing.as_ref().and_then(|r| r.fallback.clone()))
         .collect();
-    assert_eq!(fallbacks, ["daily_limit", "daily_limit"]);
+    assert_eq!(fallbacks, [Fallback::DailyLimit, Fallback::DailyLimit]);
     let caps = h
         .engine
         .factories()

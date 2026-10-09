@@ -135,16 +135,16 @@ impl Engine {
         task: &str,
         judgment: Judgment,
         purpose: Purpose,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), Fallback> {
         if self.judgments.contains_key(&judgment.id) {
             // The same request asked again is the same judgment (B3).
             return Ok(());
         }
         if self.factories.get(factory).is_none_or(|f| f.paused) {
-            return Err("paused");
+            return Err(Fallback::Paused);
         }
         if !self.charge_observer(factory, task) {
-            return Err("daily_limit");
+            return Err(Fallback::DailyLimit);
         }
         let id = judgment.id.clone();
         match self.submit_judgment(judgment) {
@@ -162,7 +162,7 @@ impl Engine {
                     "observer.not_submitted",
                     json!({"judgment": id, "detail": judgment::cut(&failure.detail, 200)}),
                 );
-                Err("queue_full")
+                Err(Fallback::QueueFull)
             }
         }
     }
@@ -206,17 +206,17 @@ impl Engine {
         factory: &str,
         id: &str,
         question: &str,
-        fallback: &str,
+        fallback: Fallback,
     ) {
         self.set_routing(factory, id, question, |routing| {
             routing.to = RouteTo::Person;
-            routing.fallback = Some(fallback.to_owned());
+            routing.fallback = Some(fallback);
         });
         self.record(
             factory,
             Some(id),
             "observer.to_person",
-            json!({"question": question, "reason": fallback}),
+            json!({"question": question, "reason": fallback.as_str()}),
         );
     }
 
@@ -301,7 +301,7 @@ impl Engine {
                     "observer.failed",
                     json!({"question": question, "reason": reason}),
                 );
-                self.send_to_person(factory, id, question, "failed");
+                self.send_to_person(factory, id, question, Fallback::Failed);
             }
         }
     }
@@ -399,9 +399,9 @@ impl Engine {
         // Unsure or a permission is a person's whatever the kind and mode,
         // so the kind's line in the mode table is not why (B7).
         let fallback = if verdict.permission_signal {
-            Some("permission")
+            Some(Fallback::Permission)
         } else if verdict.ambiguous {
-            Some("unsure")
+            Some(Fallback::Unsure)
         } else {
             None
         };
@@ -409,7 +409,7 @@ impl Engine {
             routing.to = RouteTo::Person;
             routing.kind = Some(verdict.kind);
             routing.reason = Some(verdict.reason.clone());
-            routing.fallback = fallback.map(str::to_owned);
+            routing.fallback = fallback;
             routing.proposal = proposal;
         });
         // What it holds up and where each choice leads, in the person's
@@ -990,7 +990,7 @@ impl Engine {
                 factory,
                 Some(id),
                 "observer.to_person",
-                json!({"purpose": "diagnose", "reason": reason}),
+                json!({"purpose": "diagnose", "reason": reason.as_str()}),
             );
             self.stop_no_report(factory, id, None);
         }
@@ -1218,7 +1218,7 @@ impl Engine {
                 factory,
                 Some(id),
                 "observer.to_person",
-                json!({"purpose": "risk_merge", "reason": reason}),
+                json!({"purpose": "risk_merge", "reason": reason.as_str()}),
             );
         }
     }
@@ -1453,7 +1453,7 @@ impl Engine {
             .collect();
         for (factory, id, questions) in pending {
             for question in questions {
-                self.send_to_person(&factory, &id, &question, "restart");
+                self.send_to_person(&factory, &id, &question, Fallback::Restart);
             }
         }
         let diagnosing: Vec<(String, String)> = self

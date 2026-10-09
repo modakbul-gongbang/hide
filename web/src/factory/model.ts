@@ -74,6 +74,9 @@ export type FollowUpState = (typeof FOLLOW_UP_STATES)[number];
 export const CRITERION_STATES = ["met", "unmet", "unknown"] as const;
 export type CriterionState = (typeof CRITERION_STATES)[number];
 
+/** `contracts/snapshot-wire-enums.json`: `factory_fallback`. Why a request went to a person other than the mode table (B7, B10). */
+export const FALLBACKS = ["failed", "daily_limit", "paused", "queue_full", "dropped", "restart", "unsure", "permission"] as const;
+export type Fallback = (typeof FALLBACKS)[number];
 /** `contracts/snapshot-wire-enums.json`: `factory_recovery_outcome`. */
 export const RECOVERY_OUTCOMES = ["improved", "partial", "unchanged"] as const;
 export type RecoveryOutcome = (typeof RECOVERY_OUTCOMES)[number];
@@ -231,7 +234,7 @@ export type InboxItem = {
   /** Each choice with what choosing it leads to, where the asker wrote it. */
   outcomes: ChoiceOutcome[];
   /** Why Factory AI did not decide it, or null when its kind is a person's. */
-  fallback: string | null;
+  fallback: Fallback | null;
   /** What the folded 근거 unfolds: links, checks, the report. */
   evidence: string[];
   /** The one button's item for a to-do (`resolve`). */

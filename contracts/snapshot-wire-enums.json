@@ -21,6 +21,7 @@
   "factory_follow_up_state": ["open", "issue", "factory", "discarded"],
   "factory_criterion_state": ["met", "unmet", "unknown"],
   "factory_recovery_outcome": ["improved", "partial", "unchanged"],
+  "factory_fallback": ["failed", "daily_limit", "paused", "queue_full", "dropped", "restart", "unsure", "permission"],
   "factory_recovery_action": ["remove_finished_worktrees", "restart_worker", "sleep_wake_worker", "switch_runtime", "retry_reads_and_reconnect"],
   "factory_decision_kind": ["A", "B", "C", "D", "E"],
   "factory_pause_reason": ["person", "pane_closed"],
