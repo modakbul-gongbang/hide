@@ -1198,6 +1198,17 @@ pub(crate) mod tests {
         observation
     }
 
+    /// The core's Herdr link, as a device's connection makes and drops it.
+    pub(crate) fn set_live(runtime: &mut Runtime, herdr: Option<&crate::fake_herdr::FakeHerdr>) {
+        runtime.live = herdr.map(|herdr| crate::live::LiveContext {
+            socket_path: herdr.socket_path().to_path_buf(),
+            runtime: std::sync::Weak::new(),
+            notifier: ChangeNotifier::noop(),
+            api_connector: Arc::new(herdr.connector()),
+            node: Arc::new(hide_node::Local::of_process()),
+        });
+    }
+
     fn observe_recipient_status(runtime: &mut Runtime, status: &str, sequence: u64) {
         let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
