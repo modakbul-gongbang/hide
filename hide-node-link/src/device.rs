@@ -86,6 +86,11 @@ impl fmt::Display for RemoteDiagnostic {
     }
 }
 
+/// The operation of a dial that never reached the machine's SSH server: its
+/// TCP connection failed, or did not open in time. Every later step of a
+/// connection (the SSH handshake, the host key, the sign-in) has its own.
+pub const DIAL_OPERATION: &str = "remote-dial";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemoteError {
     diagnostic: RemoteDiagnostic,
@@ -118,6 +123,12 @@ impl RemoteError {
 
     pub fn stage(&self) -> RemoteStage {
         self.diagnostic.stage
+    }
+
+    /// Whether the connection never reached the machine's SSH server, so a
+    /// move of this machine or of the network may change the answer.
+    pub fn never_reached_server(&self) -> bool {
+        self.diagnostic.operation_id == DIAL_OPERATION
     }
 }
 

@@ -106,10 +106,22 @@ pub enum LinkFailure {
     /// The core refused the node, with its reason (`other_build`,
     /// `own_node`, ...).
     Refused(String),
-    /// Anything else on the way, or the link's end: its reason.
+    /// Anything else on the way to a link: its reason.
     Ended(String),
+    /// A link the core had taken ended: its reason.
+    Lost(String),
     /// The role is stopping.
     Stopping,
+}
+
+impl LinkFailure {
+    /// Whether a sleep or a network move may change this answer, so the
+    /// wait is cut short when one is seen: a dial that never reached the
+    /// core's machine, and a link that was lost. A refusal, an attach
+    /// outcome or a wrong core answers the same from any network.
+    fn a_move_can_change(&self) -> bool {
+        matches!(self, Self::Unreachable(_) | Self::Lost(_))
+    }
 }
 
 impl std::fmt::Display for LinkFailure {
@@ -118,7 +130,9 @@ impl std::fmt::Display for LinkFailure {
             Self::Unreachable(error) => write!(formatter, "unreachable: {error}"),
             Self::Attach(outcome) => formatter.write_str(outcome.code()),
             Self::WrongCore(node) => write!(formatter, "wrong_core: the machine answers as {node}"),
-            Self::Refused(reason) | Self::Ended(reason) => formatter.write_str(reason),
+            Self::Refused(reason) | Self::Ended(reason) | Self::Lost(reason) => {
+                formatter.write_str(reason)
+            }
             Self::Stopping => formatter.write_str("stopping"),
         }
     }
@@ -377,7 +391,7 @@ fn watch(shared: &Shared) {
                 "moved": moved,
                 "live_link_answered": answered,
             }));
-            if answered != Some(true) && !matches!(phase, Phase::Connecting) {
+            if wakes_on_move(&phase, answered) {
                 wake(shared);
             }
             continue;
@@ -394,6 +408,17 @@ fn watch(shared: &Shared) {
             }
             _ => port = PortWatch::default(),
         }
+    }
+}
+
+/// Whether a sleep or network move seen in `phase` starts the next attempt
+/// now: a live link that no longer answers (`answered`), or a wait on a
+/// failure a move may change. A refused node keeps its backoff.
+fn wakes_on_move(phase: &Phase, answered: Option<bool>) -> bool {
+    match phase {
+        Phase::Connecting => false,
+        Phase::Live(_) => answered != Some(true),
+        Phase::Waiting { reason } => reason.a_move_can_change(),
     }
 }
 
@@ -426,14 +451,17 @@ impl Look {
         Self {
             wall,
             monotonic,
-            addresses,
+            addresses: addresses.map(routable),
         }
     }
 
     /// Takes a new look, and answers what moved since the last one:
     /// `"slept"` when the wall clock ran [`SLEPT`] past the monotonic one,
     /// `"network"` when the address set changed. An address set that could
-    /// not be read says nothing.
+    /// not be read says nothing. Link-local addresses (IPv4 169.254/16,
+    /// IPv6 fe80::/10) do not count: macOS gives and takes them on its own
+    /// (awdl0, llw0, utun), and no route to a core machine named by an SSH
+    /// alias moves with them.
     fn moved(
         &mut self,
         wall: SystemTime,
@@ -443,6 +471,7 @@ impl Look {
         let walked = wall.duration_since(self.wall).unwrap_or_default();
         let ran = monotonic.saturating_duration_since(self.monotonic);
         let slept = walked.saturating_sub(ran) >= SLEPT;
+        let addresses = addresses.map(routable);
         let network = match (&self.addresses, &addresses) {
             (Some(before), Some(now)) => before != now,
             _ => false,
@@ -460,6 +489,17 @@ impl Look {
             None
         }
     }
+}
+
+/// The addresses a move of the network shows in: all but link-local ones.
+fn routable(addresses: BTreeSet<IpAddr>) -> BTreeSet<IpAddr> {
+    addresses
+        .into_iter()
+        .filter(|address| match address {
+            IpAddr::V4(v4) => !v4.is_link_local(),
+            IpAddr::V6(v6) => !v6.is_unicast_link_local(),
+        })
+        .collect()
 }
 
 /// The core machine's SSH port across the probes of one unreachable wait.
@@ -535,7 +575,7 @@ fn try_link(
     };
     let channel = upstream
         .attach(&placement.program, placement.state_dir.as_deref())
-        .map_err(|error| LinkFailure::Unreachable(error.to_string()))?;
+        .map_err(attach_failure)?;
     let stream = channel.stream;
     {
         let mut state = lock(&shared.state);
@@ -556,6 +596,17 @@ fn try_link(
     lock(&shared.state).link = None;
     stream.shutdown_handle().shutdown();
     ended
+}
+
+/// Why a dial for the attach role failed. Only a dial that never reached
+/// the machine's SSH server is unreachable; a host key, a sign-in, an alias
+/// or a channel the server refused is not, and no port probe changes it.
+fn attach_failure(error: hide_node_link::device::RemoteError) -> LinkFailure {
+    if error.never_reached_server() {
+        LinkFailure::Unreachable(error.to_string())
+    } else {
+        LinkFailure::Ended(format!("ssh: {error}"))
+    }
 }
 
 fn serve_link(
@@ -672,7 +723,7 @@ fn serve_link(
         changed(&[]);
     }
     drop(forward);
-    Ok(LinkFailure::Ended(match link_end {
+    Ok(LinkFailure::Lost(match link_end {
         Ok(reason) | Err(reason) => reason,
     }))
 }
@@ -776,6 +827,87 @@ mod tests {
             &waiting(LinkFailure::Unreachable("connection refused".to_owned())),
             &answered
         ));
+    }
+
+    /// A move starts the next attempt at once only where it may change the
+    /// answer: a refused node keeps its backoff however the network moves.
+    #[test]
+    fn a_sleep_or_network_move_cuts_short_only_a_wait_a_move_can_change() {
+        let waiting = |reason| Phase::Waiting { reason };
+        for reason in [
+            LinkFailure::Unreachable("connection refused".to_owned()),
+            LinkFailure::Lost("link_failed: closed".to_owned()),
+        ] {
+            assert!(wakes_on_move(&waiting(reason.clone()), None), "{reason:?}");
+        }
+        for reason in [
+            LinkFailure::Refused("other_build".to_owned()),
+            LinkFailure::Refused("nodes_full".to_owned()),
+            LinkFailure::Refused("dialed_device".to_owned()),
+            LinkFailure::Attach(AttachOutcome::NoCore),
+            LinkFailure::WrongCore("another".to_owned()),
+            LinkFailure::Ended("ssh: host_key_changed".to_owned()),
+        ] {
+            assert!(!wakes_on_move(&waiting(reason.clone()), None), "{reason:?}");
+        }
+        assert!(!wakes_on_move(&Phase::Connecting, None));
+    }
+
+    /// Only a connection that never reached the core machine's SSH server
+    /// is unreachable, so only it is probed and woken by a move.
+    #[test]
+    fn only_a_dial_that_never_reached_ssh_is_unreachable() {
+        use hide_node_link::device::{DIAL_OPERATION, RemoteError, RemoteStage};
+        let error = |operation: &str, stage, reason: &str| {
+            RemoteError::new(operation, "core", stage, reason, true, false)
+        };
+        assert!(matches!(
+            attach_failure(error(
+                DIAL_OPERATION,
+                RemoteStage::Ssh,
+                "Connection refused"
+            )),
+            LinkFailure::Unreachable(_)
+        ));
+        for refused in [
+            error("remote-connect", RemoteStage::Ssh, "host_key_changed"),
+            error(
+                "remote-auth",
+                RemoteStage::Auth,
+                "no identity authenticated",
+            ),
+            error("node-attach", RemoteStage::Ssh, "exec refused"),
+            error("ssh-alias", RemoteStage::Alias, "unknown alias"),
+        ] {
+            let failure = attach_failure(refused.clone());
+            assert!(matches!(failure, LinkFailure::Ended(_)), "{refused}");
+            assert!(!failure.to_string().starts_with("unreachable"), "{failure}");
+        }
+    }
+
+    /// Link-local addresses come and go on their own; they are no move.
+    #[test]
+    fn link_local_addresses_coming_and_going_are_no_network_move() {
+        let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let monotonic = Instant::now();
+        let with = |extra: &[IpAddr]| {
+            let mut set = addresses(2).unwrap();
+            set.extend(extra.iter().copied());
+            Some(set)
+        };
+        let mut look = Look::new(wall, monotonic, with(&[]));
+        let step = WATCH_EVERY;
+        let awdl: IpAddr = "fe80::1c2d:3eff:fe4f:5a6b".parse().unwrap();
+        let auto: IpAddr = "169.254.10.20".parse().unwrap();
+        assert_eq!(
+            look.moved(wall + step, monotonic + step, with(&[awdl, auto])),
+            None
+        );
+        let routable: IpAddr = "2001:db8::5".parse().unwrap();
+        assert_eq!(
+            look.moved(wall + step * 2, monotonic + step * 2, with(&[routable])),
+            Some("network")
+        );
     }
 
     #[test]

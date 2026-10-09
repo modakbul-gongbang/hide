@@ -1538,12 +1538,15 @@ impl RusshRemoteClient {
             keepalive_interval: Some(Duration::from_secs(5)),
             ..client::Config::default()
         };
+        // Set once the TCP connection opened: a timeout before it is a dial
+        // that never reached the SSH server, one after it is not.
+        let reached = std::sync::atomic::AtomicBool::new(false);
         tokio::time::timeout(SSH_OPERATION_TIMEOUT, async {
             let socket = TcpStream::connect((self.host.hostname.as_str(), self.host.port))
                 .await
                 .map_err(|error| {
                     remote_error(
-                        "remote-connect",
+                        hide_node_link::device::DIAL_OPERATION,
                         &self.host.host_id,
                         RemoteStage::Ssh,
                         error,
@@ -1551,6 +1554,7 @@ impl RusshRemoteClient {
                         false,
                     )
                 })?;
+            reached.store(true, std::sync::atomic::Ordering::SeqCst);
             if config.nodelay {
                 socket.set_nodelay(true).map_err(|error| {
                     remote_error(
@@ -1612,11 +1616,22 @@ impl RusshRemoteClient {
         })
         .await
         .map_err(|_| {
+            let (operation, reason) = if reached.load(std::sync::atomic::Ordering::SeqCst) {
+                (
+                    "remote-connect",
+                    "SSH connection or authentication timed out",
+                )
+            } else {
+                (
+                    hide_node_link::device::DIAL_OPERATION,
+                    "the SSH server's port did not answer in time",
+                )
+            };
             remote_error(
-                "remote-connect",
+                operation,
                 &self.host.host_id,
                 RemoteStage::Ssh,
-                "SSH connection or authentication timed out",
+                reason,
                 true,
                 false,
             )
