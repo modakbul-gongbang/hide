@@ -1083,15 +1083,15 @@ mod tests {
         }
         assert_eq!(socket, bootstrap_socket_path(&state_dir).unwrap());
         assert!(private::is_private(socket.parent().unwrap()).unwrap());
-        // The listener takes its endpoint with it.
+        // The listener takes its endpoint and its private folder with it.
         drop(listener);
         assert!(!socket.exists());
-        fs::remove_dir(socket.parent().unwrap()).unwrap();
+        assert!(!socket.parent().unwrap().exists());
         let (listener, next) = bind(&state_dir).unwrap();
         assert_ne!(socket, next);
         assert_eq!(next, bootstrap_socket_path(&state_dir).unwrap());
         drop(listener);
-        fs::remove_dir(next.parent().unwrap()).unwrap();
+        assert!(!next.parent().unwrap().exists());
     }
 
     #[test]
