@@ -19,6 +19,7 @@ use crate::judgment::{
 };
 use crate::model::*;
 use crate::role::Role;
+use crate::words::Language;
 
 /// Failure classes of a call the provider never received, not counted
 /// against the daily cap (D-34): the engine's full queue and Hide AI's
@@ -295,6 +296,7 @@ impl Engine {
                 attachment,
             },
             ai: None,
+            language: Language::English,
         };
         let purpose = Purpose::Classify {
             question: question.to_owned(),
@@ -921,6 +923,7 @@ impl Engine {
                 worker_text,
             },
             ai: None,
+            language: Language::English,
         };
         if let Err(reason) = self.submit_observer(factory, id, judgment, Purpose::Diagnose) {
             // No Observer: the card stops for a person at once (B23).
@@ -1148,6 +1151,7 @@ impl Engine {
                 risk_paths: f.config.risk_paths.clone(),
             },
             ai: None,
+            language: Language::English,
         };
         if let Err(reason) = self.submit_observer(factory, id, judgment, Purpose::RiskMerge) {
             self.record(

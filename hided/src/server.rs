@@ -1151,17 +1151,15 @@ async fn scoped_client_loop(
                         .filter(|query| query.target.valid())
                         .map(ScopedRequest::Links),
                         Some("delivery") => {
-                            serde_json::from_value::<herdr_core::delivery::Command>(
-                                value["command"].clone(),
-                            )
-                            .ok()
-                            .filter(|_| valid_caller_hint(&value))
-                            .map(|command| {
-                                ScopedRequest::Delivery(
-                                    command,
-                                    value["caller_pane"].as_str().map(str::to_owned),
-                                )
-                            })
+                            herdr_core::delivery::Command::from_wire(value["command"].clone())
+                                .ok()
+                                .filter(|_| valid_caller_hint(&value))
+                                .map(|command| {
+                                    ScopedRequest::Delivery(
+                                        command,
+                                        value["caller_pane"].as_str().map(str::to_owned),
+                                    )
+                                })
                         }
                         Some("factory") => serde_json::from_value::<hide_factory::Command>(
                             value["command"].clone(),

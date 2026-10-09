@@ -93,6 +93,9 @@ class WriteSandbox:
                  "(deny file-write* " + " ".join(f"(subpath {quote(p)})" for p in controls) + ")",
                  "(allow file-write* " + " ".join(f"(subpath {quote(p)})" for p in allowed) + ")",
                  '(deny network-outbound (remote unix-socket))',
+                 # macOS resolves every host name through mDNSResponder's
+                 # socket; without it a native agent cannot reach its own API.
+                 '(allow network-outbound (remote unix-socket (path "/private/var/run/mDNSResponder")))',
                  f"(allow network-outbound (remote unix-socket (subpath {quote(self.sockets)})))",
                  f"(allow network-outbound (remote unix-socket (subpath {quote(self.run)})))",
                  f"(deny file-read* (subpath {quote(self.run)}))",

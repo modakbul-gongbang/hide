@@ -442,6 +442,42 @@ fn a_finished_turn_is_named_once_and_unchanged_panes_spend_nothing() {
 }
 
 #[test]
+fn a_request_repeated_word_for_word_is_a_new_turn_and_is_asked_again() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let first = [("user", "ㅇㅇ"), ("assistant", "첫 조각을 머지했습니다")];
+    let path = harness.session("a", "native-a", &first);
+    harness.backend.answer("라벨 턴 구분 작업", "done", "");
+    observe(&mut worker, &agent(&path, "idle", 3));
+    settle(&mut worker, &woken);
+    assert_eq!(harness.backend.calls(), 1);
+
+    harness.session(
+        "a",
+        "native-a",
+        &[
+            first[0],
+            first[1],
+            ("user", "ㅇㅇ"),
+            ("assistant", "다음 조각의 CI를 기다립니다"),
+        ],
+    );
+    harness.backend.answer("다음 조각 CI", "waiting", "");
+    let again = agent(&path, "idle", 5);
+    observe(&mut worker, &again);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        harness.backend.calls(),
+        2,
+        "the second ㅇㅇ is its own turn"
+    );
+    assert_eq!(
+        shown(&worker, &again).unwrap().progress.as_deref(),
+        Some("다음 조각 CI 진행")
+    );
+}
+
+#[test]
 fn an_agent_listed_before_its_pane_is_still_read_and_named() {
     let harness = Harness::new();
     let (mut worker, woken, _) = harness.worker(harness.store());

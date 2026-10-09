@@ -389,15 +389,23 @@ impl Runtime {
         // The id is not a secret (D-18 external input stays outside this). The id is checked before it is
         // hashed because this runs under the runtime lock.
         if let Command::Pull {
-            session: Some(session),
-            ..
+            session,
+            prompt_digest,
         } = &command
         {
-            if !crate::delivery::valid_session(session) {
-                return Err("session_invalid".into());
+            if prompt_digest
+                .as_deref()
+                .is_some_and(|digest| !hide_agent_hooks::delivery::valid_prompt_digest(digest))
+            {
+                return Err("prompt_digest_invalid".into());
             }
-            if crate::wire::session_digest(session) == actor.session {
-                self.note_prompt_submitted(&actor.pane_id);
+            if let Some(session) = session {
+                if !crate::delivery::valid_session(session) {
+                    return Err("session_invalid".into());
+                }
+                if crate::wire::session_digest(session) == actor.session {
+                    self.note_prompt_submitted(&actor.pane_id);
+                }
             }
         }
         let resolves_to_caller = |key: &str| {
@@ -673,6 +681,21 @@ impl Runtime {
             .get(&actor.pane_id)
             .filter(|observation| observation.actor.same_identity(actor))
             .cloned()
+    }
+
+    /// The title Hide's screens give `actor` while its pane still hosts it,
+    /// for the bell line that names it as a letter's writer. A row with no
+    /// title is called by its runtime's name, which tells the operator
+    /// nothing about who wrote, so it has none here.
+    pub(crate) fn delivery_title(&self, actor: &Actor) -> Option<String> {
+        if !self.delivery_identity_current(actor) {
+            return None;
+        }
+        self.agent_row(&actor.pane_id)
+            .filter(|row| {
+                row.identity_label != crate::sidebar::provider_name(Some(&row.agent_kind))
+            })
+            .map(|row| row.identity_label.clone())
     }
 
     /// Whether a bell may be typed into the recipient's pane now, and the
@@ -1142,6 +1165,11 @@ pub(crate) mod tests {
     /// Puts the fixture's recipient at rest in native session `native`, idle
     /// with no key and no change of status for long past the quiet period,
     /// and makes `herdr` the Herdr this machine's panes are reached through.
+    /// The agent rows the sidebar shows on this machine.
+    pub(crate) fn show_agents(runtime: &mut Runtime, payload: SessionSnapshotPayload) {
+        runtime.snapshot.navigator.agents = crate::sidebar::project_agents(payload).agents;
+    }
+
     pub(crate) fn recipient_at_rest(
         runtime: &mut Runtime,
         native: &str,
@@ -1788,13 +1816,14 @@ pub(crate) mod tests {
             )
             .unwrap();
         assert_eq!(written(&mut guard), (false, false, false));
-        for (bell, session, submitted) in [
-            (false, Some("hook-session"), true),
-            (true, Some("hook-session"), true),
+        let digest = hide_agent_hooks::delivery::prompt_digest("prompt");
+        for (prompt_digest, session, submitted) in [
+            (None, Some("hook-session"), true),
+            (Some(digest.clone()), Some("hook-session"), true),
             // Any process in the pane can run the hook command; a session
             // that is not the pane's own, or none, clears no draft.
-            (false, Some("another-session"), false),
-            (true, None, false),
+            (None, Some("another-session"), false),
+            (Some(digest.clone()), None, false),
         ] {
             guard
                 .prepare_delivery(
@@ -1803,7 +1832,7 @@ pub(crate) mod tests {
                     &context,
                     None,
                     Command::Pull {
-                        bell,
+                        prompt_digest: prompt_digest.clone(),
                         session: session.map(str::to_owned),
                     },
                 )
@@ -1811,11 +1840,28 @@ pub(crate) mod tests {
             assert_eq!(
                 written(&mut guard),
                 (false, submitted, false),
-                "bell {bell} session {session:?}"
+                "digest {prompt_digest:?} session {session:?}"
             );
         }
+        // A digest the hook could not have made is refused, not compared.
+        assert_eq!(
+            guard
+                .prepare_delivery(
+                    crate::node::TEST_NODE,
+                    "recipient",
+                    &context,
+                    None,
+                    Command::Pull {
+                        prompt_digest: Some("prompt".into()),
+                        session: None,
+                    },
+                )
+                .err()
+                .as_deref(),
+            Some("prompt_digest_invalid")
+        );
         let pull = |session: String| Command::Pull {
-            bell: false,
+            prompt_digest: None,
             session: Some(session),
         };
         // An id past the session bound is refused before it is hashed under the lock.

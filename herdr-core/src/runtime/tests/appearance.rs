@@ -385,3 +385,18 @@ fn invalid_stored_languages_publish_english_and_remain_stored() {
         assert_eq!(saved["interface_language"], invalid);
     }
 }
+
+#[test]
+fn the_factory_reads_the_explicit_language_or_none_for_the_systems() {
+    use crate::model::InterfaceLanguage;
+    let (_state, path) = state_path("factory-language");
+    let mut runtime = runtime_at(&path);
+    assert_eq!(runtime.factory_interface_language(), None);
+    runtime.dispatch_json(&language_set(serde_json::json!("ko")));
+    assert_eq!(
+        runtime.factory_interface_language(),
+        Some(InterfaceLanguage::Korean)
+    );
+    runtime.dispatch_json(&language_set(serde_json::Value::Null));
+    assert_eq!(runtime.factory_interface_language(), None);
+}

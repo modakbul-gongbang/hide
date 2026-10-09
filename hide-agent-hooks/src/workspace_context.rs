@@ -148,13 +148,23 @@ fn format_context(program: &OsString, reference: &Path, answer: &Value) -> Optio
     if has("view.close") {
         commands.push("view close <view-id>");
     }
+    // The doorbell types a letter's first line into its recipient's pane,
+    // where the operator reads it; an agent without a prompt hook reads its
+    // letters with `inbox` and never sees a bell.
+    let mut letters = String::new();
+    if has("request.send") {
+        letters.push_str(" A letter's first line is its one-line summary, which Hide shows the operator when it wakes the recipient, so begin the body with what happened or what you need.");
+    }
+    if has("inbox") {
+        letters.push_str(" A prompt that begins with 🔔 is Hide waking you for a letter: the letter comes with that prompt, and `inbox` shows it if it did not.");
+    }
     let command_prefix = format!(
         "HIDE_CAP_REF={} {}",
         shell_quote(&reference.to_string_lossy()),
         shell_quote(&program.to_string_lossy()),
     );
     Some(format!(
-        "Hide Workspace control is available for this session's checkout `{checkout_path}`. Workspace commands affect only that checkout; there is no Workspace override. Delivery commands use the current agent pane and native session, including on a connected device. Prefix each command with `{command_prefix}`. Available commands: {}. Run `{} workspace info` to refresh capabilities and `{} --help` for syntax. Omit `--reveal` to leave the current screen and keyboard focus unchanged. A failed command returns a reason and next action; recheck before retrying a timed-out action.",
+        "Hide Workspace control is available for this session's checkout `{checkout_path}`. Workspace commands affect only that checkout; there is no Workspace override. Delivery commands use the current agent pane and native session, including on a connected device.{letters} Prefix each command with `{command_prefix}`. Available commands: {}. Run `{} workspace info` to refresh capabilities and `{} --help` for syntax. Omit `--reveal` to leave the current screen and keyboard focus unchanged. A failed command returns a reason and next action; recheck before retrying a timed-out action.",
         commands.join(", "),
         command_prefix,
         shell_quote(&program.to_string_lossy()),
@@ -199,6 +209,22 @@ mod tests {
         );
         assert!(context.contains("browser open <url-or-path> [--reveal] [--wait], browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ... (read and drive a browser display; `browser help` explains refs, checking with `--diff`, and failures), view close <view-id>"));
         assert!(!context.contains("file open"));
+        assert!(!context.contains("letter"));
+    }
+
+    #[test]
+    fn an_agent_that_sends_and_receives_letters_learns_what_the_operator_sees_of_them() {
+        let answer = json!({
+            "ok": true,
+            "result": {
+                "context": {"device_id": "local", "workspace_id": "w", "checkout_path": "/srv/p"},
+                "capabilities": ["workspace.info", "request.send", "inbox"]
+            }
+        });
+        let context =
+            format_context(&OsString::from("hide"), Path::new("ref.json"), &answer).unwrap();
+        assert!(context.contains("A letter's first line is its one-line summary"));
+        assert!(context.contains("A prompt that begins with 🔔 is Hide waking you for a letter"));
     }
 
     #[test]

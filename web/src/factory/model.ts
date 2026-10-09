@@ -30,8 +30,8 @@ export type DiscoveryClass = (typeof DISCOVERY_CLASSES)[number];
 export const ATTEMPT_STAGES = ["task", "pre_merge"] as const;
 export type AttemptStage = (typeof ATTEMPT_STAGES)[number];
 
-/** `contracts/snapshot-wire-enums.json`: `factory_attempt_outcome`; `running` while it has no result. */
-export const ATTEMPT_OUTCOMES = ["passed", "failed", "environment", "running"] as const;
+/** `contracts/snapshot-wire-enums.json`: `factory_attempt_outcome`; `running` while it has no result, `cancelled` once a run was ended unanswered. */
+export const ATTEMPT_OUTCOMES = ["passed", "failed", "environment", "cancelled", "running"] as const;
 export type AttemptOutcome = (typeof ATTEMPT_OUTCOMES)[number];
 
 /** `contracts/snapshot-wire-enums.json`: `factory_waiting_for`, what a card waits for. */

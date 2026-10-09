@@ -6,6 +6,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { agentAdapter } from "../agentAdapters";
+import { MarkdownText } from "../MarkdownText";
 import { Hint } from "../components/ui/tooltip";
 import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
@@ -21,7 +22,7 @@ import { useFactoryRequest, type FactoryRequest } from "./request";
 
 /** The engine's priority is a 32-bit integer; a larger one would not reach it. */
 const PRIORITY_LIMIT = 2_147_483_647;
-import { inboxKey, splitAtCuts, taskChain } from "./view";
+import { inboxKey, splitAtCuts, taskChain, wholeDecision } from "./view";
 
 const TAB_LABEL = { turn: "factory.tab.turn", board: "factory.tab.board", graph: "factory.tab.graph", settings: "factory.tab.settings" } as const;
 
@@ -113,9 +114,7 @@ function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: F
       <div className="grid grid-cols-2 gap-xl border-t border-border pt-lg">
         <div className="flex min-w-0 flex-col gap-lg" data-factory-card-fields="true">
           <Field title={t("factory.task.goal")}>
-            <p className="text-body [overflow-wrap:anywhere]">
-              <ShortenedText text={detail.goal} />
-            </p>
+            <Goal text={detail.goal} />
           </Field>
           {detail.criteria.length > 0 ? (
             <Field title={t("factory.task.criteria")}>
@@ -377,7 +376,7 @@ function Progress({ factory, detail, actions }: { factory: FactoryView; detail: 
 function Attempt({ attempt, actions }: { attempt: AttemptView; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const [open, setOpen] = useState(false);
-  const tone = attempt.outcome === "passed" ? "text-success" : attempt.outcome === "running" ? "text-agent-working" : "text-warning";
+  const tone = attempt.outcome === "passed" ? "text-success" : attempt.outcome === "running" ? "text-agent-working" : attempt.outcome === "cancelled" ? "text-muted-foreground" : "text-warning";
   const link = attempt.link && /^https?:\/\//.test(attempt.link) ? attempt.link : null;
   return (
     <div className="flex flex-col gap-xxs" data-factory-attempt={attempt.number} data-factory-attempt-outcome={attempt.outcome}>
@@ -404,6 +403,22 @@ function Attempt({ attempt, actions }: { attempt: AttemptView; actions: Actions 
           <ShortenedText text={attempt.log_tail} />
         </pre>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The card goal, often an issue body, read as the Markdown it is written in
+ * with the renderer an issue's body uses; a goal the engine shortened ends in
+ * the muted cue, since the rest is kept only in its issue.
+ */
+function Goal({ text }: { text: string }) {
+  const { t } = useInterfaceTranslation();
+  const pieces = splitAtCuts(text);
+  return (
+    <div className="flex min-w-0 flex-col gap-xs" data-factory-goal="true">
+      <MarkdownText text={pieces.join("\n")} />
+      {pieces.length > 1 ? <span className="text-caption text-muted-foreground" data-factory-cut="true">… {t("factory.task.cut")}</span> : null}
     </div>
   );
 }
@@ -451,24 +466,34 @@ function Decisions({ detail, factory, actions }: { detail: TaskDetail; factory: 
     <Field title={t("factory.task.decisions")}>
       <ol className="flex flex-col gap-sm" data-factory-decisions={detail.decisions.length}>
         {[...detail.decisions].reverse().map((decision, at) => (
-          <DecisionRow key={`${decision.at}:${at}`} decision={decision} question={answered(decision)} task={taskRef(factory.id, detail.card.task)} actions={actions} kindLabel={decision.kind ? t(DECISION_KIND_LABEL[decision.kind]) : null} />
+          <DecisionRow key={`${decision.at}:${at}`} decision={decision} whole={wholeDecision(decision, detail.questions)} question={answered(decision)} task={taskRef(factory.id, detail.card.task)} actions={actions} kindLabel={decision.kind ? t(DECISION_KIND_LABEL[decision.kind]) : null} />
         ))}
       </ol>
     </Field>
   );
 }
 
-function DecisionRow({ decision, question, task, actions, kindLabel }: { decision: DecisionRecord; question: Question | null; task: string; actions: Actions; kindLabel: string | null }) {
+/**
+ * One decision; one the engine recorded with its question shortened opens in
+ * place to the whole question, which the Task's questions still hold.
+ */
+function DecisionRow({ decision, whole, question, task, actions, kindLabel }: { decision: DecisionRecord; whole: string | null; question: Question | null; task: string; actions: Actions; kindLabel: string | null }) {
   const { t } = useInterfaceTranslation();
   const request = useFactoryRequest(actions);
   const [text, setText] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
   const busy = request.state.phase === "sending" || request.state.phase === "taken";
   return (
     <li className="flex min-w-0 flex-col gap-xs text-body" data-factory-decision={decision.by}>
       <div className="flex min-w-0 items-start gap-sm">
         <DecisionBy by={decision.by} />
         <span className="flex min-w-0 flex-1 flex-col">
-          <ShortenedText text={decision.text} className="[overflow-wrap:anywhere]" />
+          <ShortenedText text={open && whole !== null ? whole : decision.text} className="[overflow-wrap:anywhere]" />
+          {whole !== null ? (
+            <Button variant="link" size="sm" className="self-start px-none" aria-expanded={open} data-factory-decision-whole={open ? "open" : "closed"} onClick={() => setOpen(!open)}>
+              {open ? t("factory.task.showLess") : t("factory.task.showAll")}
+            </Button>
+          ) : null}
           {kindLabel || decision.reason ? <span className="text-caption text-muted-foreground">{[kindLabel, decision.reason].filter((part) => part).join(" · ")}</span> : null}
         </span>
         {question && text === null ? (
