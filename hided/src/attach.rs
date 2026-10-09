@@ -38,6 +38,7 @@ use serde_json::json;
 use tokio::sync::Notify;
 
 use crate::core::CoreHandle;
+use crate::relay::RelayRequests;
 use crate::state_file::new_token;
 
 /// The longest handshake line either side reads.
@@ -159,6 +160,16 @@ struct Grant {
     node: String,
     /// The link the grant belongs to, once the link is up.
     link: Option<RemoteHost>,
+    /// What the node's screens wait on this core for, over every relay.
+    requests: Arc<RelayRequests>,
+}
+
+/// A relay a grant admitted: the node, its link, and what its screens wait
+/// on.
+pub struct Admitted {
+    pub node: String,
+    pub link: RemoteHost,
+    pub requests: Arc<RelayRequests>,
 }
 
 impl RelayGrants {
@@ -180,6 +191,7 @@ impl RelayGrants {
             Grant {
                 node: node.to_owned(),
                 link: None,
+                requests: Arc::default(),
             },
         );
         Some(token)
@@ -198,7 +210,7 @@ impl RelayGrants {
     /// The node and link `token` was granted on, waiting up to
     /// [`GRANT_BIND_WAIT`] for a grant handed out moments ago to be bound:
     /// the node's screens may ask before the core finished taking its link.
-    pub async fn admit(&self, token: &str) -> Option<(String, RemoteHost)> {
+    pub async fn admit(&self, token: &str) -> Option<Admitted> {
         let deadline = tokio::time::Instant::now() + GRANT_BIND_WAIT;
         loop {
             {
@@ -217,13 +229,15 @@ impl RelayGrants {
     }
 
     /// The node and link `token` was granted on, while that link lives.
-    pub fn valid(&self, token: &str) -> Option<(String, RemoteHost)> {
+    pub fn valid(&self, token: &str) -> Option<Admitted> {
         let grants = lock(&self.grants);
         let grant = grants.get(token)?;
         let link = grant.link.as_ref()?;
-        link.closed_reason()
-            .is_none()
-            .then(|| (grant.node.clone(), link.clone()))
+        link.closed_reason().is_none().then(|| Admitted {
+            node: grant.node.clone(),
+            link: link.clone(),
+            requests: Arc::clone(&grant.requests),
+        })
     }
 }
 

@@ -17,7 +17,7 @@
 //! broken stream (B17).
 
 use std::collections::{HashSet, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -280,6 +280,57 @@ impl RelayTap {
     }
 }
 
+/// Answers one linked node's screens may wait on at once (D-20): file reads
+/// and folder listings of a device's checkout, which run beside the screen
+/// and answer later. Past it a new one is refused with `relay_busy`.
+pub const MAX_RELAY_REQUESTS: usize = 64;
+
+/// What one linked node's screens wait on this core for. Each answer that
+/// runs beside a screen holds a slot until it has answered.
+#[derive(Debug, Default)]
+pub struct RelayRequests {
+    waiting: AtomicUsize,
+    refused: AtomicU64,
+}
+
+/// One waiting answer's place among [`MAX_RELAY_REQUESTS`], given back
+/// however the answer ends.
+#[derive(Debug)]
+pub struct RelaySlot(Arc<RelayRequests>);
+
+impl Drop for RelaySlot {
+    fn drop(&mut self) {
+        self.0.waiting.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+impl RelayRequests {
+    /// A slot for one more answer to `node`'s screens, or `None` at the
+    /// cap, which is logged.
+    pub fn take(self: &Arc<Self>, node: &str) -> Option<RelaySlot> {
+        let taken = self
+            .waiting
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |waiting| {
+                (waiting < MAX_RELAY_REQUESTS).then_some(waiting + 1)
+            })
+            .is_ok();
+        if taken {
+            return Some(RelaySlot(Arc::clone(self)));
+        }
+        let refused = self.refused.fetch_add(1, Ordering::Relaxed) + 1;
+        if refused.is_power_of_two() {
+            herdr_core::diagnostic!(json!({
+                "component": "node_relay",
+                "kind": "relay.requests_full",
+                "node": node,
+                "cap": MAX_RELAY_REQUESTS,
+                "refused": refused,
+            }));
+        }
+        None
+    }
+}
+
 /// Resolves when `link` has ended.
 pub async fn link_ended(link: &RemoteHost) {
     let mut check = tokio::time::interval(LINK_CHECK);
@@ -395,6 +446,20 @@ fn take_down(text: &str, terminals: &dyn TerminalNode, own_prefix: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_nodes_screens_wait_on_at_most_the_cap_of_answers() {
+        let requests = Arc::new(RelayRequests::default());
+        let held: Vec<RelaySlot> = (0..MAX_RELAY_REQUESTS)
+            .map(|_| requests.take("node").expect("under the cap"))
+            .collect();
+        assert!(requests.take("node").is_none(), "the next one is refused");
+        drop(held);
+        assert!(
+            requests.take("node").is_some(),
+            "an answer gives its slot back"
+        );
+    }
 
     fn outputs(tap: &Arc<RelayTap>) -> Vec<TerminalOutput> {
         let (text, _) = tap.take();

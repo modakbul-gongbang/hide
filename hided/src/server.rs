@@ -789,7 +789,12 @@ async fn relay_upgrade(
     else {
         return StatusCode::FORBIDDEN.into_response();
     };
-    let Some((node, link)) = state.relay_grants.admit(grant).await else {
+    let Some(crate::attach::Admitted {
+        node,
+        link,
+        requests,
+    }) = state.relay_grants.admit(grant).await
+    else {
         return StatusCode::FORBIDDEN.into_response();
     };
     match query.mode.as_str() {
@@ -800,7 +805,17 @@ async fn relay_upgrade(
                 crate::relay::serve_terminals(socket, outputs, terminals, node, link)
             })
         }
-        "screen" => ws.on_upgrade(move |socket| relay_screen(socket, state, node, link)),
+        "screen" => ws.on_upgrade(move |socket| {
+            relay_screen(
+                socket,
+                state,
+                RelayScreen {
+                    node,
+                    link,
+                    requests,
+                },
+            )
+        }),
         _ => StatusCode::BAD_REQUEST.into_response(),
     }
 }
@@ -813,12 +828,36 @@ struct RelayQuery {
     mode: String,
 }
 
-async fn relay_screen(
-    mut socket: WebSocket,
-    state: AppState,
+/// A linked node's screen, as its relay was admitted.
+struct RelayScreen {
     node: String,
     link: hide_node::ssh::RemoteHost,
-) {
+    requests: Arc<crate::relay::RelayRequests>,
+}
+
+impl RelayScreen {
+    /// A slot for one answer that runs beside this screen; `None` at the
+    /// node's cap.
+    fn slot(&self) -> Option<crate::relay::RelaySlot> {
+        self.requests.take(&self.node)
+    }
+}
+
+/// What a linked node's screen is told when its node's screens already wait
+/// on [`crate::relay::MAX_RELAY_REQUESTS`] answers.
+fn relay_busy() -> Message {
+    Message::Text(
+        json!({
+            "type": "error",
+            "payload": {"reason": "relay_busy"},
+            "message": "The core is answering as many requests from this machine as it takes; try again once they are answered",
+        })
+        .to_string()
+        .into(),
+    )
+}
+
+async fn relay_screen(mut socket: WebSocket, state: AppState, relay: RelayScreen) {
     let handshake = match tokio::time::timeout(FIRST_FRAME_TIMEOUT, socket.recv()).await {
         Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<Handshake>(&text).ok(),
         _ => None,
@@ -832,7 +871,7 @@ async fn relay_screen(
         return;
     }
     let connection = state.connections.fetch_add(1, Ordering::SeqCst);
-    screen_loop(socket, state, connection, handshake, Some((node, link))).await;
+    screen_loop(socket, state, connection, handshake, Some(relay)).await;
 }
 
 /// One screen's session after its handshake: the snapshot stream, the
@@ -844,7 +883,7 @@ async fn screen_loop(
     state: AppState,
     connection: u64,
     handshake: Handshake,
-    relay: Option<(String, hide_node::ssh::RemoteHost)>,
+    relay: Option<RelayScreen>,
 ) {
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
     if previous >= MAX_CLIENTS {
@@ -930,7 +969,7 @@ async fn screen_loop(
             },
         )
     });
-    let link = relay.as_ref().map(|(_, link)| link.clone());
+    let link = relay.as_ref().map(|relay| relay.link.clone());
     loop {
         tokio::select! {
             changed = notify.recv() => {
@@ -1034,7 +1073,15 @@ async fn screen_loop(
                         match handle_client_text(&state, &text, connection) {
                             Ok(ClientAction::FileBytes(event)) => {
                                 if let Some(device) = event_device(&state.boundary, &event) {
-                                    let superseded = start_device_read(&state, &mut device_reads, device_bytes_tx.clone(), device, event);
+                                    let slot = relay.as_ref().map(RelayScreen::slot);
+                                    if matches!(slot, Some(None)) {
+                                        let refused = file_bytes_error(&payload_str(&event, "request_id"), &payload_str(&event, "path"), "relay_busy");
+                                        if socket.send(refused).await.is_err() {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                    let superseded = start_device_read(&state, &mut device_reads, device_bytes_tx.clone(), (device, slot.flatten()), event);
                                     // Sent here rather than through `device_bytes`,
                                     // which this loop drains and could be full.
                                     if let Some(frame) = superseded
@@ -1047,7 +1094,14 @@ async fn screen_loop(
                                 }
                             }
                             Ok(ClientAction::DeviceListing(event)) => {
-                                spawn_device_listing(&state, event, device_frames_tx.clone());
+                                let slot = relay.as_ref().map(RelayScreen::slot);
+                                if matches!(slot, Some(None)) {
+                                    if socket.send(relay_busy()).await.is_err() {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                spawn_device_listing(&state, event, device_frames_tx.clone(), slot.flatten());
                             }
                             outcome => {
                                 let replies = match outcome {
@@ -1603,11 +1657,12 @@ struct DeviceRead {
 
 /// Starts a device read and returns the error frame for the read it ended to
 /// make room, if any.
+/// `device` comes with the slot a linked node's screen holds for the read.
 fn start_device_read(
     state: &AppState,
     reads: &mut std::collections::VecDeque<DeviceRead>,
     frames: tokio::sync::mpsc::Sender<Message>,
-    device: String,
+    (device, slot): (String, Option<crate::relay::RelaySlot>),
     event: Value,
 ) -> Option<Message> {
     reads.retain(|read| !read.task.is_finished());
@@ -1636,14 +1691,18 @@ fn start_device_read(
         payload_str(&event, "request_id"),
         payload_str(&event, "path"),
     );
-    let task = tokio::spawn(stream_device_file_bytes(
+    let read = stream_device_file_bytes(
         frames,
         Arc::clone(&state.core),
         Arc::clone(&state.boundary),
         Arc::clone(&state.roots),
         device,
         event,
-    ));
+    );
+    let task = tokio::spawn(async move {
+        let _slot = slot;
+        read.await
+    });
     reads.push_back(DeviceRead {
         request_id,
         path,
@@ -1838,11 +1897,17 @@ fn handle_client_text(
 
 /// Lists one folder of a device checkout on a blocking task and hands the
 /// answer to the client's socket loop. A client gone by then drops it.
-fn spawn_device_listing(state: &AppState, event: Value, frames: tokio::sync::mpsc::Sender<String>) {
+fn spawn_device_listing(
+    state: &AppState,
+    event: Value,
+    frames: tokio::sync::mpsc::Sender<String>,
+    slot: Option<crate::relay::RelaySlot>,
+) {
     let core = Arc::clone(&state.core);
     let boundary = Arc::clone(&state.boundary);
     let roots = Arc::clone(&state.roots);
     tokio::spawn(async move {
+        let _slot = slot;
         let frame = tokio::task::spawn_blocking(move || device_listing(&core, &boundary, &roots, &event))
             .await
             .unwrap_or_else(|error| {
