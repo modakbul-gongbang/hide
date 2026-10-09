@@ -266,7 +266,7 @@ Delegation derives origin from parent; handoff stores origin separately, and it 
 A handed-off agent's identical self-registration or `--check` preserves its id and stored origin, without taking an origin input or changing responsibility.
 A handed-off agent can end its own registration; its spawner cannot end it and receives `parent_authority_required`.
 Ordinary letters and explicit watches remain available between independent agents.
-The sidebar, graph, ancestor unread state, descendant badges and waiting-on-descendants rule read only responsibility through parent.
+The sidebar, graph, ancestor unread state, descendant marks and waiting-on-descendants rule read only responsibility through parent.
 PR and issue panels retain the handed-off session through its own branch facts and show no delegation line from origin.
 
 A completed spawn stores a durable receipt for its caller and intent, so retries return the same agent and preserve ended registrations and closed watches.
