@@ -54,6 +54,9 @@ const MAX_GRANTS: usize = 16;
 /// How long a relay waits for a grant handed out moments ago to be bound to
 /// its link: the node's Hello and the core's acceptance, with room.
 const GRANT_BIND_WAIT: Duration = Duration::from_secs(10);
+/// How long a node's earlier link has to answer a greeting when the node
+/// dials again, before the new link replaces it (B9's 10 s holds with it).
+const STALE_PROBE: Duration = Duration::from_secs(3);
 
 /// What the attach role answers when no core runs on its machine.
 pub const NO_CORE: &str = "no_core";
@@ -419,7 +422,7 @@ fn take_link(stream: LocalStream, service: &AttachService) {
         refuse(&mut writer, "other_build");
         return;
     }
-    if let Some(reason) = service.core.inbound_refusal(&node.node) {
+    if let Some(reason) = standing_refusal(service, &node.node) {
         refuse(&mut writer, &reason);
         return;
     }
@@ -487,6 +490,37 @@ fn take_link(stream: LocalStream, service: &AttachService) {
                 "node": node.node,
                 "reason": reason,
             }));
+        }
+    }
+}
+
+/// Why a link from `node` is refused now. A node that dials again while
+/// its earlier link still stands has most often lost that link without
+/// either end seeing it close (a network change, D-09): the earlier link is
+/// greeted, and one that does not answer within [`STALE_PROBE`] is ended so
+/// this one takes its place, rather than wait out the attach role's silence
+/// limit. An earlier link that answers keeps its place.
+fn standing_refusal(service: &AttachService, node: &str) -> Option<String> {
+    let reason = service.core.inbound_refusal(node)?;
+    if reason != "already_linked" {
+        return Some(reason);
+    }
+    // A link still being established is not superseded: its own attempt
+    // decides it within its handshake.
+    let Ok(earlier) = service.core.node_link(node) else {
+        return Some(reason);
+    };
+    match earlier.call(hide_node_link::protocol::Call::Hello, STALE_PROBE) {
+        Ok(_) => Some(reason),
+        Err(error) => {
+            herdr_core::diagnostic!(json!({
+                "component": "node_link",
+                "kind": "attach.superseded",
+                "node": node,
+                "error": error.to_string(),
+            }));
+            earlier.close("the node dialed again and this link did not answer");
+            service.core.inbound_refusal(node)
         }
     }
 }
