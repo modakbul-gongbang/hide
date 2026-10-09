@@ -15,6 +15,8 @@ pub enum CommandKind {
     Delivery(herdr_core::delivery::Command),
     /// `hide factory ...`
     Factory(crate::factory_cli::FactoryRequest),
+    /// `hide factory help`: every Factory command and its flags.
+    FactoryHelp,
     Help,
     AgentSpawnHelp,
     /// `hide version [--json]`: this build's version, commit and contract.
@@ -117,6 +119,7 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
                 .map_err(|refusal| format!("{refusal}\n{}", crate::delivery_cli::USAGE))?;
             crate::delivery_cli::parse(topic, iter).map(CommandKind::Delivery)
         }
+        Some("factory") if args[2..] == ["help"] => Ok(CommandKind::FactoryHelp),
         Some("factory") => crate::factory_cli::parse(iter).map(CommandKind::Factory),
         Some("browser") => parse_browser(iter),
         Some("workspace") => match iter.next().map(String::as_str) {
@@ -385,6 +388,10 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::cli_contract::document());
         return Ok(());
     }
+    if kind == CommandKind::FactoryHelp {
+        println!("{}", hide_factory::command::USAGE);
+        return Ok(());
+    }
     if kind == CommandKind::AgentSpawnHelp {
         println!("{}", crate::agent_cli::SPAWN_HELP);
         return Ok(());
@@ -447,6 +454,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         CommandKind::Factory(request) => crate::factory_cli::run(&env, request),
         CommandKind::Help
         | CommandKind::AgentSpawnHelp
+        | CommandKind::FactoryHelp
         | CommandKind::BrowserHelp
         | CommandKind::Version { .. }
         | CommandKind::Contract => unreachable!("handled above"),
@@ -1647,6 +1655,22 @@ mod tests {
         let error = parse(&["hide", "agent", "spawn", "--no-watch"]).unwrap_err();
         assert!(error.starts_with("Unknown flag for hide agent spawn: --no-watch\n"));
         assert!(error.contains(crate::agent_cli::USAGE));
+    }
+
+    #[test]
+    fn factory_help_prints_the_factory_commands_and_help_with_more_is_refused() {
+        let parse = |args: &[&str]| {
+            parse_args(&args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            parse(&["hide", "factory", "help"]).unwrap(),
+            CommandKind::FactoryHelp
+        );
+        assert!(parse(&["hide", "factory", "help", "done"]).is_err());
+        let usage = hide_factory::command::USAGE;
+        assert!(usage.contains("done --result"), "{usage}");
+        assert!(usage.contains("follow-up <task>"), "{usage}");
+        assert!(!usage.contains("ack-notices"), "{usage}");
     }
 
     #[test]

@@ -159,15 +159,15 @@ A capability file holds only a token, so editing it cannot change a role.
 | Read | `status`, `show`, `inbox`, `config` without `--set` | yes | yes |
 | Report | `ask`, `block`, `propose`, `done`, `decide` | its own Task | refused |
 | Add a dependency | `dep add` | its own Task | yes |
-| Intake | `init`, `add`, `check` | refused | yes |
-| Answer | `answer`, `ack-notices` | refused | yes |
+| Intake | `init`, `add`, `check`, `follow-up` | refused | yes |
+| Answer | `answer`, `resolve` | refused | yes |
 | Loosen | `dep remove`, `priority`, `worker` | refused | yes |
 | Merge | `merge`, `request-changes` | refused | yes |
 | Control | `pause`, `resume` (a Task or `--factory`), `retry`, `cancel`, `revive`, `close` | refused | yes |
 | Configure | `config --set` | refused | yes |
 
 A refusal answers `role_not_allowed` with the role and the verb.
-A Task keeps at most 500 questions, decisions and discoveries together; past that a worker's report is refused with `report_limit`, except `done`, which still finishes the Task without storing its summary, and `block`, which still stops it for a person.
+A Task keeps at most 500 questions, decisions and discoveries together; past that a worker's report is refused with `report_limit`, except `done`, which still finishes the Task without storing its report, and `block`, which still stops it for a person.
 A worker's `show` reaches its own Factory only.
 An operator relays a person's words, and every answer and decision records the relaying pane as `relayed_by`.
 Code cannot tell whether an operator pane's agent acted on a person's words, so it records who relayed and does not block.
@@ -615,10 +615,11 @@ hide factory status [--project <path>]
 hide factory show <task>
 hide factory inbox
 hide factory answer <task> [--question <id>] [--choose suggestion|default|<choice>] [--text <answer>] [--change]
+hide factory answer <task> --decision <R<n>> [--choose <choice>] [--text <answer>]
 hide factory ask --question <text> --suggestion <text> --default <action> [--choice <text>]... [--deadline-hours <n>]
 hide factory block --question <text> --suggestion <text> [--choice <text>]... [--deadline-hours <n>]
 hide factory propose --class in-scope|decision|scope-change|prerequisite|unrelated --text <text> [--title <t> --goal <g> --criterion <c>...] [--autonomy <scope>] [--reclassify <discovery>]
-hide factory done [--summary <text>] [--breaking]
+hide factory done --result <one line> [--changed <text>]... [--verified <text>]... [--unverified <text>]... [--breaking]
 hide factory decide --text <decision>
 hide factory config [--project <path>] [--set <key>=<value>]...
 hide factory priority <task> <n>
@@ -626,7 +627,8 @@ hide factory dep add|remove <task> --on <task>
 hide factory pause|resume|retry|merge|cancel|revive <task>
 hide factory pause|resume --factory [--project <path>]
 hide factory worker <task> <n>|auto
-hide factory ack-notices [--project <path>]
+hide factory follow-up <task> <discovery> issue|factory|discard
+hide factory resolve github|C<n>|start:<task>|hold:<name> [--project <path>]
 hide factory request-changes <task> --comment <text>
 hide factory check --at intake|after-done|periodic --instruction <text> [--project <path>]
 hide factory close [--project <path>]
@@ -638,12 +640,14 @@ Add --json to print the answer as JSON.
 | `init` | Without `--confirm`, shows the source, the verification candidates the code detected (the branch's required checks and verify commands read from `Cargo.toml`, `package.json`, `Makefile` or `pyproject.toml`), the merge mode and, on GitHub, the login `gh api user` names, the repository, and everything the Factory reads and writes there, and writes nothing. With `--confirm` and a verification choice, creates the Factory, records that approval (account, repository, time) in its history as `github.approved`, and, on GitHub, creates the `factory` label. A closed Factory is reopened with `--confirm`. A project that already has an open Factory answers with it. |
 | `add` | Creates a Task or updates the named one. A positional issue reads its title and body for missing fields. `--prd` copies the file into the store. |
 | `status`, `show`, `inbox` | Read the board, one Task page, and the inbox. |
-| `answer` | Answers a question and records who relayed it. `--change` replaces an answer Factory AI gave (see [Factory AI](#factory-ai-the-observer)). |
-| `ask`, `block`, `propose`, `done`, `decide` | A worker's reports on its own Task. `ask` and `block` take up to five `--choice`. |
+| `answer` | Answers a question and records who relayed it. `--change` replaces an answer Factory AI gave (see [Factory AI](#factory-ai-the-observer)). `--decision R<n>` changes a decision Factory AI made on the Task's decision record, by its number on the Task page, and tells the worker; a decision a person or the worker made, or one on a finished Task, is refused (`decision_not_changeable`, `task_finished`). |
+| `ask`, `block`, `propose`, `done`, `decide` | A worker's reports on its own Task. `ask` and `block` take up to five `--choice`. `done` takes the report in four parts: a one-line `--result`, and any number of `--changed`, `--verified` and `--unverified`; without `--result` it is refused with `result_required`, and the retired `--summary` with `summary_replaced`, both naming the four parts. |
 | `config`, `check` | Reads and sets settings, and adds a natural-language check. A check cannot be removed once added. |
 | `priority`, `dep`, `pause`, `resume`, `retry`, `merge`, `request-changes`, `cancel`, `revive`, `close` | A person's actions. `close` needs no Task in an active lifecycle state (anything except drafting, waiting, done or cancelled). `pause --factory` and `resume --factory` pause and resume a whole Factory. |
 | `worker` | Pins the Task's worker candidate by its number from 1, or `auto` for the review's pick (`worker_out_of_range`). `add --worker <n>` pins at add. |
-| `ack-notices` | Clears every notice of the Factory and answers how many; with no Factory named or current, every Factory's, a closed one's included, in one command. |
+| `follow-up` | Turns a worker's unrelated finding (its discovery id, `D<n>`) into a GitHub issue without the `factory` label (`issue`), a labelled issue that starts as a Task at once (`factory`; a local Factory adds the Task directly), or drops it (`discard`). The issue carries a hidden marker, so pressing it again after a failure finds the issue it made instead of making a second; a failure is refused with `follow_up_failed` and stays on the follow-up line, and a settled one with `follow_up_settled`. |
+| `resolve` | The single button of a to-do: `github` checks the sign-in again and lets the GitHub steps continue (`github_still_blocked` while it is still refused), `C<n>` marks a command the operator ran as done, `start:<task>` lets a Task whose start was held try again, and `hold:<name>` restarts a held recovery's schedule. |
+| `help` | Prints the commands above. |
 
 Without `--project`, `add`, `config`, `check`, `close` and a Factory's `pause` and `resume` use the only open Factory, and answer `factory_ambiguous` when there are several.
 A project path is made absolute by the CLI.
