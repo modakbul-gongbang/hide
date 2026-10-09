@@ -448,8 +448,20 @@ impl IntakeVerdict {
     }
 }
 
+/// The most of each list an intake review may add: every assumption is a
+/// standing decision and every question a Factory AI call, so an answer
+/// that runs long is cut, never stored whole.
+const INTAKE_LIST_LIMIT: usize = 12;
+const INTAKE_QUESTION_LIMIT: usize = 5;
+
+fn capped(mut list: Vec<String>) -> Vec<String> {
+    list.truncate(INTAKE_LIST_LIMIT);
+    list
+}
+
 pub fn parse_intake(value: &Value) -> Result<IntakeVerdict, String> {
-    let questions = parse_questions(&value["questions"])?;
+    let mut questions = parse_questions(&value["questions"])?;
+    questions.truncate(INTAKE_QUESTION_LIMIT);
     let dependencies = string_list(&value["dependencies"])?;
     let flags = string_list(&value["flags"])?;
     let mut split = Vec::new();
@@ -481,7 +493,12 @@ pub fn parse_intake(value: &Value) -> Result<IntakeVerdict, String> {
         return Err("split_needs_two_pieces".into());
     }
     let mut assumptions = Vec::new();
-    for item in value["assumptions"].as_array().into_iter().flatten() {
+    for item in value["assumptions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(INTAKE_LIST_LIMIT)
+    {
         assumptions.push(Assumption {
             text: text_field(item, "text")?,
             reason: cut(item["reason"].as_str().unwrap_or_default().trim(), 300),
@@ -489,8 +506,8 @@ pub fn parse_intake(value: &Value) -> Result<IntakeVerdict, String> {
     }
     Ok(IntakeVerdict {
         summary: value["summary"].as_str().map(crate::model::short_summary),
-        criteria: string_list(&value["criteria"])?,
-        out_of_scope: string_list(&value["out_of_scope"])?,
+        criteria: capped(string_list(&value["criteria"])?),
+        out_of_scope: capped(string_list(&value["out_of_scope"])?),
         assumptions,
         questions,
         dependencies,

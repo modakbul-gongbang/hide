@@ -2292,16 +2292,20 @@ impl Engine {
                 task.card.out_of_scope = verdict.out_of_scope.clone();
             }
             // What it could not confirm it assumes, as Factory AI's
-            // decisions a person can change (B3).
+            // decisions a person can change (B3); a review run again for an
+            // edited card does not record the same assumption twice.
             for assumption in &verdict.assumptions {
+                let text = judgment::cut(&assumption.text, TEXT_LIMIT);
+                if task.decisions.iter().any(|d| {
+                    d.source == Some(DecisionSource::Assumption)
+                        && (d.text == text || d.changed.as_ref().is_some_and(|c| c.from == text))
+                }) {
+                    continue;
+                }
                 task.decisions.push(
                     DecisionRecord {
                         reason: Some(judgment::cut(&assumption.reason, TEXT_LIMIT)),
-                        ..DecisionRecord::new(
-                            judgment::cut(&assumption.text, TEXT_LIMIT),
-                            OBSERVER.to_owned(),
-                            now,
-                        )
+                        ..DecisionRecord::new(text, OBSERVER.to_owned(), now)
                     }
                     .with_source(DecisionSource::Assumption),
                 );

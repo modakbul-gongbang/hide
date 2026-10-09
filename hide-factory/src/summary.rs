@@ -173,9 +173,13 @@ pub struct FactoryView {
     /// GitHub refused the Factory's sign-in or a permission (D-46).
     #[serde(default)]
     pub github_block: Option<GithubBlock>,
-    /// Follow-up candidates still open, newest first (D-31).
+    /// Follow-up candidates still open, newest first, at most
+    /// [`FOLLOW_UPS_SHOWN`] of them (D-31).
     #[serde(default)]
     pub follow_ups: Vec<FollowUpView>,
+    /// How many are open, the ones past the list included.
+    #[serde(default)]
+    pub follow_ups_open: u32,
     /// The Factory's activity, newest last, the latest [`FACTORY_ACTIVITY_SHOWN`].
     #[serde(default)]
     pub activity: Vec<Activity>,
@@ -536,6 +540,12 @@ fn factory_view(
                 .map(move |predecessor| (predecessor.clone(), task.clone()))
         })
         .collect();
+    let mut open_follow_ups: Vec<FollowUpView> = tasks
+        .values()
+        .flat_map(|task| follow_ups(factory, task))
+        .filter(|f| f.state == FollowUpState::Open)
+        .collect();
+    open_follow_ups.sort_by_key(|f| std::cmp::Reverse(f.at));
     FactoryView {
         id: factory.id.clone(),
         project: factory.project.clone(),
@@ -563,15 +573,12 @@ fn factory_view(
         observer_capped: factory.observer_cap_notice_day == local_day(now, utc_offset_ms) as u64
             && factory.observer_day == factory.observer_cap_notice_day,
         github_block: factory.github_block.clone(),
-        follow_ups: {
-            let mut open: Vec<FollowUpView> = tasks
-                .values()
-                .flat_map(|task| follow_ups(factory, task))
-                .filter(|f| f.state == FollowUpState::Open)
-                .collect();
-            open.sort_by_key(|f| std::cmp::Reverse(f.at));
-            open
-        },
+        follow_ups: open_follow_ups
+            .iter()
+            .take(FOLLOW_UPS_SHOWN)
+            .cloned()
+            .collect(),
+        follow_ups_open: open_follow_ups.len() as u32,
         activity: factory
             .activity
             .iter()
@@ -1096,6 +1103,10 @@ fn issue_url(factory: &Factory, issue: &crate::model::IssueRef) -> Option<String
     }
 }
 
+/// The most open follow-up candidates a Factory's view lists; the count
+/// says how many there are.
+const FOLLOW_UPS_SHOWN: usize = 50;
+
 /// The three numbers over the last seven local days (D-45).
 fn metrics(tasks: &BTreeMap<String, Task>, now: UnixMs, utc_offset_ms: i64) -> Metrics {
     let since = local_day(now, utc_offset_ms) - (METRICS_DAYS - 1);
@@ -1115,20 +1126,18 @@ fn metrics(tasks: &BTreeMap<String, Task>, now: UnixMs, utc_offset_ms: i64) -> M
         for decision in &task.decisions {
             // Only Factory AI's decisions can be changed, so a changed one
             // was Factory AI's.
+            // One cohort, Factory AI's decisions made in the days, and how
+            // many of those a person changed, so the share stays a share.
             let ai = decision.by == OBSERVER || decision.changed.is_some();
             if ai && within(decision.at) {
                 metrics.ai_decisions += 1;
-            }
-            if decision
-                .changed
-                .as_ref()
-                .is_some_and(|change| within(change.at))
-            {
-                metrics.overridden += 1;
+                if decision.changed.is_some() {
+                    metrics.overridden += 1;
+                }
             }
         }
     }
-    metrics.person_items_tenths = (items * 10).checked_div(metrics.finished);
+    metrics.person_items_tenths = (items * 10 + metrics.finished / 2).checked_div(metrics.finished);
     if !waits.is_empty() {
         waits.sort_unstable();
         let middle = waits.len() / 2;

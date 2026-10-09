@@ -33,7 +33,7 @@ function factory(patch: Partial<FactoryView> = {}): FactoryView {
     columns: [{ column: "moving", label: "running", cards: [card("T-1", "running", { column: "moving" })] }],
     cancelled: [], graph: { nodes: ["T-1"], edges: [], unrelated: ["T-1"] }, dependencies: [],
     outside_read_at: NOW - 600_000, stale: false, main_broken: false, auto_merge_available: true, merge_mode: "manual", paused: false, observer_mode: "assist", observer_today: 0, observer_limit: 100, observer_capped: false,
-    github_block: null, follow_ups: [], activity: [], metrics: { finished: 0, person_items_tenths: null, started: 0, start_median_ms: null, ai_decisions: 0, overridden: 0, override_percent: null }, factory_ai: null, workers: [{ agent: "claude", description: "" }], macos_notifications: false, ...patch,
+    github_block: null, follow_ups: [], follow_ups_open: 0, activity: [], metrics: { finished: 0, person_items_tenths: null, started: 0, start_median_ms: null, ai_decisions: 0, overridden: 0, override_percent: null }, factory_ai: null, workers: [{ agent: "claude", description: "" }], macos_notifications: false, ...patch,
   };
 }
 

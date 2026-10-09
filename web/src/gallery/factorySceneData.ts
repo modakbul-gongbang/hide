@@ -251,6 +251,7 @@ function view(options: {
     observer_capped: false,
     github_block: null,
     follow_ups: options.followUps ?? [],
+    follow_ups_open: options.followUps?.length ?? 0,
     activity: options.activity ?? [],
     metrics: METRICS,
     factory_ai: null,

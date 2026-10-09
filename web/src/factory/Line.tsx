@@ -40,7 +40,7 @@ export function Line({ summary, factory, actions }: { summary: FactorySummary; f
     <div className="flex min-h-full flex-col gap-lg px-lg pb-xl" data-factory-line="true">
       <Decisions items={items} factories={factories} actions={actions} />
       {rows.length > 0 ? <LineTable rows={rows} inbox={items} /> : reading ? <ReadingTable /> : items.length === 0 ? <EmptyLine factories={factories} /> : null}
-      {followUps.length > 0 ? <FollowUps lines={followUps} actions={actions} /> : null}
+      {followUps.length > 0 ? <FollowUps lines={followUps} count={factories.reduce((sum, view) => sum + view.follow_ups_open, 0)} actions={actions} /> : null}
       {activity.length > 0 ? <FactoryActivity entries={activity} showProject={factory === null} /> : null}
     </div>
   );
@@ -222,10 +222,10 @@ function Fold({ icon: Icon, title, count, hint, children, name }: { icon: typeof
 }
 
 /** The open follow-up candidates (B17-B19), folded. */
-function FollowUps({ lines, actions }: { lines: { view: FactoryView; line: FollowUpView }[]; actions: Actions }) {
+function FollowUps({ lines, count, actions }: { lines: { view: FactoryView; line: FollowUpView }[]; count: number; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   return (
-    <Fold icon={LightbulbIcon} title={t("factory.followUp.title")} count={lines.length} hint={t("factory.followUp.hint")} name="follow-ups">
+    <Fold icon={LightbulbIcon} title={t("factory.followUp.title")} count={count} hint={t("factory.followUp.hint")} name="follow-ups">
       <ul className="flex flex-col gap-sm pl-lg">
         {lines.map(({ view, line }) => (
           <FollowUpRow key={`${view.id}/${line.task}/${line.discovery}`} view={view} line={line} actions={actions} />

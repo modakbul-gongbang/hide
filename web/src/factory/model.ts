@@ -148,6 +148,8 @@ export type FactoryView = {
   github_block: GithubBlock | null;
   /** Follow-up candidates still open, newest first. */
   follow_ups: FollowUpView[];
+  /** How many follow-ups are open; the list holds the newest 50. */
+  follow_ups_open: number;
   /** The Factory's latest activity, newest last. */
   activity: Activity[];
   /** The last seven local days' three numbers (D-45). */
