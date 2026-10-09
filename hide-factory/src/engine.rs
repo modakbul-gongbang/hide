@@ -108,6 +108,9 @@ const CHECKS_DEFERRED: &str = "checks_deferred";
 pub const RETRY_REVIEW: &str = "retry-review";
 /// The choice that starts a Task from its card as written, without a review (B5).
 pub const START_AS_IS: &str = "start-as-is";
+/// A review Hide AI being off refused: the person turns it on, and the
+/// answer asks the review again (B5).
+pub const ENABLE_AI: &str = "enable-ai";
 
 /// What one attempt to start or resume a Task's worker came to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2198,31 +2201,29 @@ impl Engine {
         let already = self.task(factory, id).is_some_and(|task| {
             task.open_questions().any(|q| {
                 matches!(q.kind, QuestionKind::Action)
-                    && q.choices.iter().any(|c| c == RETRY_REVIEW)
+                    && q.choices
+                        .iter()
+                        .any(|c| c == RETRY_REVIEW || c == ENABLE_AI)
             })
         });
         if !already {
             // Hide AI off, or no agent chosen to run it, refuses every
-            // judgment as `disabled`; fixing a provider would not help. The
-            // card can also start as written (B5).
+            // judgment as `disabled`; fixing a provider would not help, so
+            // the two choices are turning it on and the card as written (B5).
+            let disabled = reason == "disabled";
             let language = self.language();
-            let text = words::asked(
-                language,
-                words::Asked::ReviewFailed {
-                    disabled: reason == "disabled",
-                },
-            );
+            let text = words::asked(language, words::Asked::ReviewFailed { disabled });
+            let (again, choices): (&str, &[&str]) = if disabled {
+                (ENABLE_AI, &[ENABLE_AI, START_AS_IS])
+            } else {
+                (RETRY_REVIEW, &[RETRY_REVIEW, START_AS_IS, "cancel"])
+            };
             self.add_question(
                 factory,
                 id,
-                NewQuestion::new(
-                    QuestionOrigin::Engine,
-                    QuestionKind::Action,
-                    text,
-                    RETRY_REVIEW,
-                )
-                .choices(&[RETRY_REVIEW, START_AS_IS, "cancel"])
-                .evidence(judgment::cut(reason, 200)),
+                NewQuestion::new(QuestionOrigin::Engine, QuestionKind::Action, text, again)
+                    .choices(choices)
+                    .evidence(judgment::cut(reason, 200)),
             );
         }
         self.pending_to_producer(factory, id);
@@ -2772,7 +2773,7 @@ impl Engine {
                 }
             }
             QuestionKind::Action => match decision.as_str() {
-                RETRY_REVIEW => {
+                RETRY_REVIEW | ENABLE_AI => {
                     self.with_task(factory, id, |task| task.review = ReviewState::Pending);
                     self.request_review(factory, id, now);
                 }

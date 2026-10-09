@@ -91,6 +91,41 @@ export const ACTION_LABEL: Record<string, MessageKey> = {
   revive: "factory.action.revive",
 };
 
+/**
+ * The words and result of a choice the engine itself offers, by its code: a
+ * question the engine asks lists codes it answers by, never sentences, and
+ * the screen says them in the operator's language (B22). A choice a worker
+ * or Factory AI wrote is its own words and has none.
+ */
+const REVIEWED_KINDS = new Set<string>(["blocking", "default", "intake", "scope_change"]);
+
+const ENGINE_CHOICE: Record<string, { label: MessageKey; result: MessageKey | null }> = {
+  approve: { label: "factory.choice.approve", result: null },
+  reject: { label: "factory.choice.reject", result: null },
+  split: { label: "factory.choice.split", result: null },
+  proceed: { label: "factory.choice.proceed", result: null },
+  continue: { label: "factory.choice.continue", result: null },
+  stop: { label: "factory.choice.stop", result: null },
+  confirm: { label: "factory.choice.confirm", result: null },
+  retry: { label: "factory.action.retry", result: "factory.choice.retryResult" },
+  cancel: { label: "factory.action.cancel", result: "factory.decide.verb.cancel" },
+  "retry-review": { label: "factory.choice.retryReview", result: "factory.choice.retryReviewResult" },
+  "start-as-is": { label: "factory.choice.startAsIs", result: "factory.choice.startAsIsResult" },
+  "enable-ai": { label: "factory.choice.enableAi", result: "factory.choice.enableAiResult" },
+  "retry-revert": { label: "factory.choice.retryRevert", result: null },
+  "resume-auto": { label: "factory.choice.resumeAuto", result: null },
+};
+
+/** A choice's words and result when the engine offers it by code, or null for words someone wrote. */
+/** An engine choice code in words; a reviewed question's choices are already written for the person and stay as they are. */
+export function engineChoice(item: Pick<InboxItem, "kind">, value: string, t: Translate): { label: string; result: string | null } | null {
+  if (REVIEWED_KINDS.has(item.kind)) return null;
+  const revert = /^revert (\S+)$/.exec(value);
+  if (revert) return { label: t("factory.choice.revert", { id: revert[1]! }), result: null };
+  const known = ENGINE_CHOICE[value];
+  return known ? { label: t(known.label), result: known.result ? t(known.result) : null } : null;
+}
+
 /** An action's words; resuming a Task paused by a closed pane starts its worker again (D-26), so it reads 다시 시작. */
 export function actionKey(value: string, paused = false): MessageKey {
   return paused && value === "resume" ? "factory.resume" : (ACTION_LABEL[value] ?? "factory.turn.send");

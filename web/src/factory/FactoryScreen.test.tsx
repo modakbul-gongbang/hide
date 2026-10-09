@@ -169,6 +169,24 @@ it("takes an answer that comes after the wait ran out, since the engine may stil
   }
 });
 
+it("says the engine's choices in words, and opens Hide AI in Settings rather than answering while it is off (B5, B22)", async () => {
+  const failed: InboxItem = { ...MERGE, group: "stopped", kind: "action", question: "Q-1", text: "The intake review could not run because Hide AI is off.", holding: "start", suggestion: "enable-ai", choices: ["start-as-is"], result_code: "drafting", gates: [] };
+  await act(async () => useShellStore.setState((state) => ({ rest: { ...state.rest, status: { ...state.rest?.status, background_ai: { enabled: false, provider: null, chosen: false, providers: [], unavailable_reason: null } } } as never })));
+  const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [failed] });
+  const choices = [...container.querySelectorAll("[data-factory-choice]")].map((choice) => choice.querySelector("span:nth-child(2) > span")!.textContent);
+  expect(choices).toEqual([english["factory.choice.enableAi"], english["factory.choice.startAsIs"]]);
+  const send = container.querySelector<HTMLButtonElement>("[data-factory-send]")!;
+  expect(send.textContent).toBe(english["factory.choice.openAi"]);
+  const before = events.length;
+  await act(async () => send.click());
+  expect(events.length).toBe(before);
+  expect(useUiStore.getState()).toMatchObject({ overlay: "settings", settingsTab: "hideAi" });
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-choice='2']")!.click());
+  expect(container.querySelector("[data-factory-send]")!.textContent).toBe(english["factory.decide.send"]);
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-send]")!.click());
+  expect(lastAction(events).payload.command).toMatchObject({ verb: "answer", task: "f1/T-1", question: "Q-1", choice: "start-as-is" });
+});
+
 it("offers a to-do's command to copy and one button that resolves it in its Factory (B16, B23)", async () => {
   const todo: InboxItem = { ...MERGE, group: "todo", kind: "command", task: null, display_id: null, text: "Close the old terminal holding the worker's name", holding: "starts", command: "herdr pane close w4:p2", impact: "Starts the worker again", resolve: "command-1", result_code: "resolve", choices: [], suggestion: "", gates: [] };
   const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [todo] });

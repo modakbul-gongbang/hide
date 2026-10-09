@@ -12,7 +12,7 @@ import { cn } from "../lib/utils";
 import { localDeviceId } from "../snapshot";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
-import { actionKey, GATE_LABEL, PAUSE_REASON_LABEL, STATE_LABEL, STOP_LABEL, TONE_TEXT, stateTone, waitingText } from "./labels";
+import { actionKey, engineChoice, GATE_LABEL, PAUSE_REASON_LABEL, STATE_LABEL, STOP_LABEL, TONE_TEXT, stateTone, waitingText } from "./labels";
 import type { CardView, FactoryView, InboxItem, TaskState } from "./model";
 import { choiceCommand, inboxKey, itemChoices } from "./choices";
 import { Refusal } from "./Decisions";
@@ -127,12 +127,12 @@ function CardAction({ card, item, actions, onDetail }: { card: CardView; item: I
     const command = choiceCommand(actionItem, { value, own: false, result: null }, "");
     if (command) request.send(command);
   };
-  const primary = verb ? t(actionKey(actionItem.suggestion, actionItem.kind === "paused")) : item.suggestion;
+  const primary = verb ? t(actionKey(actionItem.suggestion, actionItem.kind === "paused")) : (engineChoice(item, item.suggestion, t)?.label ?? item.suggestion);
   return <div className={cn("factory-card-normal flex min-w-0 flex-col gap-sm", !verb && "rounded-sm bg-secondary p-sm")}>
     {!verb ? <p className="factory-card-question text-body font-semibold text-foreground">{item.text}</p> : null}
     <div className="factory-card-control flex min-w-0 flex-wrap items-center gap-xs">
       <Button size="sm" variant="secondary" className="factory-card-action" disabled={busy} onClick={() => send(actionItem.suggestion)} data-factory-card-send="true">{busy ? t("factory.turn.sending") : primary}</Button>
-      {!verb ? <>{choices.filter((choice) => choice.value !== item.suggestion).map((choice) => <Button key={choice.value} size="sm" variant="outline" className="factory-card-wide factory-card-action" disabled={busy} onClick={() => send(choice.value)}>{choice.value}</Button>)}<Button size="sm" variant="ghost" className="factory-card-action" disabled={busy} onClick={() => useUiStore.getState().setFactoryPlace({ tab: "line", task: null, focus: inboxKey(item) })}>{t("factory.card.otherAnswer")}</Button></> : item.kind === "merge" && card.pr ? <a className="factory-card-wide rounded-sm border border-border px-sm py-xs text-caption hover:underline" href={card.pr.url} target="_blank" rel="noreferrer">{t("factory.card.viewPr")}</a> : <Button size="sm" variant="outline" className="factory-card-wide factory-card-action" onClick={onDetail}>{t("factory.card.history")}</Button>}
+      {!verb ? <>{choices.filter((choice) => choice.value !== item.suggestion).map((choice) => <Button key={choice.value} size="sm" variant="outline" className="factory-card-wide factory-card-action" disabled={busy} onClick={() => send(choice.value)}>{engineChoice(item, choice.value, t)?.label ?? choice.value}</Button>)}<Button size="sm" variant="ghost" className="factory-card-action" disabled={busy} onClick={() => useUiStore.getState().setFactoryPlace({ tab: "line", task: null, focus: inboxKey(item) })}>{t("factory.card.otherAnswer")}</Button></> : item.kind === "merge" && card.pr ? <a className="factory-card-wide rounded-sm border border-border px-sm py-xs text-caption hover:underline" href={card.pr.url} target="_blank" rel="noreferrer">{t("factory.card.viewPr")}</a> : <Button size="sm" variant="outline" className="factory-card-wide factory-card-action" onClick={onDetail}>{t("factory.card.history")}</Button>}
     </div>
     <Refusal state={request.state} />
   </div>;

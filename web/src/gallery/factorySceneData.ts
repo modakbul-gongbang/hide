@@ -475,7 +475,7 @@ function decisionsScene(base: FactorySceneFixture, now: number): FactorySceneFix
   const item = (patch: ItemFields, ago: number) => inboxItem(patch, now, ago);
   const herdrItems = base.summary.inbox.filter((row) => row.factory === herdr.id);
   const added: InboxItem[] = [
-    item({ group: "answer", kind: "intake", factory: herdr.id, task: t438.task, display_id: t438.display_id, title: t438.title, project: "herdr-ide", question: "q-438", text: `Hide AI가 꺼져 있어 ${issue(438)}의 카드를 쓰지 못했습니다. 어떻게 시작할까요?`, holding: "start", suggestion: "Hide AI 켜기", choices: ["이슈 그대로 시작"], outcomes: [{ choice: "Hide AI 켜기", result: "설정의 Hide AI를 엽니다. 켜면 접수 리뷰가 카드를 쓰고 바로 시작합니다" }, { choice: "이슈 그대로 시작", result: "이슈 본문을 목표로, 체크박스를 완료 기준으로 삼아 지금 시작합니다" }], result_code: "drafting" }, 20 * MINUTE),
+    item({ group: "stopped", kind: "action", factory: herdr.id, task: t438.task, display_id: t438.display_id, title: t438.title, project: "herdr-ide", question: "q-438", text: "Hide AI가 꺼져 있어 접수 리뷰를 하지 못했습니다. 켜서 카드를 검토할지, 이슈 그대로 시작할지 골라 주세요.", holding: "start", suggestion: "enable-ai", choices: ["start-as-is"], evidence: ["disabled"], result_code: "drafting" }, 20 * MINUTE),
     item({ group: "todo", kind: "hold", factory: herdr.id, task: null, display_id: null, title: "", project: "herdr-ide", text: "", holding: "starts", env_hold: "disk_floor", resolve: "hold:disk", result_code: "resolve", evidence: ["여유 3.1GB · 기준 5GB"], attempts: [
       { at: clock(now, 10, 40), action: "remove_finished_worktrees", outcome: "partial" },
       { at: clock(now, 11, 10), action: "sleep_wake_worker", outcome: "unchanged" },

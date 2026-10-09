@@ -336,8 +336,8 @@ fn a_review_refused_because_hide_ai_is_off_says_to_turn_it_on_once() {
     let question = open_question(&h, &f, &id);
     assert_eq!(
         question.choices,
-        vec!["retry-review", "start-as-is", "cancel"],
-        "Hide AI on, the issue as written, or not at all"
+        vec!["enable-ai", "start-as-is"],
+        "Hide AI on, or the issue as written"
     );
     let started = h.op(Command::Answer {
         task: id.clone(),

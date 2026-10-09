@@ -7,9 +7,10 @@ import { Input } from "../components/ui/input";
 import { useInterfaceTranslation } from "../i18n/client";
 import type { MessageKey } from "../i18n/catalogs";
 import { cn } from "../lib/utils";
+import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
 import { choiceCommand, inboxKey, itemChoices, singleAction, singleCommand, takesOwnWords, type Choice } from "./choices";
-import { actionKey, decisionWhy, ENV_HOLD_LABEL, FALLBACK_LABEL, FALLBACK_REASONS, GATE_LABEL, HOLDING_LABEL, MEANWHILE_LABEL, RECOVERY_OUTCOME_LABEL, RECOVERY_SHORT, refusalText, STOP_LABEL, type FallbackReason, type Translate } from "./labels";
+import { actionKey, decisionWhy, engineChoice, ENV_HOLD_LABEL, FALLBACK_LABEL, FALLBACK_REASONS, GATE_LABEL, HOLDING_LABEL, MEANWHILE_LABEL, RECOVERY_OUTCOME_LABEL, RECOVERY_SHORT, refusalText, STOP_LABEL, type FallbackReason, type Translate } from "./labels";
 import type { CardView, FactoryView, InboxItem } from "./model";
 import { useFactoryRequest, type RequestState } from "./request";
 import { factoryCards } from "./view";
@@ -161,9 +162,13 @@ function DecisionItem({ item, view, card, actions }: { item: InboxItem; view: Fa
   }, [needsText]);
   const command = single ? singleCommand(item, view) : choice ? choiceCommand(item, choice, text) : null;
   const sending = request.state.phase === "sending";
+  // Turning on Hide AI is the person's step in Settings; the engine retries the review once it can run.
+  const aiOff = useShellStore((s) => s.rest?.status?.background_ai?.enabled === false);
+  const opensAi = choice?.value === ENABLE_AI && aiOff;
   // A taken answer stays taken until the summary drops the item, so it is not sent twice.
   const send = () => {
-    if (command && !sending && request.state.phase !== "taken") request.send(command);
+    if (opensAi) useUiStore.getState().openSettings("hideAi");
+    else if (command && !sending && request.state.phase !== "taken") request.send(command);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -207,7 +212,7 @@ function DecisionItem({ item, view, card, actions }: { item: InboxItem; view: Fa
         {choices.length > 0 ? (
           <div role="radiogroup" aria-label={t("factory.turn.choices")} className="flex max-w-3/4 flex-col gap-xs">
             {choices.map((option, at) => (
-              <ChoiceRow key={`${at}:${option.value}`} item={item} option={option} at={at} picked={!own && at === Math.min(picked, choices.length - 1)} result={option.result ?? (verbs ? verbResult(option.value, t) : null)} onPick={() => { setPicked(at); if (option.value !== "request-changes") setText(""); }} />
+              <ChoiceRow key={`${at}:${option.value}`} item={item} option={option} at={at} picked={!own && at === Math.min(picked, choices.length - 1)} result={option.result ?? (verbs ? verbResult(option.value, t) : engineChoice(item, option.value, t)?.result ?? null)} onPick={() => { setPicked(at); if (option.value !== "request-changes") setText(""); }} />
             ))}
           </div>
         ) : null}
@@ -226,7 +231,7 @@ function DecisionItem({ item, view, card, actions }: { item: InboxItem; view: Fa
         <div className="flex min-w-0 flex-wrap items-center gap-sm">
           <Button data-factory-send={request.state.phase} disabled={!command || request.state.phase === "taken"} aria-busy={sending} onClick={send}>
             {sending ? <LoaderCircleIcon className="animate-spin" /> : <SingleIcon />}
-            {sending ? t("factory.turn.sending") : single ? singleLabel(item, t).label : t("factory.decide.send")}
+            {sending ? t("factory.turn.sending") : single ? singleLabel(item, t).label : opensAi ? t("factory.choice.openAi") : t("factory.decide.send")}
           </Button>
           {single ? <span className="min-w-0 text-caption text-subtle-foreground [overflow-wrap:anywhere]" data-factory-result={item.kind}>{singleResult(item, t)}</span> : view?.paused && item.group === "answer" ? <span className="min-w-0 text-caption text-subtle-foreground" data-factory-result="paused">{t("factory.turn.pausedSend")}</span> : <DefaultLine item={item} />}
         </div>
@@ -236,6 +241,9 @@ function DecisionItem({ item, view, card, actions }: { item: InboxItem; view: Fa
     </div>
   );
 }
+
+const ENABLE_AI = "enable-ai";
+
 
 function verbResult(value: string, t: Translate): string | null {
   const key = VERB_RESULT[value];
@@ -254,7 +262,7 @@ function TimeCue({ item }: { item: InboxItem }) {
 function ChoiceRow({ item, option, at, picked, result, onPick }: { item: InboxItem; option: Choice; at: number; picked: boolean; result: string | null; onPick: () => void }) {
   const { t } = useInterfaceTranslation();
   const verbs = item.kind === "merge" || item.kind === "paused";
-  const words = verbs ? t(actionKey(option.value, item.kind === "paused")) : option.value;
+  const words = verbs ? t(actionKey(option.value, item.kind === "paused")) : (engineChoice(item, option.value, t)?.label ?? option.value);
   return (
     <button
       type="button"
