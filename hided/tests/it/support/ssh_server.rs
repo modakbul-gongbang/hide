@@ -137,6 +137,15 @@ impl Ssh {
         self.shared.accepted.load(Ordering::SeqCst)
     }
 
+    /// How many client connections are open now.
+    pub fn open(&self) -> usize {
+        self.shared
+            .connections
+            .lock()
+            .expect("SSH connections")
+            .len()
+    }
+
     pub fn online(&self, value: bool) -> Result<()> {
         let (ack, done) = mpsc::sync_channel(1);
         self.controls.blocking_send(Control::Online(value, ack))?;

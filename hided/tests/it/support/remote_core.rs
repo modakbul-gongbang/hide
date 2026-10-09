@@ -268,6 +268,47 @@ impl Fixture {
         environment.command(program)
     }
 
+    /// Sends the screen machine's hided `signal` and waits for it to end.
+    pub fn signal_node(&mut self, signal: i32) -> Result<()> {
+        let mut node = self.node.take().context("no node hided runs")?;
+        let pid = i32::try_from(node.id())?;
+        // SAFETY: the pid is the fixture's own unreaped child.
+        ensure!(
+            unsafe { libc::kill(pid, signal) } == 0,
+            "the node was not signalled"
+        );
+        wait_for("private node hided confirmed exit", || {
+            Ok(node.try_wait()?.map(|_| ()))
+        })?;
+        Ok(())
+    }
+
+    /// Sends the screen machine's hided `signal`, leaving it the fixture's.
+    pub fn signal_running_node(&self, signal: i32) -> Result<()> {
+        let node = self.node.as_ref().context("no node hided runs")?;
+        let pid = i32::try_from(node.id())?;
+        // SAFETY: the pid is the fixture's own unreaped child.
+        ensure!(
+            unsafe { libc::kill(pid, signal) } == 0,
+            "the node was not signalled"
+        );
+        Ok(())
+    }
+
+    /// The attach role processes running for the core's state folder, as
+    /// the process table lists them.
+    pub fn attach_processes(&self) -> Result<Vec<String>> {
+        let mut command = std::process::Command::new("/bin/ps");
+        command.args(["-axo", "pid=,command="]);
+        let listed = String::from_utf8(successful(command)?)?;
+        let wanted = format!("attach --state-dir {}", self.core_state.display());
+        Ok(listed
+            .lines()
+            .filter(|line| line.contains(&wanted) && !line.contains("/bin/ps"))
+            .map(str::to_owned)
+            .collect())
+    }
+
     /// Ends the core machine's hided: its machine still answers SSH, and
     /// its attach socket's record stays behind.
     pub fn stop_core(&mut self) -> Result<()> {
@@ -296,6 +337,12 @@ impl Fixture {
             }))?,
         )?;
         hide_platform::fs::private::restrict_to_owner(&record)?;
+        // A node killed before it could clean up leaves its state behind;
+        // this start's state is the one waited for.
+        match fs::remove_file(state.join("hided.json")) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+            _ => {}
+        }
         let mut environment = self.screen.environment.clone();
         environment.set("HIDE_STATE_DIR", state.as_os_str());
         environment.set("HIDE_KEEP_ALIVE", "1");

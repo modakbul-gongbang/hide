@@ -1125,3 +1125,66 @@ fn a_node_screen_reads_its_own_checkouts_files_without_the_core() -> Result<()> 
         }
     }
 }
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_node_that_ends_leaves_no_attach_role_or_ssh_connection() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        for (signal, name) in [(libc::SIGTERM, "SIGTERM"), (libc::SIGKILL, "SIGKILL")] {
+            let (port, _) = fixture.start_node()?;
+            runtime.block_on(node_link(port, "live", LINK_BOUND))?;
+            ensure!(
+                fixture.attach_processes()?.len() == 1 && fixture.ssh.open() == 1,
+                "a live node has one attach role and one connection: {:?}, {}",
+                fixture.attach_processes()?,
+                fixture.ssh.open()
+            );
+            fixture.signal_node(signal)?;
+            wait_for(&format!("nothing left after {name}"), || {
+                Ok(
+                    (fixture.attach_processes()?.is_empty() && fixture.ssh.open() == 0)
+                        .then_some(()),
+                )
+            })
+            .with_context(|| {
+                format!(
+                    "left after {name}: {:?}, {} connections",
+                    fixture.attach_processes(),
+                    fixture.ssh.open()
+                )
+            })?;
+        }
+        // A node that stops answering but keeps its connection open: the
+        // attach role ends on its own once the node fell silent.
+        let (port, _) = fixture.start_node()?;
+        runtime.block_on(node_link(port, "live", LINK_BOUND))?;
+        fixture.signal_running_node(libc::SIGSTOP)?;
+        let stopped = Instant::now();
+        let ended = loop {
+            if fixture.attach_processes()?.is_empty() {
+                break stopped.elapsed();
+            }
+            ensure!(
+                stopped.elapsed() < Duration::from_secs(45),
+                "the attach role outlived a silent node: {:?}",
+                fixture.attach_processes()?
+            );
+            runtime.block_on(async { tokio::time::sleep(Duration::from_millis(250)).await });
+        };
+        fixture.signal_running_node(libc::SIGCONT)?;
+        runtime.block_on(node_link(port, "live", LINK_BOUND))?;
+        eprintln!("the attach role ended {ended:?} after its node fell silent");
+        Ok(())
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
