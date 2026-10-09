@@ -1262,6 +1262,7 @@ dependencies = [
  "hide-agent-adapter",
  "hide-node",
  "hide-node-link",
+ "hide-platform",
  "rusqlite",
  "serde",
  "serde_json",

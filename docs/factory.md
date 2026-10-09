@@ -54,7 +54,7 @@ Both are private to the user: the file is mode 0600 and the folder 0700 on Unix.
 A store written by a newer build is refused rather than read: the engine does not start, the host logs `store.open_failed`, and commands answer `factory_unavailable`.
 Fields added later load from older rows through serde defaults.
 The engine loads the whole store at start and saves each change before the command that made it answers, so a restart resumes Factories, Tasks, questions, workers and in-flight work.
-A restart starts verification again from the recorded attempt and asks a pending review again.
+A restart starts verification again from the recorded attempt, closes as cancelled any earlier attempt still unfinished, and asks a pending review again.
 A store write that fails does not stop the engine: it is counted, `hide factory status` says how many failed since start, and the host writes each one to the diagnostic log (`store.write_failed`, with the Factory, Task and stage).
 A main recovery the restart cut short is not guessed again, since which merge it was finding or reverting lived only in the old process: it goes to a person with the same choices as a recovery that could not decide.
 The engine opens the store when a store file already exists at start, or on the first command, so a machine that never created a Factory opens nothing.
@@ -393,11 +393,15 @@ A failure wakes the worker with the check name, the log path or CI link, and the
 Environment failures and merge conflicts do not count.
 `retry` resets the count.
 
-**CI.** The check runs of the worktree's head commit are read on each tick with `gh api`.
+**CI.** The check runs of the worktree's head commit are read with `gh api --paginate`, keeping only each run's name, status, conclusion and link, one line per run.
+A whole run is about 3.5 KB and a node keeps 64 KiB of a command's output, so the full answer of a commit with twenty runs would be cut; a line is about 180 bytes.
+A commit whose read decided nothing is read again after 30 seconds.
 Every named check must have a completed run, and only named checks decide; a commit with no run of a named check yet is pending, never passed.
 `--ci` with no names takes the default branch's required checks from its protection, and `init` and `config ci=` refuse a Factory that would name no check (`ci_checks_required`).
 A completed run passes on `success` or `neutral`, decides nothing on `skipped`, `cancelled` or `stale` (still pending), and fails on any other conclusion with the run's link.
-A GitHub error that carries an environment signal is the environment's; any other read error stays pending.
+A GitHub error that carries an environment signal is the environment's.
+Any other read error, a line that is not a check run among them, is an unread answer: it decides nothing and counts as no failure, the run stays running and is read again, and the third unread answer of a run leaves a notice on the Task naming what the read answered, so a read that fails the same way each time is never shown as verifying in silence.
+A verify bundle's poll the node answered in a shape the Factory cannot read is unread the same way.
 
 **Verify bundle.** Bundles run one at a time on the machine, in a queue of at most 256, each command through the shell with its output in the run's log.
 The cap, `verify_timeout_minutes` (60 by default), applies to the whole bundle from its first command, and the command running when it passes fails the run.
@@ -560,7 +564,9 @@ A watch that is slow or fails changes no Task.
 ## Configuration
 
 `hide factory config [--project <path>]` prints the Factory's settings and the machine's worker limit, and `--set <key>=<value>` changes them for the next decision.
-Only an operator may set values, and an invalid key or value answers `config_invalid`.
+`config` is the stored record, which keeps durations in milliseconds and the disk floor in bytes; `settable` prints each of those under the key and in the unit `--set` takes (`disk_floor_gb`, `stall_minutes` and the like).
+Only an operator may set values.
+A value a key does not take answers `config_invalid` naming the key, and a key `--set` does not take answers `config_invalid` with the key and every key it takes (`detail.keys`).
 A Factory's `merge_mode` cannot be `auto` while it has no verification (`auto_needs_verification`).
 
 | Key | Value | Default |
@@ -827,7 +833,7 @@ Old Tasks use the fallback when read and are never rewritten just to add the fie
 | `number` | Its place in the Task's attempts, from 1, so a run after an environment failure or a cancelled run is the next number; `n/3` counts failures, not attempts. |
 | `stage` | `task` (after `done`) or `pre_merge`. |
 | `started_at` | When it started. |
-| `outcome` | `passed`, `failed`, `environment`, `cancelled` (the run was ended before it answered: the Task went back to its worker, was cancelled or was taken outside) or `running`; only the last attempt can be running. |
+| `outcome` | `passed`, `failed`, `environment`, `cancelled` (the run was ended before it answered: the Task went back to its worker, was cancelled or was taken outside, or a restart found it unfinished behind a later attempt) or `running`; only the last attempt can be running. |
 | `check` | The failing check or command. |
 | `link` | The CI link or the log path. |
 | `log_tail` | The last 4 KiB of a local log. |

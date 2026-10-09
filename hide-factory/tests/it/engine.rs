@@ -3034,6 +3034,113 @@ fn a_restart_during_verification_runs_it_again() {
     );
 }
 
+#[test]
+fn an_unread_verification_answer_is_asked_again_and_told_to_a_person() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Unreadable", &[]);
+    let unread = VerifyPoll::Unread {
+        check: "github.checks".into(),
+        detail: "gh answered a line that is not a check run (65536 bytes)".into(),
+    };
+    h.world()
+        .verify
+        .insert(t.clone(), [unread.clone(), unread.clone(), unread].into());
+    h.done(&f, &t);
+    for _ in 0..3 {
+        h.engine.tick();
+    }
+    let task = h.task(&f, &t);
+    assert_eq!(
+        task.state,
+        TaskState::Verifying,
+        "an unread answer decides nothing"
+    );
+    assert_eq!((task.failures, task.environment_failures), (0, 0));
+    let notices: Vec<_> = task
+        .open_questions()
+        .filter(|q| q.text.contains("65536 bytes"))
+        .collect();
+    assert_eq!(
+        notices.len(),
+        1,
+        "the third unread answer tells a person once"
+    );
+    // The read answers again: the same run passes and the Task merges.
+    tick_until(&mut h, &f, &t, TaskState::Done);
+    assert_eq!(
+        h.world().verify_runs.len(),
+        2,
+        "the task run and the pre-merge run"
+    );
+}
+
+#[test]
+fn a_task_stuck_verifying_with_two_unfinished_attempts_concludes_after_a_restart() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Stuck", &[]);
+    h.world()
+        .verify
+        .insert(t.clone(), [VerifyPoll::Pending].into());
+    h.done(&f, &t);
+    h.engine.tick();
+    // The stored record of a Task an older build left verifying: a run sent
+    // back and reported again left its first attempt unfinished beside the
+    // second.
+    let mut task = h.task(&f, &t);
+    let first = task.attempts[0].clone();
+    task.attempts.push(Attempt {
+        started_at: first.started_at + 1,
+        ..first
+    });
+    let mut store = hide_factory::store::Store::open(
+        &h.dir.path().join("factory.sqlite3"),
+        &h.dir.path().join("factory-files"),
+    )
+    .unwrap();
+    store.put_task(&task).unwrap();
+    drop(store);
+    let mut h = h.restart();
+    tick_until(&mut h, &f, &t, TaskState::Done);
+    let attempts = h.task(&f, &t).attempts;
+    assert_eq!(
+        attempts.last().and_then(|a| a.outcome.clone()),
+        Some(AttemptOutcome::Passed),
+        "{attempts:?}"
+    );
+    assert_eq!(
+        attempts[0].outcome,
+        Some(AttemptOutcome::Cancelled),
+        "the attempt nothing answers is no longer shown running"
+    );
+}
+
+#[test]
+fn config_prints_each_setting_under_the_key_set_takes_and_names_a_refused_key() {
+    let mut h = Bench::new(false);
+    h.factory(true);
+    let refused = h.op(Command::Config {
+        project: Some(PROJECT.into()),
+        set: vec![("disk_floor_bytes".into(), "1".into())],
+    });
+    assert_eq!(refused["reason"], "config_invalid", "{refused}");
+    assert_eq!(refused["detail"]["key"], "disk_floor_bytes");
+    assert!(
+        refused["detail"]["keys"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("disk_floor_gb")),
+        "{refused}"
+    );
+    let set = h.op(Command::Config {
+        project: Some(PROJECT.into()),
+        set: vec![("disk_floor_gb".into(), "10".into())],
+    });
+    assert_eq!(set["ok"], true, "{set}");
+    assert_eq!(set["settable"]["disk_floor_gb"], 10, "{set}");
+}
+
 // --------------------------------------------------------------- summary
 
 #[test]

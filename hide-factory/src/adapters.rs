@@ -228,8 +228,20 @@ pub struct VerifyRun {
 pub enum VerifyPoll {
     Pending,
     Passed,
-    Failed { check: String, link: String },
-    Environment { signal: EnvSignal, check: String },
+    Failed {
+        check: String,
+        link: String,
+    },
+    Environment {
+        signal: EnvSignal,
+        check: String,
+    },
+    /// The answer could not be read, and no environment signal says why: it
+    /// decides nothing, and the run is asked again.
+    Unread {
+        check: String,
+        detail: String,
+    },
 }
 
 /// CI required checks or the verify bundle (D-53).
