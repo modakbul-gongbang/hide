@@ -80,12 +80,15 @@ impl NodePanes {
         node: &str,
         link: &RemoteHost,
         request: u64,
-        pane_id: String,
-        identity: PaneIdentity,
+        proof: Proof,
         one_shot: bool,
     ) {
+        let named = match &proof {
+            Proof::Pane { pane_id, .. } => Some(pane_id.clone()),
+            Proof::Checkout { .. } => None,
+        };
         let Ok(permit) = Arc::clone(&self.proofs).try_acquire_owned() else {
-            record_refusal(node, Some(&pane_id), "bridge_busy", "core");
+            record_refusal(node, named.as_deref(), "bridge_busy", "core");
             self.control_reply(
                 node,
                 link,
@@ -101,13 +104,12 @@ impl NodePanes {
         let link = link.clone();
         self.runtime.spawn_blocking(move || {
             let _permit = permit;
-            let named = pane_id.clone();
             let answer = match panes.state.get() {
-                Some(state) => issue(state, &node, &link, pane_id, &identity, one_shot),
+                Some(state) => issue(state, &node, &link, proof, one_shot),
                 None => refused("hide_unavailable"),
             };
             if let ProofAnswer::Refused { reason } = &answer {
-                record_refusal(&node, Some(&named), reason, "core");
+                record_refusal(&node, named.as_deref(), reason, "core");
             }
             send_reply(&node, &link, Call::PaneProofAnswer { request, answer });
         });
@@ -218,7 +220,25 @@ impl PaneEvents for Events {
                 identity,
                 nonce: _,
                 one_shot,
-            } => panes.proof(node, link, request, pane_id, identity, one_shot),
+            } => panes.proof(
+                node,
+                link,
+                request,
+                Proof::Pane { pane_id, identity },
+                one_shot,
+            ),
+            NodeEvent::CheckoutProof {
+                request,
+                path,
+                nonce,
+                one_shot,
+            } => panes.proof(
+                node,
+                link,
+                request,
+                Proof::Checkout { path, nonce },
+                one_shot,
+            ),
             NodeEvent::Revoke { token } => {
                 if let Some(state) = panes.state.get() {
                     state.pane_capabilities.revoke_vouched(node, link, &token);
@@ -246,29 +266,53 @@ impl PaneEvents for Events {
     }
 }
 
-/// Issues the credential for a pane `node` vouched for over `link`. The
-/// pane is resolved within `node`'s own panes, whatever the proof names, so
-/// a node can never vouch for a pane of another device.
+/// What a node proved about a caller.
+enum Proof {
+    /// The caller descends from the shell of `pane_id`.
+    Pane {
+        pane_id: String,
+        identity: PaneIdentity,
+    },
+    /// The caller is in no pane, and its working directory is `path`.
+    Checkout { path: String, nonce: String },
+}
+
+/// Issues the credential for a caller `node` vouched for over `link`. The
+/// pane or checkout is resolved within `node`'s own, whatever the proof
+/// names, so a node can never vouch for a caller of another device. Only a
+/// node that dialed this core vouches for a checkout caller; a device this
+/// core dialed proves pane callers only, as it always has.
 fn issue(
     state: &AppState,
     node: &str,
     link: &RemoteHost,
-    pane_id: String,
-    identity: &PaneIdentity,
+    proof: Proof,
     one_shot: bool,
 ) -> ProofAnswer {
-    let issued =
-        pane_auth::attest_remote(&state.core, node, &pane_id, identity).and_then(|attestation| {
-            state.pane_capabilities.issue_remote(
-                &attestation,
-                RemoteGrant {
-                    node: node.to_owned(),
-                    link: link.clone(),
-                    source_pane_id: pane_id,
-                    one_shot,
-                },
-            )
-        });
+    let attested = match &proof {
+        Proof::Pane { pane_id, identity } => {
+            pane_auth::attest_remote(&state.core, node, pane_id, identity)
+        }
+        Proof::Checkout { .. } if !link.dialed_by_node() => Err("caller_not_in_pane"),
+        Proof::Checkout { path, nonce } => {
+            pane_auth::attest_remote_checkout(&state.core, node, nonce, path)
+        }
+    };
+    let source_pane_id = match proof {
+        Proof::Pane { pane_id, .. } => pane_id,
+        Proof::Checkout { .. } => String::new(),
+    };
+    let issued = attested.and_then(|attestation| {
+        state.pane_capabilities.issue_remote(
+            &attestation,
+            RemoteGrant {
+                node: node.to_owned(),
+                link: link.clone(),
+                source_pane_id,
+                one_shot,
+            },
+        )
+    });
     match issued {
         // The link may have ended while the credential was made; nothing it
         // vouched for may outlive it.

@@ -410,8 +410,14 @@ async fn node_health(port: u16) -> Result<Value> {
 }
 
 /// Types `line` into `pane` once its prompt drew, and reads the screen
-/// until `answer` appears on it.
-async fn type_and_read(socket: &mut Socket, pane: &str, line: &str, answer: &str) -> Result<()> {
+/// until `answer` appears on it; answers what the pane drew after the
+/// keys, without its control sequences.
+async fn type_and_read(
+    socket: &mut Socket,
+    pane: &str,
+    line: &str,
+    answer: &str,
+) -> Result<String> {
     for kind in ["terminal_viewport", "terminal_resize"] {
         send(
             socket,
@@ -442,7 +448,7 @@ async fn type_and_read(socket: &mut Socket, pane: &str, line: &str, answer: &str
             screen.clear();
         }
         if typed && plain(&screen).contains(answer) {
-            return Ok(());
+            return Ok(plain(&screen));
         }
     }
     bail!(
@@ -761,4 +767,136 @@ fn a_screen_of_another_build_than_its_core_is_told_so() -> Result<()> {
             Err(error).context(format!("run kept at {}", fixture.root.display()))
         }
     }
+}
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_node_pane_calls_its_core_through_the_link() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let project = fixture.screen_home().join("project");
+        let herdr_pane = fixture.screen.workspace_at(&project)?;
+        let pane = format!("remote:{node}:pane:{herdr_pane}");
+        let hide = fixture.hided.with_file_name("hide");
+        let call = format!(
+            "HIDE_STATE_DIR={} {} workspace info; echo info-\"done\"",
+            fixture.node_state().display(),
+            hide.display()
+        );
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            // A pane's agent: vouched for by the node's kernel as that pane,
+            // so it may act as the pane's agent.
+            let answer = type_and_read(&mut socket, &pane, &call, "info-done").await?;
+            let info = workspace_answer(&answer)?;
+            ensure!(
+                info["ok"] == true
+                    && info["result"]["context"]["device_id"] == node.as_str()
+                    && capabilities(&info).contains(&"inbox".to_owned()),
+                "the pane's call was not answered as the node's pane: {info}"
+            );
+            // A tool outside every pane, in the node's checkout: bound to the
+            // checkout, so it acts on the Workspace but not as an agent.
+            let outside = |cwd: &std::path::Path, pane: Option<&str>| -> Result<Value> {
+                let mut command = fixture.screen_command(&hide);
+                command.args(["workspace", "info"]).current_dir(cwd);
+                if let Some(pane) = pane {
+                    command.env("HERDR_PANE_ID", pane);
+                }
+                let output = command.output()?;
+                workspace_answer(&String::from_utf8_lossy(&output.stdout)).with_context(|| {
+                    format!("stderr: {}", String::from_utf8_lossy(&output.stderr))
+                })
+            };
+            let info = tokio::task::block_in_place(|| outside(&project, None))?;
+            ensure!(
+                info["ok"] == true
+                    && info["result"]["context"]["device_id"] == node.as_str()
+                    && !capabilities(&info).contains(&"inbox".to_owned()),
+                "the checkout caller was not answered as the checkout: {info}"
+            );
+            // Naming the pane from outside it, and outside every checkout,
+            // proves nothing.
+            let home = fixture.screen_home().to_owned();
+            let info = tokio::task::block_in_place(|| outside(&home, Some(&herdr_pane)))?;
+            ensure!(
+                info["ok"] == false && info["reason"] == "checkout_not_registered",
+                "a caller outside the pane and every checkout was answered: {info}"
+            );
+            // The link ends: the node's callers are refused at once, and
+            // answered again once it is back.
+            tokio::task::block_in_place(|| fixture.ssh.online(false))?;
+            node_link(port, "waiting", LINK_BOUND).await?;
+            let asked = Instant::now();
+            let info = tokio::task::block_in_place(|| outside(&project, None))?;
+            ensure!(
+                info["ok"] == false && info["reason"] == "hide_unavailable",
+                "a caller was answered while the link was down: {info}"
+            );
+            ensure!(
+                asked.elapsed() < Duration::from_secs(2),
+                "the refusal took {:?}",
+                asked.elapsed()
+            );
+            tokio::task::block_in_place(|| fixture.ssh.online(true))?;
+            node_link(port, "live", LINK_BOUND).await?;
+            // The window reopens, as the web shell does after a close.
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            let mut last = Value::Null;
+            let info = tokio::task::block_in_place(|| {
+                wait_for("the checkout caller answered again", || {
+                    let info = outside(&project, None)?;
+                    last = info.clone();
+                    Ok((info["ok"] == true).then_some(info))
+                })
+            })
+            .with_context(|| format!("the last answer: {last}"))?;
+            ensure!(
+                info["result"]["context"]["device_id"] == node.as_str(),
+                "{info}"
+            );
+            Ok::<_, anyhow::Error>(())
+        })
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
+
+/// The one JSON answer a `hide workspace` command printed among `text`.
+fn workspace_answer(text: &str) -> Result<Value> {
+    let start = text.find('{').context("no answer was printed")?;
+    let mut answers = serde_json::Deserializer::from_str(&text[start..]).into_iter::<Value>();
+    Ok(answers.next().context("no answer was printed")??)
+}
+
+fn capabilities(info: &Value) -> Vec<String> {
+    info["result"]["capabilities"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|capability| capability.as_str().map(str::to_owned))
+        .collect()
 }

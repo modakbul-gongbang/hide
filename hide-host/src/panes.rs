@@ -8,7 +8,9 @@
 //! request is proved with this machine's kernel (the pid the system reports
 //! for the stream's other end, descended from the pane's shell) and sent up
 //! the link as [`NodeEvent::PaneProof`]; the core answers down, and the node
-//! writes the reference file the caller reads. A stream carries one `hide`
+//! writes the reference file the caller reads. On the screen machine's node
+//! a caller in no pane is proved by its working directory instead
+//! ([`NodeEvent::CheckoutProof`]). A stream carries one `hide`
 //! command's bytes up and down the same link. Everything here lives only as
 //! long as the link: the node's input closing ends the listener, every
 //! stream and every reference with it.
@@ -51,8 +53,16 @@ struct IssuedReference {
     token: String,
     created: Instant,
     holder: Option<(i32, u64)>,
-    shell_pid: i32,
-    shell_started: u64,
+    /// The pane's shell and its start, for a pane caller's reference, which
+    /// ends with the shell; a checkout caller's has none.
+    shell: Option<(i32, u64)>,
+}
+
+/// What the node proved about a caller.
+enum Proved {
+    Pane(PaneIdentity),
+    /// The wire spelling of the caller's canonical working directory.
+    Checkout(String),
 }
 
 /// A credential request, as a pane's `hide` sends it.
@@ -82,6 +92,7 @@ pub struct Panes {
     streams: Mutex<HashMap<u64, StreamEnd>>,
     clients: AtomicUsize,
     next: AtomicU64,
+    checkout_callers: bool,
 }
 
 struct StreamEnd {
@@ -106,7 +117,15 @@ impl Panes {
             streams: Mutex::new(HashMap::new()),
             clients: AtomicUsize::new(0),
             next: AtomicU64::new(1),
+            checkout_callers: false,
         }
+    }
+
+    /// Proves a caller in no pane by its working directory, as
+    /// [`crate::serve::Services::checkout_callers`] says.
+    pub fn with_checkout_callers(mut self, checkout_callers: bool) -> Self {
+        self.checkout_callers = checkout_callers;
+        self
     }
 
     /// Binds the listener in a new folder under `bridges` and starts serving
@@ -376,10 +395,21 @@ impl Panes {
             {
                 return Err("invalid_nonce".to_owned());
             }
-            let identity = pane_peer::inspect(&started.herdr_socket, &request.pane_id)?;
-            if !pane_peer::descends_from(peer, identity.shell_pid) {
-                return Err("caller_not_in_pane".to_owned());
-            }
+            let pane =
+                pane_peer::inspect(&started.herdr_socket, &request.pane_id).and_then(|identity| {
+                    if pane_peer::descends_from(peer, identity.shell_pid) {
+                        Ok(identity)
+                    } else {
+                        Err("caller_not_in_pane")
+                    }
+                });
+            let proved = match pane {
+                Ok(identity) => Proved::Pane(identity),
+                Err(_) if self.checkout_callers => {
+                    Proved::Checkout(caller_directory(peer).ok_or("caller_unavailable")?)
+                }
+                Err(reason) => return Err(reason.to_owned()),
+            };
             let holder = if request.one_shot {
                 Some((
                     peer,
@@ -393,16 +423,22 @@ impl Panes {
             let id = self.next.fetch_add(1, Ordering::Relaxed);
             let (waiting, answer) = mpsc::sync_channel(1);
             lock(&self.proofs).insert(id, waiting);
-            let sent = write_event(
-                output,
-                &NodeEvent::PaneProof {
+            let event = match &proved {
+                Proved::Pane(identity) => NodeEvent::PaneProof {
                     request: id,
                     pane_id: request.pane_id.clone(),
                     identity: identity.clone(),
                     nonce: request.nonce.clone(),
                     one_shot: request.one_shot,
                 },
-            );
+                Proved::Checkout(path) => NodeEvent::CheckoutProof {
+                    request: id,
+                    path: path.clone(),
+                    nonce: request.nonce.clone(),
+                    one_shot: request.one_shot,
+                },
+            };
+            let sent = write_event(output, &event);
             let answer = sent
                 .ok()
                 .and_then(|()| answer.recv_timeout(CLIENT_TIMEOUT).ok());
@@ -448,8 +484,12 @@ impl Panes {
                     token,
                     created: Instant::now(),
                     holder,
-                    shell_pid: identity.shell_pid,
-                    shell_started: identity.shell_started,
+                    shell: match &proved {
+                        Proved::Pane(identity) => {
+                            Some((identity.shell_pid, identity.shell_started))
+                        }
+                        Proved::Checkout(_) => None,
+                    },
                 },
             );
             reference_new = true;
@@ -534,8 +574,9 @@ impl Panes {
                     let holder_gone = reference.holder.is_some_and(|(pid, started)| {
                         pane_peer::process_start(pid) != Some(started)
                     });
-                    let pane_gone = pane_peer::process_start(reference.shell_pid)
-                        != Some(reference.shell_started);
+                    let pane_gone = reference.shell.is_some_and(|(pid, started)| {
+                        pane_peer::process_start(pid) != Some(started)
+                    });
                     (!present || expired || holder_gone || pane_gone).then_some(path.clone())
                 })
                 .collect::<Vec<_>>();
@@ -618,6 +659,14 @@ fn remove_dead_folders(bridges: &Path) {
             let _ = fs::remove_dir_all(&folder);
         }
     }
+}
+
+/// The wire spelling of `peer`'s canonical working directory, as the kernel
+/// reports it.
+fn caller_directory(peer: i32) -> Option<String> {
+    let cwd = pane_peer::process_cwd(peer)?;
+    let canonical = hide_platform::fs::identity::canonical(&cwd).ok()?;
+    hide_platform::path::to_wire(&canonical).ok()
 }
 
 /// One event line on the link's output, under the same lock as the answers,

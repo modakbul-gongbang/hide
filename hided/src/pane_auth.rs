@@ -731,6 +731,38 @@ pub fn attest_remote(
     })
 }
 
+/// Binds a caller on the screen machine that is in no pane to the
+/// registered, connected checkout of `node` holding `path`, its working
+/// directory as that node's kernel read it (PRD core-host-node-remote-core
+/// D-10). Only `node`'s own checkouts are looked at, so a node can never
+/// vouch for a caller in another machine's checkout.
+pub fn attest_remote_checkout(
+    core: &CoreHandle,
+    node: &str,
+    nonce: &str,
+    path: &str,
+) -> Result<Attestation, &'static str> {
+    if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("invalid_nonce");
+    }
+    if node.is_empty() || !path.starts_with('/') || path.len() > 4096 {
+        return Err("invalid_request");
+    }
+    let caller_id = checkout_caller_id(nonce, path);
+    let context = core
+        .workspace_query(node, &caller_id, Query::Info)
+        .map_err(|refusal| refusal.reason)?
+        .context;
+    if context.device_id != node {
+        return Err("checkout_not_registered");
+    }
+    Ok(Attestation {
+        pane_id: caller_id,
+        context,
+        binding: Binding::Checkout,
+    })
+}
+
 pub fn attest_local(
     peer: i32,
     pane_id: &str,

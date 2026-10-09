@@ -571,6 +571,7 @@ fn serve(
             terminals: Some(terminals),
             herdr_socket: Some(identity.herdr_socket.clone()),
             heartbeat: true,
+            checkout_callers: true,
         },
     )
     .map(|()| "link_closed".to_owned())

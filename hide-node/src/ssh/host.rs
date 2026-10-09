@@ -473,6 +473,9 @@ struct Inner {
     /// The streams to the node's own Herdr open on this link, for a node
     /// that dialed its core (`link_herdr`).
     herdr: link_herdr::HerdrStreams,
+    /// The link runs over the attach role's local stream: a node that dialed
+    /// this core, not a device it dialed.
+    dialed_by_node: bool,
 }
 
 impl Drop for Inner {
@@ -524,8 +527,16 @@ impl RemoteHost {
                 terminals: std::sync::OnceLock::new(),
                 readers: std::sync::OnceLock::new(),
                 herdr: Default::default(),
+                dialed_by_node: false,
             }),
         }
+    }
+
+    /// Whether a node dialed this core for this link (PRD
+    /// core-host-node-remote-core D-07): the screen machine's node, which
+    /// vouches for checkout callers as well as pane callers.
+    pub fn dialed_by_node(&self) -> bool {
+        self.inner.dialed_by_node
     }
 
     /// Why the connection ended, once it has.
@@ -2141,6 +2152,7 @@ fn start_reader(
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> RemoteHost {
     let closing = Arc::new(tokio::sync::Notify::new());
+    let dialed_by_node = matches!(source, LinkSource::Stream(_));
     let inner = Arc::new(Inner {
         target,
         runtime: Arc::clone(&runtime),
@@ -2155,6 +2167,7 @@ fn start_reader(
         terminals: std::sync::OnceLock::new(),
         readers: std::sync::OnceLock::new(),
         herdr: Default::default(),
+        dialed_by_node,
     });
     let reader = Arc::downgrade(&inner);
     runtime.spawn(async move {
@@ -2513,6 +2526,9 @@ mod tests {
             }),
         )
         .expect("a local link");
+        // The core vouches for a checkout caller only on such a link.
+        assert!(link.dialed_by_node());
+        assert!(!RemoteHost::detached("device").dialed_by_node());
         let node = std::thread::spawn(move || {
             let mut reader = std::io::BufReader::new(node_end.duplicate());
             let mut writer = node_end;

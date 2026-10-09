@@ -70,6 +70,7 @@ pub fn serve_with_terminals(
             terminals: Some(terminals),
             herdr_socket: None,
             heartbeat: false,
+            checkout_callers: false,
         },
     )
 }
@@ -86,6 +87,11 @@ pub struct Services<'a> {
     /// [`hide_node_link::panes::HEARTBEAT`]: a node that dialed its core,
     /// whose attach role ends a link that falls silent.
     pub heartbeat: bool,
+    /// Whether a caller in no pane is proved by its working directory
+    /// instead, as the core's own machine proves one: the screen machine's
+    /// node, whose agents' tools may run outside any pane. A device the
+    /// core dialed proves pane callers only.
+    pub checkout_callers: bool,
 }
 
 impl Services<'_> {
@@ -95,6 +101,7 @@ impl Services<'_> {
             terminals: None,
             herdr_socket: None,
             heartbeat: false,
+            checkout_callers: false,
         }
     }
 }
@@ -126,7 +133,7 @@ fn serve_in(
     // it was asked to stop; the reader enters one before handing it over, so
     // a cancel that arrives first still reaches it.
     let running: Mutex<HashMap<u64, bool>> = Mutex::new(HashMap::new());
-    let panes = crate::panes::Panes::new();
+    let panes = crate::panes::Panes::new().with_checkout_callers(services.checkout_callers);
     // Where a pane's `hide` on this machine finds the node's bootstrap
     // socket; read once, so every start of the service agrees.
     let bridges = hide_platform::host::home_dir().map(|home| {

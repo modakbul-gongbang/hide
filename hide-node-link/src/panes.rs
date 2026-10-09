@@ -48,6 +48,18 @@ pub enum NodeEvent {
         nonce: String,
         one_shot: bool,
     },
+    /// A process that is in no pane the node can prove asked for a
+    /// credential, and the node's kernel says its working directory is
+    /// `path` (the wire spelling of its canonical form). Only a node that
+    /// dialed its core sends it (PRD core-host-node-remote-core D-10), and
+    /// the core binds the caller to the node's own registered checkout that
+    /// holds `path`. `request` pairs the core's [`ProofAnswer`].
+    CheckoutProof {
+        request: u64,
+        path: String,
+        nonce: String,
+        one_shot: bool,
+    },
     /// A credential the node handed out is no longer held: its reference
     /// expired, was removed, or its holder ended.
     Revoke { token: String },

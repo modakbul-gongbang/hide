@@ -401,6 +401,7 @@ mod tests {
                     terminals: None,
                     herdr_socket: Some(herdr_socket),
                     heartbeat: false,
+                    checkout_callers: false,
                 },
             );
         });
