@@ -199,7 +199,8 @@ The record is registered when needed and converges on the existing one.
 - **Lineage and watch.** The spawn writes lineage and starts a watch whose observer is the Factory.
 
 A worker whose pane exists but whose agent has not shown a session yet is still starting.
-It holds its slot, the Task stays `waiting`, and the same spawn is asked again every 30 seconds.
+It holds its slot, the Task stays `waiting`, and the same spawn is asked again.
+Each ask itself waits up to 5 seconds for the session, so a young start, in its first 30 seconds, is asked again on the next tick and the worker is accepted that soon after its agent shows; a start older than that is more likely waiting on a trust or login prompt and is asked every 30 seconds.
 After 10 minutes a notice asks the person to look at the pane, where a trust or login prompt may be waiting.
 A Codex worker waits for this Mac's install kit to have read the machine since launch: the first start asks the kit to read and reports the worker as still starting.
 

@@ -63,8 +63,9 @@ const BACKOFF_MS: [u64; 5] = [
 const PROCESSED_LETTERS: usize = 4_096;
 const CASCADE_WINDOW_MS: u64 = 30 * MINUTE_MS;
 const ENV_RECHECK_MS: u64 = MINUTE_MS;
-/// How often a worker whose agent has not shown a session is asked again,
-/// and when the person is told to look at its pane.
+/// How often a worker whose agent has not shown a session is asked again
+/// once it is no longer young, and how long it stays young (see
+/// [`start_ask_interval`]).
 const START_RETRY_MS: u64 = 30_000;
 /// The most questions, decisions and discoveries one Task keeps; a worker
 /// report past it is refused.
@@ -5665,8 +5666,9 @@ impl Engine {
     }
 
     /// The worker's pane runs but its agent has shown no session: ask the
-    /// same spawn again later, and after a while tell the person to look
-    /// at the pane, where a first-run prompt may be waiting.
+    /// same spawn again (see [`start_ask_interval`]), and after a while tell
+    /// the person to look at the pane, where a first-run prompt may be
+    /// waiting.
     fn worker_starting(&mut self, factory: &str, id: &str, failure: &Failure) {
         let now = self.now();
         let key = (factory.to_owned(), id.to_owned());
@@ -5682,7 +5684,9 @@ impl Engine {
                 now
             }
         };
-        let again = failure.again_in_ms.unwrap_or(START_RETRY_MS);
+        let again = failure
+            .again_in_ms
+            .unwrap_or_else(|| start_ask_interval(now.saturating_sub(first)));
         self.starting.insert(key, (first, now + again));
         if now.saturating_sub(first) >= START_NOTICE_MS {
             let name = self
@@ -6750,6 +6754,19 @@ fn waits_on_answer(task: &Task) -> bool {
 /// A Task whose worktree waits out the keep period: cancelled, taken over
 /// by an outside pull request, or done through one (its worker's own work was
 /// never merged).
+/// When a worker that has been starting for `age_ms` is asked again and the
+/// host has no opinion. An agent usually shows its session within seconds, so
+/// a young start is asked on the next tick and is accepted that soon after;
+/// an old one more likely waits on a trust or login prompt, which a person
+/// answers, so it is asked every [`START_RETRY_MS`].
+fn start_ask_interval(age_ms: u64) -> u64 {
+    if age_ms < START_RETRY_MS {
+        0
+    } else {
+        START_RETRY_MS
+    }
+}
+
 fn kept_for_revive(task: &Task) -> bool {
     match task.state {
         TaskState::Cancelled | TaskState::Outside => true,

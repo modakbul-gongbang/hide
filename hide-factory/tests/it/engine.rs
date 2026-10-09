@@ -3267,6 +3267,58 @@ fn a_worker_whose_agent_has_not_started_holds_its_slot_and_is_asked_again_later(
 }
 
 #[test]
+fn a_young_start_is_accepted_on_the_tick_after_its_agent_shows_not_thirty_seconds_later() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().spawn_failure = Some(Failure::starting(
+        "worker.spawn",
+        "native_identity_unavailable",
+    ));
+    let a = h.ready("A", &[]);
+    for _ in 0..3 {
+        h.advance(2_000);
+        h.engine.tick();
+    }
+    assert_eq!(h.state(&f, &a), TaskState::Waiting);
+    // The agent shows its session ten seconds in, past the wait one ask makes
+    // for it: the next tick, not the next half minute, takes the worker.
+    h.world().spawn_failure = None;
+    h.advance(2_000);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &a), TaskState::Running);
+    assert_eq!(h.world().spawned.len(), 1);
+}
+
+#[test]
+fn an_old_start_is_asked_again_every_thirty_seconds_not_every_tick() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().spawn_failure = Some(Failure::starting(
+        "worker.spawn",
+        "native_identity_unavailable",
+    ));
+    let a = h.ready("A", &[]);
+    let asks = |h: &Bench| h.world().spawn_asks.len();
+    // A minute of ticks takes the young start's asks and then the old one's.
+    for _ in 0..30 {
+        h.advance(2_000);
+        h.engine.tick();
+    }
+    let young = asks(&h);
+    assert!(young >= 10, "a young start is asked on the tick: {young}");
+    for _ in 0..60 {
+        h.advance(2_000);
+        h.engine.tick();
+    }
+    let old = asks(&h) - young;
+    assert!(
+        (3..=5).contains(&old),
+        "two minutes of an old start are four asks: {old}"
+    );
+    assert_eq!(h.state(&f, &a), TaskState::Waiting);
+}
+
+#[test]
 fn a_refused_worker_start_stops_the_task_once_and_a_retry_starts_it() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
