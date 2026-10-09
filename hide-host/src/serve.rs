@@ -54,7 +54,7 @@ pub trait Terminals: Send + Sync {
 }
 
 pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
-    serve_in(input, output, Env::of_process(), None)
+    serve_in(input, output, Env::of_process(), Services::none())
 }
 
 /// [`serve`] with the node's terminal service.
@@ -63,15 +63,55 @@ pub fn serve_with_terminals(
     output: impl Write + Send,
     terminals: &dyn Terminals,
 ) -> io::Result<()> {
-    serve_in(input, output, Env::of_process(), Some(terminals))
+    serve_with(
+        input,
+        output,
+        Services {
+            terminals: Some(terminals),
+            herdr_socket: None,
+        },
+    )
+}
+
+/// What a node serves on its link besides its files and machine work.
+pub struct Services<'a> {
+    /// The node's terminal service.
+    pub terminals: Option<&'a dyn Terminals>,
+    /// The node's own Herdr socket, which its core reaches only through the
+    /// link: a node that dialed its core (PRD core-host-node-remote-core
+    /// D-18). A device its core dialed has none, and refuses Herdr streams.
+    pub herdr_socket: Option<PathBuf>,
+}
+
+impl Services<'_> {
+    /// Files and machine work only.
+    pub fn none() -> Self {
+        Self {
+            terminals: None,
+            herdr_socket: None,
+        }
+    }
+}
+
+/// [`serve`] with what `services` names.
+pub fn serve_with(
+    input: impl BufRead,
+    output: impl Write + Send,
+    services: Services<'_>,
+) -> io::Result<()> {
+    serve_in(input, output, Env::of_process(), services)
 }
 
 fn serve_in(
     input: impl BufRead,
     output: impl Write + Send,
     env: Env,
-    terminals: Option<&dyn Terminals>,
+    services: Services<'_>,
 ) -> io::Result<()> {
+    let terminals = services.terminals;
+    let herdr = services
+        .herdr_socket
+        .map(crate::herdr_bridge::HerdrBridge::new);
     let output = Mutex::new(output);
     // The calls handed to a worker and not yet answered, each with whether
     // it was asked to stop; the reader enters one before handing it over, so
@@ -109,6 +149,7 @@ fn serve_in(
             let bridges = &bridges;
             let env = &env;
             let running = &running;
+            let herdr = &herdr;
             scope.spawn(move || {
                 loop {
                     let request = match receiver.lock().map(|receiver| receiver.recv()) {
@@ -143,6 +184,21 @@ fn serve_in(
                         Call::PaneInspect { pane_id } => panes.inspect(&pane_id).and_then(to_value),
                         Call::StreamWrite { stream, data } => panes.write_stream(stream, &data),
                         Call::StreamClose { stream } => panes.close_stream(stream),
+                        Call::HerdrOpen { stream } => match herdr {
+                            Some(herdr) => herdr.open(scope, output, stream),
+                            None => Err(no_herdr_bridge()),
+                        },
+                        Call::HerdrWrite { stream, data } => match herdr {
+                            Some(herdr) => herdr.write(stream, &data),
+                            None => Err(no_herdr_bridge()),
+                        },
+                        Call::HerdrClose { stream } => match herdr {
+                            Some(herdr) => {
+                                herdr.close(stream);
+                                Ok(Value::Null)
+                            }
+                            None => Err(no_herdr_bridge()),
+                        },
                         call => handle_with_progress(call, env, &mut |report| {
                             write_line(
                                 output,
@@ -177,6 +233,10 @@ fn serve_in(
         if let Some(terminals) = terminals {
             terminals.stop();
         }
+        // Each Herdr stream's reader ends with its connection.
+        if let Some(herdr) = &herdr {
+            herdr.stop();
+        }
         // The connection is gone: a kit step still running ends its child
         // rather than keep the helper alive after it, and the pane service
         // ends its listener and streams so the scope can close.
@@ -186,6 +246,15 @@ fn serve_in(
     });
     panes.remove_folder();
     result
+}
+
+/// Why a node with no Herdr bridge refuses a Herdr stream: its core
+/// reaches its Herdr over SSH, never through the link.
+fn no_herdr_bridge() -> HostError {
+    HostError::new(
+        ErrorCode::Unsupported,
+        "This node's Herdr is not reached through its link",
+    )
 }
 
 fn read_requests(
@@ -939,6 +1008,9 @@ pub fn handle_with_progress(
             ErrorCode::Unsupported,
             "Only a device node's link carries its panes' credentials and commands",
         )),
+        Call::HerdrOpen { .. } | Call::HerdrWrite { .. } | Call::HerdrClose { .. } => {
+            Err(no_herdr_bridge())
+        }
         Call::SessionText { path, scope } => session_read(env, &path, scope.as_ref(), |path| {
             hide_session::read_bounded(path, hide_session::SESSION_READ_LIMIT_BYTES)
                 .map_err(|e| e.to_string())
@@ -1324,7 +1396,7 @@ mod tests {
                 io::BufReader::new(theirs),
                 Lines(written),
                 env,
-                None,
+                Services::none(),
             ));
         });
         let mut text = String::new();
@@ -1416,7 +1488,12 @@ mod tests {
                 stop: Arc::default(),
                 ..Env::of_process()
             };
-            let _ = done.send(serve_in(io::BufReader::new(theirs), output, env, None));
+            let _ = done.send(serve_in(
+                io::BufReader::new(theirs),
+                output,
+                env,
+                Services::none(),
+            ));
         });
         input.write_all(&line(7, watch())).unwrap();
         input.write_all(&line(7, watch())).unwrap();

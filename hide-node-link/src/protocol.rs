@@ -85,7 +85,14 @@ use crate::error::HostError;
 /// keys and output both ways. A node on 25 would read those lines as
 /// unreadable requests, so it is refused at Hello and reinstalled; the
 /// audited 24 link keeps its legacy features and starts no terminals.
-pub const PROTOCOL_VERSION: u32 = 26;
+/// 27: a node may dial its core (PRD core-host-node-remote-core D-04): the
+/// core reaches such a node's Herdr through streams inside the link
+/// (`herdr_open`, `herdr_write`, `herdr_close` and
+/// [`crate::panes::NodeEvent::HerdrData`]), takes a label generator's lock
+/// on the node that owns the Herdr server, and terminal lines name the
+/// screen a view or a key came from. A node on 26 would refuse the first as
+/// unknown, so it is refused at Hello and reinstalled.
+pub const PROTOCOL_VERSION: u32 = 27;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -536,6 +543,23 @@ pub enum Call {
     StreamClose {
         stream: u64,
     },
+    /// Opens `stream` to this node's own Herdr socket for the core: the
+    /// only way a core reaches the Herdr of a node that dialed it (PRD
+    /// core-host-node-remote-core D-18, D-19). What the node reads arrives as
+    /// [`crate::panes::NodeEvent::HerdrData`]. A node with no Herdr bridge,
+    /// a device its core dialed included, refuses it.
+    HerdrOpen {
+        stream: u64,
+    },
+    /// Base64 bytes for Herdr on `stream`; answered once they are written.
+    HerdrWrite {
+        stream: u64,
+        data: String,
+    },
+    /// Ends `stream` from the core's side.
+    HerdrClose {
+        stream: u64,
+    },
     /// Stops the reporting call `request`: its next report is answered with
     /// false, and it answers as stopped. Answered at once, before any
     /// waiting request, and a request that is no longer running is left
@@ -628,6 +652,9 @@ impl Call {
             | Self::PaneInspect { .. }
             | Self::StreamWrite { .. }
             | Self::StreamClose { .. }
+            | Self::HerdrOpen { .. }
+            | Self::HerdrWrite { .. }
+            | Self::HerdrClose { .. }
             | Self::Cancel { .. } => true,
             Self::AiAvailability { .. }
             | Self::AiModels { .. }

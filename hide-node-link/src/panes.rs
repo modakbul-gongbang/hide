@@ -13,6 +13,10 @@ pub const MAX_STREAMS: usize = 8;
 pub const MAX_CHUNK: usize = 48 * 1024;
 /// Chunks the core holds for one stream before the stream is ended.
 pub const MAX_PENDING_CHUNKS: usize = 64;
+/// Herdr streams one link carries at once (PRD core-host-node-remote-core
+/// D-20): the session subscription, controls, doorbell, find and phone
+/// reply of a node that dialed its core each hold one while they run.
+pub const MAX_HERDR_STREAMS: usize = 32;
 
 /// Which shell a pane runs, as its Herdr terminal and the shell's pid and
 /// start: the identity a bootstrap checks a caller against.
@@ -48,6 +52,12 @@ pub enum NodeEvent {
     StreamData { stream: u64, data: String },
     /// The command's side of the stream ended.
     StreamClosed { stream: u64 },
+    /// Base64 bytes the node read from its Herdr on a stream the core
+    /// opened with `herdr_open`.
+    HerdrData { stream: u64, data: String },
+    /// The node's Herdr ended a stream the core opened, or the node did at
+    /// one of its caps; `reason` says which, never what the stream carried.
+    HerdrClosed { stream: u64, reason: String },
     /// The node turned a caller away on its own, before the core was asked
     /// or at one of its caps, with the reason the caller read; the core
     /// records it with the node, since a device's stderr reaches no log.

@@ -26,6 +26,7 @@ pub mod gh;
 pub mod git;
 pub mod git_command;
 pub mod git_watch;
+pub mod herdr_bridge;
 pub mod home;
 pub mod index;
 pub mod kit;

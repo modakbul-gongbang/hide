@@ -15,6 +15,8 @@
 //! by reading the target again rather than by resending it (B14, B33).
 
 use super::*;
+#[path = "link_herdr.rs"]
+mod link_herdr;
 #[path = "retirement.rs"]
 mod retirement;
 use futures_util::{StreamExt, TryStreamExt, stream};
@@ -24,6 +26,7 @@ use hide_node_link::device::{HostConsent, HostIdentity};
 use hide_node_link::panes::{NodeEvent, PanesStarted};
 use hide_node_link::protocol::{Call, Hello, PROTOCOL_VERSION, Request};
 use hide_node_link::{LinkAnswer, NodeLink, call_as};
+pub use link_herdr::{LinkHerdrConnector, MAX_HERDR_PENDING};
 use russh_sftp::client::{RawSftpSession, error::Error as SftpError};
 use russh_sftp::protocol::{FileAttributes, StatusCode};
 use serde_json::value::RawValue;
@@ -450,8 +453,9 @@ struct Inner {
     /// and when the last clone is dropped. The device's connection stays,
     /// since other channels share it.
     closing: Arc<tokio::sync::Notify>,
-    /// The link's place among the connection's session channels.
-    _session_channel: tokio::sync::OwnedSemaphorePermit,
+    /// The link's place among the connection's session channels; a link
+    /// over a local stream takes none.
+    _session_channel: Option<tokio::sync::OwnedSemaphorePermit>,
     writer: tokio::sync::Mutex<Pin<Box<dyn AsyncWrite + Send>>>,
     pending: Mutex<HashMap<u64, Waiting>>,
     closed: Mutex<Option<String>>,
@@ -464,6 +468,9 @@ struct Inner {
     /// on this link (`crate::terminal::device`).
     terminals: std::sync::OnceLock<crate::terminal::device::LineHandler>,
     readers: std::sync::OnceLock<hide_node_link::sessions::ReaderFeatures>,
+    /// The streams to the node's own Herdr open on this link, for a node
+    /// that dialed its core (`link_herdr`).
+    herdr: link_herdr::HerdrStreams,
 }
 
 impl Drop for Inner {
@@ -505,9 +512,7 @@ impl RemoteHost {
                 target: target.to_owned(),
                 runtime: Arc::new(RemoteRuntime(Some(runtime))),
                 closing: Arc::new(tokio::sync::Notify::new()),
-                _session_channel: Arc::new(Semaphore::new(1))
-                    .try_acquire_owned()
-                    .expect("a fresh permit"),
+                _session_channel: None,
                 writer: tokio::sync::Mutex::new(writer),
                 pending: Mutex::new(HashMap::new()),
                 closed: Mutex::new(None),
@@ -516,6 +521,7 @@ impl RemoteHost {
                 roots: Mutex::new(HashMap::new()),
                 terminals: std::sync::OnceLock::new(),
                 readers: std::sync::OnceLock::new(),
+                herdr: Default::default(),
             }),
         }
     }
@@ -853,6 +859,7 @@ fn mark_closed(inner: &Inner, reason: String) {
     drop(closed);
     // Dropping the senders wakes every waiting request as disconnected.
     lock_recover(&inner.pending).clear();
+    inner.herdr.end_all();
     inner.gate.stop(&reason);
 }
 
@@ -1897,10 +1904,211 @@ fn spawn_host(
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> RemoteHost {
     let writer: Pin<Box<dyn AsyncWrite + Send>> = Box::pin(channel.make_writer());
+    start_reader(
+        client.host.host_id.clone(),
+        Arc::clone(&client.runtime),
+        Some(session_channel),
+        writer,
+        LinkSource::Channel {
+            channel,
+            _connection: connection,
+        },
+        panes,
+        on_close,
+    )
+}
+
+/// Where a link's lines come from: a device helper's SSH exec channel, or
+/// the bytes of a node that dialed this core, as its attach role hands them
+/// over a local stream (PRD core-host-node-remote-core D-04, D-10).
+enum LinkSource {
+    Channel {
+        channel: Channel<Msg>,
+        _connection: Arc<Connection>,
+    },
+    Stream(tokio::sync::mpsc::Receiver<Vec<u8>>),
+}
+
+/// What one read of a link's source brought.
+enum Arrival {
+    Data(Vec<u8>),
+    Stderr(Vec<u8>),
+    Ended(String),
+}
+
+impl LinkSource {
+    async fn next(&mut self) -> Arrival {
+        match self {
+            LinkSource::Channel { channel, .. } => loop {
+                match channel.wait().await {
+                    Some(ChannelMsg::Data { data }) => return Arrival::Data(data.to_vec()),
+                    Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        return Arrival::Stderr(data.to_vec());
+                    }
+                    Some(ChannelMsg::ExitStatus { exit_status }) => {
+                        return Arrival::Ended(format!(
+                            "the device helper exited with status {exit_status}"
+                        ));
+                    }
+                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                        return Arrival::Ended(
+                            "the connection to the device helper closed".to_owned(),
+                        );
+                    }
+                    Some(_) => {}
+                }
+            },
+            LinkSource::Stream(chunks) => match chunks.recv().await {
+                Some(chunk) => Arrival::Data(chunk),
+                None => Arrival::Ended("the node's attach stream closed".to_owned()),
+            },
+        }
+    }
+
+    /// Ends what the link read from, so its far end reads the end of its
+    /// input and exits.
+    async fn finish(self) {
+        match self {
+            LinkSource::Channel { channel, .. } => {
+                let _ = channel.eof().await;
+                let _ = channel.close().await;
+            }
+            LinkSource::Stream(chunks) => drop(chunks),
+        }
+    }
+}
+
+/// A link that runs the same reader, calls and pane events as a device's
+/// over a local byte stream: the attach role's, for a node that dialed this
+/// core (PRD core-host-node-remote-core D-10). Its identity, credentials and
+/// revocation are those of any link, whoever dialed. `target` names it in the
+/// log; `stream` is closed when the link ends.
+pub fn over_local_stream(
+    target: &str,
+    stream: hide_platform::ipc::LocalStream,
+    panes: Option<PaneHook>,
+    on_close: Box<dyn FnOnce(String) + Send + 'static>,
+) -> std::io::Result<RemoteHost> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_name("node-link")
+        .enable_all()
+        .build()?;
+    let runtime = Arc::new(RemoteRuntime(Some(runtime)));
+    let shutdown = stream.shutdown_handle();
+    let mut reading = stream.duplicate();
+    let (chunks, arrivals) = tokio::sync::mpsc::channel::<Vec<u8>>(LOCAL_READ_CHUNKS);
+    std::thread::Builder::new()
+        .name("node-link-read".into())
+        .spawn(move || {
+            let mut buffer = vec![0u8; LOCAL_READ_BYTES];
+            loop {
+                match std::io::Read::read(&mut reading, &mut buffer) {
+                    Ok(0) | Err(_) => return,
+                    Ok(read) => {
+                        if chunks.blocking_send(buffer[..read].to_vec()).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        })?;
+    let writer: Pin<Box<dyn AsyncWrite + Send>> = Box::pin(BlockingWriter::new(stream));
+    let ended = Box::new(move |reason: String| {
+        // The read thread ends with the stream, whichever side ended it.
+        shutdown.shutdown();
+        on_close(reason);
+    });
+    Ok(start_reader(
+        target.to_owned(),
+        runtime,
+        None,
+        writer,
+        LinkSource::Stream(arrivals),
+        panes,
+        ended,
+    ))
+}
+
+/// Chunks a local link's read thread holds before the reader takes them; a
+/// reader that falls behind holds the thread, never memory.
+const LOCAL_READ_CHUNKS: usize = 16;
+const LOCAL_READ_BYTES: usize = 64 * 1024;
+
+/// A blocking local stream as the link's writer: each write runs on the
+/// runtime's blocking pool, so a stalled peer holds a pool thread, never the
+/// runtime, and the link's own write timeout still ends the wait.
+struct BlockingWriter {
+    stream: Arc<std::sync::Mutex<hide_platform::ipc::LocalStream>>,
+    writing: Option<tokio::task::JoinHandle<std::io::Result<usize>>>,
+}
+
+impl BlockingWriter {
+    fn new(stream: hide_platform::ipc::LocalStream) -> Self {
+        Self {
+            stream: Arc::new(std::sync::Mutex::new(stream)),
+            writing: None,
+        }
+    }
+}
+
+impl AsyncWrite for BlockingWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffer: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        use std::task::Poll;
+        if self.writing.is_none() {
+            let stream = Arc::clone(&self.stream);
+            let bytes = buffer.to_vec();
+            self.writing = Some(tokio::task::spawn_blocking(move || {
+                let mut stream = lock_recover(&stream);
+                std::io::Write::write_all(&mut *stream, &bytes)?;
+                Ok(bytes.len())
+            }));
+        }
+        let writing = self.writing.as_mut().expect("a write in flight");
+        match Pin::new(writing).poll(context) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(result) => {
+                self.writing = None;
+                Poll::Ready(result.unwrap_or_else(|error| Err(std::io::Error::other(error))))
+            }
+        }
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        _context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+/// The link's reader, the same for every source: lines are framed, sorted
+/// into terminal lines, pane events, reports and answers, and the first
+/// reason to stop ends the link.
+fn start_reader(
+    target: String,
+    runtime: Arc<RemoteRuntime>,
+    session_channel: Option<tokio::sync::OwnedSemaphorePermit>,
+    writer: Pin<Box<dyn AsyncWrite + Send>>,
+    mut source: LinkSource,
+    panes: Option<PaneHook>,
+    on_close: Box<dyn FnOnce(String) + Send + 'static>,
+) -> RemoteHost {
     let closing = Arc::new(tokio::sync::Notify::new());
     let inner = Arc::new(Inner {
-        target: client.host.host_id.clone(),
-        runtime: Arc::clone(&client.runtime),
+        target,
+        runtime: Arc::clone(&runtime),
         closing: Arc::clone(&closing),
         _session_channel: session_channel,
         writer: tokio::sync::Mutex::new(writer),
@@ -1911,23 +2119,22 @@ fn spawn_host(
         roots: Mutex::new(HashMap::new()),
         terminals: std::sync::OnceLock::new(),
         readers: std::sync::OnceLock::new(),
+        herdr: Default::default(),
     });
     let reader = Arc::downgrade(&inner);
-    client.runtime.spawn(async move {
-        let _connection = connection;
-        let mut channel = channel;
+    runtime.spawn(async move {
         let mut buffer: Vec<u8> = Vec::new();
         // How far `buffer` has been searched for a line end, so a large
         // answer arriving in many chunks is scanned once.
         let mut scanned = 0;
         let mut stderr: Vec<u8> = Vec::new();
         let reason = 'read: loop {
-            let message = tokio::select! {
-                message = channel.wait() => message,
+            let arrival = tokio::select! {
+                arrival = source.next() => arrival,
                 () = closing.notified() => break "this Hide closed the link".to_owned(),
             };
-            match message {
-                Some(ChannelMsg::Data { data }) => {
+            match arrival {
+                Arrival::Data(data) => {
                     buffer.extend_from_slice(&data);
                     while let Some(offset) = buffer[scanned..].iter().position(|byte| *byte == b'\n') {
                         let end = scanned + offset;
@@ -1937,91 +2144,25 @@ fn spawn_host(
                         if let Some(reason) = overlong_line(&line) {
                             break 'read reason;
                         }
-                        if line.starts_with(hide_node_link::terminal::TERMINAL_LINE_PREFIX) {
-                            match inner.terminals.get() {
-                                Some(terminals) => terminals(&line),
-                                None => crate::diagnostic!(json!({
-                                    "component": "remote_host",
-                                    "kind": "host.terminal_line_unheard",
-                                    "target": inner.target,
-                                    "bytes": line.len(),
-                                })),
-                            }
-                            continue;
-                        }
-                        if line.starts_with(b"{\"event\":") {
-                            deliver_event(&inner, panes.as_ref(), &line);
-                            continue;
-                        }
-                        if line.starts_with(b"{\"progress\":") {
-                            deliver_report(&inner, &line);
-                            continue;
-                        }
-                        // The answer is only tokenized here and kept as its
-                        // own text; one nobody waits for is never copied.
-                        match serde_json::from_slice::<AnswerLine<'_>>(&line) {
-                            Ok(answer) => {
-                                let outcome = match (answer.ok, answer.error) {
-                                    (Some(raw), None) => Some(Ok(raw)),
-                                    (None, Some(error)) => Some(Err(error)),
-                                    _ => None,
-                                };
-                                let sender = lock_recover(&inner.pending)
-                                    .remove(&answer.id)
-                                    .map(|waiting| waiting.sender);
-                                match (sender, outcome) {
-                                    (Some(sender), Some(outcome)) => {
-                                        let _ = sender
-                                            .send(Delivery::Answer(outcome.map(ToOwned::to_owned)));
-                                    }
-                                    (sender, _) => crate::diagnostic!(json!({
-                                        "component": "remote_host",
-                                        "kind": "host.answer_unmatched",
-                                        "target": inner.target,
-                                        "id": answer.id,
-                                        "awaited": sender.is_some(),
-                                        "bytes": line.len(),
-                                    })),
-                                }
-                            }
-                            // serde's own text can quote the value it could
-                            // not read, which may be file contents, so only
-                            // its class and position are logged (S5.5 B48).
-                            Err(error) => crate::diagnostic!(json!({
-                                "component": "remote_host",
-                                "kind": "host.answer_unreadable",
-                                "target": inner.target,
-                                "class": format!("{:?}", error.classify()),
-                                "line": error.line(),
-                                "column": error.column(),
-                                "bytes": line.len(),
-                            })),
-                        }
+                        deliver_line(&inner, panes.as_ref(), &line);
                     }
                     scanned = buffer.len();
                     if let Some(reason) = overlong_line(&buffer) {
                         break reason;
                     }
                 }
-                Some(ChannelMsg::ExtendedData { data, .. }) => {
+                Arrival::Stderr(data) => {
                     stderr.extend_from_slice(&data);
                     if stderr.len() > 4096 {
                         stderr.drain(..stderr.len() - 4096);
                     }
                 }
-                Some(ChannelMsg::ExitStatus { exit_status }) => {
-                    break format!("the device helper exited with status {exit_status}");
-                }
-                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
-                    break "the connection to the device helper closed".to_owned();
-                }
-                Some(_) => {}
+                Arrival::Ended(reason) => break reason,
             }
         };
-        // Whatever ended the loop, the helper's channel ends with it, so the
-        // helper reads the end of its input and exits.
-        let _ = channel.eof().await;
-        let _ = channel.close().await;
+        // Whatever ended the loop, the source ends with it, so the node
+        // reads the end of its input and exits.
+        source.finish().await;
         if let Some(inner) = reader.upgrade() {
             crate::diagnostic!(json!({
                 "component": "remote_host",
@@ -2040,6 +2181,74 @@ fn spawn_host(
         on_close(reason);
     });
     RemoteHost { inner }
+}
+
+/// Sorts one whole line from the node: a terminal line, a pane event, a
+/// call's report, or an answer.
+fn deliver_line(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
+    if line.starts_with(hide_node_link::terminal::TERMINAL_LINE_PREFIX) {
+        match inner.terminals.get() {
+            Some(terminals) => terminals(line),
+            None => crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.terminal_line_unheard",
+                "target": inner.target,
+                "bytes": line.len(),
+            })),
+        }
+        return;
+    }
+    if line.starts_with(b"{\"event\":\"herdr_") {
+        deliver_herdr(inner, line);
+        return;
+    }
+    if line.starts_with(b"{\"event\":") {
+        deliver_event(inner, panes, line);
+        return;
+    }
+    if line.starts_with(b"{\"progress\":") {
+        deliver_report(inner, line);
+        return;
+    }
+    // The answer is only tokenized here and kept as its own text; one nobody
+    // waits for is never copied.
+    match serde_json::from_slice::<AnswerLine<'_>>(line) {
+        Ok(answer) => {
+            let outcome = match (answer.ok, answer.error) {
+                (Some(raw), None) => Some(Ok(raw)),
+                (None, Some(error)) => Some(Err(error)),
+                _ => None,
+            };
+            let sender = lock_recover(&inner.pending)
+                .remove(&answer.id)
+                .map(|waiting| waiting.sender);
+            match (sender, outcome) {
+                (Some(sender), Some(outcome)) => {
+                    let _ = sender.send(Delivery::Answer(outcome.map(ToOwned::to_owned)));
+                }
+                (sender, _) => crate::diagnostic!(json!({
+                    "component": "remote_host",
+                    "kind": "host.answer_unmatched",
+                    "target": inner.target,
+                    "id": answer.id,
+                    "awaited": sender.is_some(),
+                    "bytes": line.len(),
+                })),
+            }
+        }
+        // serde's own text can quote the value it could not read, which may
+        // be file contents, so only its class and position are logged (S5.5
+        // B48).
+        Err(error) => crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.answer_unreadable",
+            "target": inner.target,
+            "class": format!("{:?}", error.classify()),
+            "line": error.line(),
+            "column": error.column(),
+            "bytes": line.len(),
+        })),
+    }
 }
 
 /// Hands one event line to hided's pane events. A node that sends events
@@ -2085,6 +2294,30 @@ fn deliver_report(inner: &Arc<Inner>, line: &[u8]) {
     let _ = waiting
         .sender
         .send(Delivery::Report(report.report.to_owned()));
+}
+
+/// Hands what the node read from its Herdr to the stream the core opened
+/// (`link_herdr`); these never reach hided's pane events.
+fn deliver_herdr(inner: &Arc<Inner>, line: &[u8]) {
+    match serde_json::from_slice::<NodeEvent>(line) {
+        Ok(NodeEvent::HerdrData { stream, data }) => inner.herdr.data(&inner.target, stream, &data),
+        Ok(NodeEvent::HerdrClosed { stream, reason }) => {
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "herdr_stream.closed_by_node",
+                "target": inner.target,
+                "stream": stream,
+                "reason": reason.chars().take(64).collect::<String>(),
+            }));
+            inner.herdr.end(stream, "the node's Herdr ended the stream");
+        }
+        Ok(_) | Err(_) => crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.event_unreadable",
+            "target": inner.target,
+            "bytes": line.len(),
+        })),
+    }
 }
 
 fn deliver_event(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
@@ -2216,6 +2449,63 @@ mod tests {
         assert_eq!(heard.len(), 1);
         assert_eq!(heard[0].0, "node-a");
         assert!(matches!(&heard[0].1, NodeEvent::PaneProof { pane_id, .. } if pane_id == "w1:p1"));
+    }
+
+    /// A link over a local stream, the one a node that dialed the core
+    /// arrives on (PRD core-host-node-remote-core D-10), answers calls,
+    /// carries the node's events as its own, and ends with its stream: the
+    /// node closing it ends the link, and the link closing ends the stream.
+    #[test]
+    fn a_link_over_a_local_stream_answers_and_ends_with_its_stream() {
+        use std::io::{BufRead, Write};
+        let (core_end, node_end) = hide_platform::ipc::LocalStream::pair().expect("a stream pair");
+        let heard = Arc::new(Heard::default());
+        let slot: PaneEventsSlot = Arc::default();
+        let _ = slot.set(Arc::clone(&heard) as Arc<dyn PaneEvents>);
+        let (closed, ended) = mpsc::channel();
+        let link = over_local_stream(
+            "inbound:node-a",
+            core_end,
+            Some(PaneHook {
+                node: "node-a".to_owned(),
+                events: slot,
+            }),
+            Box::new(move |reason| {
+                let _ = closed.send(reason);
+            }),
+        )
+        .expect("a local link");
+        let node = std::thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(node_end.duplicate());
+            let mut writer = node_end;
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("a request");
+            let request: serde_json::Value = serde_json::from_str(&line).expect("a request line");
+            let event = json!({"event": "revoke", "token": "t"});
+            writeln!(writer, "{event}").expect("an event");
+            let answer = json!({"id": request["id"], "ok": {"echo": request["call"]["call"]}});
+            writeln!(writer, "{answer}").expect("an answer");
+            // The node ends its side; the link reads the end.
+            drop(writer);
+            drop(reader);
+        });
+        let answer = link
+            .call(Call::HookDiagnosis, Duration::from_secs(10))
+            .expect("an answer");
+        let LinkAnswer::Raw(raw) = answer else {
+            panic!("a raw answer")
+        };
+        assert!(raw.get().contains("echo"), "{}", raw.get());
+        node.join().expect("the node thread");
+        let reason = ended
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the link ends with its stream");
+        assert!(reason.contains("attach stream closed"), "{reason}");
+        assert!(link.closed_reason().is_some());
+        let heard = lock_recover(&heard.0);
+        assert_eq!(heard.len(), 1);
+        assert_eq!(heard[0].0, "node-a");
+        assert!(matches!(&heard[0].1, NodeEvent::Revoke { token } if token == "t"));
     }
 
     fn folder(uid: u32, mode: u32) -> FileAttributes {
