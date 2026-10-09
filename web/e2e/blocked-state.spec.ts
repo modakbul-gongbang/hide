@@ -7,7 +7,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 
 test.describe.configure({ timeout: 150_000 });
 
-test("a blocked turn draws a triangle in Needs You and an unfinished turn a half-disc outside it", async ({ page }) => {
+test("a blocked turn draws a triangle in Needs You that dims once read, and an unfinished turn a half-disc outside it", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -27,7 +27,11 @@ test("a blocked turn draws a triangle in Needs You and an unfinished turn a half
     await expect(row(unfinished)).toContainText("Stopped");
     await row(blocked).locator("[data-agent-open]").first().click();
     await expect(page.locator(`[data-pane-view="${blocked}"]`)).toHaveAttribute("data-focused", "true");
-    await expect(row(blocked).locator('[data-agent-status-mark="error"]')).toBeVisible();
+    // Read (B2): the block leaves Needs You for Seen, its triangle dims and its cause stays.
+    const mark = row(blocked).locator('[data-agent-status-mark="error"]');
+    await expect(mark).toHaveClass(/opacity-\(--opacity-read-status\)/);
+    await expect(page.locator(`[data-raised-group="needs_you"] [data-pane="${blocked}"]`)).toHaveCount(0);
+    await expect(row(blocked)).toContainText("디스크가 가득 차 멈췄어요");
   } finally {
     daemon?.stop();
     herdr.stop();
