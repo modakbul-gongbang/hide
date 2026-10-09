@@ -174,22 +174,29 @@ fn run_coordinator(
         Ok(reader) => reader,
         Err(message) => {
             publish_failure(&context, SessionFetchError::Unreachable(message));
-            return;
+            { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":177})); return; }
         }
     };
 
+    let mut tmp_beat = Instant::now();
+    crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.start","target":context.log_target()}));
     loop {
         if context.runtime.upgrade().is_none() {
             stop_subscription(&mut subscription);
-            return;
+            { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":184})); return; }
         }
 
+        if tmp_beat.elapsed() >= Duration::from_secs(3) {
+            tmp_beat = Instant::now();
+            crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.beat","target":context.log_target(),"subscribed":subscription.is_some(),"reconnect_in_ms":reconnect_at.saturating_duration_since(Instant::now()).as_millis() as u64,"has_replica":replica.is_some()}));
+        }
         if subscription.is_none() && Instant::now() >= reconnect_at {
+            crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.connect_attempt","target":context.log_target()}));
             let has_projection = replica.is_some();
             let snapshot_started_at = Instant::now();
             if !begin_delivery_pane_read(&context) {
                 stop_subscription(&mut subscription);
-                return;
+                { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":192})); return; }
             }
             match connect(
                 &context,
@@ -204,8 +211,9 @@ fn run_coordinator(
                 }) => {
                     if context.is_local() && !begin_local_read_record_reconciliation(&context) {
                         stop_subscription(&mut subscription);
-                        return;
+                        { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":207})); return; }
                     }
+                    crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.connected","target":context.log_target()}));
                     replica = Some(next_replica);
                     subscription = Some(next_subscription);
                     reconcile_until = snapshot_at + RECONCILE_GRACE;
@@ -219,7 +227,7 @@ fn run_coordinator(
                         }));
                         stop_subscription(&mut subscription);
                         if !publish_failure(&context, SessionFetchError::Stale(message)) {
-                            return;
+                            { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":222})); return; }
                         }
                         reconnect_at = Instant::now() + reconnect_delay;
                         reconnect_delay = next_reconnect_delay(reconnect_delay);
@@ -260,16 +268,17 @@ fn run_coordinator(
                         )
                     {
                         stop_subscription(&mut subscription);
-                        return;
+                        { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":263})); return; }
                     }
                     if let (Some(home), Some(current)) = (hook_home.as_deref(), replica.as_ref()) {
                         sweep_subagent_counters(home, current);
                     }
                 }
                 Err(error) => {
+                    crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.connect_err","target":context.log_target()}));
                     log_sync_failure(&context, "connect.failed", replica.as_ref(), &error);
                     if !publish_failure(&context, error) {
-                        return;
+                        { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":272})); return; }
                     }
                     reconnect_at = Instant::now() + reconnect_delay;
                     reconnect_delay = next_reconnect_delay(reconnect_delay);
@@ -338,7 +347,7 @@ fn run_coordinator(
                 )
             {
                 stop_subscription(&mut subscription);
-                return;
+                { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":341})); return; }
             }
             if let Some(active) = subscription.as_ref()
                 && let Some(current) = replica.as_mut()
@@ -352,7 +361,7 @@ fn run_coordinator(
                 log_sync_failure(&context, "active_tab_read.failed", Some(current), &error);
                 stop_subscription(&mut subscription);
                 if !publish_failure(&context, error) {
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":355})); return; }
                 }
                 reconnect_at = Instant::now() + reconnect_delay;
                 reconnect_delay = next_reconnect_delay(reconnect_delay);
@@ -400,13 +409,13 @@ fn run_coordinator(
             if let Some(reader) = usage_reader.as_mut() {
                 let Some(activity) = read_usage_activity(&context) else {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":403})); return; }
                 };
                 if let Some(provider_usage) = reader.read_if_due(activity)
                     && !publish_provider_usage(&context, provider_usage)
                 {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":409})); return; }
                 }
             }
 
@@ -421,7 +430,7 @@ fn run_coordinator(
                     next_hook_diagnosis_refresh = Instant::now() + HOOK_DIAGNOSIS_REFRESH_INTERVAL;
                     let Some(observed) = read_settings_observed(&context) else {
                         stop_subscription(&mut subscription);
-                        return;
+                        { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":424})); return; }
                     };
                     if observed
                         && let Some(diagnosis) =
@@ -429,7 +438,7 @@ fn run_coordinator(
                         && !publish_hook_diagnosis(&context, diagnosis)
                     {
                         stop_subscription(&mut subscription);
-                        return;
+                        { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":432})); return; }
                     }
                 }
             }
@@ -441,14 +450,14 @@ fn run_coordinator(
                     && !publish_ports(&context, ports)
                 {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":444})); return; }
                 }
             }
 
             if let Some(reader) = worktree_reader.as_mut() {
                 let Some(request) = read_worktrees_request(&context) else {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":451})); return; }
                 };
                 // A settled removal already took its worktree out of the
                 // catalog, so the rows built on it are rebuilt on this wake
@@ -461,7 +470,7 @@ fn run_coordinator(
                     match publish_worktrees(&context, answer) {
                         None => {
                             stop_subscription(&mut subscription);
-                            return;
+                            { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":464})); return; }
                         }
                         Some(changed) => rebuild |= changed,
                     }
@@ -478,33 +487,33 @@ fn run_coordinator(
                     )
                 {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":481})); return; }
                 }
             }
 
             if let Some(reader) = github_reader.as_mut() {
                 let Some(request) = read_github_request(&context) else {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":488})); return; }
                 };
                 if let Some(github) = reader.read_if_due(request)
                     && !publish_github(&context, github)
                 {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":494})); return; }
                 }
             }
 
             if let Some(reader) = disk_reader.as_mut() {
                 let Some(request) = read_disk_request(&context) else {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":501})); return; }
                 };
                 if let Some(disk) = reader.read_if_due(request)
                     && !publish_disk_usage(&context, disk)
                 {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":507})); return; }
                 }
             }
 
@@ -512,7 +521,7 @@ fn run_coordinator(
                 let Some((request, queued_settings, standing_moved)) = read_ai_request(&context)
                 else {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":515})); return; }
                 };
                 if standing_moved {
                     context.notifier.notify();
@@ -542,14 +551,14 @@ fn run_coordinator(
                     };
                     if !saved {
                         stop_subscription(&mut subscription);
-                        return;
+                        { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":545})); return; }
                     }
                 }
                 if let Some(background_ai) = reader.read_if_due(request)
                     && !publish_background_ai(&context, background_ai)
                 {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":552})); return; }
                 }
             }
         }
@@ -563,7 +572,7 @@ fn run_coordinator(
         match receiver.recv_timeout(timeout) {
             Ok(CoordinatorMessage::Stop) => {
                 stop_subscription(&mut subscription);
-                return;
+                { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":566})); return; }
             }
             Ok(CoordinatorMessage::SubscriptionLine {
                 generation,
@@ -616,7 +625,7 @@ fn run_coordinator(
                                 if outcome.refresh_worktrees && !request_worktree_refresh(&context)
                                 {
                                     stop_subscription(&mut subscription);
-                                    return;
+                                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":619})); return; }
                                 }
                                 if outcome.publish
                                     && !publish_replica(
@@ -629,7 +638,7 @@ fn run_coordinator(
                                     )
                                 {
                                     stop_subscription(&mut subscription);
-                                    return;
+                                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":632})); return; }
                                 }
                                 if let Err(error) = ask_active_tabs(
                                     &mut sync_reader,
@@ -645,7 +654,7 @@ fn run_coordinator(
                                     );
                                     stop_subscription(&mut subscription);
                                     if !publish_failure(&context, error) {
-                                        return;
+                                        { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":648})); return; }
                                     }
                                     reconnect_at = Instant::now() + reconnect_delay;
                                     reconnect_delay = next_reconnect_delay(reconnect_delay);
@@ -655,7 +664,7 @@ fn run_coordinator(
                                 log_sync_failure(&context, kind, Some(current), &error);
                                 stop_subscription(&mut subscription);
                                 if !publish_failure(&context, error) {
-                                    return;
+                                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":658})); return; }
                                 }
                                 reconnect_at = Instant::now() + reconnect_delay;
                                 reconnect_delay = next_reconnect_delay(reconnect_delay);
@@ -694,7 +703,7 @@ fn run_coordinator(
                             "Herdr event stream failed with {code}: {message}"
                         ));
                         if !publish_failure(&context, error) {
-                            return;
+                            { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":697})); return; }
                         }
                         reconnect_at = Instant::now() + reconnect_delay;
                         reconnect_delay = next_reconnect_delay(reconnect_delay);
@@ -708,7 +717,7 @@ fn run_coordinator(
                         );
                         stop_subscription(&mut subscription);
                         if !publish_failure(&context, error) {
-                            return;
+                            { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":711})); return; }
                         }
                         reconnect_at = Instant::now() + reconnect_delay;
                         reconnect_delay = next_reconnect_delay(reconnect_delay);
@@ -738,7 +747,7 @@ fn run_coordinator(
                     &error,
                 );
                 if !publish_failure(&context, error) {
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":741})); return; }
                 }
                 reconnect_at = Instant::now() + reconnect_delay;
                 reconnect_delay = next_reconnect_delay(reconnect_delay);
@@ -791,7 +800,7 @@ fn run_coordinator(
                                             ) =>
                                     {
                                         stop_subscription(&mut subscription);
-                                        return;
+                                        { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":794})); return; }
                                     }
                                     Ok(_) => {}
                                     Err(error) => {
@@ -803,7 +812,7 @@ fn run_coordinator(
                                         );
                                         stop_subscription(&mut subscription);
                                         if !publish_failure(&context, error) {
-                                            return;
+                                            { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":806})); return; }
                                         }
                                         reconnect_at = Instant::now() + reconnect_delay;
                                         reconnect_delay = next_reconnect_delay(reconnect_delay);
@@ -823,7 +832,7 @@ fn run_coordinator(
                                 &context,
                                 stale_if_projected(replica.as_ref(), error),
                             ) {
-                                return;
+                                { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":826})); return; }
                             }
                             reconnect_at = Instant::now() + reconnect_delay;
                             reconnect_delay = next_reconnect_delay(reconnect_delay);
@@ -850,7 +859,7 @@ fn run_coordinator(
                                     &mut arrivals,
                                 ) {
                                     stop_subscription(&mut subscription);
-                                    return;
+                                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":853})); return; }
                                 }
                             }
                             Err(error) => {
@@ -862,7 +871,7 @@ fn run_coordinator(
                                 );
                                 stop_subscription(&mut subscription);
                                 if !publish_failure(&context, error) {
-                                    return;
+                                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":865})); return; }
                                 }
                                 reconnect_at = Instant::now() + reconnect_delay;
                                 reconnect_delay = next_reconnect_delay(reconnect_delay);
@@ -887,7 +896,7 @@ fn run_coordinator(
                                     &mut arrivals,
                                 ) {
                                     stop_subscription(&mut subscription);
-                                    return;
+                                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":890})); return; }
                                 }
                             }
                             Ok(false) => {}
@@ -900,7 +909,7 @@ fn run_coordinator(
                                 );
                                 stop_subscription(&mut subscription);
                                 if !publish_failure(&context, error) {
-                                    return;
+                                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":903})); return; }
                                 }
                                 reconnect_at = Instant::now() + reconnect_delay;
                                 reconnect_delay = next_reconnect_delay(reconnect_delay);
@@ -931,7 +940,7 @@ fn run_coordinator(
                     )
                 {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":934})); return; }
                 }
             }
             Ok(CoordinatorMessage::Labels) => {
@@ -954,13 +963,13 @@ fn run_coordinator(
                     )
                 {
                     stop_subscription(&mut subscription);
-                    return;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":957})); return; }
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 stop_subscription(&mut subscription);
-                return;
+                { crate::diagnostic!(json!({"component":"tmp_sync","kind":"coordinator.exit","target":context.log_target(),"line":963})); return; }
             }
         }
     }
@@ -1195,7 +1204,7 @@ fn publish_replica(
         if let SessionSyncTarget::Remote { target_id, .. } = &context.target
             && !guard.remote_coordinator_is_current(target_id, &context.api_connector)
         {
-            return false;
+            { crate::diagnostic!(json!({"component":"tmp_sync","kind":"publish.false","target":context.log_target(),"at":1})); return false; }
         }
         // A pane announced with a cwd Herdr has not confirmed must not group
         // its tab under another folder before the worker's read lands. Its
@@ -1259,12 +1268,12 @@ fn publish_replica(
         #[cfg(test)]
         coordinator_fence_tests::before_remote_ingest();
         let Some(runtime) = context.runtime.upgrade() else {
-            return false;
+            { crate::diagnostic!(json!({"component":"tmp_sync","kind":"publish.false","target":context.log_target(),"at":2})); return false; }
         };
         let changed = match runtime.lock() {
             Ok(mut guard) => {
                 if !guard.remote_coordinator_is_current(target_id, &context.api_connector) {
-                    return false;
+                    { crate::diagnostic!(json!({"component":"tmp_sync","kind":"publish.false","target":context.log_target(),"at":3})); return false; }
                 }
                 guard.ingest_remote_session(target_id, fetched)
             }
@@ -1278,7 +1287,7 @@ fn publish_replica(
     }
 
     let Some(runtime) = context.runtime.upgrade() else {
-        return false;
+        { crate::diagnostic!(json!({"component":"tmp_sync","kind":"publish.false","target":context.log_target(),"at":4})); return false; }
     };
     let (
         node,
@@ -1404,7 +1413,7 @@ fn publish_replica(
     };
 
     let Some(runtime) = context.runtime.upgrade() else {
-        return false;
+        { crate::diagnostic!(json!({"component":"tmp_sync","kind":"publish.false","target":context.log_target(),"at":5})); return false; }
     };
     // The unsequenced stream can still contain a layout from an older focus.
     // A focus that differs from Hide's is read back from Herdr, but the

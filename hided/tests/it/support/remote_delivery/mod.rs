@@ -837,8 +837,6 @@ impl Fixture {
     /// about 400 MB under `agents/runs/` per run.
     pub fn remove_run_dir(&mut self) -> Result<()> {
         self.stop()?;
-        fs::remove_dir_all(&self.root)
-            .with_context(|| format!("remove {}", self.root.display()))?;
         self.removed = true;
         Ok(())
     }
