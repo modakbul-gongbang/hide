@@ -1473,7 +1473,7 @@ struct Turns {
     /// Reads the records that start or end background work the agent waits
     /// on; only a format that declares it can prove one
     /// ([`Agent::reports_wake_devices`]).
-    wake: Option<fn(&Value) -> std::result::Result<Option<turns::TurnMark>, SkipReason>>,
+    wake: Option<turns::wake::Parser>,
     human_starts_turn: bool,
     large: Option<fn(&str) -> Option<String>>,
 }

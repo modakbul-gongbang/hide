@@ -292,7 +292,7 @@ const conditionWords = condition => `${condition.theme === 'light' ? 'Light' : '
 async function enterState(page, state, target) {
   await page.mouse.move(0, 0);
   await page.evaluate(() => document.activeElement?.blur());
-  if (state === 'hover-parent') await page.locator('nav[data-sidebar] li[data-pane="a1"]').hover();
+  if (state === 'hover-parent') await page.locator('nav[data-sidebar] li[data-pane="a1"]').first().hover();
   if (state === 'focus-parent') {
     await page.keyboard.press('Shift');
     await page.locator('nav[data-sidebar] [data-agent-open="a1"]').focus();
@@ -338,13 +338,13 @@ async function measure(page, geometry) {
   const rest = await geometry.rowBoxes(page);
   const hover = {}, focus = {};
   for (const target of await geometry.rowTargets(page)) {
-    await page.locator(target.row).hover();
+    await page.locator(target.row).first().hover();
     await page.waitForTimeout(30);
     hover[target.key] = await geometry.rowBoxes(page);
     if (target.control) {
       await page.mouse.move(0, 0);
       await page.keyboard.press('Shift');
-      await page.locator(target.control).focus();
+      await page.locator(target.control).first().focus();
       await page.waitForTimeout(30);
       focus[target.key] = await geometry.rowBoxes(page);
       await page.evaluate(() => document.activeElement?.blur());

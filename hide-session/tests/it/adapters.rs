@@ -478,6 +478,11 @@ mod wake_devices {
         assert!(!answer.turns.as_ref().unwrap().wake_overflowed());
     }
 
+    /// The survey in `agents/runs/agent-blocked-state/wake-device-survey.md`
+    /// read real Codex, Grok, Pi, omp, Cursor and OpenCode sessions: none
+    /// writes a record that proves a started task still runs or that a new
+    /// process began. Each declares no device, and the records that look
+    /// closest to one (and Claude's own) prove nothing when read as theirs.
     #[test]
     fn no_other_agent_reports_a_device() {
         for agent in [
@@ -491,19 +496,43 @@ mod wake_devices {
             assert!(!agent.reports_wake_devices(), "{agent:?}");
         }
         assert!(Agent::Claude.reports_wake_devices());
-        let home = home(Agent::Codex);
-        let path = session_file(home.path(), Agent::Codex);
-        append(
-            &path,
-            &[
-                boot("SessionStart:startup"),
-                started("Command running in background with ID: bg1"),
-                json!({"type": "response_item", "timestamp": "2026-10-03T01:10:00.000Z",
+        let records = [
+            boot("SessionStart:startup"),
+            started("Command running in background with ID: bg1"),
+            ended("bg1"),
+            // Codex: a running exec session answers with its session id and
+            // writes nothing when it ends.
+            json!({"type": "response_item", "timestamp": "2026-10-03T01:10:00.000Z",
                 "payload": {"type": "function_call_output", "call_id": "c1", "output": "Process running with session ID 1234"}}),
-            ],
+            // Grok: a command moved to the background is `running` in the
+            // record and its end does not create a turn or a record of its own.
+            json!({"type": "tool_result", "tool_call_id": "call-1", "content": "<task-id>call-1</task-id>\n<task-type>bash</task-type>\n<status>running</status>\n<summary>Command has been automatically moved to background</summary>"}),
+        ];
+        let contents: String = records.iter().map(|record| format!("{record}\n")).collect();
+        for agent in [
+            Agent::Codex,
+            Agent::Grok,
+            Agent::Pi,
+            Agent::Omp,
+            Agent::Cursor,
+            Agent::OpenCode,
+        ] {
+            let parsed = hide_session::parse_events(agent, &contents);
+            assert!(
+                !parsed
+                    .turn_marks
+                    .iter()
+                    .any(|(_, mark)| matches!(mark, hide_session::turns::TurnMark::Wake(_))),
+                "{agent:?} proved a device from a record that proves none"
+            );
+        }
+        let home = home(Agent::Codex);
+        append(&session_file(home.path(), Agent::Codex), &records);
+        assert_eq!(
+            live(&read_whole(home.path(), Agent::Codex)),
+            [],
+            "Codex records prove no running task"
         );
-        let answer = read_whole(home.path(), Agent::Codex);
-        assert_eq!(live(&answer), [], "Codex records prove no running task");
     }
 }
 

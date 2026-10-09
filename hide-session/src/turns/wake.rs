@@ -12,6 +12,8 @@ use serde_json::Value;
 use super::{NATIVE_ID_LIMIT_BYTES, TurnMark, WakeMark, native::TOOL_MARK_LIMIT};
 use crate::SkipReason;
 
+pub(crate) type Parser = fn(&Value) -> Result<Option<TurnMark>, SkipReason>;
+
 /// The wake marks one Claude Code record carries; empty for most records.
 pub(crate) fn claude(item: &Value) -> Result<Option<TurnMark>, SkipReason> {
     let mut marks = Vec::new();
@@ -274,13 +276,13 @@ mod tests {
                 marks(
                     json!({"type": "queue-operation", "operation": "enqueue", "content": notification(status)})
                 ),
-                [ended.clone()]
+                std::slice::from_ref(&ended)
             );
             assert_eq!(
                 marks(
                     json!({"type": "attachment", "attachment": {"type": "queued_command", "prompt": notification(status)}})
                 ),
-                [ended.clone()]
+                std::slice::from_ref(&ended)
             );
         }
         assert!(marks(json!({"type": "queue-operation", "operation": "enqueue", "content": notification("running")})).is_empty());
