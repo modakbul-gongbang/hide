@@ -297,6 +297,15 @@ impl Fixture {
         log_rows(&self._ipc.path().join("s/Logs/core.jsonl"), component, kind)
     }
 
+    /// The core's loopback port and screen token.
+    pub fn core_screen(&self) -> (u16, String) {
+        (self.port, self.token.clone())
+    }
+
+    pub fn core_home(&self) -> &Path {
+        &self.core.environment.home
+    }
+
     pub fn snapshot(&self) -> Result<Value> {
         Ok(Renderer::connect(self.port, &self.token)?
             .snapshot()

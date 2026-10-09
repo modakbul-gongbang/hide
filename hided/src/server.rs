@@ -117,6 +117,8 @@ pub struct AppState {
     pub mobile: Arc<crate::mobile::Mobile>,
     /// The grants this core handed linked nodes' screen relays (`relay`).
     pub relay_grants: Arc<crate::attach::RelayGrants>,
+    /// Windows of this machine open now (`OwnScreen`).
+    pub own_screens: Arc<Mutex<usize>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -859,6 +861,9 @@ async fn screen_loop(
     if desktop {
         state.desktop_renderers.fetch_add(1, Ordering::SeqCst);
     }
+    // A window of this machine draws linked nodes' panes from this hub, so
+    // they send their output up while one is open (`Router::mirror`).
+    let _own_screen = (renderer && relay.is_none()).then(|| OwnScreen::arrive(&state));
     // A reconnecting client resumes from the cursor it last applied, so the
     // first frame carries only what changed while it was away; a fresh client
     // (cursor 0) gets the whole state.
@@ -3375,6 +3380,43 @@ pub(crate) fn dispatch_ui_attached(core: &CoreHandle, attached: bool) {
             "{}",
             json!({"component": "hided", "kind": "ui_attached.dispatch_failed", "attached": attached, "message": error})
         );
+    }
+}
+
+/// A window of this machine, counted while it is open; the first to open
+/// and the last to close tell every node whether one draws its panes.
+struct OwnScreen {
+    count: Arc<Mutex<usize>>,
+    terminals: Arc<hide_node::terminal::router::Router>,
+}
+
+impl OwnScreen {
+    fn arrive(state: &AppState) -> Self {
+        let mut count = state
+            .own_screens
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *count += 1;
+        if *count == 1 {
+            state.core.terminals.mirror(true);
+        }
+        Self {
+            count: Arc::clone(&state.own_screens),
+            terminals: Arc::clone(&state.core.terminals),
+        }
+    }
+}
+
+impl Drop for OwnScreen {
+    fn drop(&mut self) {
+        let mut count = self
+            .count
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            self.terminals.mirror(false);
+        }
     }
 }
 

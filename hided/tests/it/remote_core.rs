@@ -258,6 +258,64 @@ fn plain(screen: &str) -> String {
     text
 }
 
+/// Brings the checkout at `path` on `device` forward from `socket`, as a
+/// click on its sidebar row does, once the core's navigator lists it.
+async fn focus_checkout(
+    fixture: &Fixture,
+    socket: &mut Socket,
+    device: &str,
+    path: &std::path::Path,
+) -> Result<()> {
+    send(socket, "focus_device", json!({"device_id": device})).await?;
+    let path = path.to_string_lossy().into_owned();
+    let mut seen = Value::Null;
+    let (workspace, checkout) = tokio::task::block_in_place(|| {
+        wait_for("the checkout in the core's navigator", || {
+            let snapshot = fixture.snapshot()?;
+            // This machine's checkouts are the navigator's; a device's are
+            // its session's.
+            let mut listed: Vec<Value> = snapshot["navigator"]["workspaces"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            for remote in snapshot["status"]["remote"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                listed.extend(
+                    remote["session"]["workspaces"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default(),
+                );
+            }
+            seen = json!(
+                listed
+                    .iter()
+                    .map(|workspace| &workspace["path"])
+                    .collect::<Vec<_>>()
+            );
+            Ok(listed
+                .iter()
+                .find(|workspace| workspace["path"] == path.as_str())
+                .and_then(|workspace| {
+                    Some((
+                        workspace["id"].as_str()?.to_owned(),
+                        workspace["checkouts"][0]["id"].as_str()?.to_owned(),
+                    ))
+                }))
+        })
+    })
+    .with_context(|| format!("the core's navigator: {seen}"))?;
+    send(
+        socket,
+        "focus_checkout",
+        json!({"workspace_id": workspace, "checkout_id": checkout, "focus_device": true}),
+    )
+    .await
+}
+
 async fn node_health(port: u16) -> Result<Value> {
     let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -374,8 +432,56 @@ fn a_screen_on_the_node_draws_the_cores_state_and_its_own_pane() -> Result<()> {
                 json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
             )
             .await?;
-            send(&mut socket, "focus_device", json!({"device_id": node})).await?;
+            focus_checkout(&fixture, &mut socket, &node, &project).await?;
             type_and_read(&mut socket, &pane, "echo node-\"ok\"", "node-ok").await?;
+            // A pane of the core's machine, typed from the node's screen: its
+            // keys and output ride the node's terminals relay.
+            let core_project = fixture.core_home().join("project");
+            let core_pane = fixture.core.workspace_at(&core_project)?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"path": core_project, "label": "core", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(&fixture, &mut socket, CORE_NODE, &core_project).await?;
+            type_and_read(&mut socket, &core_pane, "echo core-\"ok\"", "core-ok").await?;
+            // A window of the core's own draws the node's pane too, once it
+            // opens: the node sends its output up only then.
+            let (core_port, core_token) = fixture.core_screen();
+            let mut window = screen_socket(core_port, &core_token).await?;
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while next_frame(&mut window, deadline)
+                .await?
+                .context("no snapshot reached the core's window")?["type"]
+                != "snapshot"
+            {}
+            // The operator looks at the node's checkout again, from the
+            // node's screen, and a window of the core's own opens on it.
+            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            send(
+                &mut window,
+                "terminal_viewport",
+                json!({"pane_id": pane, "cols": 100, "rows": 30, "new_view": true}),
+            )
+            .await?;
+            let keys = base64::engine::general_purpose::STANDARD.encode("echo mirror-\"ok\"\r");
+            send(&mut socket, "key", json!({"pane_id": pane, "bytes_base64": keys})).await?;
+            let mut drawn = String::new();
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                let frame = next_frame(&mut window, deadline).await?.with_context(|| {
+                    format!("the node's pane never drew on the core's window: {:?}", plain(&drawn))
+                })?;
+                for (from, bytes) in chunks(&frame) {
+                    if from == pane {
+                        drawn.push_str(&String::from_utf8_lossy(&bytes));
+                    }
+                }
+                if plain(&drawn).contains("mirror-ok") {
+                    break;
+                }
+            }
             Ok::<_, anyhow::Error>(())
         })
     })();
