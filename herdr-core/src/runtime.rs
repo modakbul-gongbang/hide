@@ -51,7 +51,7 @@ mod view_bookmarks;
 mod workspace_control;
 mod workspace_view;
 
-pub(crate) use factory::WorkerProbe;
+pub(crate) use factory::{DormantState, DormantWorker, FactoryPane, FactoryWake, WorkerProbe};
 pub use hosts::WorkspaceRemoteRoute;
 pub(crate) use kit::{DeviceKitAnswer, DeviceKitCall, DeviceKitWork, KitJob};
 pub use snapshot_delta::serialize_snapshot_delta;
@@ -1038,6 +1038,10 @@ pub struct Runtime {
     /// Factory host; a letter to any other `factory:` name has no recipient.
     /// Each open Factory's id with its stall window (D-30, B24).
     factory_recipients: std::collections::BTreeMap<String, u64>,
+    /// The panes the open Factories' workers run in, as the Factory host last
+    /// published them: a sleep that closes a pane keeps whose conversation it
+    /// holds (#857).
+    factory_panes: HashMap<String, factory::FactoryPane>,
     /// The Factory screens' way to the engine thread; `None` when the host
     /// did not start.
     factory_screen: Option<crate::factory::ScreenPort>,
@@ -1850,6 +1854,7 @@ impl Runtime {
             delivery_client: None,
             delivery_observations: HashMap::new(),
             factory_recipients: std::collections::BTreeMap::new(),
+            factory_panes: HashMap::new(),
             factory_screen: None,
             delivery_overflow: HashSet::new(),
             delivery_connected: HashSet::new(),

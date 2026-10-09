@@ -844,7 +844,7 @@ fn allocate(ledger: &mut Ledger, prefix: &str) -> Result<String, String> {
 
 #[cfg(test)]
 pub(crate) use executor::{SPAWN, SPAWN_TURN};
-pub(crate) use executor::{link_fork, register_code_owned, run};
+pub(crate) use executor::{WokenWorker, link_fork, register_code_owned, register_woken, run};
 
 #[cfg(test)]
 mod tests {

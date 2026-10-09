@@ -591,6 +591,15 @@ A wake saves the intent before creating its separate tab, saves the owned tab be
 Its stable intent marker permits reuse of only its own tab; no previous registration, lineage, pane address, input or terminal capability is copied into the new execution.
 Restart converts pending work to Unknown and never resends creation, close or start automatically.
 These transitions live in the `dormant` child modules of the same three sleep owners, and all persistence, Herdr and folder I/O stays off `Mutex<Runtime>`.
+A Factory worker's sleep (`docs/factory.md`, The worker lifecycle) is the same record with the Factory's worker bound to it.
+The host publishes its sleeper panes, each with the worker in it and the kind and start time of its agent, and the core binds the intent to the Factory, the worker's agent record, name and worktree when the pane and the agent kind match, whoever asked for the sleep.
+A record saved before the host published its worker is unbound, and a wake accepts it only for a worker of the same kind that started before the sleep.
+A close the Hide sleep made is not an operator close: a confirmed dormant close skips the pane-closed report to the Factory, while any other close still pauses the Task.
+A Factory wake binds the saved conversation to its worker as it begins, so the wake is asked only for a record that is the worker's own; a record whose close has not landed answers "ask later", and an agent started after the sleep or of another kind answers "awake".
+When current reader facts confirm the conversation in the new tab, the record is kept as `Woken`, with that tab's pane, instead of being cleared, because the pane is the only way back to the worker.
+The host reads these records each tick, registers the new pane under the Factory outside the runtime lock, has the engine rebind the Task's worker, and only then asks the core to release the record.
+A `Woken` record no one binds within an hour is dropped with the `agent_sleep.woken_unbound` diagnostic, and a record whose wake failed or stayed unconfirmed stops the Task once.
+`Woken` is never published in the snapshot, so no screen draws it.
 The current directory-chain barrier is supported on Unix; an unsupported platform refuses dormant persistence rather than returning a durability receipt.
 
 ## The link record

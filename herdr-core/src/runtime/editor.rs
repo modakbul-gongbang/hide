@@ -1936,7 +1936,7 @@ impl Runtime {
         if matches!(operation.phase.as_str(), "completed" | "failed" | "refused") {
             return false;
         }
-        self.confirm_dormant_close(&operation);
+        let slept = self.confirm_dormant_close(&operation);
         self.op_timings.stamp(
             &super::op_timing::pane_close_op_id(key),
             super::op_timing::Stage::Applied,
@@ -1954,7 +1954,10 @@ impl Runtime {
             current.deadline_at_unix_ms = None;
         }
         self.clear_close_guards(&operation);
-        self.factory_panes_closed(&operation.pane_ids);
+        // Hide closed a pane it put to sleep: no operator closed a worker.
+        if !slept {
+            self.factory_panes_closed(&operation.pane_ids);
+        }
         if operation.item.is_none() {
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: matches!(

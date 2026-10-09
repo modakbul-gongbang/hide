@@ -6,7 +6,7 @@
 //! The engine opens its store the first time it is asked, or at start when a
 //! store already exists, so a machine without a Factory pays nothing.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
@@ -29,10 +29,11 @@ use hide_node_link::factory::{FactoryCall, MemoryPressure as NodeMemoryPressure}
 use hide_node_link::protocol::Call;
 use serde_json::{Value, json};
 
+use crate::agent_sleep::FactoryWorker;
 use crate::delivery;
 use crate::handle::ChangeNotifier;
 use crate::model::InterfaceLanguage;
-use crate::runtime::Runtime;
+use crate::runtime::{DormantState, FactoryPane, FactoryWake, Runtime};
 
 pub mod screen;
 
@@ -159,6 +160,29 @@ impl ScreenPort {
                 mpsc::TrySendError::Full(_) => "factory_busy",
                 mpsc::TrySendError::Disconnected(_) => "factory_unavailable",
             })
+    }
+}
+
+/// What the runtime asked of a port nobody runs an engine behind.
+#[cfg(test)]
+pub(crate) struct PortWatch(Receiver<Request>);
+
+#[cfg(test)]
+impl PortWatch {
+    /// The pane closes the runtime has announced since the last call.
+    pub(crate) fn closes_announced(&self) -> usize {
+        self.0
+            .try_iter()
+            .filter(|request| matches!(request, Request::PanesClosed))
+            .count()
+    }
+}
+
+#[cfg(test)]
+impl ScreenPort {
+    pub(crate) fn watched() -> (Self, PortWatch) {
+        let (requests, watch) = mpsc::sync_channel(QUEUE_LIMIT);
+        (Self { requests }, PortWatch(watch))
     }
 }
 
@@ -345,6 +369,9 @@ struct WorkerState {
     /// Worker starts, carried out on the starter thread so a start that
     /// waits for Herdr never holds a command or a worker's report (B23).
     starts: Starts,
+    /// Why binding a woken worker's pane last failed, by sleeping session, so
+    /// a failure asked again every tick is logged when it changes (#857).
+    unbound: BTreeMap<String, String>,
 }
 
 /// Starts by `factory/task`: queued or running, finished and not yet asked
@@ -589,6 +616,9 @@ struct Woken {
     since: Instant,
     /// What the wake last waited on, so the log says each reason once.
     waiting_on: Option<String>,
+    /// The core has been asked to wake the worker. A conversation saved with
+    /// its pane closed is asked again each tick until its sleep has landed.
+    asked: bool,
 }
 
 impl Woken {
@@ -752,6 +782,7 @@ fn run_requests(
 ) {
     let runtime = sink.runtime.clone();
     let mut waiters: Vec<Waiter> = Vec::new();
+    let mut sleeper_panes: HashMap<String, FactoryPane> = HashMap::new();
     let mut last_tick = clock();
     while !stop.load(Ordering::Acquire) {
         // A request cannot renew the scheduled tick's waiting time.
@@ -839,11 +870,15 @@ fn run_requests(
             // A running attempt's log tail grows on the open page between
             // summary changes; an unchanged page is still dropped.
             publisher.touched();
+            // A sleep that closes a pane must know whose it is before it is
+            // asked for.
+            publish_sleeper_panes(engine, &runtime, &mut sleeper_panes);
             settle_sleeps(workers, &runtime);
             let mut port = CoreWorkers {
                 runtime: runtime.clone(),
                 state: Arc::clone(workers),
             };
+            port.bind_woken(engine);
             port.deliver_woken();
             publish_recipients(Some(engine), &runtime);
         }
@@ -1011,6 +1046,40 @@ fn owner_of(engine: &Engine, answer: &Value) -> Option<String> {
         .factories()
         .find(|factory| engine.task(&factory.id, task).is_some())
         .map(|factory| factory.id.clone())
+}
+
+/// Tells the core which pane each worker runs in whose conversation is kept
+/// when its pane closes, with whose it is. Only a change is handed over (#857).
+fn publish_sleeper_panes(
+    engine: &Engine,
+    runtime: &Weak<Mutex<Runtime>>,
+    published: &mut HashMap<String, FactoryPane>,
+) {
+    let panes: HashMap<String, FactoryPane> = engine
+        .sleeper_panes()
+        .filter_map(|(task, worker)| {
+            Some((
+                worker.pane.clone()?,
+                FactoryPane {
+                    kind: worker.runtime.as_str().to_owned(),
+                    started_at: worker.started_at,
+                    worker: FactoryWorker {
+                        factory: task.factory.clone(),
+                        agent: worker.agent.clone(),
+                        name: worker.name.clone(),
+                        worktree: worker.worktree.clone(),
+                    },
+                },
+            ))
+        })
+        .collect();
+    if &panes == published {
+        return;
+    }
+    if let Some(runtime) = lock(runtime) {
+        guard(&runtime).set_factory_panes(panes.clone());
+    }
+    *published = panes;
 }
 
 /// Open Factories become delivery recipients; closed ones stop receiving.
@@ -1460,10 +1529,7 @@ impl CoreWorkers {
             .map(|state| state.waking.keys().cloned().collect())
             .unwrap_or_default();
         for pane in panes {
-            let Ok(runtime) = self.runtime() else { return };
-            let probe = guard(&runtime).factory_worker_probe(&pane);
-            drop(runtime);
-            let Some(woken) = self
+            let Some(mut woken) = self
                 .state
                 .lock()
                 .ok()
@@ -1471,7 +1537,23 @@ impl CoreWorkers {
             else {
                 continue;
             };
-            let mut woken = woken;
+            let Ok(runtime) = self.runtime() else { return };
+            if !woken.asked {
+                // A conversation saved with its pane closed is woken once
+                // its sleep has landed.
+                match guard(&runtime).factory_wake(&woken.worker) {
+                    FactoryWake::Refused(reason) => {
+                        crate::diagnostic!(
+                            json!({"component":"factory","kind":"worker.wake_refused","pane_id":pane,"reason":reason,"letters":woken.letters.len()})
+                        );
+                        continue;
+                    }
+                    FactoryWake::Later => {}
+                    FactoryWake::Asked | FactoryWake::Awake => woken.asked = true,
+                }
+            }
+            let probe = guard(&runtime).factory_worker_probe(&pane);
+            drop(runtime);
             if !probe.present || probe.asleep {
                 if woken.since.elapsed() >= WAKE_LIMIT {
                     crate::diagnostic!(
@@ -1532,6 +1614,109 @@ impl CoreWorkers {
                 state.waking.insert(pane, woken);
             }
         }
+    }
+
+    /// Takes a worker whose conversation woke in a fresh pane back: the
+    /// pane the core confirmed is registered under the Factory, the Task
+    /// names it, the held letters follow it and its watch starts, and only
+    /// then does the core let go of the way back (#857). Asked again each
+    /// tick until it all stands; a failure is logged when its reason changes.
+    fn bind_woken(&mut self, engine: &mut Engine) {
+        let Ok(runtime) = self.runtime() else { return };
+        let dormant = guard(&runtime).factory_dormant_workers();
+        drop(runtime);
+        for entry in dormant {
+            let outcome = match &entry.state {
+                DormantState::Woken { pane } => self.bind_pane(engine, &entry, pane),
+                DormantState::WakeFailed(detail) => {
+                    let old = (entry.old_pane.as_str(), entry.worker.agent.as_deref());
+                    engine.worker_wake_failed(&entry.worker.factory, old, detail);
+                    continue;
+                }
+            };
+            let Ok(mut state) = self.state.lock() else {
+                continue;
+            };
+            match outcome {
+                Ok(()) => {
+                    state.unbound.remove(entry.id.as_str());
+                }
+                Err(reason) => {
+                    if state.unbound.get(entry.id.as_str()) != Some(&reason) {
+                        crate::diagnostic!(
+                            json!({"component":"factory","kind":"worker.rebind_failed","sleep_id":entry.id.as_str(),"reason":reason})
+                        );
+                        state.unbound.insert(entry.id.as_str().to_owned(), reason);
+                    }
+                }
+            }
+        }
+    }
+
+    fn bind_pane(
+        &mut self,
+        engine: &mut Engine,
+        entry: &crate::runtime::DormantWorker,
+        pane: &str,
+    ) -> Result<(), String> {
+        let worker = &entry.worker;
+        let runtime = self.runtime().map_err(|failure| failure.detail)?;
+        let delivery = guard(&runtime).factory_delivery(&worker.factory);
+        drop(runtime);
+        let (client, authority, actor) = delivery?;
+        // The old registration goes first when it still stands, so its name
+        // is free for the new one (as a restart does).
+        if let Some(old) = &worker.agent {
+            let _ = crate::coordination::run(
+                client.clone(),
+                delivery::worker::Authority {
+                    caller: authority.caller.clone(),
+                    context: authority.context.clone(),
+                },
+                actor.clone(),
+                crate::coordination::Command::End {
+                    id: old.clone(),
+                    actor: None,
+                },
+            );
+        }
+        let parent = crate::coordination::register_code_owned(&client, &authority, &actor)?;
+        let agent = crate::coordination::register_woken(
+            &client,
+            &authority,
+            &actor,
+            &parent,
+            &crate::coordination::WokenWorker {
+                pane,
+                kind: &entry.kind,
+                name: &worker.name,
+                worktree: &worker.worktree,
+            },
+        )?;
+        let old = (entry.old_pane.as_str(), worker.agent.as_deref());
+        match engine.worker_rebound(&worker.factory, old, pane, &agent) {
+            Some(bound) => {
+                // The letters held for the worker's old pane follow it.
+                if let Ok(mut state) = self.state.lock()
+                    && let Some(mut woken) = state.waking.remove(&entry.old_pane)
+                {
+                    woken.worker = bound.clone();
+                    match state.waking.get_mut(pane) {
+                        Some(held) => held.letters.append(&mut woken.letters),
+                        None => {
+                            state.waking.insert(pane.to_owned(), woken);
+                        }
+                    }
+                }
+                self.watch(&bound);
+            }
+            None => crate::diagnostic!(
+                json!({"component":"factory","kind":"worker.rebind_orphaned","sleep_id":entry.id.as_str(),"pane_id":pane})
+            ),
+        }
+        let runtime = self.runtime().map_err(|failure| failure.detail)?;
+        guard(&runtime).factory_dormant_release(&entry.id);
+        Ok(())
     }
 
     fn runtime(&self) -> Result<Arc<Mutex<Runtime>>, Failure> {
@@ -1646,7 +1831,8 @@ impl WorkerRuntime for CoreWorkers {
     }
 
     fn sleep(&mut self, worker: &WorkerRef) -> Result<(), Failure> {
-        // Factory retains this exact pane for its letters, watch and lineage.
+        // An agent whose adapter declares no sleep keeps working, so the
+        // engine must not count it asleep (D-28).
         if !worker.runtime.sleeps() {
             return Err(Failure::task("worker.sleep", "agent_cannot_sleep"));
         }
@@ -1664,9 +1850,6 @@ impl WorkerRuntime for CoreWorkers {
 
     fn wake(&mut self, worker: &WorkerRef, body: &str) -> Result<(), Failure> {
         let runtime = self.runtime()?;
-        guard(&runtime)
-            .factory_worker_resume_allowed(worker)
-            .map_err(|reason| Failure::task("worker.wake", reason))?;
         let pane = worker
             .pane
             .clone()
@@ -1682,8 +1865,11 @@ impl WorkerRuntime for CoreWorkers {
             drop(runtime);
             return self.message(worker, &intent, None, body);
         }
-        guard(&runtime).factory_wake(&pane);
+        let asked = guard(&runtime).factory_wake(worker);
         drop(runtime);
+        if let FactoryWake::Refused(reason) = asked {
+            return Err(Failure::task("worker.wake", reason));
+        }
         let mut state = self
             .state
             .lock()
@@ -1693,7 +1879,9 @@ impl WorkerRuntime for CoreWorkers {
             letters: Vec::new(),
             since: Instant::now(),
             waiting_on: None,
+            asked: false,
         });
+        woken.asked |= asked != FactoryWake::Later;
         if woken.letters.len() >= WOKEN_LETTER_LIMIT {
             return Err(Failure::task(
                 "worker.wake",
@@ -1749,11 +1937,6 @@ impl WorkerRuntime for CoreWorkers {
     }
 
     fn stop(&mut self, worker: &WorkerRef) -> Result<(), Failure> {
-        // Ending the ledger before a close-pane sleep would lose the worker's
-        // resume identity. Refuse before either effect; manual sleep is separate.
-        if worker.runtime.adapter().sleep.is_some() && !worker.runtime.sleeps() {
-            return Err(Failure::task("worker.stop", "agent_cannot_sleep"));
-        }
         // The agent ends through agent sleep once its turn ends, so its pane
         // and session stay for a revive (B50, B55); the ledger record ends now.
         // An agent that declares no sleep stays in its pane (D-28).
@@ -3011,20 +3194,21 @@ mod tests {
     }
 
     #[test]
-    fn a_worker_whose_agent_declares_no_sleep_is_refused_rather_than_queued() {
+    fn a_worker_is_queued_to_sleep_whatever_agent_it_runs() {
         let state = Arc::new(Mutex::new(WorkerState::default()));
         let mut port = CoreWorkers {
             runtime: Weak::new(),
             state: state.clone(),
         };
         let mut job = request("T-1", None);
-        // Factory sleep preserves a worker's pane identity until #857.
         for (agent, sleeps) in [
             ("claude", true),
             ("codex", true),
-            ("grok", false),
-            ("pi", false),
-            ("omp", false),
+            ("grok", true),
+            ("pi", true),
+            ("omp", true),
+            ("opencode", true),
+            ("cursor", true),
         ] {
             job.runtime = AgentRuntime::parse(agent).expect(agent);
             let answer = port.sleep(&worker(&job));
@@ -3039,18 +3223,29 @@ mod tests {
     }
 
     #[test]
-    fn factory_stop_refuses_close_pane_sleep_before_ending_the_worker() {
-        let state = Arc::new(Mutex::new(WorkerState::default()));
-        let mut port = CoreWorkers {
-            runtime: Weak::new(),
-            state: Arc::clone(&state),
-        };
-        for agent in ["pi", "omp"] {
+    fn factory_stop_puts_a_close_pane_agent_to_sleep_like_any_other() {
+        for (agent, sleeps) in [
+            ("claude", true),
+            ("pi", true),
+            ("omp", true),
+            ("grok", true),
+            ("opencode", true),
+            ("cursor", true),
+        ] {
+            let state = Arc::new(Mutex::new(WorkerState::default()));
+            let mut port = CoreWorkers {
+                runtime: Weak::new(),
+                state: Arc::clone(&state),
+            };
             let mut job = request("T-1", None);
             job.runtime = AgentRuntime::parse(agent).unwrap();
-            let failure = port.stop(&worker(&job)).unwrap_err();
-            assert_eq!(failure.detail, "agent_cannot_sleep", "{agent}");
-            assert!(state.lock().unwrap().pending_sleep.is_empty(), "{agent}");
+            // Ending the registration needs a core; the sleep is queued first.
+            let _ = port.stop(&worker(&job));
+            assert_eq!(
+                state.lock().unwrap().pending_sleep.contains("pane-T-1"),
+                sleeps,
+                "{agent}"
+            );
         }
     }
 
@@ -3108,46 +3303,51 @@ mod tests {
     }
 
     #[test]
-    fn factory_wake_refuses_persisted_close_pane_workers_without_queuing_letters() {
+    fn a_close_pane_worker_the_core_cannot_wake_now_is_refused_without_queuing_letters() {
         for agent in ["pi", "omp"] {
-            for has_dormant in [false, true] {
-                let mut job = request("T-1", None);
-                job.runtime = AgentRuntime::parse(agent).unwrap();
-                let mut worker = worker(&job);
-                worker.asleep = !has_dormant;
-                let ui = if has_dormant {
-                    dormant_worker_ui(&worker)
-                } else {
-                    Default::default()
-                };
-                let (_root, runtime) = factory_runtime(&ui);
-                let state = Arc::new(Mutex::new(WorkerState::default()));
-                let mut port = CoreWorkers {
-                    runtime: Arc::downgrade(&runtime),
-                    state: Arc::clone(&state),
-                };
-                if has_dormant {
-                    state
-                        .lock()
-                        .unwrap()
-                        .pending_sleep
-                        .insert("pane-T-1".into());
-                }
-                let failure = port
-                    .wake(&worker, "Continue the same native session")
-                    .unwrap_err();
-                assert_eq!(
-                    failure.detail, "agent_cannot_sleep",
-                    "{agent}/{has_dormant}"
-                );
-                let state = state.lock().unwrap();
-                assert!(state.waking.is_empty(), "no retired-pane letter");
-                assert_eq!(state.pending_sleep.contains("pane-T-1"), has_dormant);
-                assert_eq!(
-                    guard(&runtime).snapshot().ui_state.agent_sleep,
-                    ui.agent_sleep
-                );
-            }
+            let mut job = request("T-1", None);
+            job.runtime = AgentRuntime::parse(agent).unwrap();
+            let mut worker = worker(&job);
+            worker.asleep = true;
+            let ui = dormant_worker_ui(&worker);
+            // No live Herdr: the saved conversation cannot be woken, and the
+            // refusal leaves it exactly as it was.
+            let (_root, runtime) = factory_runtime(&ui);
+            let state = Arc::new(Mutex::new(WorkerState::default()));
+            let mut port = CoreWorkers {
+                runtime: Arc::downgrade(&runtime),
+                state: Arc::clone(&state),
+            };
+            let failure = port
+                .wake(&worker, "Continue the same native session")
+                .unwrap_err();
+            assert_eq!(failure.stage, "worker.wake", "{agent}");
+            assert!(state.lock().unwrap().waking.is_empty(), "{agent}");
+            assert_eq!(
+                guard(&runtime).snapshot().ui_state.agent_sleep,
+                ui.agent_sleep,
+                "{agent}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_worker_with_nothing_asleep_is_woken_by_its_letters_alone() {
+        for agent in ["claude", "pi", "omp"] {
+            let mut job = request("T-1", None);
+            job.runtime = AgentRuntime::parse(agent).unwrap();
+            let mut worker = worker(&job);
+            worker.asleep = true;
+            let (_root, runtime) = factory_runtime(&Default::default());
+            let state = Arc::new(Mutex::new(WorkerState::default()));
+            let mut port = CoreWorkers {
+                runtime: Arc::downgrade(&runtime),
+                state: Arc::clone(&state),
+            };
+            port.wake(&worker, "Continue").unwrap();
+            let state = state.lock().unwrap();
+            assert_eq!(state.waking["pane-T-1"].letters.len(), 1, "{agent}");
+            assert!(state.waking["pane-T-1"].asked, "{agent}");
         }
     }
 
@@ -3171,11 +3371,14 @@ mod tests {
                     runtime: Arc::downgrade(&runtime),
                     state: Arc::clone(&state),
                 };
+                if !has_dormant {
+                    // A worker that is merely gone starts again.
+                    assert_eq!(port.spawn(&job).unwrap_err().detail, "start_in_flight");
+                    assert!(starts.try_recv().is_ok(), "{agent}");
+                    continue;
+                }
                 let failure = port.spawn(&job).unwrap_err();
-                assert_eq!(
-                    failure.detail, "agent_cannot_sleep",
-                    "{agent}/{has_dormant}"
-                );
+                assert_eq!(failure.detail, "worker_dormant", "{agent}");
                 assert!(matches!(starts.try_recv(), Err(mpsc::TryRecvError::Empty)));
                 assert!(state.lock().unwrap().starts.in_flight.is_empty());
                 // The starter also checks restored work before coordination effects.
@@ -3183,7 +3386,7 @@ mod tests {
                     start_worker(&Arc::downgrade(&runtime), &job)
                         .unwrap_err()
                         .detail,
-                    "agent_cannot_sleep"
+                    "worker_dormant"
                 );
                 assert_eq!(
                     guard(&runtime).snapshot().ui_state.agent_sleep,
@@ -3806,6 +4009,7 @@ mod tests {
             letters: Vec::new(),
             since: Instant::now(),
             waiting_on: None,
+            asked: false,
         };
         let ((), records) = crate::diagnostics::capture(|| {
             woken.waits_on("pane-T-1", "agent_absent");
