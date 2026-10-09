@@ -1124,6 +1124,9 @@ pub struct Runtime {
     /// repository name, and when each of its repositories was last asked.
     device_github: HashMap<String, crate::model::GithubSnapshot>,
     device_github_reads: HashMap<(String, String), (u64, std::time::Instant)>,
+    /// How many of each device's projects the pull-request read left out at
+    /// its cap, last logged.
+    device_github_over_limit: HashMap<String, usize>,
     /// This machine's file host: the helper's dispatch, run in place.
     own_node: Arc<dyn crate::node_access::NodeLink>,
     /// Opens the transport to each registered device; the node that holds
@@ -1904,6 +1907,7 @@ impl Runtime {
             device_disk_project: HashMap::new(),
             device_github: HashMap::new(),
             device_github_reads: HashMap::new(),
+            device_github_over_limit: HashMap::new(),
             own_node,
             devices,
             document_places: HashMap::new(),

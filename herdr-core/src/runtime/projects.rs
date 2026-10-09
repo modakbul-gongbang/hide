@@ -2789,18 +2789,42 @@ impl Runtime {
             .filter_map(|(root, project)| Some((root.clone(), project.repository.clone()?)))
             .collect();
         repositories.sort();
+        let over_limit = repositories.len().saturating_sub(GITHUB_PROJECT_LIMIT);
+        let logged = self
+            .device_github_over_limit
+            .insert(device_id.to_owned(), over_limit);
+        if over_limit > 0 && logged != Some(over_limit) {
+            crate::diagnostic!(serde_json::json!({
+                "component": "github",
+                "kind": "projects.over_limit",
+                "target": device_id,
+                "limit": GITHUB_PROJECT_LIMIT,
+                "device_git_projects": repositories.len(),
+            }));
+        }
         repositories.truncate(GITHUB_PROJECT_LIMIT);
         self.device_github_reads.retain(|(device, root), _| {
             device != device_id || repositories.iter().any(|(listed, _)| listed == root)
         });
+        let answered = self.device_github.get(device_id);
         let projects = repositories
             .into_iter()
             .map(|(root, repository)| {
+                // A read that failed is asked again sooner, as this machine's
+                // first retry is.
+                let failed = answered
+                    .and_then(|github| github.project(&root))
+                    .is_some_and(|read| !read.pull_requests_read);
+                let wait = if failed {
+                    GITHUB_RETRY_FIRST
+                } else {
+                    GITHUB_REREAD
+                };
                 let read = self
                     .device_github_reads
                     .entry((device_id.to_owned(), root.clone()))
                     .or_insert((0, now));
-                if now.duration_since(read.1) >= GITHUB_REREAD {
+                if now.duration_since(read.1) >= wait {
                     *read = (read.0.wrapping_add(1), now);
                 }
                 crate::github::GithubProjectRequest {
