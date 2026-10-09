@@ -948,6 +948,30 @@ pub fn name_of(pid: u32) -> io::Result<String> {
     sys::name_of(pid)
 }
 
+/// How the terminal a process controls takes typed input, which decides
+/// whether a line typed into it before the process reads it can be cut.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LineInput {
+    /// The terminal hands each key over as it arrives (canonical mode is
+    /// off): a shell's line editor is reading, or a full-screen program.
+    Keys,
+    /// The kernel holds an unfinished line until Enter and drops every byte
+    /// past `limit` of it, Enter included (canonical mode). A shell still
+    /// running its startup files, before its line editor starts, reads this
+    /// way.
+    Lines { limit: usize },
+    /// A Windows console: there is no kernel line discipline in front of
+    /// the program, so no line length is enforced by the terminal.
+    Console,
+}
+
+/// How the controlling terminal of `pid` takes input now. `NotFound` when
+/// the process is gone or controls no terminal; `PermissionDenied` when the
+/// terminal is not this account's to read.
+pub fn line_input(pid: u32) -> io::Result<LineInput> {
+    sys::line_input(pid)
+}
+
 /// Counts and sizes the process tree rooted at `pid`. `NotFound` when `pid`
 /// does not exist.
 pub fn measure_tree(pid: u32) -> io::Result<TreeMeasure> {
@@ -1624,11 +1648,144 @@ mod sys {
                 Err(error_for_missing_info())
             }
         }
+
+        unsafe extern "C" {
+            /// `devname_r(3)`: the reentrant `devname`, since node calls run
+            /// on several threads at once.
+            fn devname_r(
+                dev: libc::dev_t,
+                kind: libc::mode_t,
+                buf: *mut libc::c_char,
+                len: libc::c_int,
+            ) -> *mut libc::c_char;
+        }
+
+        /// The name under `/dev` of the character device `device`.
+        pub(in super::super) fn device_name(device: u32) -> io::Result<String> {
+            let mut buffer = [0 as libc::c_char; 128];
+            // SAFETY: the buffer is valid for `len` bytes, and the answer is
+            // read only as a terminated string inside it.
+            let named = unsafe {
+                devname_r(
+                    device as libc::dev_t,
+                    libc::S_IFCHR,
+                    buffer.as_mut_ptr(),
+                    buffer.len() as libc::c_int,
+                )
+            };
+            if named.is_null() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "the terminal device has no name",
+                ));
+            }
+            // SAFETY: `devname_r` answered a terminated string.
+            let name = unsafe { std::ffi::CStr::from_ptr(named) };
+            name.to_str()
+                .map(str::to_owned)
+                .map_err(|_| io::Error::other("the terminal device's name is not UTF-8"))
+        }
     }
 
     #[cfg(target_os = "macos")]
     pub(super) fn parent_of(pid: u32) -> io::Result<u32> {
         mac::bsd_info(pid).map(|info| info.pbi_ppid)
+    }
+
+    /// `MAX_INPUT` in `<sys/syslimits.h>`: the tty driver drops each byte
+    /// that would make the unread input reach it (`ttyinput`), so a typed
+    /// line keeps its first 1,023 bytes and loses the rest and its Enter.
+    #[cfg(target_os = "macos")]
+    const LINE_LIMIT: usize = 1024;
+
+    /// Linux's `N_TTY_BUF_SIZE`: canonical input holds at most 4,095 bytes
+    /// of a line and the room left for its newline. `_PC_MAX_INPUT` answers
+    /// 255 there, which is not the limit the line discipline enforces.
+    #[cfg(target_os = "linux")]
+    const LINE_LIMIT: usize = 4096;
+
+    /// Opens the terminal at `path` for its attributes only: it does not
+    /// become this process's controlling terminal, the open does not wait,
+    /// and anything but the character device `matches` names is refused.
+    fn open_terminal(
+        path: &std::path::Path,
+        matches: impl Fn(u64) -> bool,
+    ) -> io::Result<std::fs::File> {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOCTTY | libc::O_NONBLOCK)
+            .open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.file_type().is_char_device() || !matches(metadata.rdev()) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{} is not the process's terminal", path.display()),
+            ));
+        }
+        Ok(file)
+    }
+
+    fn input_of(terminal: &std::fs::File) -> io::Result<super::LineInput> {
+        // SAFETY: an all-zero `termios` is a valid value for the call to fill.
+        let mut attributes: libc::termios = unsafe { std::mem::zeroed() };
+        // SAFETY: the descriptor stays open for the call and the structure is
+        // valid for writes.
+        if unsafe { libc::tcgetattr(terminal.as_raw_fd(), &mut attributes) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(if attributes.c_lflag & libc::ICANON != 0 {
+            super::LineInput::Lines { limit: LINE_LIMIT }
+        } else {
+            super::LineInput::Keys
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn line_input(pid: u32) -> io::Result<super::LineInput> {
+        // `e_tdev` is the controlling terminal's device, `NODEV` (all bits
+        // set) for a process that has none.
+        let device = mac::bsd_info(pid)?.e_tdev;
+        if device == u32::MAX {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("process {pid} controls no terminal"),
+            ));
+        }
+        let name = mac::device_name(device)?;
+        let terminal = open_terminal(&std::path::Path::new("/dev").join(name), |rdev| {
+            rdev as u32 == device
+        })?;
+        input_of(&terminal)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn line_input(pid: u32) -> io::Result<super::LineInput> {
+        // `tty_nr`, the controlling terminal's device in the kernel's
+        // encoding: the minor's low byte, the major, then its high bits.
+        let encoded: u32 = linux::field::<i32>(&linux::fields(pid)?, 4)? as u32;
+        if encoded == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("process {pid} controls no terminal"),
+            ));
+        }
+        let device = libc::makedev(
+            (encoded >> 8) & 0xfff,
+            (encoded & 0xff) | ((encoded >> 12) & 0xfff00),
+        );
+        // The kernel names the terminal nowhere else; a shell holds it on
+        // its standard streams.
+        for stream in 0..3 {
+            let path = std::path::PathBuf::from(format!("/proc/{pid}/fd/{stream}"));
+            if let Ok(terminal) = open_terminal(&path, |rdev| rdev == device) {
+                return input_of(&terminal);
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no standard stream of process {pid} is its terminal"),
+        ))
     }
 
     #[cfg(target_os = "macos")]
@@ -2430,6 +2587,12 @@ mod sys {
             io::ErrorKind::Unsupported,
             "Windows reports no working directory for another process",
         ))
+    }
+
+    /// A pane's console keeps typed keys as input events for the program,
+    /// with no line discipline that could drop part of a line.
+    pub(super) fn line_input(pid: u32) -> io::Result<super::LineInput> {
+        start_time(pid).map(|_| super::LineInput::Console)
     }
 
     pub(super) fn rss(pid: u32) -> io::Result<u64> {
