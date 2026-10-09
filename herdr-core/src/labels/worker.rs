@@ -1269,8 +1269,10 @@ impl LabelWorker {
 }
 
 fn provider(kind: Option<&str>) -> Option<Agent> {
-    hide_agent_adapter::adapter(kind?)?
-        .conversation
+    let adapter = hide_agent_adapter::adapter(kind?)?;
+    adapter
+        .titles
+        .or(adapter.conversation)
         .map(Agent::from_format)
 }
 
