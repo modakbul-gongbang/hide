@@ -22,6 +22,11 @@ pub const MAX_ATTACHED_PANES: usize = 64;
 /// Key bytes one pane may have on their way to a device before that pane's
 /// flow is ended (D-18).
 pub const MAX_UNSENT_KEY_BYTES: usize = 256 * 1024;
+/// The longest pane or creation id a screen may name to a node. A device
+/// pane's id, `remote:<device>:pane:<Herdr's id>`, is the longest, with a
+/// device id of at most 256 bytes; the node's pane caps count entries, so
+/// this bounds their bytes too.
+pub const MAX_PANE_ID_BYTES: usize = 512;
 /// Output bytes one pane may have on their way to one reader (a screen, or
 /// the link up from a device) before they are dropped and the pane is drawn
 /// again from a full frame once the reader has caught up (D-16).

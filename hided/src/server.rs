@@ -29,7 +29,7 @@ use crate::terminal_hub::Resume;
 use crate::watch::WatchService;
 use base64::Engine as _;
 use hide_node::opener::OpenHandler;
-use hide_node_link::terminal::{GridSize, KeyTarget, TerminalNode};
+use hide_node_link::terminal::{GridSize, KeyTarget, MAX_PANE_ID_BYTES, TerminalNode};
 
 const FALLBACK_INDEX: &str = include_str!("../fallback-ui/index.html");
 
@@ -2785,10 +2785,15 @@ fn terminal_key(event: &Value) -> Result<(KeyTarget, Vec<u8>), String> {
             .pointer(&format!("/payload/{name}"))
             .and_then(Value::as_str)
     };
+    let named = |id: &str| !id.is_empty() && id.len() <= MAX_PANE_ID_BYTES;
     let target = match (field("pane_id"), field("pending_request")) {
-        (Some(pane), None) if !pane.is_empty() => KeyTarget::Pane(pane.to_owned()),
-        (None, Some(request)) if !request.is_empty() => KeyTarget::Request(request.to_owned()),
-        _ => return Err("key needs exactly one of pane_id and pending_request".to_owned()),
+        (Some(pane), None) if named(pane) => KeyTarget::Pane(pane.to_owned()),
+        (None, Some(request)) if named(request) => KeyTarget::Request(request.to_owned()),
+        _ => {
+            return Err(format!(
+                "key needs exactly one of pane_id and pending_request, of at most {MAX_PANE_ID_BYTES} bytes"
+            ));
+        }
     };
     let bytes = field("bytes_base64")
         .ok_or_else(|| "key.bytes_base64 must be a string".to_owned())
@@ -2814,8 +2819,10 @@ fn terminal_view(event: &Value) -> Result<(String, GridSize, bool), String> {
     let (Some(rows), Some(cols)) = (dimension("rows"), dimension("cols")) else {
         return Err("terminal_viewport needs positive rows and cols".to_owned());
     };
-    if pane.is_empty() {
-        return Err("terminal_viewport.pane_id must be a string".to_owned());
+    if pane.is_empty() || pane.len() > MAX_PANE_ID_BYTES {
+        return Err(format!(
+            "terminal_viewport.pane_id must be a string of at most {MAX_PANE_ID_BYTES} bytes"
+        ));
     }
     let new_view = event
         .pointer("/payload/new_view")
@@ -3434,6 +3441,28 @@ pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pane id a screen sends straight to a node is refused past the
+    /// longest a device pane's id can be, so a client cannot fill a node's
+    /// capped pane entries with ids of any length.
+    #[test]
+    fn a_key_or_view_naming_a_pane_id_past_its_length_is_refused() {
+        let longest = format!("remote:{}:pane:w1:p1", "d".repeat(256));
+        let too_long = format!("w1:{}", "p".repeat(600));
+        let key = |pane: &str, field: &str| {
+            terminal_key(&json!({"type": "key", "payload": {field: pane, "bytes_base64": "eA=="}}))
+        };
+        let view = |pane: &str| {
+            terminal_view(&json!({"type": "terminal_viewport", "payload": {
+                "pane_id": pane, "rows": 24, "cols": 80,
+            }}))
+        };
+        assert!(key(&longest, "pane_id").is_ok());
+        assert!(view(&longest).is_ok());
+        assert!(key(&too_long, "pane_id").is_err());
+        assert!(key(&too_long, "pending_request").is_err());
+        assert!(view(&too_long).is_err());
+    }
 
     /// Every runtime with a question tool of its own reaches the guard, the
     /// ones with none or an unconfirmed one do not, and a session may be a
