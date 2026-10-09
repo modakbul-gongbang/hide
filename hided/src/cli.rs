@@ -1623,7 +1623,7 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         };
-        for runtime in ["claude-code", "codex", "opencode"] {
+        for runtime in ["claude-code", "codex", "opencode", "omp"] {
             assert_eq!(
                 parse(&[
                     "hide",

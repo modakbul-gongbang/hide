@@ -747,7 +747,8 @@ fn cursor_gets_the_guidance_hook_with_the_switch_and_loses_it_with_it() {
 }
 
 #[test]
-fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_partial() {
+fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_and_cursor_are_partial()
+ {
     use crate::agents::Feature::{self, *};
     // The expected rows come from the PRDs and the hook research, not from
     // the table: what Hide does for each agent in this build (D-10, B18;
@@ -836,7 +837,8 @@ fn claude_code_and_codex_do_everything_opencode_collaborates_and_the_others_are_
 
 #[test]
 fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
-    // Letters and Memory come from the six-event hook or OpenCode's plugin,
+    // Letters and Memory come from the six-event hook or a script file of
+    // Hide's (OpenCode's plugin, Pi's and omp's extension),
     // which the hook crate speaks a dialect for; the subagent count and the
     // spawn guard also come from Grok's and Cursor's own hook files. An agent
     // claiming them without a hook would be a popover that says more than

@@ -80,17 +80,6 @@ impl HookDialect {
             Self::Omp => AgentId::Omp.adapter(),
         }
     }
-
-    /// The script file of Hide's that speaks this dialect, when it is not a
-    /// settings-file hook or an agent's own hook file.
-    pub const fn plugin(self) -> Option<PluginDialect> {
-        match self {
-            Self::ClaudeCode | Self::Codex | Self::Grok | Self::Cursor => None,
-            Self::OpenCode => Some(PluginDialect::OpenCode),
-            Self::Pi => Some(PluginDialect::Pi),
-            Self::Omp => Some(PluginDialect::Omp),
-        }
-    }
 }
 
 /// Hide's own hook file for an agent of the basic tier

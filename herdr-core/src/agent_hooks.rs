@@ -252,6 +252,8 @@ mod tests {
         use hide_kit::ComponentState;
         for (dialect, id) in [
             (HookDialect::OpenCode, "opencode"),
+            (HookDialect::Pi, "pi"),
+            (HookDialect::Omp, "omp"),
             (HookDialect::Grok, "grok"),
             (HookDialect::Cursor, "cursor"),
         ] {

@@ -147,6 +147,7 @@ The Settings screen learns of it because the coordinator re-reads the diagnosis 
 
 The same `PreToolUse` helper refuses Claude Code's `AskUserQuestion` and `ExitPlanMode`, and Codex's `request_user_input`, only after the core proves the caller is the current Task-held Factory worker.
 The model receives a deny reason directing it to `hide factory ask`; an operator-started session and every other pane retain their native question UI.
+OpenCode's `question` tool and omp's `ask` are refused the same way through Hide's plugin and extension ([OpenCode: Hide's plugin](#opencode-hides-plugin), [Pi and omp: Hide's extension](#pi-and-omp-hides-extension)).
 Pinned Codex 0.160.1 was exercised with a trusted Bash positive control and a genuine plan-mode `request_user_input`: both reached PreToolUse and the question's native tool result and model reply carried the denial.
 The ordinary launch mode remains unchanged.
 
@@ -271,7 +272,7 @@ A test fails a row with no `https` `doc_url`, and a row with no program, so a cl
 Hide supports an agent only when the pinned Herdr ships an integration for it (`herdr integration install <target>`, listed by `herdr integration status`).
 Lineage, the mailbox identity, labels and sleep all read the session id that integration gives Herdr, and an agent without one could only have its state judged from its screen, a second kind of row that behaves unlike every other; so the support list follows Herdr's, and an agent Herdr has no target for is not listed (Gemini CLI left for that reason and is retired below).
 `AgentAdapter::herdr` is therefore required, not optional.
-Among the supported agents, one gets the multi-agent collaboration tier (letters, the spawn guard, Memory and the subagent count) when its official documentation or SDK types give a hook or plugin that can both put text into the prompt and refuse a tool call; today that is Claude Code and Codex, through the six-event hook, OpenCode, through Hide's plugin, and Pi and omp, through Hide's extension (without Memory yet).
+Among the supported agents, one gets the multi-agent collaboration tier (letters, the spawn guard, Memory and the subagent count) when its official documentation or SDK types give a hook or plugin that can both put text into the prompt and refuse a tool call; today that is Claude Code and Codex, through the six-event hook, OpenCode, through Hide's plugin, and Pi and omp, through Hide's extension (without Memory yet, and for Pi without a subagent count, since Pi runs none).
 Every other supported agent is the basic tier: the skill, Herdr's integration and, where its documentation gives a command hook, the agent hook: the spawn guard and the subagent count where the hook can refuse a shell call and sees a subagent start and end (Grok and Cursor), and the guidance where its session start adds context (Cursor).
 A basic-tier agent takes no letters through a hook, so `hide request ack` stays its receipt and it is no bell target (PRD grok-cursor-hooks D-07).
 Adding an agent to the list checks, in order: the pinned Herdr lists a target for it and which folder that target needs; the vendor's documentation confirms the folder it reads skills from and the name of the program it installs; the vendor publishes a mark (`docs/BRAND.md`) or the row draws a monogram; and whether its hooks or plugins meet the collaboration tier above.
