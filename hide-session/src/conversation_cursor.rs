@@ -538,7 +538,8 @@ impl LargeRecord {
     }
     fn feed(&mut self, bytes: &[u8]) -> Result<()> {
         if let Some(grok) = self.grok.as_mut() {
-            grok.feed(bytes)?;
+            // Grok's scan alone decides a Grok record.
+            return grok.feed(bytes);
         }
         for &byte in bytes {
             if let Some(token) = self.token.as_mut() {

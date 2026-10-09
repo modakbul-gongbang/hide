@@ -388,8 +388,8 @@ pub(crate) fn turn(item: &Value) -> std::result::Result<Option<TurnMark>, SkipRe
 /// which update it is, its call and turn ids, its prompt index and flags,
 /// its times and its block type. Grok writes a pasted image inline and a
 /// tool's output twice, so such lines are ordinary; reading them without
-/// their bodies keeps every turn mark, while a question call, whose body is
-/// the question, is still refused.
+/// their bodies keeps every turn mark; a question call whose body is over
+/// the cap still waits, as a question without content.
 const KEPT: &[&str] = &[
     "/timestamp",
     "/method",
@@ -419,10 +419,12 @@ const LARGE_DEPTH: usize = 64;
 /// A bounded streaming scan of one oversized `updates.jsonl` line that
 /// retains only the [`KEPT`] scalars, so a checkpoint never carries a body.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub(crate) struct LargeLine {
     frames: Vec<LargeFrame>,
     string: Option<LargeScalar>,
     literal: Option<LargeScalar>,
+    /// At most one value per [`KEPT`] pointer, the last one written.
     kept: Vec<(String, String)>,
     invalid: bool,
 }
@@ -462,11 +464,16 @@ impl LargeLine {
             .is_some_and(|frame| frame.object && frame.expecting_key)
     }
 
+    fn keep(&mut self, pointer: String, raw: String) {
+        self.kept.retain(|(kept, _)| *kept != pointer);
+        self.kept.push((pointer, raw));
+    }
+
     fn finish_literal(&mut self) {
         if let Some(literal) = self.literal.take()
             && let Some(pointer) = literal.pointer.filter(|_| literal.plain)
         {
-            self.kept.push((pointer, literal.raw));
+            self.keep(pointer, literal.raw);
         }
     }
 
@@ -485,7 +492,7 @@ impl LargeLine {
                             frame.expecting_key = false;
                         }
                     } else if let Some(pointer) = string.pointer.filter(|_| string.plain) {
-                        self.kept.push((pointer, format!("\"{}\"", string.raw)));
+                        self.keep(pointer, format!("\"{}\"", string.raw));
                     }
                     continue;
                 } else if byte == b'\\' {
@@ -582,8 +589,7 @@ impl LargeLine {
     }
 
     /// The record without its bodies, or `None` when it cannot be read
-    /// that way: an unfinished or malformed line, an unknown update, or a
-    /// question call whose body is the question.
+    /// that way: an unfinished or malformed line or an unknown update.
     pub(crate) fn reduced(mut self) -> Option<String> {
         self.finish_literal();
         if self.invalid || !self.frames.is_empty() || self.string.is_some() {
@@ -603,11 +609,6 @@ impl LargeLine {
             *at = value;
         }
         let (kind, update) = update(&record)?;
-        if matches!(kind, "tool_call" | "tool_call_update")
-            && (tool_kind(update) == Some("ask_user") || update["title"] == "ask_user_question")
-        {
-            return None;
-        }
         if kind == "user_message_chunk" && update.pointer("/content/type") == Some(&"text".into()) {
             record
                 .pointer_mut("/params/update")?
@@ -631,6 +632,103 @@ pub(crate) fn reduced_line(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scanned(line: &str) -> Option<String> {
+        let mut scan = LargeLine::default();
+        scan.feed(line.as_bytes()).ok()?;
+        scan.reduced()
+    }
+
+    /// The reduced form of every fixture record starts, asks, answers and
+    /// ends the same turns and keeps its message kinds; it loses bodies,
+    /// so a typed block starts its turn by a mark instead of its message.
+    #[test]
+    fn a_reduced_record_has_the_turn_effects_and_kinds_of_the_whole_one() {
+        let fixture = include_str!("../tests/fixtures/adapters/grok-1.0.46/updates.jsonl");
+        let effect = |item: &Value| {
+            let event = match parse_line(item) {
+                LineResult::Event(event) => {
+                    format!("{:?}{:?}{}", event.kind, event.part(), event.images)
+                }
+                LineResult::Skip(reason) => reason.as_str().into(),
+                // A dropped tool output leaves no sightings.
+                _ => String::new(),
+            };
+            let mark = format!("{:?}", turn(item));
+            match (event.as_str(), mark.as_str()) {
+                // A prompt starts its turn by its typed text or by a mark;
+                // only the mark survives a dropped text.
+                (typed, "Ok(None)") if typed.starts_with("Human") && typed.ends_with("0") => {
+                    "turn".to_owned()
+                }
+                (_, "Ok(Some(HumanTurn))") => "turn".to_owned(),
+                // A dropped answer leaves no message.
+                (answer, mark) if answer.is_empty() || answer.starts_with("Assistant") => {
+                    mark.to_owned()
+                }
+                (event, mark) => format!("{event} {mark}"),
+            }
+        };
+        for line in fixture.lines() {
+            let whole: Value = serde_json::from_str(line).unwrap();
+            let reduced: Value = serde_json::from_str(&scanned(line).unwrap()).unwrap();
+            assert_eq!(effect(&whole), effect(&reduced), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_scan_split_at_every_byte_and_saved_between_reads_the_same_fields() {
+        let line = serde_json::json!({"timestamp":1,"method":"session/update","params":{
+            "sessionId":"s","update":{"sessionUpdate":"tool_call_update","toolCallId":"c\"1",
+            "status":"completed","content":[{"type":"content","content":{"type":"text",
+            "text":"{\"status\":\"failed\",\"sessionUpdate\":\"x\"}"}}],
+            "rawOutput":{"status":"nested","title":"ask_user_question"}},
+            "_meta":{"agentTimestampMs":17_909_894_000_000_u64}}})
+        .to_string();
+        let expected = scanned(&line).unwrap();
+        let value: Value = serde_json::from_str(&expected).unwrap();
+        assert_eq!(value["params"]["update"]["toolCallId"], "c\"1");
+        assert_eq!(value["params"]["update"]["status"], "completed");
+        assert!(
+            value["params"]["update"].get("title").is_none(),
+            "only kept paths"
+        );
+        for cut in 0..line.len() {
+            let mut scan = LargeLine::default();
+            scan.feed(&line.as_bytes()[..cut]).unwrap();
+            let saved = serde_json::to_string(&scan).unwrap();
+            let mut scan: LargeLine = serde_json::from_str(&saved).unwrap();
+            scan.feed(&line.as_bytes()[cut..]).unwrap();
+            assert_eq!(
+                scan.reduced().as_deref(),
+                Some(expected.as_str()),
+                "cut {cut}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_repeated_kept_key_holds_one_value_and_a_broken_line_reads_as_nothing() {
+        let repeated = format!(
+            "{{\"params\":{{\"update\":{{\"sessionUpdate\":\"plan\",{}\"status\":\"last\"}}}}}}",
+            "\"status\":\"x\",".repeat(10_000)
+        );
+        let mut scan = LargeLine::default();
+        scan.feed(repeated.as_bytes()).unwrap();
+        assert_eq!(scan.kept.len(), 2);
+        let value: Value = serde_json::from_str(&scan.reduced().unwrap()).unwrap();
+        assert_eq!(value["params"]["update"]["status"], "last");
+        assert_eq!(scanned("not json"), None);
+        assert_eq!(
+            scanned("{\"params\":{\"update\":{}}}"),
+            None,
+            "no update kind"
+        );
+        assert_eq!(
+            scanned("{\"params\":{\"update\":{\"sessionUpdate\":\"plan\""),
+            None
+        );
+    }
 
     #[test]
     fn a_group_is_the_url_encoded_cwd_and_a_hashed_name_is_never_guessed() {

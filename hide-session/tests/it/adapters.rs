@@ -1082,9 +1082,9 @@ mod grok {
 
     /// Grok writes a pasted image inline and a tool's output twice, so a
     /// record over the line cap is ordinary: it is read without its body,
-    /// across as many polls as it takes, and only a question is refused.
+    /// across as many polls as it takes, and a question still waits.
     #[test]
-    fn a_record_over_the_line_cap_keeps_its_turn_and_only_a_question_is_refused() {
+    fn a_record_over_the_line_cap_keeps_its_turn_without_its_body() {
         let mut native = Native::new();
         let first = native.read().unwrap();
         native.resume(&first);
@@ -1181,18 +1181,25 @@ mod grok {
                 && (event.text.as_str(), event.images) == ("이 화면을 봐줘", 1)
         }));
 
-        // A question's body is the question: it is refused, never skipped.
-        let mut asking = Native::new();
-        let first = asking.read().unwrap();
-        asking.resume(&first);
-        asking.append(
-            json!({"sessionUpdate":"tool_call","toolCallId":"call-ask","title":"ask_user_question",
+        // A question whose body is over the cap still waits, without
+        // content, and its answer clears it.
+        native.resume(&long);
+        native.append(
+            json!({"sessionUpdate":"tool_call","toolCallId":"call-big","title":"ask_user_question",
                 "rawInput":{"questions":[{"question":"z".repeat(300 * 1024),"options":[]}]},
                 "_meta":{"x.ai/tool":{"kind":"ask_user"}}}),
-            json!({"promptId":"p-4"}),
+            json!({"promptId":"p-5"}),
         );
-        let refused = asking.read().unwrap_err();
-        assert!(refused.contains("line_bytes"), "{refused}");
+        let asked = native.read().unwrap();
+        let fact = user_turn(&asked).unwrap();
+        assert_eq!((fact.kind, fact.content), (UserTurnKind::Question, None));
+        native.resume(&asked);
+        native.append(
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"call-big","status":"completed",
+                "content":[{"type":"content","content":{"type":"text","text":"네"}}]}),
+            json!({"promptId":"p-5"}),
+        );
+        assert_eq!(user_turn(&native.read().unwrap()), None);
     }
 
     #[test]
