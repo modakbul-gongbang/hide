@@ -1116,9 +1116,7 @@ impl Engine {
                 discovery,
                 choice,
             } => self.follow_up(role, &task, &discovery, choice),
-            Command::Resolve { project, target } => {
-                self.resolve_to_do(role, project.as_deref(), &target)
-            }
+            Command::Resolve { project, target } => self.resolve_to_do(project.as_deref(), &target),
             Command::Worker { task, worker } => {
                 let (factory, id) = self.resolve(role, &task)?;
                 self.pin_worker(&factory, &id, worker)
@@ -6225,12 +6223,7 @@ impl Engine {
     /// A to-do's single button (B16, B23, B33): the GitHub access check, a
     /// command a person ran, a worker start they looked at, or an escalated
     /// recovery hold to try again.
-    fn resolve_to_do(
-        &mut self,
-        role: &Role,
-        project: Option<&str>,
-        target: &ResolveTarget,
-    ) -> Reply {
+    fn resolve_to_do(&mut self, project: Option<&str>, target: &ResolveTarget) -> Reply {
         let factory = self.factory_id(project)?;
         let now = self.now();
         let answer = match target {
