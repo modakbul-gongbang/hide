@@ -64,6 +64,8 @@ function card(spec: CardSpec, now: number): CardView {
     resume_at: spec.resume ? now + 50 * MINUTE : null,
     waiting_group: spec.column === "stuck" ? spec.needsPerson ? "person" : "other" : null,
     stage: spec.state === "done" ? 4 : ["outside", "merge_waiting", "landed"].includes(spec.state) ? 3 : ["verifying", "stopped"].includes(spec.state) ? 2 : spec.state === "drafting" || (spec.state === "waiting" && !spec.resume) ? 0 : 1,
+    // The engine's track: a Task past intake that has not started waits at 작업.
+    track: spec.state === "done" ? 4 : ["outside", "merge_waiting", "landed"].includes(spec.state) ? 3 : ["verifying", "stopped"].includes(spec.state) ? 2 : spec.state === "drafting" ? 0 : 1,
     state: spec.state,
     state_label: spec.state,
     needs_person: spec.needsPerson ?? false,

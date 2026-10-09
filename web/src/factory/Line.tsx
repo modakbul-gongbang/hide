@@ -131,9 +131,8 @@ function Row({ row, item }: { row: LineRow; item: InboxItem | undefined }) {
 /** The four-cell track 접수 · 작업 · 검증 · 머지 and the current cell's word, in the row's tone. */
 export function Track({ card, person }: { card: CardView; person: boolean }) {
   const { t } = useInterfaceTranslation();
-  const done = card.stage >= 4;
-  // The board's stage 0 is "not started"; on the track a Task past intake waits at 작업.
-  const stage = card.stage === 0 && card.state !== "drafting" ? 1 : card.stage;
+  const done = card.track >= 4;
+  const stage = card.track;
   const working = card.state === "running" || card.state === "verifying" || card.state === "relanding";
   const tone = done ? "text-success" : person ? "text-warning" : working ? "text-agent-working" : "text-muted-foreground";
   const current = done ? "bg-success" : person ? "bg-warning" : working ? "bg-agent-working" : "bg-muted-foreground";

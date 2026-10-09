@@ -189,6 +189,8 @@ export type CardView = {
   resume_at: UnixMs | null;
   waiting_group: "person" | "other" | null;
   stage: number;
+  /** The track cell the 라인 and the Task page draw, 0 접수 to 3 머지, 4 merged; the engine derives it. */
+  track: number;
   state: TaskState;
   state_label: string;
   needs_person: boolean;

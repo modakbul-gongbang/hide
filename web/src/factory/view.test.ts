@@ -6,7 +6,7 @@ import { boardColumns, factoryGraph, lineRows, splitAtCuts, taskChain, wholeDeci
 
 function card(task: string, patch: Partial<CardView> = {}): CardView {
   return {
-    task, ai_decisions: 0, permission_wait: false, recovering: false, display_id: task, column: "before", title: task, summary: task, issue: null, issue_url: null, pr: null, worker_runtime: null, resume_at: null, waiting_group: null, stage: 0, state: "waiting", state_label: "", needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null,
+    task, ai_decisions: 0, permission_wait: false, recovering: false, display_id: task, column: "before", title: task, summary: task, issue: null, issue_url: null, pr: null, worker_runtime: null, resume_at: null, waiting_group: null, stage: 0, track: 1, state: "waiting", state_label: "", needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null,
     priority: 0, since: 0, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, worker_label: null, pause_reason: null, ...patch,
   };
 }

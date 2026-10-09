@@ -251,8 +251,13 @@ pub struct CardView {
     pub resume_at: Option<UnixMs>,
     /// `person` or `other`, only in the stuck column.
     pub waiting_group: Option<String>,
-    /// Waiting, work, verify, merge, or all complete (0..=4).
+    /// Waiting, work, verify, merge, or all complete (0..=4): the board's
+    /// placement.
     pub stage: u8,
+    /// The four-cell track 접수 · 작업 · 검증 · 머지 the 라인 and the Task page
+    /// draw (0..=3, 4 merged): a Task past intake that has not started waits
+    /// at 작업, where the board keeps it as not started (B25).
+    pub track: u8,
     pub state: String,
     pub state_label: String,
     pub needs_person: bool,
@@ -647,6 +652,13 @@ fn board_stage(task: &Task) -> u8 {
     }
 }
 
+fn track_cell(task: &Task) -> u8 {
+    match board_stage(task) {
+        0 if task.state != TaskState::Drafting => 1,
+        stage => stage,
+    }
+}
+
 pub fn card_view(
     factory: &Factory,
     task: &Task,
@@ -741,6 +753,7 @@ pub fn card_view(
             .to_owned()
         }),
         stage: board_stage(task),
+        track: track_cell(task),
         state: task.state.as_str().to_owned(),
         state_label: stop
             .map(|reason| format!("{} ({})", task.state.label(), reason.label()))

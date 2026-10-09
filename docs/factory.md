@@ -825,6 +825,7 @@ An inbox item's `text` carries only its `kind`, and a question's own text, a spl
 | `resume_at` | For a waiting Task, its worker runtime's engine usage-hold deadline, only while it is in the future. |
 | `waiting_group` | `person` for a stuck Task needing a person or paused; `other` for another stuck Task; otherwise absent. |
 | `stage` | 0 waiting, 1 work, 2 verification, 3 merge, 4 complete. |
+| `track` | The cell the 라인 row and the Task page's stage track light: the stage, except that a Task past intake that has not run yet sits at 1, work. |
 | `state`, `state_label` | The state id and its label, with the stop reason for a stopped Task. |
 | `needs_person` | The Task is blocked, stopped, `merge_waiting`, paused by a closed pane, or has an open question a person answers; a Task blocked only on requests Factory AI is still sorting is not yet, and neither is a stop the recovery schedule is still working on. |
 | `waiting_for` | For a waiting Task, the predecessors by display id, the environment hold, or `slot`; for a blocked one, `answer` or `predecessor`. |
@@ -896,6 +897,8 @@ Drafting and never-run waiting are stage 0.
 Running, blocked, paused, relanding, previously-run waiting and stops other than verification or publication refusal are stage 1.
 Verifying and stops for `verify_failed` or `publish_refused` are stage 2.
 Merge waiting, landed and outside are stage 3; done is stage 4.
+The track is the stage with one difference: only drafting stays at 0, so a Task waiting for its first start already lights 작업.
+The engine derives it, and the web shell draws the cell it is given without computing one.
 
 The existing intake-review response supplies the optional card summary without another judgment or additional input fields.
 A failed or older response falls back to the goal sentence.

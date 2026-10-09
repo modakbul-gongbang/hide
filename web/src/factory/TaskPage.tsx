@@ -227,15 +227,15 @@ function StageTrack({ detail, factory }: { detail: TaskDetail; factory: FactoryV
   const attempts = detail.attempts.filter((attempt) => attempt.stage === "task").length;
   steps[2]!.marks.push(<span key="verify">{factory.verification === "none" ? t("factory.task.noVerification") : t("factory.track.verify", { attempts, value: detail.verification })}</span>);
   steps[3]!.marks.push(<span key="merge">{factory.merge_mode === "auto" && factory.verification !== "none" ? t("factory.track.autoMerge") : t("factory.track.manualMerge")}</span>);
-  const done = card.stage >= 4;
+  const done = card.track >= 4;
   const working = card.state === "running" || card.state === "verifying" || card.state === "relanding";
   const person = card.needs_person;
   const currentTone = person ? "text-warning" : working ? "text-agent-working" : "text-foreground";
   return (
-    <ol className="grid grid-cols-4 gap-md" data-factory-stage-track={card.stage}>
+    <ol className="grid grid-cols-4 gap-md" data-factory-stage-track={card.track}>
       {steps.map((step, at) => {
-        const complete = done || at < card.stage;
-        const current = !done && at === card.stage;
+        const complete = done || at < card.track;
+        const current = !done && at === card.track;
         const Icon = complete ? CircleCheckIcon : current ? (working ? LoaderCircleIcon : person ? CircleHelpIcon : CircleIcon) : CircleIcon;
         return (
           <li key={step.word} className="flex min-w-0 flex-col gap-xxs" data-factory-step={at} data-factory-step-state={complete ? "done" : current ? "current" : "ahead"}>

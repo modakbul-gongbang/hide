@@ -23,7 +23,7 @@ import type { CardView, DecisionView, FactorySummary, FactoryView, InboxItem, Ta
 const NOW = Date.now();
 
 function card(task: string, state: TaskState, patch: Partial<CardView> = {}): CardView {
-  return { task, ai_decisions: 0, permission_wait: false, recovering: false, display_id: task, column: null, title: `${task} 제목`, summary: "작업 요약", issue: null, issue_url: null, pr: null, worker_runtime: null, resume_at: null, waiting_group: null, stage: 1, state, state_label: state, needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null, priority: 0, since: NOW, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, worker_label: null, pause_reason: null, ...patch };
+  return { task, ai_decisions: 0, permission_wait: false, recovering: false, display_id: task, column: null, title: `${task} 제목`, summary: "작업 요약", issue: null, issue_url: null, pr: null, worker_runtime: null, resume_at: null, waiting_group: null, stage: 1, track: 1, state, state_label: state, needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null, priority: 0, since: NOW, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, worker_label: null, pause_reason: null, ...patch };
 }
 
 function factory(patch: Partial<FactoryView> = {}): FactoryView {
