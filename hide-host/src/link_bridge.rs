@@ -15,8 +15,9 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, mpsc};
 use std::thread::Scope;
+use std::time::Duration;
 
 use base64::Engine as _;
 use hide_node_link::panes::{MAX_CHUNK, NodeEvent};
@@ -27,10 +28,11 @@ use serde_json::Value;
 use crate::error::{ErrorCode, HostError, HostResult};
 use crate::panes::write_event;
 
-/// How long one write to a stream's end may take.
-const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long one chunk's write to a stream's end may take before the stream
+/// is ended.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the node's daemon has to take a browser relay connection.
-const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The browser gateway of the desktop window on a node that dialed its
 /// core, as the node's daemon holds its registration. The core decides the
@@ -90,9 +92,15 @@ impl Closer {
     }
 }
 
+/// One chunk for a stream's writer, and where it answers how the write
+/// ended.
+type Chunk = (Vec<u8>, mpsc::Sender<io::Result<()>>);
+
 struct Open {
     end: LinkEnd,
-    writer: Mutex<Box<dyn Write + Send>>,
+    /// The stream's writer thread takes one chunk at a time; holding the
+    /// lock is a write's turn on the stream.
+    chunks: Mutex<mpsc::Sender<Chunk>>,
     closer: Closer,
 }
 
@@ -101,6 +109,7 @@ pub struct LinkBridge<'a> {
     herdr: Option<PathBuf>,
     browser: Option<&'a dyn BrowserGateway>,
     streams: Mutex<HashMap<u64, std::sync::Arc<Open>>>,
+    write_timeout: Duration,
 }
 
 impl<'a> LinkBridge<'a> {
@@ -111,6 +120,7 @@ impl<'a> LinkBridge<'a> {
             herdr,
             browser,
             streams: Mutex::new(HashMap::new()),
+            write_timeout: WRITE_TIMEOUT,
         }
     }
 
@@ -136,11 +146,6 @@ impl<'a> LinkBridge<'a> {
                     };
                     HostError::new(code, format!("The node's Herdr did not answer: {error}"))
                 })?;
-                // A Herdr that stops reading fails the write rather than
-                // hold a worker of the link's control lane.
-                connection
-                    .set_write_timeout(Some(WRITE_TIMEOUT))
-                    .map_err(io_error)?;
                 Ok(Connection::Local(connection))
             }
             LinkEnd::BrowserRelay => {
@@ -154,9 +159,6 @@ impl<'a> LinkBridge<'a> {
                             )
                         },
                     )?;
-                connection
-                    .set_write_timeout(Some(WRITE_TIMEOUT))
-                    .map_err(io_error)?;
                 Ok(Connection::Tcp(connection))
             }
         }
@@ -192,9 +194,11 @@ impl<'a> LinkBridge<'a> {
         // holds only this open, never another stream's write or close.
         let connection = self.connect(end)?;
         let mut reader = connection.reader().map_err(io_error)?;
+        let mut writer = connection.writer().map_err(io_error)?;
+        let (chunks, waiting) = mpsc::channel::<Chunk>();
         let open = std::sync::Arc::new(Open {
             end,
-            writer: Mutex::new(connection.writer().map_err(io_error)?),
+            chunks: Mutex::new(chunks),
             closer: connection.closer().map_err(io_error)?,
         });
         {
@@ -205,6 +209,21 @@ impl<'a> LinkBridge<'a> {
             }
             streams.insert(stream, std::sync::Arc::clone(&open));
         }
+        // An end that stops reading holds this thread, never a worker of
+        // the link's control lane: `write` waits for it only until its
+        // deadline, and the stream's close then ends the held write, on
+        // every system (`hide_platform::ipc`, `ShutdownHandle`). The thread
+        // ends when the stream does and its last chunk sender goes.
+        scope.spawn(move || {
+            for (bytes, answer) in waiting {
+                let written = writer.write_all(&bytes);
+                let failed = written.is_err();
+                let _ = answer.send(written);
+                if failed {
+                    break;
+                }
+            }
+        });
         scope.spawn(move || {
             let mut buffer = vec![0_u8; MAX_CHUNK];
             let reason = loop {
@@ -236,7 +255,9 @@ impl<'a> LinkBridge<'a> {
         Ok(Value::Null)
     }
 
-    /// Writes base64 `data` to `stream`'s end.
+    /// Writes base64 `data` to `stream`'s end, waiting at most the write
+    /// deadline; an end that takes no more by then, or fails the write,
+    /// ends the stream.
     pub fn write(&self, stream: u64, data: &str) -> HostResult<Value> {
         if data.len() > MAX_CHUNK.div_ceil(3) * 4 {
             return Err(HostError::new(
@@ -250,11 +271,26 @@ impl<'a> LinkBridge<'a> {
         let open = lock(&self.streams)
             .get(&stream)
             .cloned()
-            .ok_or_else(|| HostError::new(ErrorCode::NotFound, "The link stream has ended"))?;
-        let written = lock(&open.writer).write_all(&bytes);
+            .ok_or_else(ended)?;
+        let written = {
+            let chunks = lock(&open.chunks);
+            let (answer, answered) = mpsc::channel();
+            if chunks.send((bytes, answer)).is_err() {
+                return Err(ended());
+            }
+            match answered.recv_timeout(self.write_timeout) {
+                Ok(written) => written.map_err(|error| error.to_string()),
+                Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+                    "The node's {} took no data for {} s",
+                    name(open.end),
+                    self.write_timeout.as_secs_f32()
+                )),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Err(ended()),
+            }
+        };
         written.map_err(|error| {
             self.close(stream);
-            HostError::new(ErrorCode::Io, error.to_string())
+            HostError::new(ErrorCode::Io, error)
         })?;
         Ok(Value::Null)
     }
@@ -294,6 +330,10 @@ pub fn unreached(end: LinkEnd) -> HostError {
     )
 }
 
+fn ended() -> HostError {
+    HostError::new(ErrorCode::NotFound, "The link stream has ended")
+}
+
 fn io_error(error: io::Error) -> HostError {
     HostError::new(ErrorCode::Io, error.to_string())
 }
@@ -302,4 +342,58 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use hide_platform::ipc::LocalListener;
+
+    use super::*;
+
+    /// A Herdr that takes the stream and never reads holds a write once its
+    /// buffer is full. The write fails at the bridge's deadline instead of
+    /// holding its caller (a worker of the link's control lane), the stream
+    /// ends, and this holds on every system: a Windows pipe takes no write
+    /// timeout, so the deadline cannot come from the stream.
+    #[test]
+    fn a_write_to_an_end_that_stops_reading_ends_the_stream_at_its_deadline() {
+        let folder = tempfile::Builder::new().prefix("lb").tempdir().unwrap();
+        let socket = folder.path().join("h.sock");
+        let listener = LocalListener::bind(&socket).unwrap();
+        let (release, released) = mpsc::channel::<()>();
+        let herdr = std::thread::spawn(move || {
+            let stream = listener.accept().unwrap();
+            let _ = released.recv_timeout(Duration::from_secs(60));
+            drop(stream);
+        });
+        let mut bridge = LinkBridge::new(Some(socket), None);
+        bridge.write_timeout = Duration::from_millis(500);
+        let output = Mutex::new(Vec::<u8>::new());
+        let chunk = base64::engine::general_purpose::STANDARD.encode(vec![7_u8; MAX_CHUNK]);
+        std::thread::scope(|scope| {
+            bridge.open(scope, &output, 1, LinkEnd::Herdr).unwrap();
+            // No buffer on any system holds a gigabyte of a silent peer's.
+            let mut refused = None;
+            for _ in 0..(1 << 30) / MAX_CHUNK {
+                let started = Instant::now();
+                if let Err(error) = bridge.write(1, &chunk) {
+                    refused = Some((error, started.elapsed()));
+                    break;
+                }
+            }
+            let (error, waited) = refused.expect("the silent end never held a write");
+            assert_eq!(error.code, ErrorCode::Io, "{error:?}");
+            assert!(
+                waited < Duration::from_secs(3),
+                "the write held its caller {waited:?}"
+            );
+            let after = bridge.write(1, &chunk).unwrap_err();
+            assert_eq!(after.code, ErrorCode::NotFound, "{after:?}");
+            bridge.stop();
+        });
+        drop(release);
+        herdr.join().unwrap();
+    }
 }
