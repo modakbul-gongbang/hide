@@ -1112,6 +1112,99 @@ impl Engine {
         }
     }
 
+    /// A worker whose agent slept by closing its pane woke in a fresh one,
+    /// and the host registered that pane for it (#857): the Task keeps the
+    /// worker on the new pane and registration, and the host gets it back.
+    /// Asking again after it was applied changes nothing. `None` when no Task
+    /// holds the worker, so the host knows the binding has no owner left.
+    pub fn worker_rebound(
+        &mut self,
+        factory: &str,
+        old: (&str, Option<&str>),
+        pane: &str,
+        agent: &str,
+    ) -> Option<WorkerRef> {
+        let (old_pane, old_agent) = old;
+        let holds = |worker: &WorkerRef, pane: &str, agent: Option<&str>| {
+            worker.pane.as_deref() == Some(pane) && worker.agent.as_deref() == agent
+        };
+        let (id, applied) = self
+            .tasks_of(factory)
+            .filter(|task| !task.purged)
+            .find_map(|task| {
+                let worker = task.worker.as_ref()?;
+                let applied = holds(worker, pane, Some(agent));
+                (applied || holds(worker, old_pane, old_agent)).then(|| (task.id.clone(), applied))
+            })?;
+        if !applied {
+            self.with_task(factory, &id, |task| {
+                if let Some(worker) = &mut task.worker {
+                    worker.pane = Some(pane.to_owned());
+                    worker.agent = Some(agent.to_owned());
+                }
+            });
+            self.record(
+                factory,
+                Some(&id),
+                "worker.rebound",
+                json!({"pane": pane, "agent": agent}),
+            );
+        }
+        self.task(factory, &id)?.worker.clone()
+    }
+
+    /// The panes of the workers whose agent closes its pane to sleep, with
+    /// whose they are: what the core needs to keep a conversation tied to its
+    /// worker when it sleeps.
+    pub fn sleeper_panes(&self) -> impl Iterator<Item = (&Task, &WorkerRef)> {
+        self.all_tasks()
+            .filter(|task| !task.purged)
+            .filter_map(|task| Some((task, task.worker.as_ref()?)))
+            .filter(|(_, worker)| {
+                worker.pane.is_some()
+                    && worker
+                        .runtime
+                        .adapter()
+                        .sleep
+                        .is_some_and(|dialect| dialect.closes_pane_when_sleeping())
+            })
+    }
+
+    /// A worker asked to wake could not be brought back by the core, which
+    /// kept its conversation: the Task stops for a person, whose resume
+    /// asks the same wake again. Only a Task that is waiting on the wake
+    /// stops, so the same failure read again changes nothing.
+    pub fn worker_wake_failed(
+        &mut self,
+        factory: &str,
+        old: (&str, Option<&str>),
+        detail: &str,
+    ) -> bool {
+        let (pane, agent) = old;
+        let stopped: Vec<String> = self
+            .tasks_of(factory)
+            .filter(|task| !task.purged)
+            .filter(|task| matches!(task.state, TaskState::Running | TaskState::Relanding))
+            .filter(|task| {
+                task.worker.as_ref().is_some_and(|worker| {
+                    worker.pane.as_deref() == Some(pane) && worker.agent.as_deref() == agent
+                })
+            })
+            .map(|task| task.id.clone())
+            .collect();
+        for id in &stopped {
+            self.starting.remove(&(factory.to_owned(), id.clone()));
+            self.set_state(factory, id, TaskState::Stopped);
+            let detail = judgment::cut(detail, 300);
+            self.with_task(factory, id, |task| {
+                task.stop = Some(StopReason::WorkerStart);
+                task.stop_detail = Some(detail);
+            });
+            self.record(factory, Some(id), "worker.wake_failed", json!({}));
+        }
+        !stopped.is_empty()
+    }
+
     // --------------------------------------------------------------- merges
 
     /// Asks the Observer whether a verified Task whose only gate is a risk

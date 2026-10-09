@@ -1095,6 +1095,91 @@ fn closing_a_worker_pane_in_hide_pauses_its_task_for_a_person() {
     assert!(h.world().spawned.last().unwrap().resume.is_some());
 }
 
+#[test]
+fn a_worker_that_woke_in_a_fresh_pane_stays_its_tasks_worker_there() {
+    let mut h = Bench::new(false);
+    let f = h.factory(false);
+    let claude = h.ready("Keeps its pane", &[]);
+    assert_eq!(config(&mut h, "workers", r#"[{"agent":"pi"}]"#)["ok"], true);
+    let t = h.ready("Moves", &[]);
+    let before = h.task(&f, &t).worker.expect("worker");
+    let (pane, agent) = (before.pane.clone().unwrap(), before.agent.clone());
+    // Only an agent that closes its pane to sleep has a pane to follow.
+    let sleepers: Vec<_> = h
+        .engine
+        .sleeper_panes()
+        .map(|(task, worker)| (task.id.clone(), worker.pane.clone()))
+        .collect();
+    assert_eq!(sleepers, [(t.clone(), before.pane.clone())], "not {claude}");
+
+    let old = (pane.as_str(), agent.as_deref());
+    let moved = h
+        .engine
+        .worker_rebound(&f, old, "pane-woken", "agent-woken")
+        .expect("the Task holds the worker");
+    assert_eq!(
+        (moved.pane.as_deref(), moved.agent.as_deref()),
+        (Some("pane-woken"), Some("agent-woken"))
+    );
+    assert_eq!(
+        WorkerRef {
+            pane: before.pane.clone(),
+            agent: before.agent.clone(),
+            ..moved.clone()
+        },
+        before,
+        "nothing else of the worker moved"
+    );
+    assert_eq!(
+        h.engine.role_for(Some("pane-woken"), None),
+        Some((f.clone(), t.clone())),
+        "its reports are the Task's from the new pane"
+    );
+    assert_eq!(
+        h.engine.role_for(Some(&pane), None),
+        None,
+        "the closed pane is no worker"
+    );
+    // Asked again after it was applied, and from a pane no Task holds.
+    assert_eq!(
+        h.engine
+            .worker_rebound(&f, old, "pane-woken", "agent-woken"),
+        Some(moved)
+    );
+    assert!(
+        h.engine
+            .worker_rebound(&f, ("pane-else", None), "pane-x", "agent-x")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_wake_the_core_could_not_finish_stops_the_task_once_for_a_person() {
+    let mut h = Bench::new(false);
+    let f = h.factory(false);
+    assert_eq!(
+        config(&mut h, "workers", r#"[{"agent":"omp"}]"#)["ok"],
+        true
+    );
+    let t = h.ready("Cannot wake", &[]);
+    let worker = h.task(&f, &t).worker.expect("worker");
+    let old = (worker.pane.as_deref().unwrap(), worker.agent.as_deref());
+    assert!(h.engine.worker_wake_failed(&f, old, "wake_failed"));
+    let task = h.task(&f, &t);
+    assert_eq!(
+        (task.state, task.stop, task.stop_detail.as_deref()),
+        (
+            TaskState::Stopped,
+            Some(StopReason::WorkerStart),
+            Some("wake_failed")
+        )
+    );
+    assert!(
+        !h.engine.worker_wake_failed(&f, old, "wake_failed"),
+        "the same failure read again stops nothing"
+    );
+}
+
 // ---------------------------------------------------------- Factory pause
 
 #[test]
@@ -1280,14 +1365,14 @@ fn a_worker_whose_agent_cannot_sleep_is_never_counted_asleep_and_hears_a_pause_s
  {
     let mut h = Bench::new(false);
     let f = h.factory(false);
-    let grok = Runtime::parse("grok").expect("grok declares a start");
-    h.world().sleepless.push(grok);
+    let sleepless = Runtime::parse("opencode").expect("opencode declares a start");
+    h.world().sleepless.push(sleepless);
     assert_eq!(
-        config(&mut h, "workers", r#"[{"agent":"grok"}]"#)["ok"],
+        config(&mut h, "workers", r#"[{"agent":"opencode"}]"#)["ok"],
         true
     );
     let t = h.ready("Sleepless", &[]);
-    assert_eq!(h.task(&f, &t).worker.expect("worker").runtime, grok);
+    assert_eq!(h.task(&f, &t).worker.expect("worker").runtime, sleepless);
     h.world().hold_judgments = true;
     h.done(&f, &t);
     h.op(Command::PauseFactory { project: None });
@@ -1320,10 +1405,10 @@ fn a_worker_whose_agent_cannot_sleep_is_never_counted_asleep_and_hears_a_pause_s
 fn a_pause_names_a_worker_whose_agent_cannot_sleep_and_a_cancel_leaves_it_awake() {
     let mut h = Bench::new(false);
     let f = h.factory(false);
-    let grok = Runtime::parse("grok").expect("grok declares a start");
-    h.world().sleepless.push(grok);
+    let sleepless = Runtime::parse("opencode").expect("opencode declares a start");
+    h.world().sleepless.push(sleepless);
     assert_eq!(
-        config(&mut h, "workers", r#"[{"agent":"grok"}]"#)["ok"],
+        config(&mut h, "workers", r#"[{"agent":"opencode"}]"#)["ok"],
         true
     );
     let t = h.ready("Keeps working", &[]);
