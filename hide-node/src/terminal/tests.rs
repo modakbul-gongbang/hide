@@ -939,6 +939,10 @@ fn a_pane_the_core_put_to_sleep_is_not_forgotten_at_the_cap() {
             .control(TerminalControl::Forget { pane: pane.clone() });
         harness.service.view(&pane, SIZE, false);
     }
+    assert_eq!(
+        harness.service.shared.lock().panes.len(),
+        MAX_UNATTACHED_PANES
+    );
     harness.service.view("w1:p10", SIZE, true);
     let opened = harness.controlling("w1:p9");
     harness.key("w1:p9", b"lost");

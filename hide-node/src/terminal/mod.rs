@@ -67,9 +67,9 @@ pub use hide_node_link::terminal::ReportSink;
 const OBSERVER_RESIZE_QUIET: Duration = Duration::from_millis(150);
 
 /// Panes a node tracks that were never asked to attach, each named by a
-/// screen's view. At it, those the core does not show and that hold nothing
-/// are forgotten; with none to forget, a view of a pane the node does not
-/// know is refused.
+/// screen's view or a core control. At it, those only a view named are
+/// forgotten (`Inner::forget_unowned`); with none to forget, a view of a
+/// pane the node does not know is refused.
 const MAX_UNATTACHED_PANES: usize = 2 * MAX_ATTACHED_PANES;
 
 /// Seconds between a failed control attach and its next attempt.
