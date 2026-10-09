@@ -59,16 +59,17 @@ struct HeldLine {
 }
 
 impl HeldLines {
-    /// The next line still in time, telling `dropped` of each that is not.
+    /// The next line still in time and the screen connection that typed
+    /// it, telling `dropped` of each that is not.
     fn next(
         &mut self,
         now: Instant,
         dropped: &tokio::sync::broadcast::Sender<u64>,
-    ) -> Option<String> {
+    ) -> Option<(String, u64)> {
         while let Some(line) = self.lines.pop_front() {
             self.bytes -= line.text.len();
             if now.duration_since(line.at) <= HELD_FOR {
-                return Some(line.text);
+                return Some((line.text, line.connection));
             }
             expired(line.connection, dropped);
         }
@@ -95,6 +96,27 @@ impl HeldLines {
             expired(line.connection, dropped);
         }
         self.bytes = 0;
+    }
+}
+
+/// A held line taken for the relay: its screen is told it was not sent
+/// unless the write finished, so a write that failed or was cut off with
+/// its relay loses no key unsaid.
+struct InFlight<'a> {
+    connection: Option<u64>,
+    dropped: &'a tokio::sync::broadcast::Sender<u64>,
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        if let Some(connection) = self.connection.take() {
+            herdr_core::diagnostic!(json!({
+                "component": "node_daemon",
+                "kind": "terminals.held_unsent",
+                "connection": connection,
+            }));
+            let _ = self.dropped.send(connection);
+        }
     }
 }
 
@@ -165,10 +187,13 @@ impl ScreenTerminals {
         if let KeyTarget::Pane(pane) = &target
             && let Some(own) = pane.strip_prefix(&self.own_prefix)
         {
-            if let Some(link) = self.own() {
-                link.terminals
-                    .key(KeyTarget::Pane(own.to_owned()), bytes, typed_at_unix_ms);
-            }
+            let Some(link) = self.own() else {
+                return Err(
+                    "This machine's panes are not reachable now; this key was not sent".to_owned(),
+                );
+            };
+            link.terminals
+                .key(KeyTarget::Pane(own.to_owned()), bytes, typed_at_unix_ms);
             return Ok(());
         }
         self.up(
@@ -306,30 +331,11 @@ async fn terminals_relay(
         Ok(upstream) => upstream,
         Err(message) => return format!("open_failed: {message}"),
     };
-    let (mut sink, mut from_core) = upstream.split();
+    let (sink, mut from_core) = upstream.split();
     // Written on a task of its own: a write the core is slow to take never
     // stops this relay reading the core's output, which would fill the SSH
     // channel and stall every other one on the connection.
-    let mut writer = {
-        let terminals = Arc::clone(terminals);
-        tokio::spawn(async move {
-            loop {
-                let next = lock(&terminals.held).next(Instant::now(), &terminals.dropped);
-                match next {
-                    Some(line) => {
-                        if sink
-                            .send(tungstenite::Message::Text(line.into()))
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    None => terminals.ready.notified().await,
-                }
-            }
-        })
-    };
+    let mut writer = tokio::spawn(write_held(Arc::clone(terminals), sink));
     let _abort = AbortOnDrop(writer.abort_handle());
     loop {
         tokio::select! {
@@ -354,6 +360,33 @@ async fn terminals_relay(
                 Some(Ok(_)) => {}
             },
         }
+    }
+}
+
+/// Writes held lines up the relay in order until a write fails; a line taken
+/// and not written is told to its screen as not sent.
+async fn write_held<S>(terminals: Arc<ScreenTerminals>, mut sink: S)
+where
+    S: futures_util::Sink<tungstenite::Message> + Unpin,
+{
+    loop {
+        let next = lock(&terminals.held).next(Instant::now(), &terminals.dropped);
+        let Some((line, connection)) = next else {
+            terminals.ready.notified().await;
+            continue;
+        };
+        let mut in_flight = InFlight {
+            connection: Some(connection),
+            dropped: &terminals.dropped,
+        };
+        if sink
+            .send(tungstenite::Message::Text(line.into()))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        in_flight.connection = None;
     }
 }
 
@@ -412,8 +445,9 @@ mod tests {
         terminals.key(2, key("b"), b"b".to_vec(), 2).unwrap();
         let now = Instant::now();
         let mut held = lock(&terminals.held);
-        let first = held.next(now, &terminals.dropped).expect("the first key");
+        let (first, typed_by) = held.next(now, &terminals.dropped).expect("the first key");
         assert!(first.contains("core-pane-a"), "{first}");
+        assert_eq!(typed_by, 1);
         // The second waited too long: dropped, and its screen told.
         let late = now + HELD_FOR + Duration::from_millis(1);
         assert_eq!(held.next(late, &terminals.dropped), None);
@@ -426,15 +460,53 @@ mod tests {
         terminals.key(3, key("c"), paste, 3).unwrap();
         let refused = terminals.key(3, key("d"), b"d".to_vec(), 4).unwrap_err();
         assert!(refused.contains("not sent"), "{refused}");
-        // This machine's own panes never wait for the relay.
-        terminals
+        // This machine's own panes never wait for the relay; with no live
+        // link a key for one is refused to its screen, never lost unsaid.
+        let unreached = terminals
             .key(
                 3,
                 KeyTarget::Pane("remote:screen:pane:w:p".to_owned()),
                 b"x".to_vec(),
                 5,
             )
-            .expect("an own pane's key");
+            .unwrap_err();
+        assert!(unreached.contains("not sent"), "{unreached}");
+    }
+
+    /// A line the relay took and could not write, because the write failed
+    /// or the relay ended during it, is told to its screen as not sent.
+    #[tokio::test]
+    async fn a_key_the_relay_took_and_did_not_send_is_told_to_its_screen() {
+        let terminals = Arc::new(ScreenTerminals::new(
+            "remote:screen:pane:".to_owned(),
+            watch::channel(None).1,
+        ));
+        let mut dropped = terminals.dropped.subscribe();
+        let key = KeyTarget::Pane("core-pane".to_owned());
+        terminals.key(7, key.clone(), b"a".to_vec(), 1).unwrap();
+        let failing = Box::pin(futures_util::sink::unfold(
+            (),
+            |(), _: tungstenite::Message| async { Err::<(), ()>(()) },
+        ));
+        write_held(Arc::clone(&terminals), failing).await;
+        assert_eq!(dropped.try_recv().unwrap(), 7);
+
+        terminals.key(8, key, b"b".to_vec(), 2).unwrap();
+        let stalled = Box::pin(futures_util::sink::unfold(
+            (),
+            |(), _: tungstenite::Message| std::future::pending::<Result<(), ()>>(),
+        ));
+        let writer = tokio::spawn(write_held(Arc::clone(&terminals), stalled));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !lock(&terminals.held).lines.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the writer never took the line");
+        writer.abort();
+        let _ = writer.await;
+        assert_eq!(dropped.try_recv().unwrap(), 8);
     }
 
     #[test]
