@@ -11,7 +11,7 @@ import { catalogWorkspaces, localDeviceId } from "../snapshot";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
 import type { MergeMode, VerificationChoice } from "./commands";
-import { Refusal } from "./MyTurn";
+import { Refusal } from "./Decisions";
 import { useFactoryRequest, type RequestState } from "./request";
 
 /** What `hide factory init` answers before `--confirm` (docs/factory.md, Creating a Factory). */
@@ -94,7 +94,7 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
     const answer = probe.state.answer as Record<string, unknown>;
     const existing = initFactory(answer);
     if (existing) {
-      useUiStore.getState().setFactoryPlace({ create: false, factory: existing, tab: "turn" });
+      useUiStore.getState().setFactoryPlace({ create: false, factory: existing, tab: "line" });
       return;
     }
     const next = answer as unknown as InitPreview;
@@ -116,7 +116,7 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
   useEffect(() => {
     if (create.state.phase !== "taken") return;
     const made = initFactory(create.state.answer as Record<string, unknown>);
-    if (made) useUiStore.getState().setFactoryPlace({ create: false, factory: made, tab: "turn" });
+    if (made) useUiStore.getState().setFactoryPlace({ create: false, factory: made, tab: "line" });
   }, [create.state]);
 
   const probing = probe.state.phase === "sending";

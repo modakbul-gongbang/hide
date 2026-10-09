@@ -399,6 +399,10 @@
         "long"
       ]
     },
+    "urlStates": [
+      "line",
+      "task"
+    ],
     "states": {
       "line": "라인 at rest: 결정 필요 on top with its items open, one row per Task beneath, the person's turn in the warning band, 후속 후보 folded at the foot.",
       "board": "보드: four lanes by movement, 시작 전 · 진행 중 · 멈춤 (나를 기다림, 다른 걸 기다림) · 완료, with the narrow lanes drawing their cards small and old completions folded.",

@@ -320,10 +320,12 @@ async function enterState(page, state, target) {
     await page.locator('[data-factory-worker-option]').first().waitFor();
     await page.locator('[data-factory-worker-option="2"]').hover();
   }
+  // The Task page frame shows one of Factory AI's decisions with 다른 답 open and an answer typed.
   if (state === 'task') {
-    await page.locator('[data-factory-tab="board"]').click();
-    await page.locator('[data-factory-card="t-412"] [data-factory-card-open]').click();
     await page.locator('[data-factory-task-page]').waitFor();
+    await page.locator('[data-factory-decision-override="R2"]').click();
+    await page.locator('[data-factory-override-text]').fill('작은 기록으로 잰 결과로 충분하다');
+    await page.mouse.move(0, 0);
   }
   if (state === 'content-match') {
     await page.getByRole('searchbox', {name:'Search sessions'}).fill('화검');

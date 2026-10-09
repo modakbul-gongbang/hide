@@ -9,7 +9,7 @@ import { taskRef } from "./commands";
 import { TaskCardView } from "./FactoryCard";
 import { COLUMN_LABEL } from "./labels";
 import type { CardView, FactoryView, InboxItem } from "./model";
-import { Refusal } from "./MyTurn";
+import { Refusal } from "./Decisions";
 import { useFactoryRequest } from "./request";
 import { boardColumns, cancelledCards } from "./view";
 
@@ -17,7 +17,7 @@ function cardInboxItem(inbox: InboxItem[], factory: string, card: CardView) {
   const preferred = card.state === "merge_waiting" ? "merge" : card.state === "stopped" ? "stopped" : card.state === "paused" ? "paused" : null;
   let fallback: InboxItem | undefined;
   for (const item of inbox) {
-    if (item.factory !== factory || item.task !== card.task || item.kind === "notice") continue;
+    if (item.factory !== factory || item.task !== card.task) continue;
     if (preferred === null || item.kind === preferred) return item;
     fallback ??= item;
   }
@@ -61,7 +61,10 @@ export function FactoryBoard({ factories, place, actions, inbox }: { factories: 
           {columns.map((column) => (
             <section key={column.column} className="flex min-w-0 flex-col gap-sm" aria-label={t(COLUMN_LABEL[column.column])} data-factory-column={column.column}>
               <h2 className="text-caption text-subtle-foreground">
-                {t(COLUMN_LABEL[column.column])} {column.groups.reduce((sum, group) => sum + group.cards.length, 0)}
+                {/* The lane's name narrows the board to it, and again widens it back. */}
+                <button type="button" className="rounded-sm outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" aria-pressed={place.column === column.column} data-factory-lane-filter={column.column} onClick={() => set({ column: place.column === column.column ? null : column.column })}>
+                  {t(COLUMN_LABEL[column.column])} {column.groups.reduce((sum, group) => sum + group.cards.length, 0)}
+                </button>
               </h2>
               {(column.column === "stuck" ? ["person", "other"] as const : [null]).map((waiting) => {
                 const groups = column.groups.map((group) => ({ ...group, cards: group.cards.filter((card) => waiting === null || card.waiting_group === waiting) }));

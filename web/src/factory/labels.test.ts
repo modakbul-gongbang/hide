@@ -3,8 +3,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { english } from "../i18n/catalogs";
 import { factoryCatalogs } from "../i18n/resources/factory";
-import { COLUMN_LABEL, DECISION_KIND_LABEL, DIAGNOSIS_SOURCE_LABEL, DISCOVERY_LABEL, ENV_HOLD_LABEL, GATE_LABEL, KIND_LABEL, MODE_LABEL, NOTICE_LABEL, ORIGIN_LABEL, OUTCOME_LABEL, PAUSE_REASON_LABEL, REFUSAL_LABEL, REFUSAL_REASONS, RESULT_LABEL, STAGE_LABEL, STATE_LABEL, STOP_LABEL, WAITING_LABEL, itemWhy, refusalText, resultText, waitingText } from "./labels";
-import { type CardView, type InboxItem, ATTEMPT_OUTCOMES, ATTEMPT_STAGES, COLUMNS, DECISION_KINDS, DIAGNOSIS_SOURCES, DISCOVERY_CLASSES, ENV_HOLDS, GATES, NOTICES, OBSERVER_MODES, PAUSE_REASONS, QUESTION_KINDS, QUESTION_ORIGINS, RESULT_CODES, STOP_REASONS, TASK_STATES, WAITING_FOR } from "./model";
+import { itemSentence, stoppedText } from "./Decisions";
+import { COLUMN_LABEL, CRITERION_LABEL, DECISION_KIND_LABEL, DECISION_SOURCE_LABEL, DIAGNOSIS_SOURCE_LABEL, DISCOVERY_LABEL, ENV_HOLD_LABEL, FOLLOW_UP_STATE_LABEL, GATE_LABEL, HOLDING_LABEL, KIND_LABEL, MODE_LABEL, ORIGIN_LABEL, OUTCOME_LABEL, PAUSE_REASON_LABEL, RECOVERY_ACTION_LABEL, RECOVERY_OUTCOME_LABEL, REFUSAL_LABEL, REFUSAL_REASONS, STAGE_LABEL, STATE_LABEL, STOP_LABEL, WAITING_LABEL, refusalText, waitingText } from "./labels";
+import { type CardView, type FactoryView, type InboxItem, ATTEMPT_OUTCOMES, ATTEMPT_STAGES, COLUMNS, CRITERION_STATES, DECISION_BYS, DECISION_KINDS, DECISION_SOURCES, DIAGNOSIS_SOURCES, DISCOVERY_CLASSES, ENV_HOLDS, FOLLOW_UP_STATES, GATES, HOLDINGS, OBSERVER_MODES, PAUSE_REASONS, QUESTION_KINDS, QUESTION_ORIGINS, RECOVERY_ACTIONS, RECOVERY_OUTCOMES, RESULT_CODES, STOP_REASONS, TASK_STATES, WAITING_FOR } from "./model";
 
 // The reading side of contracts/snapshot-wire-enums.json for the Factory
 // sections: every value the core writes has a type member here and a label
@@ -12,7 +13,9 @@ import { type CardView, type InboxItem, ATTEMPT_OUTCOMES, ATTEMPT_STAGES, COLUMN
 // before a screen shows it unlabelled.
 const CONTRACT: Record<string, string[]> = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../../contracts/snapshot-wire-enums.json"), "utf8"));
 
-const READERS: Record<string, { values: readonly string[]; labels: Record<string, string> }> = {
+// `labels: null` is a value the screen reads but never words: a result code
+// is told by the choice's own result, and who decided by the Task page's group.
+const READERS: Record<string, { values: readonly string[]; labels: Record<string, string> | null }> = {
   factory_task_state: { values: TASK_STATES, labels: STATE_LABEL },
   factory_column: { values: COLUMNS, labels: COLUMN_LABEL },
   factory_question_kind: { values: QUESTION_KINDS, labels: KIND_LABEL },
@@ -25,8 +28,14 @@ const READERS: Record<string, { values: readonly string[]; labels: Record<string
   factory_env_hold: { values: ENV_HOLDS, labels: ENV_HOLD_LABEL },
   factory_stop_reason: { values: STOP_REASONS, labels: STOP_LABEL },
   factory_gate: { values: GATES, labels: GATE_LABEL },
-  factory_result_code: { values: RESULT_CODES, labels: RESULT_LABEL },
-  factory_notice: { values: NOTICES, labels: NOTICE_LABEL },
+  factory_result_code: { values: RESULT_CODES, labels: null },
+  factory_holding: { values: HOLDINGS, labels: HOLDING_LABEL },
+  factory_decision_by: { values: DECISION_BYS, labels: { person: "factory.task.decisions.mine_one", ai: "factory.task.decisions.ai_one", worker: "factory.task.decisions.worker_one" } },
+  factory_decision_source: { values: DECISION_SOURCES, labels: DECISION_SOURCE_LABEL },
+  factory_follow_up_state: { values: FOLLOW_UP_STATES, labels: FOLLOW_UP_STATE_LABEL },
+  factory_criterion_state: { values: CRITERION_STATES, labels: CRITERION_LABEL },
+  factory_recovery_outcome: { values: RECOVERY_OUTCOMES, labels: RECOVERY_OUTCOME_LABEL },
+  factory_recovery_action: { values: RECOVERY_ACTIONS, labels: RECOVERY_ACTION_LABEL },
   factory_decision_kind: { values: DECISION_KINDS, labels: DECISION_KIND_LABEL },
   factory_pause_reason: { values: PAUSE_REASONS, labels: PAUSE_REASON_LABEL },
   factory_observer_mode: { values: OBSERVER_MODES, labels: MODE_LABEL },
@@ -41,7 +50,7 @@ describe("the Factory wire enums", () => {
   for (const [key, reader] of Object.entries(READERS)) {
     it(`types and labels every ${key} value`, () => {
       expect([...reader.values].sort()).toEqual([...CONTRACT[key]!].sort());
-      for (const value of CONTRACT[key]!) expect(english).toHaveProperty([reader.labels[value]!]);
+      if (reader.labels) for (const value of CONTRACT[key]!) expect(english).toHaveProperty([reader.labels[value]!]);
     });
   }
 });
@@ -75,15 +84,17 @@ describe("the Factory's code sentences", () => {
   const t = (key: string, options: Record<string, unknown> = {}) => (english as Record<string, string>)[key]!.replace(/\{\{(\w+)\}\}/g, (_, name: string) => String(options[name]));
   const item = (patch: Partial<InboxItem>) => ({ group: "answer", kind: "default", question: "q-1", text: "질문 원문", gates: [], stop: null, result_code: "wake_worker", unblocks: [], ...patch }) as InboxItem;
 
-  it("says a merge's gates, a stop's reason and a question's own words (B9)", () => {
-    expect(itemWhy(item({ group: "merge", kind: "merge", question: null, gates: ["merge_refused"] }), t)).toBe("Waiting to merge: Merge refused");
-    expect(itemWhy(item({ group: "stopped", kind: "stopped", question: null, stop: "publish_refused" }), t)).toBe("Stopped: Push refused");
-    expect(itemWhy(item({}), t)).toBe("질문 원문");
+  it("says a merge's gates, a stop's reason and a question's own words in one sentence (B22)", () => {
+    const pr = { number: 561, url: "", head: "", by_factory: true, open: true };
+    expect(itemSentence(item({ group: "merge", kind: "merge", question: null, gates: ["merge_refused"] }), null, { pr } as CardView, t)).toBe(t("factory.decide.mergeGated", { pr: "PR #561", gates: english["factory.gate.merge_refused"] }));
+    expect(itemSentence(item({ group: "stopped", kind: "stopped", question: null, display_id: "#7", stop: "publish_refused" }), null, null, t)).toBe(t("factory.decide.stopped", { id: "#7", reason: english["factory.stop.publish_refused"] }));
+    expect(itemSentence(item({ group: "todo", kind: "github", task: null, display_id: null }), { github_block: { forbidden: true, stage: "merge", since: 0 } } as FactoryView, null, t)).toBe(english["factory.decide.githubPermission"]);
+    expect(itemSentence(item({}), null, null, t)).toBe("질문 원문");
   });
 
-  it("says what the suggestion does and what it frees (B9)", () => {
-    expect(resultText(item({ unblocks: ["#421"] }), t)).toBe("Wakes the worker to continue; then #421 can start");
-    expect(resultText(item({ result_code: "merge" }), t)).toBe("Merges");
+  it("says what an item holds up, from the asker's words or its code, with the Tasks waiting on it (B22)", () => {
+    expect(stoppedText(item({ display_id: "#420", holding: "worker", stopped: null, unblocks: ["#421", "#422"] }), null, t)).toBe(t("factory.decide.waitingOn", { what: t("factory.holding.worker", { id: "#420" }), ids: "#421, #422" }));
+    expect(stoppedText(item({ stopped: "#405 CI 읽기", holding: "github" }), null, t)).toBe("#405 CI 읽기");
   });
 
   it("says what a card waits for (B15)", () => {

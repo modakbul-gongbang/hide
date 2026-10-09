@@ -27,15 +27,15 @@ export type FactoryStack = {
   stop: () => void;
 };
 
-type Question = { text: string; suggestion: string; default_action: string };
-export type Review = { summary: string; questions: Question[]; dependencies: string[]; split: []; flags: string[]; fits_scope: null; worker: number; worker_reason: string };
+type Question = { text: string; stopped: string; suggestion: string; default_action: string; choices: { choice: string; result: string }[] };
+export type Review = { summary: string; criteria: string[]; out_of_scope: string[]; assumptions: { text: string; reason: string }[]; questions: Question[]; dependencies: string[]; split: []; flags: string[]; fits_scope: null; worker: number; worker_reason: string };
 
-/** A review that leaves nothing open: the Task is Ready. Hide AI checks an answer against the review's schema, which asks for the worker pick too. */
-export const READY: Review = { summary: "Fixture task summary", questions: [], dependencies: [], split: [], flags: [], fits_scope: null, worker: 0, worker_reason: "" };
+/** A review that leaves nothing open: the Task is Ready. Hide AI checks an answer against the review's schema, which asks for the completed card and the worker pick too. */
+export const READY: Review = { summary: "Fixture task summary", criteria: [], out_of_scope: [], assumptions: [], questions: [], dependencies: [], split: [], flags: [], fits_scope: null, worker: 0, worker_reason: "" };
 
-/** A review that asks one question, so the Task drafts with an item in 내 차례. */
+/** A review that asks one question, so the Task drafts with an item in 결정 필요. */
 export function asking(text: string, suggestion: string, defaultAction: string): Review {
-  return { ...READY, questions: [{ text, suggestion, default_action: defaultAction }] };
+  return { ...READY, questions: [{ text, stopped: "", suggestion, default_action: defaultAction, choices: [{ choice: suggestion, result: "" }, { choice: defaultAction, result: "" }] }] };
 }
 
 let sequence = 0;

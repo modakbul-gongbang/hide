@@ -2,11 +2,11 @@ import { workerPanes } from "../../test/legacyFactoryWorkers";
 import { describe, expect, it } from "vitest";
 import { transitiveReduction } from "../projectBoard";
 import type { CardView, FactoryView, Question } from "./model";
-import { boardColumns, factoryGraph, splitAtCuts, taskChain, wholeDecision } from "./view";
+import { boardColumns, factoryGraph, lineRows, splitAtCuts, taskChain, wholeDecision } from "./view";
 
 function card(task: string, patch: Partial<CardView> = {}): CardView {
   return {
-    task, display_id: task, column: "before", title: task, summary: task, issue: null, issue_url: null, pr: null, worker_runtime: null, resume_at: null, waiting_group: null, stage: 0, state: "waiting", state_label: "", needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null,
+    task, ai_decisions: 0, permission_wait: false, recovering: false, display_id: task, column: "before", title: task, summary: task, issue: null, issue_url: null, pr: null, worker_runtime: null, resume_at: null, waiting_group: null, stage: 0, state: "waiting", state_label: "", needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null,
     priority: 0, since: 0, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, worker_label: null, pause_reason: null, ...patch,
   };
 }
@@ -18,7 +18,8 @@ function factory(cards: CardView[], dependencies: [string, string][], edges: [st
     columns: [{ column: "before", label: "", cards }], cancelled: [],
     graph: { nodes: cards.map((value) => value.task), edges, unrelated: [] }, dependencies,
     outside_read_at: null, stale: false, main_broken: false, auto_merge_available: true, merge_mode: "auto",
-    paused: false, notices: 0, observer_mode: "assist", observer_today: 0, observer_limit: 100, factory_ai: null, workers: [{ agent: "claude", description: "" }], macos_notifications: false,
+    paused: false, observer_mode: "assist", observer_today: 0, observer_limit: 100, observer_capped: false, github_block: null, follow_ups: [], activity: [],
+    metrics: { finished: 0, person_items_tenths: null, started: 0, start_median_ms: null, ai_decisions: 0, overridden: 0, override_percent: null }, factory_ai: null, workers: [{ agent: "claude", description: "" }], macos_notifications: false,
   };
 }
 
@@ -62,7 +63,7 @@ describe("the Factory board", () => {
 describe("the Factory workers (B13)", () => {
   it("are the panes the engine names on its cards, which the Overview leaves out", () => {
     const view = factory([card("T-1", { worker_pane: "w1:p2" }), card("T-2")], []);
-    expect([...workerPanes({ my_turn: 0, notices: 0, factories: [view], inbox: [] })]).toEqual(["w1:p2"]);
+    expect([...workerPanes({ my_turn: 0, factories: [view], inbox: [] })]).toEqual(["w1:p2"]);
     expect(workerPanes(null).size).toBe(0);
   });
 });
@@ -92,3 +93,16 @@ describe("wholeDecision", () => {
   });
 });
 
+
+describe("the 라인's rows (B25, B26)", () => {
+  it("put the person's turn first, then moving, waiting on something else, not started and done, leaving folded completions to the board", () => {
+    const view = factory([], []);
+    view.columns = [
+      { column: "before", label: "", cards: [card("T-7")] },
+      { column: "moving", label: "", cards: [card("T-412", { column: "moving" })] },
+      { column: "stuck", label: "", cards: [card("T-426", { column: "stuck", waiting_group: "other" }), card("T-420", { column: "stuck", waiting_group: "person" })] },
+      { column: "done", label: "", cards: [card("T-410", { column: "done" }), card("T-401", { column: "done", folded: true })] },
+    ];
+    expect(lineRows([view]).map((row) => row.card.task)).toEqual(["T-420", "T-412", "T-426", "T-7", "T-410"]);
+  });
+});

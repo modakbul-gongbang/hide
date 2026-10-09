@@ -1,24 +1,26 @@
-// 내 차례 macOS notifications (PRD factory-observer D-50, B42): while the
-// desktop app runs, an item that newly counts in 내 차례, or a main that newly
-// broke, in a Factory with the setting on becomes one macOS notification; a
-// notice never does. The first summary is the baseline, so opening the app
-// does not announce what was already waiting. Clicking a notification opens
-// its item, or the Factory whose main broke.
+// Factory macOS notifications (PRD factory-human-loop D-10, B24): while the
+// desktop app runs, a new 결정 필요 item, or a main that newly broke, in a
+// Factory with the setting on becomes one macOS notification, and nothing
+// else does. The first summary is the baseline, so opening the app does not
+// announce what was already waiting. Clicking a notification opens its item
+// on the 라인, or the Factory whose main broke.
 
 import { useEffect, useRef } from "react";
 import type { Actions } from "../actions";
 import { hostBridge } from "../host";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
-import { itemWhy } from "./labels";
+import { inboxKey } from "./choices";
+import { itemSentence } from "./Decisions";
+import type { Translate } from "./labels";
 import type { FactorySummary, InboxItem } from "./model";
-import { inboxKey } from "./view";
+import { factoryCards } from "./view";
 
 /** What the host shows at most; longer text is cut here, since the host refuses it (desktop `NOTIFY_LIMITS`). */
 const TITLE_LIMIT = 120;
 const BODY_LIMIT = 400;
 
-/** What this window has already seen: the items counted in 내 차례 and the Factories whose main was broken. */
+/** What this window has already seen: the 결정 필요 items and the Factories whose main was broken. */
 export type NotifySeen = { items: Set<string>; broken: Set<string> };
 
 export type FactoryNotice =
@@ -34,7 +36,6 @@ export function newFactoryNotices(summary: FactorySummary, seen: NotifySeen | nu
   const notices: FactoryNotice[] = [];
   const views = new Map(summary.factories.map((view) => [view.id, view]));
   for (const item of summary.inbox) {
-    if (item.group === "notice") continue;
     const key = inboxKey(item);
     next.items.add(key);
     const view = views.get(item.factory);
@@ -68,8 +69,11 @@ export function useFactoryNotifications(actions: Actions) {
         continue;
       }
       const item = notice.item;
-      const title = item.group === "merge" ? "factory.notify.merge" : item.group === "stopped" ? "factory.notify.stopped" : "factory.notify.answer";
-      bridge.notify(notice.id, cut(t(title, { project: notice.project }), TITLE_LIMIT), cut(`${item.display_id} ${item.title} · ${itemWhy(item, t)}`, BODY_LIMIT));
+      const title = item.group === "merge" ? "factory.notify.merge" : item.group === "stopped" ? "factory.notify.stopped" : item.group === "todo" ? "factory.notify.todo" : "factory.notify.answer";
+      const view = summary.factories.find((other) => other.id === item.factory) ?? null;
+      const card = view && item.task !== null ? (factoryCards(view).get(item.task) ?? null) : null;
+      const sentence = itemSentence(item, view, card, t as Translate);
+      bridge.notify(notice.id, cut(t(title, { project: notice.project }), TITLE_LIMIT), cut([item.display_id, sentence].filter((part) => part).join(" "), BODY_LIMIT));
     }
   }, [summary, bridge, t]);
   useEffect(() => {
@@ -80,10 +84,10 @@ export function useFactoryNotifications(actions: Actions) {
       const key = id.slice(ITEM_PREFIX.length);
       const item = useShellStore.getState().factory?.summary?.inbox.find((row) => inboxKey(row) === key);
       // An item answered meanwhile opens its Task instead, which still says what happened.
-      if (item) actions.openFactory({ tab: "turn", factory: null, focus: key });
+      if (item) actions.openFactory({ tab: "line", factory: null, focus: key });
       else {
         const [factory, task] = key.split("/");
-        if (factory && task) actions.openFactory({ task: { factory, task } });
+        if (factory && task && task !== "-") actions.openFactory({ task: { factory, task } });
       }
     });
   }, [bridge, actions]);

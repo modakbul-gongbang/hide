@@ -2,8 +2,8 @@
 // software-factory-ui B24, D-18): the shell's real `Sidebar` beside the real
 // `FactoryScreen`, fed by `factoryScene` instead of an engine. The scene
 // answers the screen's requests the way the core does: the settings tab's
-// `config` read gets its answer, and an answer, merge or retry takes its item
-// out of 내 차례. One scene fills one document, because the stores it seeds are
+// `config` read gets its answer, and an answer, merge, retry or resolve takes
+// its item out of 결정 필요. One scene fills one document, because the stores it seeds are
 // the app's singletons.
 
 import { useLayoutEffect, useMemo, useState } from "react";
@@ -16,7 +16,7 @@ import { FACTORY_TABS, FACTORY_ENTRY, useUiStore, type FactoryTab } from "../ui"
 import { Sidebar } from "../sidebar";
 import { clientI18n } from "../i18n/translator";
 import { useShellStore } from "../store";
-import { counted, factoryScene, OBSERVER_STATES, type ObserverVariant } from "./factorySceneData";
+import { counted, factoryScene, LOOP_STATES, OBSERVER_STATES, type ObserverVariant } from "./factorySceneData";
 import { REFERENCE_FOLDS, sidebarScene, type SceneContent } from "./sceneData";
 
 /** What one Factory scene document shows; every value comes from its query string. */
@@ -38,20 +38,24 @@ export type FactorySceneParams = {
   variant: ObserverVariant | null;
   /** Hide AI turned off. */
   aiOff: boolean;
+  /** 결정 필요 with every kind of item at once. */
+  decisions: boolean;
 };
 
 export function factorySceneParams(params: URLSearchParams): FactorySceneParams {
   const state = params.get("state");
-  if (state !== null && !["board", "graph", "sizes"].includes(state) && !(state in OBSERVER_STATES)) throw new Error(`Unknown Factory scene state ${state}`);
+  if (state !== null && !["board", "graph", "sizes"].includes(state) && !(state in OBSERVER_STATES) && !(state in LOOP_STATES)) throw new Error(`Unknown Factory scene state ${state}`);
   const content = params.get("content") ?? "reference";
   if (content !== "reference" && content !== "long") throw new Error(`Unknown scene content ${content}`);
   const common = { state, language: params.get("lang") === "en" ? ("en" as const) : ("ko" as const), theme: params.get("theme") === "light" ? ("light" as const) : ("dark" as const), content: content as SceneContent };
   // An Observer frame's state names everything it opens.
   const frame = state === null ? undefined : OBSERVER_STATES[state];
-  if (frame) return { ...common, tab: frame.tab, task: frame.task ?? null, observer: true, factory: frame.factory ?? null, sizes: frame.cards === true, variant: frame.variant ?? null, aiOff: frame.aiOff === true };
-  const tab = state === "board" || state === "graph" ? state : params.get("tab") ?? "turn";
+  if (frame) return { ...common, tab: frame.tab, task: frame.task ?? null, observer: true, factory: frame.factory ?? null, sizes: frame.cards === true, variant: frame.variant ?? null, aiOff: frame.aiOff === true, decisions: false };
+  const loop = state === null ? undefined : LOOP_STATES[state];
+  if (loop) return { ...common, tab: "line", task: loop.task ?? null, observer: false, factory: loop.factory, sizes: false, variant: null, aiOff: false, decisions: loop.decisions === true };
+  const tab = state === "board" || state === "graph" ? state : params.get("tab") ?? "line";
   if (!(FACTORY_TABS as readonly string[]).includes(tab)) throw new Error(`Unknown Factory scene tab ${tab}`);
-  return { ...common, tab: tab as FactoryTab, task: params.get("task"), observer: params.get("observer") === "1", factory: params.get("factory"), sizes: state === "sizes", variant: null, aiOff: false };
+  return { ...common, tab: tab as FactoryTab, task: params.get("task"), observer: params.get("observer") === "1", factory: params.get("factory"), sizes: state === "sizes", variant: null, aiOff: false, decisions: false };
 }
 
 /** The cards each sizes sheet draws, with the label the Observer frame gives its row. */
@@ -59,10 +63,10 @@ const REFERENCE_CARDS = [420, 405, 417, 412, 415, 398, 426, 430, 421, 410].map((
 const OBSERVER_CARDS = [[436, "답 필요 · 선택지 셋"], [437, "카드가 틀림 · AI 제안"], [435, "보고 없음 · 진단"], [433, "작업자 사라짐 · 재시작 뒤"], [434, "일시정지"]] as const;
 
 /** The verbs that finish an inbox item, so the engine would take it off the list. */
-const TAKES_ITEM = new Set(["answer", "merge", "retry", "cancel", "request_changes"]);
+const TAKES_ITEM = new Set(["answer", "merge", "retry", "cancel", "request_changes", "resume"]);
 
-export function FactoryScene({ theme, tab, task, content, state, language, observer, factory, sizes, variant, aiOff }: FactorySceneParams) {
-  const fixture = useMemo(() => factoryScene(content, Date.now(), observer, variant), [content, observer, variant]);
+export function FactoryScene({ theme, tab, task, content, state, language, observer, factory, sizes, variant, aiOff, decisions }: FactorySceneParams) {
+  const fixture = useMemo(() => factoryScene(content, Date.now(), observer, variant, decisions), [content, observer, variant, decisions]);
   const [summary, setSummary] = useState(fixture.summary);
   const openFactory = task === null ? null : (summary.factories.find((view) => view.columns.some((column) => column.cards.some((card) => card.task === task))) ?? null);
   if (task !== null && openFactory === null) throw new Error(`Unknown Factory scene task ${task}`);
@@ -73,7 +77,10 @@ export function FactoryScene({ theme, tab, task, content, state, language, obser
         if (event.kind === "factory_action") {
           const { request_id: requestId, command } = event.payload as { request_id: string; command: FactoryCommand };
           const answer = command.verb === "config" ? { ok: true, ...fixture.config } : { ok: true };
-          if (TAKES_ITEM.has(command.verb) && "task" in command) {
+          if (command.verb === "resolve") {
+            const id = command.item;
+            setSummary((current) => counted(current.factories, current.inbox.filter((item) => item.resolve !== id)));
+          } else if (TAKES_ITEM.has(command.verb) && "task" in command) {
             const ref = command.task;
             setSummary((current) => {
               const inbox = current.inbox.filter((item) => `${item.factory}/${item.task}` !== ref || ("question" in command && command.question !== null && item.question !== command.question));
@@ -138,7 +145,7 @@ export function FactoryScene({ theme, tab, task, content, state, language, obser
           {(observer ? OBSERVER_CARDS : REFERENCE_CARDS).map(([number, label]) => {
             const view = summary.factories[0]!;
             const card = view.columns.flatMap((column) => column.cards).find((card) => (number === 420 && !observer ? card.state === "blocked" : card.task === `t-${number}`))!;
-            const item = summary.inbox.find((item) => item.factory === view.id && item.task === card.task && item.kind !== "notice");
+            const item = summary.inbox.find((item) => item.factory === view.id && item.task === card.task);
             return (
               <div key={number} className="flex items-start gap-xl">
                 {observer ? <span className="factory-sizes-label text-caption text-subtle-foreground">{label}</span> : null}
