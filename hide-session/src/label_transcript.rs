@@ -127,7 +127,8 @@ pub struct LabelTranscript {
     /// Hide's Project Memory receipts the session stored in a part only Hide's
     /// own plugin writes (OpenCode's synthetic prompt part); the core checks
     /// each one's tag before it records the injection (PRD opencode-plugin
-    /// D-12). Claude Code's and Codex's receipts are read by Memory's own pass.
+    /// D-12). Claude Code's, Codex's, Pi's and omp's receipts are read by
+    /// Memory's own pass over their session files.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memory_receipts: Vec<MemoryReceiptPart>,
     /// Where each subagent file was read up to, for the next request.
@@ -237,6 +238,9 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
                 break;
             }
         }
+        if request.agent == Agent::Grok {
+            turns.set_plan_hold(parsed.plan_hold.clone());
+        }
         turns
     });
     if turns.as_ref().is_some_and(TurnTracker::capacity_exceeded) {
@@ -257,7 +261,9 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     }
     let title = match request.agent {
         Agent::Codex => codex_thread_name(home, request, &path),
-        Agent::Claude | Agent::Pi | Agent::Omp | Agent::OpenCode => parsed.title.clone(),
+        Agent::Claude | Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
+            parsed.title.clone()
+        }
     };
     let anchor = events
         .iter()

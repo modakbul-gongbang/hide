@@ -760,7 +760,8 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
     // enables starts for the five agents besides Claude Code and Codex
     // without enabling their future reader/sleep/fork features. The complete
     // Pi and OMP slices add native title and exact sleep/fork beside the
-    // accepted extension's collaboration features (reader B1/B2/B3/B14, D13).
+    // accepted extension's collaboration features (reader B1/B2/B3/B14, D13);
+    // the Grok slice adds the same to its hook features and Grok stays Basic.
     let opencode = [
         Skill,
         Guidance,
@@ -771,13 +772,14 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
         HerdrIntegration,
         Start,
     ];
-    // pi-omp-extension D-08, D-10: Pi and omp take letters and are refused a
-    // launch through Hide's extension; only omp runs subagents, and no bell
-    // rings for either. Their session readers add sleep, fork and titles.
+    // pi-omp-extension D-08, D-09, D-10: Pi and omp take letters and Memory
+    // and are refused a launch through Hide's extension; only omp runs
+    // subagents, and no bell rings for either. Their session readers add sleep, fork and titles.
     let pi = [
         Skill,
         Guidance,
         Letters,
+        Memory,
         SpawnGuard,
         HerdrIntegration,
         Sleep,
@@ -789,6 +791,7 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
         Skill,
         Guidance,
         Letters,
+        Memory,
         Subagents,
         SpawnGuard,
         HerdrIntegration,
@@ -802,7 +805,16 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
         ("codex", &Feature::ALL, false),
         (
             "grok",
-            &[Skill, Subagents, SpawnGuard, HerdrIntegration, Start],
+            &[
+                Skill,
+                Subagents,
+                SpawnGuard,
+                HerdrIntegration,
+                Sleep,
+                Fork,
+                Start,
+                Titles,
+            ],
             true,
         ),
         ("opencode", &opencode, false),
@@ -869,8 +881,7 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
             "{}",
             row.id
         );
-        // Memory needs the hook too, and its own declaration (Pi's and omp's
-        // Memory waits).
+        // Memory needs the hook too, and its own declaration.
         let declared = hide_agent_adapter::adapter(row.id).unwrap();
         assert_eq!(
             row.supports(crate::agents::Feature::Memory),

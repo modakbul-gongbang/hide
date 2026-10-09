@@ -12,6 +12,16 @@
 //! a shell that never reaches its prompt is a start that did not happen, with
 //! nothing typed into the pane.
 //!
+//! The shell alone holds the terminal between its startup files' commands
+//! too, before its line editor runs, and until then the terminal is in
+//! canonical mode: the kernel keeps an unfinished typed line and drops what
+//! passes its limit (1,024 bytes on macOS), Enter included, so a long start
+//! line (a first prompt) would be cut and never run. A start whose line could
+//! be cut therefore also waits, inside the same bound, until the pane's node
+//! reads the shell's terminal taking keys rather than lines (`line_input`),
+//! which is the line editor reading. A line shorter than every supported
+//! terminal's limit reaches the shell whole either way and asks no node.
+//!
 //! A start that puts an agent back under the name of the one just ended in
 //! the same pane (a wake, a Reopen) also meets `agent_name_taken` until
 //! Herdr has forgotten the ended agent; [`start_at_shell_reusing_name`] sends
@@ -26,8 +36,11 @@ use std::time::{Duration, Instant};
 use hide_herdr_client::{
     ApiConnector, ApiError, request_with_connector, request_with_correlation_id,
 };
+use hide_node_link::process::LineInput;
+use hide_node_link::protocol::Call;
 use serde_json::Value;
 
+use crate::node_access::NodeLink;
 use crate::wire;
 
 /// How long a pane's shell gets to reach its prompt: the pinned Herdr's own
@@ -37,6 +50,12 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const PANE_BUSY: &str = "agent_pane_busy";
 const NAME_TAKEN: &str = "agent_name_taken";
+const AGENT_NOT_FOUND: &str = "agent_not_found";
+/// The fewest bytes of an unfinished line a supported system's terminal
+/// keeps before the shell reads it: macOS's `MAX_INPUT` (Linux keeps 4,096,
+/// and a Windows console cuts nothing). A start line shorter than this
+/// reaches the shell whole once the shell holds the terminal.
+const SHORTEST_LINE_LIMIT: usize = 1024;
 /// How long Herdr gets to let go of the name of an agent that was just
 /// ended: it forgets the agent a moment after its process is gone, and
 /// refuses `agent.start` under that name until it has.
@@ -54,8 +73,12 @@ pub(crate) enum StartError {
 
 /// Action proof after shell readiness, repeated before every actual start
 /// attempt. No proof is cached across startup waits or a busy-pane refusal.
+/// `node` is the node that runs the pane, asked how its shell's terminal
+/// takes input when the start line could be cut; none when that node cannot
+/// be reached, which only a start with such a line minds.
 pub(crate) fn start_at_shell_checked(
     connector: &dyn ApiConnector,
+    node: Option<&dyn NodeLink>,
     correlation_id: &str,
     pane_id: &str,
     params: Value,
@@ -64,6 +87,7 @@ pub(crate) fn start_at_shell_checked(
 ) -> Result<Value, StartError> {
     start_within(
         connector,
+        node,
         correlation_id,
         pane_id,
         params,
@@ -79,6 +103,7 @@ pub(crate) fn start_at_shell_checked(
 /// start again until Herdr has released the name, within [`NAME_RELEASE_WAIT`].
 pub(crate) fn start_at_shell_reusing_name(
     connector: &dyn ApiConnector,
+    node: Option<&dyn NodeLink>,
     correlation_id: &str,
     pane_id: &str,
     params: Value,
@@ -86,6 +111,7 @@ pub(crate) fn start_at_shell_reusing_name(
 ) -> Result<Value, StartError> {
     start_within(
         connector,
+        node,
         correlation_id,
         pane_id,
         params,
@@ -100,6 +126,7 @@ pub(crate) fn start_at_shell_reusing_name(
 #[allow(clippy::too_many_arguments)] // one bounded start with shell/name waits and effect admission
 fn start_within(
     connector: &dyn ApiConnector,
+    node: Option<&dyn NodeLink>,
     correlation_id: &str,
     pane_id: &str,
     params: Value,
@@ -111,8 +138,16 @@ fn start_within(
     let started = Instant::now();
     let deadline = started + wait;
     let name_deadline = started + name_release_wait;
+    let shell = Shell {
+        connector,
+        node,
+        correlation_id,
+        pane_id,
+        line: wire::agent_start_line_bytes(&params),
+    };
+    let mut settled = false;
     loop {
-        wait_for_shell(connector, correlation_id, pane_id, started, deadline)?;
+        shell.wait(started, deadline)?;
         check().map_err(StartError::NotStarted)?;
         match request_with_correlation_id(
             connector,
@@ -135,54 +170,149 @@ fn start_within(
             {
                 thread::sleep(POLL_INTERVAL);
             }
+            // Herdr may still hold the name for an earlier start whose agent
+            // never showed and whose deadline has passed, which it settles
+            // only when the name is read: read it once, and send the start
+            // again when that let it go.
+            Err(ApiError::Remote { code, message }) if code == NAME_TAKEN && !settled => {
+                settled = true;
+                if !shell.settle_name(&params) {
+                    return Err(StartError::Herdr(ApiError::Remote { code, message }));
+                }
+            }
             answer => return answer.map_err(StartError::Herdr),
         }
     }
 }
 
-#[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn wait_for_shell(
-    connector: &dyn ApiConnector,
-    correlation_id: &str,
-    pane_id: &str,
-    started: Instant,
-    deadline: Instant,
-) -> Result<(), StartError> {
-    let params = wire::pane_process_info_params(pane_id).map_err(StartError::NotStarted)?;
-    loop {
-        let group = request_with_connector(
-            connector,
-            "pane.process_info",
-            params.clone(),
-            READ_TIMEOUT,
-        )
-        .map_err(|error| format!("pane.process_info failed: {error}"))
-        .and_then(wire::pane_process_group)
-        .map_err(|message| {
+/// The pane a start waits on, and how many bytes its start line types.
+struct Shell<'a> {
+    connector: &'a dyn ApiConnector,
+    node: Option<&'a dyn NodeLink>,
+    correlation_id: &'a str,
+    pane_id: &'a str,
+    line: usize,
+}
+
+impl Shell<'_> {
+    /// Returns once the shell alone holds the terminal and its terminal
+    /// would hand the start line over whole.
+    #[allow(clippy::disallowed_methods)] // a production wait, not test code
+    fn wait(&self, started: Instant, deadline: Instant) -> Result<(), StartError> {
+        let params =
+            wire::pane_process_info_params(self.pane_id).map_err(StartError::NotStarted)?;
+        loop {
+            let group = request_with_connector(
+                self.connector,
+                "pane.process_info",
+                params.clone(),
+                READ_TIMEOUT,
+            )
+            .map_err(|error| format!("pane.process_info failed: {error}"))
+            .and_then(wire::pane_process_group)
+            .map_err(|message| {
+                StartError::NotStarted(format!(
+                    "The pane's shell could not be read, so the agent was not started: {message}"
+                ))
+            })?;
+            // The limit of a terminal that still holds lines, read only while
+            // the shell holds it.
+            let held = match group.shell_pid.filter(|_| group.shell_holds_terminal()) {
+                Some(shell) => match self.line_cut_at(shell)? {
+                    None => return Ok(()),
+                    held => held,
+                },
+                None => None,
+            };
+            if Instant::now() >= deadline {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "agent_start",
+                    "kind": "shell_wait.timeout",
+                    "request": self.correlation_id,
+                    "pane_id": self.pane_id,
+                    "waited_ms": started.elapsed().as_millis() as u64,
+                    "shell_pid": group.shell_pid,
+                    "foreground_process_group_id": group.foreground_process_group_id,
+                    "foreground_pids": group.foreground_pids,
+                    "line_bytes": self.line,
+                    "line_limit": held,
+                }));
+                return Err(StartError::NotStarted(match held {
+                    Some(limit) => format!(
+                        "The pane's shell did not start reading its command line within {} s, so the agent was not started: until it does, its terminal keeps only {limit} bytes of a typed line, and this start's line is up to {} bytes. Check what the shell's startup files wait on, then retry.",
+                        SHELL_WAIT.as_secs(),
+                        self.line,
+                    ),
+                    None => format!(
+                        "The pane's shell did not reach its prompt within {} s, so the agent was not started.",
+                        SHELL_WAIT.as_secs()
+                    ),
+                }));
+            }
+            thread::sleep(POLL_INTERVAL);
+        }
+    }
+
+    /// Whether Herdr lets go of the start's name once asked about it.
+    /// Herdr holds a name from its `agent.start` until that agent shows or
+    /// the start's own deadline passes, but a server with no screen settles
+    /// a passed deadline only when the agent is next read: `agent.get` is that
+    /// read, and an answer that the name names no agent any more means the
+    /// start can be sent again. A name still held is an agent's, or a start
+    /// that may still show one, and Herdr's refusal is the answer.
+    fn settle_name(&self, params: &Value) -> bool {
+        let Some(name) = params["name"].as_str() else {
+            return false;
+        };
+        let read = wire::agent_target_params(name)
+            .map_err(ApiError::Transport)
+            .and_then(|params| {
+                request_with_connector(self.connector, "agent.get", params, READ_TIMEOUT)
+            });
+        let released =
+            matches!(&read, Err(ApiError::Remote { code, .. }) if code == AGENT_NOT_FOUND);
+        crate::diagnostic!(serde_json::json!({
+            "component": "agent_start",
+            "kind": "held_name.read",
+            "request": self.correlation_id,
+            "pane_id": self.pane_id,
+            "released": released,
+            "reason": read.err().filter(|_| !released).map(|error| error.to_string()),
+        }));
+        released
+    }
+
+    /// `None` when the start line reaches `shell` whole now; the limit of a
+    /// terminal that would cut it, while the shell's line editor is not
+    /// reading yet.
+    fn line_cut_at(&self, shell: u32) -> Result<Option<usize>, StartError> {
+        if self.line < SHORTEST_LINE_LIMIT {
+            return Ok(None);
+        }
+        let refused = |reason: String| {
             StartError::NotStarted(format!(
-                "The pane's shell could not be read, so the agent was not started: {message}"
+                "The agent was not started: its start line is up to {} bytes, more than a terminal keeps before the shell's line editor reads it, and {reason}.",
+                self.line
             ))
+        };
+        let node = self.node.ok_or_else(|| {
+            refused(
+                "the machine that runs the pane cannot be asked whether its shell is reading"
+                    .into(),
+            )
         })?;
-        if group.shell_holds_terminal() {
-            return Ok(());
+        match crate::node_access::call_as::<LineInput>(
+            node,
+            Call::LineInput { pid: shell },
+            READ_TIMEOUT,
+        ) {
+            Ok(LineInput::Keys | LineInput::Console) => Ok(None),
+            Ok(LineInput::Lines { limit }) if self.line < limit as usize => Ok(None),
+            Ok(LineInput::Lines { limit }) => Ok(Some(limit as usize)),
+            Err(error) => Err(refused(format!(
+                "the pane shell's terminal could not be read ({error})"
+            ))),
         }
-        if Instant::now() >= deadline {
-            crate::diagnostic!(serde_json::json!({
-                "component": "agent_start",
-                "kind": "shell_wait.timeout",
-                "request": correlation_id,
-                "pane_id": pane_id,
-                "waited_ms": started.elapsed().as_millis() as u64,
-                "shell_pid": group.shell_pid,
-                "foreground_process_group_id": group.foreground_process_group_id,
-                "foreground_pids": group.foreground_pids,
-            }));
-            return Err(StartError::NotStarted(format!(
-                "The pane's shell did not reach its prompt within {} s, so the agent was not started.",
-                SHELL_WAIT.as_secs()
-            )));
-        }
-        thread::sleep(POLL_INTERVAL);
     }
 }
 
@@ -219,6 +349,7 @@ mod tests {
     fn start(herdr: &FakeHerdr, wait: Duration) -> Result<Value, StartError> {
         start_within(
             &herdr.connector(),
+            None,
             "test:start",
             "w1:p1",
             json!({"pane_id": "w1:p1"}),
@@ -232,6 +363,7 @@ mod tests {
     fn start_reusing_name(herdr: &FakeHerdr, name_wait: Duration) -> Result<Value, StartError> {
         start_within(
             &herdr.connector(),
+            None,
             "test:start",
             "w1:p1",
             json!({"pane_id": "w1:p1"}),
@@ -306,6 +438,7 @@ mod tests {
             let checks = std::cell::Cell::new(0);
             let answer = start_within(
                 &herdr.connector(),
+                None,
                 "checked",
                 "w1:p1",
                 json!({"pane_id":"w1:p1"}),
@@ -386,6 +519,80 @@ mod tests {
         assert_eq!(starts.load(Ordering::SeqCst), 3);
     }
 
+    fn start_named(herdr: &FakeHerdr) -> Result<Value, StartError> {
+        start_within(
+            &herdr.connector(),
+            None,
+            "test:start",
+            "w1:p1",
+            json!({"pane_id": "w1:p1", "name": "factory-hide-t1", "kind": "claude"}),
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            Duration::ZERO,
+            &|| Ok(()),
+        )
+    }
+
+    /// Herdr holds a name for a start whose agent never showed (its line
+    /// was cut, or its program exited at once) until that start's deadline,
+    /// and a server with no screen lets go only when the name is read. A
+    /// start refused under it reads the name once and, when Herdr let go,
+    /// starts rather than being refused for good.
+    #[test]
+    fn a_name_herdr_lets_go_when_read_is_started_again() {
+        let starts = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&starts);
+        let herdr =
+            FakeHerdr::start_with_errors("agent-start-settled", move |method, _| match method {
+                "pane.process_info" => Ok(process_info(SHELL, &[SHELL])),
+                "agent.start" if seen.fetch_add(1, Ordering::SeqCst) == 0 => Err((
+                    NAME_TAKEN.into(),
+                    "agent name factory-hide-t1 is already used".into(),
+                )),
+                "agent.start" => Ok(started()),
+                "agent.get" => Err((
+                    AGENT_NOT_FOUND.into(),
+                    "agent target factory-hide-t1 not found".into(),
+                )),
+                other => panic!("unexpected {other}"),
+            });
+        assert!(start_named(&herdr).is_ok());
+        let calls = herdr.calls();
+        let (_, read) = calls
+            .iter()
+            .find(|(method, _)| method == "agent.get")
+            .expect("the held name is read");
+        assert_eq!(read["target"], "factory-hide-t1");
+        assert_eq!(starts.load(Ordering::SeqCst), 2);
+    }
+
+    /// A name Herdr still holds after the read is an agent's, or a start
+    /// that may still show one: the refusal is the answer.
+    #[test]
+    fn a_name_still_held_after_the_read_is_herdrs_refusal() {
+        let herdr =
+            FakeHerdr::start_with_errors("agent-start-held", move |method, _| match method {
+                "pane.process_info" => Ok(process_info(SHELL, &[SHELL])),
+                "agent.start" => Err((
+                    NAME_TAKEN.into(),
+                    "agent name factory-hide-t1 is already used".into(),
+                )),
+                "agent.get" => Ok(json!({"type": "agent_info", "agent": {
+                    "pane_id": "w1:p2", "terminal_id": "term_2", "workspace_id": "w1",
+                    "tab_id": "w1:t2", "name": "factory-hide-t1", "focused": false,
+                    "agent_status": "unknown", "revision": 0, "launch_pending": true}})),
+                other => panic!("unexpected {other}"),
+            });
+        let Err(StartError::Herdr(ApiError::Remote { code, .. })) = start_named(&herdr) else {
+            panic!("a name someone else holds is refused");
+        };
+        assert_eq!(code, NAME_TAKEN);
+        assert_eq!(
+            herdr.methods(),
+            ["pane.process_info", "agent.start", "agent.get"]
+        );
+    }
+
     /// The wait is bounded, and an ordinary start never waits for a name: it
     /// belongs to someone else.
     #[test]
@@ -414,5 +621,162 @@ mod tests {
             2,
             "one process read and one start, nothing sent again"
         );
+    }
+
+    /// The pane's node, answering how the shell's terminal takes input with
+    /// the next of `answers` (the last one repeats), and counting the reads.
+    struct Terminal {
+        answers: Vec<Result<LineInput, String>>,
+        reads: AtomicUsize,
+    }
+
+    impl Terminal {
+        fn answering(answers: Vec<Result<LineInput, String>>) -> Self {
+            Self {
+                answers,
+                reads: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl NodeLink for Terminal {
+        fn call(
+            &self,
+            call: Call,
+            _: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+            let Call::LineInput { pid } = call else {
+                panic!("a start asks its node only how the shell's terminal reads");
+            };
+            assert_eq!(pid, SHELL, "the shell Herdr named is the one read");
+            let read = self.reads.fetch_add(1, Ordering::SeqCst);
+            match &self.answers[read.min(self.answers.len() - 1)] {
+                Ok(input) => Ok(crate::node_access::LinkAnswer::Parsed(
+                    serde_json::to_value(input).unwrap(),
+                )),
+                Err(reason) => Err(crate::node_access::LinkError::NotConnected(reason.clone())),
+            }
+        }
+    }
+
+    fn shell_alone(name: &str) -> FakeHerdr {
+        FakeHerdr::start(name, |method, _| match method {
+            "pane.process_info" => process_info(SHELL, &[SHELL]),
+            "agent.start" => started(),
+            other => panic!("unexpected {other}"),
+        })
+    }
+
+    /// A first prompt of `bytes` bytes, the argument Herdr types last.
+    fn start_with_prompt(
+        herdr: &FakeHerdr,
+        node: Option<&dyn NodeLink>,
+        bytes: usize,
+        wait: Duration,
+    ) -> Result<Value, StartError> {
+        start_within(
+            &herdr.connector(),
+            node,
+            "test:start",
+            "w1:p1",
+            json!({"pane_id": "w1:p1", "args": ["--", "가".repeat(bytes / 3)]}),
+            Duration::from_secs(5),
+            wait,
+            Duration::ZERO,
+            &|| Ok(()),
+        )
+    }
+
+    fn typed(herdr: &FakeHerdr) -> usize {
+        herdr
+            .methods()
+            .iter()
+            .filter(|method| *method == "agent.start")
+            .count()
+    }
+
+    /// A shell that holds the terminal while its startup files still run
+    /// keeps a typed line in canonical mode, where macOS drops what passes
+    /// 1,024 bytes; the start waits until the line editor reads keys.
+    #[test]
+    fn a_long_start_line_waits_for_the_shells_line_editor() {
+        let herdr = shell_alone("agent-start-editor");
+        let terminal = Terminal::answering(vec![
+            Ok(LineInput::Lines { limit: 1024 }),
+            Ok(LineInput::Lines { limit: 1024 }),
+            Ok(LineInput::Keys),
+        ]);
+        assert!(start_with_prompt(&herdr, Some(&terminal), 4800, Duration::from_secs(5)).is_ok());
+        assert_eq!(terminal.reads.load(Ordering::SeqCst), 3);
+        assert_eq!(typed(&herdr), 1);
+        assert_eq!(
+            herdr.methods().last().map(String::as_str),
+            Some("agent.start")
+        );
+    }
+
+    /// A line that fits the terminal's own limit reaches the shell whole
+    /// even before the line editor reads (a Linux terminal keeps 4,096
+    /// bytes), and a console cuts no line.
+    #[test]
+    fn a_long_line_the_terminal_keeps_whole_starts_without_waiting() {
+        for input in [LineInput::Lines { limit: 4096 }, LineInput::Console] {
+            let herdr = shell_alone("agent-start-fits");
+            let terminal = Terminal::answering(vec![Ok(input)]);
+            assert!(
+                start_with_prompt(&herdr, Some(&terminal), 2400, Duration::from_secs(5)).is_ok()
+            );
+            assert_eq!(terminal.reads.load(Ordering::SeqCst), 1);
+            assert_eq!(typed(&herdr), 1);
+        }
+    }
+
+    /// A line shorter than every terminal's limit is typed as soon as the
+    /// shell holds the terminal, with no node to ask: a shell that has no
+    /// line editor still starts a plain command.
+    #[test]
+    fn a_short_start_line_asks_no_node() {
+        let herdr = shell_alone("agent-start-short");
+        let terminal = Terminal::answering(vec![Ok(LineInput::Lines { limit: 1024 })]);
+        assert!(start_with_prompt(&herdr, Some(&terminal), 600, Duration::from_secs(5)).is_ok());
+        assert_eq!(terminal.reads.load(Ordering::SeqCst), 0);
+        assert!(start_with_prompt(&herdr, None, 600, Duration::from_secs(5)).is_ok());
+        assert_eq!(typed(&herdr), 2);
+    }
+
+    /// The wait is the shell wait: past it a terminal still holding lines
+    /// gets nothing typed, never a cut line, and the reason names the limit.
+    #[test]
+    fn a_terminal_that_never_leaves_line_mode_gets_nothing_typed() {
+        let herdr = shell_alone("agent-start-canonical");
+        let terminal = Terminal::answering(vec![Ok(LineInput::Lines { limit: 1024 })]);
+        let Err(StartError::NotStarted(message)) =
+            start_with_prompt(&herdr, Some(&terminal), 4800, Duration::from_millis(300))
+        else {
+            panic!("a line the terminal would cut is not typed");
+        };
+        assert!(message.contains("1024 bytes"), "{message}");
+        assert_eq!(typed(&herdr), 0);
+    }
+
+    /// Without a node to ask, or with one that cannot read the terminal, a
+    /// long line is not typed on a guess.
+    #[test]
+    fn a_long_line_whose_terminal_cannot_be_read_gets_nothing_typed() {
+        let herdr = shell_alone("agent-start-unread");
+        let Err(StartError::NotStarted(message)) =
+            start_with_prompt(&herdr, None, 4800, Duration::from_secs(5))
+        else {
+            panic!("no node, no long line");
+        };
+        assert!(message.contains("cannot be asked"), "{message}");
+        let terminal = Terminal::answering(vec![Err("the helper is gone".into())]);
+        let Err(StartError::NotStarted(message)) =
+            start_with_prompt(&herdr, Some(&terminal), 4800, Duration::from_secs(5))
+        else {
+            panic!("an unread terminal is not a reading one");
+        };
+        assert!(message.contains("the helper is gone"), "{message}");
+        assert_eq!(typed(&herdr), 0);
     }
 }

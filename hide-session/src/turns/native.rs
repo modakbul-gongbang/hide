@@ -13,7 +13,7 @@ pub(crate) const TOOL_MARK_LIMIT: usize = 64;
 type Mark = Result<Option<TurnMark>, SkipReason>;
 pub(crate) type Parser = fn(&Value) -> Mark;
 
-fn id(value: Option<&Value>) -> Result<Option<String>, SkipReason> {
+pub(crate) fn id(value: Option<&Value>) -> Result<Option<String>, SkipReason> {
     let Some(value) = value
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
@@ -26,7 +26,7 @@ fn id(value: Option<&Value>) -> Result<Option<String>, SkipReason> {
     Ok(Some(value.to_owned()))
 }
 
-fn question_content(input: &Value) -> Option<UserTurnContent> {
+pub(crate) fn question_content(input: &Value) -> Option<UserTurnContent> {
     let questions = input.get("questions")?.as_array()?;
     if questions.is_empty()
         || questions

@@ -1,4 +1,5 @@
-//! Pi 1.0.4 and omp 18.7.0 recorded JSONL histories, not active model context.
+//! Pi 1.0.4 and omp 18.7.0 recorded JSONL histories, not active model context,
+//! and Grok 1.0.46's per-session directories (`grok`).
 //! Native session-manager metadata is the authority; neither folder encoding
 //! nor a filename suffix identifies a checkout or session.
 
@@ -25,6 +26,7 @@ pub(crate) struct Header {
 /// existing conversation without an operator decision.
 fn root_suffix(agent: Agent) -> &'static str {
     match agent {
+        Agent::Grok => crate::GROK_SESSIONS,
         Agent::Pi => crate::PI_SESSIONS,
         Agent::Omp => crate::OMP_SESSIONS,
         _ => unreachable!("native-file policy requires a native-file format"),
@@ -103,11 +105,14 @@ fn omp_directory(home: &Path, cwd: &Path) -> Result<OmpDirectory> {
     })
 }
 
+/// The folder the agent's default resolver reads a checkout's sessions
+/// from: the session file's folder for Pi and omp, the group holding each
+/// session's folder for Grok.
 pub(crate) fn default_directory(home: &Path, agent: Agent, cwd: &Path) -> Result<PathBuf> {
-    let name = if agent == Agent::Omp {
-        omp_directory(home, cwd)?.name
-    } else {
-        absolute_directory_name(cwd)
+    let name = match agent {
+        Agent::Omp => omp_directory(home, cwd)?.name,
+        Agent::Grok => crate::grok::group_name(cwd)?,
+        _ => absolute_directory_name(cwd),
     };
     Ok(home.join(root_suffix(agent)).join(name))
 }
@@ -267,12 +272,34 @@ fn checked_path(
     hide_platform::fs::identity::canonical(&checked).map_err(|_| RootRefusal::Unreadable)
 }
 
+/// The folder of a session file that [`default_directory`] names.
+pub(crate) fn directory_of(agent: Agent, path: &Path) -> Option<&Path> {
+    if agent == Agent::Grok {
+        crate::grok::group_of(path)
+    } else {
+        path.parent()
+    }
+}
+
 pub(crate) fn header(agent: Agent, path: &Path) -> Result<Header> {
     let mut remaining = u64::MAX;
     header_budgeted(agent, path, &mut remaining)
 }
 
 fn header_budgeted(agent: Agent, path: &Path, remaining: &mut u64) -> Result<Header> {
+    if agent == Agent::Grok {
+        let mut read = 0;
+        let summary = crate::grok::summary(path, &mut read);
+        if read > *remaining {
+            return Err(anyhow!("session_discovery_read_capacity"));
+        }
+        *remaining -= read;
+        let summary = summary?;
+        return Ok(Header {
+            id: summary.id,
+            cwd: summary.cwd,
+        });
+    }
     let file =
         crate::open_session_file(path).map_err(|_| anyhow!("label_session_file_unavailable"))?;
     let mut reader = BufReader::new(file);
@@ -343,6 +370,9 @@ pub(crate) fn confirm_route(
 ) -> Result<()> {
     let expected =
         inside_root(home, agent, path).map_err(|_| anyhow!("session_route_unconfirmed"))?;
+    if agent == Agent::Grok {
+        return confirm_grok_route(home, &expected, id, cwd);
+    }
     let directory = path
         .parent()
         .ok_or_else(|| anyhow!("session_route_unconfirmed"))?;
@@ -428,6 +458,34 @@ pub(crate) fn confirm_route(
     Ok(())
 }
 
+/// `grok --resume <id>` takes the session folder named `<id>` in the
+/// launch cwd's own group before searching any other group, so that folder
+/// holding this session's summary is the one it resumes.
+fn confirm_grok_route(home: &Path, path: &Path, id: &str, cwd: &Path) -> Result<()> {
+    if !cwd.is_absolute() || cwd.components().any(|part| part == Component::ParentDir) {
+        return Err(anyhow!("session_route_unconfirmed"));
+    }
+    let cwd = hide_platform::fs::identity::canonical(cwd)
+        .map_err(|_| anyhow!("session_route_unconfirmed"))?;
+    let group = default_directory(home, Agent::Grok, &cwd)?;
+    let group =
+        inside_root(home, Agent::Grok, &group).map_err(|_| anyhow!("session_route_unconfirmed"))?;
+    if directory_of(Agent::Grok, path) != Some(group.as_path()) {
+        return Err(anyhow!("session_route_unconfirmed"));
+    }
+    let summary = crate::grok::summary(path, &mut 0).map_err(|error| {
+        if error.to_string() == "label_session_not_root" {
+            error
+        } else {
+            anyhow!("session_route_unconfirmed")
+        }
+    })?;
+    if summary.id != id {
+        return Err(anyhow!("session_route_missing"));
+    }
+    Ok(())
+}
+
 pub(crate) fn locate(
     home: &Path,
     agent: Agent,
@@ -460,7 +518,15 @@ pub(crate) fn locate(
         return Err(SessionError::SessionFileMissing);
     }
     let mut remaining = crate::SESSION_INCREMENT_READ_LIMIT_BYTES;
-    for path in crate::jsonl_files(&directory, budget)? {
+    let paths = match (agent, reported_id) {
+        (Agent::Grok, Some(id)) => vec![directory.join(id).join(crate::grok::UPDATES)],
+        (Agent::Grok, None) => crate::read_directory(&directory, budget)?
+            .into_iter()
+            .map(|session| session.join(crate::grok::UPDATES))
+            .collect(),
+        _ => crate::jsonl_files(&directory, budget)?,
+    };
+    for path in paths {
         if inside_root(home, agent, &path).is_err() {
             continue;
         }
@@ -539,8 +605,29 @@ pub(crate) fn parse_line(agent: Agent, item: &Value) -> LineResult {
             });
         }
         Some("message") => (),
-        // Compaction, branch summaries, extension custom messages and context
-        // edits are not human turns. Pi's export retains the raw history.
+        // Hide's own extension writes its hidden message (guidance, letters,
+        // Memory) as a custom message the host stores beside the prompt; it is
+        // what the agent was given, never what the operator typed, and the
+        // Memory receipt inside it is read from here (PRD pi-omp-extension
+        // D-03, D-09).
+        Some("custom_message") if item["customType"] == "hide" => {
+            let at = match crate::timestamp_ms(item.get("timestamp")) {
+                Ok(at) => at,
+                Err(reason) => return LineResult::Skip(reason),
+            };
+            let text = crate::session_text(item.get("content")).unwrap_or_default();
+            return if text.is_empty() {
+                LineResult::Ignore
+            } else {
+                LineResult::Event(
+                    ConversationEvent::new("user", EventKind::Injected, at, text)
+                        .with_provider_injected(true),
+                )
+            };
+        }
+        // Compaction, branch summaries, other extensions' custom messages and
+        // context edits are not human turns. Pi's export retains the raw
+        // history.
         _ => return LineResult::Ignore,
     }
     let message = &item["message"];
@@ -592,7 +679,9 @@ pub(crate) fn parse_line(agent: Agent, item: &Value) -> LineResult {
             at,
             text,
         )
-        .with_images(images)
-        .with_provider_injected(kind == EventKind::Injected),
+        // Only Hide's own custom message above is provider-injected: a
+        // message entry, even one that starts like a reminder, is shown as
+        // injected but never asserts a Memory receipt.
+        .with_images(images),
     )
 }

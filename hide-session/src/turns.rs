@@ -9,7 +9,7 @@
 //! the tracker beside its read checkpoint and hands it back on the next read,
 //! so an incremental read continues the turn it was in.
 
-mod content;
+pub(crate) mod content;
 pub(crate) mod native;
 pub use content::{UserTurnContent, UserTurnFact, UserTurnKind};
 
@@ -161,6 +161,17 @@ pub struct TurnTracker {
     /// person's message.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     unreadable: bool,
+    /// A plan the session's current state says awaits approval, set anew
+    /// on every read of a format that keeps that state outside its records
+    /// (Grok's `plan_mode.json`); its content is `None` when withheld.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    plan_hold: Option<PlanHold>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PlanHold {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content: Option<UserTurnContent>,
 }
 
 fn deserialize_calls<'de, D: serde::Deserializer<'de>>(
@@ -198,6 +209,9 @@ impl TurnTracker {
         if let Some(last) = &mut self.last {
             last.plan_content = None;
         }
+        if let Some(hold) = &mut self.plan_hold {
+            hold.content = None;
+        }
         for question in &mut self.questions {
             question.content = None;
         }
@@ -209,7 +223,10 @@ impl TurnTracker {
             Waiting::Nothing => None,
             Waiting::PlanApproval => Some(UserTurnFact {
                 kind: UserTurnKind::PlanApproval,
-                content: self.last.as_ref()?.plan_content.clone(),
+                content: match &self.plan_hold {
+                    Some(hold) => hold.content.clone(),
+                    None => self.last.as_ref()?.plan_content.clone(),
+                },
             }),
             Waiting::Question => {
                 let pending = || self.questions.iter().filter(|question| !question.answered);
@@ -226,6 +243,14 @@ impl TurnTracker {
                 })
             }
         }
+    }
+
+    /// Replace the plan wait read from the session's current state: the
+    /// state is the whole answer, so a read that finds none clears it.
+    pub fn set_plan_hold(&mut self, hold: Option<UserTurnContent>) {
+        self.plan_hold = hold.map(|content| PlanHold {
+            content: Some(content),
+        });
     }
 
     pub fn capacity_exceeded(&self) -> bool {
@@ -373,6 +398,9 @@ impl TurnTracker {
         }
         if self.questions.iter().any(|question| !question.answered) {
             return Some(Waiting::Question);
+        }
+        if self.plan_hold.is_some() {
+            return Some(Waiting::PlanApproval);
         }
         let Some(turn) = &self.last else {
             return (!self.unstructured).then_some(Waiting::Nothing);

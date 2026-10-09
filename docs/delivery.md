@@ -308,6 +308,9 @@ The Claude Code and Codex `PreToolUse` spawn guard refuses such a call in a regi
 The guard remains bypassable guidance; it does not change either mode's authority or execution path.
 A launch chained behind another command is refused whole, and a launch inside `bash -c`, `$(...)`, a script or an alias is not seen, so a child started that way has no parent line, as before the guard.
 A first spawn of a new Codex child can answer `native_identity_unavailable` until that Codex has bound its session after its first turn; running the same `hide agent spawn` again with the same intent converges on the same child.
+A start Herdr typed whose agent never showed (the program exited before Herdr saw it) leaves Herdr holding the agent's name in that pane, and the pinned Herdr keeps holding it.
+Running the same intent again then answers `agent_not_started` and types nothing, since the same start would end the same way; its next action is to look at that pane and spawn with a new intent.
+A spawn about to start its agent closes the pane of every earlier spawn of the same parent, name and device that made a pane and never bound a child, where no agent shows and the shell alone holds the terminal, so a new attempt leaves no extra tab and Herdr no longer holds the name for it; each close is logged as `spawn` / `unstarted_attempt.close`, and a pane that cannot be read or closed is left to Herdr's refusal.
 
 The existing one-second `agent.list` refresh, also requested by native events, reconciles only panes whose four lineage tokens differ; startup and reconnect perform one full pass.
 Each server's pass reads the registrations recorded under its machine: this machine's are keyed by its node id, the same `machine` that `hide agent list` shows, and a device's by its device id, so a token Herdr drops (a live handoff drops every pane token) is written again on this machine as on a device.
