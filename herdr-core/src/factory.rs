@@ -997,8 +997,9 @@ fn handle(
         Command::ResumeFactory { project } => Command::ResumeFactory {
             project: project.or_else(here),
         },
-        Command::AckNotices { project } => Command::AckNotices {
+        Command::Resolve { project, item } => Command::Resolve {
             project: project.or_else(here),
+            item,
         },
         Command::Check {
             project,
@@ -2630,6 +2631,11 @@ mod tests {
                 observer_day: 0,
                 observer_calls: 0,
                 observer_cap_notice_day: 0,
+                activity: Vec::new(),
+                github_block: None,
+                holds: Vec::new(),
+                commands: Vec::new(),
+                next_command: 0,
             };
             hide_factory::store::Store::open(&paths.store, &paths.files)
                 .unwrap()

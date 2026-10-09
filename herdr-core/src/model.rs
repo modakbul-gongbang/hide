@@ -5437,11 +5437,6 @@ mod wire_enum_tests {
             },
             QuestionKind::Action,
             QuestionKind::ConfirmCard,
-            QuestionKind::Proposal {
-                command: String::new(),
-                impact: String::new(),
-            },
-            QuestionKind::Notice,
         ]
         .iter()
         .map(|kind| {
@@ -5454,9 +5449,7 @@ mod wire_enum_tests {
                 | QuestionKind::NewTaskCap
                 | QuestionKind::ProposedTask { .. }
                 | QuestionKind::Action
-                | QuestionKind::ConfirmCard
-                | QuestionKind::Proposal { .. }
-                | QuestionKind::Notice => {}
+                | QuestionKind::ConfirmCard => {}
             }
             serde_json::to_value(kind).unwrap()["kind"].clone()
         })
@@ -5551,9 +5544,23 @@ mod wire_enum_tests {
         checked.insert("factory_gate");
         assert_wire(&contract, "factory_result_code", &ResultCode::ALL);
         checked.insert("factory_result_code");
-        use hide_factory::model::{DecisionKind, NoticeCode, ObserverMode, PauseReason};
-        assert_wire(&contract, "factory_notice", &NoticeCode::ALL);
-        checked.insert("factory_notice");
+        use hide_factory::model::{
+            CriterionState, DecisionKind, DecisionSource, FollowUpState, ObserverMode, PauseReason,
+            RecoveryOutcome,
+        };
+        use hide_factory::summary::{DecisionBy, Holding};
+        assert_wire(&contract, "factory_holding", &Holding::ALL);
+        checked.insert("factory_holding");
+        assert_wire(&contract, "factory_decision_by", &DecisionBy::ALL);
+        checked.insert("factory_decision_by");
+        assert_wire(&contract, "factory_decision_source", &DecisionSource::ALL);
+        checked.insert("factory_decision_source");
+        assert_wire(&contract, "factory_follow_up_state", &FollowUpState::ALL);
+        checked.insert("factory_follow_up_state");
+        assert_wire(&contract, "factory_criterion_state", &CriterionState::ALL);
+        checked.insert("factory_criterion_state");
+        assert_wire(&contract, "factory_recovery_outcome", &RecoveryOutcome::ALL);
+        checked.insert("factory_recovery_outcome");
         assert_wire(&contract, "factory_decision_kind", &DecisionKind::ALL);
         checked.insert("factory_decision_kind");
         assert_wire(&contract, "factory_pause_reason", &PauseReason::ALL);

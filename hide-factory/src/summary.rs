@@ -66,7 +66,6 @@ pub enum ResultCode {
     NewTaskCapChoice,
     /// The chosen action runs.
     RunAction,
-    Acknowledge,
     Merge,
     /// The worker restarts in the same worktree.
     RestartWorker,
@@ -77,7 +76,7 @@ pub enum ResultCode {
 }
 
 impl ResultCode {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 11] = [
         Self::WakeWorker,
         Self::ApplyOrMerge,
         Self::Ready,
@@ -85,7 +84,6 @@ impl ResultCode {
         Self::Drafting,
         Self::NewTaskCapChoice,
         Self::RunAction,
-        Self::Acknowledge,
         Self::Merge,
         Self::RestartWorker,
         Self::ResumeWorker,
@@ -806,7 +804,7 @@ pub fn inbox_items(
             remaining_hours: None,
             waiting_since: since,
             waiting_days: 0,
-            result_code: ResultCode::Acknowledge,
+            result_code: ResultCode::Resolve,
             unblocks: Vec::new(),
             gates: Vec::new(),
             stop: None,
@@ -1505,7 +1503,7 @@ mod tests {
     //! listed, and then fails until its wire value is pinned below and in
     //! `docs/factory.md`.
     use super::*;
-    use crate::model::ObserverMode;
+    use crate::model::{DecisionSource, ObserverMode};
 
     fn wire<T: Serialize>(values: &[T]) -> Vec<String> {
         values
@@ -1622,11 +1620,10 @@ mod tests {
             ResultCode::Drafting => 4,
             ResultCode::NewTaskCapChoice => 5,
             ResultCode::RunAction => 6,
-            ResultCode::Acknowledge => 7,
-            ResultCode::Merge => 8,
-            ResultCode::RestartWorker => 9,
-            ResultCode::ResumeWorker => 10,
-            ResultCode::Resolve => 11,
+            ResultCode::Merge => 7,
+            ResultCode::RestartWorker => 8,
+            ResultCode::ResumeWorker => 9,
+            ResultCode::Resolve => 10,
         });
         assert_eq!(
             wire(&ResultCode::ALL),
@@ -1638,7 +1635,6 @@ mod tests {
                 "drafting",
                 "new_task_cap_choice",
                 "run_action",
-                "acknowledge",
                 "merge",
                 "restart_worker",
                 "resume_worker",
@@ -1672,6 +1668,25 @@ mod tests {
             DecisionBy::Worker => 2,
         });
         assert_eq!(wire(&DecisionBy::ALL), ["person", "ai", "worker"]);
+        complete(&DecisionSource::ALL, |source| match source {
+            DecisionSource::Answer => 0,
+            DecisionSource::Assumption => 1,
+            DecisionSource::SendBack => 2,
+            DecisionSource::Worker => 3,
+            DecisionSource::RequestChanges => 4,
+            DecisionSource::RiskMerge => 5,
+        });
+        assert_eq!(
+            wire(&DecisionSource::ALL),
+            [
+                "answer",
+                "assumption",
+                "send_back",
+                "worker",
+                "request_changes",
+                "risk_merge"
+            ]
+        );
         complete(&FollowUpState::ALL, |state| match state {
             FollowUpState::Open => 0,
             FollowUpState::Issue => 1,

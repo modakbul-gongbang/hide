@@ -1366,6 +1366,17 @@ pub enum DecisionSource {
     RiskMerge,
 }
 
+impl DecisionSource {
+    pub const ALL: [Self; 6] = [
+        Self::Answer,
+        Self::Assumption,
+        Self::SendBack,
+        Self::Worker,
+        Self::RequestChanges,
+        Self::RiskMerge,
+    ];
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecisionChange {
     pub by: String,
