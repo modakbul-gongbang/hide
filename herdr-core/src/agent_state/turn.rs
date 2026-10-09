@@ -116,7 +116,9 @@ pub(crate) fn demand_verb(agent: &SidebarAgentSnapshot) -> Option<super::escalat
             .is_some_and(|turn| turn.kind == hide_session::turns::UserTurnKind::Question);
     if (agent.blocked || agent.demand == "approval") && !native_question {
         Some(Verb::Approval)
-    } else if agent.demand == "error" || (agent.demand == "question" && (native_question || agent.unread)) {
+    } else if agent.demand == "error"
+        || (agent.demand == "question" && (native_question || agent.unread))
+    {
         Some(Verb::Answer)
     } else {
         None

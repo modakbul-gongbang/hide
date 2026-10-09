@@ -32,6 +32,8 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
   const relation = useUiStore((state) => state.relation);
   const outcome = useShellStore((state) => state.rest?.status?.pane_focus_request);
   const band = header?.band;
+  // Before any early return: a hook runs on every render.
+  const unreachable = useUnreachable(band?.action?.kind === "child" ? band.action.pane_id : null);
   if (!band) return header?.working ? <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[calc(2*var(--size-hairline))] bg-agent-working" data-pane-working-line={paneId} /> : null;
   const action = band.action;
   const tracked = action?.kind === "child" && relation?.sourcePaneId === paneId && relation.targetPaneId === action.pane_id ? relation : null;
@@ -42,7 +44,6 @@ export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; he
   if (!ask && !labelKey) throw new Error(`Unknown core pane band: ${band.kind}`);
   const label = ask ? null : band.kind === "exit" ? t("agentSessions.exitCode", { exitCode: band.exit_code! }) : t(labelKey as Exclude<MessageKey, "agentSessions.exitCode">);
   const Icon = ["sleeping", "waking"].includes(band.kind) ? MoonIcon : ["fix", "review", "merge"].includes(band.kind) ? GitPullRequestIcon : CircleAlertIcon;
-  const unreachable = useUnreachable(action?.kind === "child" ? action.pane_id : null);
   const reason = navigation ?? (ask ? null : bandReason(band, t));
   // An ask reads as text on a quiet fill with the warning rail (D-43); the verb carries the colour.
   return <div className="absolute inset-x-0 top-0 z-10 bg-background"><div className={cn("flex h-[var(--size-pane-header)] min-w-0 items-center gap-xs px-sm text-caption", ask ? "border-l-2 border-warning bg-secondary text-foreground" : TONES[band.tone])} data-pane-header-band={band.kind}>

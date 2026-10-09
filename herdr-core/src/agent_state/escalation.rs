@@ -435,7 +435,11 @@ mod tests {
         let ask = &rows[0].raised[0];
         assert_eq!(ask.verb, Verb::Draft);
         assert_eq!(
-            (ask.raised_pane_id.as_str(), ask.pane_id.as_str(), ask.open_pane_id.as_str()),
+            (
+                ask.raised_pane_id.as_str(),
+                ask.pane_id.as_str(),
+                ask.open_pane_id.as_str()
+            ),
             ("raised", "middle", "middle")
         );
         assert_eq!(ask.path, ["Root", "Middle"]);
