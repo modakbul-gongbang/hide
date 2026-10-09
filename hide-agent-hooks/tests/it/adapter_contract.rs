@@ -33,15 +33,14 @@ fn every_installed_hook_dialect_resolves_through_the_shared_adapter() {
                     assert_eq!(guidance.dialect(), row.subagent_counts);
                     assert!(AgentRuntime::parse(&spelling).is_none());
                 }
-                // OpenCode's hook is Hide's plugin: no settings-file runtime or
-                // guidance hook answers for it, and the plugin names this
-                // build's helper.
-                HookInstall::Plugin(_) => {
+                // OpenCode's, Pi's and omp's hook is a script file of Hide's: no
+                // settings-file runtime or guidance hook answers for it, and the
+                // file names this build's helper.
+                HookInstall::Plugin(dialect) => {
                     assert!(AgentRuntime::parse(&spelling).is_none());
                     assert!(GuidanceAgent::from_id(&spelling).is_none());
-                    let text = hide_agent_hooks::opencode::plugin_text(std::path::Path::new(
-                        "/kit/hide-agent-hooks",
-                    ));
+                    let text = hide_agent_hooks::plugin::file(dialect)
+                        .text(std::path::Path::new("/kit/hide-agent-hooks"));
                     assert!(text.contains("const HELPER = \"/kit/hide-agent-hooks\";"));
                 }
                 HookInstall::None => {

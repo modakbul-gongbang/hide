@@ -1002,6 +1002,22 @@ fn valid_caller_hint(value: &serde_json::Value) -> bool {
     })
 }
 
+/// A Factory question guard request: a pane's native session, which Pi and
+/// omp name by its file, and a runtime whose adapter declares a question
+/// tool of its own.
+fn factory_question_guard(value: &serde_json::Value) -> Option<ScopedRequest> {
+    let session = value["session"]
+        .as_str()
+        .filter(|session| herdr_core::delivery::valid_session(session))?;
+    let runtime = value["runtime"]
+        .as_str()
+        .filter(|runtime| hide_agent_adapter::direct_ask_kind(runtime).is_some())?;
+    Some(ScopedRequest::FactoryQuestionGuard {
+        session: session.to_owned(),
+        runtime: runtime.to_owned(),
+    })
+}
+
 enum ScopedRequest {
     Query(herdr_core::workspace_control::Query),
     Action(herdr_core::workspace_control::Action),
@@ -1124,26 +1140,7 @@ async fn scoped_client_loop(
                                 value["caller_pane"].as_str().map(str::to_owned),
                             )
                         }),
-                        Some("factory_question_guard") => {
-                            let session = value["session"].as_str().filter(|session| {
-                                !session.is_empty()
-                                    && session.len() <= 256
-                                    && !session.chars().any(char::is_control)
-                            });
-                            // The same agents the CLI and the hook route here.
-                            let runtime = value["runtime"].as_str().filter(|runtime| {
-                                hide_agent_adapter::direct_ask_kind(runtime).is_some()
-                            });
-                            match (session, runtime) {
-                                (Some(session), Some(runtime)) => {
-                                    Some(ScopedRequest::FactoryQuestionGuard {
-                                        session: session.to_owned(),
-                                        runtime: runtime.to_owned(),
-                                    })
-                                }
-                                _ => None,
-                            }
-                        }
+                        Some("factory_question_guard") => factory_question_guard(&value),
                         _ => None,
                     };
                     if command.is_none()
@@ -3356,6 +3353,37 @@ pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every runtime with a question tool of its own reaches the guard, the
+    /// ones with none or an unconfirmed one do not, and a session may be a
+    /// deep session file.
+    #[test]
+    fn the_question_guard_takes_each_runtime_with_a_question_tool_and_a_session_file() {
+        let deep = format!(
+            "/fixture-home/.omp/agent/sessions/-{}-/s.jsonl",
+            "segment".repeat(40)
+        );
+        let request = |session: &str, runtime: &str| {
+            factory_question_guard(&serde_json::json!({"session": session, "runtime": runtime}))
+                .map(|request| match request {
+                    ScopedRequest::FactoryQuestionGuard { session, runtime } => (session, runtime),
+                    _ => unreachable!(),
+                })
+        };
+        for runtime in ["claude-code", "codex", "opencode", "omp"] {
+            assert_eq!(
+                request(&deep, runtime),
+                Some((deep.clone(), runtime.to_owned())),
+                "{runtime}"
+            );
+        }
+        for runtime in ["pi", "grok", "cursor", "unknown"] {
+            assert!(request(&deep, runtime).is_none(), "{runtime}");
+        }
+        let past = "x".repeat(herdr_core::delivery::SESSION_LIMIT + 1);
+        assert!(request(&past, "omp").is_none());
+        assert!(request("--session", "omp").is_none());
+    }
 
     /// A refusal that lists the devices the caller could have named answers
     /// with that list; one without a list keeps the static advice.

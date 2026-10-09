@@ -107,7 +107,7 @@ export interface FactoryQuestionGuard {
   type: "factory_question_guard";
   request_id: WorkspaceRequestId;
   session: string;
-  runtime: "claude-code" | "codex" | "opencode";
+  runtime: "claude-code" | "codex" | "opencode" | "omp";
 }
 /**
  * One pane-scoped document or View transition. Repeating the same request ID and command returns its recorded result within the ten-minute retry window.

@@ -204,16 +204,21 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         executables: &["pi"],
         skill_location: SkillLocation::Shared,
         skill_os: Os::ALL,
-        hook: HookInstall::None,
+        hook: HookInstall::Plugin(PluginDialect::Pi),
         herdr: HerdrIntegration {
             name: "pi",
             folder: &[".pi", "agent"],
         },
         default_on: false,
-        prompt_hook: None,
-        spawn_guard: None,
+        prompt_hook: Some(HookDialect::Pi),
+        spawn_guard: Some(HookDialect::Pi),
+        // Pi runs no subagents.
         subagent_counts: None,
         memory: None,
+        // Pi's previous-session picker reads `done` and a bell's Enter there
+        // resumes another session; its trust dialog reads `idle` and Enter
+        // picks the highlighted item (measured 2026-10-07). Letters reach it on
+        // its next prompt instead.
         bell: false,
         session: Some(SessionFormat::Pi),
         sleep: Some(LaunchDialect::Pi),
@@ -228,12 +233,13 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         install_url: "https://pi.dev/",
         logo_id: "pi",
         factory: FactoryCapabilities {
-            direct_ask: Unconfirmed,
+            // Pi has no built-in tool that asks the operator.
+            direct_ask: Unavailable,
             user_turn: Unconfirmed,
             turn_end_and_answer: Unconfirmed,
-            startup_guidance: Unavailable,
+            startup_guidance: Available(HookInstall::Plugin(PluginDialect::Pi)),
             resume: Unconfirmed,
-            next_prompt_letters: Unavailable,
+            next_prompt_letters: Available(HookDialect::Pi),
         },
     },
     AgentAdapter {
@@ -248,16 +254,19 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         executables: &["omp"],
         skill_location: SkillLocation::Shared,
         skill_os: Os::UNIX,
-        hook: HookInstall::None,
+        hook: HookInstall::Plugin(PluginDialect::Omp),
         herdr: HerdrIntegration {
             name: "omp",
             folder: &[".omp", "agent"],
         },
         default_on: false,
-        prompt_hook: None,
-        spawn_guard: None,
-        subagent_counts: None,
+        prompt_hook: Some(HookDialect::Omp),
+        spawn_guard: Some(HookDialect::Omp),
+        subagent_counts: Some(HookDialect::Omp),
         memory: None,
+        // omp's previous-session picker reads `done` and a bell's Enter there
+        // resumes another session (measured 2026-10-07). Letters reach it on
+        // its next prompt instead.
         bell: false,
         session: None,
         sleep: None,
@@ -272,12 +281,15 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         install_url: "https://omp.sh/docs/quickstart",
         logo_id: "omp",
         factory: FactoryCapabilities {
-            direct_ask: Unconfirmed,
+            direct_ask: Available(DirectAsk {
+                tools: &["ask"],
+                denial: HookDialect::Omp,
+            }),
             user_turn: Unconfirmed,
             turn_end_and_answer: Unconfirmed,
-            startup_guidance: Unavailable,
+            startup_guidance: Available(HookInstall::Plugin(PluginDialect::Omp)),
             resume: Unconfirmed,
-            next_prompt_letters: Unavailable,
+            next_prompt_letters: Available(HookDialect::Omp),
         },
     },
     AgentAdapter {

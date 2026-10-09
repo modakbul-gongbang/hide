@@ -1918,8 +1918,8 @@ pub struct PaneChildrenSnapshot {
     pub chips: Vec<AgentChipSnapshot>,
     /// Whether Hide hears this pane's session, for the pane header's "Not
     /// connected" chip (PRD settings-cleanup B26 to B31). `None` on an agent
-    /// Hide has no connection to judge (Grok, OpenCode, Pi, omp,
-    /// Cursor: B19) and on one whose hook is switched off or whose machine
+    /// whose session Hide cannot reopen to connect it (Grok, OpenCode, Pi,
+    /// omp, Cursor: B19) and on one whose hook is switched off or whose machine
     /// the core has not read yet. Derived from the same observation as
     /// `instrumented` above, never a second detector.
     pub connection: Option<PaneConnectionSnapshot>,

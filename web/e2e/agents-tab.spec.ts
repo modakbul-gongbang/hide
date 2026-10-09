@@ -95,9 +95,9 @@ test("the Partial chip opens by keyboard with a mark and a word per feature, and
     const list = await openAgents(page, daemon);
     const chip = list.locator('[data-agent-partial="cursor"]');
     await expect(chip).toBeVisible({ timeout: 60_000 });
-    // B18: Partial is on every agent Hide does only some things for, on or off; a Full agent has none.
-    await expect(list.locator('[data-agent-partial="omp"]')).toBeVisible();
-    await expect(list.locator('[data-agent-partial="claude-code"]')).toHaveCount(0);
+    // B18: Partial is on every agent Hide does only some things for, on or off; a Full agent has none, and omp is Full
+    // through Hide's extension (PRD pi-omp-extension).
+    for (const id of ["claude-code", "omp"]) await expect(list.locator(`[data-agent-partial="${id}"]`)).toHaveCount(0);
     await chip.focus();
     await page.keyboard.press("Enter");
     const popover = page.locator('[data-agent-partial-popover="cursor"]');

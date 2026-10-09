@@ -43,8 +43,8 @@ const PROMPT_PAYLOAD_BUDGET: Duration = Duration::from_millis(500);
 #[path = "../workspace_context.rs"]
 mod workspace_context;
 
-#[path = "../opencode/helper.rs"]
-mod opencode_helper;
+#[path = "../plugin/helper.rs"]
+mod plugin_helper;
 
 fn main() -> ExitCode {
     let started = Instant::now();
@@ -55,14 +55,14 @@ fn main() -> ExitCode {
         Ok(watch) => watch,
         // Exit 2 from a `PreToolUse` hook refuses the tool call. The outer hook
         // is what an agent runs, and it must never end that way; the inner one
-        // is only ever started by it. OpenCode's plugin reads any exit as no
-        // answer, and an agent's call is never failed by Hide's helper.
-        // Cursor's permission hooks get their allow, since Cursor reads
-        // output that is not a valid answer as a refusal.
+        // is only ever started by it. A script of Hide's in an agent's folder
+        // reads any exit as no answer, and an agent's call is never failed by
+        // Hide's helper. Cursor's permission hooks get their allow, since
+        // Cursor reads output that is not a valid answer as a refusal.
         Err(_)
             if matches!(
                 arguments.first().map(String::as_str),
-                Some("hook" | "opencode")
+                Some("hook" | "opencode" | "pi" | "omp")
             ) =>
         {
             if cursor_permission_hook(&arguments) {
@@ -119,10 +119,12 @@ fn main() -> ExitCode {
             // outcome is the pane reading as uninstrumented (PRD B32).
             ExitCode::SUCCESS
         }
-        // What Hide's OpenCode plugin asks (`hide_agent_hooks::opencode`).
-        Some("opencode") => {
+        // What Hide's script in an agent's own folder asks
+        // (`hide_agent_hooks::plugin`): OpenCode's plugin, Pi's and omp's
+        // extension.
+        Some(agent @ ("opencode" | "pi" | "omp")) => {
             let _ = std::panic::catch_unwind(|| {
-                opencode_helper::run(arguments.get(1).map(String::as_str), started)
+                plugin_helper::run(agent, arguments.get(1).map(String::as_str), started)
             });
             ExitCode::SUCCESS
         }
@@ -156,7 +158,7 @@ fn usage() -> String {
      hide-agent-hooks hook --runtime <grok|cursor> \
      --event <SessionStart|PreToolUse|SubagentStart|SubagentStop|Stop> \
      [--source <install marker>]\n       \
-     hide-agent-hooks opencode <start|prompt|confirm|tool|subagents>\n       \
+     hide-agent-hooks <opencode|pi|omp> <start|prompt|confirm|tool|subagents>\n       \
      hide-agent-hooks doctor [--json]"
         .to_owned()
 }

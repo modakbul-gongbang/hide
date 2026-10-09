@@ -17,8 +17,8 @@ pub struct WebAdapter {
     /// Whether the start command takes a model.
     pub can_pick_model: bool,
     pub sidebar_mark: Option<super::SidebarMark>,
-    /// What Settings calls the agent's hook piece: a hook entry or a plugin
-    /// file; absent for an agent Hide writes no hook for.
+    /// What Settings calls the agent's hook piece: a hook entry, a plugin
+    /// file or an extension file; absent for an agent Hide writes no hook for.
     pub hook_kind: Option<HookKind>,
 }
 
@@ -27,6 +27,7 @@ pub struct WebAdapter {
 pub enum HookKind {
     Hook,
     Plugin,
+    Extension,
 }
 
 pub fn web_contract() -> impl Iterator<Item = WebAdapter> {
@@ -50,7 +51,10 @@ pub fn web_contract() -> impl Iterator<Item = WebAdapter> {
             super::HookInstall::Runtime(_) | super::HookInstall::Guidance(_) => {
                 Some(HookKind::Hook)
             }
-            super::HookInstall::Plugin(_) => Some(HookKind::Plugin),
+            super::HookInstall::Plugin(super::PluginDialect::OpenCode) => Some(HookKind::Plugin),
+            super::HookInstall::Plugin(super::PluginDialect::Pi | super::PluginDialect::Omp) => {
+                Some(HookKind::Extension)
+            }
             super::HookInstall::None => None,
         },
     })
