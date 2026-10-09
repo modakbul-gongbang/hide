@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 
 mod catalog;
 mod conversation_cursor;
+pub mod cursor;
 mod envelope;
 mod label_owner;
 pub mod label_transcript;
@@ -214,14 +215,31 @@ pub fn inside_session_root(
 /// device named where a session file should be is refused at once instead of
 /// blocking the reader, and so is a folder.
 pub(crate) fn open_session_file(path: &Path) -> io::Result<File> {
+    open_session_file_with_links(path, true)
+}
+
+pub(crate) fn open_session_file_nofollow(path: &Path) -> io::Result<File> {
+    open_session_file_with_links(path, false)
+}
+
+fn open_session_file_with_links(path: &Path, follow: bool) -> io::Result<File> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
+        options.custom_flags(libc::O_NONBLOCK | if follow { 0 } else { libc::O_NOFOLLOW });
     }
     let file = options.open(path)?;
+    if !follow
+        && hide_platform::fs::identity::file_id_nofollow(path)?
+            != hide_platform::fs::identity::file_id_of(&file)?
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Session source is linked.",
+        ));
+    }
     if !file.metadata()?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,

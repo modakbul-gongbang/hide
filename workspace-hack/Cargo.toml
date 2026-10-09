@@ -17,6 +17,7 @@ publish = false
 ahash = { version = "0.8", features = ["serde"] }
 aho-corasick = { version = "1" }
 bitflags = { version = "2", default-features = false, features = ["serde"] }
+bytes = { version = "1" }
 crossbeam-utils = { version = "0.8" }
 futures-channel = { version = "0.3", features = ["sink"] }
 futures-util = { version = "0.3", features = ["channel", "io", "sink"] }

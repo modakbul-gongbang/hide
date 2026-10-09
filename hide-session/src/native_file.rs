@@ -236,13 +236,21 @@ fn checked_path(
     agent: Agent,
     path: &Path,
 ) -> std::result::Result<PathBuf, RootRefusal> {
+    checked_path_under(home, root_suffix(agent), path)
+}
+
+pub(crate) fn checked_path_under(
+    home: &Path,
+    suffix: &str,
+    path: &Path,
+) -> std::result::Result<PathBuf, RootRefusal> {
     let canonical_home =
         hide_platform::fs::identity::canonical(home).map_err(|_| RootRefusal::Unreadable)?;
     let relative = path
         .strip_prefix(home)
         .or_else(|_| path.strip_prefix(&canonical_home))
         .map_err(|_| RootRefusal::Outside)?;
-    if !relative.starts_with(root_suffix(agent)) {
+    if !relative.starts_with(suffix) {
         return Err(RootRefusal::Outside);
     }
     let mut checked = canonical_home;

@@ -5,6 +5,7 @@
 
 mod adapters;
 mod conversation_cursor;
+mod cursor;
 mod links;
 mod search;
 mod user_turns;
