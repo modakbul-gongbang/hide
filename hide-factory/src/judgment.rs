@@ -609,7 +609,7 @@ pub enum Verdict {
         text: String,
         suggestion: String,
         choices: Vec<String>,
-        classification: Classification,
+        classification: Box<Classification>,
     },
     ForgotDone,
     /// Stuck, or nothing to tell: a person's.
@@ -632,7 +632,7 @@ pub fn parse_diagnosis(value: &Value, card: &Card) -> Result<WorkerDiagnosis, St
                 text: text_field(question, "text")?,
                 suggestion: text_field(question, "suggestion")?,
                 choices: valid_choices(choices).map_err(|(reason, _)| reason)?,
-                classification: parse_classification(question, card)?,
+                classification: Box::new(parse_classification(question, card)?),
             }
         }
         Some("forgot_done") => Verdict::ForgotDone,

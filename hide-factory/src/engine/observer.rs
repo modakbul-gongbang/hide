@@ -1027,7 +1027,7 @@ impl Engine {
                     .task(factory, id)
                     .and_then(|t| t.questions.iter().find(|q| q.id == question).cloned())
                 {
-                    self.route_verdict(factory, id, &q, classification);
+                    self.route_verdict(factory, id, &q, *classification);
                 }
             }
             Verdict::ForgotDone => {

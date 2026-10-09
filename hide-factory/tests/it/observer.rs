@@ -350,7 +350,7 @@ fn the_daily_cap_sends_the_rest_of_the_day_to_a_person_with_one_line() {
     let fallbacks: Vec<_> = task
         .questions
         .iter()
-        .filter_map(|q| q.routing.as_ref().and_then(|r| r.fallback.clone()))
+        .filter_map(|q| q.routing.as_ref().and_then(|r| r.fallback))
         .collect();
     assert_eq!(fallbacks, [Fallback::DailyLimit, Fallback::DailyLimit]);
     let caps = h
