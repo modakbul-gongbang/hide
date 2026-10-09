@@ -202,6 +202,8 @@ A worker whose pane exists but whose agent has not shown a session yet is still 
 It holds its slot, the Task stays `waiting`, and the same spawn is asked again.
 Each ask itself waits up to 5 seconds for the session, so a young start, in its first 30 seconds, is asked again on the next tick and the worker is accepted that soon after its agent shows; a start older than that is more likely waiting on a trust or login prompt and is asked every 30 seconds.
 After 10 minutes a notice asks the person to look at the pane, where a trust or login prompt may be waiting.
+The starter thread logs why a start has no accepted worker yet as `worker.start_unfinished` (the stage and the reason, such as `native_identity_unavailable`, once per reason), `worker.start_refused` for a start the runtime refused, and `worker.start_accepted` with `waited_ms` once an unfinished start succeeds; a start that works the first time logs nothing.
+A woken worker whose letters are still held logs `worker.wake_waiting` with its reason (`agent_absent`, `agent_asleep` or the delivery's reason), once per reason, and `worker.wake_delivered` when they go out.
 A Codex worker waits for this Mac's install kit to have read the machine since launch: the first start asks the kit to read and reports the worker as still starting.
 
 A start the runtime refuses, other than for an environment signal, stops the Task with the reason "worker start failed" and the runtime's reason (cut at 300 characters) beside it.
