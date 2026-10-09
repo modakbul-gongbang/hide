@@ -5,7 +5,9 @@
 use std::path::Path;
 
 use hide_factory::Command;
-use hide_factory::command::{CardInput, FollowUpChoice, USAGE, VerificationChoice, render_human};
+use hide_factory::command::{
+    CardInput, FollowUpChoice, ResolveTarget, USAGE, VerificationChoice, render_human,
+};
 use hide_factory::model::{CheckPoint, DiscoveryClass, MergeMode, Runtime};
 
 use crate::env::{self, Env};
@@ -216,7 +218,7 @@ fn parse_words(words: &[&str], cwd: &Path) -> Option<Command> {
         "resolve" => match rest.split_first() {
             Some((item, rest)) if !item.starts_with("--") => Some(Command::Resolve {
                 project: project_only(rest, cwd)?,
-                item: (*item).to_owned(),
+                target: ResolveTarget::parse(item)?,
             }),
             _ => None,
         },

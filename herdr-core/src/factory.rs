@@ -1096,9 +1096,9 @@ fn handle(
         Command::ResumeFactory { project } => Command::ResumeFactory {
             project: project.or_else(here),
         },
-        Command::Resolve { project, item } => Command::Resolve {
+        Command::Resolve { project, target } => Command::Resolve {
             project: project.or_else(here),
-            item,
+            target,
         },
         Command::Check {
             project,

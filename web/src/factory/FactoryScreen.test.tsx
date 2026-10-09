@@ -191,13 +191,13 @@ it("says the engine's choices in words, and opens Hide AI in Settings while it i
 });
 
 it("offers a to-do's command to copy and one button that resolves it in its Factory (B16, B23)", async () => {
-  const todo: InboxItem = { ...MERGE, group: "todo", kind: "command", task: null, display_id: null, text: "Close the old terminal holding the worker's name", holding: "starts", command: "herdr pane close w4:p2", impact: "Starts the worker again", resolve: "command-1", result_code: "resolve", choices: [], suggestion: "", gates: [] };
+  const todo: InboxItem = { ...MERGE, group: "todo", kind: "command", task: null, display_id: null, text: "Close the old terminal holding the worker's name", holding: "starts", command: "herdr pane close w4:p2", impact: "Starts the worker again", resolve: "C1", result_code: "resolve", choices: [], suggestion: "", gates: [] };
   const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [todo] });
   expect(container.querySelector("[data-factory-command] code")!.textContent).toBe("herdr pane close w4:p2");
   expect(container.querySelectorAll("[data-factory-choice]")).toHaveLength(0);
   expect(container.querySelector("[data-factory-result='command']")!.textContent).toBe("Starts the worker again");
   await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-send]")!.click());
-  expect(lastAction(events).payload.command).toEqual({ verb: "resolve", project: "/fixture", item: "command-1" });
+  expect(lastAction(events).payload.command).toEqual({ verb: "resolve", project: "/fixture", item: "C1" });
 });
 
 it("shows where a project check failed and the engine's next action, a logged-out gh's included (B5)", async () => {

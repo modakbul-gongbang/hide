@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::command::ResolveTarget;
 use crate::dag;
 use crate::judgment::WorkerTextSource;
 use crate::model::{
@@ -970,7 +971,7 @@ pub fn inbox_items(
             let mut item = base("todo", 4, String::new(), task.state_since);
             item.kind = "start".into();
             item.holding = Holding::Start;
-            item.resolve = Some(format!("start:{}", task.id));
+            item.resolve = Some(ResolveTarget::Start(task.id.clone()).name());
             item.result_code = ResultCode::Resolve;
             item.evidence
                 .extend(task.worker.as_ref().and_then(|w| w.pane.clone()));
@@ -988,7 +989,7 @@ pub fn inbox_items(
         todo.kind = "github".into();
         todo.holding = Holding::Github;
         todo.command = Some(block.command());
-        todo.resolve = Some("github".into());
+        todo.resolve = Some(ResolveTarget::Github.name());
         todo.result_code = ResultCode::Resolve;
         todo.evidence.push(block.stage.clone());
         todo.unblocks = tasks
@@ -1004,7 +1005,7 @@ pub fn inbox_items(
         todo.holding = Holding::Starts;
         todo.command = Some(command.command.clone());
         todo.impact = Some(command.impact.clone());
-        todo.resolve = Some(command.id.clone());
+        todo.resolve = Some(ResolveTarget::Command(command.id.clone()).name());
         todo.result_code = ResultCode::Resolve;
         items.push(todo);
     }
@@ -1035,28 +1036,11 @@ pub fn inbox_items(
             _ => None,
         };
         todo.attempts = hold.attempts.clone();
-        todo.resolve = Some(format!("hold:{}", hold_name(&hold.key)));
+        todo.resolve = Some(ResolveTarget::Hold(hold.key.clone()).name());
         todo.result_code = ResultCode::Resolve;
         items.push(todo);
     }
     items
-}
-
-/// A hold's name in a to-do's item, as `hide factory resolve` takes it.
-pub fn hold_name(key: &HoldKey) -> String {
-    match key {
-        HoldKey::Start { hold } => format!(
-            "start-{}",
-            match hold {
-                EnvHold::DiskFloor => "disk_floor",
-                EnvHold::DiskFull => "disk_full",
-                EnvHold::MemoryCritical => "memory_critical",
-            }
-        ),
-        HoldKey::Halt => "halt".into(),
-        HoldKey::Reads => "reads".into(),
-        HoldKey::Task { task } => format!("task-{task}"),
-    }
 }
 
 /// What an open question holds up when its asker did not say.

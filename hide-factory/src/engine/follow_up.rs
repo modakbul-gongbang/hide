@@ -5,10 +5,6 @@
 //! it into the Factory as a labelled issue that starts at once, or
 //! discards it; a failed issue leaves its reason on the line and can be
 //! pressed again (B19).
-//!
-//! `resolve` is the button of every to-do that is not a question (B23):
-//! the GitHub access check, a command a person ran, a worker whose pane they
-//! looked at, and a recovery hold to try again.
 
 use serde_json::json;
 
@@ -186,62 +182,6 @@ impl Engine {
             "follow_up.settled",
             json!({"discovery": discovery, "state": state.as_str()}),
         );
-    }
-
-    /// A to-do's single button (B16, B23, B33).
-    pub(super) fn resolve_item(&mut self, role: &Role, project: Option<&str>, item: &str) -> Reply {
-        let factory = self.factory_id(project)?;
-        let now = self.now();
-        let answer = if item == "github" {
-            self.resolve_access(&factory)?
-        } else if let Some(task) = item.strip_prefix("start:") {
-            let (factory, id) = self.resolve(role, task)?;
-            if !self.task(&factory, &id).is_some_and(|t| t.start_waiting) {
-                return Err(refuse(
-                    "item_not_found",
-                    "This worker is not waiting on a person",
-                ));
-            }
-            self.with_task(&factory, &id, |t| {
-                t.start_waiting = false;
-                t.person_items += 1;
-            });
-            // Asked again at once rather than at its next retry.
-            if let Some(entry) = self.starting.get_mut(&(factory.clone(), id.clone())) {
-                entry.1 = now;
-            }
-            json!({"message": "the worker's start is asked again"})
-        } else if let Some(slug) = item.strip_prefix("hold:") {
-            let key = self.factories.get(&factory).and_then(|f| {
-                f.holds
-                    .iter()
-                    .find(|hold| crate::summary::hold_name(&hold.key) == slug)
-                    .map(|hold| hold.key.clone())
-            });
-            if !key.is_some_and(|key| self.restart_hold(&factory, &key)) {
-                return Err(refuse("item_not_found", "Check hide factory inbox"));
-            }
-            json!({"message": "the automatic recovery starts over"})
-        } else {
-            let Some(f) = self.factories.get_mut(&factory) else {
-                return Err(refuse("factory_not_found", "Check hide factory status"));
-            };
-            let Some(command) = f
-                .commands
-                .iter_mut()
-                .find(|c| c.id == item && c.resolved_at.is_none())
-            else {
-                return Err(refuse(
-                    "item_not_found",
-                    "Name a to-do as hide factory inbox lists it: github, C<n>, start:<task> or hold:<name>",
-                ));
-            };
-            command.resolved_at = Some(now);
-            self.save_factory(&factory);
-            json!({"message": "marked as done"})
-        };
-        self.record(&factory, None, "todo.resolved", json!({"item": item}));
-        Ok(answer)
     }
 }
 

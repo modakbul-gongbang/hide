@@ -8,7 +8,7 @@ use hide_factory::Inbound;
 use hide_factory::adapters::{
     EnvSignal, Failure, MainCheck, MemoryPressure, OutsideEvent, VerifyPoll, WorkerStatus,
 };
-use hide_factory::command::{CardInput, Command, VerificationChoice};
+use hide_factory::command::{CardInput, Command, ResolveTarget, VerificationChoice};
 use hide_factory::judgment::JudgmentInput;
 use hide_factory::model::*;
 use serde_json::json;
@@ -2703,7 +2703,7 @@ fn a_stopped_start_is_restarted_once_by_the_schedule_and_a_command_becomes_a_to_
     assert_eq!(todo.resolve.as_deref(), Some("C1"));
     let resolved = h.op(Command::Resolve {
         project: None,
-        item: "C1".into(),
+        target: ResolveTarget::parse("C1").unwrap(),
     });
     assert_eq!(resolved["ok"], true, "{resolved}");
     assert!(
@@ -4212,7 +4212,7 @@ fn an_environment_recovery_is_a_line_of_the_factory_activity_not_a_question() {
     assert_eq!(todo.env_hold, Some(EnvHold::DiskFloor));
     let again = h.op(Command::Resolve {
         project: None,
-        item: "hold:start-disk_floor".into(),
+        target: ResolveTarget::parse("hold:start-disk_floor").unwrap(),
     });
     assert_eq!(again["ok"], true, "{again}");
     assert!(

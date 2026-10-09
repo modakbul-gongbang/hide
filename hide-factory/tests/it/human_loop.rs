@@ -6,7 +6,7 @@
 
 use crate::support::*;
 use hide_factory::adapters::{EnvSignal, Failure, FileFact, IntakeFacts, OutsideEvent};
-use hide_factory::command::{Command, FollowUpChoice, VerificationChoice};
+use hide_factory::command::{Command, FollowUpChoice, ResolveTarget, VerificationChoice};
 use hide_factory::judgment::JudgmentInput;
 use hide_factory::model::*;
 use serde_json::{Value, json};
@@ -396,14 +396,14 @@ fn a_lost_github_sign_in_is_one_to_do_and_a_passing_check_lets_the_steps_continu
 
     let refused = h.op(Command::Resolve {
         project: None,
-        item: "github".into(),
+        target: ResolveTarget::parse("github").unwrap(),
     });
     assert_eq!(refused["reason"], "github_still_blocked", "{refused}");
     h.world().access_failure = None;
     h.world().observe_failure = None;
     let resolved = h.op(Command::Resolve {
         project: None,
-        item: "github".into(),
+        target: ResolveTarget::parse("github").unwrap(),
     });
     assert_eq!(resolved["ok"], true, "{resolved}");
     assert!(h.engine.summary().factories[0].github_block.is_none());
@@ -444,7 +444,7 @@ fn a_missing_permission_waits_for_the_person_s_press_since_a_read_cannot_prove_i
     );
     let resolved = h.op(Command::Resolve {
         project: None,
-        item: "github".into(),
+        target: ResolveTarget::parse("github").unwrap(),
     });
     assert_eq!(resolved["ok"], true, "{resolved}");
     assert!(
@@ -766,4 +766,27 @@ fn a_failed_move_leaves_the_schema_one_store_as_it_was() {
     assert!(error.0.contains("migration"), "{error}");
     assert_eq!(read(&path), before, "nothing moved");
     assert!(path.with_file_name("factory.v1.sqlite3").exists());
+}
+
+#[test]
+fn a_to_do_is_named_on_the_wire_by_its_resolve_name_and_any_other_name_is_refused() {
+    for name in [
+        "github",
+        "C12",
+        "start:T-3",
+        "hold:start-disk_floor",
+        "hold:reads",
+        "hold:task-T-4",
+    ] {
+        let command: Command =
+            serde_json::from_value(json!({"verb": "resolve", "project": null, "item": name}))
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(serde_json::to_value(&command).unwrap()["item"], name);
+    }
+    for name in ["C", "Cx", "hold:start-floods", "start:", "rm -rf /"] {
+        let parsed = serde_json::from_value::<Command>(
+            json!({"verb": "resolve", "project": null, "item": name}),
+        );
+        assert!(parsed.is_err(), "{name}");
+    }
 }

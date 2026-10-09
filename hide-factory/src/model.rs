@@ -357,6 +357,38 @@ pub enum HoldKey {
     Task { task: String },
 }
 
+impl HoldKey {
+    /// The hold's name in a to-do, as `hide factory resolve hold:<name>`
+    /// takes it.
+    pub fn name(&self) -> String {
+        match self {
+            Self::Start { hold } => format!("start-{}", hold.as_str()),
+            Self::Halt => "halt".into(),
+            Self::Reads => "reads".into(),
+            Self::Task { task } => format!("task-{task}"),
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        if let Some(hold) = name.strip_prefix("start-") {
+            return EnvHold::ALL
+                .into_iter()
+                .find(|h| h.as_str() == hold)
+                .map(|hold| Self::Start { hold });
+        }
+        if let Some(task) = name.strip_prefix("task-").filter(|t| !t.is_empty()) {
+            return Some(Self::Task {
+                task: task.to_owned(),
+            });
+        }
+        match name {
+            "halt" => Some(Self::Halt),
+            "reads" => Some(Self::Reads),
+            _ => None,
+        }
+    }
+}
+
 /// A hold the recovery schedule works through: one step at 30, 90 and 150
 /// minutes, a person at 180 (D-44). Whether a diagnosis is out for its next
 /// step is the engine's judgment in flight, never stored, so a restart that
@@ -1637,6 +1669,14 @@ pub enum EnvHold {
 
 impl EnvHold {
     pub const ALL: [Self; 3] = [Self::DiskFloor, Self::DiskFull, Self::MemoryCritical];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DiskFloor => "disk_floor",
+            Self::DiskFull => "disk_full",
+            Self::MemoryCritical => "memory_critical",
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {

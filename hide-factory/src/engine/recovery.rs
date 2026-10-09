@@ -317,11 +317,7 @@ impl Engine {
             "disk_free": self.ports.environment.disk_free(&f.project),
         });
         let judgment = Judgment {
-            id: format!(
-                "{factory}:recovery:{}:{}",
-                crate::summary::hold_name(key),
-                hold.attempts.len()
-            ),
+            id: format!("{factory}:recovery:{}:{}", key.name(), hold.attempts.len()),
             factory: factory.to_owned(),
             task: hold_task(key).map(str::to_owned),
             priority: Priority::Factory,

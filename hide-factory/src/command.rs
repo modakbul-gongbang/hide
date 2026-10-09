@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::model::{CheckPoint, DiscoveryClass, MergeMode, Runtime};
+use crate::model::{CheckPoint, DiscoveryClass, HoldKey, MergeMode, Runtime};
 use crate::role::Permission;
 
 /// A new or updated card as `hide factory add` sends it.
@@ -28,6 +28,64 @@ pub struct CardInput {
     pub worker: Option<usize>,
     /// A PRD the daemon copies into the Factory's private folder (D-10).
     pub prd: Option<String>,
+}
+
+/// What a to-do's button resolves, written on the wire and in the CLI as
+/// the item's `resolve` name: `github`, `C<n>`, `start:<task>` or
+/// `hold:<name>`; a name of none of these shapes is refused when it is read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub enum ResolveTarget {
+    /// The GitHub access check (B33).
+    Github,
+    /// A command a person ran, `C<n>` (B16).
+    Command(String),
+    /// A worker start a person looked at (B23).
+    Start(String),
+    /// An escalated recovery hold to try again (B14).
+    Hold(HoldKey),
+}
+
+impl ResolveTarget {
+    pub fn parse(name: &str) -> Option<Self> {
+        if name == "github" {
+            return Some(Self::Github);
+        }
+        if let Some(task) = name.strip_prefix("start:").filter(|t| !t.is_empty()) {
+            return Some(Self::Start(task.to_owned()));
+        }
+        if let Some(hold) = name.strip_prefix("hold:") {
+            return HoldKey::parse(hold).map(Self::Hold);
+        }
+        name.strip_prefix('C')
+            .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+            .map(|_| Self::Command(name.to_owned()))
+    }
+
+    pub fn name(&self) -> String {
+        match self {
+            Self::Github => "github".into(),
+            Self::Command(id) => id.clone(),
+            Self::Start(task) => format!("start:{task}"),
+            Self::Hold(key) => format!("hold:{}", key.name()),
+        }
+    }
+}
+
+impl TryFrom<String> for ResolveTarget {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, String> {
+        Self::parse(&name).ok_or_else(|| {
+            format!("not a to-do: {name:?}; name one as hide factory inbox lists it: github, C<n>, start:<task> or hold:<name>")
+        })
+    }
+}
+
+impl From<ResolveTarget> for String {
+    fn from(target: ResolveTarget) -> Self {
+        target.name()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,11 +217,11 @@ pub enum Command {
         discovery: String,
         choice: FollowUpChoice,
     },
-    /// A to-do's single button (B16, B23, B33): `github`, `C<n>`,
-    /// `start:<task>` or `hold:<name>`.
+    /// A to-do's single button (B16, B23, B33).
     Resolve {
         project: Option<String>,
-        item: String,
+        #[serde(rename = "item")]
+        target: ResolveTarget,
     },
     /// Pins a Task's worker candidate by its number, 1 first; `None` lets
     /// the review's pick decide again (D-41).

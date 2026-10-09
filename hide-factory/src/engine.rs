@@ -15,7 +15,7 @@ use crate::adapters::{
     Notifier, OutsideEvent, PreMerge, Removal, RepoContext, RevertRef, TaskSource, Verifier,
     VerifyPoll, VerifyRun, WorkerRuntime, WorkerSpawn, WorkerStatus,
 };
-use crate::command::{CardInput, Command, Refusal, VerificationChoice};
+use crate::command::{CardInput, Command, Refusal, ResolveTarget, VerificationChoice};
 use crate::dag;
 use crate::judgment::{self, Judgment, JudgmentInput, JudgmentOutcome, OtherTask, Priority};
 use crate::model::*;
@@ -1113,8 +1113,8 @@ impl Engine {
                 discovery,
                 choice,
             } => self.follow_up(role, &task, &discovery, choice),
-            Command::Resolve { project, item } => {
-                self.resolve_item(role, project.as_deref(), &item)
+            Command::Resolve { project, target } => {
+                self.resolve_to_do(role, project.as_deref(), &target)
             }
             Command::Worker { task, worker } => {
                 let (factory, id) = self.resolve(role, &task)?;
@@ -6191,6 +6191,65 @@ impl Engine {
                 }
             }
         }
+    }
+
+    /// A to-do's single button (B16, B23, B33): the GitHub access check, a
+    /// command a person ran, a worker start they looked at, or an escalated
+    /// recovery hold to try again.
+    fn resolve_to_do(
+        &mut self,
+        role: &Role,
+        project: Option<&str>,
+        target: &ResolveTarget,
+    ) -> Reply {
+        let factory = self.factory_id(project)?;
+        let now = self.now();
+        let answer = match target {
+            ResolveTarget::Github => self.resolve_access(&factory)?,
+            ResolveTarget::Start(task) => {
+                let (factory, id) = self.resolve(role, task)?;
+                if !self.task(&factory, &id).is_some_and(|t| t.start_waiting) {
+                    return Err(refuse(
+                        "item_not_found",
+                        "This worker is not waiting on a person",
+                    ));
+                }
+                self.with_task(&factory, &id, |t| {
+                    t.start_waiting = false;
+                    t.person_items += 1;
+                });
+                // Asked again at once rather than at its next retry.
+                if let Some(entry) = self.starting.get_mut(&(factory.clone(), id.clone())) {
+                    entry.1 = now;
+                }
+                json!({"message": "the worker's start is asked again"})
+            }
+            ResolveTarget::Hold(key) => {
+                if !self.restart_hold(&factory, key) {
+                    return Err(refuse("item_not_found", "Check hide factory inbox"));
+                }
+                json!({"message": "the automatic recovery starts over"})
+            }
+            ResolveTarget::Command(id) => {
+                let Some(command) = self.factories.get_mut(&factory).and_then(|f| {
+                    f.commands
+                        .iter_mut()
+                        .find(|c| &c.id == id && c.resolved_at.is_none())
+                }) else {
+                    return Err(refuse("item_not_found", "Check hide factory inbox"));
+                };
+                command.resolved_at = Some(now);
+                self.save_factory(&factory);
+                json!({"message": "marked as done"})
+            }
+        };
+        self.record(
+            &factory,
+            None,
+            "todo.resolved",
+            json!({"item": target.name()}),
+        );
+        Ok(answer)
     }
 
     fn task_for_issue(&self, factory: &str, issue: &IssueRef) -> Option<Task> {
