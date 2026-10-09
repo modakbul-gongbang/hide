@@ -2312,6 +2312,14 @@ impl Engine {
                 );
             }
         });
+        if let Some(task) = self.task(factory, id) {
+            let event = ActivityEvent::Intake {
+                label: task.label_path,
+                criteria: task.card.criteria.len() as u32,
+                assumptions: verdict.assumptions.len() as u32,
+            };
+            self.log_task(factory, id, event);
+        }
         for assumption in &verdict.assumptions {
             self.log_task(
                 factory,

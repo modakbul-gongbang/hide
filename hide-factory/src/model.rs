@@ -115,6 +115,13 @@ pub struct Activity {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActivityEvent {
+    /// The intake review completed the card: how many criteria it holds,
+    /// how many assumptions the review made, and whether a label brought it.
+    Intake {
+        label: bool,
+        criteria: u32,
+        assumptions: u32,
+    },
     /// A worker started or resumed; `attempt` counts fresh starts.
     Started { resumed: bool },
     /// The worker's report of done (D-36).

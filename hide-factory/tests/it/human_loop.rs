@@ -118,6 +118,17 @@ fn a_label_starts_with_a_card_the_review_completed_and_assumptions_on_the_record
     );
     assert!(assumption.overridable());
     assert!(
+        task.activity.iter().any(|entry| matches!(
+            entry.event,
+            ActivityEvent::Intake {
+                label: true,
+                criteria: 1,
+                assumptions: 1
+            }
+        )),
+        "the intake is the Task's first activity line"
+    );
+    assert!(
         task.open_questions().next().is_none(),
         "no card confirmation (B1)"
     );

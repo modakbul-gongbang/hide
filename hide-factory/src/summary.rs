@@ -18,8 +18,8 @@ use crate::model::{
     Activity, Attachment, AttemptOutcome, AttemptStage, ChoiceOutcome, Column, CriterionState,
     CriterionVerdict, DAY_MS, DecisionChange, DecisionKind, DecisionSource, Discovery, EnvHold,
     Factory, FactoryAi, FollowUpState, Gate, GithubBlock, HoldKey, MergeMode, OBSERVER,
-    PauseReason, PullRequest, Question, QuestionKind, Runtime, SourceKind, StopReason, Task,
-    TaskState, UnixMs, Verification, WorkerCandidate, WorkerReport, decision_id,
+    PauseReason, PullRequest, Question, QuestionKind, RecoveryAttempt, Runtime, SourceKind,
+    StopReason, Task, TaskState, UnixMs, Verification, WorkerCandidate, WorkerReport, decision_id,
 };
 
 /// What a card waits for, as a code beside `waiting_for`'s words, so a
@@ -385,6 +385,10 @@ pub struct InboxItem {
     pub stop: Option<StopReason>,
     /// Why the machine holds starts, for a hold to-do.
     pub env_hold: Option<EnvHold>,
+    /// What the recovery schedule already tried, for a hold to-do or a
+    /// stop it gave up on (B14).
+    #[serde(default)]
+    pub attempts: Vec<RecoveryAttempt>,
     /// The Observer's kind and reason for a request it sorted.
     pub decision_kind: Option<DecisionKind>,
     pub observer_reason: Option<String>,
@@ -809,6 +813,7 @@ pub fn inbox_items(
             gates: Vec::new(),
             stop: None,
             env_hold: None,
+            attempts: Vec::new(),
             decision_kind: None,
             observer_reason: None,
         };
@@ -926,6 +931,7 @@ pub fn inbox_items(
                     task: task.id.clone(),
                 }) {
                     item.evidence.extend(hold.cause.clone());
+                    item.attempts = hold.attempts.clone();
                 }
                 items.push(item);
             }
@@ -1006,6 +1012,7 @@ pub fn inbox_items(
             HoldKey::Start { hold } => Some(hold),
             _ => None,
         };
+        todo.attempts = hold.attempts.clone();
         todo.resolve = Some(format!("hold:{}", hold_name(&hold.key)));
         todo.result_code = ResultCode::Resolve;
         items.push(todo);
