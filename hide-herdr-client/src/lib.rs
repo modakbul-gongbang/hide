@@ -339,9 +339,9 @@ pub fn request_with_correlation_id(
     response_result(response, request_id)
 }
 
-/// Sends a request on the caller's established connection. A caller can read
-/// an execution identity and mutate that execution on the same connection.
-/// The bounded line reader leaves following responses untouched.
+/// Sends the single request on a caller-established connection, allowing
+/// the caller to recheck its authority after the actual connect.
+/// Herdr closes that connection after answering. Responses are capped at 64 KiB.
 pub fn request_on_stream(
     stream: &mut dyn ApiStream,
     request_id: &str,

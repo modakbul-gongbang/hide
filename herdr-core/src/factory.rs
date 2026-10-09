@@ -1324,10 +1324,9 @@ impl CoreWorkers {
             std::slice::from_ref(&owned.native.pane_id),
             crate::live::ProcessWait::ForEnd,
             crate::live::CONFIRM_TIMEOUT,
-            &|stream, _| {
-                let native = hide_herdr_client::request_on_stream(
-                    stream,
-                    "factory-abandon:identity",
+            &|_| {
+                let native = hide_herdr_client::request_small_response(
+                    &connector,
                     "agent.get",
                     params.clone(),
                     Duration::from_secs(2),
@@ -3089,7 +3088,7 @@ mod tests {
     }
 
     #[test]
-    fn abandoned_close_pane_start_refuses_execution_replaced_on_actual_close_connection() {
+    fn abandoned_close_pane_start_refuses_execution_replaced_after_actual_close_connect() {
         replaced_start(StartReplacement::ExecutionOnClose);
     }
 
@@ -3119,8 +3118,8 @@ mod tests {
             &self,
         ) -> Result<Box<dyn hide_herdr_client::ApiStream>, hide_herdr_client::ApiError> {
             let stream = hide_herdr_client::ApiConnector::connect(&self.connector)?;
-            // Capture, pre-End proof, process read, then actual close connect.
-            if self.calls.fetch_add(1, Ordering::SeqCst) == 3 {
+            // Capture, pre-End proof, process read, pre-close proof, then actual close connect.
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 4 {
                 let runtime = self.replacement.runtime.upgrade().unwrap();
                 guard(&runtime).set_live(self.replacement.clone());
             }
@@ -3204,7 +3203,7 @@ mod tests {
         let on_confirmation = replacement_live.clone();
         let mut identity_reads = 0;
         let kind_owned = kind.to_owned();
-        let herdr = crate::fake_herdr::FakeHerdr::start_with_errors(
+        let herdr = crate::fake_herdr::FakeHerdr::start_concurrent_with_errors(
             "factory-abandon",
             move |method, params| {
                 if method == "pane.close" && refuse_close {
@@ -3216,7 +3215,7 @@ mod tests {
                         identity_reads += 1;
                         let replaced = match replacement {
                             Some(StartReplacement::ExecutionBefore) => identity_reads >= 2,
-                            Some(StartReplacement::ExecutionOnClose) => identity_reads >= 3,
+                            Some(StartReplacement::ExecutionOnClose) => identity_reads >= 4,
                             _ => false,
                         };
                         json!({"type":"agent_info", "agent": {
@@ -3420,6 +3419,17 @@ mod tests {
             assert_eq!(
                 std::fs::read_to_string(tree.join("README.md")).unwrap(),
                 "Original source\n"
+            );
+        }
+        if replacement == Some(StartReplacement::ExecutionOnClose) {
+            assert_eq!(
+                herdr
+                    .methods()
+                    .iter()
+                    .filter(|method| *method == "agent.get")
+                    .count(),
+                4,
+                "replacement is read after the actual close connection, not at its precheck"
             );
         }
         if replacement.is_some() {

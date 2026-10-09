@@ -193,7 +193,7 @@ The spawn runs on the host's starter thread, one at a time with at most 16 waiti
 A Task cancelled or paused while its worker starts on the starter has that worker ended when it arrives, and a worktree that start made removed; its next start is a new attempt with its own spawn intent.
 For Pi and omp, this abandoned-start rollback closes only the execution that start created, even though normal Factory sleep and stop are refused; a resumed start keeps its existing worktree, branch, conversation and other panes.
 The unclaimed start retains its original connection generation and file node only until it is claimed or released.
-Rollback verifies the created native session and terminal on the actual close connection, and refuses a replaced connection or execution before closing or deleting files.
+Rollback rechecks the created native session and terminal before and after opening the actual close connection, and refuses a replaced connection or execution before closing or deleting files.
 A refused rollback preserves the worktree and branch and records a cleanup failure; it never redirects the old pane ID to the replacement server.
 A refused close reports a cleanup failure and preserves the files rather than deleting a folder whose pane may still be running.
 A Task cancelled while its agent had not shown its session yet keeps its attempt, so a revive asks the same spawn again and gets the pane and worktree it already made.
