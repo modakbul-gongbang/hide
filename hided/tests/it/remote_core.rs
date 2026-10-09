@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail, ensure};
 use base64::Engine as _;
 use futures_util::{SinkExt, StreamExt};
-use hided::node_role::{NodeIdentity, NodeRole, Phase};
+use hided::node_role::{LinkFailure, NodeIdentity, NodeRole, Phase};
 use serde_json::Value;
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message;
@@ -128,7 +128,7 @@ fn a_node_of_another_build_or_the_cores_own_machine_is_refused() -> Result<()> {
         ensure!(
             phase
                 == Phase::Waiting {
-                    reason: "other_build".to_owned()
+                    reason: LinkFailure::Refused("other_build".to_owned())
                 },
             "another build was not refused: {phase:?}"
         );
@@ -141,7 +141,7 @@ fn a_node_of_another_build_or_the_cores_own_machine_is_refused() -> Result<()> {
         ensure!(
             phase
                 == Phase::Waiting {
-                    reason: "own_node".to_owned()
+                    reason: LinkFailure::Refused("own_node".to_owned())
                 },
             "the core's own machine was not refused: {phase:?}"
         );

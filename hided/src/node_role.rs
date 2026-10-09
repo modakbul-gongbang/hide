@@ -31,7 +31,7 @@ use hide_platform::ipc::{LocalStream, ShutdownHandle};
 use serde_json::json;
 use tokio::sync::watch;
 
-use crate::attach::{self, Accepted, Line, NodeHello};
+use crate::attach::{self, Accepted, AttachOutcome, Line, NodeHello};
 use crate::placement::Placement;
 
 /// The first wait after a failed attempt.
@@ -95,7 +95,39 @@ pub enum Phase {
     /// The core took the link.
     Live(Accepted),
     /// The last attempt failed or the link ended; the next one waits.
-    Waiting { reason: String },
+    Waiting { reason: LinkFailure },
+}
+
+/// Why the node's last attempt failed or its link ended. Its text is the
+/// `core_link_reason` the node's health reports.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LinkFailure {
+    /// The core's machine could not be reached over SSH: the watch probes
+    /// its SSH port and tries at once when it answers again.
+    Unreachable(String),
+    /// The core's machine answered, and its attach role reached no core.
+    Attach(AttachOutcome),
+    /// The core's machine answers as another core than the placement names.
+    WrongCore(String),
+    /// The core refused the node, with its reason (`other_build`,
+    /// `own_node`, ...).
+    Refused(String),
+    /// Anything else on the way, or the link's end: its reason.
+    Ended(String),
+    /// The role is stopping.
+    Stopping,
+}
+
+impl std::fmt::Display for LinkFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unreachable(error) => write!(formatter, "unreachable: {error}"),
+            Self::Attach(outcome) => formatter.write_str(outcome.code()),
+            Self::WrongCore(node) => write!(formatter, "wrong_core: the machine answers as {node}"),
+            Self::Refused(reason) | Self::Ended(reason) => formatter.write_str(reason),
+            Self::Stopping => formatter.write_str("stopping"),
+        }
+    }
 }
 
 struct State {
@@ -269,11 +301,8 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
             return;
         }
         let started = Instant::now();
-        let ended = link_once(shared, config, placement, identity, generation);
+        let reason = link_once(shared, config, placement, identity, generation);
         shared.live.send_replace(None);
-        let reason = match ended {
-            Ok(reason) | Err(reason) => reason,
-        };
         if started.elapsed() >= SETTLED {
             wait = FIRST_WAIT;
         }
@@ -284,7 +313,7 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
             "component": "node_role",
             "kind": "link.ended",
             "core": placement.node,
-            "reason": reason,
+            "reason": reason.to_string(),
             "lived_ms": started.elapsed().as_millis() as u64,
             "retry_ms": wait.as_millis() as u64,
         }));
@@ -357,13 +386,8 @@ fn watch(shared: &Shared) {
             }
             continue;
         }
-        match (&phase, &upstream) {
-            // Probed only until the port answers: past that the dial failed
-            // on something else (a key, a host key, the account), and the
-            // wait's own retry tries it again.
-            (Phase::Waiting { reason }, Some(upstream))
-                if reason.starts_with(UNREACHABLE) && port.last != Some(true) =>
-            {
+        match &upstream {
+            Some(upstream) if probes_port(&phase, &port) => {
                 if port.came_back(upstream.reachable(PROBE_WITHIN)) {
                     herdr_core::diagnostic!(json!({
                         "component": "node_role",
@@ -377,9 +401,18 @@ fn watch(shared: &Shared) {
     }
 }
 
-/// The reason a dial failed because the core's machine could not be
-/// reached.
-const UNREACHABLE: &str = "unreachable";
+/// Whether the watch probes the core machine's SSH port: only while the
+/// node waits after a dial that could not reach the machine, and only until
+/// the port answers. Past that the dial failed on something else (a key, a
+/// host key, the account), and the wait's own retry tries it again.
+fn probes_port(phase: &Phase, port: &PortWatch) -> bool {
+    matches!(
+        phase,
+        Phase::Waiting {
+            reason: LinkFailure::Unreachable(_)
+        }
+    ) && port.last != Some(true)
+}
 
 fn network_addresses() -> Option<BTreeSet<IpAddr>> {
     hide_platform::host::network_addresses().ok()
@@ -468,19 +501,33 @@ fn link_once(
     placement: &Placement,
     identity: &NodeIdentity,
     generation: u64,
-) -> Result<String, String> {
+) -> LinkFailure {
+    match try_link(shared, config, placement, identity, generation) {
+        Ok(ended) | Err(ended) => ended,
+    }
+}
+
+fn try_link(
+    shared: &Shared,
+    config: &Path,
+    placement: &Placement,
+    identity: &NodeIdentity,
+    generation: u64,
+) -> Result<LinkFailure, LinkFailure> {
     // The alias is read again for every attempt, so a fix the operator
     // makes to it reaches the next dial; a connection to an alias that
     // changed is ended and a new one made.
     let alias = SshAlias::from_config_file(config, &placement.alias)
-        .map_err(|error| format!("ssh_alias: {}", error.diagnostic().reason))?;
+        .map_err(|error| LinkFailure::Ended(format!("ssh_alias: {}", error.diagnostic().reason)))?;
     let upstream = {
         let mut slot = lock(&shared.upstream);
         match slot.as_ref() {
             Some(upstream) if *upstream.alias() == alias => Arc::clone(upstream),
             _ => {
-                let upstream =
-                    Arc::new(Upstream::new(alias).map_err(|error| format!("ssh: {error}"))?);
+                let upstream = Arc::new(
+                    Upstream::new(alias)
+                        .map_err(|error| LinkFailure::Ended(format!("ssh: {error}")))?,
+                );
                 let replaced = slot.replace(Arc::clone(&upstream));
                 drop(slot);
                 if let Some(replaced) = replaced {
@@ -492,12 +539,12 @@ fn link_once(
     };
     let channel = upstream
         .attach(&placement.program, placement.state_dir.as_deref())
-        .map_err(|error| format!("{UNREACHABLE}: {error}"))?;
+        .map_err(|error| LinkFailure::Unreachable(error.to_string()))?;
     let stream = channel.stream;
     {
         let mut state = lock(&shared.state);
         if state.stopping {
-            return Err("stopping".to_owned());
+            return Err(LinkFailure::Stopping);
         }
         state.link = Some(stream.shutdown_handle());
     }
@@ -523,28 +570,33 @@ fn serve_link(
     stderr: &Mutex<Vec<u8>>,
     upstream: &Arc<Upstream>,
     generation: u64,
-) -> Result<String, String> {
+) -> Result<LinkFailure, LinkFailure> {
+    let ended = LinkFailure::Ended;
     let mut reader = BufReader::new(stream.duplicate());
     let mut writer = stream.duplicate();
     reader
         .get_ref()
         .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| ended(error.to_string()))?;
     let silent = |message: String| {
         let said = String::from_utf8_lossy(&lock(stderr)).trim().to_owned();
         if said.is_empty() {
-            message
+            ended(message)
         } else {
-            format!("{message} ({said})")
+            ended(format!("{message} ({said})"))
         }
     };
     match attach::read_line(&mut reader).map_err(silent)? {
-        Line::Attach(answer) if answer == attach::NO_CORE => return Err("no_core".to_owned()),
+        Line::Attach(outcome) => return Err(LinkFailure::Attach(outcome)),
         Line::Core(core) if core.node != placement.node => {
-            return Err(format!("wrong_core: the machine answers as {}", core.node));
+            return Err(LinkFailure::WrongCore(core.node));
         }
         Line::Core(_) => {}
-        _ => return Err("the core's machine answered another line than its core's".to_owned()),
+        _ => {
+            return Err(ended(
+                "the core's machine answered another line than its core's".to_owned(),
+            ));
+        }
     }
     attach::write_line(
         &mut writer,
@@ -554,16 +606,21 @@ fn serve_link(
             build: identity.build.clone(),
             herdr_socket: identity.herdr_socket.display().to_string(),
         }),
-    )?;
-    let accepted = match attach::read_line(&mut reader)? {
+    )
+    .map_err(ended)?;
+    let accepted = match attach::read_line(&mut reader).map_err(ended)? {
         Line::Accepted(accepted) => accepted,
-        Line::Refused(refusal) => return Err(refusal.reason),
-        _ => return Err("the core answered another line than its answer".to_owned()),
+        Line::Refused(refusal) => return Err(LinkFailure::Refused(refusal.reason)),
+        _ => {
+            return Err(ended(
+                "the core answered another line than its answer".to_owned(),
+            ));
+        }
     };
     reader
         .get_ref()
         .set_read_timeout(None)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| ended(error.to_string()))?;
     herdr_core::diagnostic!(json!({
         "component": "node_role",
         "kind": "link.accepted",
@@ -574,14 +631,14 @@ fn serve_link(
     // with it.
     let forward = upstream
         .forward(accepted.port)
-        .map_err(|error| format!("relay_forward: {error}"))?;
+        .map_err(|error| ended(format!("relay_forward: {error}")))?;
     let terminals = Arc::new(NodeTerminals::for_screen(
         Arc::clone(&shared.screen),
         identity.herdr_bin.clone(),
     ));
     let roots = Arc::new(hide_host::serve::OpenedRoots::default());
     if set_phase(shared, Phase::Live(accepted.clone())) {
-        return Err("stopping".to_owned());
+        return Err(LinkFailure::Stopping);
     }
     shared.live.send_replace(Some(Arc::new(LiveLink {
         generation,
@@ -598,7 +655,7 @@ fn serve_link(
             browser: Arc::clone(browser),
             generation,
         });
-    let ended = serve(
+    let link_end = serve(
         reader,
         writer,
         identity,
@@ -610,7 +667,9 @@ fn serve_link(
     );
     shared.live.send_replace(None);
     drop(forward);
-    ended
+    Ok(LinkFailure::Ended(match link_end {
+        Ok(reason) | Err(reason) => reason,
+    }))
 }
 
 /// Answers the core's calls until the link ends. The reader keeps what it
@@ -695,6 +754,35 @@ mod tests {
             ),
             None
         );
+    }
+
+    /// The port is probed for a dial that could not reach the core's
+    /// machine, whatever its text, and never for another failure whose text
+    /// happens to read the same.
+    #[test]
+    fn only_an_unreachable_dial_probes_the_core_machine_s_port() {
+        let waiting = |reason| Phase::Waiting { reason };
+        let silent = PortWatch::default();
+        assert!(probes_port(
+            &waiting(LinkFailure::Unreachable("connection refused".to_owned())),
+            &silent
+        ));
+        for reason in [
+            LinkFailure::Refused("unreachable_by_policy".to_owned()),
+            LinkFailure::Ended("unreachable: the link dropped".to_owned()),
+            LinkFailure::Attach(AttachOutcome::NoCore),
+            LinkFailure::Stopping,
+        ] {
+            assert!(
+                !probes_port(&waiting(reason.clone()), &silent),
+                "{reason:?}"
+            );
+        }
+        let answered = PortWatch { last: Some(true) };
+        assert!(!probes_port(
+            &waiting(LinkFailure::Unreachable("connection refused".to_owned())),
+            &answered
+        ));
     }
 
     #[test]

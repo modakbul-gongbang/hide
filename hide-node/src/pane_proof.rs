@@ -145,35 +145,66 @@ pub fn bootstrap_socket_record(state_dir: &Path) -> PathBuf {
 /// record and the folder the socket sits in are this account's own and
 /// private.
 pub fn bootstrap_socket_path(state_dir: &Path) -> Result<PathBuf, String> {
-    recorded_socket_path(&bootstrap_socket_record(state_dir)).map_err(|reason| reason.to_owned())
+    recorded_socket_path(&bootstrap_socket_record(state_dir))
+        .map_err(|refusal| refusal.code().to_owned())
+}
+
+/// Why a socket record is not followed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecordRefusal {
+    /// There is no record this account can open: nothing published one.
+    Missing,
+    /// The record or the socket's folder is not this account's own and
+    /// private, or the record is not a path.
+    Untrusted,
+    /// The folder the record names is gone: the process that wrote it ended
+    /// without removing it.
+    Stale,
+}
+
+impl RecordRefusal {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Missing => "hide_unavailable",
+            Self::Untrusted | Self::Stale => "invalid_bootstrap_socket_record",
+        }
+    }
+}
+
+impl std::fmt::Display for RecordRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.code())
+    }
 }
 
 /// The socket a record written by [`bind_recorded`] names, trusted only when
-/// the record and the socket's folder are this account's own and private:
-/// `hide_unavailable` when there is no record, and
-/// `invalid_bootstrap_socket_record` when it cannot be trusted.
-pub fn recorded_socket_path(record: &Path) -> Result<PathBuf, &'static str> {
-    let file = private::open_own_file(record, false).map_err(|_| "hide_unavailable")?;
-    let metadata = file.metadata().map_err(|_| "hide_unavailable")?;
+/// the record and the socket's folder are this account's own and private.
+pub fn recorded_socket_path(record: &Path) -> Result<PathBuf, RecordRefusal> {
+    let file = private::open_own_file(record, false).map_err(|_| RecordRefusal::Missing)?;
+    let metadata = file.metadata().map_err(|_| RecordRefusal::Missing)?;
     if !private::is_private(record).unwrap_or(false) || metadata.len() > BOOTSTRAP_RECORD_CAP {
-        return Err("invalid_bootstrap_socket_record");
+        return Err(RecordRefusal::Untrusted);
     }
     let mut bytes = Vec::new();
     file.take(BOOTSTRAP_RECORD_CAP)
         .read_to_end(&mut bytes)
-        .map_err(|_| "invalid_bootstrap_socket_record")?;
-    let path =
-        PathBuf::from(String::from_utf8(bytes).map_err(|_| "invalid_bootstrap_socket_record")?);
-    let directory = path.parent().ok_or("invalid_bootstrap_socket_record")?;
-    let metadata =
-        fs::symlink_metadata(directory).map_err(|_| "invalid_bootstrap_socket_record")?;
+        .map_err(|_| RecordRefusal::Untrusted)?;
+    let path = PathBuf::from(String::from_utf8(bytes).map_err(|_| RecordRefusal::Untrusted)?);
+    let directory = path.parent().ok_or(RecordRefusal::Untrusted)?;
+    let metadata = fs::symlink_metadata(directory).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            RecordRefusal::Stale
+        } else {
+            RecordRefusal::Untrusted
+        }
+    })?;
     if !path.is_absolute()
         || !metadata.is_dir()
         || metadata.file_type().is_symlink()
         || !private::owned_by_current_user(directory).unwrap_or(false)
         || !private::is_private(directory).unwrap_or(false)
     {
-        return Err("invalid_bootstrap_socket_record");
+        return Err(RecordRefusal::Untrusted);
     }
     Ok(path)
 }

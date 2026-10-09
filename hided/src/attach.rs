@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use hide_node::pane_proof::BootstrapListener;
+use hide_node::pane_proof::{BootstrapListener, RecordRefusal};
 use hide_node::ssh::RemoteHost;
 use hide_node::ssh::host::inbound::{self, InboundNode};
 use hide_node::terminal::device::DeviceSink;
@@ -64,15 +64,38 @@ const UNBOUND_GRANT_LIFETIME: Duration = Duration::from_secs(60);
 const ACCEPT_RETRY_FIRST: Duration = Duration::from_millis(100);
 const ACCEPT_RETRY_MAX: Duration = Duration::from_secs(5);
 
-/// What the attach role answers when no core runs on its machine.
-pub const NO_CORE: &str = "no_core";
+/// Why the attach role reached no core on its machine; the node reports it
+/// as the reason it waits.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachOutcome {
+    /// No core recorded its attach socket here: none runs, and the attach
+    /// role starts none (D-07).
+    NoCore,
+    /// The record names a socket no core answers on: the core that wrote
+    /// it ended without removing it, or is not answering.
+    CoreNotAnswering,
+    /// The record or its socket's folder is not this account's own and
+    /// private, so it is not followed.
+    RecordUntrusted,
+}
+
+impl AttachOutcome {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::NoCore => "no_core",
+            Self::CoreNotAnswering => "core_not_answering",
+            Self::RecordUntrusted => "record_untrusted",
+        }
+    }
+}
 
 /// One handshake line, as the attach role, the core and the node write it.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Line {
-    /// From the attach role: no core runs on its machine ([`NO_CORE`]).
-    Attach(String),
+    /// From the attach role: why it reached no core on its machine.
+    Attach(AttachOutcome),
     /// From the core: who it is.
     Core(CoreHello),
     /// From the node: who it is.
@@ -628,19 +651,29 @@ pub fn run(args: &[OsString]) -> Result<(), String> {
         }
         _ => return Err("usage: hided attach [--state-dir <absolute dir>]".to_owned()),
     };
-    let core = hide_node::pane_proof::recorded_socket_path(&attach_record(&state_dir))
-        .ok()
-        .and_then(|socket| LocalStream::connect(&socket).ok());
-    // A node that is not this account's own login cannot reach the record:
-    // the state folder and the socket's folder are owner-only.
-    let Some(core) = core else {
-        // No core runs here, or it does not answer: the attach role starts
-        // none (D-07) and says so.
-        let mut stdout = std::io::stdout().lock();
-        write_line(&mut stdout, &Line::Attach(NO_CORE.to_owned()))?;
-        return Ok(());
-    };
-    pipe(core)
+    match find_core(&state_dir) {
+        Ok(core) => pipe(core),
+        // No core answers here: the attach role starts none (D-07) and says
+        // why.
+        Err(outcome) => {
+            let mut stdout = std::io::stdout().lock();
+            write_line(&mut stdout, &Line::Attach(outcome))
+        }
+    }
+}
+
+/// The core's attach socket on this machine, as the core in `state_dir`
+/// recorded it. A node that is not this account's own login cannot reach
+/// the record: the state folder and the socket's folder are owner-only.
+fn find_core(state_dir: &Path) -> Result<LocalStream, AttachOutcome> {
+    let socket = hide_node::pane_proof::recorded_socket_path(&attach_record(state_dir)).map_err(
+        |refusal| match refusal {
+            RecordRefusal::Missing => AttachOutcome::NoCore,
+            RecordRefusal::Stale => AttachOutcome::CoreNotAnswering,
+            RecordRefusal::Untrusted => AttachOutcome::RecordUntrusted,
+        },
+    )?;
+    LocalStream::connect(&socket).map_err(|_| AttachOutcome::CoreNotAnswering)
 }
 
 /// Pipes standard input to the core and the core to standard output until
@@ -742,5 +775,30 @@ mod tests {
         assert!(attaching.hold("node-b").is_some());
         drop(first);
         assert!(attaching.hold("node-a").is_some());
+    }
+
+    /// The attach role tells the node why it reached no core: none
+    /// recorded, a recorded core that is gone, or a record this account
+    /// does not keep private, which it never follows.
+    #[test]
+    fn the_attach_role_says_why_it_reached_no_core() {
+        let state = tempfile::tempdir().unwrap();
+        let outcome = |state: &Path| find_core(state).err();
+        assert_eq!(outcome(state.path()), Some(AttachOutcome::NoCore));
+
+        let (listener, _) = bind(state.path()).unwrap();
+        assert_eq!(outcome(state.path()), None, "the recorded core answers");
+        let record = attach_record(state.path());
+        let private = std::fs::metadata(&record).unwrap().permissions();
+        let mut shared = private.clone();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut shared, 0o644);
+        std::fs::set_permissions(&record, shared).unwrap();
+        assert_eq!(outcome(state.path()), Some(AttachOutcome::RecordUntrusted));
+        std::fs::set_permissions(&record, private).unwrap();
+
+        // The core ended without removing its record.
+        drop(listener);
+        assert!(record.exists());
+        assert_eq!(outcome(state.path()), Some(AttachOutcome::CoreNotAnswering));
     }
 }
