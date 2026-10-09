@@ -38,6 +38,7 @@ mod attachments;
 mod device;
 pub mod host;
 pub mod hosts;
+pub mod upstream;
 
 pub use device::{Connector, SshDevice};
 pub use host::{PaneEvents, PaneEventsSlot, RemoteHost};
@@ -1034,6 +1035,28 @@ impl RusshRemoteClient {
                 "en",
             ))
             .await;
+        }
+    }
+
+    /// Ends the device's connection now, whatever still holds it; the next
+    /// use dials again.
+    pub(crate) fn disconnect(&self) {
+        let connection = Arc::clone(&self.connection);
+        let ended = async move {
+            let session = connection.session.lock().await.take();
+            if let Some(session) = session {
+                let _ = bounded_ssh_operation(session.disconnect(
+                    Disconnect::ByApplication,
+                    "node closed",
+                    "en",
+                ))
+                .await;
+            }
+        };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.runtime.spawn(ended);
+        } else {
+            self.runtime.block_on(ended);
         }
     }
 

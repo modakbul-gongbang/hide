@@ -52,30 +52,48 @@ pub fn bind(
     state_dir: &Path,
     token: impl Fn() -> String,
 ) -> Result<(BootstrapListener, PathBuf), String> {
+    bind_recorded(
+        &bootstrap_socket_record(state_dir),
+        "hide-pane",
+        "b.sock",
+        token,
+    )
+}
+
+/// Binds a local socket named `name` in a new private folder whose name
+/// starts with `prefix`, and records its path at `record`, so a process of
+/// this account finds it there: the pane bootstrap, and the attach socket a
+/// node's link reaches its core on (PRD core-host-node-remote-core D-07).
+/// The folder is owner-only, so only this account's processes connect.
+pub fn bind_recorded(
+    record: &Path,
+    prefix: &str,
+    name: &str,
+    token: impl Fn() -> String,
+) -> Result<(BootstrapListener, PathBuf), String> {
     let parent = bootstrap_parent();
     let directory = (0..8)
         .find_map(|_| {
-            let candidate = parent.join(format!("hide-pane-{}", &token()[..24]));
+            let candidate = parent.join(format!("{prefix}-{}", &token()[..24]));
             match private::create_dir(&candidate) {
                 Ok(()) => Some(Ok(candidate)),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
                 Err(error) => Some(Err(error.to_string())),
             }
         })
-        .unwrap_or_else(|| Err("pane bootstrap directory collision limit".to_owned()))?;
-    let path = directory.join("b.sock");
+        .unwrap_or_else(|| Err(format!("{prefix} directory collision limit")))?;
+    let path = directory.join(name);
     let result = (|| {
         let listener = BootstrapListener::bind(&path).map_err(|error| error.to_string())?;
         private::restrict_to_owner(&path).map_err(|error| error.to_string())?;
-        let record = bootstrap_socket_record(state_dir);
         let staging = record.with_extension(format!("{}.tmp", &token()[..16]));
         let mut file = private::create_new_file(&staging).map_err(|error| error.to_string())?;
         let published = (|| {
-            let text = path.to_str().ok_or("pane bootstrap path is not text")?;
+            let text = path.to_str().ok_or("socket path is not text")?;
             file.write_all(text.as_bytes())
                 .map_err(|error| error.to_string())?;
             file.sync_all().map_err(|error| error.to_string())?;
-            fs::rename(&staging, &record).map_err(|error| error.to_string())
+            fs::rename(&staging, record).map_err(|error| error.to_string())
         })();
         if published.is_err() {
             let _ = fs::remove_file(staging);
@@ -98,29 +116,35 @@ pub fn bootstrap_socket_record(state_dir: &Path) -> PathBuf {
 /// record and the folder the socket sits in are this account's own and
 /// private.
 pub fn bootstrap_socket_path(state_dir: &Path) -> Result<PathBuf, String> {
-    let record = bootstrap_socket_record(state_dir);
-    let file = private::open_own_file(&record, false).map_err(|_| "hide_unavailable".to_owned())?;
-    let metadata = file.metadata().map_err(|_| "hide_unavailable".to_owned())?;
-    if !private::is_private(&record).unwrap_or(false) || metadata.len() > BOOTSTRAP_RECORD_CAP {
-        return Err("invalid_bootstrap_socket_record".to_owned());
+    recorded_socket_path(&bootstrap_socket_record(state_dir)).map_err(|reason| reason.to_owned())
+}
+
+/// The socket a record written by [`bind_recorded`] names, trusted only when
+/// the record and the socket's folder are this account's own and private:
+/// `hide_unavailable` when there is no record, and
+/// `invalid_bootstrap_socket_record` when it cannot be trusted.
+pub fn recorded_socket_path(record: &Path) -> Result<PathBuf, &'static str> {
+    let file = private::open_own_file(record, false).map_err(|_| "hide_unavailable")?;
+    let metadata = file.metadata().map_err(|_| "hide_unavailable")?;
+    if !private::is_private(record).unwrap_or(false) || metadata.len() > BOOTSTRAP_RECORD_CAP {
+        return Err("invalid_bootstrap_socket_record");
     }
     let mut bytes = Vec::new();
     file.take(BOOTSTRAP_RECORD_CAP)
         .read_to_end(&mut bytes)
-        .map_err(|_| "invalid_bootstrap_socket_record".to_owned())?;
-    let path = PathBuf::from(
-        String::from_utf8(bytes).map_err(|_| "invalid_bootstrap_socket_record".to_owned())?,
-    );
+        .map_err(|_| "invalid_bootstrap_socket_record")?;
+    let path =
+        PathBuf::from(String::from_utf8(bytes).map_err(|_| "invalid_bootstrap_socket_record")?);
     let directory = path.parent().ok_or("invalid_bootstrap_socket_record")?;
-    let metadata = fs::symlink_metadata(directory)
-        .map_err(|_| "invalid_bootstrap_socket_record".to_owned())?;
+    let metadata =
+        fs::symlink_metadata(directory).map_err(|_| "invalid_bootstrap_socket_record")?;
     if !path.is_absolute()
         || !metadata.is_dir()
         || metadata.file_type().is_symlink()
         || !private::owned_by_current_user(directory).unwrap_or(false)
         || !private::is_private(directory).unwrap_or(false)
     {
-        return Err("invalid_bootstrap_socket_record".to_owned());
+        return Err("invalid_bootstrap_socket_record");
     }
     Ok(path)
 }

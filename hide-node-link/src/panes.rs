@@ -17,6 +17,11 @@ pub const MAX_PENDING_CHUNKS: usize = 64;
 /// D-20): the session subscription, controls, doorbell, find and phone
 /// reply of a node that dialed its core each hold one while they run.
 pub const MAX_HERDR_STREAMS: usize = 32;
+/// How often a node that dialed its core writes [`NodeEvent::Ping`].
+pub const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10);
+/// How long the attach role waits for a byte from its node before it ends
+/// the link as gone: three heartbeats.
+pub const HEARTBEAT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Which shell a pane runs, as its Herdr terminal and the shell's pid and
 /// start: the identity a bootstrap checks a caller against.
@@ -52,6 +57,10 @@ pub enum NodeEvent {
     StreamData { stream: u64, data: String },
     /// The command's side of the stream ended.
     StreamClosed { stream: u64 },
+    /// The node is alive: a node that dialed its core says so every
+    /// [`HEARTBEAT`], so the attach role on the core's machine ends a link
+    /// whose node fell silent (PRD core-host-node-remote-core B20).
+    Ping,
     /// Base64 bytes the node read from its Herdr on a stream the core
     /// opened with `herdr_open`.
     HerdrData { stream: u64, data: String },

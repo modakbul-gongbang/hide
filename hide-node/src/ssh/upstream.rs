@@ -1,0 +1,208 @@
+//! The one SSH connection a node opens to its core on another machine (PRD
+//! core-host-node-remote-core D-04, D-07): an exec channel that runs the
+//! core machine's attach role carries the node's link, and the screen relay
+//! reaches the core's loopback port through forwards on the same connection.
+//!
+//! The screen machine needs no SSH server of its own, only the alias. The
+//! connection checks the core machine's key against `known_hosts` exactly as
+//! a device the core dials is checked, and ends when its owner drops it.
+
+use std::io::{self, Read, Write};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::Arc;
+
+use hide_node_link::device::{RemoteResult, RemoteStage};
+use hide_platform::ipc::LocalStream;
+use russh::ChannelMsg;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::oneshot;
+
+use super::{RemoteLocalForward, RusshRemoteClient, SshAlias, remote_error, shell_quote};
+
+/// Bytes carried per read in either direction of the attach channel.
+const CHUNK: usize = 64 * 1024;
+
+/// The node's connection to its core's machine.
+pub struct Upstream {
+    client: RusshRemoteClient,
+}
+
+/// The attach role's channel, as a local stream: what the node writes to it
+/// reaches the attach role's standard input, and the attach role's standard
+/// output is what the node reads. The channel ends when the stream ends, and
+/// the stream ends when the channel does.
+pub struct AttachChannel {
+    pub stream: LocalStream,
+    /// What the attach role wrote to its standard error, for the diagnostic
+    /// when the channel ends before a handshake.
+    pub stderr: Arc<std::sync::Mutex<Vec<u8>>>,
+}
+
+/// The most of the attach role's standard error kept for a diagnostic.
+const STDERR_CAP: usize = 4096;
+
+impl Upstream {
+    pub fn new(alias: SshAlias) -> RemoteResult<Self> {
+        Ok(Self {
+            client: RusshRemoteClient::new(alias)?,
+        })
+    }
+
+    /// The alias's host id, for diagnostics.
+    pub fn host_id(&self) -> &str {
+        &self.client.host.host_id
+    }
+
+    /// Dials the core's machine when the connection is not up, and runs
+    /// `program attach [--state-dir <dir>]` there on a new exec channel.
+    pub fn attach(&self, program: &str, state_dir: Option<&str>) -> RemoteResult<AttachChannel> {
+        let target = self.client.host.host_id.clone();
+        let mut command = format!("{} attach", shell_quote(program));
+        if let Some(state_dir) = state_dir {
+            command.push_str(" --state-dir ");
+            command.push_str(&shell_quote(state_dir));
+        }
+        let client = &self.client;
+        let channel = client.runtime.block_on(async {
+            let permit = client
+                .session_channel("node-attach", RemoteStage::Ssh)
+                .await?;
+            let session = client.shared_session().await?;
+            let opened = super::bounded_ssh_operation(session.channel_open_session()).await;
+            let channel = match opened {
+                Ok(channel) => channel,
+                Err(error) => {
+                    client.forget_session(&session).await;
+                    return Err(remote_error(
+                        "node-attach",
+                        &target,
+                        RemoteStage::Ssh,
+                        error,
+                        true,
+                        false,
+                    ));
+                }
+            };
+            super::bounded_ssh_operation(channel.exec(true, command))
+                .await
+                .map_err(|error| {
+                    remote_error("node-attach", &target, RemoteStage::Ssh, error, true, false)
+                })?;
+            Ok::<_, hide_node_link::device::RemoteError>((channel, permit))
+        })?;
+        let (ours, theirs) = LocalStream::pair().map_err(|error| {
+            remote_error(
+                "node-attach",
+                &target,
+                RemoteStage::Ssh,
+                error,
+                false,
+                false,
+            )
+        })?;
+        let stderr = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (channel, permit) = channel;
+        let (mut read_half, write_half) = channel.split();
+        let to_node = theirs.duplicate();
+        let shutdown = theirs.shutdown_handle();
+        // The channel's output, to the node: data to the stream, standard
+        // error to the diagnostic, and the stream ended with the channel.
+        {
+            let stderr = Arc::clone(&stderr);
+            client.runtime.spawn(async move {
+                let _permit = permit;
+                let mut to_node = to_node;
+                while let Some(message) = read_half.wait().await {
+                    match message {
+                        ChannelMsg::Data { data } => {
+                            let mut to_node_now = to_node;
+                            let written = tokio::task::spawn_blocking(move || {
+                                let result = to_node_now.write_all(&data);
+                                (to_node_now, result)
+                            })
+                            .await;
+                            match written {
+                                Ok((back, Ok(()))) => to_node = back,
+                                _ => break,
+                            }
+                        }
+                        ChannelMsg::ExtendedData { data, .. } => {
+                            let mut kept = stderr.lock().unwrap_or_else(|p| p.into_inner());
+                            let room = STDERR_CAP.saturating_sub(kept.len());
+                            kept.extend_from_slice(&data[..data.len().min(room)]);
+                        }
+                        ChannelMsg::Eof | ChannelMsg::Close => break,
+                        _ => {}
+                    }
+                }
+                shutdown.shutdown();
+            });
+        }
+        // The node's bytes, to the channel, until the node's end of the
+        // stream closes; then the attach role reads the end of its input.
+        let handle = client.runtime.handle().clone();
+        std::thread::Builder::new()
+            .name("node-attach-up".to_owned())
+            .spawn(move || {
+                let mut from_node = theirs;
+                let mut writer = write_half.make_writer();
+                let mut buffer = vec![0_u8; CHUNK];
+                loop {
+                    match from_node.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            let sent = handle.block_on(async {
+                                writer.write_all(&buffer[..read]).await?;
+                                writer.flush().await
+                            });
+                            if sent.is_err() {
+                                break;
+                            }
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                        Err(_) => break,
+                    }
+                }
+                let _ = handle.block_on(async {
+                    let _ = writer.shutdown().await;
+                    write_half.close().await
+                });
+                from_node.shutdown_handle().shutdown();
+            })
+            .map_err(|error| {
+                remote_error(
+                    "node-attach",
+                    &target,
+                    RemoteStage::Ssh,
+                    error,
+                    false,
+                    false,
+                )
+            })?;
+        Ok(AttachChannel {
+            stream: ours,
+            stderr,
+        })
+    }
+
+    /// A loopback port on this machine whose connections reach `port` on
+    /// the core machine's loopback, over the same connection.
+    pub fn forward(&self, port: u16) -> RemoteResult<RemoteLocalForward> {
+        let (_cancel, canceled) = oneshot::channel();
+        // The sender is kept alive for the call: a dropped sender reads as a
+        // cancel.
+        let forward = self.client.start_local_workspace_forward(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+            None,
+            true,
+            canceled,
+        );
+        drop(_cancel);
+        forward
+    }
+
+    /// Ends the connection and every channel on it.
+    pub fn close(&self) {
+        self.client.disconnect();
+    }
+}

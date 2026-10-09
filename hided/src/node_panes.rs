@@ -232,7 +232,7 @@ impl PaneEvents for Events {
             }
             // The link hands its Herdr streams' lines to the streams
             // themselves (`hide_node::ssh::LinkHerdrConnector`).
-            NodeEvent::HerdrData { .. } | NodeEvent::HerdrClosed { .. } => {}
+            NodeEvent::HerdrData { .. } | NodeEvent::HerdrClosed { .. } | NodeEvent::Ping => {}
         }
     }
 

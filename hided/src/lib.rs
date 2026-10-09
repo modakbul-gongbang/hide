@@ -1,4 +1,5 @@
 pub mod agent_cli;
+pub mod attach;
 pub mod attachments;
 pub mod boundary;
 mod browser_assets;
@@ -21,7 +22,9 @@ pub mod mobile;
 pub mod node_cli;
 
 pub mod node_panes;
+pub mod node_role;
 pub mod pane_auth;
+pub mod placement;
 pub mod server;
 pub mod spawn;
 pub mod state_file;
@@ -93,6 +96,10 @@ pub struct RunningDaemon {
     pane_capabilities: Arc<pane_auth::Registry>,
     pane_bootstrap_socket: std::path::PathBuf,
     pane_bootstrap_record: std::path::PathBuf,
+    /// Where nodes on other machines reach this core (PRD
+    /// core-host-node-remote-core D-07); removed with the daemon.
+    node_attach_socket: std::path::PathBuf,
+    node_attach_record: std::path::PathBuf,
     pub mobile: Arc<mobile::Mobile>,
     /// Ended on drop, before the instance lock is released: the core's last
     /// layout and state saves are on disk before another daemon can start,
@@ -102,10 +109,15 @@ pub struct RunningDaemon {
 
 impl RunningDaemon {
     fn remove_bootstrap_socket(&self) {
-        let _ = std::fs::remove_file(&self.pane_bootstrap_record);
-        let _ = std::fs::remove_file(&self.pane_bootstrap_socket);
-        if let Some(directory) = self.pane_bootstrap_socket.parent() {
-            let _ = std::fs::remove_dir(directory);
+        for (record, socket) in [
+            (&self.pane_bootstrap_record, &self.pane_bootstrap_socket),
+            (&self.node_attach_record, &self.node_attach_socket),
+        ] {
+            let _ = std::fs::remove_file(record);
+            let _ = std::fs::remove_file(socket);
+            if let Some(directory) = socket.parent() {
+                let _ = std::fs::remove_dir(directory);
+            }
         }
     }
 
@@ -321,12 +333,14 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let node_panes = Arc::new(node_panes::NodePanes::new(tokio::runtime::Handle::current()));
     let pane_events: hide_node::ssh::PaneEventsSlot = Default::default();
     let _ = pane_events.set(Arc::new(node_panes::Events(Arc::clone(&node_panes))));
-    let core = Arc::new(CoreHandle::spawn(options, pane_events)?);
+    let core = Arc::new(CoreHandle::spawn(options, Arc::clone(&pane_events))?);
     // After the core installed the diagnostic log beside its state.
     #[cfg(unix)]
     state_move::log_left_behind(env.legacy_state_dir.as_deref(), &env.state_dir);
     let pane_capabilities = Arc::new(pane_auth::Registry::new(&env.state_dir)?);
     let (pane_listener, pane_bootstrap_socket) = pane_auth::bind(&env.state_dir)?;
+    let (attach_listener, node_attach_socket) = attach::bind(&env.state_dir)?;
+    let relay_grants = Arc::new(attach::RelayGrants::default());
     let watch = Arc::new(watch::WatchService::new(Arc::clone(&core)));
     let index = Arc::new(IndexService::new());
     let attachments = Arc::new(Attachments::new(&env.state_dir));
@@ -432,6 +446,19 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         port,
         Arc::clone(&shutdown),
     ));
+    tokio::spawn(attach::serve(
+        attach_listener,
+        Arc::new(attach::AttachService {
+            core: Arc::clone(&core),
+            build: env.build.clone(),
+            port,
+            panes: pane_events,
+            terminals: Arc::clone(&core.terminals)
+                as Arc<dyn hide_node::terminal::device::DeviceSink>,
+            grants: Arc::clone(&relay_grants),
+        }),
+        Arc::clone(&shutdown),
+    ));
     tokio::spawn(async move {
         if let Err(error) = server::serve(listener, app).await {
             eprintln!(
@@ -449,6 +476,8 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         pane_capabilities,
         pane_bootstrap_socket,
         pane_bootstrap_record: pane_auth::bootstrap_socket_record(&env.state_dir),
+        node_attach_socket,
+        node_attach_record: attach::attach_record(&env.state_dir),
         mobile,
         core,
     })

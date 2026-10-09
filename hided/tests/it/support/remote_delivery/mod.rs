@@ -1,7 +1,7 @@
 //! Isolated process fixture for the actual SSH return-route journey.
 //! Every candidate child has an owned process tree; counts and reads are capped.
 
-mod renderer;
+pub mod renderer;
 use super::ssh_server as ssh;
 
 use std::collections::BTreeMap;
@@ -37,7 +37,7 @@ impl ssh::Account for Environment {
 }
 
 impl Environment {
-    fn new(root: &Path, socket: &Path, bin: &Path, state_dir: Option<&Path>) -> Result<Self> {
+    pub fn new(root: &Path, socket: &Path, bin: &Path, state_dir: Option<&Path>) -> Result<Self> {
         let home = root.join("home");
         for folder in [
             &home,
@@ -127,7 +127,7 @@ impl Environment {
         command
     }
 
-    fn set(&mut self, name: &str, value: impl Into<OsString>) {
+    pub fn set(&mut self, name: &str, value: impl Into<OsString>) {
         self.values.insert(name.into(), value.into());
     }
 }
@@ -139,7 +139,7 @@ pub fn quote(value: impl AsRef<OsStr>) -> String {
     )
 }
 
-fn capture(mut command: Command) -> Result<CapturedOutput> {
+pub fn capture(mut command: Command) -> Result<CapturedOutput> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -149,7 +149,7 @@ fn capture(mut command: Command) -> Result<CapturedOutput> {
         .map_err(|error| anyhow::anyhow!("private command capture: {error}"))
 }
 
-fn successful(command: Command) -> Result<Vec<u8>> {
+pub fn successful(command: Command) -> Result<Vec<u8>> {
     let answer = capture(command)?;
     ensure!(
         answer.status.success(),
@@ -190,7 +190,7 @@ fn helper_diagnostics(remote: &Environment) -> String {
     }
 }
 
-fn read(path: &Path) -> Result<Vec<u8>> {
+pub fn read(path: &Path) -> Result<Vec<u8>> {
     ensure!(
         fs::metadata(path)?.len() <= READ_CAP as u64,
         "private fixture read cap"

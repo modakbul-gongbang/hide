@@ -71,6 +71,16 @@ enum Command {
         device_id: String,
         reply: Sender<Option<Arc<dyn hide_herdr_client::ApiConnector>>>,
     },
+    InboundRefusal {
+        node: String,
+        reply: Sender<Option<String>>,
+    },
+    InboundNode {
+        node: String,
+        label: String,
+        transport: Arc<dyn herdr_core::remote::DeviceTransport>,
+        reply: Sender<Result<(), String>>,
+    },
     BrowserRouteSource {
         device_id: String,
         checkout_path: String,
@@ -333,6 +343,44 @@ impl CoreHandle {
             .map_err(|_| "core owner thread is gone".to_owned())?;
         rx.recv()
             .map_err(|_| "core owner thread dropped the device connection reply".to_owned())
+    }
+
+    /// Why a node dialing this core would be refused, before its link is
+    /// started (PRD core-host-node-remote-core D-10).
+    pub fn inbound_refusal(&self, node: &str) -> Option<String> {
+        let (reply, rx) = mpsc::channel();
+        if self
+            .commands
+            .send(Command::InboundRefusal {
+                node: node.to_owned(),
+                reply,
+            })
+            .is_err()
+        {
+            return Some("core_unavailable".to_owned());
+        }
+        rx.recv()
+            .unwrap_or_else(|_| Some("core_unavailable".to_owned()))
+    }
+
+    /// Hands the core the link of a node that dialed it. A refusal drops
+    /// the transport, which closes the link.
+    pub fn accept_inbound_node(
+        &self,
+        node: &str,
+        label: &str,
+        transport: Arc<dyn herdr_core::remote::DeviceTransport>,
+    ) -> Result<(), String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::InboundNode {
+                node: node.to_owned(),
+                label: label.to_owned(),
+                transport,
+                reply,
+            })
+            .map_err(|_| "core_unavailable".to_owned())?;
+        rx.recv().map_err(|_| "core_unavailable".to_owned())?
     }
 
     pub fn browser_route_source(
@@ -670,6 +718,17 @@ fn owner_loop(
             }
             Command::RemoteHerdrApi { device_id, reply } => {
                 let _ = reply.send(core.remote_herdr_api(&device_id));
+            }
+            Command::InboundRefusal { node, reply } => {
+                let _ = reply.send(core.inbound_refusal(&node));
+            }
+            Command::InboundNode {
+                node,
+                label,
+                transport,
+                reply,
+            } => {
+                let _ = reply.send(core.accept_inbound_node(&node, &label, transport));
             }
             Command::BrowserRouteSource {
                 device_id,

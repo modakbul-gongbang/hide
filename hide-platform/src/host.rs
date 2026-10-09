@@ -51,6 +51,10 @@ pub const VARIABLES: &[&str] = &[
 /// How a caller with its own record of the environment (a registry that
 /// validates at start, a test) hands it to the `_from` functions: the value
 /// of a variable, `None` when it is unset.
+/// Names this process's machine for [`machine_id`] in place of the one the
+/// system reports: only a test fixture sets it.
+pub const MACHINE_ID_VARIABLE: &str = "HIDE_MACHINE_ID";
+
 pub type Variables<'a> = &'a dyn Fn(&str) -> Option<OsString>;
 
 fn process(name: &str) -> Option<OsString> {
@@ -323,8 +327,19 @@ pub fn name() -> io::Result<String> {
 /// Hide: the hardware UUID on macOS (`IOPlatformUUID`), `/etc/machine-id` on
 /// Linux, the `MachineGuid` Windows keeps in its registry.
 /// Its trimmed lowercase spelling is shared with stored lineage tokens.
+///
+/// [`MACHINE_ID_VARIABLE`] names another machine instead, so a test runs a
+/// node and the core it dials as two machines on one host.
 pub fn machine_id() -> io::Result<String> {
-    let id = sys::machine_id()?;
+    let id = match nonempty_variable(&process, MACHINE_ID_VARIABLE) {
+        Some(id) => id.into_string().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the machine id variable is not text",
+            )
+        })?,
+        None => sys::machine_id()?,
+    };
     let id = id.trim();
     if id.is_empty() {
         return Err(io::Error::new(

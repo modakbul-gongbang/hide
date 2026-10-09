@@ -69,6 +69,7 @@ pub fn serve_with_terminals(
         Services {
             terminals: Some(terminals),
             herdr_socket: None,
+            heartbeat: false,
         },
     )
 }
@@ -81,6 +82,10 @@ pub struct Services<'a> {
     /// link: a node that dialed its core (PRD core-host-node-remote-core
     /// D-18). A device its core dialed has none, and refuses Herdr streams.
     pub herdr_socket: Option<PathBuf>,
+    /// Whether the node says it is alive every
+    /// [`hide_node_link::panes::HEARTBEAT`]: a node that dialed its core,
+    /// whose attach role ends a link that falls silent.
+    pub heartbeat: bool,
 }
 
 impl Services<'_> {
@@ -89,6 +94,7 @@ impl Services<'_> {
         Self {
             terminals: None,
             herdr_socket: None,
+            heartbeat: false,
         }
     }
 }
@@ -109,6 +115,9 @@ fn serve_in(
     services: Services<'_>,
 ) -> io::Result<()> {
     let terminals = services.terminals;
+    let heartbeat = services.heartbeat;
+    // Ends the heartbeat when the input does.
+    let input_ended = (Mutex::new(false), std::sync::Condvar::new());
     let herdr = services
         .herdr_socket
         .map(crate::herdr_bridge::HerdrBridge::new);
@@ -226,7 +235,28 @@ fn serve_in(
             });
         }
         drop(receiver);
+        if heartbeat {
+            let output = &output;
+            let input_ended = &input_ended;
+            scope.spawn(move || {
+                let (ended, wake) = input_ended;
+                let mut ended = lock(ended);
+                loop {
+                    let (guard, _) = wake
+                        .wait_timeout(ended, hide_node_link::panes::HEARTBEAT)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    ended = guard;
+                    if *ended
+                        || write_line(output, &hide_node_link::panes::NodeEvent::Ping).is_err()
+                    {
+                        return;
+                    }
+                }
+            });
+        }
         let result = read_requests(input, &sender, &output, &running, terminals);
+        *lock(&input_ended.0) = true;
+        input_ended.1.notify_all();
         drop(sender);
         // The connection is gone: the terminal sessions end with it, so no
         // attach child outlives the link that asked for it (D-20, B20).

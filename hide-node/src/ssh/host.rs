@@ -2233,6 +2233,9 @@ fn deliver_line(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
         }
         return;
     }
+    if line.starts_with(b"{\"event\":\"ping\"}") {
+        return;
+    }
     if line.starts_with(b"{\"event\":\"herdr_") {
         deliver_herdr(inner, line);
         return;

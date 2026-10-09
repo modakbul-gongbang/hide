@@ -32,6 +32,12 @@ fn run() -> Result<(), String> {
     if args.first().is_some_and(|arg| arg == "node") {
         return hided::node_cli::run(&args[1..]);
     }
+    // The attach role a node on another machine runs here over SSH: it
+    // pipes the node's channel to the core already running on this machine
+    // and starts none.
+    if args.first().is_some_and(|arg| arg == "attach") {
+        return hided::attach::run(&args[1..]);
+    }
     if args.first().is_some_and(|arg| arg == "--open-helper") {
         // Only Unix supervises a file opener through this mode.
         #[cfg(unix)]

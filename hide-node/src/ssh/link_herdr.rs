@@ -400,6 +400,7 @@ mod tests {
                 hide_host::serve::Services {
                     terminals: None,
                     herdr_socket: Some(herdr_socket),
+                    heartbeat: false,
                 },
             );
         });
