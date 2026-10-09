@@ -564,7 +564,9 @@ A watch that is slow or fails changes no Task.
 ## Configuration
 
 `hide factory config [--project <path>]` prints the Factory's settings and the machine's worker limit, and `--set <key>=<value>` changes them for the next decision.
-Only an operator may set values, and an invalid key or value answers `config_invalid`.
+`config` is the stored record, which keeps durations in milliseconds and the disk floor in bytes; `settable` prints each of those under the key and in the unit `--set` takes (`disk_floor_gb`, `stall_minutes` and the like).
+Only an operator may set values.
+A value a key does not take answers `config_invalid` naming the key, and a key `--set` does not take answers `config_invalid` with the key and every key it takes (`detail.keys`).
 A Factory's `merge_mode` cannot be `auto` while it has no verification (`auto_needs_verification`).
 
 | Key | Value | Default |

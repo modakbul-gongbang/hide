@@ -4668,7 +4668,7 @@ impl Engine {
             let bad = || {
                 refuse(
                     "config_invalid",
-                    "Check hide factory config for the keys and values",
+                    format!("{key} does not take {:?}", judgment::cut(value, 80)),
                 )
                 .with(json!({"key": key}))
             };
@@ -4893,7 +4893,16 @@ impl Engine {
                 }
                 "prd_in_issue" => config.prd_in_issue = value == "on",
                 "macos_notifications" => config.macos_notifications = value == "on",
-                _ => return Err(bad()),
+                _ => {
+                    return Err(refuse(
+                        "config_invalid",
+                        format!(
+                            "{key} is not a key --set takes; use one of {}",
+                            CONFIG_KEYS.join(", ")
+                        ),
+                    )
+                    .with(json!({"key": key, "keys": CONFIG_KEYS})));
+                }
             }
         }
         if !set.is_empty() {
@@ -4922,7 +4931,11 @@ impl Engine {
             self.save_factory(&factory_id);
             self.record(&factory_id, None, "config.changed", json!({"keys": set.iter().map(|(k, _)| k).collect::<Vec<_>>(), "by": role.relayed_by()}));
         }
-        Ok(json!({"config": config, "machine": {"max_workers": self.machine_max_workers}}))
+        Ok(json!({
+            "config": config,
+            "settable": settable(&config),
+            "machine": {"max_workers": self.machine_max_workers},
+        }))
     }
 
     /// An agent a worker candidate may name: one whose adapter declares a
@@ -7078,6 +7091,62 @@ fn worker_name(factory: &Factory, task: &Task) -> String {
         if name.is_empty() { "p" } else { &name },
         task.id.to_ascii_lowercase()
     )
+}
+
+/// Every key `hide factory config --set` takes.
+pub const CONFIG_KEYS: &[&str] = &[
+    "merge_mode",
+    "merge_method",
+    "verify",
+    "ci",
+    "no_verification",
+    "quick_check",
+    "max_workers",
+    "question_deadline_hours",
+    "stall_minutes",
+    "no_report_minutes",
+    "watch_interval_minutes",
+    "watch_daily_limit",
+    "outside_read_minutes",
+    "cancel_keep_days",
+    "done_fold_days",
+    "archive_fold_days",
+    "new_task_limit",
+    "verify_failure_limit",
+    "autonomy_diff_limit",
+    "verify_timeout_minutes",
+    "disk_floor_gb",
+    "default_runtime",
+    "workers",
+    "observer_mode",
+    "observer_daily_limit",
+    "factory_ai",
+    "factory_ai_model",
+    "factory_ai_effort",
+    "harness",
+    "autonomy",
+    "recovery",
+    "worker_args",
+    "risk_paths",
+    "prd_in_issue",
+    "macos_notifications",
+];
+
+/// The settings `config` keeps in another unit, under the key and in the
+/// unit `--set` takes them.
+fn settable(config: &Config) -> Value {
+    json!({
+        "question_deadline_hours": config.question_deadline_ms / HOUR_MS,
+        "stall_minutes": config.stall_ms / MINUTE_MS,
+        "no_report_minutes": config.no_report_ms / MINUTE_MS,
+        "watch_interval_minutes": config.watch_interval_ms / MINUTE_MS,
+        "outside_read_minutes": config.outside_read_ms / MINUTE_MS,
+        "cancel_keep_days": config.cancel_keep_ms / DAY_MS,
+        "done_fold_days": config.done_fold_ms / DAY_MS,
+        "archive_fold_days": config.archive_fold_ms / DAY_MS,
+        "verify_timeout_minutes": config.verify_timeout_ms / MINUTE_MS,
+        "disk_floor_gb": config.disk_floor_bytes / (1024 * 1024 * 1024),
+    })
 }
 
 /// The card as a worker reads it: goal, criteria and what is out of scope.

@@ -3116,6 +3116,31 @@ fn a_task_stuck_verifying_with_two_unfinished_attempts_concludes_after_a_restart
     );
 }
 
+#[test]
+fn config_prints_each_setting_under_the_key_set_takes_and_names_a_refused_key() {
+    let mut h = Bench::new(false);
+    h.factory(true);
+    let refused = h.op(Command::Config {
+        project: Some(PROJECT.into()),
+        set: vec![("disk_floor_bytes".into(), "1".into())],
+    });
+    assert_eq!(refused["reason"], "config_invalid", "{refused}");
+    assert_eq!(refused["detail"]["key"], "disk_floor_bytes");
+    assert!(
+        refused["detail"]["keys"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("disk_floor_gb")),
+        "{refused}"
+    );
+    let set = h.op(Command::Config {
+        project: Some(PROJECT.into()),
+        set: vec![("disk_floor_gb".into(), "10".into())],
+    });
+    assert_eq!(set["ok"], true, "{set}");
+    assert_eq!(set["settable"]["disk_floor_gb"], 10, "{set}");
+}
+
 // --------------------------------------------------------------- summary
 
 #[test]
