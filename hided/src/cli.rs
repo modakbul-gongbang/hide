@@ -963,7 +963,61 @@ impl ConnectError {
 ///
 /// The whole look-and-replace holds this state folder's connect lock, so
 /// two connects never both stop a daemon and start their own.
+///
+/// A daemon in the node role is then waited for as [`await_core_link`]
+/// says.
 fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
+    let state = find_or_start(env)?;
+    await_core_link(&state)?;
+    Ok(state)
+}
+
+/// How long `hide connect` waits for a node-role daemon's first word from
+/// its core.
+const CORE_LINK_WITHIN: Duration = Duration::from_secs(20);
+
+/// A daemon in the node role (PRD core-host-node-remote-core D-08, D-23)
+/// attaches the host once its first attempt to link to its core ended: a
+/// live link, or a core that is not running or cannot be reached, which
+/// the window shows as its reconnecting state. A core of another build
+/// refuses the node, and the host shows the failure it shows for a local
+/// daemon of another build. Past [`CORE_LINK_WITHIN`] the host attaches
+/// and the window shows the same reconnecting state. A daemon that is its
+/// own core answers at once.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
+fn await_core_link(state: &DaemonState) -> Result<(), ConnectError> {
+    let deadline = std::time::Instant::now() + CORE_LINK_WITHIN;
+    loop {
+        let Ok(health) = health_json(state.port, HEALTH_REQUEST) else {
+            return Ok(());
+        };
+        if health["role"] != "node" {
+            return Ok(());
+        }
+        if health["core_link"] == "connecting" && std::time::Instant::now() < deadline {
+            std::thread::sleep(HEALTH_PAUSE);
+            continue;
+        }
+        if health["core_link_reason"] == "other_build" {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "hide", "kind": "core.other_build_refused",
+                    "pid": state.pid, "build": health["build"],
+                })
+            );
+            return Err(ConnectError::OtherBuild(format!(
+                "the core this machine's hided links to runs another build than build {}, and refused it",
+                health["build"].as_str().unwrap_or("unknown"),
+            )));
+        }
+        return Ok(());
+    }
+}
+
+/// The daemon of this state folder, replaced or started as [`connect`]
+/// says.
+fn find_or_start(env: &Env) -> Result<DaemonState, ConnectError> {
     let build = crate::build_id::of_file(&daemon_binary().map_err(ConnectError::StartFailed)?)
         .map_err(ConnectError::StartFailed)?;
     #[cfg(unix)]

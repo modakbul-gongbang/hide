@@ -252,7 +252,37 @@ impl Fixture {
     /// Starts the screen machine's hided with the core machine recorded as
     /// its core: it runs in the node role. Answers its port and token.
     pub fn start_node(&mut self) -> Result<(u16, String)> {
-        let state = self._ipc.path().join("s");
+        self.start_node_with(&self.hided.clone())
+    }
+
+    /// The screen machine's state folder, which records its core.
+    pub fn node_state(&self) -> PathBuf {
+        self._ipc.path().join("s")
+    }
+
+    /// `program` run as the screen machine's account, on its state folder.
+    pub fn screen_command(&self, program: &Path) -> std::process::Command {
+        let mut environment = self.screen.environment.clone();
+        environment.set("HIDE_STATE_DIR", self.node_state().as_os_str());
+        environment.set("HIDE_OPEN_COMMAND", "/usr/bin/true");
+        environment.command(program)
+    }
+
+    /// Ends the core machine's hided: its machine still answers SSH, and
+    /// its attach socket's record stays behind.
+    pub fn stop_core(&mut self) -> Result<()> {
+        if let Some(mut daemon) = self.daemon.take() {
+            daemon.kill_tree()?;
+            wait_for("private core hided confirmed exit", || {
+                Ok(daemon.try_wait()?.map(|_| ()))
+            })?;
+        }
+        Ok(())
+    }
+
+    /// [`Fixture::start_node`] with the `hided` at `hided`.
+    pub fn start_node_with(&mut self, hided: &Path) -> Result<(u16, String)> {
+        let state = self.node_state();
         hide_platform::fs::private::create_dir_all(&state)?;
         let placement = self.placement();
         let record = hided::placement::record_path(&state);
@@ -271,7 +301,7 @@ impl Fixture {
         environment.set("HIDE_KEEP_ALIVE", "1");
         environment.set("HIDE_OPEN_COMMAND", "/usr/bin/true");
         let log = File::create(self.root.join("node-hided.log"))?;
-        let mut command = environment.command(&self.hided);
+        let mut command = environment.command(hided);
         command
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
@@ -345,12 +375,7 @@ impl Fixture {
                 Ok(node.try_wait()?.map(|_| ()))
             })?;
         }
-        if let Some(mut daemon) = self.daemon.take() {
-            daemon.kill_tree()?;
-            wait_for("private core hided confirmed exit", || {
-                Ok(daemon.try_wait()?.map(|_| ()))
-            })?;
-        }
+        self.stop_core()?;
         self.ssh.stop()?;
         self.core.stop()?;
         self.screen.stop()?;

@@ -671,3 +671,94 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
         }
     }
 }
+
+/// `hide connect --json` of the screen machine, run with `hide` at `cli`.
+fn screen_connect(fixture: &Fixture, cli: &std::path::Path) -> Result<Value> {
+    let output = fixture
+        .screen_command(&cli.join("hide"))
+        .args(["connect", "--json"])
+        .output()?;
+    serde_json::from_slice(&output.stdout).with_context(|| {
+        format!(
+            "hide connect answered {:?} {:?}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_screen_whose_core_is_not_running_attaches_and_waits_for_it() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let core_state = fixture.core_state.join("hided.json");
+        let before = std::fs::read(&core_state)?;
+        fixture.stop_core()?;
+        let (port, _) = fixture.start_node()?;
+        let cli = fixture.hided.parent().context("the CLI folder")?.to_owned();
+        let answer = screen_connect(&fixture, &cli)?;
+        ensure!(answer["ok"] == true, "hide connect refused: {answer}");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let health = runtime.block_on(node_health(port))?;
+        ensure!(
+            health["core_link"] == "waiting" && health["core_link_reason"] == "no_core",
+            "the node does not wait for its core: {health}"
+        );
+        // The attach role answered without starting a core in its place.
+        ensure!(
+            std::fs::read(&core_state)? == before,
+            "a core started on the core's machine"
+        );
+        Ok(())
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_screen_of_another_build_than_its_core_is_told_so() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        // The screen machine's app is another build: its hided differs from
+        // the core's by one byte past the program's end.
+        let cli = fixture.root.join("other-build");
+        std::fs::create_dir_all(&cli)?;
+        let source = fixture.hided.parent().context("the CLI folder")?;
+        for name in ["hide", "hided"] {
+            std::fs::copy(source.join(name), cli.join(name))?;
+        }
+        let mut bytes = std::fs::read(cli.join("hided"))?;
+        bytes.push(0);
+        std::fs::write(cli.join("hided"), bytes)?;
+        fixture.start_node_with(&cli.join("hided"))?;
+        let answer = screen_connect(&fixture, &cli)?;
+        ensure!(
+            answer["ok"] == false && answer["reason"] == "other_build",
+            "hide connect did not answer other_build: {answer}"
+        );
+        let refused = fixture.core_log("node_link", "attach.refused")?;
+        ensure!(
+            refused
+                .iter()
+                .any(|row| row["reason"] == "other_build" && row["node_build"] != row["core_build"]),
+            "the core logged no build mismatch: {refused:?}"
+        );
+        Ok(())
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
