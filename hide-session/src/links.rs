@@ -269,6 +269,18 @@ pub(crate) fn pi_line(item: &Value, offset: u64, links: &mut LinkAccumulator) {
     }
 }
 
+/// Grok keeps its owner and cwd in `summary.json`, which the link reader
+/// proves beside the file; a record says only when the session was active.
+pub(crate) fn grok_line(item: &Value, _offset: u64, links: &mut LinkAccumulator) {
+    let at = item
+        .pointer("/params/_meta/agentTimestampMs")
+        .and_then(Value::as_u64)
+        .map_or_else(|| crate::timestamp_ms(item.get("timestamp")), Ok);
+    if let Ok(at) = at {
+        links.activity(at);
+    }
+}
+
 /// Codex: what one record says about links.
 pub(crate) fn codex_line(item: &Value, _offset: u64, links: &mut LinkAccumulator) {
     links.sidechain_line = links.facts.subagent;
@@ -409,6 +421,16 @@ pub fn candidates(
             walk(&root, agent, 1, window, &mut found, &mut visited)?;
         }
     }
+    if let Ok(root) = crate::native_file::root(home, crate::Agent::Grok) {
+        walk(
+            &root,
+            crate::Agent::Grok,
+            2,
+            window,
+            &mut found,
+            &mut visited,
+        )?;
+    }
     found.sort_by(|left, right| {
         right
             .modified_unix_ms
@@ -462,6 +484,7 @@ fn walk(
             || path
                 .extension()
                 .is_none_or(|extension| extension != "jsonl")
+            || (agent == crate::Agent::Grok && crate::grok::group_of(&path).is_none())
         {
             continue;
         }

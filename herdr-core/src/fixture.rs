@@ -32,6 +32,41 @@ pub(crate) fn native_session_folder(
     home.join(format!(".{kind}/agent/sessions")).join(bucket)
 }
 
+/// A Grok 1.0.46 session folder with its id-owning summary and an empty
+/// conversation, at the group Grok names by URL-encoding the cwd.
+#[cfg(test)]
+pub(crate) fn grok_session(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    id: &str,
+) -> std::path::PathBuf {
+    let group: String = cwd
+        .to_str()
+        .unwrap()
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+                (byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect();
+    let folder = home.join(".grok/sessions").join(group).join(id);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("summary.json"),
+        serde_json::json!({"info": {"id": id, "cwd": cwd}, "session_summary": "",
+            "created_at": "2026-10-03T01:00:00Z", "updated_at": "2026-10-03T01:00:00Z",
+            "num_messages": 0, "current_model_id": "grok-build"})
+        .to_string(),
+    )
+    .unwrap();
+    let conversation = folder.join("updates.jsonl");
+    std::fs::write(&conversation, "").unwrap();
+    conversation
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FixturePlan {
     pub workspace_name: String,

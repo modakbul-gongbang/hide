@@ -146,7 +146,10 @@ fn a_newer_helpers_unknown_row_is_omitted_while_known_rows_keep_their_features()
             Feature::Subagents,
             Feature::SpawnGuard,
             Feature::HerdrIntegration,
-            Feature::Start
+            Feature::Sleep,
+            Feature::Fork,
+            Feature::Start,
+            Feature::Titles
         ]
     );
     // The OMP reader contract adds titles and exact lifecycle support to
