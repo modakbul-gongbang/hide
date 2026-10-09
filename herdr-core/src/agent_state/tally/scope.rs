@@ -116,7 +116,6 @@ pub struct Raised {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Scope {
     pub overview_needs_you: usize,
-    pub work: BTreeMap<String, crate::agent_state::work::RowWork>,
     pub has_working: bool,
     pub relations: BTreeMap<String, Vec<super::relations::Group>>,
     pub listed: Vec<Listed>,
@@ -767,30 +766,6 @@ impl Cache {
                 let projected = projects
                     .get_mut(&(project.device_id.clone(), project.id.clone()))
                     .expect("project scope inserted");
-                let tasks: HashMap<_, _> = project
-                    .tasks
-                    .tasks
-                    .iter()
-                    .map(|t| (t.key.as_str(), t))
-                    .collect();
-                for member in &projected.members {
-                    let agent = device
-                        .agents
-                        .iter()
-                        .find(|a| a.pane_id == member.pane_id)
-                        .expect("scope member");
-                    let task = project
-                        .checkouts
-                        .iter()
-                        .find(|c| c.id == member.checkout_id)
-                        .and_then(|c| c.task_key.as_deref())
-                        .and_then(|key| tasks.get(key))
-                        .copied();
-                    projected.work.insert(
-                        member.pane_id.clone(),
-                        crate::agent_state::work::row_work(agent, task, &project.tasks.tasks),
-                    );
-                }
                 projected.prs =
                     crate::agent_state::work::board::project(project, &device.agents, &trees);
                 projected.graph = super::graph::project(

@@ -1,4 +1,5 @@
 import type { AgentScope } from "../src/agentScope";
+import type { LegacyScope } from "./legacyAgentScope";
 // Frozen pre-Sessions request view fixture, retained to pin legacy tests over the
 // snapshot: which rows it draws, in which group and order, the Requests tile,
 // and the words each row's lines say. The verb is the core's (D-07); this
@@ -269,7 +270,7 @@ export function childrenSummary(row: RequestRow, t: TFunction<"translation">): {
 
 /** Work membership and current chips are the core's; this file resolves their labels. */
 function workOf(row: RequestRow, project: Workspace) {
-  const work = project.agent_scope.work[row.lens.agent.pane_id];
+  const work = (project.agent_scope as LegacyScope).work[row.lens.agent.pane_id];
   if (!work) throw new Error("Missing core request work for the selected row");
   return work;
 }
