@@ -915,6 +915,7 @@ impl Runtime {
                         .take(crate::issues::ISSUE_LIMIT)
                         .collect(),
                     root: PathBuf::from(&workspace.path),
+                    repository: None,
                     generation: self
                         .github_generations
                         .get(&workspace.path)
@@ -2770,6 +2771,63 @@ impl Runtime {
         true
     }
 
+    /// The repositories of a node that dials this core whose `origin` names
+    /// a GitHub repository, read with this machine's login by that name
+    /// (D-16): each once, then again every five minutes, as this machine's
+    /// are.
+    pub(crate) fn device_github_request(
+        &mut self,
+        device_id: &str,
+        now: std::time::Instant,
+    ) -> crate::github::GithubRequest {
+        let Some(listed) = self.device_worktrees.get(device_id) else {
+            return crate::github::GithubRequest::default();
+        };
+        let mut repositories: Vec<(String, String)> = listed
+            .projects
+            .iter()
+            .filter_map(|(root, project)| Some((root.clone(), project.repository.clone()?)))
+            .collect();
+        repositories.sort();
+        repositories.truncate(GITHUB_PROJECT_LIMIT);
+        self.device_github_reads.retain(|(device, root), _| {
+            device != device_id || repositories.iter().any(|(listed, _)| listed == root)
+        });
+        let projects = repositories
+            .into_iter()
+            .map(|(root, repository)| {
+                let read = self
+                    .device_github_reads
+                    .entry((device_id.to_owned(), root.clone()))
+                    .or_insert((0, now));
+                if now.duration_since(read.1) >= GITHUB_REREAD {
+                    *read = (read.0.wrapping_add(1), now);
+                }
+                crate::github::GithubProjectRequest {
+                    links: Vec::new(),
+                    root: PathBuf::from(&root),
+                    repository: Some(repository),
+                    generation: read.0,
+                }
+            })
+            .collect();
+        crate::github::GithubRequest { projects }
+    }
+
+    /// The pull requests of a node's repositories: its rows carry them, as
+    /// this machine's do.
+    pub(crate) fn ingest_device_github(
+        &mut self,
+        device_id: &str,
+        github: crate::model::GithubSnapshot,
+    ) -> bool {
+        if !self.is_inbound(device_id) || self.device_github.get(device_id) == Some(&github) {
+            return false;
+        }
+        self.device_github.insert(device_id.to_owned(), github);
+        self.refresh_device_catalog(device_id)
+    }
+
     /// What a node that dials this core measures on its own machine: the
     /// worktrees of its project in front of the Overview and of the one a
     /// web Overview named, as `disk_request` asks of this machine's.
@@ -3896,7 +3954,7 @@ pub(super) fn owner_open(
 /// (`github::pull_request_for_checkout`), and reports whether any changed.
 /// Both places that learn something new about a checkout, GitHub's list and
 /// the worktree reader's HEAD, come through here.
-fn associate_pull_requests(
+pub(super) fn associate_pull_requests(
     workspace: &mut crate::model::WorkspaceSnapshot,
     project: Option<&crate::model::GithubProjectSnapshot>,
 ) -> bool {

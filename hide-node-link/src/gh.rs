@@ -192,6 +192,58 @@ pub fn allowed(arguments: &[&str]) -> bool {
                 || arguments[3].starts_with("query=query HideIssueDependencies {")))
 }
 
+/// Whether `value` names a repository as `gh` takes it, `[HOST/]OWNER/NAME`:
+/// two or three plain components, none of which can be read as a flag or a
+/// path step.
+pub fn valid_repository(value: &str) -> bool {
+    let parts: Vec<&str> = value.split('/').collect();
+    value.len() <= 256
+        && (parts.len() == 2 || parts.len() == 3)
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && !part.starts_with(['-', '.'])
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        })
+}
+
+/// The repository an `origin` URL names, as [`valid_repository`] takes it:
+/// `OWNER/NAME` on github.com and `HOST/OWNER/NAME` elsewhere, from the
+/// SSH (`git@host:owner/name.git`, `ssh://git@host/owner/name`) and HTTPS
+/// forms. `None` for any other shape.
+pub fn repository_of_remote(url: &str) -> Option<String> {
+    let url = url.trim();
+    let (host, path) = if let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("ssh://"))
+        .or_else(|| url.strip_prefix("git://"))
+    {
+        let rest = rest.rsplit_once('@').map_or(rest, |(_, rest)| rest);
+        let (host, path) = rest.split_once('/')?;
+        (host.split(':').next()?, path)
+    } else {
+        let (user_host, path) = url.split_once(':')?;
+        let host = user_host
+            .rsplit_once('@')
+            .map_or(user_host, |(_, host)| host);
+        (host, path)
+    };
+    let path = path.trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, name) = path.split_once('/')?;
+    if name.contains('/') {
+        return None;
+    }
+    let host = host.to_ascii_lowercase();
+    let repository = if host == "github.com" {
+        format!("{owner}/{name}")
+    } else {
+        format!("{host}/{owner}/{name}")
+    };
+    valid_repository(&repository).then_some(repository)
+}
+
 /// What one `gh` command answered: its output, or why it gave none.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
@@ -208,6 +260,36 @@ pub enum GhAnswer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_remote_url_names_its_repository_and_nothing_else_does() {
+        for (url, repository) in [
+            ("git@github.com:acme/app.git", "acme/app"),
+            ("https://github.com/acme/app", "acme/app"),
+            ("https://token@github.com/acme/app.git/", "acme/app"),
+            ("ssh://git@github.com:22/acme/app.git", "acme/app"),
+            (
+                "git@ghe.example.com:acme/app.git",
+                "ghe.example.com/acme/app",
+            ),
+        ] {
+            assert_eq!(
+                repository_of_remote(url).as_deref(),
+                Some(repository),
+                "{url}"
+            );
+        }
+        for url in [
+            "/srv/git/app.git",
+            "git@github.com:acme/app/extra.git",
+            "git@github.com:-acme/app.git",
+            "https://github.com/acme",
+        ] {
+            assert_eq!(repository_of_remote(url), None, "{url}");
+        }
+        assert!(!valid_repository("acme/../app"));
+        assert!(!valid_repository("--repo/app"));
+    }
 
     #[test]
     fn a_search_takes_its_repositories_the_cap_fixed_fields_and_the_query_words_after_the_dashes() {

@@ -1860,3 +1860,100 @@ fn a_node_project_is_measured_on_the_node_as_a_local_one_is() -> Result<()> {
         }
     }
 }
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_node_checkouts_pull_request_is_read_with_the_cores_login_by_repository_name() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let git = |folder: &std::path::Path, arguments: &[&str]| -> Result<String> {
+            let output = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                ])
+                .args(arguments)
+                .current_dir(folder)
+                .output()?;
+            ensure!(output.status.success(), "git {arguments:?}: {output:?}");
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        };
+        // A checkout of the node's on a branch with a pull request, whose
+        // origin names its GitHub repository.
+        let project = fixture.screen_home().join("pr-project");
+        std::fs::create_dir_all(&project)?;
+        git(&project, &["init", "-q", "-b", "feature"])?;
+        git(&project, &["commit", "-q", "--allow-empty", "-m", "work"])?;
+        git(
+            &project,
+            &["remote", "add", "origin", "git@github.com:acme/app.git"],
+        )?;
+        let head = git(&project, &["rev-parse", "HEAD"])?;
+        // The core machine's `gh` answers only for that repository, named.
+        let gh = fixture.core_home().join("bin/gh");
+        std::fs::write(
+            &gh,
+            format!(
+                r#"#!/bin/sh
+[ "$1 $2" = "auth status" ] && exit 0
+[ "$GH_REPO" = "acme/app" ] || {{ echo "no repository named" >&2; exit 1; }}
+case "$1 $2" in
+  "pr list") case "$4" in
+      all) echo '[{{"title":"Node PR","number":7,"headRefName":"feature","headRefOid":"{head}","isCrossRepository":false,"baseRefName":"main","state":"OPEN","reviewDecision":"","isDraft":false,"url":"https://github.com/acme/app/pull/7","mergedAt":null,"updatedAt":"2026-10-01T10:00:00Z","createdAt":"2026-10-01T10:00:00Z","closedAt":null,"closingIssuesReferences":[]}}]' ;;
+      *) echo '[{{"number":7,"statusCheckRollup":[]}}]' ;;
+    esac ;;
+  "repo view") echo '{{"nameWithOwner":"acme/app","id":"R_1"}}' ;;
+  *) echo '[]' ;;
+esac
+"#
+            ),
+        )?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755))?;
+        }
+        fixture.screen.workspace_at(&project)?;
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
+            )
+            .await?;
+            let mut last = Value::Null;
+            tokio::task::block_in_place(|| {
+                wait_for("the node checkout's pull request", || {
+                    let row = device_project(&fixture.snapshot()?, &node, &project)
+                        .unwrap_or(Value::Null);
+                    last = row["checkouts"].clone();
+                    Ok(row["checkouts"]
+                        .as_array()
+                        .is_some_and(|rows| rows.iter().any(|row| row["pull_request"]["number"] == 7))
+                        .then_some(()))
+                })
+            })
+            .with_context(|| format!("the project's checkouts: {last}"))?;
+            Ok::<_, anyhow::Error>(())
+        })
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}

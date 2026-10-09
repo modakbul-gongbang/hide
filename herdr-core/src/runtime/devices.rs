@@ -177,10 +177,10 @@ impl Runtime {
             context.notifier.clone(),
         );
         if registration.inbound {
-            sync_context = sync_context.dialed_in(super::inbound::InboundLink::for_device(
-                &device_id,
-                context.runtime.clone(),
-            ));
+            sync_context = sync_context.dialed_in(
+                super::inbound::InboundLink::for_device(&device_id, context.runtime.clone()),
+                self.own_node(),
+            );
         }
         let (sync, changed) = match session_sync::spawn(sync_context, None) {
             Ok(handle) => (Some(handle), false),
@@ -246,6 +246,9 @@ impl Runtime {
         self.device_ports.remove(device_id);
         self.device_disk.remove(device_id);
         self.device_disk_project.remove(device_id);
+        self.device_github.remove(device_id);
+        self.device_github_reads
+            .retain(|(device, _), _| device != device_id);
         self.forget_device_host(device_id);
         if let Some(connection) = self.remote_connections.remove(device_id)
             && let Some(sync) = connection.sync

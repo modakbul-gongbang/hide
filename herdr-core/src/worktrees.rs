@@ -712,6 +712,10 @@ pub fn project_snapshot(
     }
     let base_branch = facts.base_branch.clone();
     ProjectWorktreesSnapshot {
+        repository: facts
+            .origin_url
+            .as_deref()
+            .and_then(hide_node_link::gh::repository_of_remote),
         shared_git_path: facts.shared_git_path,
         root_path: facts.root_path,
         default_branch: facts.default_branch,

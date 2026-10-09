@@ -53,6 +53,13 @@ impl Runtime {
                     }
                     None => device_catalog::apply_worktrees(project, listed),
                 }
+                if let Some(found) = self
+                    .device_github
+                    .get(target)
+                    .and_then(|github| github.project(&project.path))
+                {
+                    super::projects::associate_pull_requests(project, Some(found));
+                }
             }
         }
         if let Some(listeners) = self.device_ports.get(target) {

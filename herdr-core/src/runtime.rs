@@ -1116,6 +1116,10 @@ pub struct Runtime {
     /// the project a web Overview named for measuring there.
     device_disk: HashMap<String, Vec<crate::model::DiskUsageSnapshot>>,
     device_disk_project: HashMap<String, String>,
+    /// The pull requests of each node that dials this core, read here by
+    /// repository name, and when each of its repositories was last asked.
+    device_github: HashMap<String, crate::model::GithubSnapshot>,
+    device_github_reads: HashMap<(String, String), (u64, std::time::Instant)>,
     /// This machine's file host: the helper's dispatch, run in place.
     own_node: Arc<dyn crate::node_access::NodeLink>,
     /// Opens the transport to each registered device; the node that holds
@@ -1888,6 +1892,8 @@ impl Runtime {
             device_ports: HashMap::new(),
             device_disk: HashMap::new(),
             device_disk_project: HashMap::new(),
+            device_github: HashMap::new(),
+            device_github_reads: HashMap::new(),
             own_node,
             devices,
             document_places: HashMap::new(),

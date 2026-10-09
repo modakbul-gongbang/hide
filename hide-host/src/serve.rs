@@ -1012,10 +1012,14 @@ pub fn handle_with_progress(
                 }
             }))
         }
-        Call::Gh { cwd, args } => {
+        Call::Gh {
+            cwd,
+            args,
+            repository,
+        } => {
             let cwd = cwd.as_deref().map(absolute).transpose()?;
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
-            to_value(crate::gh::run(cwd.as_deref(), &args))
+            to_value(crate::gh::run(cwd.as_deref(), repository.as_deref(), &args))
         }
         Call::ListeningPorts => to_value(crate::ports::read()),
         Call::VolumeFree { path } => to_value(crate::disk::volume_free_bytes(&absolute(&path)?)),

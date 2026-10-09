@@ -47,6 +47,25 @@ pub fn read(
     Some(read_project(&root, root_path, bases, base_override))
 }
 
+/// The `url` of the `[remote "origin"]` section of a Git configuration file.
+pub fn origin_url(config: &str) -> Option<String> {
+    let mut in_origin = false;
+    for line in config.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_origin = line == r#"[remote "origin"]"#;
+            continue;
+        }
+        if in_origin
+            && let Some((key, value)) = line.split_once('=')
+            && key.trim() == "url"
+        {
+            return Some(value.trim().to_owned()).filter(|value| !value.is_empty());
+        }
+    }
+    None
+}
+
 /// Reads `root`, already known to be a main worktree.
 pub fn read_project(
     root: &Path,
@@ -128,13 +147,20 @@ pub fn read_project(
         let main = worktrees.remove(index);
         worktrees.insert(0, main);
     }
+    let shared_git_path = git(
+        root,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .ok()
+    .map(|value| value.trim().to_owned());
+    // Read from the repository's own configuration, not another git process.
+    let origin_url = shared_git_path
+        .as_deref()
+        .and_then(|shared| std::fs::read_to_string(Path::new(shared).join("config")).ok())
+        .and_then(|config| origin_url(&config));
     RepositoryWorktrees {
-        shared_git_path: git(
-            root,
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        )
-        .ok()
-        .map(|value| value.trim().to_owned()),
+        shared_git_path,
+        origin_url,
         root_path,
         default_branch,
         branches,
@@ -1923,5 +1949,20 @@ mod holder_scan_tests {
         };
         assert!(thread.join().is_err(), "the scan panicked");
         assert!(!SLOT.load(Ordering::Acquire), "a panic frees the slot too");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_origin_url_is_read_from_its_own_section() {
+        let config = "[core]\n\turl = not-this\n[remote \"upstream\"]\n\turl = git@github.com:other/app.git\n[remote \"origin\"]\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\turl = git@github.com:acme/app.git\n";
+        assert_eq!(
+            origin_url(config).as_deref(),
+            Some("git@github.com:acme/app.git")
+        );
+        assert_eq!(origin_url("[remote \"upstream\"]\n\turl = x\n"), None);
     }
 }

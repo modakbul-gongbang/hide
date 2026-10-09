@@ -3842,6 +3842,10 @@ pub struct ProjectWorktreesSnapshot {
     /// Why this repository has no worktree list. An empty list with no reason
     /// means the repository genuinely has none.
     pub unavailable_reason: Option<String>,
+    /// The GitHub repository its `origin` names (`[HOST/]OWNER/NAME`), by
+    /// which a device's pull requests are read with this machine's login.
+    #[serde(skip)]
+    pub repository: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]

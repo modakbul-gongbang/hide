@@ -133,14 +133,11 @@ fn run_coordinator(
     let mut worktree_reader = context
         .node()
         .map(|node| crate::worktrees::WorktreeReader::new(Arc::clone(node)));
+    // `gh` runs here with the operator's login, for this machine's projects
+    // and, by repository name, for those of a node that dials this core.
     let mut github_reader = context
-        .is_local()
-        .then(|| {
-            context
-                .node()
-                .map(|node| crate::github::GithubReader::new(Arc::clone(node)))
-        })
-        .flatten();
+        .login()
+        .map(|node| crate::github::GithubReader::new(Arc::clone(node)));
     // Sizes are measured on the machine the folders are on: this one's by
     // its own node, a node that dials this core through its link.
     let mut disk_reader = context
@@ -1758,9 +1755,16 @@ fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::Gi
     let request = {
         let mut guard = runtime.lock().ok()?;
         let now = Instant::now();
-        guard.reread_pending_checks(now);
-        guard.reread_stale_github(now);
-        guard.github_request()
+        match &context.target {
+            SessionSyncTarget::Local { .. } => {
+                guard.reread_pending_checks(now);
+                guard.reread_stale_github(now);
+                guard.github_request()
+            }
+            SessionSyncTarget::Remote { target_id, .. } => {
+                guard.device_github_request(target_id, now)
+            }
+        }
     };
     drop(runtime);
     Some(request)
@@ -1926,10 +1930,15 @@ fn publish_github(context: &SessionSyncContext, answer: crate::github::GithubAns
         return false;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) => {
-            let current = guard.github_request() == answer.request;
-            guard.ingest_github_answer(answer.snapshot, current)
-        }
+        Ok(mut guard) => match &context.target {
+            SessionSyncTarget::Local { .. } => {
+                let current = guard.github_request() == answer.request;
+                guard.ingest_github_answer(answer.snapshot, current)
+            }
+            SessionSyncTarget::Remote { target_id, .. } => {
+                guard.ingest_device_github(target_id, answer.snapshot)
+            }
+        },
         Err(_) => return false,
     };
     drop(runtime);

@@ -418,10 +418,14 @@ pub enum Call {
     },
     /// One `gh` command with the operator's login, in `cwd` when named
     /// (`gh::allowed` names the command lines; any other is refused unrun).
-    /// Answers `gh::GhAnswer`.
+    /// `repository` (`[HOST/]OWNER/NAME`, `gh::valid_repository`) names the
+    /// repository a command that would read it from `cwd` works on instead,
+    /// for a checkout on another machine. Answers `gh::GhAnswer`.
     Gh {
         cwd: Option<String>,
         args: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repository: Option<String>,
     },
     /// The machine's TCP listeners and where each was started
     /// (`ports::ListeningPorts`).
