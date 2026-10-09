@@ -789,12 +789,16 @@ mod tests {
         let (listener, _) = bind(state.path()).unwrap();
         assert_eq!(outcome(state.path()), None, "the recorded core answers");
         let record = attach_record(state.path());
-        let private = std::fs::metadata(&record).unwrap().permissions();
-        let mut shared = private.clone();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut shared, 0o644);
-        std::fs::set_permissions(&record, shared).unwrap();
-        assert_eq!(outcome(state.path()), Some(AttachOutcome::RecordUntrusted));
-        std::fs::set_permissions(&record, private).unwrap();
+        // A record others can read is refused; Windows keeps no mode bits.
+        #[cfg(unix)]
+        {
+            let private = std::fs::metadata(&record).unwrap().permissions();
+            let mut shared = private.clone();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut shared, 0o644);
+            std::fs::set_permissions(&record, shared).unwrap();
+            assert_eq!(outcome(state.path()), Some(AttachOutcome::RecordUntrusted));
+            std::fs::set_permissions(&record, private).unwrap();
+        }
 
         // The core ended without removing its record.
         drop(listener);

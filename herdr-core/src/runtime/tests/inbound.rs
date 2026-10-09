@@ -353,3 +353,44 @@ fn inbound_nodes_are_capped_and_their_labels_are_plain_text() {
     assert!(!shown.chars().any(char::is_control), "{shown:?}");
     assert_eq!(shown.chars().count(), 64);
 }
+
+/// A node that dials in has no connection of the core's to test: asking
+/// for a connection test names where to test it, and no test row starts.
+#[test]
+fn a_connection_test_of_a_node_that_dials_in_is_refused_with_where_to_test_it() {
+    let shared = shared_runtime();
+    let (link, release) = held_link();
+    shared
+        .lock()
+        .unwrap()
+        .accept_inbound_node(NODE, "MacBook", link)
+        .expect("the link is taken");
+    wait(&shared, "the link ready", |runtime| {
+        runtime.host_snapshot(NODE).state == "ready"
+    });
+    let event = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "test_device",
+        "payload": { "device_id": NODE }
+    }))
+    .expect("device event");
+    let mut runtime = shared.lock().unwrap();
+    assert!(runtime.dispatch_json(&event));
+    let error = runtime
+        .snapshot()
+        .status
+        .last_error
+        .clone()
+        .expect("error reported");
+    assert_eq!(error.kind, "device.test_inbound");
+    let row = runtime
+        .snapshot()
+        .navigator
+        .devices
+        .iter()
+        .find(|device| device.id == NODE)
+        .expect("a device row");
+    assert!(row.test.is_none(), "{:?}", row.test);
+    drop(runtime);
+    drop(release);
+}

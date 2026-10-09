@@ -222,19 +222,16 @@ impl Fixture {
     }
 
     /// Starts the core machine's hided on its state folder and waits for
-    /// its attach socket; a core that ended before leaves its state behind,
-    /// and this start's state is the one waited for.
+    /// its attach socket. A core killed before leaves its state and its
+    /// attach socket behind: the state is removed so this start's is the
+    /// one waited for, and the socket is left for the new core to replace.
     pub fn start_core(&mut self) -> Result<()> {
         ensure!(self.daemon.is_none(), "the core's hided already runs");
         let state = self.core_state.join("hided.json");
         let socket = self.core_state.join("node-attach-socket");
-        for left in [&state, &socket] {
-            match fs::remove_file(left) {
-                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                    return Err(error.into());
-                }
-                _ => {}
-            }
+        match fs::remove_file(&state) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+            _ => {}
         }
         let log = File::options()
             .create(true)
