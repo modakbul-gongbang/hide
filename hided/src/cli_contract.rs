@@ -34,6 +34,8 @@ pub enum Input {
     Session,
     /// A letter body: not blank, at most `BODY_LIMIT` bytes.
     Body,
+    /// A SHA-256 as 64 lowercase hexadecimal digits.
+    Sha256,
     /// A watch approval: not blank, at most 256 bytes, without control
     /// characters.
     Approval,
@@ -49,6 +51,7 @@ impl Input {
             Key => "key",
             Session => "session",
             Body => "body",
+            Sha256 => "sha256",
             Approval => "approval",
             Unsigned => "unsigned",
             OneOf(_) => "one_of",
@@ -132,7 +135,7 @@ const fn spec(
     }
 }
 
-use Input::{Approval, Body, Key, OneOf, Session, Text, Unsigned};
+use Input::{Approval, Body, Key, OneOf, Session, Sha256, Text, Unsigned};
 
 const ID: &[Arg] = &[Arg {
     name: "id",
@@ -253,7 +256,10 @@ pub const COMMANDS: &[Spec] = &[
     spec(
         &["inbox", "--hook"],
         &[],
-        &[switch("--bell"), optional("--session", Session)],
+        &[
+            optional("--prompt-digest", Sha256),
+            optional("--session", Session),
+        ],
         &["intake"],
     ),
     Spec {
@@ -449,6 +455,10 @@ mod tests {
             Key => ("k1", "-x"),
             Session => ("/sessions/a.jsonl", "-x"),
             Body => ("multi\nline body", " "),
+            Sha256 => (
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "BA7816BF",
+            ),
             Approval => ("approved by the lead", " "),
             Unsigned => ("1", "-1"),
             OneOf(values) => (values[0], "other"),
@@ -577,8 +587,19 @@ mod tests {
         assert!(admit(&args(&["request", "send", "t", "--body", "--wait"])).is_ok());
         // What `--` passes through is the agent's own.
         assert!(admit(&args(&["agent", "spawn", "--", "--model", "x"])).is_ok());
-        assert!(admit(&args(&["inbox", "--hook", "--session", "s", "--bell"])).is_ok());
-        assert!(admit(&args(&["inbox", "--bell"])).is_err());
+        assert!(
+            admit(&args(&[
+                "inbox",
+                "--hook",
+                "--session",
+                "s",
+                "--prompt-digest",
+                "d"
+            ]))
+            .is_ok()
+        );
+        assert!(admit(&args(&["inbox", "--hook", "--bell"])).is_err());
+        assert!(admit(&args(&["inbox", "--prompt-digest", "d"])).is_err());
     }
 
     /// The committed copy is the contract this build exports, so a change to

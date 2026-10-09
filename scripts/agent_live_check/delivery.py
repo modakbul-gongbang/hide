@@ -1,4 +1,4 @@
-"""Controller-originated real mail; only an assistant bell reply proves receipt."""
+"""Controller-originated real mail; only hided's own bell and its assistant reply prove receipt."""
 
 import secrets
 
@@ -9,7 +9,7 @@ from .scenes import transcript
 from .timing import Deadline, ObservationTimeout
 
 
-def measure(runtime, pane, recipe, home, cwd, bell, seconds, overlay):
+def measure(runtime, pane, recipe, home, cwd, seconds, quiet_seconds, overlay):
     initial = runtime.agent(pane)
     session = initial.get("agent_session") if initial else None
     file = transcript(home, recipe["kind"], session, overlay["session_root"])
@@ -24,8 +24,11 @@ def measure(runtime, pane, recipe, home, cwd, bell, seconds, overlay):
     marker = "LIVE_MAIL_" + secrets.token_hex(16)
     letter_id = runtime.send_letter(pane, "live-proof-" + secrets.token_hex(8),
                                     "Reply with this marker in your own assistant text: " + marker)
-    deadline = Deadline.observation(runtime.owner, seconds)
-    sent = False
+    # The controller types nothing: only the line hided's doorbell typed and
+    # kept on the letter opens the turn its hook hands the letter to, and the
+    # doorbell waits for the pane to be quiet first.
+    deadline = Deadline.observation(runtime.owner, seconds + quiet_seconds)
+    bell = None
     try:
         while not deadline.expired():
             screen = runtime.screen(pane, seconds=deadline.command_seconds(), deadline=deadline.end)
@@ -35,20 +38,21 @@ def measure(runtime, pane, recipe, home, cwd, bell, seconds, overlay):
             deadline.remaining()
             if not current or current.get("agent_session") != session:
                 return {"outcome": "unknown", "reason": "recipient_identity_changed"}
+            if bell is None:
+                bell = runtime.bell_line(pane, letter_id, seconds=deadline.command_seconds(),
+                                         deadline=deadline.end)
+                deadline.remaining()
             fresh = messages(file, recipe["kind"])[offset:]
             deadline.remaining()
-            if bell_turn(fresh, bell, marker):
+            if bell is not None and bell_turn(fresh, bell, marker):
                 deadline.remaining()
-                return {"outcome": "verified", "reason": "private_hided_letter_marker_in_bell_started_assistant_reply",
-                        "letter_id": letter_id, "session_source": session["source"]}
+                return {"outcome": "verified", "reason": "private_hided_letter_marker_in_hided_bell_assistant_reply",
+                        "letter_id": letter_id, "bell": bell, "session_source": session["source"]}
             if current["agent_status"] == "blocked":
                 return {"outcome": "unknown", "reason": "inbox_needs_approval", "letter_id": letter_id}
-            if not sent and current["agent_status"] in ("idle", "done"):
-                if not any(role == "user" and (text == bell or text.startswith(bell + "\n")) for role, text in fresh):
-                    runtime.send(pane, bell, deadline=deadline)
-                sent = True
             if runtime.owner.cancelled.wait(0.15):
                 raise ProcessError("run_cancelled")
     except ObservationTimeout:
         pass
-    return {"outcome": "unknown", "reason": "delivery_observation_timeout", "letter_id": letter_id}
+    return {"outcome": "unknown", "reason": "delivery_observation_timeout", "letter_id": letter_id,
+            "bell": bell}

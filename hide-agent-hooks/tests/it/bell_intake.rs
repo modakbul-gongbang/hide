@@ -1,7 +1,7 @@
 //! The prompt hook as the agent runs it: the compiled helper beside a stand-in
-//! `hide` that records what it was asked. The helper must ask for the letter
-//! bodies only when the submitted prompt is Hide's bell, and confirm only
-//! letters it actually handed over.
+//! `hide` that records what it was asked. The helper names the submitted
+//! prompt by its digest and never by its text, hands the agent what the core
+//! answers for it, and confirms only letters it actually handed over.
 
 #![cfg(unix)]
 
@@ -10,21 +10,33 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use hide_agent_hooks::delivery::BELL_PROMPT;
 use hide_platform::process::OwnedChild;
 
 use crate::programs;
 use crate::stand_ins;
 
-const FAKE_HIDE: &str = r#"#!/bin/sh
+/// The line the stand-in core rang with.
+const LINE: &str = "🔔 label-end-fix 보고: PR #881을 열었습니다";
+/// SHA-256 of `LINE` and of `please run the tests`, from
+/// `printf %s ... | shasum -a 256`.
+const LINE_DIGEST: &str = "8c8f47d90d22c1de24724041f83429bfb4163ba4f7004431b38e235d6b3669e1";
+const OPERATOR_DIGEST: &str = "d5f5d18e68c6739345b7f53abb632b17c1c3663c1aebedc5a7d23987ec1ae706";
+
+/// A stand-in `hide` that answers the bell's digest with a letter and any
+/// other prompt with a count, as the core does once it has rung `LINE`.
+fn fake_hide() -> String {
+    format!(
+        r#"#!/bin/sh
 echo "$@" >> "$FAKE_HIDE_LOG"
 case "$*" in
-  "inbox --hook --bell --session fixture-session") echo '{"ok":true,"result":{"context":"LETTER-BODY","ids":["letter-1"],"remaining":0}}' ;;
-  "inbox --hook --session fixture-session") echo '{"ok":true,"result":{"context":"LETTERS-WAITING","ids":[],"remaining":0}}' ;;
-  "inbox --confirm letter-1") echo '{"ok":true,"result":{"confirmed":["letter-1"]}}' ;;
-  *) echo '{"ok":false,"reason":"unexpected"}' ;;
+  "inbox --hook --prompt-digest {LINE_DIGEST} --session fixture-session") echo '{{"ok":true,"result":{{"context":"LETTER-BODY","ids":["letter-1"],"remaining":0}}}}' ;;
+  "inbox --hook --prompt-digest "*" --session fixture-session") echo '{{"ok":true,"result":{{"context":"LETTERS-WAITING","ids":[],"remaining":0}}}}' ;;
+  "inbox --confirm letter-1") echo '{{"ok":true,"result":{{"confirmed":["letter-1"]}}}}' ;;
+  *) echo '{{"ok":false,"reason":"unexpected"}}' ;;
 esac
-"#;
+"#
+    )
+}
 
 struct Kit {
     root: tempfile::TempDir,
@@ -38,7 +50,7 @@ impl Kit {
         let bin = root.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
         stand_ins::place(programs::hook(), &bin.join("hide-agent-hooks"));
-        stand_ins::program(&bin.join("hide"), FAKE_HIDE);
+        stand_ins::program(&bin.join("hide"), &fake_hide());
         Self { root }
     }
 
@@ -100,13 +112,13 @@ impl Kit {
 #[test]
 fn the_bell_turn_receives_the_letter_bodies_and_confirms_them() {
     let kit = Kit::new();
-    let stdout = kit.prompt(BELL_PROMPT);
+    let stdout = kit.prompt(LINE);
     assert!(stdout.contains("LETTER-BODY"), "{stdout}");
     assert_eq!(
         kit.asked(),
         [
-            "inbox --hook --bell --session fixture-session",
-            "inbox --confirm letter-1"
+            format!("inbox --hook --prompt-digest {LINE_DIGEST} --session fixture-session"),
+            "inbox --confirm letter-1".into()
         ]
     );
 }
@@ -117,12 +129,19 @@ fn an_operator_prompt_receives_only_the_count_and_confirms_nothing() {
     let stdout = kit.prompt("please run the tests");
     assert!(stdout.contains("LETTERS-WAITING"), "{stdout}");
     assert!(!stdout.contains("LETTER-BODY"));
-    assert_eq!(kit.asked(), ["inbox --hook --session fixture-session"]);
+    assert_eq!(
+        kit.asked(),
+        [format!(
+            "inbox --hook --prompt-digest {OPERATOR_DIGEST} --session fixture-session"
+        )]
+    );
 }
 
 #[test]
-fn a_prompt_that_only_starts_like_the_bell_is_an_operator_prompt() {
+fn a_prompt_that_only_starts_like_the_bell_is_another_prompt() {
     let kit = Kit::new();
-    kit.prompt(&format!("{BELL_PROMPT} Also fix the build."));
-    assert_eq!(kit.asked(), ["inbox --hook --session fixture-session"]);
+    kit.prompt(&format!("{LINE} Also fix the build."));
+    let asked = kit.asked();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert!(!asked[0].contains(LINE_DIGEST), "{asked:?}");
 }

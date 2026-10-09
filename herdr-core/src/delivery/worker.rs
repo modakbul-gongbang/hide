@@ -227,9 +227,12 @@ pub(crate) enum Effect {
         command: Box<Command>,
     },
     Tick(Vec<watch::Reading>),
+    /// Spends one bell of the letter on `line` and saves it before the
+    /// doorbell types the line.
     BellAttempt {
         id: String,
         observed: Box<Observation>,
+        line: String,
     },
     Bell {
         id: String,
@@ -581,13 +584,16 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
                 tick.transitions,
             ));
         }
-        Effect::BellAttempt { id, observed } => {
+        Effect::BellAttempt { id, observed, line } => {
             let letter = ledger
                 .letters
                 .iter_mut()
                 .find(|letter| letter.id == *id && letter.recipient.same_identity(&observed.actor))
                 .ok_or("letter_unavailable")?;
-            return Ok((json!({"attempt":letter.reserve_bell(now)?}), false));
+            return Ok((
+                json!({"attempt":letter.reserve_bell(now, line.clone())?}),
+                false,
+            ));
         }
         Effect::Bell {
             id,
@@ -837,7 +843,7 @@ fn run(
                             Ok(())
                         })
                 }
-                Effect::BellAttempt { id, observed } => runtime
+                Effect::BellAttempt { id, observed, .. } => runtime
                     .lock()
                     .map_err(|_| "delivery_unavailable".to_owned())
                     .and_then(|guard| {
@@ -1304,7 +1310,7 @@ mod tests {
         .unwrap();
         for command in [
             Command::Pull {
-                bell: true,
+                prompt_digest: None,
                 session: None,
             },
             Command::Confirm {

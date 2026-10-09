@@ -35,17 +35,24 @@ def source_contract(checkout: Path) -> dict:
             row = None
     if not rows or row is not None:
         raise ProtectionError("adapter_declarations_unreadable")
-    prefix = "pub const BELL_PROMPT: &str = "
-    values = [line[len(prefix):-1] for line in
-              (checkout / "hide-agent-hooks/src/delivery.rs").read_text().splitlines()
+    bell = json.loads(declaration(checkout / "herdr-core/src/delivery/bell.rs",
+                                  "    const SAMPLE: &str = "))
+    if not isinstance(bell, str) or not bell.startswith("🔔 ") or "\n" in bell:
+        raise ProtectionError("invalid_bell_sample")
+    quiet = declaration(checkout / "herdr-core/src/delivery/doorbell.rs", "const QUIET_MS: u64 = ")
+    if not quiet.replace("_", "").isdigit():
+        raise ProtectionError("doorbell_quiet_declaration_unreadable")
+    return {"bell": bell, "quiet_seconds": int(quiet.replace("_", "")) / 1000, "targets": rows,
+            "declaration_sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+
+
+def declaration(file: Path, prefix: str) -> str:
+    """The value of the one single-line declaration in `file` that starts with `prefix`."""
+    values = [line[len(prefix):-1] for line in file.read_text().splitlines()
               if line.startswith(prefix) and line.endswith(";")]
     if len(values) != 1:
-        raise ProtectionError("bell_prompt_declaration_unreadable")
-    bell = json.loads(values[0])
-    if not isinstance(bell, str) or not bell or "\n" in bell:
-        raise ProtectionError("invalid_bell_prompt")
-    return {"bell": bell, "targets": rows,
-            "declaration_sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+        raise ProtectionError("declaration_unreadable:" + prefix.strip())
+    return values[0]
 
 
 def recipes(directory: Path, declared: dict) -> dict:

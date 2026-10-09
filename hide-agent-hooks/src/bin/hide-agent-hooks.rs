@@ -384,7 +384,7 @@ fn run_hook(arguments: &[String], started: Instant) {
         && runtime.is_some_and(|runtime| runtime.dialect().adapter().memory.is_some());
     let prompt_hook =
         runtime.is_some_and(|runtime| runtime.dialect().adapter().prompt_hook.is_some());
-    // The prompt event reads its payload for the bell test even without
+    // The prompt event reads its payload for the prompt digest even without
     // Memory; a Memory read that follows works from the same bytes.
     let payload = if event == HookEvent::UserPromptSubmit && runtime.is_some() {
         read_stdin_before_deadline(started + PROMPT_PAYLOAD_BUDGET)
@@ -397,10 +397,7 @@ fn run_hook(arguments: &[String], started: Instant) {
         (Some((bytes, truncated)), HookEvent::UserPromptSubmit) => {
             hide_agent_hooks::delivery::read_prompt(bytes, *truncated)
         }
-        _ => hide_agent_hooks::delivery::Prompt {
-            bell: false,
-            session: None,
-        },
+        _ => hide_agent_hooks::delivery::Prompt::default(),
     };
     let mut output = if let Some(runtime) = runtime.filter(|_| memory_injection) {
         memory_output_before_deadline(runtime, event, home.clone(), deadline, payload)

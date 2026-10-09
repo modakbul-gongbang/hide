@@ -65,7 +65,7 @@ The CLI admits only the commands and flags the contract names (`hided/src/cli_co
 
 ## Safe intake and manual fallback
 
-A doorbell carries only a short instruction to read `hide inbox`.
+A doorbell types one line that says what arrived ([The bell line](#the-bell-line)).
 It is typed when every one of these hide-owned facts holds, and the verdict reads no terminal screen, so a redrawn footer or a user's statusline cannot change it:
 
 - Herdr reports the pane `idle` or `done`, and has for 30 seconds.
@@ -110,15 +110,16 @@ A refusal before the reservation spends none, so a letter Herdr keeps refusing i
 A crash or changed pane after reservation may consume an attempt while leaving the letter pending.
 Legacy records with a successful bell but no total count conservatively have no automatic attempts left; manual and prompt-hook intake remain available.
 
-The `UserPromptSubmit` hook of a bell target reads the submitted prompt from its input payload and asks for letters in one of two ways.
-When the prompt is exactly the bell (`hide inbox --hook --bell`), it pulls the pending letters, oldest first, and after them the letters an earlier build acknowledged without a receipt (`hook_confirmed: false`), which the store's expiry pass before every request drops once their deadline passes, so such a backlog never displaces the letter the bell rang for; it emits their context, flushes stdout, then confirms those IDs.
-For any other prompt, the operator's own included (`hide inbox --hook`), it adds at most one line, `Hide 편지 N통 대기 중, 이 턴이 끝난 뒤 전달`, counting the letters a bell will still bring, and confirms nothing; the prompt text is never changed and no letter body reaches an operator's turn.
+The `UserPromptSubmit` hook of a bell target reads the submitted prompt from its input payload and sends the core the SHA-256 of its trimmed text (`hide inbox --hook --prompt-digest <sha256>`), never the text itself.
+The core alone knows which line its doorbell typed, so it alone decides whether the prompt was the bell ([Recognizing the bell](#recognizing-the-bell)).
+When it was, the pull takes the pending letters, oldest first, and after them the letters an earlier build acknowledged without a receipt (`hook_confirmed: false`), which the store's expiry pass before every request drops once their deadline passes, so such a backlog never displaces the letter the bell rang for; it emits their context, flushes stdout, then confirms those IDs.
+For any other prompt, the operator's own included, it adds at most one line, `Hide 편지 N통 대기 중, 이 턴이 끝난 뒤 전달`, counting the letters a bell will still bring, and confirms nothing; the prompt text is never changed and no letter body reaches an operator's turn.
 A letter whose three bells are spent stays pending for `hide inbox` and expires undelivered.
 A payload that is truncated, unreadable or not read within 0.5 seconds counts as an operator prompt.
 Both pulls carry the payload's `session_id`; the core takes the pull as proof the pane's composer was sent only when that session is the pane's own native session, so a stray `hide inbox --hook` from another tool in the pane clears no draft.
 The session id is not a secret, so this guards against accidents and not against a hostile process in the pane (external input, D-18).
 A hook that runs while Herdr already reports the pane `working` is a queued prompt being taken up and clears nothing, and a session longer than 4096 bytes (Herdr's own bound; Pi and omp name a session by its file path), starting with `-` or holding a control character is refused before it is hashed.
-A device kit older than the local app sends `hide inbox --hook` without `--bell`, so its bell turn gets only the count line and the letter stays pending until the kit is updated; keep the kit and the app on the same build.
+A device kit of an earlier build sends a `bell` flag and no digest: the core drops the flag (`Command::from_wire`), so that kit's bell turn gets only the count line and the letter stays pending until the kit is updated, while its OpenCode, Pi or omp pane still takes its letters on the next prompt; keep the kit and the app on the same build.
 A prompt hook that runs inside an agent with no prompt hook of its own (Grok loading Claude Code's hook) receives nothing and confirms nothing.
 Claude Code's hook run inside OpenCode, through an operator plugin that bridges `~/.claude/settings.json`, ends silently as a whole, so OpenCode's letters and counts are taken once, by Hide's own plugin.
 
@@ -146,6 +147,34 @@ OpenCode's plugin and Pi's and omp's extension hold the same 1.85-second prompt 
 The pinned Herdr API has no atomic composer guard.
 Hide checks the occupant before and after the durable reservation and checks its memory state immediately before the off-lock pane write, but direct external Herdr/TUI input can race that final write.
 That residual limit is the approved D-18 boundary; external input is not represented as a Hide key event.
+
+### The bell line
+
+The doorbell types `🔔 <writer> <kind>: <the letter's first line>`, and ` · 외 N통` when N more letters wait for the same recipient:
+
+```
+🔔 label-end-fix 보고: label end 수정 PR #881을 열었습니다
+🔔 hierarchy-pen-scratch 보고: Pen 시안이 준비됐습니다 · 외 1통
+```
+
+The kind reads 요청 for a request, 막힘 for a block, 보고 for a report, 답장 for a reply and 감시 for a watch warning.
+The writer is the name the sender registered under (`hide agent register`, `hide agent spawn --name`), else the title Hide's screens give it while its pane still hosts that session, else its Herdr agent id; a watch warning is named by the agent it watches, and its first line says for how long nothing moved.
+Both are looked up in memory when the bell rings, on the doorbell's thread, never on the session-sync thread.
+The first line is the body's first line that has anything to show, cut to 60 characters with `…`, and the writer is cut to 32; a body with no such line leaves the colon and summary out.
+Agents learn from their session guidance that this first line is the letter's one-line summary.
+
+The line is typed into a composer and submitted with Enter, so it carries nothing a composer acts on while it is typed.
+Control characters become spaces, characters that draw nothing or reorder text are dropped (`display_text::one_line`), and runs of whitespace become one space.
+`@` opens the file picker in Claude Code and Codex and `$` opens Codex's skill picker, and Enter would accept the picker's choice instead of submitting, so both are typed as their full-width forms `＠` and `＄`; a backslash before Enter continues the line in Claude Code, so `\` is typed as `＼`.
+`/`, `!` and `#` act only as a prompt's first character, and the line begins with `🔔`.
+
+### Recognizing the bell
+
+The reservation that spends one of a letter's three bells saves the exact line on the letter (`bell_line`) before it is typed.
+A prompt hook's pull is the bell's exactly when its digest is that of the saved line of a `pending` letter whose recipient is the caller's own pane and native session (`mailbox::rang`).
+A person who types `🔔` and the same words, a bell line copied into another agent's pane, and a line whose letter was already taken in or cancelled are therefore ordinary prompts.
+A second bell for the same letter saves its own line, so a hook of the first one that arrives after it is an ordinary prompt too.
+The ledger refuses a saved line longer than 512 bytes or holding a control character.
 
 ### A menu Herdr reads as a stop
 
@@ -346,13 +375,14 @@ bash scripts/verify-cargo.sh test-scoped -p hided --test it node_session_activit
 ```
 
 A filtered run must execute the expected named tests; zero selected tests is a failed check.
+The remote mailbox lane (`hided/tests/it/remote_delivery.rs`) waits for the daemon's own doorbell to ring each recipient and hands that pane's prompt hook the line the letter kept, so it crosses the bell's recognition over the node link; its provider panes carry one finished Claude conversation each, because the doorbell rings a Claude Code pane only once its session read says nothing waits.
 The helper executable tests use private homes and fixture transcripts, pair JSON-line responses by request ID, and cover activity success/refusal, privacy, kit coexistence, normal exit and abrupt owner loss.
 Each fixture launch and capture shares an absolute five-second deadline and a combined 64 KiB output cap; provider sessions and the installed helper are never used.
 The full Rust test and lint lanes still apply to the final committed head.
 Actual Linux and Windows OS-contract runner results are required for the state-machine, ledger and activity portability claim; declaring a workflow does not prove it passed.
 Real TUI delivery requires an isolated Herdr server, private HOME/state, precisely identified candidate processes and disposable provider sessions with observed native identity and registered lineage.
 Register only an actual parent session and spawn its child through `hide agent spawn`; never seed a capability or coordination ledger.
-Exercise idle/done delivery to a Claude pane with a statusline and to a Codex pane, working delay, a pending letter held while a permission, question or plan menu is open and delivered after it is answered, each target's menus read as Herdr `blocked` or, for Codex's plan approval, held as `awaiting_operator`, hook confirmation/restart, capacity/corruption, watch clocks/reset/exit/reply and helper privacy/fallback.
+Exercise idle/done delivery to a Claude pane with a statusline and to a Codex pane, a letter whose first line carries `@`, `$`, `/`, `!`, `#`, backticks, a trailing backslash and more than 60 characters of Korean (its bell is submitted as one prompt and its hook takes the letter), working delay, a pending letter held while a permission, question or plan menu is open and delivered after it is answered, each target's menus read as Herdr `blocked` or, for Codex's plan approval, held as `awaiting_operator`, hook confirmation/restart, capacity/corruption, watch clocks/reset/exit/reply and helper privacy/fallback.
 Label protocol fixtures separately from actual provider runtime observations.
 Measure matched baseline/candidate input latency and idle/driven load through [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md); a headless or socket-only check does not prove native presentation.
 Own every fixture process with a deadline and teardown, preserve the operator's app/server/panes/hooks, and remove private authentication caches after the owned agents exit.

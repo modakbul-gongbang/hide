@@ -159,8 +159,16 @@ fn successful(command: Command) -> Result<Vec<u8>> {
     Ok(answer.stdout)
 }
 
-pub fn wait_for<T>(what: &str, mut observe: impl FnMut() -> Result<Option<T>>) -> Result<T> {
-    let deadline = Instant::now() + READY_BOUND;
+pub fn wait_for<T>(what: &str, observe: impl FnMut() -> Result<Option<T>>) -> Result<T> {
+    wait_within(what, READY_BOUND, observe)
+}
+
+fn wait_within<T>(
+    what: &str,
+    bound: Duration,
+    mut observe: impl FnMut() -> Result<Option<T>>,
+) -> Result<T> {
+    let deadline = Instant::now() + bound;
     loop {
         if let Some(value) = observe()? {
             return Ok(value);
@@ -296,7 +304,40 @@ impl Herdr {
             "--seq",
             "1",
         ])?;
+        herdr.finished_session(if state.is_some() {
+            "fixture-local-session"
+        } else {
+            "fixture-remote-session"
+        })?;
         Ok(herdr)
+    }
+
+    /// The conversation file a provider keeps for `session`, holding one
+    /// finished turn. The doorbell rings a Claude Code pane only once its
+    /// session read says nothing waits for the operator, and the fixture's
+    /// provider writes no conversation of its own.
+    fn finished_session(&self, session: &str) -> Result<()> {
+        let folder = self.environment.home.join(".claude/projects/-fixture");
+        fs::create_dir_all(&folder)?;
+        let record = |kind: &str, message: Value| {
+            json!({"type": kind, "sessionId": session, "uuid": format!("{session}-{kind}"),
+                "timestamp": "2026-01-01T00:00:00.000Z", "message": message})
+            .to_string()
+        };
+        fs::write(
+            folder.join(format!("{session}.jsonl")),
+            [
+                record("user", json!({"role": "user", "content": "start"})),
+                record(
+                    "assistant",
+                    json!({"role": "assistant", "stop_reason": "end_turn",
+                        "content": [{"type": "text", "text": "ready"}]}),
+                ),
+            ]
+            .join("\n")
+                + "\n",
+        )?;
+        Ok(())
     }
 
     fn command(&self, args: &[&str]) -> Command {
@@ -318,6 +359,7 @@ impl Herdr {
     /// session Hide waits for before it calls a spawned agent started. The
     /// fixture's provider is a shim that reports nothing by itself.
     pub fn report_session(&self, pane: &str, session: &str) -> Result<()> {
+        self.finished_session(session)?;
         self.write(&[
             "pane",
             "report-agent-session",
@@ -733,6 +775,25 @@ impl Fixture {
             return Ok(Default::default());
         }
         Ok(serde_json::from_slice(&read(&path)?)?)
+    }
+
+    /// The line the daemon's own doorbell typed into the recipient's pane
+    /// for letter `id`, once it has rung. The doorbell waits for the pane to
+    /// be quiet for 30 seconds (`docs/delivery.md`), so this waits longer
+    /// than a readiness check does.
+    pub fn rung(&self, id: &str) -> Result<String> {
+        wait_within(
+            "the doorbell to ring for the letter",
+            Duration::from_secs(90),
+            || {
+                Ok(self
+                    .ledger()?
+                    .letters
+                    .into_iter()
+                    .find(|letter| letter.id == id)
+                    .and_then(|letter| letter.bell_line))
+            },
+        )
     }
 
     pub fn wait_bridge(&self, minimum: usize) -> Result<()> {

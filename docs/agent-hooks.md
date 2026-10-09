@@ -93,7 +93,7 @@ Claude Code and Codex currently accept the same envelope, but the installed runt
 `SubagentStart`, `SubagentStop`, and `Stop` write nothing to stdout, preserving their existing silent behavior.
 This stdout is advisory context for the agent and is independent of the best-effort metadata report described below.
 
-For local and connected device agent delivery, `UserPromptSubmit` reads the submitted prompt from the runtime payload (waiting at most 0.5 seconds for it) to learn whether it is Hide's own bell and which native session it runs in.
+For local and connected device agent delivery, `UserPromptSubmit` reads the submitted prompt from the runtime payload (waiting at most 0.5 seconds for it) and sends its SHA-256 and the native session it runs in to `hide inbox --hook --prompt-digest <sha256> --session <id>`; the core decides from that digest whether the prompt is the line its doorbell typed ([delivery.md: Recognizing the bell](delivery.md#recognizing-the-bell)), and the prompt text never leaves the hook.
 The session id goes to `hide inbox --hook --session`, which is how the hook counts as a submission only in its own pane; an unreadable or truncated payload has none, so that hook clears no draft.
 The bell turn pulls at most five pending letters and 8 KiB of letter context from the sibling `hide` CLI within one total two-second budget; any other prompt receives only a one-line count of waiting letters.
 Only a successful stdout flush permits confirmation, so pre-confirm interruption can repeat an ID and confirmed letters do not repeat.
