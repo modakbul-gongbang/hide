@@ -8,7 +8,7 @@ use crate::SkipReason;
 
 /// A single native record is already bounded by the session line limit.
 /// Bound the retained collection as well, including unrelated tool results.
-const TOOL_MARK_LIMIT: usize = 64;
+pub(crate) const TOOL_MARK_LIMIT: usize = 64;
 
 type Mark = Result<Option<TurnMark>, SkipReason>;
 pub(crate) type Parser = fn(&Value) -> Mark;
