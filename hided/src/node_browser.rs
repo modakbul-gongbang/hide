@@ -31,6 +31,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, watch};
 
+use crate::backoff::Backoff;
 use crate::browser_control::{BrowserControl, Failure, Registration};
 use crate::node_daemon::NodeState;
 use crate::node_role::LiveLink;
@@ -42,10 +43,6 @@ const TICKET_LIFE: Duration = Duration::from_secs(10);
 /// tickets handed out and not yet dialed: the refusal comes with the
 /// question, not with the dial.
 const MAX_RELAYS: usize = 4;
-/// How long an announce that failed first waits before it is sent again;
-/// it doubles to [`ANNOUNCE_LONGEST`].
-const ANNOUNCE_RETRY: Duration = Duration::from_secs(2);
-const ANNOUNCE_LONGEST: Duration = Duration::from_secs(60);
 /// How often the windows are looked at again: one that exited without
 /// releasing its registration leaves, and the core is told.
 const OWNERS_EVERY: Duration = Duration::from_secs(5);
@@ -187,7 +184,8 @@ impl NodeBrowser {
             let mut current: Option<u64> = None;
             // The windows the current link's core was last told of.
             let mut told: Option<Vec<i32>> = None;
-            let mut wait = ANNOUNCE_RETRY;
+            // An announce that failed is sent again after a wait.
+            let mut backoff = Backoff::default();
             let mut retry_at: Option<tokio::time::Instant> = None;
             let mut failure: Option<String> = None;
             loop {
@@ -200,7 +198,7 @@ impl NodeBrowser {
                     }
                     current = generation;
                     told = None;
-                    wait = ANNOUNCE_RETRY;
+                    backoff.reset();
                     retry_at = None;
                     failure = None;
                     browser
@@ -227,7 +225,7 @@ impl NodeBrowser {
                     match sent {
                         Ok(()) => {
                             told = Some(owners);
-                            wait = ANNOUNCE_RETRY;
+                            backoff.reset();
                             retry_at = None;
                             failure = None;
                         }
@@ -241,8 +239,7 @@ impl NodeBrowser {
                                 }));
                                 failure = Some(reason);
                             }
-                            retry_at = Some(tokio::time::Instant::now() + wait);
-                            wait = (wait * 2).min(ANNOUNCE_LONGEST);
+                            retry_at = Some(tokio::time::Instant::now() + backoff.failed());
                         }
                     }
                 }

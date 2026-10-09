@@ -32,13 +32,10 @@ use serde_json::json;
 use tokio::sync::watch;
 
 use crate::attach::{self, Accepted, AttachOutcome, Line, NodeHello};
+use crate::backoff::Backoff;
 use crate::placement::Placement;
 
-/// The first wait after a failed attempt.
-const FIRST_WAIT: Duration = Duration::from_secs(2);
-/// The longest wait between attempts.
-const LONGEST_WAIT: Duration = Duration::from_secs(60);
-/// A link that lived this long starts the wait over at [`FIRST_WAIT`].
+/// A link that lived this long starts the wait over.
 const SETTLED: Duration = Duration::from_secs(30);
 /// How long the core's machine has to answer the handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -301,7 +298,7 @@ impl Drop for NodeRole {
 }
 
 fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: &NodeIdentity) {
-    let mut wait = FIRST_WAIT;
+    let mut backoff = Backoff::default();
     let mut generation = 0;
     loop {
         generation += 1;
@@ -312,11 +309,9 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
         let reason = link_once(shared, config, placement, identity, generation);
         shared.live.send_replace(None);
         if started.elapsed() >= SETTLED {
-            wait = FIRST_WAIT;
+            backoff.reset();
         }
-        // The wait about to start: woken, it starts over, and otherwise the
-        // one after it is twice as long.
-        let this_wait = wait;
+        let wait = backoff.failed();
         herdr_core::diagnostic!(json!({
             "component": "node_role",
             "kind": "link.ended",
@@ -328,7 +323,7 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
         if set_phase(shared, Phase::Waiting { reason }) {
             return;
         }
-        let deadline = Instant::now() + this_wait;
+        let deadline = Instant::now() + wait;
         let mut state = lock(&shared.state);
         while !state.stopping && !state.woken {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -344,17 +339,10 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
         if state.stopping {
             return;
         }
-        wait = next_wait(this_wait, std::mem::take(&mut state.woken));
-    }
-}
-
-/// The wait after `wait`: a wake starts it over, and otherwise it doubles
-/// up to [`LONGEST_WAIT`].
-fn next_wait(wait: Duration, woken: bool) -> Duration {
-    if woken {
-        FIRST_WAIT
-    } else {
-        (wait * 2).min(LONGEST_WAIT)
+        // Woken, the wait starts over.
+        if std::mem::take(&mut state.woken) {
+            backoff.reset();
+        }
     }
 }
 
@@ -724,18 +712,6 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_wait_doubles_to_a_minute_and_a_wake_starts_it_over() {
-        let mut wait = FIRST_WAIT;
-        let mut waits = Vec::new();
-        for _ in 0..7 {
-            waits.push(wait.as_secs());
-            wait = next_wait(wait, false);
-        }
-        assert_eq!(waits, [2, 4, 8, 16, 32, 60, 60]);
-        assert_eq!(next_wait(LONGEST_WAIT, true), FIRST_WAIT);
-    }
 
     fn addresses(last: u8) -> Option<BTreeSet<IpAddr>> {
         Some(BTreeSet::from([IpAddr::from([192, 168, 1, last])]))

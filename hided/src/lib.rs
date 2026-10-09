@@ -1,6 +1,7 @@
 pub mod agent_cli;
 pub mod attach;
 pub mod attachments;
+pub mod backoff;
 pub mod boundary;
 mod browser_assets;
 pub mod browser_cli;
