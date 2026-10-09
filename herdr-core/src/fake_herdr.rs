@@ -75,7 +75,25 @@ impl FakeHerdr {
     /// reads as `ApiError::Remote`.
     pub(crate) fn start_with_errors(
         name: &str,
-        mut respond: impl FnMut(&str, &Value) -> Result<Value, (String, String)> + Send + 'static,
+        respond: impl FnMut(&str, &Value) -> Result<Value, (String, String)> + Send + 'static,
+    ) -> Self {
+        Self::start_with_errors_mode(name, respond, false)
+    }
+
+    /// A retained, still-unwritten control connection must not prevent a
+    /// fresh identity read on another connection, as in the real server.
+    /// Each connection still answers exactly one request.
+    pub(crate) fn start_concurrent_with_errors(
+        name: &str,
+        respond: impl FnMut(&str, &Value) -> Result<Value, (String, String)> + Send + 'static,
+    ) -> Self {
+        Self::start_with_errors_mode(name, respond, true)
+    }
+
+    fn start_with_errors_mode(
+        name: &str,
+        respond: impl FnMut(&str, &Value) -> Result<Value, (String, String)> + Send + 'static,
+        concurrent: bool,
     ) -> Self {
         let temporary = if cfg!(unix) {
             PathBuf::from("/tmp")
@@ -98,38 +116,53 @@ impl FakeHerdr {
             std::thread::Builder::new()
                 .name(format!("fake-herdr-{name}"))
                 .spawn(move || {
-                    loop {
-                        let stream = listener.accept().expect("accept fake herdr request");
-                        if stopping.load(Ordering::Acquire) {
-                            return;
+                    let respond = Mutex::new(respond);
+                    std::thread::scope(|scope| {
+                        loop {
+                            let stream = listener.accept().expect("accept fake herdr request");
+                            if stopping.load(Ordering::Acquire) {
+                                return;
+                            }
+                            let requests = &requests;
+                            let respond = &respond;
+                            let answer = move || {
+                                let mut line = String::new();
+                                let mut stream = BufReader::new(stream);
+                                stream
+                                    .read_line(&mut line)
+                                    .expect("read fake herdr request");
+                                if line.trim().is_empty() {
+                                    // A client that connected and hung up sent nothing to
+                                    // answer; the next connection may still carry a request.
+                                    return;
+                                }
+                                let request: Value =
+                                    serde_json::from_str(&line).expect("fake herdr request JSON");
+                                let method = request["method"]
+                                    .as_str()
+                                    .expect("fake herdr request names a method")
+                                    .to_owned();
+                                let response =
+                                    match respond.lock().unwrap()(&method, &request["params"]) {
+                                        Ok(result) => {
+                                            wire::checked_response_fixture(&request["id"], result)
+                                        }
+                                        Err((code, message)) => serde_json::json!({
+                                            "id": request["id"],
+                                            "error": {"code": code, "message": message}
+                                        }),
+                                    };
+                                requests.lock().unwrap().push(request.clone());
+                                writeln!(stream.get_mut(), "{response}")
+                                    .expect("write fake herdr response");
+                            };
+                            if concurrent {
+                                scope.spawn(answer);
+                            } else {
+                                answer();
+                            }
                         }
-                        let mut line = String::new();
-                        let mut stream = BufReader::new(stream);
-                        stream
-                            .read_line(&mut line)
-                            .expect("read fake herdr request");
-                        if line.trim().is_empty() {
-                            // A client that connected and hung up sent nothing to
-                            // answer; the next connection may still carry a request.
-                            continue;
-                        }
-                        let request: Value =
-                            serde_json::from_str(&line).expect("fake herdr request JSON");
-                        let method = request["method"]
-                            .as_str()
-                            .expect("fake herdr request names a method")
-                            .to_owned();
-                        let response = match respond(&method, &request["params"]) {
-                            Ok(result) => wire::checked_response_fixture(&request["id"], result),
-                            Err((code, message)) => serde_json::json!({
-                                "id": request["id"],
-                                "error": {"code": code, "message": message}
-                            }),
-                        };
-                        requests.lock().unwrap().push(request.clone());
-                        writeln!(stream.get_mut(), "{response}")
-                            .expect("write fake herdr response");
-                    }
+                    });
                 })
                 .expect("spawn fake herdr thread")
         };

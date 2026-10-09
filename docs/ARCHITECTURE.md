@@ -657,26 +657,36 @@ The leaf selects dialects but does not implement them.
 `hide-kit` projects the shared rows into pieces and owns installation policy, while core feature gates read the relevant independent capability.
 OpenCode's existing title reader remains distinct from the session-file features offered for Claude Code and Codex; its letters, Memory, spawn guard and subagent count come from Hide's plugin ([agent-hooks.md: OpenCode: Hide's plugin](agent-hooks.md#opencode-hides-plugin)), not from its sessions.
 Pi's and omp's letters and spawn guard, and omp's subagent count and `ask` guard, come the same way from Hide's extension ([agent-hooks.md: Pi and omp: Hide's extension](agent-hooks.md#pi-and-omp-hides-extension)).
-Pi 1.0.4 extends the shared file reader through `hide-session::pi`: the first version3 session header proves its native ID and exact cwd under the default `.pi/agent/sessions` root.
+Pi 1.0.4 and omp 18.7.0 extend the shared file reader through `hide-session::native_file`: the first version3 session header proves the native ID and exact cwd under the respective default `.pi/agent/sessions` or `.omp/agent/sessions` root.
 The native default cwd directory is additionally required because Pi's ID lookup outside it prompts to fork instead of resuming the same session; lossy folder encoding still never proves ownership.
 Filename suffixes never supply an ID, and links below home and custom session directories confer no read authority.
 Native IDs ending in `.jsonl` are refused locally because this CLI treats that argument as a path.
-Before a Pi close, fork, wake or archive resume, the current Identity/Activity-capable node audits its default directory for one safe exact-ID route.
-The label proof retains Pi's resolved source path even for an ID reference; it stays within authenticated reader answers, internal row facts and local durable intent, never the UI snapshot.
+omp's default bucket uses its native temp-first, home-relative and external-path spelling; a nondefault bucket never authorizes a launch.
+Before a native-file close, fork, wake or archive resume, the current Identity/Activity-capable node audits its default directory for one safe route to the exact proven ID and source.
+omp's selector also matches case-insensitive ID prefixes, filename prefixes and the filename suffix after the last underscore, so any second matching candidate refuses the action.
+The label proof retains the resolved source path even for an ID reference; it stays within authenticated reader answers, internal row facts and local durable intent, never the UI snapshot.
 Fork, sleeping records and queued archive resumes retain that original path with the expected native ID and checkout, and re-prove it instead of discovering a different same-ID file after a wait.
 The action-only audit shares the discovery entry cap and a 1 MiB aggregate header budget; duplicate IDs, linked entries and uninspectable native-resolver candidates refuse the effect.
 Queued starts repeat the route proof after shell readiness and before each actual start attempt; fork execution and task/helper identity must still match their admitted intent.
 Archive resume also checks the actual current control connector, local connection generation and file-node identity before creating topology and each start attempt; a retained retired connector cannot acquire authority from a replacement reader.
-The shared session connector repeats the captured current control, file-node and exact task/fork-intent check after each potentially waiting connection, before archive start or Pi fork tab/start requests can be written.
+The shared session connector repeats the captured current control, file-node and exact task/fork-intent check after each potentially waiting connection, before archive start or native-file fork tab/start requests can be written.
 An already-created failed fork child is still cleaned up through its original connector; that cleanup cannot target a replacement server.
 Search, archive detail and Memory reads carry the catalog row's expected native ID and checkout, and refuse a replacement rather than deriving their requested owner from the new file.
 Labels, activity, project catalog, content search, archive detail, link sightings and local phone pages use the same before/after native proof; a phone idle poll and a cloned older-page reader cannot retain a replaced owner's history.
-Same-length reads compare the physical file stamp, failed Pi label reads revoke cached native authority, and link identity comes only from the proven first header even across incremental chunks.
-The parser reads Pi's raw recorded history, including messages on earlier branches, without reconstructing active model context or following a fork's `parentSession` file.
+Same-length reads compare the physical file stamp, failed native-file label reads revoke cached native identity and turn authority, and link identity comes only from the proven first header even across incremental chunks.
+The parser reads raw recorded history, including messages on earlier branches, without reconstructing active model context or following a fork's `parentSession` file.
 Pi `session_info.name` is the native/manual title; an explicit empty name clears it, while absence on an incremental read preserves the prior name.
+omp's physical first title-v1 slot, or its legacy first session header, supplies the current title and auto/user source.
+The cursor samples that bounded prefix through its existing file descriptor on each omp poll and charges its actual bytes to the existing read allowance, including a refused prefix.
+The label worker rechecks current native-file metadata through its single serialized reader no sooner than three seconds after a successful read, even when Herdr's state is unchanged; a refused or unavailable native read waits fifteen seconds before retrying.
+This adds bounded file reads on the existing worker, with no I/O under Runtime or session-sync, no extra provider request for unchanged events, and no publication or store write for unchanged facts.
+It applies the current title, including an explicit clear or manual-to-auto change, without rewinding the event checkpoint or replaying question marks; `title_change` entries are audit history, not current title authority.
 Only recorded message times and actual tool-result or bash-execution output supply PR sightings; thinking, custom extension context, compaction and branch summaries supply no human request.
 Pi has no structured native wait/content or subagent grant, and authenticated protocol24 facts never acquire its new reader.
-Its complete adapter enables conversation, title, exact resume/fork and the common durable distinct sleeping-session lifecycle; the other unfinished complete-reader slices stay disabled.
+omp's native `ask` calls carry bounded question text and option labels into the existing turn tracker; only correlated results, a later human turn or a native abort clear that pending question.
+Nested child artifacts never enter root discovery or conversation, and no child identity or task completion is inferred from text.
+Both adapters enable conversation, title, exact resume/fork and the common durable distinct sleeping-session lifecycle; omp uses `--resume <id>` and `--fork <id>`, while the other unfinished complete-reader slices stay disabled.
+Authenticated reader facts distinguish an intermediate Pi-only protocol25 helper from one implementing omp; matching protocol numbers alone grant nothing.
 Hide AI retains its separate provider registry; its adapter id only associates a provider with an agent identity and logo.
 
 The web shell reads `contracts/agent-adapters.json`, generated by the leaf's `export_web_contract` example, for support order, aliases, names, Docs/Install links, logo ids, branded marks and start/resume eligibility.
@@ -686,7 +696,7 @@ Pre-migration byte fixtures pin Claude Code and Codex commands and complete inst
 
 Each row explicitly declares six Factory capabilities as available, unavailable or unconfirmed: direct questions and their refusal dialect, user turns, turn end and final answer, startup guidance, resume and next-prompt letters.
 These declarations activate no new guard, transcript reader or Factory policy.
-`hide-session::turns::UserTurnFact` carries a turn kind and optional bounded structured content when Claude Code or Codex native records supply it.
+`hide-session::turns::UserTurnFact` carries a turn kind and optional bounded structured content when Claude Code, Codex or omp native records supply it.
 Missing content remains absent; a failed or incomplete read certifies no structured fact for the current Herdr state.
 The content constructor bounds text to 8 KiB, choices to eight and each choice to 256 bytes before copying, preserves UTF-8 boundaries and marks any truncation.
 
@@ -1000,8 +1010,9 @@ Only a desktop package's own `hide`, in macOS `Contents/Resources` or Windows/Li
 Only the daemon of the state folder the CLI was given is looked at, so a development or e2e daemon elsewhere is never replaced, and stopping a daemon leaves Herdr, its panes and their agents running.
 Each connect holds `connect.lock` in the state folder from looking at the daemon until the one it attaches to answers, so two connects never both replace it; a stop removes `hided.json` only while it still names the stopped pid and never unlinks `hided.lock`, so a daemon started since keeps its state and its instance lock.
 A daemon that has ended counts as stopped before its starter reaps it, although Linux still lists an unreaped process's start time.
-Before any of that, a connect whose state folder is the default `~/.hide/state` moves the legacy default `~/.local/state/hide` into place once (PRD hide-home-layout D-05; `hided/src/state_move.rs`): under the legacy folder's own `connect.lock`, which an older `hide connect` takes too, it stops the daemon that answers its `/health` as the pid the legacy `hided.json` names, by the same rule as a replacement, then renames the whole folder in one `rename(2)`, so there is never a copy in two places.
-The folder moves only while its `hided.lock` is free, taken without waiting and held across the rename: a process that holds it but did not answer `/health` as itself is never signalled, and the connect answers `start_failed` naming the folder, because a pid or a slow `/health` can mislead but a running daemon always holds its lock.
+Before any of that, a connect whose state folder is the default `~/.hide/state` moves the legacy default `~/.local/state/hide` into place once (PRD hide-home-layout D-05; `hided/src/state_move.rs`): under the legacy folder's own `connect.lock`, which an older `hide connect` takes too, it stops the daemon the legacy `hided.json` names, then renames the whole folder in one `rename(2)`, so there is never a copy in two places.
+That pid is signalled only once it is proven to be the daemon: a state that recorded its daemon's process start is proven by the kernel's answer for that pid, as `hide stop` judges it, so a daemon too busy to answer `/health` within its one-second request is still stopped and the folder still moves (issue 863); a state an earlier build wrote without a start (before v0.3.0) is proven only by `/health` answering as that pid, because liveness alone also passes a reused pid.
+The folder moves only while its `hided.lock` is free, taken without waiting and held across the rename: a process that holds it but was not proven to be that daemon is never signalled, and the connect answers `start_failed` naming the folder, because a pid alone can mislead but a running daemon always holds its lock.
 A legacy folder that is a link or not this account's is not moved, one other accounts can write to is refused with the `chmod go-w` that fixes it (only when it would move; beside an existing new folder it is just left), the moved folder is made 0700, `~/.hide` must be a private folder of this account, and a daemon that will not stop leaves both folders as they were and answers `start_failed`.
 `HIDE_STATE_DIR` naming `~/.hide/state` itself counts as the default, since that is the value `hide connect` hands the daemon it starts.
 When `~/.hide/state` already exists nothing is merged: the new folder is used, and each daemon start logs `state.legacy_left` with both paths while the legacy folder remains.
@@ -1241,7 +1252,10 @@ Nothing runs under the runtime mutex: conversation reads run on the worker's rea
   Native tool-call ids correlate question results; ordinary prose never supplies structured question content.
   The tracker bounds native call identities to 256 bytes and eight calls per turn, and a capacity breach fails the read explicitly.
   Optional `UserTurnContent` keeps at most 8 KiB of text and eight 256-byte choices, preserving UTF-8 boundaries and marking cuts.
-  A native wait-lifecycle record beyond the separate 256 KiB physical-line admission cap fails the read rather than being discarded as unrelated tool output; its content is not certified as absent or answered.
+  A native record beyond the separate 256 KiB physical-line admission cap is discarded without its body, and the bounded ids its structure carries become the record's turn mark: a tool result answers its call, an `AskUserQuestion` or `request_user_input` call waits with its content absent, and a Codex plan, start, completion or abort keeps its turn id and mode.
+  An id past the native bounds is the same reported failure it is in a retained record.
+  Only conversation text, an envelope the scan cannot classify, or an escaped or non-ASCII id fails the read, because Claude Code writes a tool result such as a screenshot inline as base64, and refusing it would stop every later read of the session, its labels and its doorbell.
+  A checkpoint an older scan took inside such a record kept no ids, so the cursor rereads that record from its start.
   The tracker rides on the read's request and answer beside the checkpoint, so an incremental read continues the turn it was in, a read from the start or a rescan starts over, and a record replayed from the anchor is not folded twice.
   The record keeps the tracker and the Herdr `state_change_seq` the read was asked under (`PaneRecord::turns`, `turns_seq`, set only once the backlog is read), and the overlay answers the wait (`LabelOverlay::waiting`) only for that state and the proven session, so a fact read for an earlier state never stands for a newer one.
   A failed reread invalidates that proof and publishes no structured fact, while retaining the bounded tracker/checkpoint for a later successful continuation and the existing unavailable-read retry interval.

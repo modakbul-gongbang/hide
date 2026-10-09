@@ -756,8 +756,10 @@ mod tests {
         no_session.session_id = None;
         let mut pi = agent("w1:p7");
         pi.agent_kind = "pi".into();
-        let mut other = agent("w1:p11");
-        other.agent_kind = "omp".into();
+        let mut omp = agent("w1:p11");
+        omp.agent_kind = "omp".into();
+        let mut other = agent("w1:p12");
+        other.agent_kind = "grok".into();
         let mut remote = agent("remote:mini:w1:p1");
         remote.pane_id = "remote:mini:w1:p1".into();
         let on_screen = agent("w1:p8");
@@ -773,6 +775,7 @@ mod tests {
             unknown,
             no_session,
             pi,
+            omp,
             other,
             remote,
             on_screen,
@@ -788,7 +791,7 @@ mod tests {
             &HashMap::from([("w1:p9".to_owned(), 13 * HOUR)]),
             12 * HOUR,
         );
-        assert_eq!(due, ["w1:p1", "w1:p7", "w1:p10"]);
+        assert_eq!(due, ["w1:p1", "w1:p7", "w1:p11", "w1:p10"]);
     }
 
     /// The sleeping row is drawn from the record, so the record has to carry

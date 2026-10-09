@@ -88,9 +88,13 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     const showSessions = () => ensureSessions(page);
     const row = (pane: string) => panel.locator(`[data-session-row="${pane}"]`);
     const group = (name: string) => panel.locator(`[data-session-group="${name}"]`);
+    const head = (name: string) => group(name).locator('[data-session-focus="group"]');
+    const unfold = async (name: string) => { if (await head(name).getAttribute("aria-expanded") === "false") await head(name).click(); };
     await expect(row(asking)).toContainText("Approve", { timeout: 30_000 });
     await expect(row(question)).toContainText("Answer");
-    await expect(row(stopped)).toContainText("Stopped");
+    await expect(head("resting")).toHaveAttribute("aria-expanded", "false"); // An unfinished turn rests, folded, with its tag.
+    await unfold("resting");
+    await expect(group("resting").locator(`[data-session-row="${stopped}"]`)).toContainText("Stopped");
     await expect(group("in_progress").locator(`[data-session-row="${parent}"]`)).toBeVisible();
     await expect(row(child)).toHaveCount(0);
     await expect.poll(() => last.get("request_view")?.observing).toBe(true);
@@ -104,7 +108,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await expect(page.locator(`[data-pane-view="${question}"]`)).toHaveAttribute("data-focused", "true");
     await showSessions();
     await expect(group("my_turn").locator(`[data-session-row="${question}"]`)).toHaveCount(0);
-    await group("resting").locator('[data-session-focus="group"]').click();
+    await unfold("resting");
     await expect(group("resting").locator(`[data-session-row="${question}"]`)).toBeVisible();
     await expect(row(question)).not.toContainText("Answer");
     await row(asking).locator('[data-session-focus="row"]').click();
@@ -112,6 +116,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await showSessions();
     await expect(group("my_turn").locator(`[data-session-row="${asking}"]`)).toContainText("Approve");
     // Keyboard arrows reach the next row; Resolve is a named keyboard action.
+    await unfold("resting");
     await row(stopped).locator('[data-session-focus="row"]').focus();
     await page.keyboard.press("Home");
     await expect(panel.locator('[data-session-focus]').first()).toBeFocused();
@@ -122,7 +127,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await expect(row(stopped)).toHaveCount(0);
     await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`)).toHaveCount(0);
     await expect(panel.locator('[data-session-count="resolved_today"]')).toHaveText("1");
-    await group("resolved_today").locator('[data-session-focus="group"]').click();
+    await head("resolved_today").click();
     await expect(row(stopped)).toBeVisible();
     expect(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "core-state.json"), "utf8")).resolved_sessions[stopped]).toBeTruthy();
     // Closing/reopening the document retains both the chosen tool and resolution.
@@ -132,7 +137,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await expect(page.locator('[data-tool-tab="agent_sessions"]')).toHaveAttribute("aria-selected", "true");
     await expect(panel.locator('[data-session-count="resolved_today"]')).toHaveText("1");
     await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`)).toHaveCount(0);
-    await group("resolved_today").locator('[data-session-focus="group"]').click();
+    await head("resolved_today").click();
     await row(stopped).locator('[data-session-focus="row"]').click();
     await expect(page.locator(`[data-pane-view="${stopped}"]`)).toHaveAttribute("data-focused", "true");
     await showSessions();

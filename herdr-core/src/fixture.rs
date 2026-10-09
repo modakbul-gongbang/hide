@@ -2,6 +2,36 @@ use serde::{Deserialize, Serialize};
 
 pub const FIXTURE_PREFIX: &str = "herdr-ide-verify-";
 
+/// Synthetic fixtures live below the canonical OS temp directory. These
+/// bucket spellings come from Pi 1.0.4 and omp 18.7.0, independently of the
+/// product's locator, so a wrong locator cannot move the expected fixture.
+#[cfg(test)]
+pub(crate) fn native_session_folder(
+    home: &std::path::Path,
+    kind: &str,
+    cwd: &std::path::Path,
+) -> std::path::PathBuf {
+    let encode = |path: &std::path::Path| {
+        path.to_string_lossy()
+            .trim_start_matches(['/', '\\'])
+            .replace(['/', '\\', ':'], "-")
+    };
+    let bucket = match kind {
+        "pi" => format!("--{}--", encode(cwd)),
+        "omp" => {
+            let temporary = std::env::temp_dir().canonicalize().unwrap();
+            let relative = cwd.strip_prefix(temporary).unwrap();
+            if relative.as_os_str().is_empty() {
+                "-tmp".into()
+            } else {
+                format!("-tmp-{}", encode(relative))
+            }
+        }
+        _ => panic!("not a native-file fixture"),
+    };
+    home.join(format!(".{kind}/agent/sessions")).join(bucket)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FixturePlan {
     pub workspace_name: String,

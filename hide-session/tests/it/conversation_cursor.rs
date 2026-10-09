@@ -1,3 +1,4 @@
+use hide_session::turns::{ToolTurnMark, TurnMark, TurnMode};
 use hide_session::{
     Agent, ConversationCursor, EventKind, RescanReason, SESSION_LINE_LIMIT_BYTES, SessionError,
     SkipReason,
@@ -101,10 +102,18 @@ fn oversized_conversation_and_unclassifiable_records_still_fail() {
 }
 
 #[test]
-fn oversized_native_questions_answers_and_plan_records_fail_without_consuming_them() {
+fn oversized_native_records_keep_their_turn_mark_without_their_body() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.jsonl");
     let huge = "x".repeat(SESSION_LINE_LIMIT_BYTES + 1);
+    let asked = TurnMark::Tools(vec![ToolTurnMark::Asked {
+        call: "question-1".into(),
+        content: None,
+    }]);
+    let answered = TurnMark::Tools(vec![ToolTurnMark::Answered {
+        call: "question-1".into(),
+    }]);
+    let turn = Some("turn-1".to_owned());
     let records = [
         (
             Agent::Claude,
@@ -112,12 +121,14 @@ fn oversized_native_questions_answers_and_plan_records_fail_without_consuming_th
                 "type":"tool_use","id":"question-1","name":"AskUserQuestion",
                 "input":{"questions":[{"question":huge}]}
             }]}}),
+            asked.clone(),
         ),
         (
             Agent::Claude,
             json!({"type":"user","message":{"content":[{
                 "type":"tool_result","tool_use_id":"question-1","content":huge
             }]}}),
+            answered.clone(),
         ),
         (
             Agent::Codex,
@@ -125,55 +136,116 @@ fn oversized_native_questions_answers_and_plan_records_fail_without_consuming_th
                 "type":"function_call","call_id":"question-1","name":"request_user_input",
                 "arguments":json!({"questions":[{"question":huge}]}).to_string()
             }}),
+            asked,
         ),
         (
             Agent::Codex,
             json!({"type":"response_item","payload":{
                 "type":"function_call_output","call_id":"question-1","output":huge
             }}),
+            answered,
         ),
         (
             Agent::Codex,
             json!({"type":"event_msg","payload":{
                 "type":"item_completed","turn_id":"turn-1","item":{"type":"Plan","text":huge}
             }}),
+            TurnMark::Plan { turn: turn.clone() },
         ),
         (
             Agent::Codex,
             json!({"type":"event_msg","payload":{
                 "type":"task_started","turn_id":"turn-1","collaboration_mode_kind":"plan","extra":huge
             }}),
+            TurnMark::Started {
+                turn: turn.clone(),
+                mode: TurnMode::Plan,
+            },
         ),
         (
             Agent::Codex,
             json!({"type":"event_msg","payload":{
                 "type":"task_complete","turn_id":"turn-1","extra":huge
             }}),
+            TurnMark::Completed { turn: turn.clone() },
         ),
         (
             Agent::Codex,
             json!({"type":"event_msg","payload":{
                 "type":"turn_aborted","turn_id":"turn-1","extra":huge
             }}),
+            TurnMark::Aborted { turn },
         ),
     ];
-    for (agent, record) in records {
-        fs::write(&path, format!("{record}\n{}", human("after native record"))).unwrap();
+    for (agent, record, mark) in records {
+        let after = human("after native record");
+        fs::write(&path, format!("{record}\n{after}")).unwrap();
         let mut reader = ConversationCursor::new();
-        for _ in 0..2 {
-            assert!(
-                matches!(reader.read(agent, &path),
-                Err(SessionError::Capacity { resource: "line_bytes", limit })
-                    if limit == SESSION_LINE_LIMIT_BYTES as u64),
-                "{agent:?}"
-            );
-            assert_eq!(reader.checkpoint().offset(), 0);
-        }
+        let mut marks = Vec::new();
+        let mut oversized = 0;
+        while {
+            let parsed = reader.read(agent, &path).unwrap();
+            marks.extend(parsed.turn_marks);
+            oversized += parsed
+                .skipped_reasons
+                .get(&SkipReason::NonConversationCapacity)
+                .copied()
+                .unwrap_or(0);
+            reader.has_more()
+        } {}
+        assert_eq!(marks.first(), Some(&(0, mark)), "{agent:?} {record:.120}");
+        assert_eq!(oversized, 1, "{agent:?}");
+        assert_eq!(
+            reader.checkpoint().offset(),
+            (record.to_string().len() + 1 + after.len()) as u64
+        );
     }
 }
 
 #[test]
-fn a_split_native_question_cannot_be_discarded_after_checkpoint_restore() {
+fn a_screenshot_tool_result_answers_its_call_and_the_read_continues() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.jsonl");
+    // Claude Code writes a screenshot inline: the call id comes first, the
+    // image is base64 inside the block, and `toolUseResult` repeats it.
+    let image = "A".repeat(SESSION_LINE_LIMIT_BYTES * 2);
+    let blocks = json!([
+        {"type":"text","text":"Computer Use state"},
+        {"type":"image","source":{"type":"base64","media_type":"image/png","data":image}},
+        {"type":"text","text":"Key window"}
+    ]);
+    let record = json!({
+        "parentUuid":"p", "type":"user",
+        "message":{"role":"user","content":[
+            {"tool_use_id":"toolu_01Screenshot","type":"tool_result","content":blocks}
+        ]},
+        "toolUseResult":blocks
+    });
+    let after = json!({"type":"user","message":{"role":"user","content":"다음 단계로 가자"},
+        "timestamp":"2026-10-09T00:00:00Z"});
+    fs::write(&path, format!("{record}\n{after}\n")).unwrap();
+    let mut reader = ConversationCursor::new();
+    let (mut marks, mut events) = (Vec::new(), Vec::new());
+    while {
+        let parsed = reader.read(Agent::Claude, &path).unwrap();
+        marks.extend(parsed.turn_marks);
+        events.extend(parsed.events);
+        reader.has_more()
+    } {}
+    assert_eq!(
+        marks.first(),
+        Some(&(
+            0,
+            TurnMark::Tools(vec![ToolTurnMark::Answered {
+                call: "toolu_01Screenshot".into()
+            }])
+        ))
+    );
+    assert_eq!(events.last().unwrap().text, "다음 단계로 가자");
+}
+
+#[test]
+fn a_split_native_question_keeps_its_call_across_a_checkpoint_restore() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.jsonl");
     // Both native discriminators arrive after the discarded body, so the
@@ -195,23 +267,26 @@ fn a_split_native_question_cannot_be_discarded_after_checkpoint_restore() {
     assert!(!reader.has_more(), "a torn record waits for its append");
     let checkpoint = serde_json::to_value(reader.checkpoint()).unwrap();
     fs::write(&path, &complete).unwrap();
-    for old_checkpoint in [false, true] {
+    let asked = TurnMark::Tools(vec![ToolTurnMark::Asked {
+        call: "question-1".into(),
+        content: None,
+    }]);
+    // An older build's scan kept no ids: the record is reread from its start.
+    for older_scan in [false, true] {
         let mut checkpoint = checkpoint.clone();
-        if old_checkpoint {
-            checkpoint["classifier"]
-                .as_object_mut()
-                .unwrap()
-                .remove("user_turn_scanned");
+        if older_scan {
+            let classifier = checkpoint["classifier"].as_object_mut().unwrap();
+            classifier.remove("native_ids");
+            classifier.insert("user_turn_scanned".into(), json!(true));
         }
         let mut restored = ConversationCursor::restore(serde_json::from_value(checkpoint).unwrap());
-        assert!(matches!(
-            restored.read(Agent::Claude, &path),
-            Err(SessionError::Capacity {
-                resource: "line_bytes",
-                ..
-            })
-        ));
-        assert_eq!(restored.checkpoint().offset(), split as u64);
+        let mut marks = Vec::new();
+        while {
+            marks.extend(restored.read(Agent::Claude, &path).unwrap().turn_marks);
+            restored.has_more()
+        } {}
+        assert_eq!(marks, [(0, asked.clone())], "older scan: {older_scan}");
+        assert_eq!(restored.checkpoint().offset(), complete.len() as u64);
     }
 }
 

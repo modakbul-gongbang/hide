@@ -507,6 +507,8 @@ Sessions belongs to the project of the front checkout; All checkouts and the `<c
 At Home it covers all projects on the selected device and adds the project to each row.
 The core supplies My turn, Review · Merge, In progress, Resting and Resolved today in that order, leaving empty groups out and folding the last two initially.
 The four counts above the list are My turn, Review · Merge, In progress and Resolved today.
+My turn holds only what waits for the operator to move: an answer, a menu or plan approval, and a raised child.
+A Result, Fix or Stopped row rests in Resting with its tag and unread mark; Resting stays folded because the sidebar row's mark and the pane's band already show that news where the operator would open it.
 
 Each row has two lines: status mark, provider, stable task name, issue, PR/CI, direct-child badge and elapsed time; then its task tag, result line and checkout.
 The checkout in front has a left bar.
@@ -1513,7 +1515,7 @@ A device that cannot be reached shows one line and Try again in place of its lis
 `Not installed N` is a folded list of the rest, each with its official mark, its name and `Install ↗`, which opens the vendor's installation guide (`web/src/settings/agentRows.ts`); an agent with no program has no switch.
 A row is the agent's official mark (the same in light and dark), its name and a switch, with no line about what the switch puts there; `Docs ↗` to the kit's skills page for the agent shows only while the row is hovered or has keyboard focus, and always on a screen with no hover.
 The switch is that machine's: turning an agent on installs its skill and hook and the Herdr integration there, turning it off takes out only what Hide installed (docs/agent-hooks.md), and an agent that is off wears no status.
-A Claude Code, Codex or Pi row that is on, whose sessions Hide counts from their session files, says one of two things: `N sessions` for its sessions running on that machine now, or `Ready` when it is set up and has none; a sleeping agent is not running and is not counted.
+A Claude Code, Codex, Pi or omp row that is on, whose sessions Hide counts from their session files, says one of two things: `N sessions` for its sessions running on that machine now, or `Ready` when it is set up and has none; a sleeping agent is not running and is not counted.
 The count is all the row says about sessions: it lists none and does not say whether Hide hears each one, because a session that runs without Hide is fixed from its own pane header (docs/status-model.md).
 Grok and Cursor wear a `Basic` chip (`기본`, `基础`, `基本`), on or off; Claude Code, Codex, OpenCode, Pi and omp have both prompt intake and spawn refusal and wear no chip.
 Every other agent's row shows no status, on or off.
@@ -1523,6 +1525,11 @@ Every supported agent has Herdr's integration, so no row says its status is judg
 The support order, names, links, logo ids and start eligibility come from the shared adapter's generated contract rather than web-owned lists.
 Pi has native titles, Sleep and Fork from its complete session reader beside letters and the spawn guard from Hide's extension; it has no structured question/plan wait, Memory or subagent count.
 Pi starts with the existing first-prompt argument boundary and CLI model default, without an extra-folder argument.
+omp has native titles, Sleep and Fork from its complete session reader beside guidance, letters, subagents and the spawn guard from Hide's extension; its row wears no Basic chip.
+Its current native/manual title wins over a generated goal; an explicit clear returns to the existing fallback without replaying the conversation.
+An unanswered native `ask` enters the existing question state with bounded text and choices even with summaries off, and a correlated answer clears it.
+Its question keeps the existing Answer tag in the pane header even while the native session holds for an operator reply.
+Archive resume sends the selected source path to the core, which decides whether the native reader requires that exact file proof before starting.
 Escape closes the popover and focus returns to the chip.
 A part that failed, was removed or is outdated shows one line on that agent's row naming it (`Hook: Removed`, `Plugin: Outdated: …` for OpenCode's hook piece, `Herdr integration: Failed: …`) with Reinstall, only while the agent is on; a hook the operator removed stays removed until Reinstall or switching the agent off and on.
 An agent that is on and found whose hook Hide could not put in says why in one muted line without Reinstall, since nothing is broken: its program has not created its configuration folder yet, a file of that name is not Hide's, or Hide does not write that hook on this system (`Plugin: OpenCode has not created ~/.config/opencode yet; …`).
@@ -1594,11 +1601,11 @@ The header's `+`, 에이전트 시작, opens the start sheet: a text box for wha
 Pressing 시작 again for the same text and choice after a lost answer sends the same request id, and hided starts one agent for it.
 While hided is out of reach the sheet shows the unreachable line and keeps what was written; a refused start shows its reason inside the sheet and keeps the text, which is cleared only by a start that went.
 When hided is out of reach the last list stays dimmed under "연결 안 됨 · 맥의 hide가 꺼져 있거나 폰의 Tailscale이 꺼져 있어요. 다시 시도 중", the app retries on its own, and it shows the same line when opened without a network.
-A row opens its detail: ← 목록, the elapsed time and the row's head, with 대화 | 터미널 between ← 목록 and the elapsed time when the agent has a conversation to show, a Claude Code, Codex or Pi agent on this Mac whose session Herdr reports.
+A row opens its detail: ← 목록, the elapsed time and the row's head, with 대화 | 터미널 between ← 목록 and the elapsed time when the agent has a conversation to show, a Claude Code, Codex, Pi or omp agent on this Mac whose session Herdr reports.
 대화 is the agent's own conversation, its newest 30 messages with the newest at the bottom: the operator's messages as ❯ blocks on a grey ground, the agent's Markdown drawn at full width (headings, emphasis, lists, tables, and code wrapped without highlighting, a link or an image as its text), an interruption as 중단됨, and the time after each turn; pulling to the top loads 30 older messages at a time up to the first, and at 300 it says 최근 300개까지 볼 수 있어요.
 What the agent writes next arrives on its own, and tool output and injected context are never shown.
-Pi uses its recorded native message units and times, with the same 30-message paging and text bounds; every page, idle poll and copied pager proves the reported native owner and exact checkout under its default root again.
-An unavailable or changed Pi source falls back through the existing feature-local refusal path; no transcript is borrowed from another session and no new banner is added.
+Pi and omp use their recorded native message units and times, with the same 30-message paging and text bounds; every page, idle poll and copied pager proves the reported native owner and exact checkout under its default root again.
+An unavailable or changed native source falls back through the existing feature-local refusal path; no transcript is borrowed from another session and no new banner is added.
 터미널, and the whole detail of any other agent, is the pane's recent rows read-only in the terminal's colours with the newest at the bottom, each row wrapped at the phone's width so the detail never scrolls sideways; pulling to the top loads older rows until the pane has no more.
 Every detail has the quick keys (Enter, Escape, 위 화살표, 아래 화살표, Ctrl-C by accessible name) and a one-line reply with 보내기; a reply is sent with Enter after it and clears on success, a failure keeps the text with the reason under it, and a reply over 2,000 characters is named before it is sent.
 When hide cannot tell whether a reply reached the pane, the line says so and asks the operator to check the terminal before sending it again.

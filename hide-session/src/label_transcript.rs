@@ -257,7 +257,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     }
     let title = match request.agent {
         Agent::Codex => codex_thread_name(home, request, &path),
-        Agent::Claude | Agent::Pi | Agent::OpenCode => parsed.title.clone(),
+        Agent::Claude | Agent::Pi | Agent::Omp | Agent::OpenCode => parsed.title.clone(),
     };
     let anchor = events
         .iter()
@@ -607,7 +607,7 @@ mod tests {
         let path = transcript_path(root.path(), "session.jsonl");
         let huge = "x".repeat(crate::SESSION_LINE_LIMIT_BYTES + 10);
         let tool = serde_json::json!({"type":"user","sessionId":"s1","timestamp":"2026-10-01T00:00:01Z",
-            "message":{"role":"user","content":[{"type":"tool_result","content":huge}]}});
+            "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":huge}]}});
         fs::write(
             &path,
             claude_line("user", "s1", "request", "2026-10-01T00:00:00Z")
