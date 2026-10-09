@@ -673,6 +673,16 @@ impl Fixture {
                 .then_some(()))
         })?;
         fixture.wait_bridge(1)?;
+        // The device's CLI is a new file, which macOS checks the first time
+        // it starts, and a journey's hook runs it inside its budget; start it
+        // once here (docs/TESTING.md, rule 8).
+        let cli = fixture.remote.environment.home.join("bin/hide");
+        wait_for("the device's installed CLI", || {
+            Ok(cli.is_file().then_some(()))
+        })?;
+        let mut version = fixture.remote.environment.command(&cli);
+        version.arg("--version");
+        successful(version)?;
         Ok(fixture)
     }
 
