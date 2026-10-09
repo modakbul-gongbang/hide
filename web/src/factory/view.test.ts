@@ -1,8 +1,8 @@
 import { workerPanes } from "../../test/legacyFactoryWorkers";
 import { describe, expect, it } from "vitest";
 import { transitiveReduction } from "../projectBoard";
-import type { CardView, FactoryView } from "./model";
-import { boardColumns, factoryGraph, splitAtCuts, taskChain } from "./view";
+import type { CardView, FactoryView, Question } from "./model";
+import { boardColumns, factoryGraph, splitAtCuts, taskChain, wholeDecision } from "./view";
 
 function card(task: string, patch: Partial<CardView> = {}): CardView {
   return {
@@ -74,3 +74,21 @@ describe("splitAtCuts", () => {
     expect(splitAtCuts("a whole decision")).toEqual(["a whole decision"]);
   });
 });
+
+describe("wholeDecision", () => {
+  const text = "감시: The suggested retry for T-1 may fail the same way. The worker name is still held by an existing terminal.";
+  const question = (at: number) => ({ id: "Q10", text, answer: { text: "ok", chose: "ok", relayed_by: "screen", at } }) as unknown as Question;
+  const decision = (line: string, at = 5) => ({ text: line, by: "screen", at });
+
+  it("puts back the whole question answered in the same step, after a prefix too", () => {
+    expect(wholeDecision(decision(`${text.slice(0, 30)}\n[cut 90 bytes] -> ok`), [question(5)])).toBe(`${text} -> ok`);
+    expect(wholeDecision(decision(`뒤집음: ${text.slice(0, 30)}\n[cut 90 bytes] -> no`), [question(5)])).toBe(`뒤집음: ${text} -> no`);
+  });
+
+  it("leaves a decision alone that was not shortened, or whose question was answered at another moment", () => {
+    expect(wholeDecision(decision(`${text.slice(0, 30)}\n[cut 90 bytes] -> ok`, 6), [question(5)])).toBeNull();
+    expect(wholeDecision(decision("a whole decision -> ok"), [question(5)])).toBeNull();
+    expect(wholeDecision(decision("done: a report\n[cut 90 bytes]"), [question(5)])).toBeNull();
+  });
+});
+

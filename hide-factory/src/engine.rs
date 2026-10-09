@@ -22,6 +22,7 @@ use crate::model::*;
 use crate::role::{Permission, ROLE_NOT_ALLOWED, Role};
 use crate::store::{Event, Record, Store, StoreError, sha256_hex};
 use crate::summary::{self, FactorySummary};
+use crate::words::{self, Language};
 
 mod observer;
 
@@ -579,6 +580,7 @@ impl Engine {
             return Err(Failure::task("judgment", "paused"));
         }
         judgment.ai = factory.config.factory_ai.clone();
+        judgment.language = self.ports.environment.language();
         self.keep(
             &judgment.factory,
             judgment.task.as_deref(),
@@ -2022,6 +2024,7 @@ impl Engine {
                 workers,
             },
             ai: None,
+            language: Language::English,
         };
         self.with_task(factory, id, |task| {
             task.review = ReviewState::Requested { at: now }
@@ -2048,6 +2051,7 @@ impl Engine {
                     diff: None,
                 },
                 ai: None,
+                language: Language::English,
             };
             if self.submit_judgment(judgment).is_ok() {
                 self.judgments.insert(
@@ -2938,7 +2942,8 @@ impl Engine {
                 )
             }
             DiscoveryClass::Unrelated => {
-                self.notice(factory, id, &format!("무관한 발견: {text}"));
+                let notice = words::unrelated_notice(self.ports.environment.language(), text);
+                self.notice(factory, id, &notice);
                 Ok(json!({"message": "sent to the person's inbox", "discovery": discovery_id}))
             }
             DiscoveryClass::Prerequisite => {
@@ -3234,6 +3239,7 @@ impl Engine {
                 decisions,
             },
             ai: None,
+            language: Language::English,
         };
         match self.submit_judgment(drift.clone()) {
             Ok(()) => {
@@ -3263,6 +3269,7 @@ impl Engine {
                     diff: Some(diff.clone()),
                 },
                 ai: None,
+                language: Language::English,
             };
             match self.submit_judgment(judgment.clone()) {
                 Ok(()) => {
@@ -3349,7 +3356,9 @@ impl Engine {
             AttemptStage::PreMerge => self.ports.verifier.start_premerge(&factory, &task),
         };
         let now = self.now();
-        let number = task.failures + 1;
+        // The attempt's place in the Task's list: a run after an environment
+        // failure or a cancelled run is a new attempt with its own number.
+        let number = task.attempts.len() as u32 + 1;
         match started {
             Ok(run) => {
                 self.with_task(factory_id, id, |task| {
@@ -3398,9 +3407,20 @@ impl Engine {
         }
     }
 
+    /// Ends the run in flight and closes its attempt as cancelled, so a later
+    /// run is never listed beside one still shown as running.
     fn cancel_verification(&mut self, factory: &str, id: &str) {
         if let Some(state) = self.verifying.remove(&(factory.to_owned(), id.to_owned())) {
             self.ports.verifier.cancel(&state.run);
+            self.with_task(factory, id, |task| {
+                if let Some(attempt) = task
+                    .attempts
+                    .last_mut()
+                    .filter(|attempt| attempt.outcome.is_none())
+                {
+                    attempt.outcome = Some(AttemptOutcome::Cancelled);
+                }
+            });
         }
     }
 
@@ -3454,6 +3474,8 @@ impl Engine {
                     let failure = Failure::environment(&check, signal, "verification");
                     self.verification_environment(&factory_id, &id, &failure, &check);
                 }
+                // A poll answers; only a cancelled run closes as cancelled.
+                AttemptOutcome::Cancelled => {}
             }
         }
     }
@@ -5550,7 +5572,13 @@ impl Engine {
                     runtime,
                     project: factory.project.clone(),
                     branch: worker.branch.clone(),
-                    prompt: worker_prompt(&task, &factory, true, &self.hide_program),
+                    prompt: worker_prompt(
+                        &task,
+                        &factory,
+                        true,
+                        &self.hide_program,
+                        self.ports.environment.language(),
+                    ),
                     args: args.clone(),
                     model: candidate.model.clone(),
                     effort: candidate.effort.clone(),
@@ -5608,7 +5636,13 @@ impl Engine {
                 runtime,
                 project: factory.project.clone(),
                 branch: task.branch_slug(),
-                prompt: worker_prompt(&task, &factory, false, &self.hide_program),
+                prompt: worker_prompt(
+                    &task,
+                    &factory,
+                    false,
+                    &self.hide_program,
+                    self.ports.environment.language(),
+                ),
                 args,
                 model: candidate.model.clone(),
                 effort: candidate.effort.clone(),
@@ -6329,6 +6363,7 @@ impl Engine {
                 actions: RecoveryAction::ALL.to_vec(),
             },
             ai: None,
+            language: Language::English,
         };
         if self.submit_judgment(judgment.clone()).is_ok() {
             self.judgments
@@ -6438,6 +6473,7 @@ impl Engine {
             .map(|f| f.config.recovery.clone())
             .unwrap_or_default();
         let anchor = self.tasks_of(factory).last().map(|t| t.id.clone());
+        let language = self.ports.environment.language();
         match diagnosis.action {
             Some(action) if enabled.contains(&action) => {
                 self.run_recovery(factory, action);
@@ -6452,11 +6488,7 @@ impl Engine {
                             command: action.as_str().into(),
                             impact: diagnosis.cause.clone(),
                         },
-                        &format!(
-                            "환경 문제: {}. 복구 동작 {}을 실행할까요?",
-                            diagnosis.cause,
-                            action.as_str()
-                        ),
+                        &words::recovery_proposal(language, &diagnosis.cause, action),
                         "approve",
                         None,
                         None,
@@ -6475,10 +6507,7 @@ impl Engine {
                             command: command.clone(),
                             impact: impact.clone(),
                         },
-                        &format!(
-                            "환경 문제: {}. 사람이 실행할 명령: {command} (영향: {impact})",
-                            diagnosis.cause
-                        ),
+                        &words::command_proposal(language, &diagnosis.cause, &command, &impact),
                         "run it yourself",
                         None,
                         None,
@@ -6521,6 +6550,7 @@ impl Engine {
             priority: Priority::Factory,
             input: JudgmentInput::Watch { board },
             ai: None,
+            language: Language::English,
         };
         if let Some(f) = self.factories.get_mut(factory_id) {
             f.watch_last_at = Some(now);
@@ -6569,6 +6599,7 @@ impl Engine {
                         diff: None,
                     },
                     ai: None,
+                    language: Language::English,
                 };
                 match self.submit_judgment(judgment.clone()) {
                     Ok(()) => {
@@ -6667,12 +6698,14 @@ impl Engine {
                 );
                 continue;
             }
+            let notice =
+                words::watch_notice(self.ports.environment.language(), &warning.text, &action);
             self.add_question(
                 factory_id,
                 &anchor,
                 QuestionOrigin::Engine,
                 QuestionKind::Notice,
-                &format!("감시: {} (할 일: {action})", warning.text),
+                &notice,
                 &action,
                 None,
                 None,
@@ -7013,8 +7046,15 @@ fn card_text(card: &Card) -> String {
 }
 
 /// The worker's first prompt (B22): the card, the attachments, the harness
-/// preset and the Factory's reporting rules.
-pub fn worker_prompt(task: &Task, factory: &Factory, resumed: bool, hide: &str) -> String {
+/// preset and the Factory's reporting rules, with the operator's language
+/// every report is written in.
+pub fn worker_prompt(
+    task: &Task,
+    factory: &Factory,
+    resumed: bool,
+    hide: &str,
+    language: Language,
+) -> String {
     let mut prompt = String::new();
     if resumed {
         prompt.push_str("Factory: 같은 worktree에서 이 Task를 이어서 맡습니다. 지금까지 한 일을 확인하고 이어가세요.\n\n");
@@ -7035,6 +7075,7 @@ pub fn worker_prompt(task: &Task, factory: &Factory, resumed: bool, hide: &str) 
         ));
     }
     prompt.push_str(REPORTING_RULES);
+    prompt.push_str(&words::report_language_rule(language));
     if hide != "hide" {
         prompt.push_str(&format!(
             "- 위와 이후 편지의 `hide`는 모두 이 프로그램입니다: '{}'\n",

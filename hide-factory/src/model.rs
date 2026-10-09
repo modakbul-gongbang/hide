@@ -1180,7 +1180,8 @@ pub struct WorkerRef {
 /// A verification attempt in progress or finished.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attempt {
-    /// n of the n/3 count: fixes the worker submitted (D-53).
+    /// Its place in the Task's attempts, from 1. The n/3 count is the
+    /// Task's `failures`, not this.
     pub number: u32,
     pub commit: Option<String>,
     pub started_at: UnixMs,
@@ -1202,8 +1203,17 @@ pub enum AttemptStage {
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum AttemptOutcome {
     Passed,
-    Failed { check: String, link: String },
-    Environment { signal: String, check: String },
+    Failed {
+        check: String,
+        link: String,
+    },
+    Environment {
+        signal: String,
+        check: String,
+    },
+    /// The run was ended before it answered: the Task went back to its
+    /// worker, was cancelled, or an outside pull request took it.
+    Cancelled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -730,6 +730,20 @@ impl Runtime {
         )
     }
 
+    /// The operator's explicit interface language, `None` when the choice is
+    /// the system's; a stored value that is invalid reads as English, as the
+    /// snapshot shows it (docs/LOCALIZATION.md).
+    pub(crate) fn factory_interface_language(&self) -> Option<crate::model::InterfaceLanguage> {
+        self.snapshot
+            .ui_state
+            .interface_language
+            .as_ref()
+            .map(|value| {
+                serde_json::from_value(value.clone())
+                    .unwrap_or(crate::model::InterfaceLanguage::English)
+            })
+    }
+
     pub(crate) fn factory_ai_settings(&self) -> Option<hide_ai::AiSettings> {
         self.ai_settings.clone()
     }

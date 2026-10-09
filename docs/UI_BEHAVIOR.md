@@ -1202,7 +1202,10 @@ The graph still reduces transitive edges and places unrelated Tasks below; folde
 
 The Task page is full width: the chain (its predecessors → this Task → the Tasks waiting on it) at the top, the goal, completion criteria, out of scope and attachments on the left, and progress (pull request and CI, verification n/3, each attempt's log tail and CI link, the external wait, 'worker 보기') and the decision record on the right.
 Verification n/3 counts the worker's resubmissions and reads '검증 실패 n/3'; a Factory without verification shows '검증 없음'.
+The goal, often an issue body with headings and lists, reads as Markdown through the renderer an issue's body uses (`MarkdownText`), so its lines and headings stay.
 A done Task's completion criteria read as met, and a muted '… (줄임)' stands where the engine shortened a text, at its end or mid-sentence, instead of the store's cut mark.
+A decision the engine recorded with its question shortened has '전체 보기', which opens it in place to the whole question the Task still holds, and '접기' closes it; a text whose rest the store does not keep (a goal cut from a long issue body, a log tail) keeps only the cue.
+Attempts are numbered by their place in the Task's list, and a run the engine ended before it answered (the Task went back to its worker, was cancelled or taken outside) reads '취소됨' rather than running.
 The page offers only the actions the engine allows in the Task's state: 정리 중 edit (which opens the secretary) and cancel, 대기 priority, removing a dependency and cancel, 실행 중 pause and cancel, 멈춤 retry and cancel, 머지 대기 merge, request changes and cancel, a blocked Task nothing but its answer, and a cancelled Task 되살리기 while it lasts.
 The worker line names the worker that started as agent · model · effort, or 'CLI 기본값' for a candidate without them, with 'Factory AI가 고른 후보: <설명> · <이유>' when the review picked it.
 Before a worker starts, a Factory with more than one candidate shows a worker select with Factory AI's pick marked 'Factory AI가 고름' in the menu; choosing another pins it (`hide factory worker`) and choosing Factory AI's pick again returns the choice to it.
