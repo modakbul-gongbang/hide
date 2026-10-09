@@ -393,11 +393,15 @@ A failure wakes the worker with the check name, the log path or CI link, and the
 Environment failures and merge conflicts do not count.
 `retry` resets the count.
 
-**CI.** The check runs of the worktree's head commit are read on each tick with `gh api`.
+**CI.** The check runs of the worktree's head commit are read with `gh api --paginate`, keeping only each run's name, status, conclusion and link, one line per run.
+A whole run is about 3.5 KB and a node keeps 64 KiB of a command's output, so the full answer of a commit with twenty runs would be cut; a line is about 180 bytes.
+A commit whose read decided nothing is read again after 30 seconds.
 Every named check must have a completed run, and only named checks decide; a commit with no run of a named check yet is pending, never passed.
 `--ci` with no names takes the default branch's required checks from its protection, and `init` and `config ci=` refuse a Factory that would name no check (`ci_checks_required`).
 A completed run passes on `success` or `neutral`, decides nothing on `skipped`, `cancelled` or `stale` (still pending), and fails on any other conclusion with the run's link.
-A GitHub error that carries an environment signal is the environment's; any other read error stays pending.
+A GitHub error that carries an environment signal is the environment's.
+Any other read error, a line that is not a check run among them, is an unread answer: it decides nothing and counts as no failure, the run stays running and is read again, and the third unread answer of a run leaves a notice on the Task naming what the read answered, so a read that fails the same way each time is never shown as verifying in silence.
+A verify bundle's poll the node answered in a shape the Factory cannot read is unread the same way.
 
 **Verify bundle.** Bundles run one at a time on the machine, in a queue of at most 256, each command through the shell with its output in the run's log.
 The cap, `verify_timeout_minutes` (60 by default), applies to the whole bundle from its first command, and the command running when it passes fails the run.

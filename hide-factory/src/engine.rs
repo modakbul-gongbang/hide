@@ -117,7 +117,13 @@ const START_NOTICE_MS: u64 = 10 * MINUTE_MS;
 struct VerifyState {
     run: VerifyRun,
     stage: AttemptStage,
+    /// Answers of this run the Factory could not read.
+    unread: u32,
 }
+
+/// The unread answers of one run after which a person is told: a read that
+/// fails the same way each time never finishes the run on its own.
+const UNREAD_NOTICE_AFTER: u32 = 3;
 
 /// Failed store writes: a running count, and the ones the host has not
 /// logged yet (at most [`STORE_FAILURE_LIMIT`]).
@@ -3379,7 +3385,11 @@ impl Engine {
                 );
                 self.verifying.insert(
                     (factory_id.to_owned(), id.to_owned()),
-                    VerifyState { run, stage },
+                    VerifyState {
+                        run,
+                        stage,
+                        unread: 0,
+                    },
                 );
             }
             Err(failure) => self.verification_environment(factory_id, id, &failure, "start"),
@@ -3437,6 +3447,10 @@ impl Engine {
             let poll = self.ports.verifier.poll(&factory, &state.run);
             let outcome = match poll {
                 VerifyPoll::Pending => continue,
+                VerifyPoll::Unread { check, detail } => {
+                    self.verification_unread(&factory_id, &id, &check, &detail);
+                    continue;
+                }
                 VerifyPoll::Passed => AttemptOutcome::Passed,
                 VerifyPoll::Failed { check, link } => AttemptOutcome::Failed { check, link },
                 VerifyPoll::Environment { signal, check } => AttemptOutcome::Environment {
@@ -3477,6 +3491,35 @@ impl Engine {
                 // A poll answers; only a cancelled run closes as cancelled.
                 AttemptOutcome::Cancelled => {}
             }
+        }
+    }
+
+    /// An answer the Factory could not read decides nothing and is not the
+    /// environment's: the run stays running and is asked again, and the
+    /// third unread answer of a run tells a person what the read answered.
+    fn verification_unread(&mut self, factory: &str, id: &str, check: &str, detail: &str) {
+        let Some(state) = self.verifying.get_mut(&(factory.to_owned(), id.to_owned())) else {
+            return;
+        };
+        state.unread += 1;
+        let unread = state.unread;
+        let detail = judgment::cut(detail, 200);
+        if unread == 1 || unread == UNREAD_NOTICE_AFTER {
+            self.record(
+                factory,
+                Some(id),
+                "verify.unread",
+                json!({"check": check, "unread": unread, "detail": detail}),
+            );
+        }
+        if unread == UNREAD_NOTICE_AFTER {
+            self.once_notice(
+                factory,
+                id,
+                &format!(
+                    "검증 결과를 읽지 못해 검증이 끝나지 않습니다 ({check}): {detail}. 읽히는 대로 이어집니다."
+                ),
+            );
         }
     }
 
