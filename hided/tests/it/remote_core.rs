@@ -477,10 +477,12 @@ fn a_screen_on_the_node_draws_the_cores_state_and_its_own_pane() -> Result<()> {
             .build()?;
         runtime.block_on(async {
             node_link(port, "live", LINK_BOUND).await?;
-            ensure!(
-                !fixture.node_log("node_daemon", "started")?.is_empty(),
-                "the node role logged no start beside its state"
-            );
+            // The diagnostic log is written behind the daemon's own work.
+            tokio::task::block_in_place(|| {
+                wait_for("the node role's start logged beside its state", || {
+                    Ok((!fixture.node_log("node_daemon", "started")?.is_empty()).then_some(()))
+                })
+            })?;
             let mut socket = screen_socket(port, &token).await?;
             // The screen's first state is the core's: the node is one of its
             // devices.
@@ -1030,9 +1032,11 @@ fn a_pane_runs_at_the_grid_of_the_screen_that_last_typed_into_it() -> Result<()>
             let mut window = screen_socket(core_port, &core_token).await?;
             first_snapshot(&mut window, Duration::from_secs(20)).await?;
             draw_at(&mut window, &pane, 70, 21).await?;
-            let typed_wide = Instant::now();
             let grid = pane_grid(None, &mut socket, &pane, 2).await.context("grid 2")?;
             ensure!(grid == "33 120", "a window that only looks resized the pane: {grid}");
+            // The node tells the core of a pane's typing at most once a
+            // second, so the second is counted from the wide window's last.
+            let typed_wide = Instant::now();
             // It types: the pane takes its grid.
             let grid = pane_grid(Some(&mut window), &mut socket, &pane, 3).await.context("grid 3")?;
             ensure!(grid == "21 70", "the window that typed last: {grid}");
