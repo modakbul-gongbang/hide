@@ -1,7 +1,7 @@
 import { sectionTree, sectionCount, directChildren, unfoldedRows } from "../test/legacyRowTree";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { badgeLabel, badgeParts, badgeWords, branchChip, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sidebarLine } from "./agentRow";
+import { badgeLabel, badgeParts, badgeWords, branchChip, lineText, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sidebarLine } from "./agentRow";
 import { createInterfaceI18n } from "./i18n/instance";
 import type { AgentRow } from "./snapshot";
 
@@ -33,8 +33,8 @@ describe("the second line (sidebar-agent-status D-05, B7, B8)", () => {
     expect(lineTone(line, asking)).toBe("text-warning opacity-(--opacity-read-status)");
     const unread: AgentRow = legacyAgentRow({ ...asking, group: "needs_you", emphasized: true, unread: true });
     expect(lineTone(line, unread)).toBe("text-warning");
-    const failed = row("e", { demand: "error", detail: "빌드 실패", group: "needs_you", emphasized: true });
-    expect(lineTone(rowLine(failed)!, failed)).toBe("text-destructive");
+    const blocked = row("e", { demand: "error", detail: "디스크 여유가 없어 검증을 못 함", group: "needs_you", emphasized: true });
+    expect(lineTone(rowLine(blocked)!, blocked)).toBe("text-warning");
   });
 
   it("shows a changed row's sentence bright until the operator reads it, then only on selection", () => {
@@ -55,7 +55,7 @@ describe("the second line (sidebar-agent-status D-05, B7, B8)", () => {
 
 describe("the mark and the badge (D-01, D-02)", () => {
   it("draws a waiting root's ring in the working colour and every other row from its own axes", () => {
-    expect(markTone(row("root", { activity: "stopped", symbol: "○", waiting_on_descendants: true }))).toBe("text-agent-working");
+    expect(markTone(row("root", { activity: "stopped", symbol: "○", wait: "children" }))).toBe("text-agent-working");
     expect(markTone(row("idle", { activity: "stopped", symbol: "○" }))).toBe("text-subtle-foreground");
     expect(markTone(row("ask", { demand: "question", activity: "stopped", group: "needs_you", emphasized: true, unread: true }))).toBe("text-warning");
   });
@@ -63,7 +63,7 @@ describe("the mark and the badge (D-01, D-02)", () => {
   it("keeps a read demand's hue at reduced emphasis, so an unread one stands out", () => {
     expect(markTone(row("asked", { demand: "question", activity: "stopped", group: "seen" }))).toBe("text-warning opacity-(--opacity-read-status)");
     expect(markTone(row("approved", { demand: "approval", activity: "stopped", group: "seen" }))).toBe("text-warning opacity-(--opacity-read-status)");
-    expect(markTone(row("failed", { demand: "error", activity: "stopped", group: "seen" }))).toBe("text-destructive opacity-(--opacity-read-status)");
+    expect(markTone(row("blocked-read", { demand: "error", activity: "stopped", group: "seen" }))).toBe("text-warning opacity-(--opacity-read-status)");
     expect(markTone(row("blocked", { demand: "approval", activity: "stopped", group: "needs_you", emphasized: true }))).toBe("text-warning");
   });
 
@@ -78,7 +78,7 @@ describe("the mark and the badge (D-01, D-02)", () => {
 
   it("reads the badge in the selected language", async () => {
     const { t } = await createInterfaceI18n("ko");
-    expect(badgeWords({ error: 2, approval: 0, question: 1, working: 3, done: 0, idle: 1 }, t)).toBe("오류 2개, 질문 1개, 작업 중인 에이전트 3개, 쉬는 에이전트 1개");
+    expect(badgeWords({ error: 2, approval: 0, question: 1, working: 3, done: 0, idle: 1 }, t)).toBe("막힌 에이전트 2개, 질문 1개, 작업 중인 에이전트 3개, 쉬는 에이전트 1개");
     expect(badgeLabel({ question: 1 }, 2, t)).toBe("활성 하위 에이전트 2개: 질문 1개");
   });
 });
@@ -100,7 +100,7 @@ describe("the row's accessible name", () => {
 });
 
 describe("the tree a group section draws (D-03, B6)", () => {
-  const parent = row("p", { activity: "stopped", waiting_on_descendants: true, lineage_child_pane_ids: ["c1", "c2"], lineage_collapsed: true });
+  const parent = row("p", { activity: "stopped", wait: "children", lineage_child_pane_ids: ["c1", "c2"], lineage_collapsed: true });
   const c1 = row("c1", { delegated: true, lineage_depth: 1, lineage_child_pane_ids: ["g"], lineage_collapsed: true });
   const c2 = row("c2", { delegated: true, lineage_depth: 1, demand: "question" });
   const g = row("g", { delegated: true, lineage_depth: 2 });
@@ -165,5 +165,23 @@ describe("the Projects lineage fold (sidebar-readability D-6, B12)", () => {
   it("opens one level at a time: an unfolded parent shows its children and a folded child keeps its own", () => {
     const open = { lineage_collapsed: false };
     expect(walk([[row("a", open), 0], [row("b"), 1], [row("c"), 2], [row("e", open), 1], [row("f"), 2], [row("d"), 0]])).toEqual(["a", "b", "e", "f", "d"]);
+  });
+});
+
+describe("the stopped and waiting words (blocked-state D-07, D-10)", () => {
+  it("leads a stopped or waiting sentence with its word and leaves a block's cause alone", async () => {
+    const { t } = await createInterfaceI18n("ko");
+    const stopped = row("s", { activity: "stopped", symbol: "◐", status_code: "stopped", group: "done", unread: true, emphasized: true, detail: "테스트 3개 남음" });
+    expect(sidebarLine(stopped)).toMatchObject({ mode: "news" });
+    expect(lineText(t, stopped, sidebarLine(stopped)!)).toBe("멈춤 · 테스트 3개 남음");
+    const waiting = row("w", { activity: "stopped", symbol: "○", status_code: "waiting", wait: "background", detail: "CI 끝나기를 기다림" });
+    expect(sidebarLine(waiting)).toMatchObject({ mode: "waiting" });
+    expect(lineText(t, waiting, sidebarLine(waiting)!)).toBe("대기 · CI 끝나기를 기다림");
+    const blocked = row("b", { demand: "error", activity: "stopped", symbol: "▲", status_code: "error", group: "needs_you", emphasized: true, detail: "디스크 여유가 없음" });
+    expect(lineText(t, blocked, sidebarLine(blocked)!)).toBe("디스크 여유가 없음");
+  });
+
+  it("counts a stopped agent on the badge between working and done", () => {
+    expect(badgeParts({ error: 1, working: 1, stopped: 2, done: 1 }).map((part) => part.symbol)).toEqual(["▲", "●", "◐", "✓"]);
   });
 });

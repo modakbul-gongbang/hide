@@ -1310,7 +1310,7 @@ fn a_blocked_child_raises_its_own_turn_while_its_parent_keeps_its_own_group() {
     let root = agent_row(&runtime, "w1:p1");
     assert_eq!(root.group, "working");
     assert!(
-        !root.waiting_on_descendants,
+        root.wait.is_none(),
         "a root that is working itself is not waiting"
     );
     assert!(root.unread);
@@ -1348,14 +1348,14 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(root.waiting_on_descendants);
+    assert!(root.wait == Some(crate::model::AgentWait::Children));
     assert_eq!(root.group, "working", "a waiting root is not Done");
     assert_eq!(root.symbol, "\u{25cb}");
     assert_eq!(root.status_code, crate::model::AgentStatusCode::Waiting);
     assert!(!root.emphasized);
     assert_eq!(root.descendant_counts.working, 1);
     let wire = serde_json::to_value(root).unwrap();
-    assert_eq!(wire["waiting_on_descendants"], true);
+    assert_eq!(wire["wait"], "children");
     assert_eq!(
         wire["group"], "working",
         "no new group value reaches the wire"
@@ -1377,7 +1377,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(root.waiting_on_descendants);
+    assert!(root.wait == Some(crate::model::AgentWait::Children));
     assert_eq!(root.group, "working");
     assert_eq!(root.descendant_counts.question, 1);
     assert!(root.unread, "a child's question is news to the root");
@@ -1400,7 +1400,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(!root.waiting_on_descendants);
+    assert!(root.wait.is_none());
     assert_eq!(
         (root.group.as_str(), root.symbol.as_str()),
         ("needs_you", "?")
@@ -1413,7 +1413,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(!root.waiting_on_descendants);
+    assert!(root.wait.is_none());
     assert_eq!(
         (root.group.as_str(), root.symbol.as_str()),
         ("working", "\u{25cf}")
@@ -1428,7 +1428,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(!root.waiting_on_descendants);
+    assert!(root.wait.is_none());
     assert_eq!((root.group.as_str(), root.symbol.as_str()), ("done", "✓"));
 
     // A grandchild keeps the root waiting through a quiet middle row, and
@@ -1442,10 +1442,10 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(root.waiting_on_descendants);
+    assert!(root.wait == Some(crate::model::AgentWait::Children));
     assert_eq!(root.group, "working");
     assert!(
-        !agent_row(&runtime, "w1:p2").waiting_on_descendants,
+        agent_row(&runtime, "w1:p2").wait.is_none(),
         "only a lineage root waits; a delegated row keeps its own mark"
     );
     ingest_lineage(
@@ -1456,7 +1456,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
-    assert!(!root.waiting_on_descendants);
+    assert!(root.wait.is_none());
     assert_ne!(
         root.group, "working",
         "a closed child no longer holds the root"
@@ -1470,7 +1470,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
             ("w1:p2", Some("w1:p1"), "unrecognized", ""),
         ],
     );
-    assert!(!agent_row(&runtime, "w1:p1").waiting_on_descendants);
+    assert!(agent_row(&runtime, "w1:p1").wait.is_none());
     let _ = std::fs::remove_file(&runtime.state_path);
 }
 

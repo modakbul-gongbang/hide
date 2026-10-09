@@ -62,6 +62,7 @@ pub const GROUPS: [Group; 5] = [
 pub enum Tag {
     Answer,
     Approval,
+    Blocked,
     Fix,
     Review,
     Merge,
@@ -108,7 +109,7 @@ pub(crate) fn row(agent: &SidebarAgentSnapshot, verb: RequestVerb) -> Row {
     // result, a failed check or an unfinished turn rests with its tag and
     // the row's unread mark (docs/status-model.md, The Sessions tool).
     let group = match verb {
-        RequestVerb::Answer => Group::MyTurn,
+        RequestVerb::Answer | RequestVerb::Blocked => Group::MyTurn,
         RequestVerb::Review => Group::ReviewMerge,
         RequestVerb::Working | RequestVerb::Waiting => Group::InProgress,
         RequestVerb::Fix | RequestVerb::Stopped | RequestVerb::Result | RequestVerb::Idle => {
@@ -142,6 +143,8 @@ fn demand_tag(agent: &SidebarAgentSnapshot) -> Option<Tag> {
         Some(Tag::Approval)
     } else if agent.demand == "question" {
         Some(Tag::Answer)
+    } else if agent.demand == "error" {
+        Some(Tag::Blocked)
     } else {
         None
     }
@@ -150,6 +153,7 @@ fn demand_tag(agent: &SidebarAgentSnapshot) -> Option<Tag> {
 pub(crate) fn tag(agent: &SidebarAgentSnapshot, verb: RequestVerb) -> Tag {
     match verb {
         RequestVerb::Answer => demand_tag(agent).unwrap_or(Tag::Answer),
+        RequestVerb::Blocked => Tag::Blocked,
         RequestVerb::Fix => Tag::Fix,
         RequestVerb::Review => {
             let mut duties = agent

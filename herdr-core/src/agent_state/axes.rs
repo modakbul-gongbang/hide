@@ -1,16 +1,19 @@
 //! Lifecycle, completion, read and ownership axes, including lineage.
 use super::turn::{derive_from_axes, sort_agents};
-use crate::model::{PaneReadRecord, SidebarAgentSnapshot};
+use crate::labels::analysis::LabelEnd;
+use crate::model::{AgentWait, PaneReadRecord, SidebarAgentSnapshot};
 use crate::sidebar::SessionAgentPayload;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// What an agent needs from the operator.
 ///
 /// A question is the core label's verdict on the agent's last message;
-/// Herdr's `blocked` lifecycle is an approval. Whether the operator has read
-/// either is Hide's own judgment (`apply_read_state`). `Error` has no source
-/// since the hand-installed hook path was retired (PRD labels-in-hided D-06)
-/// and stays only so the wire value keeps its meaning.
+/// Herdr's `blocked` lifecycle is an approval. `Error` is the label's block
+/// (`end: blocked`): the agent stopped and named what stopped it, which is
+/// the operator's to clear. It keeps the wire name it had when it was a
+/// failure, so every consumer of the value reads one meaning, and it is not
+/// Herdr's `blocked` lifecycle. Whether the operator has read any of them is
+/// Hide's own judgment (`apply_read_state`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentDemand {
     Error,
@@ -273,8 +276,9 @@ pub fn apply_lineage(
         agent.lineage_collapsed = !expanded.contains(&agent.pane_id);
         agent.descendant_counts = descendant_counts[index];
         agent.direct_child_counts = direct_child_counts[index];
-        agent.waiting_on_descendants =
-            depth == 0 && quiet_itself(agent) && descendants_busy(&descendant_counts[index]);
+        agent.wait =
+            (depth == 0 && quiet_itself(agent) && descendants_busy(&descendant_counts[index]))
+                .then_some(AgentWait::Children);
         agent.descendant_signals = std::mem::take(&mut descendant_signals[index]);
     }
     // Ownership was unknown when the rows were first derived, because it is
@@ -317,6 +321,23 @@ fn close_order(children: &[Vec<usize>], parents: &[Option<usize>]) -> Vec<Vec<us
 fn quiet_itself(agent: &SidebarAgentSnapshot) -> bool {
     let (demand, activity, _) = axes_of(agent);
     demand == AgentDemand::None && activity == AgentActivity::Stopped && !agent.blocked
+}
+
+/// Whether the label read this stopped turn as not finished and nothing is
+/// left to wake the agent: it ended `unfinished`, or it said it waits (`waiting`)
+/// for something the session cannot prove is running (B15). The row stays
+/// where Herdr put it, in Done while unread, but draws no check: Done's check
+/// is for a turn the agent reported finished. Without a label the row has no
+/// such verdict and Herdr's `done` is drawn as it always was (D-16).
+pub(crate) fn stopped_unfinished(agent: &SidebarAgentSnapshot) -> bool {
+    let (demand, activity, _) = axes_of(agent);
+    demand == AgentDemand::None
+        && activity == AgentActivity::Stopped
+        && agent.wait.is_none()
+        && matches!(
+            agent.row_facts.as_ref().and_then(|facts| facts.end),
+            Some(LabelEnd::Unfinished | LabelEnd::Waiting)
+        )
 }
 
 /// Whether any live descendant is still busy: working, or holding a
@@ -671,10 +692,12 @@ pub(crate) fn derive_read_state(
     sort_agents(agents);
 }
 
-/// The demand axis. A question outranks an approval, so the worse thing
-/// waiting is the one the row names.
+/// The demand axis. A block outranks a question and a question an approval,
+/// so the worse thing waiting is the one the row names.
 pub(crate) fn agent_demand(agent: &SessionAgentPayload) -> AgentDemand {
-    if agent
+    if agent.label.as_ref().is_some_and(|label| label.blocked) {
+        AgentDemand::Error
+    } else if agent
         .facts
         .as_ref()
         .and_then(|facts| facts.user_turn.as_ref())

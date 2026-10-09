@@ -3,7 +3,7 @@ import { AgentMark } from "../AgentMark";
 import { agentClosing } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
-import { branchChip, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
+import { branchChip, lineText, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
 import { cn } from "../lib/utils";
 import type { AgentRow } from "../snapshot";
 import type { AgentMenuItem } from "../workspaceManage";
@@ -124,7 +124,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       data-pane={agent.pane_id}
       data-attention={attention ? "true" : "false"}
       data-delegated={agent.delegated ? "true" : "false"}
-      data-waiting={agent.waiting_on_descendants ? "true" : "false"}
+      data-waiting={agent.wait ?? "false"}
       data-agent-device={device ?? undefined}
       data-depth={depth}
       className={cn("group/row relative flex items-start gap-xs rounded-sm py-xs pr-xs text-body", selected ? "bg-secondary" : "hover:bg-accent")}
@@ -142,7 +142,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         />
       </Hint>
       <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
-        <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_code} />
+        <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.wait ? "waiting" : agent.status_code} />
         <AgentMark kind={agent.agent_kind} />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
@@ -180,7 +180,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         </span>
         {line ? (
           <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))}>
-            {line.text}
+            {lineText(t, agent, line)}
           </span>
         ) : null}
         {place ? (

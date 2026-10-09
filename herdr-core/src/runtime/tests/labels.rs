@@ -180,9 +180,9 @@ fn a_row_without_a_label_shows_the_sessions_own_title_and_the_request() {
     assert_eq!(row["request"]["request"]["sender"]["kind"], "operator");
 }
 
-/// B14, B18, B21: an unfinished turn stops the row and a wait on something
-/// other than a pull request waits; with agent summaries off the same row
-/// is named by its own title, carries no line and never stops.
+/// B9, B15, B21: an unfinished turn stops the row, and so does a turn that
+/// says it waits when nothing proven wakes the agent; with agent summaries off
+/// the same row is named by its own title, carries no line and never stops.
 #[test]
 fn an_unfinished_turn_stops_the_row_and_summaries_off_take_every_ai_field_away() {
     use crate::labels::analysis::LabelEnd;
@@ -206,7 +206,10 @@ fn an_unfinished_turn_stops_the_row_and_summaries_off_take_every_ai_field_away()
         "idle",
         true,
     ));
-    assert_eq!(waiting["request"]["verb"], "waiting");
+    assert_eq!(
+        waiting["request"]["verb"], "stopped",
+        "a wait with no proven wake device is a stop (B15)"
+    );
 
     let off = row(&runtime_with_record(
         record(LabelEnd::Unfinished),
@@ -217,6 +220,68 @@ fn an_unfinished_turn_stops_the_row_and_summaries_off_take_every_ai_field_away()
     assert!(off["request"].get("line").is_none(), "{off}");
     assert_ne!(off["request"]["verb"], "stopped");
     assert_eq!(off["request"]["request"]["text"], "요청 보기 만들어줘");
+}
+
+/// B1, B2, B3, B4, B10, D-25: a turn that named its cause is a block in Needs
+/// You with its own mark and word and the cause as the second line; reading
+/// it moves it to Seen and keeps the dimmed cause; the agent working again
+/// ends it. An unfinished turn is a half-disc in Done, never a check, and a
+/// turn the agent reported finished keeps the check.
+#[test]
+fn a_blocked_turn_is_a_needs_you_block_and_an_unfinished_one_a_stop_not_a_check() {
+    use crate::labels::analysis::LabelEnd;
+    let record = |end, line: &str| PaneRecord {
+        goal: Some("검증 레인 정리".to_owned()),
+        line: line.to_owned(),
+        end: Some(end),
+        facts: operator_asked("검증 돌려줘"),
+        ..PaneRecord::default()
+    };
+    let blocked = row(&runtime_with_record(
+        record(LabelEnd::Blocked, "디스크 여유가 없어 검증을 못 함"),
+        "done",
+        true,
+    ));
+    assert_eq!(blocked["demand"], "error");
+    assert_eq!(blocked["group"], "needs_you");
+    assert_eq!(blocked["symbol"], "\u{25b2}");
+    assert_eq!(blocked["status_code"], "error");
+    assert_eq!(blocked["detail"], "디스크 여유가 없어 검증을 못 함");
+    assert_eq!(blocked["request"]["verb"], "blocked");
+    assert_eq!(blocked["state"]["chip_tone"]["kind"], "warning");
+    assert_eq!(blocked["state"]["attention_rank"], 0);
+
+    let stopped = row(&runtime_with_record(
+        record(LabelEnd::Unfinished, "배포 단계가 남음"),
+        "done",
+        true,
+    ));
+    assert_eq!(stopped["demand"], "none");
+    assert_eq!(stopped["group"], "done");
+    assert_eq!(stopped["symbol"], "\u{25d0}");
+    assert_eq!(stopped["status_code"], "stopped");
+    assert_eq!(stopped["detail"], "배포 단계가 남음");
+    assert_eq!(stopped["request"]["verb"], "stopped");
+    assert_eq!(stopped["state"]["chip_tone"]["kind"], "subtle");
+
+    let done = row(&runtime_with_record(
+        record(LabelEnd::Done, "검증을 끝냄"),
+        "done",
+        true,
+    ));
+    assert_eq!(done["group"], "done");
+    assert_eq!(done["symbol"], "\u{2713}");
+    assert_eq!(done["status_code"], "done");
+
+    // With no label verdict (summaries off) the same Herdr `done` is the
+    // check it always was (D-16, B17).
+    let off = row(&runtime_with_record(
+        record(LabelEnd::Blocked, "디스크 여유가 없어 검증을 못 함"),
+        "done",
+        false,
+    ));
+    assert_eq!(off["demand"], "none");
+    assert_eq!(off["symbol"], "\u{2713}");
 }
 
 /// B15, D-29: opening a finished row reads the pane as a focus would, and

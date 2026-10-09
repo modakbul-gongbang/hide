@@ -5,6 +5,7 @@ import type { Catalog, Catalogs } from "../schema";
 export const requestsEnglish = {
   "requests.title": "Requests",
   "requests.verb.answer": "To answer",
+  "requests.verb.blocked": "Blocked",
   "requests.verb.fix": "To fix",
   "requests.verb.review": "Review · Merge",
   "requests.verb.stopped": "Stopped",
@@ -26,6 +27,7 @@ export const requestsEnglish = {
   "requests.sender.agent": "Agent",
   "requests.end.working": "Working",
   "requests.end.question": "Question",
+  "requests.end.blocked": "Blocked",
   "requests.end.done": "Done",
   "requests.end.waiting": "Waiting",
   "requests.end.unfinished": "Unfinished",
@@ -51,6 +53,7 @@ export const requestsEnglish = {
 const ko = {
   "requests.title": "요청",
   "requests.verb.answer": "답할 것",
+  "requests.verb.blocked": "막힘",
   "requests.verb.fix": "고칠 것",
   "requests.verb.review": "리뷰·머지",
   "requests.verb.stopped": "멈춤",
@@ -72,6 +75,7 @@ const ko = {
   "requests.sender.agent": "에이전트",
   "requests.end.working": "진행 중",
   "requests.end.question": "질문",
+  "requests.end.blocked": "막힘",
   "requests.end.done": "끝남",
   "requests.end.waiting": "기다림",
   "requests.end.unfinished": "덜 끝남",
@@ -97,6 +101,7 @@ const ko = {
 const zhCN = {
   "requests.title": "请求",
   "requests.verb.answer": "待回复",
+  "requests.verb.blocked": "受阻",
   "requests.verb.fix": "待修复",
   "requests.verb.review": "审查·合并",
   "requests.verb.stopped": "已停止",
@@ -118,6 +123,7 @@ const zhCN = {
   "requests.sender.agent": "智能体",
   "requests.end.working": "进行中",
   "requests.end.question": "提问",
+  "requests.end.blocked": "受阻",
   "requests.end.done": "已完成",
   "requests.end.waiting": "等待中",
   "requests.end.unfinished": "未完成",
@@ -143,6 +149,7 @@ const zhCN = {
 const ja = {
   "requests.title": "リクエスト",
   "requests.verb.answer": "返信が必要",
+  "requests.verb.blocked": "ブロック中",
   "requests.verb.fix": "修正が必要",
   "requests.verb.review": "レビュー・マージ",
   "requests.verb.stopped": "停止",
@@ -164,6 +171,7 @@ const ja = {
   "requests.sender.agent": "エージェント",
   "requests.end.working": "進行中",
   "requests.end.question": "質問",
+  "requests.end.blocked": "ブロック",
   "requests.end.done": "完了",
   "requests.end.waiting": "待機",
   "requests.end.unfinished": "未完了",

@@ -564,7 +564,7 @@ mod tests {
             delegated: false,
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
             direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
-            waiting_on_descendants: false,
+            wait: None,
             descendant_signals: std::collections::BTreeSet::new(),
             lineage_parent_pane_id: None,
             lineage_path_pane_ids: Vec::new(),

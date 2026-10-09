@@ -25,7 +25,7 @@ const GROUP_LABEL: Record<SessionGroup, MessageKey> = {
   resolved_today: "agentSessions.group.resolved_today",
 };
 const TAG_LABEL: Record<SessionTag, MessageKey> = {
-  answer: "agentSessions.tag.answer", approval: "agentSessions.tag.approval", fix: "agentSessions.tag.fix",
+  answer: "agentSessions.tag.answer", approval: "agentSessions.tag.approval", blocked: "agentSessions.tag.blocked", fix: "agentSessions.tag.fix",
   review: "agentSessions.tag.review", merge: "agentSessions.tag.merge", stopped: "agentSessions.tag.stopped",
   result: "agentSessions.tag.result", working: "agentSessions.tag.working", ci_wait: "agentSessions.tag.ci_wait",
   waiting: "agentSessions.tag.waiting", idle: "agentSessions.tag.idle",
