@@ -269,12 +269,15 @@ fn collect_grok(
     visited: &mut usize,
     limit: usize,
 ) -> Result<(), SessionCatalogError> {
-    let entries = |directory: &Path| {
-        fs::read_dir(directory).map_err(|source| SessionCatalogError::Io {
+    // Grok's own sweep may remove a folder between two listings.
+    let entries = |directory: &Path| match fs::read_dir(directory) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(SessionCatalogError::Io {
             operation: "read_directory",
             path: directory.to_path_buf(),
             source,
-        })
+        }),
     };
     let visit = |visited: &mut usize| {
         *visited = visited.saturating_add(1);
@@ -300,8 +303,14 @@ fn collect_grok(
         }
         Ok::<_, SessionCatalogError>(folders)
     };
-    for group in folders(entries(root)?, visited)? {
-        for session in folders(entries(&group)?, visited)? {
+    let Some(groups) = entries(root)? else {
+        return Ok(());
+    };
+    for group in folders(groups, visited)? {
+        let Some(sessions) = entries(&group)? else {
+            continue;
+        };
+        for session in folders(sessions, visited)? {
             output.push((Agent::Grok, session.join(crate::grok::UPDATES)));
         }
     }

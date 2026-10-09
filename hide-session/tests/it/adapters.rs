@@ -1447,10 +1447,14 @@ mod grok {
         assert_eq!(answer.facts.session_id.as_deref(), Some(GROK_ID));
         assert_eq!(answer.facts.prs.len(), 1);
         let candidates = hide_session::links::candidates(native.home.path(), 0, None).unwrap();
+        let grok: Vec<_> = candidates
+            .iter()
+            .filter(|candidate| candidate.agent == Agent::Grok)
+            .collect();
+        let root = fs::canonicalize(&native.path).unwrap();
+        assert!(grok.iter().any(|candidate| candidate.path == root));
         assert!(
-            candidates
-                .iter()
-                .filter(|candidate| candidate.agent == Agent::Grok)
+            grok.iter()
                 .all(|candidate| candidate.path.ends_with("updates.jsonl"))
         );
     }
