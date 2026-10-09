@@ -19,7 +19,7 @@ export function sidebarPanes(workspaces: readonly Workspace[], scope: AgentScope
  * The pane whose row stands for the focused pane: the focused pane when the
  * sidebar draws it, otherwise its nearest ancestor that it draws, since a
  * delegated child is reached through its parent's badge (docs/UI_BEHAVIOR.md,
- * The sidebar follows the focus). Null when no pane on that line is drawn.
+ * Sidebar hierarchy). Null when no pane on that line is drawn.
  */
 export function sidebarFocusPane(focused: string | null, agents: readonly AgentRow[], drawn: ReadonlySet<string>): string | null {
   const parents = new Map(agents.map((agent) => [agent.pane_id, agent.lineage_parent_pane_id ?? null]));

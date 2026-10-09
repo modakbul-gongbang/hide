@@ -606,11 +606,17 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const workspaceVisible = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
   const focusedProjectId = workspaceVisible ? (workspaces.find((workspace) => workspace.checkouts.some((checkout) => checkout.id === focusedCheckoutId))?.id ?? null) : null;
   const list = useRef<HTMLUListElement>(null);
+  const revealed = useRef<string | null>(null);
   // The focus's row is brought into view when the focus moves, before the frame
-  // is painted, and never on a snapshot that keeps it, so a list the operator
-  // scrolled stays where they left it.
+  // is painted, and never while the focus stays where it was revealed, through
+  // a snapshot or another screen in front, so a list the operator scrolled
+  // stays where they left it.
   useLayoutEffect(() => {
-    if (workspaceVisible && list.current) revealSidebarFocus(list.current);
+    if (!workspaceVisible || !list.current) return;
+    const focus = `${focusedCheckoutId ?? ""}\u0000${focusedPaneId ?? ""}`;
+    if (focus === revealed.current) return;
+    revealed.current = focus;
+    revealSidebarFocus(list.current);
   }, [loaded, workspaceVisible, focusedCheckoutId, focusedPaneId]);
   const catalogState = useShellStore((s) => catalogLineOf(s.rest, t)?.state ?? null);
   const catalogText = useShellStore((s) => catalogLineOf(s.rest, t)?.text ?? null);

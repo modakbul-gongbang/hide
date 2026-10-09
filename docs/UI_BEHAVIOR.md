@@ -977,13 +977,13 @@ Choosing a tile keeps each device's list apart, and ⌥n numbers its visible roo
 Search opens the ⌘K palette and Add project the Add a project dialog (see Adding a project), on this machine or a selected SSH device alike; there is no Search field row and no bottom new-workspace button.
 The Herdr status line sits under the top and above the list, and is not shown while a device is in front.
 The web Projects list is the scope picker, starting at its first project.
-The shared Overview row carries the selected fill and current-location marker while its modal or page is shown; Home and project headings do not.
+The shared Overview row carries the selected fill and current-location marker while its modal or page is shown; Home and project headings do not, and a project heading is filled only while a Workspace is in front and its fold hides the focused checkout (below).
 Expanded projects contain checkout rows only, with no Overview child.
 A Workspace selects its focused checkout and visible agent rows.
 A focused delegated child has no row of its own, so the nearest ancestor row the list draws carries its selection.
 While a fold hides the focused checkout's row, the row that hides it carries the selection instead: the folded project's row, or the Inactive, empty-worktree, cleanup or inactive-projects fold that holds it; no fold opens by itself, so the operator's folds stay as they left them.
 When the focus moves, the list scrolls by as little as brings the selected row into view, the agent row before its checkout's, and not at all while one is already in view; an agent selected both raised and in its tree is brought in at its tree row.
-A snapshot that keeps the focus never scrolls the list, so a list the operator scrolled stays where they left it (`web/src/sidebarFocus.ts`, `web/src/sidebarFollowsFocus.test.tsx`).
+A focus that has not moved since it was brought into view never scrolls the list, whether a snapshot arrives or the Workspace comes back in front from another screen, so a list the operator scrolled stays where they left it (`web/src/sidebarFocus.ts`, `web/src/sidebarFollowsFocus.test.tsx`).
 
 A plain folder, a project that is not a Git repository and holds one checkout, is one web row instead of a project row over an identical checkout row.
 Its first line is the project's folder glyph, name and status badge, set in the checkout row's columns, and the badge stays while its agent rows are open, as a project's does; its second line and trailing chevron are the checkout's, and a plain folder has no commit age.

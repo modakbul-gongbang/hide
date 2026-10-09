@@ -119,6 +119,12 @@ it("selects and brings into view the row that stands for the focused pane, openi
     expect(scrolled.at(-1)).toBe(inactive);
     expect(events.filter((event) => event.kind.includes("toggle"))).toEqual([]);
 
+    // Another screen in front and back, the focus where it was: the list stays where the operator left it.
+    const revealedSoFar = scrolled.length;
+    await act(async () => useUiStore.setState({ screen: { kind: "main" } }));
+    await act(async () => useUiStore.setState({ screen: { kind: "workspace" } }));
+    expect(scrolled).toHaveLength(revealedSoFar);
+
     // A row already in view stays where it is when the focus moves to it.
     const before = scrolled.length;
     rowTop = 40;
