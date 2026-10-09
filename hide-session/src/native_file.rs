@@ -539,8 +539,29 @@ pub(crate) fn parse_line(agent: Agent, item: &Value) -> LineResult {
             });
         }
         Some("message") => (),
-        // Compaction, branch summaries, extension custom messages and context
-        // edits are not human turns. Pi's export retains the raw history.
+        // Hide's own extension writes its hidden message (guidance, letters,
+        // Memory) as a custom message the host stores beside the prompt; it is
+        // what the agent was given, never what the operator typed, and the
+        // Memory receipt inside it is read from here (PRD pi-omp-extension
+        // D-03, D-09).
+        Some("custom_message") if item["customType"] == "hide" => {
+            let at = match crate::timestamp_ms(item.get("timestamp")) {
+                Ok(at) => at,
+                Err(reason) => return LineResult::Skip(reason),
+            };
+            let text = crate::session_text(item.get("content")).unwrap_or_default();
+            return if text.is_empty() {
+                LineResult::Ignore
+            } else {
+                LineResult::Event(
+                    ConversationEvent::new("user", EventKind::Injected, at, text)
+                        .with_provider_injected(true),
+                )
+            };
+        }
+        // Compaction, branch summaries, other extensions' custom messages and
+        // context edits are not human turns. Pi's export retains the raw
+        // history.
         _ => return LineResult::Ignore,
     }
     let message = &item["message"];
@@ -593,6 +614,10 @@ pub(crate) fn parse_line(agent: Agent, item: &Value) -> LineResult {
             text,
         )
         .with_images(images)
-        .with_provider_injected(kind == EventKind::Injected),
+        // Only what the host itself recorded as context is the provider's;
+        // an operator's message that merely starts like a reminder is shown
+        // as injected but never asserts a Memory receipt, as with Claude
+        // Code's transcripts.
+        .with_provider_injected(role != "user" && kind == EventKind::Injected),
     )
 }
