@@ -87,7 +87,7 @@ The `workspace-servers` and `session-search` gallery scenes render the productio
 A frame may name `referenceNode` when the approved scratch uses a different node ID; baseline exports that reference node while review exports the committed `node`, retaining both identities and their actual dimensions in the comparison.
 A target in `design/review-targets.json` names what one run covers: the committed Pen file and its `Screen /` sheet, the Pen nodes it pairs with the screen and each node's width, theme, text scale, content and state, the gallery scene, the states the scene can be put in, the conditions to measure, the default layout rules, and the questions left to a person.
 Targets exist for `projects-sidebar`, `workspace-servers`, `session-search`, `area-focus` and `factory`, and `design/review-targets.json` is the inventory; add one when a change touches another screen, not before.
-`factory` pairs the Light and Dark `Screen / Factory` windows with the Factory scene's `내 차례`, graph and Task page states, takes the delegated proposal's Light pictures e1, e2 and e3 as the reference of both themes, and measures the screen with `web/e2e/factory-geometry.mjs` (no overlapping parts, no sideways overflow).
+`factory` pairs the Light and Dark `Screen / Factory` windows with the Factory scene's 라인, graph and Task page states, takes the delegated proposal's Light picture e3 as the graph's reference of both themes (the 라인 and Task page frames are their own reference), and measures the screen with `web/e2e/factory-geometry.mjs` (no overlapping parts, no sideways overflow).
 Its selector is the scene root, not `[data-factory-screen]`, because the Pen frame is the whole window and a comparison image has to be as wide as its frame.
 `area-focus` measures the production shared area renderer and View tabs with read-only Korean content, enforcing one keyboard area, retained selections, stable geometry and unfiltered content; real terminal and native browser behavior still requires an isolated app capture.
 
@@ -241,14 +241,17 @@ The library Checkbox and Button are refs; the table is a screen-local grid drawn
 Its web files are `web/src/DiskCleanupSheet.tsx`, `web/src/diskCleanup.ts` and `web/src/ProjectOverview.tsx`.
 
 Factory is `Screen / Factory`.
-It draws the Factory place in the window, from one invented data set so the flow counts, the 내 차례 number and the sidebar badge agree.
-The sidebar carries the Factory row under Overview with the 내 차례 number in warning and ⇧⌘F, and the 비서 row beneath it once a Factory exists.
-The header is Factory, the project filter, `+ Factory 만들기` and `비서에게 묻기`, and under it the flow bar `정리 중 · 대기 · 실행 중 · 완료 오늘` with the last GitHub read at its end and no person-turn cell, then the tabs `내 차례 · 보드 · 그래프 · 설정`.
-내 차례 is one column grouped `답할 것`, `머지 대기`, `멈춤` and `알림`: the top item is open with numbered choices, the suggestion picked, a send button that names the answer, the result beside it, the default line and `자세히`, the other items are one line each, and `Factory 밖 에이전트 요청 N → 요청` closes the list.
+It draws the Factory place in the window, from one invented data set so the 결정 필요 count, the 라인 tab number and the sidebar badge agree.
+The sidebar carries the Factory row under Overview with that number in warning and ⇧⌘F, each Factory under it, and the 비서 row beneath them once a Factory exists.
+The header is Factory, the project filter, the pause, `+ Factory 만들기` and `비서에게 묻기`, then the tabs `라인 · 보드 · 그래프 · 설정` with the Factory's state at the row's end: the last GitHub read (dimmed once it is old), `main 깨짐` and the daily AI limit; there is no flow bar.
+The 라인, 결정 필요 and Task page frames (`fx-loop-*`, PRD factory-human-loop) are the operator's approved design and lead the code, which still draws 내 차례 until that PRD lands.
+라인 opens with 결정 필요, only what the person moves, every item one shape: a sentence, what it stopped, two or three choices with their results and the recommended one, `다른 답`, the default and its deadline, or one button for a to-do (with a copyable command where the person runs one), and the evidence folded at its foot.
+Under it is one table row per Task (title, issue and PR, the steps `접수 · 작업 · 검증 · 머지` with the current one named, what it does now in one sentence, elapsed time, how many answers Factory AI gave), the person's turn alone in the warning band, and 후속 후보 folded at the foot; a second frame draws every 결정 필요 kind at once.
+The Task page reads top to bottom: title and state sentence, the track with who decided where, summary, the criteria checklist, decisions split `내가 정한 것` / `AI가 정한 것` with `다른 답`, the activity timeline with four-part reports, the original issue rendered, and the Task's 후속 후보.
+The 라인 with no Task, its first read and a Task page that could not be read are frames of their own.
 보드 has the four columns with the person-turn cards in the warning border on top, a state mark on every card and old completions folded into one line; 그래프 lays the Tasks out in layers with arrows, draws none for a dependency a longer path implies, dims finished work and puts the unrelated Tasks below.
-The Task page is full width: the chain, the card fields on the left, the progress and the decision record on the right, and only the buttons the state allows.
-The create sheet is drawn detecting, with the required checks, with verify command candidates and with nothing detected (auto unavailable, manual), each listing what it writes on GitHub; the empty states are no Factory (only `+ Factory 만들기`) and no Tasks (the intake line).
-The cards, rows and sheet are drawn on local tokens and library refs in this sheet, not as `Component /` masters, because each is one screen's part (`web/src/factory/`) rather than a composite under `web/src/components`.
+The create sheet is drawn detecting, with the required checks, with verify command candidates and with nothing detected (auto unavailable, manual), each listing what it writes on GitHub; with no Factory the screen offers only `+ Factory 만들기`.
+The cards, rows, 결정 필요 items, track and sheet are drawn on local tokens and library refs in this sheet, not as `Component /` masters, because each is one screen's part (`web/src/factory/`) rather than a composite under `web/src/components`.
 Its builder is `scripts/pen-screens-factory.mjs`, and its web files are `web/src/factory/FactoryScreen.tsx`, `MyTurn.tsx`, `FactoryBoard.tsx`, `FactoryGraph.tsx`, `FactoryCard.tsx`, `TaskPage.tsx`, `CreateSheet.tsx` and `web/src/components/sidebar-header.tsx`.
 
 ## How to add a token

@@ -328,7 +328,7 @@
     ]
   },
   "factory": {
-    "description": "The Factory screens: 내 차례 with its top item open, the graph and a Task page, beside the shell's sidebar with the Factory row and the 비서 row.",
+    "description": "The Factory screens: the 라인 with 결정 필요 on top (PRD factory-human-loop), the graph and the Task page, beside the shell's sidebar with the Factory row and the 비서 row.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-factory",
     "scene": "factory",
@@ -336,22 +336,20 @@
     "measurement": "web/e2e/factory-geometry.mjs",
     "frames": [
       {
-        "node": "fx-turn-l",
+        "node": "fx-loop-line-l",
         "theme": "light",
         "width": 1440,
         "scale": 1,
         "content": "reference",
-        "state": "rest",
-        "referenceNode": "e1"
+        "state": "line"
       },
       {
-        "node": "fx-turn-d",
+        "node": "fx-loop-line-d",
         "theme": "dark",
         "width": 1440,
         "scale": 1,
         "content": "reference",
-        "state": "rest",
-        "referenceNode": "e1"
+        "state": "line"
       },
       {
         "node": "fx-graph-l",
@@ -372,22 +370,20 @@
         "referenceNode": "e3"
       },
       {
-        "node": "fx-task-l",
+        "node": "fx-loop-task-l",
         "theme": "light",
         "width": 1440,
         "scale": 1,
         "content": "reference",
-        "state": "task",
-        "referenceNode": "e2"
+        "state": "task"
       },
       {
-        "node": "fx-task-d",
+        "node": "fx-loop-task-d",
         "theme": "dark",
         "width": 1440,
         "scale": 1,
         "content": "reference",
-        "state": "task",
-        "referenceNode": "e2"
+        "state": "task"
       }
     ],
     "conditions": {
@@ -404,21 +400,21 @@
       ]
     },
     "states": {
-      "rest": "내 차례 at rest: the first item open with its suggestion picked, nothing hovered or focused.",
+      "line": "라인 at rest: 결정 필요 on top with its items open, one row per Task beneath, the person's turn in the warning band, 후속 후보 folded at the foot.",
       "board": "보드: four lanes by movement, 시작 전 · 진행 중 · 멈춤 (나를 기다림, 다른 걸 기다림) · 완료, with the narrow lanes drawing their cards small and old completions folded.",
       "graph": "그래프: layered Tasks with arrows, none for a dependency a longer path implies, and the unrelated Tasks below.",
-      "task": "Task page of the running Task with its chain, card fields, progress and decision record."
+      "task": "Task page of the verifying Task: the state sentence, the track with who decided where, summary, the criteria checklist, decisions split 나 / AI with one 다른 답 open, the activity timeline, the original issue and its 후속 후보."
     },
     "rules": {
       "noOverlap": true,
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "Each reference, current Pen and actual trio: do spacing, weight, color and alignment carry the same intent? The flow bar has no 사람 차례 cell on purpose (PRD B12), so that cell is the one expected difference from the reference pictures.",
-      "The Dark frames have no reference picture of their own; they are set against the Light one. Does Dark use the tokens as the Light does, with the same hierarchy?",
-      "Does the top item of 내 차례 read as one decision: the answer on the button, the result beside it, the default line below, and 자세히 as the way out?",
-      "Does the person-turn card read as the person's turn in the warning border without a separate column, on the board and in the graph?",
-      "Long Korean titles and the long issue number: is a title still recognizable where the card or row cuts it, and does nothing overlap?"
+      "The 라인 and Task page frames are the approved design of PRD factory-human-loop with no reference picture: do spacing, weight, color and alignment carry the same intent as the Pen frame? The graph keeps its reference picture e3.",
+      "The Dark frames are set against the Light ones. Does Dark use the tokens as the Light does, with the same hierarchy?",
+      "Does each 결정 필요 item read as one decision: the sentence, what stopped, the choices with their results and 추천, 다른 답, the default line, and the folded 근거?",
+      "Is the warning band on the person's rows the only colour that says whose turn it is, on the 라인, the board and the graph?",
+      "Long Korean titles and the long issue number: is a title still recognizable where the row cuts it, and does nothing overlap?"
     ]
   },
   "factory-board": {
@@ -509,29 +505,13 @@
     ]
   },
   "factory-observer": {
-    "description": "The Factory with Factory AI as Observer (PRD factory-observer): 내 차례 with notices, the settings in each mode, all projects, a paused Factory, the quiet Task page, picking the worker, and the cards the Observer changes.",
+    "description": "The Factory with Factory AI as Observer (PRD factory-observer): the settings in each mode, all projects, picking the worker, and the cards the Observer changes. Its 내 차례, paused and quiet Task page frames were replaced by the 라인 and Task page of the factory target (PRD factory-human-loop).",
     "file": "design/hide-screens.pen",
     "sheet": "screen-factory",
     "scene": "factory",
     "selector": "[data-gallery-scene=\"factory\"]",
     "measurement": "web/e2e/factory-geometry.mjs",
     "frames": [
-      {
-        "node": "fx-obs-turn-l",
-        "theme": "light",
-        "width": 1440,
-        "scale": 1,
-        "content": "reference",
-        "state": "obs-turn"
-      },
-      {
-        "node": "fx-obs-turn-d",
-        "theme": "dark",
-        "width": 1440,
-        "scale": 1,
-        "content": "reference",
-        "state": "obs-turn"
-      },
       {
         "node": "fx-obs-set-l",
         "theme": "light",
@@ -613,38 +593,6 @@
         "state": "obs-all"
       },
       {
-        "node": "fx-obs-paused-l",
-        "theme": "light",
-        "width": 1440,
-        "scale": 1,
-        "content": "reference",
-        "state": "obs-paused"
-      },
-      {
-        "node": "fx-obs-paused-d",
-        "theme": "dark",
-        "width": 1440,
-        "scale": 1,
-        "content": "reference",
-        "state": "obs-paused"
-      },
-      {
-        "node": "fx-obs-task-l",
-        "theme": "light",
-        "width": 1440,
-        "scale": 1,
-        "content": "reference",
-        "state": "obs-task"
-      },
-      {
-        "node": "fx-obs-task-d",
-        "theme": "dark",
-        "width": 1440,
-        "scale": 1,
-        "content": "reference",
-        "state": "obs-task"
-      },
-      {
         "node": "fx-obs-pick-l",
         "theme": "light",
         "width": 1440,
@@ -690,26 +638,20 @@
       ]
     },
     "urlStates": [
-      "obs-turn",
       "obs-set",
       "obs-direct",
       "obs-auto",
       "obs-off",
       "obs-all",
-      "obs-paused",
-      "obs-task",
       "obs-pick",
       "obs-cards"
     ],
     "states": {
-      "obs-turn": "내 차례 with Factory AI: the count holds answers, merges and stops only; what Factory AI handled sits below the line as notices with 다른 답.",
       "obs-set": "설정 · herdr-ide with 함께: the three mode cards, the table of who answers, Factory AI's agent and today's use, three worker candidates.",
       "obs-direct": "설정 · 직접 with one candidate and 고급 설정 open.",
       "obs-auto": "설정 · 맡김 with five candidates, today's AI use at 100/100.",
       "obs-off": "설정 with Hide AI off: the modes dimmed with the note that every decision comes to the person.",
       "obs-all": "설정 · 모든 프로젝트: one row per Factory with state, mode and worker, and the machine's worker total.",
-      "obs-paused": "내 차례 · sasu paused: the paused chip and 다시 시작 in the header, 잠듦 in the flow bar.",
-      "obs-task": "The Task page of a worker that went quiet: the stop line, Factory AI's diagnosis, and its decisions with 다른 답.",
       "obs-pick": "The Task page before it starts, with the worker menu open and Factory AI's pick marked.",
       "obs-cards": "The five cards the Observer changes (answer, wrong card, no report, worker gone, paused) at 210, 300 and 470 px."
     },
@@ -718,11 +660,9 @@
       "noSidewaysOverflow": true
     },
     "judgment": [
-      "Does 내 차례's count leave out what Factory AI already handled, with those notices quiet below the line and 다른 답 one click away?",
       "Do the three mode cards and the table say who answers each kind of decision without reading a paragraph?",
       "With Hide AI off or the day's use full, is it plain that every decision comes to the person?",
-      "Does a paused Factory read as asleep in the header, the flow bar and its cards, while its questions still wait?",
-      "On the Task page, is Factory AI's diagnosis and pick one quiet line under what it explains?"
+      "On the worker pick, is Factory AI's pick and its reason one quiet line under what it explains?"
     ]
   }
 }
