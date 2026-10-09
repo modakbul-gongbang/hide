@@ -19,18 +19,16 @@ fn program(folder: &Path, name: &str) -> PathBuf {
     path
 }
 
-/// A stand-in login shell whose startup files put `extra` on the `PATH`.
-fn shell_adding(folder: &Path, extra: &Path) -> PathBuf {
+/// A stand-in login shell whose startup files put `installer-bin`, beside
+/// the home it is asked for, on the `PATH`. Every shell here is a stand-in
+/// (`stand_ins.rs`), so its first start is paid before the ask's deadline
+/// starts rather than inside it.
+fn shell_adding_installer_bin(folder: &Path) -> PathBuf {
     let shell = folder.join("shell");
-    fs::write(
+    crate::stand_ins::program(
         &shell,
-        format!(
-            "#!/bin/sh\nPATH=\"{}:$PATH\"\nexport PATH\n[ \"$1\" = -ilc ] || exit 64\neval \"$2\"\n",
-            extra.display()
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
+        "#!/bin/sh\n[ \"$1\" = -ilc ] || exit 64\nPATH=\"${HOME%/*}/installer-bin:$PATH\"\nexport PATH\neval \"$2\"\n",
+    );
     shell
 }
 
@@ -40,7 +38,7 @@ fn a_program_only_the_login_shells_path_reaches_is_found() {
     let home = root.path().join("home");
     let shells_folder = root.path().join("installer-bin");
     let installed = program(&shells_folder, "hide-fixture-agent-a");
-    let shell = shell_adding(root.path(), &shells_folder);
+    let shell = shell_adding_installer_bin(root.path());
 
     let found = programs::find_cli_with(
         &home,
@@ -73,18 +71,13 @@ fn a_program_in_an_install_folder_the_daemons_path_misses_is_found() {
 }
 
 /// A stand-in login shell that records each time it is started, one line per
-/// start in `starts`.
-fn counting_shell(folder: &Path, starts: &Path) -> PathBuf {
+/// start in `starts` beside the home it is asked for.
+fn counting_shell(folder: &Path) -> PathBuf {
     let shell = folder.join("counting-shell");
-    fs::write(
+    crate::stand_ins::program(
         &shell,
-        format!(
-            "#!/bin/sh\necho started >> \"{}\"\n[ \"$1\" = -ilc ] || exit 64\neval \"$2\"\n",
-            starts.display()
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
+        "#!/bin/sh\n[ \"$1\" = -ilc ] || exit 64\necho started >> \"${HOME%/*}/starts\"\neval \"$2\"\n",
+    );
     shell
 }
 
@@ -97,7 +90,7 @@ fn callers_that_arrive_cold_together_start_one_shell() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home");
     let started = root.path().join("starts");
-    let shell = counting_shell(root.path(), &started);
+    let shell = counting_shell(root.path());
     let callers = 6;
     let together = Barrier::new(callers);
 
@@ -125,7 +118,7 @@ fn callers_that_arrive_cold_together_start_one_shell() {
 fn a_second_home_does_not_make_the_first_ask_again() {
     let root = tempfile::tempdir().unwrap();
     let started = root.path().join("starts");
-    let shell = counting_shell(root.path(), &started);
+    let shell = counting_shell(root.path());
     let stop = AtomicBool::new(false);
     let first = root.path().join("first-home");
     let second = root.path().join("second-home");
@@ -151,6 +144,12 @@ fn the_path_a_program_runs_with_names_only_absolute_folders() {
     assert!(folders.contains(&PathBuf::from("/shell/abs")));
 }
 
+/// While one home's ask is held, another home is answered. The test holds
+/// an ask the product ends at its deadline, so nothing slow runs while it is
+/// held (docs/TESTING.md, Wait for state, not time): the second home's
+/// answer is read before the hold, and reading it again starts no process.
+/// One lock held across every home's ask would keep that read waiting until
+/// the first ask's deadline, which ends the first ask unanswered.
 #[test]
 fn a_slow_ask_for_one_home_does_not_hold_another_home_behind_it() {
     let root = tempfile::tempdir().unwrap();
@@ -159,27 +158,27 @@ fn a_slow_ask_for_one_home_does_not_hold_another_home_behind_it() {
     // The first shell says it was started and then does not answer until the
     // release file exists, so its ask is under way for as long as the test says.
     let slow = root.path().join("slow-shell");
-    fs::write(
+    crate::stand_ins::program(
         &slow,
-        format!(
-            "#!/bin/sh\necho in > \"{}\"\nwhile [ ! -e \"{}\" ]; do sleep 0.01; done\n[ \"$1\" = -ilc ] || exit 64\neval \"$2\"\n",
-            entered.display(),
-            release.display()
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&slow, fs::Permissions::from_mode(0o755)).unwrap();
-    let quick = counting_shell(root.path(), &root.path().join("quick-starts"));
+        "#!/bin/sh\n[ \"$1\" = -ilc ] || exit 64\necho in > \"${HOME%/*}/entered\"\nwhile [ ! -e \"${HOME%/*}/release\" ]; do sleep 0.01; done\neval \"$2\"\n",
+    );
+    let quick = counting_shell(root.path());
     let stop = AtomicBool::new(false);
+    let second = root.path().join("second");
+    assert!(
+        programs::login_shell_path(&second, Some(&quick), &stop).is_some(),
+        "the stand-in shell answers"
+    );
 
     std::thread::scope(|scope| {
         let waiting = scope
             .spawn(|| programs::login_shell_path(&root.path().join("first"), Some(&slow), &stop));
-        while !entered.exists() {
+        while !entered.exists() && !waiting.is_finished() {
             std::thread::yield_now();
         }
+        assert!(entered.exists(), "the slow shell never started");
         // The first ask is under way; another home answers without it.
-        let other = programs::login_shell_path(&root.path().join("second"), Some(&quick), &stop);
+        let other = programs::login_shell_path(&second, Some(&quick), &stop);
         assert!(
             other.is_some(),
             "the second home was answered while the first was still asking"
@@ -187,4 +186,9 @@ fn a_slow_ask_for_one_home_does_not_hold_another_home_behind_it() {
         fs::write(&release, "").unwrap();
         assert!(waiting.join().unwrap().is_some());
     });
+    assert_eq!(
+        starts(&root.path().join("starts")),
+        1,
+        "the second home's answer was remembered, so no shell started while the first ask was held"
+    );
 }
