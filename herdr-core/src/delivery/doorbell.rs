@@ -18,7 +18,7 @@ use crate::runtime::Runtime;
 use crate::runtime::delivery::Observation;
 use crate::wire::{self, Readiness};
 
-use super::ledger::State;
+use super::ledger::{Ledger, Letter, State};
 use super::worker::{Client, Effect, now};
 
 const QUIET_MS: u64 = 30_000;
@@ -262,7 +262,7 @@ impl Doorbell {
                 .any(|letter| &letter.recipient.pane_id == pane)
         });
         let mut count = 0;
-        for letter in pending {
+        for &letter in &pending {
             if stop.load(Ordering::Acquire) || count >= WORK_PER_PASS {
                 break;
             }
@@ -311,12 +311,20 @@ impl Doorbell {
                 _ => RETRY_FIRST_MS,
             };
             count += 1;
+            let others = pending
+                .iter()
+                .filter(|other| {
+                    other.id != letter.id && other.recipient.same_identity(&letter.recipient)
+                })
+                .count();
+            let line = bell_line(owner, &ledger, letter, others);
             match deliver(
                 owner,
                 client,
                 connector.as_ref(),
                 &letter.id,
                 &observed,
+                &line,
                 stop,
             ) {
                 Ok(Outcome::Rung) => {
@@ -394,6 +402,40 @@ impl Doorbell {
     }
 }
 
+/// The line the bell types for `letter`, naming its writer as the operator
+/// knows it: the name it registered under, else the title Hide's screens give
+/// it while its pane still hosts it, else its Herdr agent id. A watch warning
+/// names the agent it watches. Memory only: the ledger is the pass's copy and
+/// the title one short look under the lock.
+fn bell_line(owner: &Mutex<Runtime>, ledger: &Ledger, letter: &Letter, others: usize) -> String {
+    let about = letter
+        .watch_warning
+        .as_ref()
+        .map_or(&letter.sender, |warning| &warning.target);
+    let registered = ledger
+        .agents
+        .iter()
+        .rev()
+        .find(|record| record.actor.same_identity(about))
+        .map(|record| record.name.clone());
+    let name = registered
+        .or_else(|| {
+            owner
+                .lock()
+                .ok()
+                .and_then(|guard| guard.delivery_title(about))
+        })
+        .filter(|name| crate::display_text::one_line(name, 1).is_some())
+        .unwrap_or_else(|| about.name.clone());
+    super::bell::line(&super::bell::Ring {
+        sender: &name,
+        kind: &letter.kind,
+        body: &letter.body,
+        others,
+        inbox: super::bell::names_inbox(&letter.recipient.kind),
+    })
+}
+
 fn record(client: &Client, id: &str, observed: &Observation, sent: bool) {
     if let Err(code) = client.submit(
         Effect::Bell {
@@ -463,6 +505,7 @@ fn deliver(
     connector: &dyn ApiConnector,
     id: &str,
     observed: &Observation,
+    line: &str,
     stop: &AtomicBool,
 ) -> Result<Outcome, &'static str> {
     if stop.load(Ordering::Acquire) {
@@ -476,6 +519,7 @@ fn deliver(
             Effect::BellAttempt {
                 id: id.to_owned(),
                 observed: Box::new(observed.clone()),
+                line: line.to_owned(),
             },
             Duration::from_secs(5),
         )
@@ -502,11 +546,10 @@ fn deliver(
     {
         return Ok(Outcome::Held(reason));
     }
-    let parameters = wire::delivery_input_params(
-        &observed.raw_pane_id,
-        hide_agent_hooks::delivery::BELL_PROMPT,
-    )
-    .map_err(|_| "herdr_parameters")?;
+    // The line is the one the reservation saved, so the prompt hook of the
+    // turn it opens is recognized by it (`mailbox::rang`).
+    let parameters =
+        wire::delivery_input_params(&observed.raw_pane_id, line).map_err(|_| "herdr_parameters")?;
     rpc(connector, "pane.send_input", parameters)?;
     // Arrival is not intake. Only a flushed prompt-hook confirmation clears it.
     Ok(Outcome::Rung)
@@ -827,6 +870,18 @@ mod tests {
                 .count()
         }
 
+        fn line(&self) -> Option<String> {
+            let guard = self.runtime.lock().unwrap();
+            let ledger = guard.delivery_state().unwrap();
+            ledger
+                .letters
+                .iter()
+                .find(|letter| letter.id == self.letter)
+                .unwrap()
+                .bell_line
+                .clone()
+        }
+
         fn attempts(&self) -> u8 {
             let guard = self.runtime.lock().unwrap();
             let ledger = guard.delivery_state().unwrap();
@@ -858,13 +913,19 @@ mod tests {
             let typed = bell.typed();
             assert_eq!(typed.len(), 1, "{flags}");
             assert_eq!(typed[0]["pane_id"], "recipient");
+            // The recipient is a Codex, so the line names where the letter is.
             assert_eq!(
-                typed[0]["text"],
-                hide_agent_hooks::delivery::BELL_PROMPT,
+                typed[0]["text"], "🔔 sender 보고: private · hide inbox",
                 "{flags}"
             );
             assert_eq!(typed[0]["keys"], json!(["enter"]));
             assert_eq!(bell.attempts(), 1, "{flags}");
+            // The letter keeps the line it was rung with, which is what
+            // recognizes the turn the bell opens.
+            assert_eq!(
+                bell.line().as_deref(),
+                Some("🔔 sender 보고: private · hide inbox")
+            );
         }
     }
 
@@ -964,6 +1025,93 @@ mod tests {
         assert_eq!(held(&logged), ["not_ready"], "logged once, not per retry");
         assert!(bell.typed().is_empty());
         assert_eq!(bell.attempts(), 0);
+    }
+
+    #[test]
+    fn the_bell_names_the_writer_by_registration_then_title_then_herdr_id() {
+        use crate::delivery::{ledger::Ledger, mailbox};
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, sender, recipient, _) = crate::runtime::delivery::tests::fixture(root.path());
+        let mut ledger = Ledger::default();
+        let letter = mailbox::send(
+            &mut ledger,
+            &sender,
+            &recipient.actor,
+            "summary",
+            "\n리뷰 끝났습니다\n자세한 내용",
+            "report",
+            None,
+            1,
+        )
+        .unwrap();
+        let line = |ledger: &Ledger, letter: &Letter| bell_line(&runtime, ledger, letter, 1);
+        assert_eq!(
+            line(&ledger, &letter),
+            "🔔 sender 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
+        );
+        // A row with no title is called by its runtime, which names no one.
+        let untitled: crate::sidebar::SessionSnapshotPayload = serde_json::from_value(json!({
+            "agents": [{"id":"sender","pane_id":"sender","agent":"codex",
+                "agent_status":"working","state_change_seq":1}]
+        }))
+        .unwrap();
+        crate::runtime::delivery::tests::show_agents(&mut runtime.lock().unwrap(), untitled);
+        assert_eq!(
+            line(&ledger, &letter),
+            "🔔 sender 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
+        );
+        // The sidebar's title for the pane, while the pane still hosts it.
+        let titled: crate::sidebar::SessionSnapshotPayload = serde_json::from_value(json!({
+            "agents": [{"id":"sender","pane_id":"sender","agent":"codex",
+                "agent_status":"working","state_change_seq":1,
+                "label":{"task":"라벨 제목"}}]
+        }))
+        .unwrap();
+        crate::runtime::delivery::tests::show_agents(&mut runtime.lock().unwrap(), titled);
+        assert_eq!(
+            line(&ledger, &letter),
+            "🔔 라벨 제목 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
+        );
+        let mut moved_on = letter.clone();
+        moved_on.sender.session = Some("an-earlier-session".into());
+        assert_eq!(
+            line(&ledger, &moved_on),
+            "🔔 sender 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
+        );
+        // The name it registered under comes first.
+        ledger.agents.push(crate::coordination::AgentRecord {
+            id: "agent-1".into(),
+            name: "label-end-fix".into(),
+            machine: "local".into(),
+            host_scope: "scope".into(),
+            native_machine: "local".into(),
+            session: "sender-native".into(),
+            instance: "sender".into(),
+            pane: "sender".into(),
+            parent: None,
+            origin: None,
+            project: None,
+            actor: sender.clone(),
+            ended: false,
+        });
+        assert_eq!(
+            line(&ledger, &letter),
+            "🔔 label-end-fix 보고: 리뷰 끝났습니다 · 외 1통 · hide inbox"
+        );
+        // A watch warning is about the agent it watches, not its parent.
+        let mut warning = letter.clone();
+        warning.kind = "watch".into();
+        warning.sender = recipient.actor.clone();
+        warning.watch_warning = Some(crate::delivery::watch::WarningReceipt {
+            target: sender.clone(),
+            activity_at_unix_ms: 0,
+            ordinal: 1,
+            parent_notified: false,
+        });
+        assert_eq!(
+            line(&ledger, &warning),
+            "🔔 label-end-fix 감시: 리뷰 끝났습니다 · 외 1통 · hide inbox"
+        );
     }
 
     #[test]

@@ -1,4 +1,5 @@
 //! Durable agent delivery owned by the core.
+mod bell;
 pub(crate) mod doorbell;
 mod human;
 pub mod ledger;
@@ -97,7 +98,9 @@ pub(crate) fn reserved_name(value: &str) -> bool {
 
 /// A pane's native session as a letter pull or a Factory question guard names
 /// it: the helper's own rule, so the CLI, the daemon and the hook agree.
-pub use hide_agent_hooks::delivery::{SESSION_LIMIT, valid_session};
+pub use hide_agent_hooks::delivery::{
+    SESSION_LIMIT, prompt_digest, valid_prompt_digest, valid_session,
+};
 
 pub(crate) fn valid_key(value: &str) -> bool {
     !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
