@@ -122,6 +122,23 @@ impl Runtime {
         live.then_some("already_linked")
     }
 
+    /// The nodes that dialed this core and are connected now, in the order
+    /// they were first registered: the machines the operator works at.
+    pub(crate) fn linked_nodes(&self) -> Vec<String> {
+        self.snapshot
+            .ui_state
+            .device_registrations
+            .iter()
+            .filter(|registration| registration.inbound)
+            .filter(|registration| {
+                self.snapshot.status.remote.iter().any(|status| {
+                    status.target_id == registration.id && status.state == "connected"
+                })
+            })
+            .map(|registration| registration.id.clone())
+            .collect()
+    }
+
     /// The link a node brought, for its connection to take; `None` until
     /// the node dials.
     pub(super) fn take_inbound_transport(

@@ -258,3 +258,44 @@ fn the_core_never_redials_a_node_and_takes_its_next_link() {
     });
     drop(release);
 }
+
+/// The machines the operator works at are the nodes that dialed this core
+/// and are connected now: a node still connecting is not one, and neither
+/// is a device this core dials (D-18).
+#[test]
+fn only_a_connected_node_that_dialed_in_is_a_linked_machine() {
+    let shared = shared_runtime();
+    let (link, _release) = HeldLink::new();
+    shared
+        .lock()
+        .unwrap()
+        .accept_inbound_node(NODE, "MacBook", link)
+        .expect("the link");
+    assert!(shared.lock().unwrap().linked_nodes().is_empty());
+    let event = serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "register_device",
+        "payload": {"id": "studio", "label": "studio", "ssh_alias": "studio-host"},
+    });
+    shared
+        .lock()
+        .unwrap()
+        .dispatch_json(&serde_json::to_vec(&event).unwrap());
+    let mut runtime = shared.lock().unwrap();
+    let row = runtime
+        .snapshot
+        .status
+        .remote
+        .iter()
+        .find(|row| row.target_id == NODE)
+        .cloned()
+        .expect("the node's status row");
+    runtime.snapshot.status.remote.clear();
+    for target in [NODE, "studio"] {
+        let mut row = row.clone();
+        row.target_id = target.to_owned();
+        row.state = "connected".to_owned();
+        runtime.snapshot.status.remote.push(row);
+    }
+    assert_eq!(runtime.linked_nodes(), vec![NODE.to_owned()]);
+}

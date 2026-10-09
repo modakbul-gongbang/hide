@@ -75,6 +75,9 @@ enum Command {
         node: String,
         reply: Sender<Option<String>>,
     },
+    LinkedNodes {
+        reply: Sender<Vec<String>>,
+    },
     InboundNode {
         node: String,
         label: String,
@@ -348,6 +351,17 @@ impl CoreHandle {
             .map_err(|_| "core owner thread is gone".to_owned())?;
         rx.recv()
             .map_err(|_| "core owner thread dropped the device connection reply".to_owned())
+    }
+
+    /// The nodes that dialed this core and are connected now: the machines
+    /// the operator works at (PRD core-host-node-remote-core D-18).
+    pub fn linked_nodes(&self) -> Result<Vec<String>, String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::LinkedNodes { reply })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped the linked nodes".to_owned())
     }
 
     /// Why a node dialing this core would be refused, before its link is
@@ -726,6 +740,9 @@ fn owner_loop(
             }
             Command::InboundRefusal { node, reply } => {
                 let _ = reply.send(core.inbound_refusal(&node));
+            }
+            Command::LinkedNodes { reply } => {
+                let _ = reply.send(core.linked_nodes());
             }
             Command::InboundNode {
                 node,
