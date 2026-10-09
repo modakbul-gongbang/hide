@@ -649,6 +649,67 @@ fn a_control_returns_while_the_sink_is_busy_with_another_panes_frame() {
     }
 }
 
+/// Two readers printing at once each hand over only their own frames: once
+/// one reader's frame was handed, it goes back to reading its pane, even
+/// while the sink is busy with the other reader's frame that queued behind
+/// it.
+#[test]
+fn a_reader_goes_back_to_its_pane_while_another_readers_frame_is_handed() {
+    let harness = harness(RetryPolicy::Automatic);
+    let first = harness.controlling("w1:p1");
+    let second = harness.controlling("w1:p2");
+    let hold = |pane: &str| {
+        let (told, entered) = channel();
+        let (go_on, held) = channel();
+        *harness.outputs.hold_on.lock().unwrap() = Some(Hold {
+            pane: pane.into(),
+            told,
+            go_on: held,
+        });
+        (entered, go_on)
+    };
+    let (first_entered, first_go_on) = hold("w1:p1");
+    first.frame(SIZE, true, b"first");
+    first_entered
+        .recv_timeout(WAIT)
+        .expect("the sink took the first pane's frame");
+    second.frame(SIZE, true, b"second");
+    let started = Instant::now();
+    while harness.service.shared.deliveries_lock().queue.is_empty() {
+        assert!(
+            started.elapsed() < WAIT,
+            "the second pane's frame never queued"
+        );
+        thread::yield_now();
+    }
+    let (second_entered, second_go_on) = hold("w1:p2");
+    first_go_on.send(()).unwrap();
+    second_entered
+        .recv_timeout(WAIT)
+        .expect("the sink took the second pane's frame");
+    // The first pane's reader reads on while the second frame is in the
+    // sink: its session's end reaches the core.
+    first.close(Some("pane exited"));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let ended = loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match harness.reports.recv_timeout(left) {
+            Ok(TerminalReport::State { pane, state })
+                if pane == "w1:p1" && state.state == "ended" =>
+            {
+                break true;
+            }
+            Ok(_) => {}
+            Err(_) => break false,
+        }
+    };
+    second_go_on.send(()).unwrap();
+    assert!(
+        ended,
+        "the first pane's reader was handing the second pane's frame"
+    );
+}
+
 #[test]
 fn an_ended_session_says_so_on_the_pane_and_a_closing_one_does_not() {
     let harness = harness(RetryPolicy::Automatic);

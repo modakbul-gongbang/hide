@@ -442,11 +442,12 @@ impl Shared {
     /// that `waits` (a session's reader) returns once its batch was handed;
     /// any other returns as soon as its batch is another thread's to hand.
     fn hand_over(&self, first: u64, through: u64, waits: bool) {
-        // Whether this thread may hand the next delivery over: its own, or
-        // one whose thread does not wait for it.
+        // Whether this thread may hand the next delivery over: one of its
+        // own batch, or one whose thread does not wait for it. Past its own
+        // batch, the next reader's frame is that reader's to hand.
         let mine = |deliveries: &Deliveries| {
             deliveries.queue.front().is_some_and(|(_, waited_for)| {
-                !*waited_for || (waits && deliveries.handed + 1 >= first)
+                !*waited_for || (waits && (first..=through).contains(&(deliveries.handed + 1)))
             })
         };
         let mut deliveries = self.deliveries_lock();
