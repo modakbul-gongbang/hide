@@ -888,8 +888,11 @@ mod grok {
             read(self.home.path(), &self.request)
         }
 
+        /// The label store keeps a checkpoint as JSON, so each read resumes
+        /// from one that went through it, even inside an oversized record.
         fn resume(&mut self, answer: &LabelTranscript) {
-            self.request.checkpoint = Some(answer.checkpoint.clone());
+            let stored = serde_json::to_string(&answer.checkpoint).unwrap();
+            self.request.checkpoint = Some(serde_json::from_str(&stored).unwrap());
             self.request.turns = answer.turns.clone();
         }
 
