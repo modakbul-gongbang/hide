@@ -15,7 +15,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::support::remote_core::{CORE_NODE, Fixture, Herdr};
-use crate::support::remote_delivery::wait_for;
+use crate::support::remote_delivery::{PROMPT, wait_for};
 
 const LINK_BOUND: Duration = Duration::from_secs(30);
 
@@ -422,7 +422,7 @@ async fn node_health(port: u16) -> Result<Value> {
     Ok(serde_json::from_str(body)?)
 }
 
-/// Types `line` into `pane` once its prompt drew, and reads the screen
+/// Types `line` into `pane` once its shell drew its prompt, and reads the screen
 /// until `answer` appears on it; answers what the pane drew after the
 /// keys, without its control sequences.
 async fn type_and_read(
@@ -448,8 +448,7 @@ async fn type_and_read(
                 screen.push_str(&String::from_utf8_lossy(&bytes));
             }
         }
-        if !typed && !plain(&screen).trim().is_empty() {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+        if !typed && plain(&screen).contains(PROMPT.trim_end()) {
             let keys = base64::engine::general_purpose::STANDARD.encode(format!("{line}\r"));
             send(
                 socket,
@@ -831,8 +830,10 @@ fn a_screen_whose_core_is_not_running_attaches_and_waits_for_it() -> Result<()> 
             .enable_all()
             .build()?;
         let health = runtime.block_on(node_health(port))?;
+        // The core was killed, so its record still names its socket, which
+        // no core answers.
         ensure!(
-            health["core_link"] == "waiting" && health["core_link_reason"] == "no_core",
+            health["core_link"] == "waiting" && health["core_link_reason"] == "core_not_answering",
             "the node does not wait for its core: {health}"
         );
         // The attach role answered without starting a core in its place.

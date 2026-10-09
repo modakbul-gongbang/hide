@@ -20,6 +20,10 @@ pub use ssh::Ssh;
 const READY_BOUND: Duration = Duration::from_secs(30);
 const READ_CAP: usize = 1024 * 1024;
 
+/// The prompt every fixture shell draws, so a test types into a pane only
+/// once its shell is ready for keys.
+pub const PROMPT: &str = "fixture-ready> ";
+
 #[derive(Clone)]
 pub struct Environment {
     pub home: PathBuf,
@@ -48,7 +52,7 @@ impl Environment {
         ] {
             fs::create_dir_all(folder)?;
         }
-        fs::write(home.join(".zshrc"), "PS1='fixture %# '\n")?;
+        fs::write(home.join(".zshrc"), format!("PS1='{PROMPT}'\n"))?;
         // This journey starts after retirement. Mark only that private
         // prerequisite complete so candidate kit reconciliation never reaches
         // the account's actual service manager; mailbox state is never seeded.
