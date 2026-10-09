@@ -599,109 +599,12 @@ impl Engine {
     }
 
     /// "다른 답" on a decision the Observer made (D-19, B12).
-    pub(super) fn override_answer(
-        &mut self,
-        role: &Role,
-        factory: &str,
-        id: &str,
-        question: Question,
-        choice: Option<String>,
-        text: Option<String>,
-    ) -> Reply {
-        let task = self
-            .task(factory, id)
-            .cloned()
-            .ok_or_else(|| refuse("task_not_found", "Check hide factory status"))?;
-        if question
-            .answer
-            .as_ref()
-            .is_none_or(|answer| answer.relayed_by != OBSERVER)
-        {
-            return Err(refuse(
-                "already_answered",
-                "This question was answered already; only an answer Factory AI gave can be changed",
-            ));
-        }
-        if question.kind.closed() {
-            return Err(refuse(
-                "decision_not_changeable",
-                "Factory AI's choice on this question already ran; undo it its own way",
-            ));
-        }
-        if matches!(
-            task.state,
-            TaskState::Done | TaskState::Landed | TaskState::Cancelled | TaskState::Outside
-        ) {
-            return Err(refuse(
-                "task_finished",
-                "A finished Task's decisions stay as they are",
-            )
-            .with(json!({"state": task.state.label()})));
-        }
-        let chosen = match choice.as_deref() {
-            Some("suggestion") => Some(question.suggestion.clone()),
-            Some("default") => question.default_action.clone(),
-            Some(other) => Some(other.to_owned()),
-            None => None,
-        };
-        let text = text.or_else(|| chosen.clone()).unwrap_or_default();
-        if text.trim().is_empty() {
-            return Err(refuse(
-                "answer_required",
-                "Pass --choose <choice> or --text with the answer that replaces Factory AI's",
-            ));
-        }
-        let now = self.now();
-        let by = role.relayed_by();
-        let answer = Answer {
-            text: judgment::cut(&text, TEXT_LIMIT),
-            chose: chosen,
-            relayed_by: by.clone(),
-            at: now,
-        };
-        self.with_task(factory, id, |task| {
-            if let Some(q) = task.questions.iter_mut().find(|q| q.id == question.id) {
-                q.answer = Some(answer.clone());
-                if let Some(routing) = &mut q.routing {
-                    routing.overridden = true;
-                }
-            }
-            // Factory AI's decision becomes the person's (B28).
-            let text = format!("{} -> {}", judgment::cut(&question.text, 200), answer.text);
-            match task
-                .decisions
-                .iter_mut()
-                .rev()
-                .find(|d| d.question.as_deref() == Some(question.id.as_str()) && d.by_ai())
-            {
-                Some(record) => change_record(record, text, &by, now),
-                None => task.decisions.push(
-                    DecisionRecord {
-                        question: Some(question.id.clone()),
-                        ..DecisionRecord::new(text, by.clone(), now)
-                    }
-                    .with_source(DecisionSource::Answer),
-                ),
-            }
-        });
-        self.record(
-            factory,
-            Some(id),
-            "question.overridden",
-            json!({"question": question.id, "by": by}),
-        );
-        let body = format!(
-            "Factory: a person changed Factory AI's answer.\nQuestion: {}\nNew answer: {}\nWork to the new answer, then report again with hide factory done.",
-            judgment::cut(&question.text, 400),
-            answer.text
-        );
-        self.tell_changed(factory, id, &task, question.letter.as_deref(), &body);
-        Ok(self.task_answer(factory, id, "answer changed"))
-    }
-
-    /// "다른 답" on one of Factory AI's decisions by its id (B28): an answer
-    /// goes through the question it answered; an intake assumption or a
-    /// send-back is rewritten as the person's.
+    /// "다른 답" on one of Factory AI's decisions (B28), by its id or by the
+    /// question it answered: the one path both `--decision R<n>` and
+    /// `--question <id> --change` take, with `Task::decision_changeable` the
+    /// only rule. An answer is replaced on its question too, and the worker
+    /// hears the new answer; an assumption or a send-back is rewritten as
+    /// the person's.
     pub(super) fn override_decision(
         &mut self,
         role: &Role,
@@ -715,27 +618,14 @@ impl Engine {
             .task(factory, id)
             .cloned()
             .ok_or_else(|| refuse("task_not_found", "Check hide factory status"))?;
-        let Some(record) = decision_index(decision).and_then(|index| task.decisions.get(index))
+        let Some((index, record)) = decision_index(decision)
+            .and_then(|index| task.decisions.get(index).map(|record| (index, record)))
         else {
             return Err(refuse(
                 "decision_not_found",
                 "Name a decision as hide factory show lists it, R<n>",
             ));
         };
-        if !task.decision_changeable(record) {
-            return Err(refuse(
-                "decision_not_changeable",
-                "Only an answer, an assumption or a send-back Factory AI made can be changed",
-            ));
-        }
-        if let Some(question) = record
-            .question
-            .as_ref()
-            .and_then(|qid| task.questions.iter().find(|q| &q.id == qid))
-            .filter(|q| !q.open())
-        {
-            return self.override_answer(role, factory, id, question.clone(), choice, text);
-        }
         if matches!(
             task.state,
             TaskState::Done | TaskState::Landed | TaskState::Cancelled | TaskState::Outside
@@ -746,35 +636,83 @@ impl Engine {
             )
             .with(json!({"state": task.state.label()})));
         }
-        let text = text.or(choice).unwrap_or_default();
+        if !task.decision_changeable(record) {
+            return Err(refuse(
+                "decision_not_changeable",
+                "Only Factory AI's answer to a question that takes words, its assumption or its send-back can be changed",
+            ));
+        }
+        let question = record
+            .question
+            .as_ref()
+            .and_then(|qid| task.questions.iter().find(|q| &q.id == qid))
+            .filter(|q| !q.open())
+            .cloned();
+        let chosen = match (&question, choice.as_deref()) {
+            (Some(q), Some("suggestion")) => Some(q.suggestion.clone()),
+            (Some(q), Some("default")) => q.default_action.clone(),
+            (_, other) => other.map(str::to_owned),
+        };
+        let text = text.or_else(|| chosen.clone()).unwrap_or_default();
         if text.trim().is_empty() {
             return Err(refuse(
                 "answer_required",
-                "Pass --text with the decision that replaces Factory AI's",
+                "Pass --choose <choice> or --text with the answer that replaces Factory AI's",
             ));
         }
         let text = judgment::cut(&text, TEXT_LIMIT);
         let now = self.now();
         let by = role.relayed_by();
-        let index = decision_index(decision).unwrap_or_default();
         let from = record.text.clone();
+        let changed = match &question {
+            Some(q) => format!("{} -> {text}", judgment::cut(&q.text, 200)),
+            None => text.clone(),
+        };
         self.with_task(factory, id, |task| {
+            if let Some(q) = &question
+                && let Some(asked) = task.questions.iter_mut().find(|asked| asked.id == q.id)
+            {
+                asked.answer = Some(Answer {
+                    text: text.clone(),
+                    chose: chosen.clone(),
+                    relayed_by: by.clone(),
+                    at: now,
+                });
+                if let Some(routing) = &mut asked.routing {
+                    routing.overridden = true;
+                }
+            }
             if let Some(record) = task.decisions.get_mut(index) {
-                change_record(record, text.clone(), &by, now);
+                change_record(record, changed.clone(), &by, now);
             }
         });
         self.record(
             factory,
             Some(id),
             "decision.overridden",
-            json!({"decision": decision, "by": by}),
+            json!({"decision": decision, "question": question.as_ref().map(|q| q.id.clone()), "by": by}),
         );
-        let body = format!(
-            "Factory: a person changed one of Factory AI's decisions.\nWas: {}\nNow: {text}\nWork to the new decision, then report again with hide factory done.",
-            judgment::cut(&from, 400)
-        );
-        self.tell_changed(factory, id, &task, None, &body);
-        Ok(self.task_answer(factory, id, "decision changed"))
+        let body = match &question {
+            Some(q) => format!(
+                "Factory: a person changed Factory AI's answer.\nQuestion: {}\nNew answer: {text}\nWork to the new answer, then report again with hide factory done.",
+                judgment::cut(&q.text, 400)
+            ),
+            None => format!(
+                "Factory: a person changed one of Factory AI's decisions.\nWas: {}\nNow: {text}\nWork to the new decision, then report again with hide factory done.",
+                judgment::cut(&from, 400)
+            ),
+        };
+        let letter = question.as_ref().and_then(|q| q.letter.as_deref());
+        self.tell_changed(factory, id, &task, letter, &body);
+        Ok(self.task_answer(
+            factory,
+            id,
+            if question.is_some() {
+                "answer changed"
+            } else {
+                "decision changed"
+            },
+        ))
     }
 
     /// A worker already at work hears of a changed decision; one that

@@ -2555,7 +2555,26 @@ impl Engine {
             && let Some(answered) = task.questions.iter().find(|q| q.id == qid && !q.open())
         {
             if change {
-                return self.override_answer(role, factory, id, answered.clone(), choice, text);
+                // The record of Factory AI's answer is what changes; an
+                // answer a person gave has none.
+                let Some(index) = task
+                    .decisions
+                    .iter()
+                    .rposition(|d| d.question.as_deref() == Some(qid) && d.by_ai())
+                else {
+                    return Err(refuse(
+                        "already_answered",
+                        "This question was answered already; only an answer Factory AI gave can be changed",
+                    ));
+                };
+                return self.override_decision(
+                    role,
+                    factory,
+                    id,
+                    &decision_id(index),
+                    choice,
+                    text,
+                );
             }
             return Err(refuse(
                 "already_answered",
