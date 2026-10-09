@@ -40,8 +40,9 @@ const MESSAGE_ITEMS: usize = 256;
 const MESSAGE_BYTES: usize = 1024 * 1024;
 /// How often a relay looks whether its node's link still stands.
 const LINK_CHECK: Duration = Duration::from_secs(1);
-/// The longest line a node's terminals relay may send.
-const MAX_DOWN_LINE: usize = 1024 * 1024;
+/// The longest line a node's terminals relay may send: a paste goes up as
+/// one key, as large as a screen of this machine may send one.
+const MAX_DOWN_LINE: usize = 16 * 1024 * 1024;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
@@ -53,6 +54,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// terminals relays of linked nodes read it.
 pub struct ScreenOutputs {
     hub: Arc<TerminalHub>,
+    /// Which screen each pane's size follows; a pane leaves it when it is
+    /// forgotten here.
+    pane_sizes: Arc<crate::pane_sizes::PaneSizes>,
     taps: Mutex<Vec<Arc<RelayTap>>>,
     /// How many taps there are, read without the lock: with none, output
     /// costs one load beyond the hub.
@@ -63,13 +67,30 @@ impl ScreenOutputs {
     pub fn new(hub: Arc<TerminalHub>) -> Arc<Self> {
         Arc::new(Self {
             hub,
+            pane_sizes: Arc::default(),
             taps: Mutex::default(),
             tapped: AtomicUsize::new(0),
         })
     }
 
+    /// Adds a node's tap, ending the one its node had: a node keeps one
+    /// terminals relay, so a second replaces the first rather than double
+    /// what the core sends it.
+    pub fn pane_sizes(&self) -> Arc<crate::pane_sizes::PaneSizes> {
+        Arc::clone(&self.pane_sizes)
+    }
+
     fn add(&self, tap: Arc<RelayTap>) {
         let mut taps = lock(&self.taps);
+        taps.retain(|held| {
+            if held.node == tap.node {
+                held.close();
+                held.wake.notify_one();
+                false
+            } else {
+                true
+            }
+        });
         taps.push(tap);
         self.tapped.store(taps.len(), Ordering::SeqCst);
     }
@@ -98,6 +119,7 @@ impl OutputSink for ScreenOutputs {
 
     fn forget(&self, pane: &str) {
         self.hub.forget(pane);
+        self.pane_sizes.forget(pane);
         for tap in self.taps() {
             tap.forget(pane);
         }
@@ -106,6 +128,25 @@ impl OutputSink for ScreenOutputs {
 
 enum TapItem {
     Output(TerminalOutput),
+    /// The pane is gone; the node forgets what it kept of it.
+    Forget(String),
+}
+
+impl TapItem {
+    fn pane(&self) -> &str {
+        match self {
+            Self::Output(output) => &output.pane,
+            Self::Forget(pane) => pane,
+        }
+    }
+
+    /// What it holds of the tap's byte bound.
+    fn size(&self) -> usize {
+        match self {
+            Self::Output(output) => output.data.len(),
+            Self::Forget(pane) => pane.len(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -147,6 +188,8 @@ impl RelayTap {
         if pane.starts_with(&self.own_prefix) {
             return;
         }
+        // Encoded before the tap's lock, which every pane's output takes.
+        let data = encode_base64(bytes);
         let mut state = lock(&self.state);
         if state.closed {
             return;
@@ -167,13 +210,12 @@ impl RelayTap {
             state.awaiting_full.remove(pane);
             // A full frame draws over whatever of the pane still waits.
             let mut freed = 0;
-            state.items.retain(|TapItem::Output(output)| {
-                if output.pane == pane {
+            state.items.retain(|item| match item {
+                TapItem::Output(output) if output.pane == pane => {
                     freed += output.data.len();
                     false
-                } else {
-                    true
                 }
+                _ => true,
             });
             state.bytes -= freed;
         } else if state.awaiting_full.contains(pane) {
@@ -181,7 +223,7 @@ impl RelayTap {
         }
         let output = TerminalOutput {
             pane: pane.to_owned(),
-            data: encode_base64(bytes),
+            data,
             full,
         };
         let size = output.data.len();
@@ -204,13 +246,20 @@ impl RelayTap {
     /// The node fell behind: its backlog goes, and each pane in it is drawn
     /// again from a full frame.
     fn overflow(&self, state: &mut TapState) {
-        let panes: HashSet<String> = state
-            .items
-            .drain(..)
-            .map(|TapItem::Output(output)| output.pane)
-            .collect();
+        let mut panes = HashSet::new();
+        let mut forgotten = VecDeque::new();
+        for item in state.items.drain(..) {
+            match item {
+                TapItem::Output(output) => {
+                    panes.insert(output.pane);
+                }
+                // A pane's end is kept: the node must still forget it.
+                forget @ TapItem::Forget(_) => forgotten.push_back(forget),
+            }
+        }
+        state.bytes = forgotten.iter().map(TapItem::size).sum();
+        state.items = forgotten;
         state.dropped += 1;
-        state.bytes = 0;
         herdr_core::diagnostic!(json!({
             "component": "node_relay",
             "kind": "relay.terminals_overflow",
@@ -227,11 +276,17 @@ impl RelayTap {
     }
 
     fn forget(&self, pane: &str) {
+        if pane.starts_with(&self.own_prefix) {
+            return;
+        }
         let mut state = lock(&self.state);
+        if state.closed {
+            return;
+        }
         let mut freed = 0;
-        state.items.retain(|TapItem::Output(output)| {
-            if output.pane == pane {
-                freed += output.data.len();
+        state.items.retain(|item| {
+            if item.pane() == pane {
+                freed += item.size();
                 false
             } else {
                 true
@@ -239,7 +294,15 @@ impl RelayTap {
         });
         state.bytes -= freed;
         state.awaiting_full.remove(pane);
-        state.started_whole.remove(pane);
+        state.redraws.retain(|asked| asked != pane);
+        // A pane the node was sent is forgotten there too, so its hub keeps
+        // no pane the core no longer has.
+        if state.started_whole.remove(pane) {
+            state.bytes += pane.len();
+            state.items.push_back(TapItem::Forget(pane.to_owned()));
+            drop(state);
+            self.wake.notify_one();
+        }
     }
 
     /// The next message for the node, and the panes to draw again.
@@ -249,27 +312,38 @@ impl RelayTap {
         if state.items.is_empty() {
             return (None, redraws);
         }
+        let mut taken = Vec::new();
+        let mut size = 0;
+        while taken.len() < MESSAGE_ITEMS && (taken.is_empty() || size < MESSAGE_BYTES) {
+            let Some(item) = state.items.pop_front() else {
+                break;
+            };
+            state.bytes -= item.size();
+            size += item.size();
+            taken.push(item);
+        }
+        let more = !state.items.is_empty();
+        drop(state);
+        if more {
+            self.wake.notify_one();
+        }
+        // Serialized outside the tap's lock.
         let mut text = String::new();
-        for index in 0..MESSAGE_ITEMS {
-            if index > 0 && text.len() >= MESSAGE_BYTES {
-                break;
-            }
-            let Some(TapItem::Output(output)) = state.items.pop_front() else {
-                break;
+        for item in taken {
+            let terminal = match item {
+                TapItem::Output(output) => TerminalUp::Output(output),
+                TapItem::Forget(pane) => TerminalUp::Forget { pane },
             };
-            state.bytes -= output.data.len();
-            let line = TerminalLine {
-                terminal: TerminalUp::Output(output),
-            };
-            if let Ok(encoded) = serde_json::to_string(&line) {
+            if let Ok(encoded) = serde_json::to_string(&TerminalLine { terminal }) {
                 text.push_str(&encoded);
                 text.push('\n');
             }
         }
-        if !state.items.is_empty() {
-            self.wake.notify_one();
-        }
         (Some(text), redraws)
+    }
+
+    fn is_closed(&self) -> bool {
+        lock(&self.state).closed
     }
 
     fn close(&self) {
@@ -361,7 +435,7 @@ pub async fn serve_terminals(
         "link": link.identity(),
     }));
     // Every pane this machine draws starts whole on the node.
-    for pane in outputs.hub.retained_bytes().into_keys() {
+    for pane in outputs.hub.panes() {
         if !pane.starts_with(&tap.own_prefix) {
             terminals.redraw(&pane);
         }
@@ -370,6 +444,9 @@ pub async fn serve_terminals(
     let reason = loop {
         tokio::select! {
             () = tap.wake.notified() => {
+                if tap.is_closed() {
+                    break "replaced";
+                }
                 let (text, redraws) = tap.take();
                 for pane in redraws {
                     terminals.redraw(&pane);
@@ -493,6 +570,36 @@ mod tests {
             [true, false]
         );
         assert!(sent.iter().all(|output| output.pane == "w1:p1"));
+    }
+
+    /// A pane the core forgets is forgotten by the node it was sent to, so
+    /// the node's hub keeps only panes the core still has; a pane the node
+    /// never drew needs no word (R6).
+    #[test]
+    fn a_pane_the_core_forgets_is_forgotten_on_the_node() {
+        let tap = RelayTap::new("mac");
+        tap.output("w1:p1", b"whole", true);
+        assert_eq!(outputs(&tap).len(), 1);
+        tap.output("w1:p1", b"more", false);
+        tap.forget("w1:p1");
+        tap.forget("w1:p2");
+        let (text, _) = tap.take();
+        let lines: Vec<TerminalUp> = text
+            .unwrap_or_default()
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<TerminalLine<TerminalUp>>(line)
+                    .unwrap()
+                    .terminal
+            })
+            .collect();
+        assert!(
+            matches!(lines.as_slice(), [TerminalUp::Forget { pane }] if pane == "w1:p1"),
+            "{lines:?}"
+        );
+        // The pane coming back starts whole again.
+        tap.output("w1:p1", b"partial", false);
+        assert!(outputs(&tap).is_empty());
     }
 
     #[test]

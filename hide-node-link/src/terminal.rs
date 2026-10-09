@@ -262,6 +262,11 @@ pub enum TerminalDown {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TerminalUp {
     Output(TerminalOutput),
+    /// The pane is gone: a node that drew it from a core's relay forgets
+    /// what it kept of it (PRD core-host-node-remote-core D-20).
+    Forget {
+        pane: String,
+    },
     Report {
         report: TerminalReport,
     },

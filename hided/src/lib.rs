@@ -478,7 +478,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         mobile: Arc::clone(&mobile),
         relay_grants: Arc::clone(&relay_grants),
         own_screens: Arc::new(Mutex::new(0)),
-        pane_sizes: Arc::default(),
+        pane_sizes: core.outputs.pane_sizes(),
     };
     node_panes.serve(app.clone());
     let env_state_dir = env.state_dir.clone();

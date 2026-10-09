@@ -703,6 +703,82 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
     }
 }
 
+/// A node whose link went half open, so neither end saw it close (a
+/// network change), dials again: the core greets the earlier link, ends it
+/// when it does not answer, and takes the new one at once rather than
+/// refuse it as already linked until the attach role's silence limit (B9,
+/// D-09).
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<()> {
+    use hided::attach::{Line, NodeHello, read_line, write_line};
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, _token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(node_link(port, "live", LINK_BOUND))?;
+        // The node stops answering and its link stays open.
+        fixture.signal_running_node(libc::SIGSTOP)?;
+        let dialed = Instant::now();
+        let answer = (|| {
+            let stream = hide_platform::ipc::LocalStream::connect(
+                &fixture.core_state.join("node-attach-socket"),
+            )?;
+            stream.set_read_timeout(Some(Duration::from_secs(20)))?;
+            let mut reader = std::io::BufReader::new(stream.duplicate());
+            let mut writer = stream;
+            let Line::Core(core) = read_line(&mut reader).map_err(anyhow::Error::msg)? else {
+                bail!("the core did not greet first");
+            };
+            write_line(
+                &mut writer,
+                &Line::Node(NodeHello {
+                    node: node.clone(),
+                    label: "screen-fixture".to_owned(),
+                    build: core.build,
+                    herdr_socket: fixture.screen.socket.display().to_string(),
+                }),
+            )
+            .map_err(anyhow::Error::msg)?;
+            read_line(&mut reader).map_err(anyhow::Error::msg)
+        })();
+        let took = dialed.elapsed();
+        fixture.signal_running_node(libc::SIGCONT)?;
+        let answer = answer?;
+        ensure!(
+            matches!(answer, Line::Accepted(_)),
+            "the second link was answered {answer:?}"
+        );
+        ensure!(
+            took < Duration::from_secs(10),
+            "the second link waited {took:?}"
+        );
+        ensure!(
+            !fixture
+                .core_log("node_link", "attach.superseded")?
+                .is_empty(),
+            "the core never recorded the earlier link as superseded"
+        );
+        // The node finds its own link ended and returns.
+        runtime.block_on(node_link(port, "live", LINK_BOUND))?;
+        Ok(())
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.signal_running_node(libc::SIGCONT);
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
+
 /// `hide connect --json` of the screen machine, run with `hide` at `cli`.
 fn screen_connect(fixture: &Fixture, cli: &std::path::Path) -> Result<Value> {
     let output = fixture
@@ -1223,7 +1299,7 @@ fn a_removed_node_loses_its_link_and_registers_again_on_its_next_attach() -> Res
 
 /// B17: a screen that stops reading while its core sends it a large file
 /// holds up neither another screen nor a pane of the core's machine, and is
-/// drawn again from a fresh snapshot once it reads again.
+/// closed as fallen behind, so its read fails rather than hang (R3).
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_screen_that_stops_reading_holds_up_no_other_screen() -> Result<()> {
@@ -1273,20 +1349,16 @@ fn a_screen_that_stops_reading_holds_up_no_other_screen() -> Result<()> {
                 started.elapsed()
             );
 
-            // Reading again, the stalled screen is drawn from a whole snapshot.
-            let deadline = Instant::now() + Duration::from_secs(30);
-            loop {
-                let frame = next_frame(&mut stalled, deadline)
-                    .await?
-                    .context("the stalled screen was never drawn again")?;
-                if frame["type"] == "snapshot" {
-                    break;
-                }
-            }
+            // Reading again, the stalled screen finds itself closed, so the
+            // read it waits for fails rather than hang, and a screen opened
+            // again is drawn whole.
+            let (code, reason) = close_of(&mut stalled, Duration::from_secs(30)).await?;
             ensure!(
-                !fixture.node_log("node_daemon", "screen.resync")?.is_empty(),
-                "the stalled screen's resync was not logged"
+                (code, reason.as_str()) == (1013, "screen_fell_behind"),
+                "the stalled screen closed as {code} {reason}"
             );
+            let mut again = screen_socket(port, &token).await?;
+            first_snapshot(&mut again, Duration::from_secs(20)).await?;
             Ok::<_, anyhow::Error>(())
         })
     })();

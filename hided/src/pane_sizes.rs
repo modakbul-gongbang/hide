@@ -19,8 +19,9 @@ use std::sync::Mutex;
 use hide_node_link::terminal::GridSize;
 use serde_json::json;
 
-/// The panes whose screens' grids are kept. Past it a screen's grid goes on
-/// at once, as with one screen, and the crossing is logged.
+/// The panes whose screens' grids are kept. A pane leaves when the core
+/// forgets it; past the cap a screen's grid goes on at once, as with one
+/// screen, and the crossing is logged once.
 const MAX_PANES: usize = 1024;
 
 #[derive(Default)]
@@ -36,6 +37,8 @@ struct Pane {
 #[derive(Default)]
 pub struct PaneSizes {
     panes: Mutex<HashMap<String, Pane>>,
+    /// Set while the table is full and the crossing has been logged.
+    full: std::sync::atomic::AtomicBool,
 }
 
 impl PaneSizes {
@@ -44,12 +47,14 @@ impl PaneSizes {
     pub fn resized(&self, screen: u64, pane: &str, size: GridSize) -> Option<GridSize> {
         let mut panes = self.lock();
         if !panes.contains_key(pane) && panes.len() >= MAX_PANES {
-            herdr_core::diagnostic!(json!({
-                "component": "pane_sizes",
-                "kind": "pane_sizes.full",
-                "pane_id": pane,
-                "cap": MAX_PANES,
-            }));
+            if !self.full.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                herdr_core::diagnostic!(json!({
+                    "component": "pane_sizes",
+                    "kind": "pane_sizes.full",
+                    "pane_id": pane,
+                    "cap": MAX_PANES,
+                }));
+            }
             return Some(size);
         }
         let entry = panes.entry(pane.to_owned()).or_default();
@@ -111,6 +116,14 @@ impl PaneSizes {
             !entry.grids.is_empty()
         });
         resized
+    }
+
+    /// The pane is gone: no screen sizes it any more.
+    pub fn forget(&self, pane: &str) {
+        let mut panes = self.lock();
+        if panes.remove(pane).is_some() && panes.len() < MAX_PANES {
+            self.full.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Pane>> {
@@ -198,5 +211,19 @@ mod tests {
         }
         assert_eq!(sizes.resized(2, "over", NARROW), Some(NARROW));
         assert_eq!(sizes.lock().len(), MAX_PANES);
+    }
+
+    /// A pane the core forgets leaves the table, so a screen open for weeks
+    /// keeps only live panes and the size rule stays on for new ones (R7).
+    #[test]
+    fn a_forgotten_pane_leaves_room_for_the_next() {
+        let sizes = PaneSizes::default();
+        for pane in 0..MAX_PANES {
+            sizes.resized(1, &pane.to_string(), WIDE);
+        }
+        sizes.forget("0");
+        assert_eq!(sizes.resized(1, "new", WIDE), Some(WIDE));
+        sizes.input(1, "new");
+        assert_eq!(sizes.resized(2, "new", NARROW), None, "the size rule holds");
     }
 }

@@ -269,6 +269,16 @@ impl TerminalHub {
         }
     }
 
+    /// The panes this hub keeps output of, read under its lock without
+    /// walking their chunks.
+    pub fn panes(&self) -> Vec<String> {
+        lock(&self.state)
+            .panes
+            .keys()
+            .map(ToString::to_string)
+            .collect()
+    }
+
     /// Bytes each pane keeps for clients now, for the memory bound's test
     /// and the measurement.
     pub fn retained_bytes(&self) -> HashMap<String, usize> {

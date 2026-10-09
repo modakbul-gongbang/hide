@@ -1195,6 +1195,9 @@ impl ProxyShared {
                     "message": device_text(&message, DEVICE_RECORD_TEXT),
                 })),
             },
+            // Only a core sends a pane's end, to a node that drew it from
+            // the core's relay; a device's panes end in its pane events.
+            TerminalUp::Forget { .. } => {}
             TerminalUp::Report { report } => {
                 // A device's errors are its own word about its panes: they
                 // reach the log as notes and never become the operator's
