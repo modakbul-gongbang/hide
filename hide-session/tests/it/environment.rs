@@ -7,7 +7,7 @@ fn native_override_registry_owns_raw_reads_and_matches_the_example() {
         .iter()
         .map(|entry| entry.key)
         .collect();
-    let example: BTreeSet<_> = include_str!("../.env.example")
+    let example: BTreeSet<_> = include_str!("../../.env.example")
         .lines()
         .filter_map(|line| line.strip_prefix("# ")?.split_once('=').map(|(key, _)| key))
         .collect();
