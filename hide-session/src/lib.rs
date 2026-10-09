@@ -502,6 +502,9 @@ pub enum SkipReason {
     MissingTimestamp,
     InvalidTimestamp,
     NonConversationCapacity,
+    /// A record past the line cap whose text, or whose structure, the
+    /// bounded scan cannot keep; its text is lost.
+    ConversationCapacity,
     /// A record longer than the line cap was read without its bodies.
     BodyCapacity,
     UserTurnCapacity,
@@ -515,6 +518,7 @@ impl SkipReason {
             Self::MissingTimestamp => "missing_timestamp",
             Self::InvalidTimestamp => "invalid_timestamp",
             Self::NonConversationCapacity => "non_conversation_capacity",
+            Self::ConversationCapacity => "conversation_capacity",
             Self::BodyCapacity => "body_capacity",
             Self::UserTurnCapacity => "user_turn_capacity",
             Self::UserTurnInvalid => "user_turn_invalid",
