@@ -39,9 +39,17 @@ const INPUT_LIMIT: u64 = 256 * 1024;
 #[serde(default)]
 struct Input {
     session_id: Option<String>,
+    /// The agent's own id for the session, which Memory and its receipts know
+    /// it by; Pi's and omp's extension names the session by its file for
+    /// letters, as Herdr does, and sends this beside it.
+    native_session: Option<String>,
     prompt: Option<String>,
     cwd: Option<PathBuf>,
     first: bool,
+    /// Whether Memory's session-start capsule is still to be given; Pi's and
+    /// omp's extension tracks it apart from the guidance, and OpenCode's
+    /// plugin, which sends none, gives both on its first prompt.
+    memory_first: Option<bool>,
     letters: Vec<String>,
     tool: Option<String>,
     command: Option<String>,
@@ -85,6 +93,19 @@ impl Agent {
             PluginDialect::Pi | PluginDialect::Omp => {
                 version == Some(hide_agent_hooks::pi_extension::VERSION)
             }
+        }
+    }
+
+    /// The session Memory knows: OpenCode's session id is already its own,
+    /// while Pi's and omp's file path is not what their session reader keys a
+    /// receipt by.
+    fn memory_session(&self, input: &Input, session: &str) -> Option<String> {
+        match self.dialect {
+            PluginDialect::OpenCode => Some(session.to_owned()),
+            PluginDialect::Pi | PluginDialect::Omp => input
+                .native_session
+                .clone()
+                .filter(|id| delivery::valid_session(id)),
         }
     }
 
@@ -164,26 +185,9 @@ fn prompt(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value 
     let Some(session) = session(&input) else {
         return json!({});
     };
-    let memory = if agent.adapter.memory.is_some() {
-        memory_context_until(
-            MemoryRequest {
-                runtime_id: agent.runtime(),
-                event: if input.first {
-                    HookEvent::SessionStart
-                } else {
-                    HookEvent::UserPromptSubmit
-                },
-                cwd: input.cwd,
-                prompt: input.prompt,
-                session_id: Some(session.clone()),
-            },
-            home,
-            Instant::now() + Duration::from_millis(hide_memory::HOOK_PROCESS_BUDGET_MS),
-        )
-        .context
-    } else {
-        None
-    };
+    let memory_deadline =
+        Instant::now() + Duration::from_millis(hide_memory::HOOK_PROCESS_BUDGET_MS);
+    let (memory, memory_start) = prompt_memory(home, agent, &input, &session, memory_deadline);
     let intake = delivery::pull(
         deadline,
         &Prompt {
@@ -201,7 +205,47 @@ fn prompt(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value 
         context.push_str(&text);
         letters = ids;
     }
-    json!({ "context": context, "letters": letters })
+    json!({ "context": context, "letters": letters, "memory_start": memory_start })
+}
+
+/// The Memory capsule for this prompt, signed for the session Memory knows,
+/// and whether it is the session-start capsule, which tells the script to stop
+/// asking for one once the message carrying it is written.
+fn prompt_memory(
+    home: &Path,
+    agent: &Agent,
+    input: &Input,
+    session: &str,
+    deadline: Instant,
+) -> (Option<String>, bool) {
+    if agent.adapter.memory.is_none() {
+        return (None, false);
+    }
+    let Some(memory_session) = agent.memory_session(input, session) else {
+        // A script of this build always sends the host's id; Memory without
+        // it would be signed for a session no reader knows.
+        delivery::diagnose(home, "plugin");
+        return (None, false);
+    };
+    let start = input.memory_first.unwrap_or(input.first);
+    let memory = memory_context_until(
+        MemoryRequest {
+            runtime_id: agent.runtime(),
+            event: if start {
+                HookEvent::SessionStart
+            } else {
+                HookEvent::UserPromptSubmit
+            },
+            cwd: input.cwd.clone(),
+            prompt: input.prompt.clone(),
+            session_id: Some(memory_session),
+        },
+        home,
+        deadline,
+    )
+    .context;
+    let start = start && memory.is_some();
+    (memory, start)
 }
 
 fn confirm(home: &Path, input: Input, deadline: Instant) -> Value {
@@ -302,4 +346,107 @@ fn subagents(home: &Path, input: Input) -> Value {
     let socket_path = socket_path.unwrap_or_default();
     let _ = report::record_outcome(home, &pane, "subagent count", &socket_path, &outcome);
     json!({ "reported": outcome.is_ok() })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Room for a debug build on a loaded machine; the 75 ms process budget is
+    /// the helper's own and is not what these tests prove.
+    const MEMORY_TEST_DEADLINE: Duration = Duration::from_secs(60);
+
+    /// A HOME whose Memory store holds one enabled Project, and that Project's
+    /// folder and id.
+    fn memory_project() -> (tempfile::TempDir, PathBuf, String, hide_memory::MemoryStore) {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let root = temp.path().join("project");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let node = hide_platform::host::machine_id().unwrap();
+        let project = hide_project::resolve(&root, &node).unwrap();
+        let database = hide_agent_hooks::memory::database_path(&home);
+        std::fs::create_dir_all(database.parent().unwrap()).unwrap();
+        let store = hide_memory::MemoryStore::open(&database).unwrap();
+        store
+            .ensure_project(&project.id, &project.root, &node)
+            .unwrap();
+        store.set_enabled(&project.id, true, true).unwrap();
+        (temp, root, project.id, store)
+    }
+
+    fn input(value: Value) -> Input {
+        serde_json::from_value(value).unwrap()
+    }
+
+    /// The `event`, `items` and `auth` of the receipt line in `context`.
+    fn receipt(context: &str) -> (String, String, String) {
+        let line = context
+            .lines()
+            .find(|line| line.starts_with("<hide-memory-receipt "))
+            .unwrap_or_else(|| panic!("no receipt in {context}"));
+        let field = |name: &str| {
+            let start = line.find(&format!("{name}=\"")).unwrap() + name.len() + 2;
+            line[start..].split_once('"').unwrap().0.to_owned()
+        };
+        (field("event"), field("items"), field("auth"))
+    }
+
+    /// Pi's and omp's extension names the session by its file for letters and
+    /// by the host's own id for Memory: the session-start receipt is signed
+    /// for the id, which is what their session reader keys it by, never for
+    /// the file. OpenCode's session id is its own.
+    #[test]
+    fn a_session_start_receipt_is_signed_for_the_session_memory_knows() {
+        let (temp, root, project_id, store) = memory_project();
+        let home = temp.path().join("home");
+        let deadline = || Instant::now() + MEMORY_TEST_DEADLINE;
+        for name in ["pi", "omp"] {
+            let agent = Agent::parse(name).unwrap();
+            let file = format!("/sessions/-work-/2026-10-09T00-00-00-000Z_{name}.jsonl");
+            let id = format!("01a11d1d-{name}");
+            let asked = input(
+                json!({"session_id": file, "native_session": id, "prompt": "Fix it",
+                "cwd": root, "first": true, "memory_first": true}),
+            );
+            let (memory, start) = prompt_memory(&home, &agent, &asked, &file, deadline());
+            assert!(start, "{name}: the session-start capsule was given");
+            let (event, items, auth) = receipt(&memory.unwrap());
+            assert_eq!(event, "SessionStart");
+            let verifies = |session: &str| {
+                store
+                    .verify_receipt_auth(&project_id, name, session, &event, &items, &auth)
+                    .unwrap()
+            };
+            assert!(verifies(&id), "{name}: signed for the host's id");
+            assert!(!verifies(&file), "{name}: never for the session file");
+
+            // Once the start capsule is written the script asks for the
+            // prompt capsule, even on the guidance's first prompt; with no
+            // session-start receipt projected yet there is none to give.
+            let later = input(
+                json!({"session_id": file, "native_session": id, "prompt": "Fix it",
+                "cwd": root, "first": true, "memory_first": false}),
+            );
+            assert_eq!(
+                prompt_memory(&home, &agent, &later, &file, deadline()),
+                (None, false),
+                "{name}"
+            );
+        }
+
+        let agent = Agent::parse("opencode").unwrap();
+        let asked = input(
+            json!({"session_id": "ses_root", "prompt": "Fix it", "cwd": root, "first": true}),
+        );
+        let (memory, start) = prompt_memory(&home, &agent, &asked, "ses_root", deadline());
+        assert!(start);
+        let (event, items, auth) = receipt(&memory.unwrap());
+        assert!(
+            store
+                .verify_receipt_auth(&project_id, "opencode", "ses_root", &event, &items, &auth)
+                .unwrap()
+        );
+    }
 }

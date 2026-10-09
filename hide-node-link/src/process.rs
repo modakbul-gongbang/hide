@@ -19,3 +19,18 @@ pub enum ProcessStart {
         reason: String,
     },
 }
+
+/// How the terminal a pane's shell controls takes typed input
+/// (`hide_platform::process::LineInput`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum LineInput {
+    /// Each key reaches the program as it arrives: the shell's line editor
+    /// is reading.
+    Keys,
+    /// The kernel holds an unfinished line and drops every byte past
+    /// `limit` of it, Enter included.
+    Lines { limit: u32 },
+    /// A console with no line discipline, which cuts no line.
+    Console,
+}

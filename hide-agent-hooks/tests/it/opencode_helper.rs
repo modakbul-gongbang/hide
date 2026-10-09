@@ -1,6 +1,8 @@
 //! `hide-agent-hooks opencode <operation>`, what Hide's OpenCode plugin asks
-//! (PRD opencode-plugin B3, B4, B7, B9, B11, B19): the compiled helper beside a
-//! stand-in `hide` that records every call, run with the JSON the plugin sends.
+//! (PRD opencode-plugin B3, B4, B7, B9, B11, B19), and the Memory Pi's and
+//! omp's extension asks for (PRD pi-omp-extension B10): the compiled helper
+//! beside a stand-in `hide` that records every call, run with the JSON the
+//! script sends.
 
 #![cfg(unix)]
 
@@ -55,13 +57,21 @@ impl Machine {
     }
 
     fn run(&self, operation: &str, input: &Value, in_pane: bool) -> Value {
-        self.run_bytes(operation, input.to_string().as_bytes(), in_pane)
+        self.run_as("opencode", operation, input, in_pane)
+    }
+
+    fn run_as(&self, agent: &str, operation: &str, input: &Value, in_pane: bool) -> Value {
+        self.run_bytes_as(agent, operation, input.to_string().as_bytes(), in_pane)
     }
 
     fn run_bytes(&self, operation: &str, input: &[u8], in_pane: bool) -> Value {
+        self.run_bytes_as("opencode", operation, input, in_pane)
+    }
+
+    fn run_bytes_as(&self, agent: &str, operation: &str, input: &[u8], in_pane: bool) -> Value {
         let mut command = Command::new(&self.helper);
         command
-            .args(["opencode", operation])
+            .args([agent, operation])
             .env(hide_platform::host::HOME_VARIABLE, &self.home)
             .env("PATH", "/usr/bin:/bin")
             .env("HERDR_SOCKET_PATH", self.home.join("no-herdr.sock"))
@@ -237,4 +247,80 @@ fn start_answers_hides_session_guidance() {
         context.contains(hide_agent_hooks::guidance::GUIDANCE_LINE),
         "{context}"
     );
+}
+
+/// A Memory-enabled Project beside the machine's HOME, in the store the
+/// helper reads.
+fn memory_project(machine: &Machine) -> (PathBuf, String, hide_memory::MemoryStore) {
+    let root = machine.home.parent().unwrap().join("project");
+    std::fs::create_dir_all(&root).unwrap();
+    let node = hide_platform::host::machine_id().unwrap();
+    let project = hide_project::resolve(&root, &node).unwrap();
+    let database = hide_agent_hooks::memory::database_path(&machine.home);
+    std::fs::create_dir_all(database.parent().unwrap()).unwrap();
+    let store = hide_memory::MemoryStore::open(&database).unwrap();
+    store
+        .ensure_project(&project.id, &project.root, &node)
+        .unwrap();
+    store.set_enabled(&project.id, true, true).unwrap();
+    (root, project.id, store)
+}
+
+/// Whether `context` carries a Memory receipt line.
+fn has_receipt(context: &str) -> bool {
+    context
+        .lines()
+        .any(|line| line.starts_with("<hide-memory-receipt "))
+}
+
+/// Through the helper binary, the outcomes that do not hang on its 75 ms
+/// Memory budget: a prompt past the session start, one with no usable host
+/// id, and one in a Project with Memory off are no session start, and the
+/// letters ride regardless. Which session a receipt is signed for is the
+/// helper's unit test, which can wait for Memory.
+#[test]
+fn pi_and_omp_prompts_without_a_session_start_capsule_say_so_and_still_carry_letters() {
+    let machine = Machine::new();
+    let (project, project_id, store) = memory_project(&machine);
+    let version = hide_agent_hooks::pi_extension::VERSION;
+    for agent in ["pi", "omp"] {
+        let file = format!("/sessions/-work-/2026-10-09T00-00-00-000Z_{agent}.jsonl");
+        let id = format!("01a11d1d-{agent}");
+
+        // Once the start capsule is written, the prompt asks for the prompt
+        // capsule, which is no session start.
+        let answer = machine.run_as(
+            agent,
+            "prompt",
+            &json!({"session_id": file, "native_session": id, "prompt": "Fix it", "cwd": project,
+                "first": true, "memory_first": false, "version": version}),
+            true,
+        );
+        assert_eq!(answer["memory_start"], json!(false), "{agent}");
+        assert_eq!(answer["letters"], json!(["letter-1"]), "{agent}");
+
+        // An id that would read as an option is no session: no Memory, the letters still ride.
+        let answer = machine.run_as(
+            agent,
+            "prompt",
+            &json!({"session_id": file, "native_session": "-x", "prompt": "Fix it", "cwd": project,
+                "first": true, "memory_first": true, "version": version}),
+            true,
+        );
+        assert_eq!(answer["memory_start"], json!(false), "{agent}");
+        assert_eq!(answer["letters"], json!(["letter-1"]), "{agent}");
+        assert!(!has_receipt(answer["context"].as_str().unwrap()), "{agent}");
+    }
+
+    // With Memory off no capsule is given, so the extension asks again.
+    store.set_enabled(&project_id, false, true).unwrap();
+    let answer = machine.run_as(
+        "pi",
+        "prompt",
+        &json!({"session_id": "/sessions/-work-/off.jsonl", "native_session": "01a11d1d-off",
+            "prompt": "Fix it", "cwd": project, "first": true, "memory_first": true, "version": version}),
+        true,
+    );
+    assert_eq!(answer["memory_start"], json!(false));
+    assert!(!has_receipt(answer["context"].as_str().unwrap()));
 }

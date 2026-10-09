@@ -85,7 +85,12 @@ use crate::error::HostError;
 /// keys and output both ways. A node on 25 would read those lines as
 /// unreadable requests, so it is refused at Hello and reinstalled; the
 /// audited 24 link keeps its legacy features and starts no terminals.
-pub const PROTOCOL_VERSION: u32 = 26;
+/// 27: `line_input` answers how a pane shell's terminal takes typed input,
+/// so a start waits for the shell's line editor before it types a line the
+/// terminal could cut. A node on 26 would refuse it as unknown, and a long
+/// first prompt could not start on that device, so it is refused at Hello and
+/// reinstalled.
+pub const PROTOCOL_VERSION: u32 = 27;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -401,6 +406,12 @@ pub enum Call {
     ProcessDescendants {
         pid: u32,
     },
+    /// How the terminal `pid` controls takes typed input now
+    /// (`process::LineInput`), read before a pane's shell is given a line its
+    /// terminal could cut.
+    LineInput {
+        pid: u32,
+    },
     /// Measures each of `paths` (`disk::DiskUsage`), reporting each one as
     /// it finishes and answering them all. The entries of `shared_git` are
     /// a repository's shared Git directory, measured as one size.
@@ -616,6 +627,7 @@ impl Call {
             | Self::AgentInstalled { .. }
             | Self::ProcessStarts { .. }
             | Self::ProcessDescendants { .. }
+            | Self::LineInput { .. }
             | Self::DiskUsage { .. }
             | Self::ListeningPorts
             | Self::VolumeFree { .. }

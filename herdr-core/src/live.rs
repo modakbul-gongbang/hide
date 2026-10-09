@@ -2130,8 +2130,11 @@ fn start_or_degrade_agent(
     let pane_was_clear = matches!(&interrupted_reused_agent, Ok(false));
     let resume = resume_arguments(agent);
     if let Some(args) = resume {
+        // A resume line is a session id, far under every terminal's line
+        // limit, so the restore asks no node.
         let result = start_agent(
             connector,
+            None,
             &format!("herdr-core:{key}:agent:{index}:resume"),
             pane_id,
             &name,
@@ -2157,6 +2160,7 @@ fn start_or_degrade_agent(
     }
     if let Err(message) = start_agent(
         connector,
+        None,
         &format!("herdr-core:{key}:agent:{index}:fresh"),
         pane_id,
         &name,
@@ -2217,8 +2221,12 @@ fn agent_is_running(connector: &dyn ApiConnector, pane_id: &str, kind: &str) -> 
     })
 }
 
+/// `node` runs the pane (`agent_start::start_at_shell_checked`); none
+/// when it cannot be reached.
+#[allow(clippy::too_many_arguments)] // the start identity and the pane's node
 pub(crate) fn start_agent(
     connector: &dyn ApiConnector,
+    node: Option<&dyn crate::node_access::NodeLink>,
     request_id: &str,
     pane_id: &str,
     name: &str,
@@ -2228,6 +2236,7 @@ pub(crate) fn start_agent(
 ) -> Result<String, String> {
     start_agent_checked(
         connector,
+        node,
         request_id,
         pane_id,
         name,
@@ -2241,6 +2250,7 @@ pub(crate) fn start_agent(
 #[allow(clippy::too_many_arguments)] // the existing start identity plus its effect admission
 fn start_agent_checked(
     connector: &dyn ApiConnector,
+    node: Option<&dyn crate::node_access::NodeLink>,
     request_id: &str,
     pane_id: &str,
     name: &str,
@@ -2251,6 +2261,7 @@ fn start_agent_checked(
 ) -> Result<String, String> {
     crate::agent_start::start_at_shell_checked(
         connector,
+        node,
         request_id,
         pane_id,
         wire::agent_start_params(pane_id, name, kind, args, codex_daemon)?,
@@ -2971,6 +2982,7 @@ fn run_agent_fork_with_registration(
     };
     let started = start_agent_checked(
         mutation_connector,
+        Some(node),
         &format!("herdr-core:fork:{}:start", request.name),
         &child_pane_id,
         &request.name,
