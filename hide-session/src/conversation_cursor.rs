@@ -36,6 +36,12 @@ impl ConversationCheckpoint {
         }
     }
 
+    /// The same position, saying whether the session had more to read.
+    pub(crate) fn with_more(mut self, more: bool) -> Self {
+        self.has_more = more;
+        self
+    }
+
     /// The session creation time and last-message digest
     /// [`Self::at_message`] recorded; `None` from an older checkpoint.
     pub(crate) fn message_witness(&self) -> Option<(u64, u64)> {

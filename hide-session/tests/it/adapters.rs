@@ -1696,7 +1696,9 @@ fn opencode_question(writer: &rusqlite::Connection, message: &str, at: u64, stat
         ]
     }]});
     let state = match status {
-        "running" => serde_json::json!({"status": "running", "input": input, "time": {"start": at}}),
+        "running" => {
+            serde_json::json!({"status": "running", "input": input, "time": {"start": at}})
+        }
         "completed" => serde_json::json!({"status": "completed", "input": input,
             "output": "User has answered your questions: main", "metadata": {}, "title": "Asked 1 question",
             "time": {"start": at, "end": at + 5}}),
@@ -1726,16 +1728,24 @@ fn an_opencode_question_waits_with_its_text_and_choices_until_it_is_answered() {
     let home = home(Agent::OpenCode);
     let writer = opencode_writer(home.path());
     let first = read(home.path(), &request(Agent::OpenCode)).unwrap();
-    assert_eq!(first.turns.as_ref().unwrap().waiting(), Some(Waiting::Nothing));
+    assert_eq!(
+        first.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Nothing)
+    );
 
     // The question waits while its message is unfinished.
     opencode_assistant(&writer, "msg_07", START + 400_000, false);
     opencode_question(&writer, "msg_07", START + 400_100, "running");
     let asking = read(home.path(), &opencode_continued(&first)).unwrap();
-    assert!(asking.events.is_empty(), "the unfinished message is no event yet");
+    assert!(
+        asking.events.is_empty(),
+        "the unfinished message is no event yet"
+    );
     let fact = asking.turns.as_ref().unwrap().user_turn().unwrap();
     assert_eq!(fact.kind, UserTurnKind::Question);
-    let content = serde_json::to_value(fact.content.unwrap()).unwrap().to_string();
+    let content = serde_json::to_value(fact.content.unwrap())
+        .unwrap()
+        .to_string();
     assert!(content.contains("어느 브랜치에 올릴까요?"), "{content}");
     assert!(content.contains("release"), "{content}");
 
@@ -1772,7 +1782,10 @@ fn a_dismissed_opencode_question_ends_the_wait_and_a_read_from_the_start_agrees(
     opencode_assistant(&writer, "msg_07", START + 400_000, true);
     // A reader that lost its state folds the whole session to the same answer.
     let fresh = read_whole(home.path(), Agent::OpenCode);
-    assert_eq!(fresh.turns.as_ref().unwrap().waiting(), Some(Waiting::Nothing));
+    assert_eq!(
+        fresh.turns.as_ref().unwrap().waiting(),
+        Some(Waiting::Nothing)
+    );
 }
 
 #[test]
@@ -1829,10 +1842,7 @@ fn an_opencode_session_proves_its_checkout_and_refuses_another_one() {
     );
     other.cwd = Some("/work/app/".into());
     let confirmed = read(home.path(), &other).unwrap().confirmed;
-    assert_eq!(
-        confirmed.native_session_id.as_deref(),
-        Some(OPENCODE_ROOT)
-    );
+    assert_eq!(confirmed.native_session_id.as_deref(), Some(OPENCODE_ROOT));
     assert_eq!(confirmed.incarnation, "opencode:1790989200000");
     let mut path = request(Agent::OpenCode);
     path.reference_kind = "path".into();
@@ -1927,4 +1937,116 @@ fn opencode_activity_answers_its_newest_write_and_count_only_for_its_proven_owne
     );
     let value = serde_json::to_string(&answer).unwrap();
     assert!(!value.contains(OPENCODE_ROOT) && !value.contains("/work/app"));
+}
+
+#[test]
+fn opencode_catalog_and_search_hold_only_its_root_sessions_in_the_project() {
+    use hide_session::search::SearchIndex;
+    use hide_session::{SessionCatalog, SessionReadScope, search_read};
+    let home = home(Agent::OpenCode);
+    let checkout = home.path().join("checkout");
+    std::fs::create_dir(&checkout).unwrap();
+    let checkout = std::fs::canonicalize(checkout).unwrap();
+    let writer = opencode_writer(home.path());
+    writer
+        .execute(
+            "UPDATE session SET directory = ?1",
+            [checkout.display().to_string()],
+        )
+        .unwrap();
+    writer
+        .execute(
+            "INSERT INTO session (id, project_id, slug, directory, title, version, \
+             time_created, time_updated) VALUES ('ses_elsewhere', 'prj_1', 'far', \
+             '/elsewhere/app', 'elsewhere', '1.18.30', 1, 1)",
+            [],
+        )
+        .unwrap();
+    let project = hide_project::resolve(&checkout, "local").unwrap();
+
+    let sessions = SessionCatalog::new(home.path(), "local")
+        .project_sessions(&project)
+        .unwrap();
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    let session = &sessions[0];
+    assert_eq!(session.id, OPENCODE_ROOT);
+    assert_eq!(session.agent, Agent::OpenCode);
+    assert_eq!(
+        session.locator,
+        PathBuf::from(format!("opencode/{OPENCODE_ROOT}"))
+    );
+    assert_eq!(session.title.as_deref(), Some("요청 보기 만들기"));
+    assert!(
+        session
+            .first_human_request
+            .as_deref()
+            .is_some_and(|text| text.starts_with("요청 보기를 만들어줘")),
+        "{session:?}"
+    );
+
+    let mut index = SearchIndex::open(&home.path().join("index.sqlite3")).unwrap();
+    let scope = SessionReadScope {
+        id: OPENCODE_ROOT.to_owned(),
+        cwd: checkout.display().to_string(),
+    };
+    let locator = session.locator.display().to_string();
+    let mut index_all = |index: &mut SearchIndex| loop {
+        let saved = index.saved(&project.id, OPENCODE_ROOT).unwrap();
+        let step = search_read::read_opencode_step(home.path(), saved.as_ref(), &scope).unwrap();
+        if !index
+            .apply(&project.id, OPENCODE_ROOT, &locator, 0, step)
+            .unwrap()
+        {
+            break;
+        }
+    };
+    index_all(&mut index);
+    let saved = index.saved(&project.id, OPENCODE_ROOT).unwrap();
+    assert!(matches!(
+        search_read::read_opencode_step(home.path(), saved.as_ref(), &scope).unwrap(),
+        hide_session::search::IndexStep::Done
+    ));
+    let mut stamps = |paths: &[String]| {
+        Ok(paths
+            .iter()
+            .map(|_| search_read::opencode_stamp(home.path(), &scope).ok())
+            .collect())
+    };
+    let page = index
+        .search_scoped(&project.id, "pull/12", 0, None, &mut stamps)
+        .unwrap();
+    assert_eq!(page.hits.len(), 1, "{page:?}");
+    assert_eq!(page.hits[0].session_id, OPENCODE_ROOT);
+    assert!(!page.stale);
+    // The child session's answer is its own conversation, never the root's.
+    let child = index
+        .search_scoped(&project.id, "subagent", 0, None, &mut stamps)
+        .unwrap();
+    assert!(child.hits.is_empty(), "{child:?}");
+
+    // A new message moves the stamp: the copy is stale until it is read on.
+    writer
+        .execute(
+            "INSERT INTO message VALUES ('msg_07', ?1, 1790989400000, 1790989400000, \
+             '{\"role\":\"user\",\"time\":{\"created\":1790989400000}}')",
+            [OPENCODE_ROOT],
+        )
+        .unwrap();
+    writer
+        .execute(
+            "INSERT INTO part VALUES ('prt_09', 'msg_07', ?1, 1790989400000, 1790989400000, \
+             '{\"type\":\"text\",\"text\":\"배포 노트도 붙여줘\"}')",
+            [OPENCODE_ROOT],
+        )
+        .unwrap();
+    let stale = index
+        .search_scoped(&project.id, "pull/12", 0, None, &mut stamps)
+        .unwrap();
+    assert!(stale.stale && stale.hits.is_empty(), "{stale:?}");
+    index_all(&mut index);
+    let fresh = index
+        .search_scoped(&project.id, "배포 노트", 0, None, &mut stamps)
+        .unwrap();
+    assert_eq!(fresh.hits.len(), 1, "{fresh:?}");
+    assert!(!fresh.stale);
 }

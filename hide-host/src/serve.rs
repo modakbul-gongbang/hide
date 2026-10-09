@@ -841,6 +841,25 @@ pub fn handle_with_progress(
             to_value(listed)
         }
         Call::SessionIndexRead {
+            agent: hide_session::Agent::OpenCode,
+            path,
+            saved,
+            scope,
+        } => {
+            // OpenCode's sessions live in its database, named `opencode/<id>`.
+            let home = env.home("sessions_home_unavailable")?;
+            let step = hide_session::search_read::opencode_session(&path, scope.as_ref())
+                .and_then(|scope| {
+                    hide_session::search_read::read_opencode_step(
+                        Path::new(&home),
+                        saved.as_ref(),
+                        scope,
+                    )
+                })
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
+            to_value(step)
+        }
+        Call::SessionIndexRead {
             agent,
             path,
             saved,
@@ -874,6 +893,20 @@ pub fn handle_with_progress(
                     .iter()
                     .enumerate()
                     .map(|(index, path)| {
+                        let scope = scopes
+                            .as_ref()
+                            .and_then(|scopes| scopes.get(index))
+                            .and_then(Option::as_ref);
+                        if path.starts_with(hide_session::links::OPENCODE_PREFIX) {
+                            return hide_session::search_read::opencode_session(path, scope)
+                                .and_then(|scope| {
+                                    hide_session::search_read::opencode_stamp(
+                                        Path::new(&home),
+                                        scope,
+                                    )
+                                })
+                                .ok();
+                        }
                         let path = Path::new(path);
                         if !path.is_absolute() {
                             return None;
@@ -895,10 +928,6 @@ pub fn handle_with_progress(
                         } else {
                             hide_session::Agent::Claude
                         };
-                        let scope = scopes
-                            .as_ref()
-                            .and_then(|scopes| scopes.get(index))
-                            .and_then(Option::as_ref);
                         hide_session::read_session_file(
                             Path::new(&home),
                             agent,

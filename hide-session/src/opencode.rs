@@ -119,25 +119,40 @@ pub(crate) fn open(home: &Path) -> Result<Connection, String> {
     Ok(connection)
 }
 
-/// The root session a proof found, as its own row states it.
+/// The session a proof found, as its own row states it.
 pub(crate) struct Proven {
     pub(crate) title: Option<String>,
     pub(crate) created: u64,
     pub(crate) updated: u64,
     pub(crate) messages: u64,
+    pub(crate) directory: Option<String>,
+    pub(crate) parent: Option<String>,
 }
 
-/// Proves that `id` names a root session OpenCode started in `cwd`.
-pub(crate) fn prove(connection: &Connection, id: &str, cwd: Option<&str>) -> Result<Proven, String> {
+/// What a read requires of the session row before it reads.
+#[derive(Clone, Copy)]
+pub(crate) enum Owner<'a> {
+    /// A root session OpenCode started in this checkout: every session
+    /// feature (titles, turns, lifecycle, archive, search, phone).
+    Root { cwd: Option<&'a str> },
+    /// Any session as its row records it, a subagent's child session
+    /// included: the link graph, which names each by its own row.
+    Recorded,
+}
+
+/// Proves that `id` names the session `owner` requires.
+pub(crate) fn prove(connection: &Connection, id: &str, owner: Owner<'_>) -> Result<Proven, String> {
     if !crate::label_owner::valid_native_id(id) {
         return Err("label_session_id_invalid".to_owned());
     }
-    let (title, created, updated, directory, child) = connection
+    let (title, created, updated, directory, (parent, child)) = connection
         .query_row(
             "SELECT CASE WHEN typeof(title) = 'text' AND octet_length(title) <= ?2 * 4 \
              THEN substr(title, 1, ?2) END, time_created, time_updated, \
              CASE WHEN typeof(directory) = 'text' AND octet_length(directory) <= ?3 \
-             THEN directory END, parent_id IS NOT NULL FROM session WHERE id = ?1",
+             THEN directory END, \
+             CASE WHEN typeof(parent_id) = 'text' AND octet_length(parent_id) <= ?3 \
+             THEN parent_id END, parent_id IS NOT NULL FROM session WHERE id = ?1",
             params![id, TITLE_LIMIT_CHARS, DIRECTORY_LIMIT_BYTES],
             |row| {
                 Ok((
@@ -145,20 +160,24 @@ pub(crate) fn prove(connection: &Connection, id: &str, cwd: Option<&str>) -> Res
                     row.get::<_, i64>(1)?,
                     row.get::<_, i64>(2)?,
                     row.get::<_, Option<String>>(3)?,
-                    row.get::<_, bool>(4)?,
+                    (row.get::<_, Option<String>>(4)?, row.get::<_, bool>(5)?),
                 ))
             },
         )
         .optional()
         .map_err(|error| refusal(&error))?
         .ok_or_else(|| "session_file_missing".to_owned())?;
-    if child {
-        return Err("label_session_not_root".to_owned());
-    }
-    let cwd = cwd.ok_or_else(|| "label_session_cwd_unconfirmed".to_owned())?;
-    let directory = directory.ok_or_else(|| "label_session_cwd_unconfirmed".to_owned())?;
-    if !same_directory(&directory, cwd) {
-        return Err("label_session_cwd_mismatch".to_owned());
+    if let Owner::Root { cwd } = owner {
+        if child {
+            return Err("label_session_not_root".to_owned());
+        }
+        let cwd = cwd.ok_or_else(|| "label_session_cwd_unconfirmed".to_owned())?;
+        let recorded = directory
+            .as_deref()
+            .ok_or_else(|| "label_session_cwd_unconfirmed".to_owned())?;
+        if !same_directory(recorded, cwd) {
+            return Err("label_session_cwd_mismatch".to_owned());
+        }
     }
     let messages: i64 = connection
         .query_row(
@@ -172,6 +191,8 @@ pub(crate) fn prove(connection: &Connection, id: &str, cwd: Option<&str>) -> Res
         created: u64::try_from(created).map_err(|_| "label_session_metadata_unconfirmed")?,
         updated: u64::try_from(updated).map_err(|_| "label_session_metadata_unconfirmed")?,
         messages: u64::try_from(messages).unwrap_or(0),
+        directory,
+        parent,
     })
 }
 
@@ -214,7 +235,7 @@ pub(crate) fn confirm(
     cwd: Option<&str>,
 ) -> Result<ConfirmedLabelSession, String> {
     let connection = open(home)?;
-    prove(&connection, id, cwd)?.confirmed(id)
+    prove(&connection, id, Owner::Root { cwd })?.confirmed(id)
 }
 
 /// A session's activity: its newest write (the session row or any of its
@@ -229,11 +250,29 @@ pub(crate) fn activity(
         return Err("session_kind_unsupported".to_owned());
     }
     let id = request.reference_value.as_str();
-    if request.expected_id.as_deref().is_some_and(|expected| expected != id) {
+    if request
+        .expected_id
+        .as_deref()
+        .is_some_and(|expected| expected != id)
+    {
         return Err("session_route_owner_changed".to_owned());
     }
     let connection = open(home)?;
-    let proven = prove(&connection, id, request.cwd.as_deref())?;
+    let proven = prove(
+        &connection,
+        id,
+        Owner::Root {
+            cwd: request.cwd.as_deref(),
+        },
+    )?;
+    Ok(crate::session_activity::SessionActivity {
+        modified_at_unix_ms: newest_write(&connection, id, &proven)?,
+        bytes: proven.messages,
+    })
+}
+
+/// When the session or any of its messages was last written.
+fn newest_write(connection: &Connection, id: &str, proven: &Proven) -> Result<u64, String> {
     let newest: Option<i64> = connection
         .query_row(
             "SELECT max(time_updated) FROM message WHERE session_id = ?1",
@@ -241,11 +280,129 @@ pub(crate) fn activity(
             |row| row.get(0),
         )
         .map_err(|error| refusal(&error))?;
-    let newest = newest.and_then(|newest| u64::try_from(newest).ok()).unwrap_or(0);
-    Ok(crate::session_activity::SessionActivity {
-        modified_at_unix_ms: proven.updated.max(newest),
-        bytes: proven.messages,
-    })
+    let newest = newest
+        .and_then(|newest| u64::try_from(newest).ok())
+        .unwrap_or(0);
+    Ok(proven.updated.max(newest))
+}
+
+/// A proven root session's stamp for the search index: its creation, its
+/// message count and its newest write, read in one transaction.
+pub(crate) fn stamp(home: &Path, id: &str, cwd: &str) -> Result<String, String> {
+    let connection = open(home)?;
+    let proven = prove(&connection, id, Owner::Root { cwd: Some(cwd) })?;
+    let newest = newest_write(&connection, id, &proven)?;
+    Ok(format!(
+        "opencode:{}:{}:{newest}",
+        proven.created, proven.messages
+    ))
+}
+
+/// The project's root OpenCode sessions, as the session catalog lists them:
+/// each one's checkout is the `directory` its own row records, resolved to
+/// the project like a file reader's `cwd`. At most `limit` session rows
+/// are visited, counted with the catalog's other entries; crossing it is the
+/// catalog's capacity failure. No database means no OpenCode sessions.
+pub(crate) fn catalog(
+    home: &Path,
+    device_id: &str,
+    project: &hide_project::ProjectIdentity,
+    visited: &mut usize,
+    limit: usize,
+) -> Result<Vec<crate::ProjectSession>, crate::SessionCatalogError> {
+    let failed = |reason: String| crate::SessionCatalogError::Io {
+        operation: "read_opencode",
+        path: database_path(home),
+        source: std::io::Error::other(reason),
+    };
+    let connection = match open(home) {
+        Ok(connection) => connection,
+        Err(reason) if reason == "session_file_missing" => return Ok(Vec::new()),
+        Err(reason) => return Err(failed(reason)),
+    };
+    let remaining = limit.saturating_sub(*visited);
+    let mut statement = connection
+        .prepare(
+            "SELECT id, directory FROM session WHERE parent_id IS NULL \
+             AND typeof(directory) = 'text' AND octet_length(directory) <= ?1 \
+             AND octet_length(id) <= ?1 ORDER BY time_updated DESC, id LIMIT ?2",
+        )
+        .map_err(|error| failed(refusal(&error)))?;
+    let rows = statement
+        .query_map(
+            params![DIRECTORY_LIMIT_BYTES, remaining as i64 + 1],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .map_err(|error| failed(refusal(&error)))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| failed(refusal(&error)))?;
+    if rows.len() > remaining {
+        return Err(crate::SessionCatalogError::Capacity { limit });
+    }
+    *visited += rows.len();
+    // One resolution per checkout: a project's sessions share a few.
+    let mut projects = std::collections::HashMap::new();
+    let mut sessions = Vec::new();
+    for (id, directory) in rows {
+        if !crate::label_owner::valid_native_id(&id) {
+            continue;
+        }
+        let same = *projects.entry(directory.clone()).or_insert_with(|| {
+            Path::new(&directory).is_absolute()
+                && hide_project::resolve(Path::new(&directory), device_id)
+                    .is_ok_and(|identity| identity.id == project.id)
+        });
+        if !same {
+            continue;
+        }
+        let proven = prove(
+            &connection,
+            &id,
+            Owner::Root {
+                cwd: Some(&directory),
+            },
+        )
+        .map_err(failed)?;
+        let first = first_request(&connection, &id).map_err(failed)?;
+        sessions.push(crate::ProjectSession {
+            locator: PathBuf::from(format!("{}{id}", crate::links::OPENCODE_PREFIX)),
+            agent: crate::Agent::OpenCode,
+            checkout_path: PathBuf::from(&directory),
+            first_human_request: first
+                .as_ref()
+                .map(|(text, _)| crate::catalog::compact_snippet(text)),
+            started_at_unix_ms: first.map(|(_, at)| at).or(Some(proven.created)),
+            updated_at_unix_ms: proven.updated,
+            title: proven.title,
+            event_count: usize::try_from(proven.messages).unwrap_or(usize::MAX),
+            availability: crate::SessionAvailability::Available,
+            id,
+        });
+    }
+    Ok(sessions)
+}
+
+/// The operator's first request in a session and when it was sent: the
+/// first text part of its first person's message that OpenCode or Hide did
+/// not add itself, read within the row limit.
+fn first_request(connection: &Connection, id: &str) -> Result<Option<(String, u64)>, String> {
+    connection
+        .query_row(
+            "SELECT json_extract(part.data, '$.text'), message.time_created \
+             FROM message JOIN part ON part.message_id = message.id \
+             WHERE message.session_id = ?1 AND octet_length(message.data) <= ?2 \
+             AND json_valid(message.data) AND json_extract(message.data, '$.role') = 'user' \
+             AND typeof(part.data) = 'text' AND octet_length(part.data) <= ?3 \
+             AND json_valid(part.data) AND json_extract(part.data, '$.type') = 'text' \
+             AND coalesce(json_extract(part.data, '$.synthetic'), 0) = 0 \
+             AND typeof(json_extract(part.data, '$.text')) = 'text' \
+             ORDER BY message.time_created, message.id, part.time_created, part.id LIMIT 1",
+            params![id, MESSAGE_LIMIT_BYTES, ROW_LIMIT_BYTES],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()
+        .map(|found| found.map(|(text, at)| (text, u64::try_from(at).unwrap_or(0))))
+        .map_err(|error| refusal(&error))
 }
 
 /// A message id's digest, the witness a checkpoint keeps of where it ended.
@@ -272,12 +429,28 @@ pub(crate) fn read(
     home: &Path,
     request: &LabelTranscriptRequest,
 ) -> Result<LabelTranscript, String> {
+    read_as(
+        home,
+        request,
+        Owner::Root {
+            cwd: request.cwd.as_deref(),
+        },
+    )
+    .map(|(transcript, _)| transcript)
+}
+
+/// One bounded read of the session `owner` admits, with the row it proved.
+pub(crate) fn read_as(
+    home: &Path,
+    request: &LabelTranscriptRequest,
+    owner: Owner<'_>,
+) -> Result<(LabelTranscript, Proven), String> {
     if request.reference_kind != "id" {
         return Err("session_kind_unsupported".to_owned());
     }
     let session_id = request.reference_value.as_str();
     let connection = open(home)?;
-    let proven = prove(&connection, session_id, request.cwd.as_deref())?;
+    let proven = prove(&connection, session_id, owner)?;
     let count = proven.messages;
     let mut start = request
         .checkpoint
@@ -295,7 +468,9 @@ pub(crate) fn read(
             .as_ref()
             .and_then(ConversationCheckpoint::message_witness)
         && (created != proven.created
-            || message_at(&connection, session_id, start - 1)?.as_deref().map(witness)
+            || message_at(&connection, session_id, start - 1)?
+                .as_deref()
+                .map(witness)
                 != Some(last))
     {
         rescanned = Some("replaced".to_owned());
@@ -505,7 +680,7 @@ pub(crate) fn read(
         .into_iter()
         .map(|(reason, count)| (reason.to_owned(), count))
         .collect();
-    Ok(LabelTranscript {
+    let transcript = LabelTranscript {
         confirmed: proven.confirmed(session_id)?,
         events: transcript.events,
         checkpoint: ConversationCheckpoint::at_message(next, proven.created, previous),
@@ -514,13 +689,14 @@ pub(crate) fn read(
         rescanned,
         skipped_lines,
         skipped_reasons,
-        title: proven.title,
+        title: proven.title.clone(),
         custom_title: None,
         pr_sightings: transcript.sightings,
         memory_receipts: transcript.receipts,
         subagents: Default::default(),
         turns: Some(turns),
-    })
+    };
+    Ok((transcript, proven))
 }
 
 /// The question marks of the message OpenCode is still writing, and the

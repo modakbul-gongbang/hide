@@ -24,6 +24,8 @@ pub enum SessionFilter {
     Codex,
     Claude,
     Pi,
+    #[serde(rename = "opencode")]
+    OpenCode,
 }
 
 impl SessionFilter {
@@ -31,7 +33,10 @@ impl SessionFilter {
         matches!(self, Self::All)
             || matches!(
                 (self, agent),
-                (Self::Codex, Agent::Codex) | (Self::Claude, Agent::Claude) | (Self::Pi, Agent::Pi)
+                (Self::Codex, Agent::Codex)
+                    | (Self::Claude, Agent::Claude)
+                    | (Self::Pi, Agent::Pi)
+                    | (Self::OpenCode, Agent::OpenCode)
             )
     }
 }
@@ -143,7 +148,13 @@ impl SessionCatalog {
             )?;
         }
 
-        let mut sessions = Vec::new();
+        let mut sessions = crate::opencode::catalog(
+            &self.home,
+            &self.device_id,
+            project,
+            &mut visited,
+            SESSION_DISCOVERY_LIMIT,
+        )?;
         for (agent, path) in files {
             if agent == Agent::Pi && crate::pi::inside_root(&self.home, &path).is_err() {
                 continue;
@@ -363,7 +374,7 @@ fn first_human(events: &[ConversationEvent]) -> Option<&str> {
         .map(|event| event.text.as_str())
 }
 
-fn compact_snippet(value: &str) -> String {
+pub(crate) fn compact_snippet(value: &str) -> String {
     let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
     compact.chars().take(160).collect()
 }
