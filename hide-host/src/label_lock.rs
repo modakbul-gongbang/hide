@@ -44,7 +44,9 @@ struct Held {
     generator: u64,
 }
 
-/// The label locks one core holds through this node.
+/// The label locks one core holds through this node, keyed by the socket
+/// as the core named it: the lock file's own path depends on whether the
+/// socket exists when it is spelled, so it is not a stable key.
 #[derive(Debug, Default)]
 pub struct LabelLocks {
     held: Mutex<HashMap<PathBuf, Held>>,
@@ -56,45 +58,57 @@ impl LabelLocks {
     /// same worker while held, it is held; by another worker of the same
     /// core, this process holds it.
     pub fn take(&self, socket: &Path, generator: u64) -> io::Result<LabelLock> {
-        let path = lock_path(socket);
-        let mut held = self.lock();
-        if let Some(lock) = held.get(&path) {
-            return Ok(LabelLock {
-                held: lock.generator == generator,
-                holder: Some(u64::from(std::process::id())),
-            });
-        }
-        if held.len() >= MAX_LOCKS {
-            return Err(io::Error::other(format!(
-                "this node already holds {MAX_LOCKS} label locks"
-            )));
-        }
-        match try_lock(&path)? {
-            Some(file) => {
-                record_holder(&file);
-                held.insert(path, Held { file, generator });
-                Ok(LabelLock {
-                    held: true,
-                    holder: Some(u64::from(std::process::id())),
-                })
+        let ours = |lock: &Held| LabelLock {
+            held: lock.generator == generator,
+            holder: Some(u64::from(std::process::id())),
+        };
+        {
+            let held = self.lock();
+            if let Some(lock) = held.get(socket) {
+                return Ok(ours(lock));
             }
-            None => Ok(LabelLock {
+            if held.len() >= MAX_LOCKS {
+                return Err(io::Error::other(format!(
+                    "this node already holds {MAX_LOCKS} label locks"
+                )));
+            }
+        }
+        // The file is opened and locked outside the table's lock, so a slow
+        // filesystem holds only this ask.
+        let path = lock_path(socket);
+        let Some(file) = try_lock(&path)? else {
+            return Ok(LabelLock {
                 held: false,
                 holder: holder(&path),
-            }),
+            });
+        };
+        record_holder(&file);
+        let mut held = self.lock();
+        // Another worker of this core took it meanwhile: this lock goes.
+        if let Some(lock) = held.get(socket) {
+            let answer = ours(lock);
+            drop(held);
+            unlock(file);
+            return Ok(answer);
         }
+        held.insert(socket.to_path_buf(), Held { file, generator });
+        Ok(LabelLock {
+            held: true,
+            holder: Some(u64::from(std::process::id())),
+        })
     }
 
     /// Gives the lock of the server at `socket` back, if this node holds it
     /// for `generator`.
     pub fn release(&self, socket: &Path, generator: u64) {
-        let path = lock_path(socket);
         let mut held = self.lock();
-        if held
-            .get(&path)
+        let lock = held
+            .get(socket)
             .is_some_and(|lock| lock.generator == generator)
-            && let Some(lock) = held.remove(&path)
-        {
+            .then(|| held.remove(socket))
+            .flatten();
+        drop(held);
+        if let Some(lock) = lock {
             unlock(lock.file);
         }
     }
@@ -180,6 +194,27 @@ fn try_lock(path: &Path) -> io::Result<Option<File>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A worker asking again after its server's socket appeared, through a
+    /// folder reached by a link, still holds its lock: the table is keyed
+    /// by the socket as named, not by a path spelled differently once the
+    /// socket exists (L1).
+    #[cfg(unix)]
+    #[test]
+    fn a_lock_asked_again_after_its_socket_appears_is_still_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let linked = dir.path().join("linked");
+        std::os::unix::fs::symlink(&real, &linked).unwrap();
+        let socket = linked.join("herdr.sock");
+        let locks = LabelLocks::default();
+        assert!(locks.take(&socket, 7).unwrap().held);
+        std::fs::write(real.join("herdr.sock"), b"").unwrap();
+        assert!(locks.take(&socket, 7).unwrap().held);
+        locks.release(&socket, 7);
+        assert!(LabelLocks::default().take(&socket, 8).unwrap().held);
+    }
 
     #[test]
     fn a_link_planted_at_the_lock_path_is_neither_followed_nor_held() {

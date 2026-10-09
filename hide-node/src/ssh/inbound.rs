@@ -154,7 +154,7 @@ pub fn establish(
             "reason": reason,
         }));
     }
-    link.take_readers(readers).map_err(refuse)?;
+    link.take_readers(hello.protocol, readers).map_err(refuse)?;
     if panes.is_some() {
         super::start_panes_at(Ok(node.herdr_socket.clone()), &link);
     }

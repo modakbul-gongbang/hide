@@ -569,7 +569,7 @@ impl LabelWorker {
     pub(crate) fn tick(&mut self, now: Instant) -> bool {
         let mut changed = self.ensure_generator(now);
         if !self.generator.held() {
-            return false;
+            return changed;
         }
         let ids: Vec<String> = self.panes.keys().cloned().collect();
         for id in ids {
@@ -625,7 +625,7 @@ impl LabelWorker {
 
     /// What these labels lay onto a projection; see [`LabelOverlay`].
     pub(crate) fn overlay(&self) -> LabelOverlay {
-        LabelOverlay::of_records(&self.records, self.generator.held(), self.summaries)
+        LabelOverlay::of_records(&self.records, self.generator.shows(), self.summaries)
     }
 
     /// Takes the operator's agent-summary switch. Off cancels the request

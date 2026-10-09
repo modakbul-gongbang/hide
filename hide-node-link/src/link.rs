@@ -79,6 +79,13 @@ pub trait NodeLink: Send + Sync {
         None
     }
 
+    /// Whether the node at the other end speaks an older protocol this core
+    /// still admits (the audited 24), so a request it predates is refused
+    /// as one it cannot read rather than one it misread.
+    fn predates_current_protocol(&self) -> bool {
+        false
+    }
+
     /// A call whose node reports progress before it answers: `progress`
     /// hears each report and answers whether the call should go on, and
     /// answering `false` asks the node to stop the work, which it answers

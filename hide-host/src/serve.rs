@@ -263,22 +263,30 @@ fn serve_in(
                         Call::LabelLock {
                             herdr_socket,
                             generator,
-                        } => handle_in(
-                            Call::LabelLock {
-                                herdr_socket: herdr_socket.or_else(|| panes.herdr_socket()),
-                                generator,
+                        } => label_socket(herdr.as_ref(), herdr_socket, panes).and_then(
+                            |herdr_socket| {
+                                handle_in(
+                                    Call::LabelLock {
+                                        herdr_socket,
+                                        generator,
+                                    },
+                                    env,
+                                )
                             },
-                            env,
                         ),
                         Call::LabelUnlock {
                             herdr_socket,
                             generator,
-                        } => handle_in(
-                            Call::LabelUnlock {
-                                herdr_socket: herdr_socket.or_else(|| panes.herdr_socket()),
-                                generator,
+                        } => label_socket(herdr.as_ref(), herdr_socket, panes).and_then(
+                            |herdr_socket| {
+                                handle_in(
+                                    Call::LabelUnlock {
+                                        herdr_socket,
+                                        generator,
+                                    },
+                                    env,
+                                )
                             },
-                            env,
                         ),
                         Call::RootOpen { root } => {
                             let opened = handle_in(Call::RootOpen { root: root.clone() }, env);
@@ -374,6 +382,28 @@ fn no_labeled_server() -> HostError {
         ErrorCode::Unsupported,
         "This node serves no Herdr server whose labels it could lock",
     )
+}
+
+/// The Herdr server whose label lock a core asks for. A node that dialed
+/// its core (it bridges its own Herdr) locks only that server's, so a core
+/// cannot have it create a lock file anywhere else; a device locks the
+/// server its core names, or the one its pane service serves.
+fn label_socket(
+    bridge: Option<&crate::herdr_bridge::HerdrBridge>,
+    named: Option<String>,
+    panes: &crate::panes::Panes,
+) -> HostResult<Option<String>> {
+    let Some(bridge) = bridge else {
+        return Ok(named.or_else(|| panes.herdr_socket()));
+    };
+    let own = bridge.socket().to_string_lossy().into_owned();
+    match named {
+        Some(named) if named != own => Err(HostError::new(
+            ErrorCode::InvalidRequest,
+            "A node that dialed its core locks only its own Herdr server's labels",
+        )),
+        _ => Ok(Some(own)),
+    }
 }
 
 /// Why a node with no Herdr bridge refuses a Herdr stream: its core

@@ -478,6 +478,8 @@ struct Inner {
     /// on this link (`crate::terminal::device`).
     terminals: std::sync::OnceLock<crate::terminal::device::LineHandler>,
     readers: std::sync::OnceLock<hide_node_link::sessions::ReaderFeatures>,
+    /// The protocol the node's Hello named.
+    protocol: std::sync::OnceLock<u32>,
     /// The streams to the node's own Herdr open on this link, for a node
     /// that dialed its core (`link_herdr`).
     herdr: link_herdr::HerdrStreams,
@@ -551,6 +553,7 @@ impl RemoteHost {
                 roots: Mutex::new(HashMap::new()),
                 terminals: std::sync::OnceLock::new(),
                 readers: std::sync::OnceLock::new(),
+                protocol: std::sync::OnceLock::new(),
                 herdr: Default::default(),
                 dialed_by_node: false,
             }),
@@ -731,11 +734,14 @@ impl RemoteHost {
         written
     }
 
-    /// Takes the reader facts the node's Hello advertised; once per link.
+    /// Takes the protocol and reader facts the node's Hello advertised;
+    /// once per link.
     pub(super) fn take_readers(
         &self,
+        protocol: u32,
         readers: hide_node_link::sessions::ReaderFeatures,
     ) -> Result<(), String> {
+        let _ = self.inner.protocol.set(protocol);
         self.inner
             .readers
             .set(readers)
@@ -824,6 +830,13 @@ impl NodeLink for RemoteHost {
             return None;
         }
         self.inner.readers.get()
+    }
+
+    fn predates_current_protocol(&self) -> bool {
+        self.inner
+            .protocol
+            .get()
+            .is_some_and(|protocol| *protocol < PROTOCOL_VERSION)
     }
 
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
@@ -1020,9 +1033,8 @@ pub fn establish(
             "reason": reason,
         }));
     }
-    host.inner.readers.set(readers).map_err(|_| {
-        EstablishError::Helper("The device reader facts were already established".to_owned())
-    })?;
+    host.take_readers(hello.protocol, readers)
+        .map_err(EstablishError::Helper)?;
     if panes.is_some() {
         establish_stage(target, "panes", since);
         start_panes(client, &host);
@@ -2196,6 +2208,7 @@ fn start_reader(
         roots: Mutex::new(HashMap::new()),
         terminals: std::sync::OnceLock::new(),
         readers: std::sync::OnceLock::new(),
+        protocol: std::sync::OnceLock::new(),
         herdr: Default::default(),
         dialed_by_node,
     });

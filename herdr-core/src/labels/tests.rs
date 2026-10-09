@@ -736,6 +736,9 @@ impl crate::node_access::NodeLink for OlderHelper {
             std::sync::OnceLock::new();
         Some(FACTS.get_or_init(hide_node_link::sessions::ReaderFeatures::protocol24))
     }
+    fn predates_current_protocol(&self) -> bool {
+        true
+    }
     fn call(
         &self,
         _: hide_node_link::protocol::Call,

@@ -46,6 +46,11 @@ impl HerdrBridge {
         }
     }
 
+    /// The socket of this node's own Herdr, the one server it bridges.
+    pub fn socket(&self) -> &std::path::Path {
+        &self.socket
+    }
+
     /// Connects `stream` to this node's Herdr and reads it on `scope` until
     /// either side ends it.
     pub fn open<'scope, 'env, W: Write + Send>(

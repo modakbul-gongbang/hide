@@ -32,6 +32,9 @@ use super::worker::Wake;
 use crate::node_access::{LinkError, NodeLink, call_as};
 
 const RETRY: Duration = Duration::from_secs(30);
+/// How soon a worker whose node has not answered yet asks again: a device
+/// still connecting answers within seconds, and its labels wait on it.
+const FIRST_RETRY: Duration = Duration::from_secs(2);
 /// How long one ask of a linked node may take; its thread ends with it.
 const ASK_WITHIN: Duration = Duration::from_secs(10);
 
@@ -62,6 +65,14 @@ enum Role {
 impl Role {
     fn generates(self) -> bool {
         matches!(self, Self::Held | Self::Unshared)
+    }
+
+    /// Whether the labels this core stored are shown: by a worker that
+    /// generates, and by one whose node has not answered yet, so a device
+    /// still connecting shows what it had rather than provider names. A
+    /// worker standing by shows provider names: another core generates.
+    fn shows(self) -> bool {
+        self != Self::Standby
     }
 }
 
@@ -110,27 +121,33 @@ impl GeneratorLock {
 
     /// Takes the answer that came and asks again when it is due. Returns
     /// `(changed, took_over)`: whether this worker started or stopped
-    /// generating, and whether it was standing by until now, so what changed
-    /// while another core generated has to be caught up.
+    /// generating or showing its labels, and whether it was standing by
+    /// until now, so what changed while another core generated has to be
+    /// caught up.
     pub(crate) fn ensure(&mut self, now: Instant) -> (bool, bool) {
         let before = self.role;
         if let Some(answer) = self.take_answer() {
-            self.apply(answer);
+            self.apply(answer, now);
         }
         if self.asking.is_none() && self.next_attempt.is_none_or(|at| now >= at) {
             self.next_attempt = Some(now + RETRY);
             if let Some(answer) = self.ask() {
-                self.apply(answer);
+                self.apply(answer, now);
             }
         }
         (
-            before.generates() != self.role.generates(),
+            before.generates() != self.role.generates() || before.shows() != self.role.shows(),
             before == Role::Standby && self.role.generates(),
         )
     }
 
     pub(crate) fn held(&self) -> bool {
         self.role.generates()
+    }
+
+    /// Whether the labels this core stored are laid on the projection.
+    pub(crate) fn shows(&self) -> bool {
+        self.role.shows()
     }
 
     fn call(&self, take: bool) -> Call {
@@ -202,7 +219,10 @@ impl GeneratorLock {
         Some(answer)
     }
 
-    fn apply(&mut self, answer: Answer) {
+    fn apply(&mut self, answer: Answer, now: Instant) {
+        if matches!(answer, Answer::Failed(_)) && self.role == Role::Unasked {
+            self.next_attempt = Some(now + FIRST_RETRY);
+        }
         let (role, kind, holder, message) = match answer {
             Answer::Lock(LabelLock { held: true, .. }) => {
                 let kind = (self.role == Role::Standby).then_some("generator.acquired");
@@ -278,13 +298,13 @@ impl Drop for GeneratorLock {
 fn ask(node: &dyn NodeLink, call: Call) -> Answer {
     match call_as::<LabelLock>(node, call, ASK_WITHIN) {
         Ok(lock) => Answer::Lock(lock),
-        // A node that names no server, or one that predates the call, has
-        // no shared place to meet at.
+        // A node that names no server, or one that predates the call, has no
+        // shared place to meet at. Any other refusal fails the ask, so two
+        // cores never both generate because one node misread a request.
         Err(LinkError::Refused(error))
-            if matches!(
-                error.code,
-                ErrorCode::Unsupported | ErrorCode::InvalidRequest
-            ) =>
+            if error.code == ErrorCode::Unsupported
+                || (error.code == ErrorCode::InvalidRequest
+                    && node.predates_current_protocol()) =>
         {
             Answer::NoServer
         }
@@ -333,8 +353,9 @@ mod tests {
         let mut other = lock(&two, &dir.path().join("other.sock"));
         let now = Instant::now();
         assert_eq!(first.ensure(now), (true, false));
-        assert_eq!(second.ensure(now), (false, false));
-        assert!(!second.held());
+        // Standing by hides what the second had shown.
+        assert_eq!(second.ensure(now), (true, false));
+        assert!(!second.held() && !second.shows());
         assert_eq!(other.ensure(now), (true, false));
         drop(first);
         // Inside the retry window nothing is asked; after it, it takes over.
@@ -351,7 +372,8 @@ mod tests {
         let mut new = lock(&node, &socket);
         let now = Instant::now();
         assert_eq!(old.ensure(now), (true, false));
-        assert_eq!(new.ensure(now), (false, false));
+        assert_eq!(new.ensure(now), (true, false));
+        assert!(!new.held());
         drop(old);
         assert_eq!(new.ensure(now + RETRY), (true, true));
     }
@@ -414,10 +436,15 @@ mod tests {
         open.send(()).unwrap();
         woken.recv_timeout(Duration::from_secs(10)).unwrap();
         assert_eq!(worker.ensure(now), (true, false));
-        assert_eq!(lock(&local(), &socket).ensure(now), (false, false));
+        let mut standing = lock(&local(), &socket);
+        standing.ensure(now);
+        assert!(!standing.held());
         drop(worker);
         given_back.recv_timeout(Duration::from_secs(10)).unwrap();
-        assert_eq!(lock(&local(), &socket).ensure(now), (true, false));
+        let mut next = lock(&local(), &socket);
+        next.ensure(now);
+        assert!(next.held());
+        drop(next);
 
         // A worker that ends while its ask is out gives back what the ask
         // takes after it ended.
@@ -426,7 +453,84 @@ mod tests {
         drop(late);
         open.send(()).unwrap();
         given_back.recv_timeout(Duration::from_secs(10)).unwrap();
-        assert_eq!(lock(&local(), &socket).ensure(now), (true, false));
+        let mut last = lock(&local(), &socket);
+        last.ensure(now);
+        assert!(last.held());
+    }
+
+    /// A node that cannot answer yet (a device still connecting) leaves its
+    /// worker showing the labels it stored, and is asked again within
+    /// seconds rather than after the standing-by interval (R8).
+    #[test]
+    fn a_first_ask_that_fails_keeps_stored_labels_and_asks_again_soon() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("herdr.sock");
+        let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let node = local();
+        let place_ready = Arc::clone(&ready);
+        let mut worker = GeneratorLock::new(
+            LockPlace {
+                node: Box::new(move || {
+                    if place_ready.load(Ordering::SeqCst) {
+                        Ok(Arc::clone(&node))
+                    } else {
+                        Err("device_helper_not_ready")
+                    }
+                }),
+                herdr_socket: Some(socket.display().to_string()),
+            },
+            "device:mini",
+            Arc::new(|| {}),
+        );
+        let now = Instant::now();
+        assert_eq!(worker.ensure(now), (false, false));
+        assert!(worker.shows() && !worker.held());
+        ready.store(true, Ordering::SeqCst);
+        assert_eq!(worker.ensure(now + FIRST_RETRY), (true, false));
+        assert!(worker.held());
+    }
+
+    /// A node on the current protocol that refuses the lock as a request it
+    /// could not read fails the ask: its worker does not generate beside
+    /// another core. Only a node that predates the call has no lock (L18).
+    #[test]
+    fn a_misread_lock_is_not_taken_as_no_server_unless_the_node_predates_it() {
+        struct Refusing(bool);
+        impl NodeLink for Refusing {
+            fn call(&self, _: Call, _: Duration) -> Result<hide_node_link::LinkAnswer, LinkError> {
+                Err(LinkError::Refused(hide_node_link::error::HostError::new(
+                    ErrorCode::InvalidRequest,
+                    "unknown variant",
+                )))
+            }
+            fn predates_current_protocol(&self) -> bool {
+                self.0
+            }
+            fn in_process(&self) -> bool {
+                true
+            }
+        }
+        let worker = |older: bool| {
+            let node: Arc<dyn NodeLink> = Arc::new(Refusing(older));
+            GeneratorLock::new(
+                LockPlace {
+                    node: Box::new(move || Ok(Arc::clone(&node))),
+                    herdr_socket: None,
+                },
+                "device:mini",
+                Arc::new(|| {}),
+            )
+        };
+        let now = Instant::now();
+        let mut current = worker(false);
+        current.ensure(now);
+        assert!(!current.held(), "a current node's misread lock is no lock");
+        let mut older = worker(true);
+        older.ensure(now);
+        assert!(
+            older.held(),
+            "a node that predates the call has none to share"
+        );
     }
 
     #[test]
