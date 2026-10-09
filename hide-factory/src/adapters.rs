@@ -448,6 +448,9 @@ pub enum MemoryPressure {
 pub trait Environment {
     fn disk_free(&mut self, project: &str) -> Option<u64>;
     fn memory_pressure(&mut self) -> MemoryPressure;
+    /// The operator's language, read when a judgment is queued or a worker
+    /// starts, so a change in Settings applies to the next one.
+    fn language(&mut self) -> crate::words::Language;
 }
 
 /// Where a person is told (D-30): an inbox item exists in the store; this

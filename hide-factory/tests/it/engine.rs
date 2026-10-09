@@ -3816,6 +3816,97 @@ fn a_pinned_usage_hold_exposes_its_deadline_until_the_engine_resumes() {
     assert_eq!(card_json(&h, &id)["resume_at"], serde_json::Value::Null);
 }
 
+// ------------------------------------------------- the operator's language
+
+#[test]
+fn every_judgment_and_worker_prompt_is_in_the_operators_language_read_when_asked() {
+    let mut h = Bench::new(false);
+    h.world().language = Some(Language::English);
+    let f = h.factory(true);
+    h.world().hold_judgments = true;
+    h.add("Card", &[]);
+    let review = h
+        .world()
+        .submitted
+        .last()
+        .cloned()
+        .expect("an intake review");
+    assert_eq!(review.language, Language::English);
+    let system = review.system();
+    assert!(system.contains("in English"), "{system}");
+    assert!(
+        !system.contains("Korean"),
+        "no language but the operator's: {system}"
+    );
+    h.world().hold_judgments = false;
+
+    // A change in Settings applies to the next judgment and the next start.
+    h.world().language = Some(Language::Japanese);
+    let t = h.ready("Started", &[]);
+    let prompt = h
+        .world()
+        .spawned
+        .iter()
+        .find(|spawn| spawn.task == t)
+        .map(|spawn| spawn.prompt.clone())
+        .expect("a start");
+    assert!(prompt.contains("日本語 (ja)"), "{prompt}");
+    let judged = h.world().judged.last().cloned().expect("a review answered");
+    assert_eq!(judged.language, Language::Japanese);
+    assert!(judged.system().contains("in Japanese"));
+    let _ = f;
+}
+
+#[test]
+fn an_environment_question_names_what_the_action_does_in_the_operators_words() {
+    let mut h = Bench::new(false);
+    h.world().language = Some(Language::English);
+    let f = h.factory(true);
+    h.world().disk_free = Some(1 << 30);
+    let held = h.ready("Held", &[]);
+    h.world().env_diagnosis = Some(json!({
+        "cause": "Free disk is about 4.7 GB, under the floor.",
+        "action": "remove_finished_worktrees"
+    }));
+    h.advance(31 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    let question = h
+        .task(&f, &held)
+        .open_questions()
+        .find(|q| matches!(q.kind, QuestionKind::Proposal { .. }))
+        .cloned()
+        .expect("a proposal for a person");
+    assert_eq!(
+        question.text,
+        "Environment problem: Free disk is about 4.7 GB, under the floor. Remove the worktrees of finished Tasks, and of cancelled Tasks past their keep period, to free disk space?"
+    );
+}
+
+#[test]
+fn a_watch_warning_reads_in_the_operators_language() {
+    let mut h = Bench::new(false);
+    h.world().language = Some(Language::English);
+    let f = h.factory(true);
+    let t = h.ready("Quiet", &[]);
+    h.world().watch.push_back(json!({"warnings": [
+        {"text": "T-1 has not moved for an hour.", "action": "Look at its pane.", "task": t},
+    ]}));
+    h.advance(30 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    let notice = h
+        .task(&f, &t)
+        .open_questions()
+        .find(|q| q.kind == QuestionKind::Notice)
+        .map(|q| q.text.clone())
+        .expect("a notice");
+    assert_eq!(
+        notice,
+        "Watch: T-1 has not moved for an hour. (to do: Look at its pane)"
+    );
+}
+
 // ------------------------------------------------------------- attempts
 
 fn attempts(h: &mut Bench, t: &str) -> Vec<(u64, String)> {

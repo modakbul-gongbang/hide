@@ -12,6 +12,7 @@ use hide_factory::command::{CardInput, Command, VerificationChoice};
 use hide_factory::judgment::{Judgment, JudgmentAnswer, JudgmentInput, JudgmentOutcome};
 use hide_factory::model::*;
 use hide_factory::role::Role;
+pub use hide_factory::words::Language;
 use hide_factory::{Engine, Ports};
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -103,6 +104,8 @@ pub struct World {
     pub hold_judgments: bool,
     pub disk_free: Option<u64>,
     pub memory: Option<MemoryPressure>,
+    /// The operator's language; Korean, which the scenarios read, when unset.
+    pub language: Option<Language>,
     pub outside: VecDeque<OutsideEvent>,
     pub observe_failure: Option<Failure>,
     pub observed: u32,
@@ -629,6 +632,9 @@ impl Environment for Shared {
     }
     fn memory_pressure(&mut self) -> MemoryPressure {
         self.world().memory.unwrap_or(MemoryPressure::Normal)
+    }
+    fn language(&mut self) -> Language {
+        self.world().language.unwrap_or(Language::Korean)
     }
 }
 

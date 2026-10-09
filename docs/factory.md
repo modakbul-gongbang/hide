@@ -207,7 +207,7 @@ The record is registered when needed and converges on the existing one.
   A worker uses only what its agent's adapter declares (D-28): today only Claude Code and Codex take a model and an effort; Factory sleep supports Claude Code and Codex, whose sleep preserves the worker's pane; a Grok, OpenCode, Pi, omp or Cursor worker keeps working through a pause.
   Claude Code, Codex, OpenCode, Pi and omp hear a letter at their next prompt, OpenCode, Pi and omp through Hide's plugin or extension, while a Grok or Cursor worker hears one only by reading its inbox; a worker of any agent but Claude Code and Codex is diagnosed from its screen when it goes quiet.
   An old Factory's `default_runtime` reads as one default candidate on the CLI's defaults until a person changes the list, and `add --runtime <agent>` pins that agent's first candidate.
-- **First prompt.** One argument behind the flag the agent's start declares (`--`, or `--prompt` for OpenCode), at most 6 KiB, cut at a character boundary with a pointer to `hide factory show <task>` for the rest. It holds the Task, goal, criteria, out-of-scope items, the read-only absolute path of each attachment, the harness instruction when one is set, and the reporting rules: commit on the branch, never push or merge to the default branch, finish with `hide factory done`, never ask the person on screen but send every question through `ask` (with a default) or `block`, each with up to five choices of at most 120 characters, report discoveries, and a turn that ends without a report stops the Task. The prompt text is written in Korean. When a `hide` program sits beside the daemon, the prompt names its absolute path and says every `hide` in the rules means that program, so a worker never reaches an older copy on its `PATH`.
+- **First prompt.** One argument behind the flag the agent's start declares (`--`, or `--prompt` for OpenCode), at most 6 KiB, cut at a character boundary with a pointer to `hide factory show <task>` for the rest. It holds the Task, goal, criteria, out-of-scope items, the read-only absolute path of each attachment, the harness instruction when one is set, and the reporting rules: commit on the branch, never push or merge to the default branch, finish with `hide factory done`, never ask the person on screen but send every question through `ask` (with a default) or `block`, each with up to five choices of at most 120 characters, report discoveries, and a turn that ends without a report stops the Task. The prompt text is written in Korean, and a rule after the reporting rules names the operator's language (see [The operator's language](#the-operators-language)) as the one every report a person reads is written in. When a `hide` program sits beside the daemon, the prompt names its absolute path and says every `hide` in the rules means that program, so a worker never reaches an older copy on its `PATH`.
 - **Lineage and watch.** The spawn writes lineage and starts a watch whose observer is the Factory.
 
 A worker whose pane exists but whose agent has not shown a session yet is still starting.
@@ -278,6 +278,14 @@ Every judgment is a tool-less, one-shot call whose input the code bundles and cu
 | `factory_watch` | See [The watch](#the-watch) | The Factory's board summary | Warnings, each with an optional action |
 | `factory_env_diagnosis` | See [Environment](#environment) | The collected facts and the closed action list | One action from the list, or an exact command with its impact |
 | `factory_observer` | See [Factory AI](#factory-ai-the-observer) | The request or the worker's text, the card, its recorded decisions (50) and its PRD | Sort a request into a kind with an answer or a fix, read a quiet worker, or approve a risk-path merge |
+
+### The operator's language
+
+Every text the Factory writes for a person is in the operator's language: the language Hide's interface is set to, which the host reads when a judgment is queued or a worker starts, so a change in Settings applies to the next one.
+It is the core's explicit choice (`ui_state.interface_language`, English for a stored value that is invalid), else this machine's primary language resolved as a shell resolves it ([LOCALIZATION.md](LOCALIZATION.md)), else English, with `language.system_fallback` in the diagnostic log.
+Each judgment carries it (`Judgment.language`) and its instructions end by asking for every text a person reads (questions, suggestions, default actions, choices, flags, summaries, warnings, causes, impacts, answers, reasons, card text) in that language whatever the input's language; no instruction names another.
+The worker's first prompt asks for every report (a `done` summary, an `ask` or `block`, a `propose` or `decide` text) in it.
+The few sentences the engine wraps around a judgment's or a worker's words, a watch notice, an environment proposal and an unrelated discovery's notice, are composed in it too (`hide-factory/src/words.rs`); the engine's other fixed sentences are still Korean.
 
 Questions that a drift or check judgment adds always carry a default action, taking the suggestion when the answer has none, so a check can only slow a Task down.
 A drift question keeps the Task in `verifying`, does not wake the worker, and holds auto merge until it is answered or its deadline passes; an answer that differs from the default wakes the worker to apply it.
@@ -535,6 +543,7 @@ The closed recovery list is the only set of actions the Factory runs without a p
 | `retry_reads_and_reconnect` | Clears the Factory's read back-off and the machine's start hold. |
 
 A diagnosis naming an action that is off becomes a proposal that the Factory runs once a person answers `approve`; any other command becomes a proposal with the exact command and impact, which a person runs themselves or dismisses.
+A proposal reads as the cause and then the action asked in words a person recognises, what it does and what it frees ("끝난 Task와 보관 기간이 지난 취소 Task의 worktree를 지워 디스크 공간을 확보할까요?"), never the action's id, with one sentence end between them; the action's id stays in the question's `kind`.
 Logging in, deleting outside the Factory and installing tools are only ever proposals.
 A Task that alone repeats an environment failure three times is the Task's: it stops as "same environment failure repeated".
 
@@ -544,7 +553,7 @@ The watch reads a Factory's board for what a person cannot already see in the in
 It runs when a Task finishes, when main breaks, when a Task reaches its new-Task limit, and every `watch_interval_minutes` (30 by default, at least 5) for a Factory that has Tasks.
 It asks `factory_watch` with the Factory's board summary.
 A warning without a proposed action goes to the diagnostic log only.
-A warning with an action becomes a notice on the Task it names, or on the Factory's last Task, and counts against `watch_daily_limit` (5) per Factory per UTC day; a warning past the limit is logged as capped.
+A warning with an action becomes a notice on the Task it names, or on the Factory's last Task, reading the warning and its action in the operator's language, and counts against `watch_daily_limit` (5) per Factory per UTC day; a warning past the limit is logged as capped.
 A warning about a Task that already waits on a person is logged and not raised.
 A watch that is slow or fails changes no Task.
 
