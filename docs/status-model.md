@@ -564,6 +564,8 @@ Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull
 `agent_state/sessions.rs` maps the verb to one group and one task tag in `row.state.session`.
 Answer, Fix, Stopped and Result belong to My turn; Review to Review · Merge; Working and Waiting to In progress; Idle to Resting.
 A blocked menu takes Approval before an unread AI question's Answer.
+A current native `user_turn.kind = question` instead takes Answer while its session holds for a reply, including after it is read and when its content is absent.
+Native plan approval keeps Approval; the typed native wait, rather than a provider name or an AI question label, distinguishes these cases.
 Reading an AI question skips its demand rung and leaves a dimmed question; menu and plan approval remain My turn until answered.
 Merge requires every open duty PR on the row to have passing checks and an approved or absent review decision; absent or unknown checks never imply a pass.
 Without a label line the row keeps its outline but carries no invented task tag or result sentence.

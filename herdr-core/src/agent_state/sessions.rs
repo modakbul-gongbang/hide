@@ -126,13 +126,19 @@ pub(super) fn mergeable(pull: &crate::request_view::AgentPullRequestSnapshot) ->
         && matches!(pull.review, None | Some(ReviewDecision::Approved))
 }
 
-/// Native questions also hold the pane blocked until a reply. Their demand
-/// still outranks approval on every tag surface, as it does on the row mark.
+/// A native unanswered question also holds the pane blocked until a reply.
+/// Only that proven native wait overrides the approval of a blocked menu;
+/// an AI question alone never changes what the menu asks the operator to do.
 fn demand_tag(agent: &SidebarAgentSnapshot) -> Option<Tag> {
-    if agent.demand == "question" {
-        Some(Tag::Answer)
-    } else if agent.blocked {
+    let native_question = agent.demand == "question"
+        && agent
+            .user_turn
+            .as_ref()
+            .is_some_and(|turn| turn.kind == hide_session::turns::UserTurnKind::Question);
+    if agent.blocked && !native_question {
         Some(Tag::Approval)
+    } else if agent.demand == "question" {
+        Some(Tag::Answer)
     } else {
         None
     }
