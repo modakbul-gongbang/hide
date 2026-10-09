@@ -1944,7 +1944,7 @@ pub(super) fn established(
         installed: false,
         helper_path: "/home/me/.local/share/hide/host-helper/0123456789abcdef/hided".to_owned(),
         upload: Default::default(),
-        terminals,
+        terminals: terminals.ok_or_else(|| "the test's node runs no terminal service".to_owned()),
     }
 }
 

@@ -285,6 +285,13 @@ impl hide_node_link::terminal::TerminalRoutes for RecordedTerminals {
             .unwrap()
             .push(format!("remove:{device}"));
     }
+
+    fn terminals_unstarted(&self, device: &str, _: &str) {
+        self.devices
+            .lock()
+            .unwrap()
+            .push(format!("unstarted:{device}"));
+    }
 }
 
 /// Gives `runtime` recorded terminal routes.

@@ -66,6 +66,8 @@ enum Route {
 #[derive(Default)]
 struct Routes {
     devices: HashMap<String, Arc<dyn TerminalNode>>,
+    /// Devices whose link is up without terminals, and why.
+    unstarted: HashMap<String, String>,
     /// The panes on screen, as the core last said, by the core's ids.
     shown: Vec<String>,
     /// The pane the core's keyboard is in, as it last said, by its id.
@@ -263,6 +265,14 @@ impl Router {
     }
 
     fn unrouted_attach(&self, pane: String) {
+        let unstarted = Self::device_of(&pane)
+            .and_then(|(device, _)| lock(&self.routes).unstarted.get(device).cloned());
+        let message = match unstarted {
+            Some(reason) => format!(
+                "This device's helper is connected but carries no terminals ({reason}), so its terminal cannot attach; it attaches when the helper connects with them"
+            ),
+            None => "This device's helper is not connected, so its terminal cannot attach; it attaches when the helper connects".to_owned(),
+        };
         self.reports.report(TerminalReport::State {
             pane,
             state: PaneTerminalState {
@@ -270,10 +280,7 @@ impl Router {
                 mode: None,
                 generation: 0,
                 attempt: 0,
-                message: Some(
-                    "This device's helper is not connected, so its terminal cannot attach; it attaches when the helper connects"
-                        .to_owned(),
-                ),
+                message: Some(message),
                 exit_category: Some("device_unavailable".to_owned()),
                 retry_decision: "manual".to_owned(),
                 last_attempt_at_unix_ms: None,
@@ -454,7 +461,8 @@ impl TerminalNode for Router {
             Route::Unrouted => self.reports.report(TerminalReport::Error {
                 pane: scoped,
                 kind: "terminal.device_disconnected".to_owned(),
-                message: "This device is not connected, so the key was not sent".to_owned(),
+                message: "This device's terminals are not connected, so the key was not sent"
+                    .to_owned(),
             }),
         }
     }
@@ -479,6 +487,7 @@ impl TerminalNode for Router {
 impl TerminalRoutes for Router {
     fn install_device(&self, device: &str, node: Arc<dyn TerminalNode>) {
         let mut routes = lock(&self.routes);
+        routes.unstarted.remove(device);
         // Known first, so the shown panes are read as this device's by the
         // same rule its lines are.
         let replaced = routes.devices.insert(device.to_owned(), Arc::clone(&node));
@@ -497,6 +506,7 @@ impl TerminalRoutes for Router {
 
     fn remove_device(&self, device: &str) {
         let mut routes = lock(&self.routes);
+        routes.unstarted.remove(device);
         let removed = routes.devices.remove(device);
         let panes = routes.attached.remove(device).unwrap_or_default();
         routes.rates.remove(device);
@@ -515,6 +525,14 @@ impl TerminalRoutes for Router {
             }));
         }
         drop(removed);
+    }
+
+    fn terminals_unstarted(&self, device: &str, reason: &str) {
+        // Whatever an earlier link carried ended with it.
+        self.remove_device(device);
+        lock(&self.routes)
+            .unstarted
+            .insert(device.to_owned(), reason.to_owned());
     }
 }
 
@@ -710,6 +728,33 @@ mod tests {
                 generation: 2
             }]
         );
+    }
+
+    /// A device whose link is up without terminals (its helper speaks an
+    /// older protocol) says so on its panes, not that its helper is not
+    /// connected, until a link with terminals is installed.
+    #[test]
+    fn a_device_linked_without_terminals_says_why_its_panes_cannot_attach() {
+        let (router, _local, _hub, reports) = router();
+        router.terminals_unstarted(
+            "mini",
+            "the device's helper speaks protocol 24, which carries no terminals",
+        );
+        router.control(attach("remote:mini:pane:w2:p3"));
+        let message = |reports: &Reports| match reports.0.lock().unwrap().last() {
+            Some(TerminalReport::State { state, .. }) => state.message.clone().unwrap(),
+            other => panic!("no state: {other:?}"),
+        };
+        let unstarted = message(&reports);
+        assert!(unstarted.contains("protocol 24"), "{unstarted}");
+        assert!(!unstarted.contains("not connected"), "{unstarted}");
+        router.install_device(
+            "mini",
+            Arc::new(Recorder::default()) as Arc<dyn TerminalNode>,
+        );
+        router.remove_device("mini");
+        router.control(attach("remote:mini:pane:w2:p3"));
+        assert!(message(&reports).contains("helper is not connected"));
     }
 
     #[test]

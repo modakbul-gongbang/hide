@@ -967,21 +967,29 @@ pub fn establish(
         establish_stage(target, "panes", since);
         start_panes(client, &host);
     }
-    let terminals = terminals.and_then(|hook| {
-        establish_stage(target, "terminals", since);
-        // The audited 24 link keeps its legacy features only: its node has
-        // no terminal service, so it is never asked to start one.
-        if hello.protocol != PROTOCOL_VERSION {
-            crate::diagnostic!(json!({
-                "component": "remote_host",
-                "kind": "host.terminals_unstarted",
-                "target": target,
-                "reason": format!("the device node speaks protocol {}, which carries no terminals", hello.protocol),
-            }));
-            return None;
+    let terminals = match terminals {
+        None => Err("this process takes no device terminals".to_owned()),
+        Some(hook) => {
+            establish_stage(target, "terminals", since);
+            // The audited 24 link keeps its legacy features only: its node
+            // has no terminal service, so it is never asked to start one.
+            if hello.protocol == PROTOCOL_VERSION {
+                start_terminals(client, &host, hook)
+            } else {
+                let reason = format!(
+                    "the device's helper speaks protocol {}, which carries no terminals",
+                    hello.protocol
+                );
+                crate::diagnostic!(json!({
+                    "component": "remote_host",
+                    "kind": "host.terminals_unstarted",
+                    "target": target,
+                    "reason": reason,
+                }));
+                Err(reason)
+            }
         }
-        start_terminals(client, &host, hook)
-    });
+    };
     establish_stage(target, "ready", since);
     Ok(Established {
         host: Arc::new(host),
@@ -1003,7 +1011,7 @@ fn start_terminals(
     client: &RusshRemoteClient,
     host: &RemoteHost,
     hook: TerminalHook,
-) -> Option<Arc<dyn hide_node_link::terminal::TerminalNode>> {
+) -> Result<Arc<dyn hide_node_link::terminal::TerminalNode>, String> {
     let started = client
         .herdr_socket_path()
         .map_err(|error| error.to_string())
@@ -1028,7 +1036,7 @@ fn start_terminals(
                 "target": host.inner.target,
                 "link": terminals.link(),
             }));
-            Some(Arc::new(terminals))
+            Ok(Arc::new(terminals))
         }
         Err(reason) => {
             crate::diagnostic!(json!({
@@ -1037,7 +1045,7 @@ fn start_terminals(
                 "target": host.inner.target,
                 "reason": reason,
             }));
-            None
+            Err(reason)
         }
     }
 }

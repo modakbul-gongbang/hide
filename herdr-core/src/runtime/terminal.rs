@@ -46,6 +46,7 @@ impl TerminalNode for NoTerminals {
 impl TerminalRoutes for NoTerminals {
     fn install_device(&self, _device: &str, _node: Arc<dyn TerminalNode>) {}
     fn remove_device(&self, _device: &str) {}
+    fn terminals_unstarted(&self, _device: &str, _reason: &str) {}
 }
 
 /// Whether a pane in `state` may be asked to attach: one with a session, or

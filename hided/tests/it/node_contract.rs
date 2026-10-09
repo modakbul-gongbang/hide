@@ -278,7 +278,7 @@ impl Device {
             link: established.host,
             state,
             events,
-            terminals: established.terminals,
+            terminals: established.terminals.ok(),
             hello: established.hello,
             helper_path: established.helper_path,
             local,

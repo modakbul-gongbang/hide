@@ -335,6 +335,10 @@ pub trait TerminalRoutes: TerminalNode {
     /// The device's link ended or the device was removed: its panes have no
     /// terminal until a link is installed again.
     fn remove_device(&self, device: &str);
+    /// The device's link is up but carries no terminals, for `reason` (its
+    /// node speaks an older protocol, or its terminal service did not
+    /// start): its panes say so until a link with terminals is installed.
+    fn terminals_unstarted(&self, device: &str, reason: &str);
 }
 
 /// The id the core gives pane `pane` of `device`.

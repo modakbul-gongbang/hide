@@ -371,9 +371,9 @@ pub struct Established {
     /// How the build's files reached the device on this connection.
     pub upload: Upload,
     /// The device's terminals inside this link, when its node started its
-    /// terminal service; a device whose Herdr could not be found has none
-    /// and the reason is in the log.
-    pub terminals: Option<std::sync::Arc<dyn crate::terminal::TerminalNode>>,
+    /// terminal service, or why it has none (its node speaks an older
+    /// protocol, or its Herdr could not be found).
+    pub terminals: Result<std::sync::Arc<dyn crate::terminal::TerminalNode>, String>,
 }
 
 /// What one connection's install did with the build's files: how many it
