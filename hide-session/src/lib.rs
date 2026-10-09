@@ -49,7 +49,9 @@ pub use label_owner::{
     label_reference_token, read_session_file, valid_native_id,
 };
 
-pub use conversation_cursor::{ConversationCheckpoint, ConversationCursor};
+pub use conversation_cursor::{
+    ConversationCheckpoint, ConversationCursor, ConversationRead, read_conversation,
+};
 
 pub use catalog::{
     ProjectSession, SESSION_DISCOVERY_LIMIT, SessionAvailability, SessionCatalog,
@@ -140,6 +142,7 @@ pub fn session_root(home: &Path, agent: Agent) -> Option<PathBuf> {
         Agent::Grok => Some(home.join(GROK_SESSIONS)),
         Agent::Pi => Some(home.join(PI_SESSIONS)),
         Agent::Omp => Some(home.join(OMP_SESSIONS)),
+        Agent::Cursor => Some(home.join(cursor::SESSIONS)),
         Agent::OpenCode => None,
     }
 }
@@ -264,6 +267,7 @@ pub enum Agent {
     Grok,
     Pi,
     Omp,
+    Cursor,
     #[serde(rename = "opencode")]
     OpenCode,
 }
@@ -284,6 +288,7 @@ impl Agent {
             Self::Grok => hide_agent_adapter::SessionFormat::Grok,
             Self::Pi => hide_agent_adapter::SessionFormat::Pi,
             Self::Omp => hide_agent_adapter::SessionFormat::Omp,
+            Self::Cursor => hide_agent_adapter::SessionFormat::Cursor,
             Self::OpenCode => hide_agent_adapter::SessionFormat::OpenCode,
         }
     }
@@ -295,6 +300,7 @@ impl Agent {
             hide_agent_adapter::SessionFormat::Grok => Self::Grok,
             hide_agent_adapter::SessionFormat::Pi => Self::Pi,
             hide_agent_adapter::SessionFormat::Omp => Self::Omp,
+            hide_agent_adapter::SessionFormat::Cursor => Self::Cursor,
             hide_agent_adapter::SessionFormat::OpenCode => Self::OpenCode,
         }
     }
@@ -314,6 +320,10 @@ impl Agent {
     }
     pub const fn has_session_file(self) -> bool {
         self.format().has_session_file()
+    }
+
+    pub const fn is_jsonl(self) -> bool {
+        self.format().is_jsonl()
     }
 
     pub const fn requires_native_file_proof(self) -> bool {
@@ -339,7 +349,8 @@ impl SessionIdentity {
 }
 
 /// The normalized kind of a conversation record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EventKind {
     Human,
     Injected,
@@ -359,7 +370,7 @@ impl EventKind {
 }
 
 /// A provider-neutral conversation event.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ConversationEvent {
     pub role: &'static str,
     pub kind: EventKind,
@@ -376,6 +387,48 @@ pub struct ConversationEvent {
     /// writes one message as several records (Grok's prompt blocks and an
     /// answer's text runs); consecutive parts become one event.
     part: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct OwnedConversationEvent {
+    role: String,
+    kind: EventKind,
+    provider_injected: bool,
+    at_unix_ms: u64,
+    text: String,
+    images: u32,
+    part: Option<String>,
+}
+
+impl TryFrom<OwnedConversationEvent> for ConversationEvent {
+    type Error = &'static str;
+    fn try_from(event: OwnedConversationEvent) -> std::result::Result<Self, Self::Error> {
+        let role = match event.role.as_str() {
+            "user" => "user",
+            "assistant" => "assistant",
+            "system" => "system",
+            _ => return Err("conversation_role_invalid"),
+        };
+        Ok(Self {
+            role,
+            kind: event.kind,
+            provider_injected: event.provider_injected,
+            at_unix_ms: event.at_unix_ms,
+            text: event.text,
+            images: event.images,
+            part: event.part,
+        })
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ConversationEvent {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        OwnedConversationEvent::deserialize(deserializer)?
+            .try_into()
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 impl ConversationEvent {
@@ -910,7 +963,7 @@ impl SessionLocator {
             SessionIdentity::Id(id) => match agent {
                 Agent::Claude => self.claude_path_for_id(cwd, id, budget),
                 Agent::Codex => self.codex_path_for_id(id, budget),
-                Agent::Grok | Agent::Pi | Agent::Omp => {
+                Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor => {
                     native_file::locate(&self.home, agent, Some(identity), cwd, budget)
                 }
                 Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
@@ -975,7 +1028,7 @@ impl SessionLocator {
                 budget,
             )?)),
             Agent::Codex => self.newest_codex_session(cwd, budget),
-            Agent::Grok | Agent::Pi | Agent::Omp => {
+            Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor => {
                 native_file::locate(&self.home, agent, None, Some(cwd), budget).map(Some)
             }
             Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
@@ -1386,7 +1439,7 @@ pub(crate) fn parse_events_into(
             },
             found,
         ),
-        Agent::OpenCode => ParsedSession::default(),
+        Agent::OpenCode | Agent::Cursor => ParsedSession::default(),
     }
 }
 

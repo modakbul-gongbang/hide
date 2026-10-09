@@ -503,6 +503,14 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         scope: Option<hide_session::SessionReadScope>,
     },
+    /// A bounded provider-neutral conversation page, including native graphs.
+    SessionConversation {
+        agent: hide_session::Agent,
+        path: String,
+        scope: hide_session::SessionReadScope,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkpoint: Option<hide_session::ConversationCheckpoint>,
+    },
     /// Starts this node's pane service for the Herdr at `herdr_socket`: the
     /// bootstrap socket a device pane's `hide` asks on. Answered with
     /// [`crate::panes::PanesStarted`]; asking again for the same Herdr
@@ -622,6 +630,7 @@ impl Call {
             | Self::SessionStat { .. }
             | Self::SessionChunk { .. }
             | Self::SessionText { .. }
+            | Self::SessionConversation { .. }
             | Self::PanesStart { .. }
             | Self::TerminalsStart { .. }
             | Self::PaneProofAnswer { .. }

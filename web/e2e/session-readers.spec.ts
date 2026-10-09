@@ -1,21 +1,22 @@
 // Synthetic native-format writers on actual pinned Herdr and hided.
 // Installed CLI measurements remain a separate acceptance boundary.
-import { expect, test } from "@playwright/test";
+import { expect, test, type BrowserContext } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { GROK_ID, GROK_PLAN, GROK_TITLE, OMP_ID, OMP_TITLE, OMP_UPDATED_TITLE, PI_ID, PI_TITLE, appendOmpQuestion, prepareNativeWriter, reportNativeWriter, setGrokPlanApproval, updateOmpTitle } from "./session-reader-fixture";
+import { CURSOR_ID, CURSOR_GOAL, GROK_ID, GROK_PLAN, GROK_TITLE, OMP_ID, OMP_TITLE, OMP_UPDATED_TITLE, PI_ID, PI_TITLE, appendOmpQuestion, prepareNativeWriter, reportNativeWriter, setGrokPlanApproval, updateOmpTitle } from "./session-reader-fixture";
 import { screenshot } from "./wire";
 import { afterCleanup } from "./worker-owned";
+import { FakeTailscale } from "./fake-tailscale";
 import type { AgentRow } from "../src/snapshot";
 
 type QuestionRow = AgentRow & { user_turn?: { kind: string; content: { text: string; choices: string[]; truncated: boolean } | null } };
 
 test.describe.configure({ timeout: 150_000 });
 
-for (const [kind, id, initialTitle, resumeFlag] of [["pi", PI_ID, PI_TITLE, "--session"], ["omp", OMP_ID, OMP_TITLE, "--resume"], ["grok", GROK_ID, GROK_TITLE, "--resume"]] as const) {
-test(`${kind} native title and durable sleep wake the exact conversation in a fresh pane`, async ({ page }) => {
+for (const [kind, id, initialTitle, resumeFlag] of [["pi", PI_ID, PI_TITLE, "--session"], ["omp", OMP_ID, OMP_TITLE, "--resume"], ["grok", GROK_ID, GROK_TITLE, "--resume"], ["cursor", CURSOR_ID, CURSOR_GOAL, "--resume"]] as const) {
+test(`${kind} ${kind === "cursor" ? "generated goal" : "native title"} and durable sleep wake the exact conversation in a fresh pane`, async ({ page }) => {
   let agents: QuestionRow[] = [];
   page.on("websocket", (socket) => socket.on("framereceived", (frame) => {
     if (typeof frame.payload !== "string") return;
@@ -69,6 +70,10 @@ test(`${kind} native title and durable sleep wake the exact conversation in a fr
     }
     await row.click();
     await page.locator(`[data-pane-menu="${sourcePane}"]`).click();
+    if (kind === "cursor") {
+      await expect(page.locator('[data-menu-item="fork_agent"]')).toHaveCount(0);
+      expect(agents.find(agent => agent.pane_id === sourcePane)?.user_turn).toBeUndefined();
+    }
     await expect(page.locator('[data-menu-item="sleep_agent"]')).toBeEnabled({ timeout: 20_000 });
     await page.locator('[data-menu-item="sleep_agent"]').click();
     const sleeping = page.locator('[data-sleeping-session]');
@@ -76,7 +81,7 @@ test(`${kind} native title and durable sleep wake the exact conversation in a fr
     await expect(row).toHaveCount(0);
     await expect.poll(() => JSON.stringify(herdr.run(["pane", "list"]))).not.toContain(`"pane_id":"${sourcePane}"`);
     await screenshot(page, `${kind}-durable-sleep`);
-    const prior = fs.readFileSync(session, "utf8");
+    const prior = fs.readFileSync(session);
     await sleeping.getByRole("button", { name: "Wake agent" }).click();
     type Listed = { result: { agents: { pane_id: string; agent: string }[] } };
     let fresh = "";
@@ -89,7 +94,7 @@ test(`${kind} native title and durable sleep wake the exact conversation in a fr
     reportNativeWriter(herdr, kind, fresh, session);
     await expect(sleeping).toHaveCount(0, { timeout: 30_000 });
     await expect(page.locator(`nav[data-sidebar] [data-pane="${fresh}"]`)).toContainText(title);
-    expect(fs.readFileSync(session, "utf8")).toBe(prior);
+    expect(fs.readFileSync(session)).toEqual(prior);
     await screenshot(page, `${kind}-exact-wake`);
   } catch (error) {
     throw afterCleanup(afterCleanup(error, () => daemon?.stop()), () => herdr.stop());
@@ -98,3 +103,51 @@ test(`${kind} native title and durable sleep wake the exact conversation in a fr
   herdr.stop();
 });
 }
+
+test("Cursor phone reads native message units and omits an unrecorded time", async ({ browser, page }) => {
+  const herdr = await startHerdr({ agents: false });
+  const tailscale = new FakeTailscale();
+  let daemon: Daemon | null = null;
+  let phoneContext: BrowserContext | undefined;
+  try {
+    tailscale.ready();
+    tailscale.install();
+    const pane = herdr.panes[0];
+    const session = prepareNativeWriter(herdr, "cursor");
+    herdr.run(["agent", "start", "cursor-phone", "--kind", "cursor", "--pane", pane]);
+    await expect.poll(() => fs.existsSync(session)).toBe(true);
+    reportNativeWriter(herdr, "cursor", pane, session);
+    daemon = await startHided(herdr, "cursor-phone", herdr.env.HOME, { HIDE_TAILSCALE_BIN: tailscale.bin });
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await page.locator("[data-open-settings]").click();
+    await page.locator('[data-settings-tab="mobile"]').click();
+    await page.locator('[data-mobile-switch="true"]').click();
+    await expect(page.locator('[data-mobile-ready="true"]')).toBeVisible({ timeout: 30_000 });
+    await page.locator('[data-mobile-show-code="true"]').click();
+    const qr = page.locator("[data-mobile-qr]");
+    await expect(qr).toBeVisible();
+    const url = await qr.getAttribute("data-mobile-qr");
+    expect(url).toContain("/m/#pair=");
+    phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "ko-KR" });
+    const phone = await phoneContext.newPage();
+    await phone.goto(`${daemon.origin}/m/${url!.slice(url!.indexOf("#"))}`);
+    await phone.locator('[data-phone-pair="true"]').tap();
+    await expect(phone.locator('[data-phone-connected="true"]')).toBeVisible();
+    await phone.locator(`[data-phone-agent$="|${pane}"]`).tap();
+    const messages = phone.locator("[data-phone-message]");
+    await expect(messages).toHaveCount(2, { timeout: 30_000 });
+    const human = phone.locator('[data-phone-message="you"]');
+    await expect(human).toContainText("요청 보기를 만들어줘");
+    await expect(human.locator("time")).toHaveCount(0);
+    await expect(phone.locator('[data-phone-message="agent"] time')).toHaveAttribute("datetime", "2026-10-03T01:01:00.000Z");
+    await expect(phone.locator("[data-phone-older]")).toHaveCount(0);
+    await screenshot(phone, "cursor-phone-native-units-time");
+  } finally {
+    const errors: unknown[] = [];
+    try { await phoneContext?.close(); } catch (error) { errors.push(error); }
+    try { daemon?.stop(); } catch (error) { errors.push(error); }
+    try { herdr.stop(); } catch (error) { errors.push(error); }
+    try { tailscale.remove(); } catch (error) { errors.push(error); }
+    if (errors.length) throw new AggregateError(errors, "Cursor phone fixture cleanup failed");
+  }
+});

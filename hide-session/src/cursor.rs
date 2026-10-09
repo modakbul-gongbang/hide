@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 use crate::{ConversationEvent, EventKind, ParsedSession, RescanReason, Result, SessionError};
 
 pub const SESSIONS: &str = ".cursor/chats";
+pub const ARCHIVE_PAGE_LIMIT: usize = 256;
 const META_BYTES: usize = 64 * 1024;
 const BLOB_BYTES: usize = crate::SESSION_LINE_LIMIT_BYTES;
 const TURN_LIMIT: usize = crate::SESSION_DISCOVERY_LIMIT;
@@ -519,6 +520,12 @@ impl Checkpoint {
         self.offset
     }
 
+    pub(crate) fn matches_owner(&self, native_id: &str, incarnation: &str) -> Result<bool> {
+        self.validate()?;
+        Ok(self.owner == hex(&Sha256::digest(native_id.as_bytes()))
+            && self.incarnation.as_deref() == Some(incarnation))
+    }
+
     fn validate(&self) -> Result<()> {
         let hash = |value: &str| {
             value.len() == 64
@@ -533,8 +540,18 @@ impl Checkpoint {
                 .is_none_or(|value| value.is_empty() || value.len() > 64)
             || self.turn >= TURN_LIMIT
             || self.steps > STEP_LIMIT
-            || self.offset > (TURN_LIMIT * (STEP_LIMIT + 1)) as u64
+            || self.offset >> 32 != self.turn as u64
+            || self.offset & u32::MAX as u64 > (STEP_LIMIT + 1) as u64
             || !matches!(self.user.len(), 0 | 32)
+            || (self.user_read
+                && (self.user.len() != 32
+                    || self.offset & u32::MAX as u64 != (self.steps + 1) as u64))
+            || (!self.user_read
+                && (!self.user.is_empty()
+                    || self.steps != 0
+                    || self.offset & u32::MAX as u64 != 0
+                    || !self.step_prefix.is_empty()))
+            || (self.turn > 0 && !hash(&self.closed))
             || (!self.closed.is_empty() && !hash(&self.closed))
             || (!self.step_prefix.is_empty() && !hash(&self.step_prefix))
         {
@@ -549,6 +566,7 @@ pub struct ReadResult {
     pub checkpoint: Checkpoint,
     pub has_more: bool,
     pub read_bytes: u64,
+    pub human_anchors: Vec<(u64, Checkpoint)>,
 }
 
 fn prefix(ids: &[Vec<u8>]) -> Result<String> {
@@ -564,6 +582,71 @@ fn prefix(ids: &[Vec<u8>]) -> Result<String> {
 
 fn minute(value: Option<u64>) -> u64 {
     value.map(|value| value / 60_000 * 60_000).unwrap_or(0)
+}
+
+fn agent_turn(turn: Turn) -> Result<AgentTurn> {
+    let agent = match turn.kind {
+        Some(turn::Kind::Agent(agent)) if agent.user_message.len() == 32 => agent,
+        Some(turn::Kind::Shell(_)) => AgentTurn::default(),
+        _ => return Err(invalid("cursor_turn_invalid")),
+    };
+    if agent.steps.len() > STEP_LIMIT {
+        return Err(capacity("cursor_turn_steps", STEP_LIMIT));
+    }
+    prefix(&agent.steps)?;
+    Ok(agent)
+}
+
+// A page and an incremental read decode the same native conversation units.
+// The outer Option means the bounded transaction needs another read; the
+// inner Option means this unit contains no visible conversation text.
+fn user_event(db: &mut Database, id: &[u8]) -> Result<Option<Option<ConversationEvent>>> {
+    let Some(bytes) = db.blob(id)? else {
+        return Ok(None);
+    };
+    let user = User::decode(bytes.as_slice()).map_err(|_| invalid("cursor_protobuf_invalid"))?;
+    let text = if user.text_blob_id.is_empty() {
+        user.text
+    } else {
+        let Some(bytes) = db.blob(&user.text_blob_id)? else {
+            return Ok(None);
+        };
+        String::from_utf8(bytes).map_err(|_| invalid("cursor_text_invalid"))?
+    };
+    let injected = user.is_simulated_msg.unwrap_or(false) || user.sent_by_agent_id.is_some();
+    Ok(Some((!text.is_empty()).then(|| {
+        ConversationEvent::new(
+            "user",
+            if injected {
+                EventKind::Injected
+            } else {
+                EventKind::Human
+            },
+            minute(user.started_at_ms),
+            text,
+        )
+        .with_provider_injected(injected)
+    })))
+}
+
+fn step_event(db: &mut Database, id: &[u8]) -> Result<Option<Option<ConversationEvent>>> {
+    let Some(bytes) = db.blob(id)? else {
+        return Ok(None);
+    };
+    let step = Step::decode(bytes.as_slice()).map_err(|_| invalid("cursor_protobuf_invalid"))?;
+    let event = match step.kind {
+        Some(step::Kind::Assistant(message)) if !message.text.is_empty() => {
+            Some(ConversationEvent::new(
+                "assistant",
+                EventKind::Assistant,
+                minute(message.started_at_ms),
+                message.text,
+            ))
+        }
+        Some(_) => None,
+        None => return Err(invalid("cursor_step_invalid")),
+    };
+    Ok(Some(event))
 }
 
 /// Read native conversation units under one transaction and byte allowance.
@@ -594,6 +677,7 @@ pub fn read(
     let incarnation = db.before[0].as_ref().map(|mark| mark.id.clone());
     let owner = hex(&Sha256::digest(native_id.as_bytes()));
     let mut parsed = ParsedSession::default();
+    let mut human_anchors = Vec::new();
     let mut checkpoint = saved.unwrap_or_default();
     let previous_offset = checkpoint.offset;
     if !checkpoint.owner.is_empty()
@@ -636,14 +720,7 @@ pub fn read(
         };
         let turn =
             Turn::decode(bytes.as_slice()).map_err(|_| invalid("cursor_protobuf_invalid"))?;
-        let agent = match turn.kind {
-            Some(turn::Kind::Agent(agent)) => agent,
-            Some(turn::Kind::Shell(_)) => AgentTurn::default(),
-            None => return Err(invalid("cursor_turn_invalid")),
-        };
-        if agent.steps.len() > STEP_LIMIT {
-            return Err(capacity("cursor_turn_steps", STEP_LIMIT));
-        }
+        let agent = agent_turn(turn)?;
         if checkpoint.steps > agent.steps.len()
             || (checkpoint.user_read && checkpoint.user != agent.user_message)
             || (!checkpoint.step_prefix.is_empty()
@@ -654,6 +731,7 @@ pub fn read(
                 rescan_reason: Some(RescanReason::Truncated),
                 ..ParsedSession::default()
             };
+            human_anchors.clear();
             checkpoint = Checkpoint {
                 owner: checkpoint.owner,
                 incarnation: incarnation.clone(),
@@ -662,37 +740,15 @@ pub fn read(
             continue;
         }
         if !checkpoint.user_read && !agent.user_message.is_empty() {
-            let Some(bytes) = db.blob(&agent.user_message)? else {
+            let Some(event) = user_event(&mut db, &agent.user_message)? else {
                 has_more = true;
                 break;
             };
-            let user =
-                User::decode(bytes.as_slice()).map_err(|_| invalid("cursor_protobuf_invalid"))?;
-            let text = if user.text_blob_id.is_empty() {
-                user.text
-            } else {
-                let Some(bytes) = db.blob(&user.text_blob_id)? else {
-                    has_more = true;
-                    break;
-                };
-                String::from_utf8(bytes).map_err(|_| invalid("cursor_text_invalid"))?
-            };
-            let injected =
-                user.is_simulated_msg.unwrap_or(false) || user.sent_by_agent_id.is_some();
-            if !text.is_empty() {
-                parsed.events.push(
-                    ConversationEvent::new(
-                        "user",
-                        if injected {
-                            EventKind::Injected
-                        } else {
-                            EventKind::Human
-                        },
-                        minute(user.started_at_ms),
-                        text,
-                    )
-                    .with_provider_injected(injected),
-                );
+            if let Some(event) = event {
+                if event.kind == EventKind::Human {
+                    human_anchors.push((checkpoint.offset, checkpoint.clone()));
+                }
+                parsed.events.push(event);
                 parsed.event_offsets.push(checkpoint.offset);
             }
             checkpoint.offset = checkpoint
@@ -703,24 +759,13 @@ pub fn read(
             checkpoint.user_read = true;
         }
         while checkpoint.steps < agent.steps.len() && parsed.events.len() < EVENT_LIMIT {
-            let Some(bytes) = db.blob(&agent.steps[checkpoint.steps])? else {
+            let Some(event) = step_event(&mut db, &agent.steps[checkpoint.steps])? else {
                 has_more = true;
                 break;
             };
-            let step =
-                Step::decode(bytes.as_slice()).map_err(|_| invalid("cursor_protobuf_invalid"))?;
-            match step.kind {
-                Some(step::Kind::Assistant(message)) if !message.text.is_empty() => {
-                    parsed.events.push(ConversationEvent::new(
-                        "assistant",
-                        EventKind::Assistant,
-                        minute(message.started_at_ms),
-                        message.text,
-                    ));
-                    parsed.event_offsets.push(checkpoint.offset);
-                }
-                Some(_) => {}
-                None => return Err(invalid("cursor_step_invalid")),
+            if let Some(event) = event {
+                parsed.events.push(event);
+                parsed.event_offsets.push(checkpoint.offset);
             }
             checkpoint.offset = checkpoint
                 .offset
@@ -729,7 +774,11 @@ pub fn read(
             checkpoint.steps += 1;
         }
         checkpoint.closed = prefix(&root.turns[..checkpoint.turn])?;
-        checkpoint.step_prefix = prefix(&agent.steps[..checkpoint.steps])?;
+        checkpoint.step_prefix = if checkpoint.user_read {
+            prefix(&agent.steps[..checkpoint.steps])?
+        } else {
+            String::new()
+        };
         if checkpoint.steps < agent.steps.len() || parsed.events.len() >= EVENT_LIMIT {
             has_more =
                 checkpoint.steps < agent.steps.len() || checkpoint.turn + 1 < root.turns.len();
@@ -739,6 +788,7 @@ pub fn read(
             break;
         }
         checkpoint.turn += 1;
+        checkpoint.offset = (checkpoint.turn as u64) << 32;
         checkpoint.closed = prefix(&root.turns[..checkpoint.turn])?;
         checkpoint.user.clear();
         checkpoint.user_read = false;
@@ -754,6 +804,7 @@ pub fn read(
         checkpoint,
         has_more,
         read_bytes: db.read_bytes as u64,
+        human_anchors,
     })
 }
 
@@ -762,6 +813,179 @@ pub struct Header {
     pub cwd: PathBuf,
     pub created_at: u64,
     pub updated_at: Option<u64>,
+}
+
+pub const PAGE_READ_BYTES: u64 = 8 * 1024 * 1024;
+pub const PAGE_MESSAGES: usize = 30;
+pub const PAGE_TEXT_BYTES: usize = 256 * 1024;
+
+pub struct PageLimits {
+    pub messages: usize,
+    pub text_bytes: usize,
+    pub read_bytes: u64,
+}
+
+impl Default for PageLimits {
+    fn default() -> Self {
+        Self {
+            messages: PAGE_MESSAGES,
+            text_bytes: PAGE_TEXT_BYTES,
+            read_bytes: PAGE_READ_BYTES,
+        }
+    }
+}
+
+pub struct Page {
+    pub parsed: ParsedSession,
+    pub before: Option<u64>,
+    pub tail: Checkpoint,
+    pub read_bytes: u64,
+}
+
+/// Reads older native units directly from their turn and step references.
+/// Ordinals are `(turn << 32) | unit`, where the user is unit zero.
+/// The current graph prefix is retained for an incremental tail poll; a
+/// rewritten prefix resets that view instead of appending a different past.
+pub fn page_before(
+    home: &Path,
+    path: &Path,
+    native_id: &str,
+    cwd: &str,
+    before: Option<u64>,
+    limits: PageLimits,
+) -> Result<Page> {
+    let budget = usize::try_from(limits.read_bytes.min(PAGE_READ_BYTES))
+        .map_err(|_| capacity("cursor_read_bytes", PAGE_READ_BYTES as usize))?;
+    let messages = limits.messages.min(PAGE_MESSAGES);
+    let text_limit = limits.text_bytes.min(PAGE_TEXT_BYTES);
+    if messages == 0 || text_limit == 0 {
+        return Err(invalid("cursor_page_limit_invalid"));
+    }
+    let mut db = Database::open(home, path, Some((native_id, cwd)), budget)?;
+    let root_id = db.root.clone();
+    let root = if root_id.is_empty() {
+        Conversation::default()
+    } else {
+        db.required::<Conversation>(&root_id)?
+    };
+    if root.turns.len() > TURN_LIMIT {
+        return Err(capacity("cursor_turns", TURN_LIMIT));
+    }
+    prefix(&root.turns)?;
+    let last = if let Some(id) = root.turns.last() {
+        agent_turn(db.required::<Turn>(id)?)?
+    } else {
+        AgentTurn::default()
+    };
+    let last_turn = root.turns.len().saturating_sub(1);
+    let tail = Checkpoint {
+        owner: hex(&Sha256::digest(native_id.as_bytes())),
+        incarnation: db.before[0].as_ref().map(|mark| mark.id.clone()),
+        turn: last_turn,
+        closed: prefix(&root.turns[..last_turn])?,
+        user: last.user_message.clone(),
+        user_read: !last.user_message.is_empty(),
+        steps: last.steps.len(),
+        step_prefix: if last.user_message.is_empty() {
+            String::new()
+        } else {
+            prefix(&last.steps)?
+        },
+        offset: ((last_turn as u64) << 32)
+            | (last.steps.len() + usize::from(!last.user_message.is_empty())) as u64,
+    };
+    tail.validate()?;
+    let mut parsed = ParsedSession::default();
+    let mut text_bytes = 0usize;
+    let mut next = None;
+    let mut inspected = false;
+    if !root.turns.is_empty() {
+        let first_turn = before.map(|id| (id >> 32) as usize).unwrap_or(last_turn);
+        if first_turn > last_turn {
+            return Err(invalid("cursor_page_cursor_invalid"));
+        }
+        'turns: for index in (0..=first_turn).rev() {
+            let agent = if index == last_turn {
+                last.clone()
+            } else {
+                let Some(bytes) = db.blob(&root.turns[index])? else {
+                    if !inspected {
+                        return Err(capacity("cursor_read_bytes", budget));
+                    }
+                    next = Some(((index as u64) << 32) | (STEP_LIMIT + 1) as u64);
+                    break;
+                };
+                agent_turn(
+                    Turn::decode(bytes.as_slice())
+                        .map_err(|_| invalid("cursor_protobuf_invalid"))?,
+                )?
+            };
+            let units = if agent.user_message.is_empty() {
+                0
+            } else {
+                agent.steps.len() + 1
+            };
+            let upper = if index == first_turn {
+                before
+                    .map(|id| (id & u32::MAX as u64) as usize)
+                    .unwrap_or(units)
+            } else {
+                units
+            };
+            let upper = if upper == STEP_LIMIT + 1 {
+                units
+            } else {
+                upper
+            };
+            if upper > units {
+                return Err(invalid("cursor_page_cursor_invalid"));
+            }
+            for unit in (0..upper).rev() {
+                let ordinal = ((index as u64) << 32) | unit as u64;
+                let decoded = if unit == 0 {
+                    user_event(&mut db, &agent.user_message)?
+                } else {
+                    step_event(&mut db, &agent.steps[unit - 1])?
+                };
+                let Some(event) = decoded else {
+                    if !inspected {
+                        return Err(capacity("cursor_read_bytes", budget));
+                    }
+                    next = Some(ordinal + 1);
+                    break 'turns;
+                };
+                inspected = true;
+                if let Some(event) = event.filter(|event| {
+                    event.kind != EventKind::Injected && !event.text.trim().is_empty()
+                }) {
+                    if !parsed.events.is_empty()
+                        && text_bytes.saturating_add(event.text.len()) > text_limit
+                    {
+                        next = Some(ordinal + 1);
+                        break 'turns;
+                    }
+                    text_bytes += event.text.len();
+                    parsed.events.push(event);
+                    parsed.event_offsets.push(ordinal);
+                    if parsed.events.len() == messages {
+                        next = (ordinal > 0).then_some(ordinal);
+                        break 'turns;
+                    }
+                }
+            }
+        }
+    } else if before.is_some_and(|id| id != 0) {
+        return Err(invalid("cursor_page_cursor_invalid"));
+    }
+    parsed.events.reverse();
+    parsed.event_offsets.reverse();
+    db.finish()?;
+    Ok(Page {
+        parsed,
+        before: next,
+        tail,
+        read_bytes: db.read_bytes as u64,
+    })
 }
 
 pub fn header(home: &Path, path: &Path) -> Result<Header> {
@@ -778,6 +1002,257 @@ pub fn header(home: &Path, path: &Path) -> Result<Header> {
         created_at: minute(Some(db.created_at)),
         updated_at: db.updated_at.map(|time| minute(Some(time))),
     })
+}
+
+pub(crate) fn activity(
+    home: &Path,
+    path: &Path,
+    native_id: &str,
+    cwd: &str,
+) -> Result<crate::session_activity::SessionActivity> {
+    let db = Database::open(
+        home,
+        path,
+        Some((native_id, cwd)),
+        crate::SESSION_INCREMENT_READ_LIMIT_BYTES as usize,
+    )?;
+    let mut bytes = 0u64;
+    let mut modified_at_unix_ms = 0u64;
+    for name in ["store.db", "meta.json", "store.db-wal", "store.db-shm"] {
+        let metadata = match std::fs::symlink_metadata(path.with_file_name(name)) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Err(invalid("session_activity_stat_failed")),
+        };
+        bytes = bytes
+            .checked_add(metadata.len())
+            .ok_or_else(|| invalid("session_activity_size_invalid"))?;
+        let time: u64 = metadata
+            .modified()
+            .map_err(|_| invalid("session_activity_mtime_unavailable"))?
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .map_err(|_| invalid("session_activity_mtime_invalid"))?
+            .as_millis()
+            .try_into()
+            .map_err(|_| invalid("session_activity_mtime_invalid"))?;
+        modified_at_unix_ms = modified_at_unix_ms.max(time);
+    }
+    db.finish()?;
+    Ok(crate::session_activity::SessionActivity {
+        modified_at_unix_ms,
+        bytes,
+    })
+}
+
+pub(crate) fn proof(
+    home: &Path,
+    path: &Path,
+    reported_id: Option<&str>,
+    cwd: &str,
+) -> Result<crate::ConfirmedLabelSession> {
+    let id = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .filter(|value| uuid(value))
+        .ok_or_else(|| invalid("cursor_session_id_invalid"))?;
+    if reported_id.is_some_and(|reported| reported != id) {
+        return Err(invalid("cursor_session_identity_mismatch"));
+    }
+    let db = Database::open(
+        home,
+        path,
+        Some((id, cwd)),
+        crate::SESSION_INCREMENT_READ_LIMIT_BYTES as usize,
+    )?;
+    let result = crate::ConfirmedLabelSession {
+        owner: crate::label_owner::reference_token(crate::Agent::Cursor, "id", id)
+            .ok_or_else(|| invalid("cursor_session_id_invalid"))?,
+        native_session_id: Some(id.to_owned()),
+        source_path: Some(
+            db.path
+                .to_str()
+                .filter(|value| value.len() <= 4096)
+                .ok_or_else(|| invalid("cursor_path_unconfirmed"))?
+                .to_owned(),
+        ),
+        incarnation: db.before[0]
+            .as_ref()
+            .ok_or_else(|| invalid("cursor_source_unavailable"))?
+            .id
+            .clone(),
+        bytes: db
+            .source
+            .metadata()
+            .map_err(|_| invalid("cursor_source_unavailable"))?
+            .len(),
+    };
+    db.finish()?;
+    Ok(result)
+}
+
+pub(crate) fn confirm_route(home: &Path, path: &Path, id: &str, cwd: &Path) -> Result<()> {
+    if !uuid(id) {
+        return Err(invalid("cursor_session_id_invalid"));
+    }
+    let route = home
+        .join(SESSIONS)
+        .join(directory(cwd)?)
+        .join(id)
+        .join("store.db");
+    if checked_path(home, &route)? != checked_path(home, path)? {
+        return Err(invalid("cursor_native_route_mismatch"));
+    }
+    proof(
+        home,
+        &route,
+        Some(id),
+        cwd.to_str()
+            .ok_or_else(|| invalid("cursor_cwd_unconfirmed"))?,
+    )?;
+    Ok(())
+}
+
+pub(crate) fn locate(
+    home: &Path,
+    identity: Option<&crate::SessionIdentity>,
+    cwd: Option<&str>,
+    budget: &mut crate::DiscoveryBudget,
+) -> Result<PathBuf> {
+    let cwd = cwd.ok_or(crate::SessionError::CwdUnavailable)?;
+    if let Some(crate::SessionIdentity::Path(path)) = identity {
+        proof(home, path, None, cwd)?;
+        return checked_path(home, path);
+    }
+    let directory = home.join(SESSIONS).join(directory(Path::new(cwd))?);
+    let candidates = match identity {
+        Some(crate::SessionIdentity::Id(id)) if uuid(id) => {
+            vec![directory.join(id).join("store.db")]
+        }
+        Some(_) => return Err(invalid("cursor_session_id_invalid")),
+        None => crate::read_directory(&directory, budget)?
+            .into_iter()
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(uuid)
+            })
+            .map(|path| path.join("store.db"))
+            .collect(),
+    };
+    let mut remaining = crate::SESSION_INCREMENT_READ_LIMIT_BYTES as usize;
+    let mut latest = None;
+    for path in candidates {
+        let db = match Database::open(home, &path, None, remaining) {
+            Ok(db) => db,
+            Err(SessionError::Capacity { .. }) => {
+                return Err(capacity(
+                    "discovery_read_bytes",
+                    crate::SESSION_INCREMENT_READ_LIMIT_BYTES as usize,
+                ));
+            }
+            Err(_) if identity.is_none() => continue,
+            Err(error) => return Err(error),
+        };
+        remaining = remaining.saturating_sub(db.read_bytes);
+        if hide_platform::fs::identity::canonical(&db.header.cwd).ok()
+            != hide_platform::fs::identity::canonical(Path::new(cwd)).ok()
+        {
+            return Err(invalid("cursor_scope_mismatch"));
+        }
+        db.finish()?;
+        let time = db.updated_at.unwrap_or(db.created_at);
+        if latest.as_ref().is_none_or(|(previous, _)| time > *previous) {
+            latest = Some((time, db.path.clone()));
+        }
+    }
+    latest
+        .map(|(_, path)| path)
+        .ok_or(crate::SessionError::SessionFileMissing)
+}
+
+/// Metadata-only change token. This is an observation, never read authority.
+pub(crate) fn source_stamp(path: &Path) -> Option<String> {
+    let mut digest = Sha256::new();
+    for name in [
+        "store.db",
+        "meta.json",
+        "store.db-wal",
+        "store.db-shm",
+        "store.db-journal",
+    ] {
+        let candidate = path.with_file_name(name);
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(_) => digest.update(format!("{name}:{:?}", mark(&candidate).ok()?).as_bytes()),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && name != "store.db"
+                    && name != "meta.json" =>
+            {
+                digest.update(format!("{name}:absent").as_bytes())
+            }
+            Err(_) => return None,
+        }
+    }
+    Some(format!("cursor:{:x}", digest.finalize()))
+}
+
+pub fn read_all(
+    home: &Path,
+    path: &Path,
+    scope: &crate::SessionReadScope,
+) -> Result<ParsedSession> {
+    let stamp = source_stamp(path).ok_or_else(|| invalid("cursor_source_unavailable"))?;
+    let mut parsed = ParsedSession::default();
+    let mut saved = None;
+    let mut read_bytes = 0;
+    let mut text_bytes = 0;
+    let mut pages = 0;
+    loop {
+        pages += 1;
+        if pages > ARCHIVE_PAGE_LIMIT {
+            return Err(capacity("cursor_archive_pages", ARCHIVE_PAGE_LIMIT));
+        }
+        let read = read(
+            home,
+            path,
+            &scope.id,
+            &scope.cwd,
+            saved,
+            crate::SESSION_INCREMENT_READ_LIMIT_BYTES,
+        )?;
+        if read.parsed.rescan_reason.is_some() {
+            return Err(invalid("cursor_source_changed"));
+        }
+        read_bytes += read.read_bytes;
+        text_bytes += read
+            .parsed
+            .events
+            .iter()
+            .map(|event| event.text.len() as u64)
+            .sum::<u64>();
+        if read_bytes > crate::SESSION_READ_LIMIT_BYTES
+            || text_bytes > crate::SESSION_READ_LIMIT_BYTES
+        {
+            return Err(capacity(
+                "cursor_archive_bytes",
+                crate::SESSION_READ_LIMIT_BYTES as usize,
+            ));
+        }
+        if parsed.events.len() + read.parsed.events.len() > TURN_LIMIT {
+            return Err(capacity("cursor_archive_events", TURN_LIMIT));
+        }
+        parsed.events.extend(read.parsed.events);
+        parsed.event_offsets.extend(read.parsed.event_offsets);
+        if !read.has_more {
+            break;
+        }
+        saved = Some(read.checkpoint);
+    }
+    if source_stamp(path).as_deref() != Some(&stamp) {
+        return Err(invalid("cursor_source_changed"));
+    }
+    Ok(parsed)
 }
 
 // Field numbers come from the installed native agent/v1 generated schema.

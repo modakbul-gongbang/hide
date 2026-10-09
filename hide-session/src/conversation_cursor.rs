@@ -19,6 +19,8 @@ pub struct ConversationCheckpoint {
     /// label request carries a checkpoint.
     #[serde(default)]
     classifier: Option<Box<LargeRecord>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native: Option<Box<crate::cursor::Checkpoint>>,
 }
 
 impl ConversationCheckpoint {
@@ -35,11 +37,62 @@ impl ConversationCheckpoint {
     }
 
     pub fn offset(&self) -> u64 {
-        self.cursor.offset
+        self.native
+            .as_ref()
+            .map(|native| native.offset())
+            .unwrap_or(self.cursor.offset)
     }
     pub fn has_more(&self) -> bool {
         self.has_more
     }
+
+    pub(crate) fn is_native(&self) -> bool {
+        self.native.is_some()
+    }
+
+    pub(crate) fn native_matches(&self, confirmed: &crate::ConfirmedLabelSession) -> Result<bool> {
+        let native = self
+            .native
+            .as_ref()
+            .ok_or_else(|| SessionError::Checkpoint("cursor_checkpoint_missing".into()))?;
+        native.matches_owner(
+            confirmed
+                .native_session_id
+                .as_deref()
+                .ok_or_else(|| SessionError::Checkpoint("cursor_session_id_unconfirmed".into()))?,
+            &confirmed.incarnation,
+        )
+    }
+}
+
+/// One provider-neutral page on an authenticated reader boundary.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ConversationRead {
+    pub events: Vec<crate::ConversationEvent>,
+    pub event_offsets: Vec<u64>,
+    pub checkpoint: ConversationCheckpoint,
+    pub has_more: bool,
+    pub rescanned: bool,
+    pub read_bytes: u64,
+}
+
+pub fn read_conversation(
+    home: &Path,
+    agent: Agent,
+    path: &Path,
+    scope: &crate::SessionReadScope,
+    saved: Option<ConversationCheckpoint>,
+) -> Result<ConversationRead> {
+    let mut cursor = saved.map(ConversationCursor::restore).unwrap_or_default();
+    let parsed = cursor.read_confirmed(home, agent, path, scope)?;
+    Ok(ConversationRead {
+        events: parsed.events,
+        event_offsets: parsed.event_offsets,
+        checkpoint: cursor.checkpoint(),
+        has_more: cursor.has_more(),
+        rescanned: parsed.rescan_reason.is_some(),
+        read_bytes: cursor.read_bytes(),
+    })
 }
 
 /// Incrementally reads conversation events without retaining unrelated records.
@@ -50,6 +103,8 @@ pub struct ConversationCursor {
     has_more: bool,
     classifier: Option<Box<LargeRecord>>,
     read_bytes: u64,
+    native: Option<Box<crate::cursor::Checkpoint>>,
+    human_anchors: Vec<(u64, crate::cursor::Checkpoint)>,
 }
 
 impl ConversationCursor {
@@ -64,6 +119,7 @@ impl ConversationCursor {
             discarded_bytes: self.discarded_bytes,
             has_more: self.has_more,
             classifier: self.classifier.clone(),
+            native: self.native.clone(),
         }
     }
 
@@ -71,15 +127,28 @@ impl ConversationCursor {
     /// boundary this cursor already read past (an event offset). Reading
     /// from it again yields the records from there on; nothing beyond the
     /// file identity is carried, so no transcript bytes are kept.
-    pub fn checkpoint_at(&self, offset: u64) -> ConversationCheckpoint {
+    pub fn checkpoint_at(&self, offset: u64) -> Result<ConversationCheckpoint> {
+        if self.native.is_some() {
+            let native = self
+                .human_anchors
+                .iter()
+                .find(|(at, _)| *at == offset)
+                .map(|(_, checkpoint)| checkpoint.clone())
+                .ok_or_else(|| SessionError::Checkpoint("cursor_anchor_unavailable".to_owned()))?;
+            return Ok(ConversationCheckpoint {
+                native: Some(Box::new(native)),
+                ..ConversationCheckpoint::default()
+            });
+        }
         let mut cursor = self.cursor.checkpoint();
         cursor.offset = offset.min(cursor.offset);
-        ConversationCheckpoint {
+        Ok(ConversationCheckpoint {
             cursor,
             discarded_bytes: 0,
             has_more: false,
             classifier: None,
-        }
+            native: None,
+        })
     }
 
     pub fn restore(checkpoint: ConversationCheckpoint) -> Self {
@@ -100,6 +169,8 @@ impl ConversationCursor {
             has_more: false,
             classifier,
             read_bytes: 0,
+            native: checkpoint.native,
+            human_anchors: Vec::new(),
         }
     }
 
@@ -108,6 +179,8 @@ impl ConversationCursor {
         self.discarded_bytes = 0;
         self.has_more = false;
         self.classifier = None;
+        self.native = None;
+        self.human_anchors.clear();
     }
 
     /// More bytes from the last observed file size remain to be read.
@@ -122,6 +195,32 @@ impl ConversationCursor {
 
     pub fn read(&mut self, agent: Agent, path: &Path) -> Result<ParsedSession> {
         self.read_with_budget(agent, path, crate::SESSION_INCREMENT_READ_LIMIT_BYTES)
+    }
+
+    /// Native graph stores need the node-owned root and current read scope.
+    pub fn read_confirmed(
+        &mut self,
+        home: &Path,
+        agent: Agent,
+        path: &Path,
+        scope: &crate::SessionReadScope,
+    ) -> Result<ParsedSession> {
+        if agent != Agent::Cursor {
+            return self.read(agent, path);
+        }
+        let result = crate::cursor::read(
+            home,
+            path,
+            &scope.id,
+            &scope.cwd,
+            self.native.as_deref().cloned(),
+            crate::SESSION_INCREMENT_READ_LIMIT_BYTES,
+        )?;
+        self.native = Some(Box::new(result.checkpoint));
+        self.has_more = result.has_more;
+        self.read_bytes = result.read_bytes;
+        self.human_anchors = result.human_anchors;
+        Ok(result.parsed)
     }
 
     /// A shared poll gives each file only its remaining byte allowance.
@@ -154,6 +253,9 @@ impl ConversationCursor {
         file: &File,
         budget: u64,
     ) -> Result<ParsedSession> {
+        if !agent.is_jsonl() {
+            return Err(SessionError::UnsupportedSessionKind);
+        }
         self.has_more = false;
         self.read_bytes = 0;
         let mut plan_hold = None;
@@ -784,7 +886,7 @@ impl LargeRecord {
         }
         match agent {
             // Grok's oversized records are read by its own scan.
-            Agent::OpenCode | Agent::Grok | Agent::Pi | Agent::Omp => None,
+            Agent::OpenCode | Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor => None,
             Agent::Codex => self.codex(),
             Agent::Claude => self.claude(),
         }

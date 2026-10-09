@@ -178,7 +178,7 @@
       "sample": "hide-agent-adapter/tests/fixtures/cursor-guidance.json"
     },
     "session": {
-      "absent": "No session reader in this build"
+      "sample": "hide-session/tests/fixtures/cursor-2026.10.01/graph.json"
     },
     "features": [
       "skill",
@@ -186,14 +186,16 @@
       "subagents",
       "spawn_guard",
       "herdr_integration",
-      "start"
+      "sleep",
+      "start",
+      "titles"
     ],
     "factory": {
       "direct_ask": "unavailable",
-      "user_turn": "unconfirmed",
-      "turn_end_and_answer": "unconfirmed",
+      "user_turn": "unavailable",
+      "turn_end_and_answer": "unavailable",
       "startup_guidance": "available",
-      "resume": "unconfirmed",
+      "resume": "available",
       "next_prompt_letters": "unavailable"
     }
   }

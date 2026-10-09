@@ -313,18 +313,7 @@ pub fn resume_arguments(agent: &ClosedAgent) -> Option<Vec<String>> {
         return None;
     }
     let dialect = hide_agent_adapter::adapter(&agent.kind)?.resume?;
-    match dialect {
-        hide_agent_adapter::LaunchDialect::Claude
-        | hide_agent_adapter::LaunchDialect::Codex
-        | hide_agent_adapter::LaunchDialect::Grok
-        | hide_agent_adapter::LaunchDialect::Pi
-        | hide_agent_adapter::LaunchDialect::Omp => {
-            Some(vec![dialect.resume_flag().into(), session_id.clone()])
-        }
-        hide_agent_adapter::LaunchDialect::OpenCode | hide_agent_adapter::LaunchDialect::Cursor => {
-            None
-        }
-    }
+    Some(vec![dialect.resume_flag().into(), session_id.clone()])
 }
 
 #[cfg(test)]

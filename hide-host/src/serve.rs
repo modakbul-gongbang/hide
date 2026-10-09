@@ -377,6 +377,12 @@ fn session_read<T: serde::Serialize>(
     let home = env.home("sessions_home_unavailable")?;
     let home = Path::new(&home);
     let agent = session_file_agent(home, &path)?;
+    if !agent.is_jsonl() {
+        return Err(HostError::new(
+            ErrorCode::Unsupported,
+            "session_raw_lines_unsupported",
+        ));
+    }
     to_value(
         hide_session::read_session_file(home, agent, &path, scope, || read(&path))
             .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
@@ -856,7 +862,15 @@ pub fn handle_with_progress(
                 agent,
                 &path,
                 scope.as_ref(),
-                || hide_session::search_read::read_step(saved.as_ref(), agent, &path),
+                || {
+                    hide_session::search_read::read_step_confirmed(
+                        Path::new(&home),
+                        saved.as_ref(),
+                        agent,
+                        &path,
+                        scope.as_ref(),
+                    )
+                },
             )
             .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
             to_value(step)
@@ -936,6 +950,33 @@ pub fn handle_with_progress(
             hide_session::read_bounded(path, hide_session::SESSION_READ_LIMIT_BYTES)
                 .map_err(|e| e.to_string())
         }),
+        Call::SessionConversation {
+            agent,
+            path,
+            scope,
+            checkpoint,
+        } => {
+            let path = session_file(env, &[agent], &path)?;
+            let home = env.home("sessions_home_unavailable")?;
+            let page = hide_session::read_session_file(
+                Path::new(&home),
+                agent,
+                &path,
+                Some(&scope),
+                || {
+                    hide_session::read_conversation(
+                        Path::new(&home),
+                        agent,
+                        &path,
+                        &scope,
+                        checkpoint,
+                    )
+                    .map_err(|_| "session_conversation_read_failed".to_owned())
+                },
+            )
+            .map_err(|reason| HostError::new(ErrorCode::Io, reason))?;
+            to_value(page)
+        }
         Call::LinkRead { requests } => {
             if requests.len() > hide_session::links::READ_FILE_LIMIT {
                 return Err(HostError::new(

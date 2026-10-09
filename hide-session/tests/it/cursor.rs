@@ -141,6 +141,256 @@ fn checkpoint_reads_mutated_last_turn_without_repeating_request() {
 }
 
 #[test]
+fn native_pages_walk_back_across_turns_and_keep_a_mutation_safe_tail() {
+    let fixture = Fixture::new();
+    fixture.root("second");
+    let page = |before| {
+        cursor::page_before(
+            fixture.home.path(),
+            &fixture.path,
+            ID,
+            fixture.cwd.to_str().unwrap(),
+            before,
+            cursor::PageLimits {
+                messages: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    let newest = page(None);
+    assert_eq!(newest.parsed.events[0].text, "Later answer");
+    assert_eq!(newest.parsed.event_offsets, [(1u64 << 32) | 1]);
+    let middle = page(newest.before);
+    assert_eq!(middle.parsed.events[0].text, "Native answer");
+    assert_eq!(middle.parsed.event_offsets, [1]);
+    let first = page(middle.before);
+    assert_eq!(first.parsed.events[0].text, "Read this conversation");
+    assert_eq!(first.parsed.event_offsets, [0]);
+    assert_eq!(first.before, None);
+    assert!(
+        fixture
+            .read(Some(newest.tail))
+            .unwrap()
+            .parsed
+            .events
+            .is_empty()
+    );
+    fixture.root("first");
+    let original = page(None);
+    fixture.root("append");
+    let appended = fixture.read(Some(original.tail)).unwrap();
+    assert_eq!(
+        appended
+            .parsed
+            .events
+            .iter()
+            .map(|event| event.text.as_str())
+            .collect::<Vec<_>>(),
+        ["Later answer"]
+    );
+    assert_eq!(appended.parsed.event_offsets, [3]);
+    fixture.root("rewrite");
+    assert_eq!(
+        fixture
+            .read(Some(appended.checkpoint))
+            .unwrap()
+            .parsed
+            .rescan_reason,
+        Some(RescanReason::Truncated)
+    );
+}
+
+#[test]
+fn native_pages_refuse_bad_cursors_and_budget_without_publishing_text() {
+    let fixture = Fixture::new();
+    for before in [Some(u64::MAX), Some(258), Some(1u64 << 32)] {
+        assert!(
+            cursor::page_before(
+                fixture.home.path(),
+                &fixture.path,
+                ID,
+                fixture.cwd.to_str().unwrap(),
+                before,
+                Default::default()
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        cursor::page_before(
+            fixture.home.path(),
+            &fixture.path,
+            ID,
+            fixture.cwd.to_str().unwrap(),
+            None,
+            cursor::PageLimits {
+                read_bytes: 1,
+                ..Default::default()
+            }
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn labels_archive_and_search_share_native_graph_and_checkpoint_ownership() {
+    use hide_session::{
+        Agent, SessionReadScope, label_transcript,
+        search::{IndexStep, SearchIndex},
+        search_read,
+    };
+    let fixture = Fixture::new();
+    let scope = SessionReadScope {
+        id: ID.to_owned(),
+        cwd: fixture.cwd.to_str().unwrap().to_owned(),
+    };
+    let project = hide_project::resolve(&fixture.cwd, "fixture").unwrap();
+    let catalog = hide_session::SessionCatalog::new(fixture.home.path(), "fixture");
+    let sessions = catalog.project_sessions(&project).unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].agent, Agent::Cursor);
+    assert_eq!(
+        sessions[0].first_human_request.as_deref(),
+        Some("Read this conversation")
+    );
+    assert!(sessions[0].title.is_none());
+    assert_eq!(sessions[0].event_count, 2);
+    assert_eq!(
+        hide_session::SessionCatalog::filtered(
+            &sessions,
+            hide_session::SessionFilter::Cursor,
+            "conversation"
+        )
+        .len(),
+        1
+    );
+    let activity = hide_session::session_activity::read(
+        fixture.home.path(),
+        &hide_session::session_activity::SessionActivityRequest {
+            agent: Agent::Cursor,
+            reference_kind: "id".into(),
+            reference_value: ID.into(),
+            cwd: Some(scope.cwd.clone()),
+            exact_route: true,
+            expected_id: Some(ID.into()),
+        },
+    )
+    .unwrap();
+    assert!(activity.bytes >= std::fs::metadata(&fixture.path).unwrap().len());
+    assert!(activity.modified_at_unix_ms > 0);
+    let request = label_transcript::LabelTranscriptRequest {
+        agent: Agent::Cursor,
+        reference_kind: "id".into(),
+        reference_value: ID.into(),
+        cwd: Some(scope.cwd.clone()),
+        checkpoint: None,
+        subagents: Default::default(),
+        turns: None,
+    };
+    let first = label_transcript::read(fixture.home.path(), &request).unwrap();
+    assert_eq!(
+        first
+            .events
+            .iter()
+            .map(|event| event.text.as_str())
+            .collect::<Vec<_>>(),
+        ["Read this conversation", "Native answer"]
+    );
+    assert!(first.title.is_none() && first.custom_title.is_none() && first.turns.is_none());
+    assert!(first.pr_sightings.is_empty());
+    let anchored = label_transcript::read(
+        fixture.home.path(),
+        &label_transcript::LabelTranscriptRequest {
+            checkpoint: first.anchor,
+            ..request.clone()
+        },
+    )
+    .unwrap();
+    assert_eq!(anchored.events, first.events);
+    let archive = cursor::read_all(fixture.home.path(), &fixture.path, &scope).unwrap();
+    assert_eq!(archive.events.len(), 2);
+    let dto = hide_session::read_conversation(
+        fixture.home.path(),
+        Agent::Cursor,
+        &fixture.path,
+        &scope,
+        None,
+    )
+    .unwrap();
+    let json = serde_json::to_vec(&dto).unwrap();
+    let restored: hide_session::ConversationRead = serde_json::from_slice(&json).unwrap();
+    assert_eq!(restored.events, dto.events);
+    let mut invalid = serde_json::to_value(dto.events[0].clone()).unwrap();
+    invalid["role"] = json!("foreign");
+    assert!(serde_json::from_value::<hide_session::ConversationEvent>(invalid).is_err());
+    let mut index = SearchIndex::open(&fixture.home.path().join("search.db")).unwrap();
+    let (step, reads) = search_read::read_step_confirmed(
+        fixture.home.path(),
+        None,
+        Agent::Cursor,
+        &fixture.path,
+        Some(&scope),
+    )
+    .unwrap();
+    assert!(
+        reads.cursor_bytes > 0
+            && reads.cursor_bytes <= hide_session::SESSION_INCREMENT_READ_LIMIT_BYTES
+    );
+    index
+        .apply("project", ID, fixture.path.to_str().unwrap(), 0, step)
+        .unwrap();
+    let saved = index.saved("project", ID).unwrap().unwrap();
+    let (idle, _) = search_read::read_step_confirmed(
+        fixture.home.path(),
+        Some(&saved),
+        Agent::Cursor,
+        &fixture.path,
+        Some(&scope),
+    )
+    .unwrap();
+    assert!(matches!(idle, IndexStep::Done));
+    fixture.root("append");
+    let (step, _) = search_read::read_step_confirmed(
+        fixture.home.path(),
+        Some(&saved),
+        Agent::Cursor,
+        &fixture.path,
+        Some(&scope),
+    )
+    .unwrap();
+    match step {
+        IndexStep::Read {
+            reset, messages, ..
+        } => {
+            assert!(!reset);
+            assert_eq!(
+                messages
+                    .iter()
+                    .map(|message| message.text.as_str())
+                    .collect::<Vec<_>>(),
+                ["Later answer"]
+            );
+        }
+        other => panic!("unexpected step: {other:?}"),
+    }
+    let wrong = SessionReadScope {
+        id: "other".into(),
+        ..scope
+    };
+    assert!(
+        search_read::read_step_confirmed(
+            fixture.home.path(),
+            None,
+            Agent::Cursor,
+            &fixture.path,
+            Some(&wrong)
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn checkpoint_refuses_to_append_a_rewritten_prefix() {
     let fixture = Fixture::new();
     let first = fixture.read(None).unwrap();

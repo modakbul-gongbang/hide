@@ -29,6 +29,7 @@ fn root_suffix(agent: Agent) -> &'static str {
         Agent::Grok => crate::GROK_SESSIONS,
         Agent::Pi => crate::PI_SESSIONS,
         Agent::Omp => crate::OMP_SESSIONS,
+        Agent::Cursor => crate::cursor::SESSIONS,
         _ => unreachable!("native-file policy requires a native-file format"),
     }
 }
@@ -112,6 +113,9 @@ pub(crate) fn default_directory(home: &Path, agent: Agent, cwd: &Path) -> Result
     let name = match agent {
         Agent::Omp => omp_directory(home, cwd)?.name,
         Agent::Grok => crate::grok::group_name(cwd)?,
+        Agent::Cursor => {
+            crate::cursor::directory(cwd).map_err(|_| anyhow!("session_route_unconfirmed"))?
+        }
         _ => absolute_directory_name(cwd),
     };
     Ok(home.join(root_suffix(agent)).join(name))
@@ -229,7 +233,11 @@ pub(crate) fn inside_root(
     if !relative.starts_with(root_suffix(agent)) || relative == Path::new(root_suffix(agent)) {
         return Err(RootRefusal::Outside);
     }
-    checked_path(home, agent, path)
+    if agent == Agent::Cursor {
+        crate::cursor::checked_path(home, path).map_err(|_| RootRefusal::Outside)
+    } else {
+        checked_path(home, agent, path)
+    }
 }
 
 pub(crate) fn root(home: &Path, agent: Agent) -> std::result::Result<PathBuf, RootRefusal> {
@@ -282,7 +290,9 @@ pub(crate) fn checked_path_under(
 
 /// The folder of a session file that [`default_directory`] names.
 pub(crate) fn directory_of(agent: Agent, path: &Path) -> Option<&Path> {
-    if agent == Agent::Grok {
+    if agent == Agent::Cursor {
+        path.parent().and_then(Path::parent)
+    } else if agent == Agent::Grok {
         crate::grok::group_of(path)
     } else {
         path.parent()
@@ -376,6 +386,10 @@ pub(crate) fn confirm_route(
     id: &str,
     cwd: &Path,
 ) -> Result<()> {
+    if agent == Agent::Cursor {
+        return crate::cursor::confirm_route(home, path, id, cwd)
+            .map_err(|error| anyhow!(error.to_string()));
+    }
     let expected =
         inside_root(home, agent, path).map_err(|_| anyhow!("session_route_unconfirmed"))?;
     if agent == Agent::Grok {
@@ -501,6 +515,9 @@ pub(crate) fn locate(
     cwd: Option<&str>,
     budget: &mut DiscoveryBudget,
 ) -> crate::Result<PathBuf> {
+    if agent == Agent::Cursor {
+        return crate::cursor::locate(home, identity, cwd, budget);
+    }
     let cwd = cwd.ok_or(SessionError::CwdUnavailable)?;
     if let Some(SessionIdentity::Path(path)) = identity {
         crate::confirm_session_file(home, agent, path, None, Some(cwd))

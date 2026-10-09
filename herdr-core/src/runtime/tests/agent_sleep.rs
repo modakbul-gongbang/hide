@@ -207,6 +207,19 @@ fn a_native_dormant_journey_refuses_a_changed_route_before_close_wake_or_start()
     }
 }
 
+#[test]
+#[cfg(unix)]
+fn cursor_durable_sleep_wakes_exactly_once_and_refuses_a_lost_native_owner() {
+    for phase in [
+        "none",
+        "missing-source-before-close",
+        "missing-source-before-wake",
+        "missing-source-before-start",
+    ] {
+        durable_dormant_journey("cursor", phase);
+    }
+}
+
 #[cfg(unix)]
 fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     use crate::agent_sleep::DormantPhase;
@@ -227,29 +240,39 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         .to_owned();
     let (mut runtime, _) = live_tab_order_runtime(&cwd);
     let home = tempfile::tempdir().unwrap();
-    let native_folder = crate::fixture::native_session_folder(
-        home.path(),
-        if kind == "omp" { "omp" } else { "pi" },
-        std::path::Path::new(&cwd),
-    );
-    std::fs::create_dir_all(&native_folder).unwrap();
-    let native_path = native_folder.join("native.jsonl");
     let native_id = "11111111-2222-3333-4444-555555555555";
-    std::fs::write(
-        &native_path,
-        format!(
-            "{}\n",
-            serde_json::json!({"type":"session", "version":3, "id":native_id, "cwd":cwd})
-        ),
-    )
-    .unwrap();
+    let native_path = if kind == "cursor" {
+        crate::fixture::cursor_session(home.path(), Path::new(&cwd), native_id)
+    } else {
+        let folder = crate::fixture::native_session_folder(
+            home.path(),
+            if kind == "omp" { "omp" } else { "pi" },
+            Path::new(&cwd),
+        );
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("native.jsonl");
+        std::fs::write(
+            &file,
+            format!(
+                "{}\n",
+                serde_json::json!({"type":"session", "version":3, "id":native_id, "cwd":cwd})
+            ),
+        )
+        .unwrap();
+        file
+    };
+    let native_folder = native_path.parent().unwrap().to_path_buf();
     let native_before = std::fs::read(&native_path).unwrap();
     let other_before = [native_before.as_slice(), b"{\"type\":\"message\",\"id\":\"other-message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"different history\"}]}}\n"].concat();
     let backup_path = native_folder.join(format!("date_{native_id}-alias.jsonl.123.bak"));
-    let backup_bytes = String::from_utf8(other_before.clone())
-        .unwrap()
-        .replace(native_id, "different-native-owner");
-    if matches!(kind, "pi" | "omp") {
+    let backup_bytes = if kind == "cursor" {
+        String::new()
+    } else {
+        String::from_utf8(other_before.clone())
+            .unwrap()
+            .replace(native_id, "different-native-owner")
+    };
+    if matches!(kind, "pi" | "omp" | "cursor") {
         runtime.own_node = Arc::new(hide_node::Local::new(Some(home.path().to_path_buf())));
         runtime.live.as_mut().unwrap().node = runtime.own_node();
     }

@@ -551,7 +551,7 @@ mod tests {
         entry.phase = DormantPhase::Sleeping;
         entry.closed = true;
         assert!(store.dormant_snapshots()[0].wake_available);
-        for kind in ["pi", "omp", "grok"] {
+        for kind in ["pi", "omp", "grok", "cursor"] {
             let entry = store.dormant.get_mut(&id).unwrap();
             entry.kind = kind.into();
             entry.label_owner =
@@ -563,8 +563,8 @@ mod tests {
             assert!(store.dormant_snapshots()[0].wake_available, "{kind}");
         }
         // OpenCode's record is otherwise valid, so only its missing resume
-        // keeps it asleep; Cursor and an unknown kind have no reader at all.
-        for kind in ["opencode", "cursor", "unknown"] {
+        // keeps it asleep; an unknown kind has no reader at all.
+        for kind in ["opencode", "unknown"] {
             let entry = store.dormant.get_mut(&id).unwrap();
             entry.kind = kind.into();
             if let Some(owner) = hide_session::label_reference_token(kind, "id", "native-one") {
