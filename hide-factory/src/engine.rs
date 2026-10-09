@@ -347,11 +347,20 @@ pub struct Engine {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Purpose {
     Intake,
-    Drift,
-    Check,
+    /// The checks below carry the card's criteria as they were asked, so a
+    /// criterion verdict names the sentence the check saw even when the
+    /// card changed while it ran.
+    Drift {
+        criteria: Vec<String>,
+    },
+    Check {
+        criteria: Vec<String>,
+    },
     /// A periodic user check on a running Task: it adds questions or marks
     /// and never holds a merge (B67).
-    Periodic,
+    Periodic {
+        criteria: Vec<String>,
+    },
     /// The board the watch read, as of this time.
     Watch {
         read_at: UnixMs,
@@ -2191,7 +2200,13 @@ impl Engine {
             if self.submit_judgment(judgment).is_ok() {
                 self.judgments.insert(
                     check_id,
-                    (factory.to_owned(), Some(id.to_owned()), Purpose::Check),
+                    (
+                        factory.to_owned(),
+                        Some(id.to_owned()),
+                        Purpose::Check {
+                            criteria: task.card.criteria.clone(),
+                        },
+                    ),
                 );
             }
         }
@@ -3483,7 +3498,13 @@ impl Engine {
             Ok(()) => {
                 self.judgments.insert(
                     drift.id,
-                    (factory.to_owned(), Some(id.to_owned()), Purpose::Drift),
+                    (
+                        factory.to_owned(),
+                        Some(id.to_owned()),
+                        Purpose::Drift {
+                            criteria: task.card.criteria.clone(),
+                        },
+                    ),
                 );
                 count += 1;
             }
@@ -3514,7 +3535,13 @@ impl Engine {
                 Ok(()) => {
                     self.judgments.insert(
                         judgment.id,
-                        (factory.to_owned(), Some(id.to_owned()), Purpose::Check),
+                        (
+                            factory.to_owned(),
+                            Some(id.to_owned()),
+                            Purpose::Check {
+                                criteria: task.card.criteria.clone(),
+                            },
+                        ),
                     );
                     count += 1;
                 }
@@ -3541,8 +3568,14 @@ impl Engine {
     /// periodic check on a running Task only asks, flags or sends a fix by
     /// letter (B67). Each answers pass, send back or questions, with a
     /// verdict per criterion (D-28).
-    fn apply_finding(&mut self, factory: &str, id: &str, value: &Value, holds_merge: bool) {
-        let criteria = self.task(factory, id).map_or(0, |t| t.card.criteria.len());
+    fn apply_finding(
+        &mut self,
+        factory: &str,
+        id: &str,
+        value: &Value,
+        criteria: &[String],
+        holds_merge: bool,
+    ) {
         let finding = match judgment::parse_finding(value, criteria) {
             Ok(finding) => finding,
             Err(reason) if holds_merge => return self.check_failed(factory, id, &reason),
@@ -5561,7 +5594,7 @@ impl Engine {
                     )
                 })
             {
-                if matches!(purpose, Purpose::Drift | Purpose::Check)
+                if matches!(purpose, Purpose::Drift { .. } | Purpose::Check { .. })
                     && let Some(count) = self
                         .checks_running
                         .get_mut(&(factory.clone(), id.to_owned()))
@@ -5593,7 +5626,11 @@ impl Engine {
                 (JudgmentOutcome::Failed { reason }, Purpose::Intake, Some(task)) => {
                     self.review_failed(&factory, &task, reason)
                 }
-                (outcome, Purpose::Drift | Purpose::Check, Some(task)) => {
+                (
+                    outcome,
+                    Purpose::Drift { criteria } | Purpose::Check { criteria },
+                    Some(task),
+                ) => {
                     let key = (factory.clone(), task.clone());
                     if let Some(count) = self.checks_running.get_mut(&key) {
                         *count = count.saturating_sub(1);
@@ -5601,13 +5638,10 @@ impl Engine {
                     let drafting = self
                         .task(&factory, &task)
                         .is_some_and(|t| t.state == TaskState::Drafting);
-                    let criteria = self
-                        .task(&factory, &task)
-                        .map_or(0, |t| t.card.criteria.len());
                     match outcome {
                         JudgmentOutcome::Answered { value } if drafting => {
                             // An intake check only adds questions to the draft.
-                            if let Ok(finding) = judgment::parse_finding(value, criteria) {
+                            if let Ok(finding) = judgment::parse_finding(value, &criteria) {
                                 for question in &finding.questions {
                                     self.add_question(
                                         &factory,
@@ -5622,7 +5656,7 @@ impl Engine {
                             }
                         }
                         JudgmentOutcome::Answered { value } => {
-                            self.apply_finding(&factory, &task, value, true)
+                            self.apply_finding(&factory, &task, value, &criteria, true)
                         }
                         JudgmentOutcome::Failed { .. } if drafting => {}
                         JudgmentOutcome::Failed { reason } => {
@@ -5631,20 +5665,19 @@ impl Engine {
                     }
                     self.advance_merge(&factory, &task);
                 }
-                (JudgmentOutcome::Answered { value }, Purpose::Periodic, Some(task)) => {
-                    let criteria = self
-                        .task(&factory, &task)
-                        .map_or(0, |t| t.card.criteria.len());
-                    match judgment::parse_finding(value, criteria) {
-                        Ok(_) => self.apply_finding(&factory, &task, value, false),
-                        Err(_) => self.record(
-                            &factory,
-                            Some(&task),
-                            "judgment.failed",
-                            json!({"purpose": "Periodic", "reason": "unreadable"}),
-                        ),
-                    }
-                }
+                (
+                    JudgmentOutcome::Answered { value },
+                    Purpose::Periodic { criteria },
+                    Some(task),
+                ) => match judgment::parse_finding(value, &criteria) {
+                    Ok(_) => self.apply_finding(&factory, &task, value, &criteria, false),
+                    Err(_) => self.record(
+                        &factory,
+                        Some(&task),
+                        "judgment.failed",
+                        json!({"purpose": "Periodic", "reason": "unreadable"}),
+                    ),
+                },
                 (JudgmentOutcome::Answered { value }, Purpose::Watch { read_at }, _) => {
                     self.apply_watch(&factory, value, read_at)
                 }
@@ -6897,7 +6930,13 @@ impl Engine {
                     Ok(()) => {
                         self.judgments.insert(
                             judgment.id,
-                            (factory.id.clone(), Some(id.clone()), Purpose::Periodic),
+                            (
+                                factory.id.clone(),
+                                Some(id.clone()),
+                                Purpose::Periodic {
+                                    criteria: card.criteria.clone(),
+                                },
+                            ),
                         );
                     }
                     Err(failure) => self.record(

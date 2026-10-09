@@ -317,7 +317,8 @@ A drift question keeps the Task in `verifying`, does not wake the worker, and ho
 A drift or check judgment answers one of three: pass, send back, or questions.
 A send-back stops the verification in flight, records Factory AI's fix as a decision (source `send_back`) and a `sent_back` line of the Task's activity, counts as a verification failure toward the limit (see [Verification](#verification)), and wakes the worker with the fix and the count; at the limit the Task stops as "verification failed three times" and asks a person to retry or cancel.
 A send-back that answers after the Task left `verifying` changes nothing.
-Each answer may judge every completion criterion as `met`, `unmet` or `unknown` with a reason, naming each by its place in the card's criteria list (at most 30), which the Task page shows as its checklist; a place past the list or one named twice makes the answer unreadable.
+Each answer may judge every completion criterion as `met`, `unmet` or `unknown` with a reason, naming each by its place in the numbered criteria list it is given (at most 30), which the Task page shows as its checklist; a place past the list or one named twice makes the answer unreadable.
+A verdict keeps the sentence it judged and is shown only beside that sentence in that place, so a card changed while or after a check ran shows the changed criteria without a verdict until the next check.
 A judgment that cannot run is never skipped and never read as a pass.
 A failed review marks the Task and raises an action question with the choices `retry-review`, `start-as-is` and `cancel`, and `add` answers `pending`.
 A review refused as `disabled` asks with two choices instead, `enable-ai` and `start-as-is`, because a retry or a provider fix cannot run while Hide AI is off.

@@ -1501,7 +1501,9 @@ fn checklist(criteria: &[String], verdicts: &[CriterionVerdict]) -> Vec<Criterio
         .iter()
         .enumerate()
         .map(|(index, text)| {
-            let verdict = verdicts.iter().find(|v| v.index == index);
+            let verdict = verdicts
+                .iter()
+                .find(|v| v.index == index && &v.criterion == text);
             CriterionView {
                 text: text.clone(),
                 state: verdict.map(|v| v.state),

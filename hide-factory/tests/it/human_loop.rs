@@ -261,6 +261,61 @@ fn a_check_sends_the_work_back_and_each_send_back_counts_toward_the_limit() {
 }
 
 #[test]
+fn a_criterion_verdict_is_shown_only_beside_the_sentence_the_check_judged() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Checked", &[]);
+    h.world()
+        .drift
+        .insert(t.clone(), send_back("Add the missing test"));
+    h.done(&f, &t);
+    h.engine.tick();
+    h.engine.tick();
+    let states = |h: &mut Bench| {
+        let shown = h.op(Command::Show { task: t.clone() });
+        shown["task"]["checklist"]
+            .as_array()
+            .expect("a checklist")
+            .iter()
+            .map(|row| (row["text"].clone(), row["state"].clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        states(&mut h),
+        [(json!("Checked passes its test"), json!("unmet"))]
+    );
+    // An approved scope change puts another sentence in that place.
+    let mut changed = card("Checked", &[]);
+    changed.criteria = vec!["Checked is fast".into()];
+    h.op(Command::Add {
+        project: None,
+        task: Some(t.clone()),
+        issue: None,
+        card: changed,
+        producer_pane: None,
+    });
+    let question = h
+        .task(&f, &t)
+        .open_questions()
+        .next()
+        .cloned()
+        .expect("a scope change to approve");
+    h.op(Command::Answer {
+        task: t.clone(),
+        question: Some(question.id),
+        choice: Some("approve".into()),
+        text: None,
+        change: false,
+        decision: None,
+    });
+    assert_eq!(
+        states(&mut h),
+        [(json!("Checked is fast"), Value::Null)],
+        "the old verdict judged another sentence"
+    );
+}
+
+#[test]
 fn an_unrelated_finding_waits_as_a_follow_up_and_becomes_what_a_person_picks() {
     let mut h = Bench::new(true);
     let f = github(&mut h);

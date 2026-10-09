@@ -267,7 +267,12 @@ impl Judgment {
                 card,
                 diff,
                 decisions,
-            } => json!({"card": card, "diff": cut(diff, DIFF_LIMIT), "decisions": decisions}),
+            } => json!({
+                "card": card,
+                "criteria": numbered(&card.criteria),
+                "diff": cut(diff, DIFF_LIMIT),
+                "decisions": decisions,
+            }),
             JudgmentInput::Watch { board } => json!({"board": board}),
             JudgmentInput::EnvDiagnosis { facts, actions } => json!({
                 "facts": facts,
@@ -281,6 +286,7 @@ impl Judgment {
             } => json!({
                 "instruction": instruction,
                 "card": card,
+                "criteria": numbered(&card.criteria),
                 "diff": diff.as_deref().map(|text| cut(text, DIFF_LIMIT)),
                 "decisions": decisions,
             }),
@@ -699,11 +705,20 @@ impl Finding {
     }
 }
 
-/// A check's answer about a card with `criteria` completion criteria: a
-/// verdict names its criterion by its place in the card's list, and a place
-/// past the list, or one named twice, makes the answer unreadable.
-pub fn parse_finding(value: &Value, criteria: usize) -> Result<Finding, String> {
-    let card_criteria = criteria;
+/// The card's completion criteria with the index a verdict names each by.
+fn numbered(criteria: &[String]) -> Value {
+    criteria
+        .iter()
+        .enumerate()
+        .map(|(index, text)| json!({"index": index, "text": text}))
+        .collect()
+}
+
+/// A check's answer about a card whose completion criteria were
+/// `card_criteria` when it was asked: a verdict names its criterion by its
+/// place in that list and keeps the sentence, and a place past the list, or
+/// one named twice, makes the answer unreadable.
+pub fn parse_finding(value: &Value, card_criteria: &[String]) -> Result<Finding, String> {
     let mut questions = parse_questions(&value["questions"])?;
     for question in &mut questions {
         if question.default_action.is_none() {
@@ -726,13 +741,14 @@ pub fn parse_finding(value: &Value, criteria: usize) -> Result<Finding, String> 
         let index = item["index"]
             .as_u64()
             .map(|index| index as usize)
-            .filter(|index| *index < card_criteria)
+            .filter(|index| *index < card_criteria.len())
             .ok_or("criterion_index_out_of_range")?;
         if criteria.iter().any(|verdict| verdict.index == index) {
             return Err("criterion_judged_twice".into());
         }
         criteria.push(CriterionVerdict {
             index,
+            criterion: card_criteria[index].clone(),
             state: item["state"]
                 .as_str()
                 .and_then(CriterionState::parse)
@@ -1082,7 +1098,7 @@ const INTAKE_SYSTEM: &str = concat!(
 );
 
 const DRIFT_SYSTEM: &str = concat!(
-    "You compare a finished change with the Task card it claims to complete: its goal, completion criteria and out-of-scope list, and the recorded decisions (assumptions and answers the work had to follow). Return JSON only. Judge every completion criterion of the card as met, unmet, or unknown when the diff cannot show it, with one line of reason, naming each by its index in the card's criteria list, from 0. ",
+    "You compare a finished change with the Task card it claims to complete: its goal, completion criteria and out-of-scope list, and the recorded decisions (assumptions and answers the work had to follow). Return JSON only. Judge every completion criterion of the card as met, unmet, or unknown when the diff cannot show it, with one line of reason, naming each by its index in the numbered criteria list. ",
     "verdict is pass when the diff does what the card and the decisions ask and nothing they rule out. verdict is send_back when the worker can fix what is missing or wrong inside the card and the decisions: send_back says what to fix, concretely enough to act on. verdict is questions only when a person must decide: a permission (cost, credentials, deletion, security, an effect outside the repository, anything irreversible) or a product judgment the card and the decisions do not settle. Leave send_back empty unless the verdict is send_back. Add flags for a reported breaking change or a public contract change. You cannot approve anything wider than the card. ",
     "A question for a person is written so someone who has not read the Task can answer it: text is the question without internal ids, command names or file paths, stopped is what the question holds up, choices are two or three answers each with what choosing it leads to, suggestion is the choice you recommend, and default_action is what happens if nobody answers in time."
 );
@@ -1092,7 +1108,7 @@ const WATCH_SYSTEM: &str = "You read a Factory board summary: recent events, Tas
 const ENV_SYSTEM: &str = "You diagnose a problem that is holding Factory work back, from facts the code collected (the hold, disk usage, failure signals, which stage failed, how many Tasks, the recovery actions already tried). Return JSON only: a one-line cause, and either one action from the given list, which runs at once, or none with an exact shell command and its impact for a person to run. Never choose an action that is not in the list; logging in, deletion outside the Factory and installing tools are always a command for a person. Write cause and impact so a person who has not seen the facts understands them.";
 
 const CHECK_SYSTEM: &str = concat!(
-    "You run one natural-language check a person configured on a Factory Task. Return JSON only. verdict is pass when the instruction is satisfied by the card and the change you see; send_back when the worker can satisfy it inside the card, with send_back saying what to fix; questions only when a person must decide a permission or a product judgment. decisions are the Task's recorded decisions and bind the work: a question they already answer is not asked again. Leave send_back empty unless the verdict is send_back, and criteria empty unless the instruction asks about the card's criteria, each then named by its index in the card's criteria list, from 0. You cannot change the card or the change. ",
+    "You run one natural-language check a person configured on a Factory Task. Return JSON only. verdict is pass when the instruction is satisfied by the card and the change you see; send_back when the worker can satisfy it inside the card, with send_back saying what to fix; questions only when a person must decide a permission or a product judgment. decisions are the Task's recorded decisions and bind the work: a question they already answer is not asked again. Leave send_back empty unless the verdict is send_back, and criteria empty unless the instruction asks about the card's criteria, each then named by its index in the numbered criteria list. You cannot change the card or the change. ",
     "A question for a person is written so someone who has not read the Task can answer it: text is the question without internal ids, command names or file paths, stopped is what the question holds up, choices are two or three answers each with what choosing it leads to, suggestion is the choice you recommend, and default_action is what happens if nobody answers in time."
 );
 
@@ -1201,7 +1217,7 @@ mod tests {
         let answer = |criteria: Value| {
             parse_finding(
                 &json!({"verdict": "pass", "send_back": "", "criteria": criteria, "questions": [], "flags": []}),
-                2,
+                &["builds".to_owned(), "tested".to_owned()],
             )
         };
         let both = answer(json!([
@@ -1210,8 +1226,11 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(
-            both.criteria.iter().map(|v| v.index).collect::<Vec<_>>(),
-            [1, 0]
+            both.criteria
+                .iter()
+                .map(|v| (v.index, v.criterion.as_str()))
+                .collect::<Vec<_>>(),
+            [(1, "tested"), (0, "builds")]
         );
         assert_eq!(
             answer(json!([{"index": 2, "state": "met", "reason": ""}])).unwrap_err(),
@@ -1235,7 +1254,7 @@ mod tests {
             "criteria": [],
             "questions": [{"text": "Docs updated?", "stopped": "", "suggestion": "Leave docs", "default_action": "", "choices": []}],
             "flags": []
-        }), 0)
+        }), &[])
         .unwrap();
         assert!(!finding.passed(), "a question is not a pass");
         assert_eq!(
@@ -1255,7 +1274,7 @@ mod tests {
                     "questions": questions,
                     "flags": []
                 }),
-                1,
+                &["docs".to_owned()],
             )
         };
         let back = answer("send_back", "Update the docs", json!([])).unwrap();

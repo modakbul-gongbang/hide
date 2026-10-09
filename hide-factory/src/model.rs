@@ -1911,6 +1911,9 @@ pub struct Task {
 pub struct CriterionVerdict {
     /// The criterion's place in the card's criteria, from 0.
     pub index: usize,
+    /// The criterion as the check saw it; a verdict whose criterion the card
+    /// no longer has in that place is shown on none.
+    pub criterion: String,
     pub state: CriterionState,
     #[serde(default)]
     pub reason: String,
