@@ -6,11 +6,11 @@
 //! never moved (D-04). The whole folder is renamed at once, so there is never
 //! a copy in two places or a half-moved folder; a daemon running from the old
 //! folder is stopped first, because it keeps writing there, and the folder
-//! moves only once its instance lock is free: a daemon that holds it but did
-//! not answer as itself is never signalled, and nothing moves. When the new
-//! folder already exists nothing is merged: the old folder stays as it is
-//! and the daemon's boot logs both paths (`log_left_behind`). Every later run
-//! finds no old folder and does nothing.
+//! moves only once its instance lock is free: a daemon that holds it but
+//! could not be proven to be the one its state names is never signalled, and
+//! nothing moves. When the new folder already exists nothing is merged: the
+//! old folder stays as it is and the daemon's boot logs both paths
+//! (`log_left_behind`). Every later run finds no old folder and does nothing.
 
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -29,7 +29,7 @@ pub enum Moved {
 }
 
 /// Moves `legacy` to `target` once. `stop` ends the daemon a legacy state
-/// file names when that daemon answers as itself, and returns its pid; a
+/// file names when that pid is proven to be the daemon, and returns its pid; a
 /// daemon that will not stop, or any process still holding the folder's
 /// instance lock afterwards, is an error and nothing moves.
 pub fn move_legacy(
@@ -75,7 +75,7 @@ pub fn move_legacy(
         Ok(lock) => lock,
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
             return Err(format!(
-                "a hided still runs from {} and did not answer as itself, so nothing was moved; quit it and connect again",
+                "a hided still runs from {} and was not proven to be the one its state names, so nothing was moved; quit it and connect again",
                 legacy.display()
             ));
         }
@@ -275,7 +275,8 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let legacy = legacy_with(home.path());
         let target = home.path().join(".hide/state");
-        // A daemon that did not answer as itself: `stop` finds nothing to signal.
+        // A daemon not proven to be the one its state names: `stop` finds
+        // nothing to signal.
         let held = crate::state_file::acquire_lock(&legacy).unwrap();
         let error = move_legacy(&legacy, &target, |_| Ok(None)).unwrap_err();
         assert!(error.contains("still runs"), "{error}");

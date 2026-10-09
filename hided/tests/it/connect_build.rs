@@ -305,7 +305,8 @@ fn the_first_connect_moves_the_legacy_state_folder_and_its_daemon_once() {
         state: &legacy,
     };
     // An older build's daemon, as it ran: from the legacy folder, with the
-    // operator's state beside it.
+    // operator's state beside it. Its state records its process start, which
+    // proves it is the daemon however slowly it answers `/health`.
     let old = connect(&cli, &home, &legacy)["pid"].as_i64().unwrap() as i32;
     std::fs::write(legacy.join("operator-file.txt"), "kept").unwrap();
 
