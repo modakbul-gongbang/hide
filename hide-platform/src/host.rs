@@ -25,6 +25,7 @@
 //! | `SHELL` | macOS, Linux | no default shell |
 //! | `ComSpec` | Windows | no default shell |
 //! | `ProgramFiles` | Windows | no Tailscale location |
+//! | `HIDE_MACHINE_ID` | all | the machine id the system reports |
 
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -46,15 +47,16 @@ pub const VARIABLES: &[&str] = &[
     "SHELL",
     "ComSpec",
     "ProgramFiles",
+    MACHINE_ID_VARIABLE,
 ];
 
-/// How a caller with its own record of the environment (a registry that
-/// validates at start, a test) hands it to the `_from` functions: the value
-/// of a variable, `None` when it is unset.
 /// Names this process's machine for [`machine_id`] in place of the one the
 /// system reports: only a test fixture sets it.
 pub const MACHINE_ID_VARIABLE: &str = "HIDE_MACHINE_ID";
 
+/// How a caller with its own record of the environment (a registry that
+/// validates at start, a test) hands it to the `_from` functions: the value
+/// of a variable, `None` when it is unset.
 pub type Variables<'a> = &'a dyn Fn(&str) -> Option<OsString>;
 
 fn process(name: &str) -> Option<OsString> {
