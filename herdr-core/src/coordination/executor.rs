@@ -738,6 +738,20 @@ fn spawn(
             if reserved.child.is_some() {
                 return Err("child_identity_changed".into());
             }
+            // This spawn already had its start typed here, and Herdr still
+            // holds the name with no agent while the shell is back at its
+            // prompt: the start ended without the agent. Asking the same
+            // intent again answers that, rather than typing the start again
+            // each time; a new attempt closes this pane and starts afresh.
+            if observed.iter().any(|agent| {
+                agent.pane_id == pane
+                    && agent.name.as_deref() == Some(name)
+                    && agent.agent.is_none()
+            }) && shell_alone(connector.as_ref(), pane) == Ok(true)
+            {
+                return Err("agent_not_started".into());
+            }
+            close_unstarted_attempts(connector.as_ref(), &*state(client)?, &reserved, &observed);
             crate::live::start_agent(
                 connector.as_ref(),
                 node.as_deref(),
@@ -802,6 +816,73 @@ fn spawn(
             reason
         }
     })
+}
+
+/// Whether `pane`'s shell alone holds its terminal: no program it started
+/// runs in the foreground.
+fn shell_alone(connector: &dyn ApiConnector, pane: &str) -> Result<bool, String> {
+    crate::wire::pane_process_info_params(pane)
+        .and_then(|params| {
+            request_with_connector(
+                connector,
+                "pane.process_info",
+                params,
+                Duration::from_secs(2),
+            )
+            .map_err(|error| error.to_string())
+        })
+        .and_then(crate::wire::pane_process_group)
+        .map(|group| group.shell_holds_terminal())
+}
+
+/// Closes the pane of every earlier attempt of `reserved`: a spawn of the
+/// same parent, name and device that made a pane and never bound a child,
+/// because its agent did not start (a refused start, or one Herdr typed that
+/// never showed its agent). Each new attempt is its own intent with a pane of
+/// its own, so the earlier pane would stay behind as an extra tab, holding the
+/// agent's name in Herdr when its start was typed. A pane where an agent shows
+/// or the shell does not hold the terminal is left alone, and a pane that
+/// cannot be read or closed is logged and left to Herdr's own answer.
+fn close_unstarted_attempts(
+    connector: &dyn ApiConnector,
+    ledger: &crate::delivery::ledger::Ledger,
+    reserved: &SpawnRecord,
+    observed: &[ProjectedAgent],
+) {
+    let earlier = ledger.spawns.iter().filter(|record| {
+        record.id != reserved.id
+            && record.parent == reserved.parent
+            && record.name == reserved.name
+            && record.machine == reserved.machine
+            && record.child.is_none()
+            && !record.completed
+            && record.pane != reserved.pane
+    });
+    for record in earlier {
+        let Some(pane) = record.pane.as_deref() else {
+            continue;
+        };
+        if observed
+            .iter()
+            .any(|agent| agent.pane_id == pane && agent.agent.is_some())
+        {
+            continue;
+        }
+        let closed = match shell_alone(connector, pane) {
+            Ok(false) => continue,
+            Ok(true) => crate::wire::pane_target_params(pane).and_then(|params| {
+                request_with_connector(connector, "pane.close", params, Duration::from_secs(5))
+                    .map(drop)
+                    .map_err(|error| error.to_string())
+            }),
+            Err(reason) => Err(reason),
+        };
+        crate::diagnostic!(json!({
+            "component": "spawn", "kind": "unstarted_attempt.close", "spawn": reserved.id,
+            "attempt": record.id, "pane_id": pane, "closed": closed.is_ok(),
+            "reason": closed.err(),
+        }));
+    }
 }
 
 /// A failure of a spawn's work on a device, as the caller should read it: the
@@ -1006,6 +1087,127 @@ mod tests {
         assert_eq!(observations.load(Ordering::SeqCst), 2);
         assert_eq!(herdr.methods(), ["agent.list", "agent.list"]);
     }
+    /// A Factory retry is a new attempt with its own intent and pane; the
+    /// earlier attempts of the same parent and name whose agent never
+    /// started are closed, so no extra tab and no held name stays behind.
+    /// A pane where an agent shows or the shell is busy, another name's
+    /// spawn and the attempt's own pane are left alone.
+    #[test]
+    fn a_new_attempt_closes_the_idle_panes_of_earlier_attempts_that_never_started() {
+        let actor = Actor {
+            pane_id: "factory".into(),
+            name: "factory".into(),
+            kind: "codex".into(),
+            device_id: crate::node::TEST_NODE.into(),
+            session: crate::wire::session_digest("native-factory"),
+        };
+        let mut ledger = crate::delivery::ledger::Ledger::default();
+        let parent = super::super::apply(
+            &mut ledger,
+            &actor,
+            &Mutation::Register {
+                record: AgentRecord {
+                    id: String::new(),
+                    name: "factory".into(),
+                    machine: crate::node::TEST_NODE.into(),
+                    host_scope: "fixture".into(),
+                    native_machine: "fixture-machine".into(),
+                    session: "native-factory".into(),
+                    instance: "factory-terminal".into(),
+                    pane: "factory".into(),
+                    parent: None,
+                    origin: None,
+                    project: None,
+                    ended: false,
+                    actor: actor.clone(),
+                },
+                check: false,
+            },
+            1,
+        )
+        .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let mut attempt = |name: &str, intent: &str, pane: &str| -> SpawnRecord {
+            let reserved = super::super::apply(
+                &mut ledger,
+                &actor,
+                &Mutation::Reserve {
+                    parent: parent.clone(),
+                    command: Command::Spawn {
+                        parent: Some(parent.clone()),
+                        machine: None,
+                        name: name.into(),
+                        intent: intent.into(),
+                        kind: "claude".into(),
+                        repo: "/fixture".into(),
+                        branch: "factory/801".into(),
+                        path: None,
+                        args: Vec::new(),
+                    },
+                },
+                1,
+            )
+            .unwrap();
+            serde_json::from_value(
+                super::super::apply(
+                    &mut ledger,
+                    &actor,
+                    &Mutation::Advance {
+                        id: reserved["id"].as_str().unwrap().into(),
+                        path: Some("/fixture.worktrees/801".into()),
+                        pane: Some(pane.into()),
+                        child: None,
+                    },
+                    1,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        attempt("worker", "factory-801", "w2:p1");
+        attempt("worker", "factory-801-a1", "w2:p2");
+        attempt("worker", "factory-801-a2", "w2:p3");
+        attempt("other", "factory-857", "w3:p1");
+        let current = attempt("worker", "factory-801-a3", "w2:p4");
+        let herdr = FakeHerdr::start("coordination-earlier-attempts", |method, params| {
+            let pane = params["pane_id"].as_str().unwrap().to_owned();
+            match method {
+                // The shell runs a command in w2:p3: that attempt is busy.
+                "pane.process_info" => {
+                    let foreground = if pane == "w2:p3" { 4200 } else { 4100 };
+                    json!({"type": "pane_process_info", "process_info": {
+                        "pane_id": pane, "shell_pid": 4100,
+                        "foreground_process_group_id": foreground,
+                        "foreground_processes": [{"pid": foreground, "name": "zsh"}]}})
+                }
+                "pane.close" => json!({"type": "ok"}),
+                other => panic!("unexpected {other}"),
+            }
+        });
+        // An agent shows in w2:p2, and Herdr holds the name for the start in
+        // w2:p1 that never showed one.
+        let observed: Vec<ProjectedAgent> =
+            crate::wire::agents_response(json!({"type": "agent_list", "agents": [
+                {"pane_id": "w2:p1", "workspace_id": "w2", "tab_id": "w2:t1",
+                    "terminal_id": "t1", "revision": 0, "focused": false,
+                    "agent_status": "unknown", "name": "worker", "launch_pending": true},
+                {"pane_id": "w2:p2", "workspace_id": "w2", "tab_id": "w2:t2",
+                    "terminal_id": "t2", "revision": 0, "focused": false,
+                    "agent_status": "idle", "agent": "claude"},
+            ]}))
+            .unwrap();
+        close_unstarted_attempts(&herdr.connector(), &ledger, &current, &observed);
+        let closed: Vec<String> = herdr
+            .calls()
+            .into_iter()
+            .filter(|(method, _)| method == "pane.close")
+            .map(|(_, params)| params["pane_id"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(closed, ["w2:p1"]);
+    }
+
     #[test]
     fn completed_spawn_replay_after_restart_preserves_report_stop_end_and_explicit_watch() {
         use crate::delivery::{ledger, mailbox, watch, worker::Worker};

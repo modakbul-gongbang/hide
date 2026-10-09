@@ -144,6 +144,7 @@ fn start_within(
         pane_id,
         line: wire::agent_start_line_bytes(&params),
     };
+    let mut released = false;
     loop {
         shell.wait(started, deadline)?;
         check().map_err(StartError::NotStarted)?;
@@ -167,6 +168,16 @@ fn start_within(
                 if code == NAME_TAKEN && Instant::now() < name_deadline =>
             {
                 thread::sleep(POLL_INTERVAL);
+            }
+            // An earlier start in this pane under this name never showed its
+            // agent, and Herdr still holds the name for it while the shell
+            // has the terminal back. That start is this one's to replace: the
+            // name is given back once and the start sent again.
+            Err(ApiError::Remote { code, message }) if code == NAME_TAKEN && !released => {
+                released = true;
+                if !shell.release_unstarted(&params) {
+                    return Err(StartError::Herdr(ApiError::Remote { code, message }));
+                }
             }
             answer => return answer.map_err(StartError::Herdr),
         }
@@ -239,6 +250,42 @@ impl Shell<'_> {
             }
             thread::sleep(POLL_INTERVAL);
         }
+    }
+
+    /// Gives back the start's name when Herdr holds it in this pane for a
+    /// start that never showed its agent; true when it did. Called after
+    /// Herdr refused the name, which it checks before anything is typed, and
+    /// right after the shell was read holding the terminal, so no agent of
+    /// that start runs here.
+    fn release_unstarted(&self, params: &Value) -> bool {
+        let (Some(name), Some(kind)) = (params["name"].as_str(), params["kind"].as_str()) else {
+            return false;
+        };
+        let held = request_with_connector(
+            self.connector,
+            "agent.list",
+            wire::empty_params(),
+            READ_TIMEOUT,
+        )
+        .map_err(|error| format!("agent.list failed: {error}"))
+        .and_then(|value| wire::holds_unstarted_launch(value, self.pane_id, name));
+        let release = match held {
+            Ok(true) => wire::pane_release_agent_params(self.pane_id, kind).and_then(|params| {
+                request_with_connector(self.connector, "pane.release_agent", params, READ_TIMEOUT)
+                    .map_err(|error| format!("pane.release_agent failed: {error}"))
+            }),
+            Ok(false) => return false,
+            Err(reason) => Err(reason),
+        };
+        crate::diagnostic!(serde_json::json!({
+            "component": "agent_start",
+            "kind": "unstarted_name.release",
+            "request": self.correlation_id,
+            "pane_id": self.pane_id,
+            "released": release.is_ok(),
+            "reason": release.as_ref().err(),
+        }));
+        release.is_ok()
     }
 
     /// `None` when the start line reaches `shell` whole now; the limit of a
@@ -476,6 +523,95 @@ mod tests {
             });
         assert!(start_reusing_name(&herdr, Duration::from_secs(5)).is_ok());
         assert_eq!(starts.load(Ordering::SeqCst), 3);
+    }
+
+    /// Herdr's agent list with `name` held on `pane`, as a start that never
+    /// showed its agent, or as one whose agent runs.
+    fn holding(pane: &str, agent: Option<&str>) -> Value {
+        let mut held = json!({
+            "pane_id": pane, "terminal_id": "term_1", "workspace_id": "w1", "tab_id": "w1:t1",
+            "name": "factory-hide-t1", "focused": false, "agent_status": "unknown",
+            "revision": 0, "state_change_seq": 0, "launch_pending": true
+        });
+        if let Some(agent) = agent {
+            held["agent"] = json!(agent);
+        }
+        json!({"type": "agent_list", "agents": [held]})
+    }
+
+    fn start_named(herdr: &FakeHerdr) -> Result<Value, StartError> {
+        start_within(
+            &herdr.connector(),
+            None,
+            "test:start",
+            "w1:p1",
+            json!({"pane_id": "w1:p1", "name": "factory-hide-t1", "kind": "claude"}),
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            Duration::ZERO,
+            &|| Ok(()),
+        )
+    }
+
+    /// A start in this pane that never showed its agent (its line was cut,
+    /// or its program exited at once) leaves Herdr holding the name with the
+    /// shell back at its prompt; the next start under that name gives it
+    /// back and starts, rather than being refused for good.
+    #[test]
+    fn a_name_held_by_an_unstarted_launch_in_the_same_pane_is_given_back() {
+        let starts = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&starts);
+        let herdr =
+            FakeHerdr::start_with_errors("agent-start-unstarted", move |method, _| match method {
+                "pane.process_info" => Ok(process_info(SHELL, &[SHELL])),
+                "agent.start" if seen.fetch_add(1, Ordering::SeqCst) == 0 => Err((
+                    NAME_TAKEN.into(),
+                    "agent name factory-hide-t1 is already used".into(),
+                )),
+                "agent.start" => Ok(started()),
+                "agent.list" => Ok(holding("w1:p1", None)),
+                "pane.release_agent" => Ok(json!({"type": "ok"})),
+                other => panic!("unexpected {other}"),
+            });
+        assert!(start_named(&herdr).is_ok());
+        let calls = herdr.calls();
+        let (_, release) = calls
+            .iter()
+            .find(|(method, _)| method == "pane.release_agent")
+            .expect("the held name is given back");
+        assert_eq!(release["pane_id"], "w1:p1");
+        assert_eq!(release["agent"], "claude");
+        assert_eq!(
+            herdr.methods().last().map(String::as_str),
+            Some("agent.start")
+        );
+        assert_eq!(starts.load(Ordering::SeqCst), 2);
+    }
+
+    /// A name held in another pane, or by an agent that shows, is someone
+    /// else's: the refusal is the answer and nothing is given back.
+    #[test]
+    fn a_name_held_elsewhere_or_by_a_running_agent_is_not_given_back() {
+        for (pane, agent) in [("w1:p2", None), ("w1:p1", Some("claude"))] {
+            let herdr =
+                FakeHerdr::start_with_errors("agent-start-held", move |method, _| match method {
+                    "pane.process_info" => Ok(process_info(SHELL, &[SHELL])),
+                    "agent.start" => Err((
+                        NAME_TAKEN.into(),
+                        "agent name factory-hide-t1 is already used".into(),
+                    )),
+                    "agent.list" => Ok(holding(pane, agent)),
+                    other => panic!("unexpected {other}"),
+                });
+            let Err(StartError::Herdr(ApiError::Remote { code, .. })) = start_named(&herdr) else {
+                panic!("a name someone else holds is refused");
+            };
+            assert_eq!(code, NAME_TAKEN);
+            assert_eq!(
+                herdr.methods(),
+                ["pane.process_info", "agent.start", "agent.list"]
+            );
+        }
     }
 
     /// The wait is bounded, and an ordinary start never waits for a name: it

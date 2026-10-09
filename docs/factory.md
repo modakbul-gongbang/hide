@@ -204,7 +204,8 @@ After 10 minutes a notice asks the person to look at the pane, where a trust or 
 A Codex worker waits for this Mac's install kit to have read the machine since launch: the first start asks the kit to read and reports the worker as still starting.
 
 A start the runtime refuses, other than for an environment signal, stops the Task with the reason "worker start failed" and the runtime's reason (cut at 300 characters) beside it.
-A person fixes the cause and retries; the next attempt uses a new spawn intent.
+A person fixes the cause and retries; the next attempt uses a new spawn intent, and its spawn closes the pane an earlier attempt left where its agent never started, so a retry leaves no extra tab and Herdr no longer holds the worker's name for it (`docs/delivery.md`).
+A start Herdr typed whose agent never showed is not asked again as the same spawn: the next ask stops the Task with `agent_not_started`.
 A start that fails with an environment signal leaves the Task `waiting` and is handled by the environment rules.
 
 A Task's worker is put to sleep when the Task blocks, pauses, goes to `verifying`, or waits for a slot, and woken when it runs again.
