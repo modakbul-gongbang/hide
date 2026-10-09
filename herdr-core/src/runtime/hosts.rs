@@ -118,7 +118,10 @@ impl Runtime {
         self.device_registration(device_id).is_some()
     }
 
-    fn device_registration(&self, device_id: &str) -> Option<&crate::model::DeviceRegistration> {
+    pub(super) fn device_registration(
+        &self,
+        device_id: &str,
+    ) -> Option<&crate::model::DeviceRegistration> {
         self.snapshot
             .ui_state
             .device_registrations
@@ -224,6 +227,14 @@ impl Runtime {
 
     /// Gives or withdraws consent for one device.
     pub(super) fn set_host_consent(&mut self, device_id: &str, allow: bool) -> bool {
+        if self.is_inbound(device_id) {
+            self.set_error(
+                "device.host.inbound",
+                "This machine connects to the core itself with your SSH login; it takes no helper consent",
+                false,
+            );
+            return true;
+        }
         let fresh = self.new_host_consent();
         let Some(registration) = self
             .snapshot
@@ -314,15 +325,21 @@ impl Runtime {
             );
             return self.refresh_device_snapshots();
         }
-        let Some(consent) = registration.host_consent.clone() else {
-            self.set_host_phase(device_id, HostPhase::NotAllowed);
-            return self.refresh_device_snapshots();
+        // A node that dials this core was allowed by the operator's own SSH
+        // login (D-10); its link takes no consent of the core's.
+        let consent = if registration.inbound {
+            HostConsent::default()
+        } else {
+            let Some(consent) = registration.host_consent.clone() else {
+                self.set_host_phase(device_id, HostPhase::NotAllowed);
+                return self.refresh_device_snapshots();
+            };
+            if !self.consent_current(&consent) {
+                self.set_host_phase(device_id, HostPhase::NotAllowed);
+                return self.refresh_device_snapshots();
+            }
+            self.carried_consent(device_id, consent)
         };
-        if !self.consent_current(&consent) {
-            self.set_host_phase(device_id, HostPhase::NotAllowed);
-            return self.refresh_device_snapshots();
-        }
-        let consent = self.carried_consent(device_id, consent);
         let Some(client) = self
             .remote_connections
             .get(device_id)
@@ -389,6 +406,10 @@ impl Runtime {
     /// Starts the device's link for a read that needs it, unless a lost or
     /// failed one is still waiting out its retry.
     fn reconnect_device_host(&mut self, device_id: &str, now_unix_ms: u64) -> bool {
+        // Only the node can bring a node that dials this core back.
+        if self.is_inbound(device_id) {
+            return false;
+        }
         let waiting = self
             .device_host_retries
             .get(device_id)
@@ -543,11 +564,14 @@ impl Runtime {
                 self.restore_front_when_ready();
                 self.home_helper_ready(device_id);
                 // Every connection brings the device's kit up to this build
-                // without asking (B10, B13, B19).
-                self.queue_device_kit(
-                    device_id,
-                    super::KitJob::Apply(hide_kit::Scope::automatic()),
-                );
+                // without asking (B10, B13, B19); a node that dials this core
+                // keeps its own.
+                if !self.is_inbound(device_id) {
+                    self.queue_device_kit(
+                        device_id,
+                        super::KitJob::Apply(hide_kit::Scope::automatic()),
+                    );
+                }
             }
             Err(error) => {
                 let message = error.to_string();
@@ -574,7 +598,9 @@ impl Runtime {
                     EstablishError::IdentityChanged { .. } => HostPhase::IdentityChanged(message),
                     EstablishError::Unsupported(_) => HostPhase::Unsupported(message),
                     _ => {
-                        self.schedule_host_retry(device_id, now_unix_ms());
+                        if !self.is_inbound(device_id) {
+                            self.schedule_host_retry(device_id, now_unix_ms());
+                        }
                         HostPhase::Unavailable(message)
                     }
                 };
@@ -613,7 +639,10 @@ impl Runtime {
             return false;
         }
         host.phase = HostPhase::Unavailable(format!("The device helper disconnected: {reason}"));
-        self.schedule_host_retry(device_id, now_unix_ms());
+        // A node that dials this core comes back by dialing again.
+        if !self.is_inbound(device_id) {
+            self.schedule_host_retry(device_id, now_unix_ms());
+        }
         self.end_device_terminals(
             device_id,
             &format!("The device helper disconnected: {reason}"),
@@ -729,6 +758,9 @@ impl Runtime {
     /// The host row for one device, read by Settings and by every file or
     /// Git surface that needs to say why it cannot act.
     pub(super) fn host_snapshot(&self, device_id: &str) -> DeviceHostSnapshot {
+        if self.is_inbound(device_id) {
+            return self.inbound_host_snapshot(device_id);
+        }
         let consent = self
             .device_registration(device_id)
             .and_then(|registration| registration.host_consent.as_ref());
@@ -792,6 +824,49 @@ impl Runtime {
         snapshot.state = state.to_owned();
         snapshot.message = message;
         snapshot
+    }
+
+    /// The host row of a node that dials this core: its link's state, with
+    /// the operator's SSH login as its consent and no helper of the core's.
+    fn inbound_host_snapshot(&self, device_id: &str) -> DeviceHostSnapshot {
+        let (state, message, platform) =
+            match self.device_hosts.get(device_id).map(|host| &host.phase) {
+                Some(HostPhase::Ready { host, platform, .. }) => match host.closed_reason() {
+                    None => ("ready", None, Some(platform.clone())),
+                    Some(reason) => (
+                        "unavailable",
+                        Some(format!("The machine's link ended: {reason}")),
+                        Some(platform.clone()),
+                    ),
+                },
+                Some(HostPhase::Connecting) => (
+                    "connecting",
+                    Some("Connecting to the machine…".to_owned()),
+                    None,
+                ),
+                Some(
+                    HostPhase::Unavailable(message)
+                    | HostPhase::IdentityChanged(message)
+                    | HostPhase::Unsupported(message),
+                ) => ("unavailable", Some(message.clone()), None),
+                Some(HostPhase::NotAllowed) | None => (
+                    "unavailable",
+                    Some("The machine has not connected to this core yet".to_owned()),
+                    None,
+                ),
+            };
+        DeviceHostSnapshot {
+            consent: "granted".to_owned(),
+            helper_root: None,
+            cli_dir: None,
+            contract: HOST_CONSENT_CONTRACT,
+            bound_identity: None,
+            granted_at_unix_ms: None,
+            state: state.to_owned(),
+            message,
+            platform,
+            helper_path: None,
+        }
     }
 
     /// The install root and the command folder a consent names.

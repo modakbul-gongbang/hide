@@ -729,6 +729,7 @@ fn withdrawing_consent_drops_a_save_waiting_for_the_helper() {
                 ssh_alias: Some(DEVICE.to_owned()),
                 herdr_socket_path: None,
                 host_consent: None,
+                inbound: false,
             });
         runtime.set_host_consent(DEVICE, false);
     }
@@ -775,6 +776,7 @@ fn withdrawing_consent_lets_a_running_save_land() {
                 ssh_alias: Some(DEVICE.to_owned()),
                 herdr_socket_path: None,
                 host_consent: None,
+                inbound: false,
             });
         runtime.set_host_consent(DEVICE, false);
     }

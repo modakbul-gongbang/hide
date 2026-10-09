@@ -564,6 +564,40 @@ impl Core {
         result
     }
 
+    /// Why a link from `node` would be refused now, if it would.
+    pub fn inbound_refusal(&self, node: &str) -> Option<String> {
+        if !check_owner_thread(self, "inbound_refusal") {
+            return Some("core_unavailable".to_owned());
+        }
+        lock_recover(&self.runtime)
+            .inbound_refusal(node)
+            .map(str::to_owned)
+    }
+
+    /// Takes the link a node that dialed this core brought (PRD
+    /// core-host-node-remote-core D-04, D-10), registering the node on its
+    /// first link; the refusal is the reason the node is told.
+    pub fn accept_inbound_node(
+        &self,
+        node: &str,
+        label: &str,
+        transport: std::sync::Arc<dyn crate::remote::DeviceTransport>,
+    ) -> Result<(), String> {
+        if !check_owner_thread(self, "accept_inbound_node") {
+            return Err("core_unavailable".to_owned());
+        }
+        let (accepted, retired_syncs) = {
+            let mut runtime = lock_recover(&self.runtime);
+            let accepted = runtime.accept_inbound_node(node, label, transport);
+            (accepted, runtime.take_retired_remote_syncs())
+        };
+        drop(retired_syncs);
+        if accepted.is_ok() {
+            notify_change(self);
+        }
+        accepted
+    }
+
     /// The Herdr API connection the core holds for a connected SSH device;
     /// `None` when the device is not connected. The daemon reads and writes
     /// a device pane through it without joining the attach set.

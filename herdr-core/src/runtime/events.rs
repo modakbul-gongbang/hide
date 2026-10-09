@@ -2317,7 +2317,13 @@ impl Runtime {
             }
             Event::DeviceHostRetry(payload) => {
                 let device_id = payload.device_id.trim().to_owned();
-                if self.device_registration_exists(&device_id) {
+                if self.is_inbound(&device_id) {
+                    self.set_error(
+                        "device.host.inbound",
+                        "This machine connects to the core itself; it reconnects when it can reach the core",
+                        false,
+                    );
+                } else if self.device_registration_exists(&device_id) {
                     self.close_device_host(&device_id, "retry requested");
                     self.retry_device_host_now(&device_id);
                 } else {
@@ -2386,6 +2392,7 @@ impl Runtime {
                     ssh_alias: Some(ssh_alias.clone()),
                     herdr_socket_path,
                     host_consent: payload.host_consent.then(|| self.new_host_consent()),
+                    inbound: false,
                 };
                 self.snapshot
                     .ui_state

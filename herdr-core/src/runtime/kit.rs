@@ -745,6 +745,11 @@ impl Runtime {
     /// and the work runs when it does; its row is busy only while the work
     /// can actually run.
     pub(super) fn queue_device_kit(&mut self, device_id: &str, job: KitJob) {
+        // A node that dials this core is a machine with Hide's own install,
+        // whose kit its own hided keeps.
+        if self.is_inbound(device_id) {
+            return;
+        }
         let merged = match self.device_kit_pending.remove(device_id) {
             Some(before) => before.merge(job),
             None => job,
@@ -832,6 +837,9 @@ impl Runtime {
             }));
             Err(reason)
         };
+        if registration.inbound {
+            return left("the machine keeps its own kit; it connects to the core itself");
+        }
         if self.registration_sharing_account(registration).is_some() {
             return left("another registered device reaches the same account on that machine");
         }

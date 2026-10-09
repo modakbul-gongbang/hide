@@ -82,12 +82,22 @@ impl Runtime {
     /// reason, so the row never reads as "not attempted".
     pub(super) fn connect_remote_device(&mut self, registration: &DeviceRegistration) -> bool {
         let device_id = registration.id.clone();
-        let Some(ssh_alias) = registration.ssh_alias.clone() else {
-            return false;
-        };
         if self.remote_connections.contains_key(&device_id) {
             return false;
         }
+        // A node that dials this core has a connection only once it has
+        // brought its link; until then its row reads not connected.
+        let source = if registration.inbound {
+            match self.take_inbound_transport(&device_id) {
+                Some(transport) => Ok(transport),
+                None => return false,
+            }
+        } else {
+            match registration.ssh_alias.clone() {
+                Some(ssh_alias) => Err(ssh_alias),
+                None => return false,
+            }
+        };
         if !self
             .snapshot
             .status
@@ -112,15 +122,20 @@ impl Runtime {
             if !hide_node_link::terminal::device_id_is_unambiguous(&device_id) {
                 return Err("This device's id contains \":\", so its panes cannot be told apart from another device's; remove it and register it under another id".to_owned());
             }
-            let home_path = self.home_path.as_ref().ok_or_else(|| {
-                "HOME is unavailable, so the SSH config cannot be resolved".to_owned()
-            })?;
-            let transport = self.devices.transport(
-                home_path,
-                &device_id,
-                &ssh_alias,
-                registration.herdr_socket_path.clone(),
-            )?;
+            let transport = match source {
+                Ok(transport) => transport,
+                Err(ssh_alias) => {
+                    let home_path = self.home_path.as_ref().ok_or_else(|| {
+                        "HOME is unavailable, so the SSH config cannot be resolved".to_owned()
+                    })?;
+                    self.devices.transport(
+                        home_path,
+                        &device_id,
+                        &ssh_alias,
+                        registration.herdr_socket_path.clone(),
+                    )?
+                }
+            };
             let connector = transport.herdr_api_connector();
             Ok::<_, String>((transport, connector))
         })();
@@ -297,6 +312,14 @@ impl Runtime {
             );
             return true;
         };
+        if registration.inbound {
+            self.set_error(
+                "remote.retry_inbound",
+                "This machine connects to the core itself; it reconnects when it can reach the core",
+                false,
+            );
+            return true;
+        }
         if self
             .snapshot
             .status

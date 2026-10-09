@@ -61,7 +61,7 @@ pub fn devices(node: &NodeId, registrations: &[DeviceRegistration]) -> Vec<Devic
 
     for registration in registrations {
         if seen.insert(registration.id.clone()) {
-            let remote = registration.ssh_alias.is_some();
+            let remote = registration.ssh_alias.is_some() || registration.inbound;
             result.push(DeviceSnapshot {
                 agent_scope: Default::default(),
                 id: registration.id.clone(),

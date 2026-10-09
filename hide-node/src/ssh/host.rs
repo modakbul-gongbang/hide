@@ -15,6 +15,8 @@
 //! by reading the target again rather than by resending it (B14, B33).
 
 use super::*;
+#[path = "inbound.rs"]
+pub mod inbound;
 #[path = "link_herdr.rs"]
 mod link_herdr;
 #[path = "retirement.rs"]
@@ -691,6 +693,17 @@ impl RemoteHost {
         written
     }
 
+    /// Takes the reader facts the node's Hello advertised; once per link.
+    pub(super) fn take_readers(
+        &self,
+        readers: hide_node_link::sessions::ReaderFeatures,
+    ) -> Result<(), String> {
+        self.inner
+            .readers
+            .set(readers)
+            .map_err(|_| "The node's reader facts were already established".to_owned())
+    }
+
     /// Hands what the node's terminal service sends on this link to
     /// `terminals`; a link takes one handler for its life.
     pub fn take_terminal_lines(&self, terminals: crate::terminal::device::LineHandler) -> bool {
@@ -1019,9 +1032,23 @@ fn start_terminals(
     host: &RemoteHost,
     hook: TerminalHook,
 ) -> Result<Arc<dyn hide_node_link::terminal::TerminalNode>, String> {
-    let started = client
-        .herdr_socket_path()
-        .map_err(|error| error.to_string())
+    start_terminals_at(
+        client
+            .herdr_socket_path()
+            .map_err(|error| error.to_string()),
+        host,
+        hook,
+    )
+}
+
+/// [`start_terminals`] for the node's Herdr at `herdr_socket`, as the node
+/// names it.
+pub(super) fn start_terminals_at(
+    herdr_socket: Result<String, String>,
+    host: &RemoteHost,
+    hook: TerminalHook,
+) -> Result<Arc<dyn hide_node_link::terminal::TerminalNode>, String> {
+    let started = herdr_socket
         .and_then(|herdr_socket| {
             host.call(Call::TerminalsStart { herdr_socket }, HELLO_TIMEOUT)
                 .map_err(|error| error.to_string())
@@ -1097,13 +1124,21 @@ fn establish_stage(target: &str, stage: &str, since: Instant) {
 /// found keeps its files and Git; its panes' `hide` answers that the node is
 /// unavailable, and the reason goes to the log.
 fn start_panes(client: &RusshRemoteClient, host: &RemoteHost) {
-    let started = client
-        .herdr_socket_path()
-        .map_err(|error| error.to_string())
-        .and_then(|herdr_socket| {
-            call_as::<PanesStarted>(host, Call::PanesStart { herdr_socket }, HELLO_TIMEOUT)
-                .map_err(|error| error.to_string())
-        });
+    start_panes_at(
+        client
+            .herdr_socket_path()
+            .map_err(|error| error.to_string()),
+        host,
+    );
+}
+
+/// [`start_panes`] for the node's Herdr at `herdr_socket`, as the node
+/// names it.
+pub(super) fn start_panes_at(herdr_socket: Result<String, String>, host: &RemoteHost) {
+    let started = herdr_socket.and_then(|herdr_socket| {
+        call_as::<PanesStarted>(host, Call::PanesStart { herdr_socket }, HELLO_TIMEOUT)
+            .map_err(|error| error.to_string())
+    });
     match started {
         Ok(_) => crate::diagnostic!(json!({
             "component": "remote_host",

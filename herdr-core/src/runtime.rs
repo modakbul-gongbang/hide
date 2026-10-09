@@ -22,6 +22,7 @@ mod events;
 mod factory;
 mod home;
 mod hosts;
+mod inbound;
 mod issues;
 mod kit;
 pub(crate) mod links;
@@ -1075,6 +1076,9 @@ pub struct Runtime {
     /// connected or connecting, keyed by device id. Removing a device drops
     /// its entry; the coordinator handle moves to `retired_remote_syncs`.
     remote_connections: HashMap<String, devices::RemoteDeviceConnection>,
+    /// The link each node that dialed this core brought, until its
+    /// connection takes it (`inbound`).
+    inbound_transports: HashMap<String, Arc<dyn crate::remote::DeviceTransport>>,
     /// Coordinators of removed devices, waiting for the FFI layer to join
     /// them off the runtime lock: a join under the lock would wait for a
     /// worker that is itself waiting for the lock.
@@ -1862,6 +1866,7 @@ impl Runtime {
             state_path,
             home_path: environment.home_path,
             remote_connections: HashMap::new(),
+            inbound_transports: HashMap::new(),
             retired_remote_syncs: Vec::new(),
             remote_device_tests: HashMap::new(),
             device_hosts: HashMap::new(),

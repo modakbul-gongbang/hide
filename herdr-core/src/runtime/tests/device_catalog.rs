@@ -576,6 +576,7 @@ fn retrying_a_device_keeps_its_panes_in_their_checkouts() {
             ssh_alias: Some(TARGET.to_owned()),
             herdr_socket_path: None,
             host_consent: None,
+            inbound: false,
         });
     runtime
         .snapshot
@@ -639,6 +640,7 @@ fn catalog_device_runtime(workspaces: Vec<WorkspaceSnapshot>) -> (Runtime, tempf
             ssh_alias: Some(TARGET.to_owned()),
             herdr_socket_path: None,
             host_consent: None,
+            inbound: false,
         });
     runtime
         .snapshot
@@ -1339,6 +1341,7 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
             ssh_alias: Some(TARGET.to_owned()),
             herdr_socket_path: None,
             host_consent: None,
+            inbound: false,
         });
     let registration = |id: &str, device: &str| crate::model::WorkspaceRegistration {
         primary_checkout_id: None,
@@ -1909,6 +1912,7 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
             ssh_alias: Some(TARGET.to_owned()),
             herdr_socket_path: None,
             host_consent: Some(consent),
+            inbound: false,
         });
     // Allowed, but the first read of its kit failed: the cause is unknown,
     // not a missing hook.

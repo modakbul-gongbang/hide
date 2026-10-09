@@ -3271,6 +3271,12 @@ pub struct DeviceRegistration {
     /// existed asks before its first file or Git use.
     #[serde(default)]
     pub host_consent: Option<HostConsent>,
+    /// A machine whose node dials this core (PRD core-host-node-remote-core
+    /// D-04): the core never dials it, installs no kit on it and asks no
+    /// consent of it, since the operator's own SSH login opened its link
+    /// (D-10). Its id is its node id.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inbound: bool,
 }
 
 pub use hide_node_link::device::HostConsent;

@@ -40,6 +40,7 @@ fn registration(id: &str, label: &str, alias: &str) -> DeviceRegistration {
         ssh_alias: Some(alias.to_owned()),
         herdr_socket_path: None,
         host_consent: None,
+        inbound: false,
     }
 }
 
