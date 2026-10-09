@@ -238,6 +238,9 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
                 break;
             }
         }
+        if request.agent == Agent::Grok {
+            turns.set_plan_hold(parsed.plan_hold.clone());
+        }
         turns
     });
     if turns.as_ref().is_some_and(TurnTracker::capacity_exceeded) {
@@ -258,7 +261,9 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     }
     let title = match request.agent {
         Agent::Codex => codex_thread_name(home, request, &path),
-        Agent::Claude | Agent::Pi | Agent::Omp | Agent::OpenCode => parsed.title.clone(),
+        Agent::Claude | Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
+            parsed.title.clone()
+        }
     };
     let anchor = events
         .iter()

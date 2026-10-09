@@ -136,9 +136,12 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
             Feature::Subagents,
             Feature::SpawnGuard,
             Feature::HerdrIntegration,
-            Feature::Start
+            Feature::Sleep,
+            Feature::Fork,
+            Feature::Start,
+            Feature::Titles
         ],
-        "grok can start and guards and counts through its own hook, independently of its reader and lifecycle features"
+        "grok guards and counts through its own hook, and its session reader adds titles and the exact lifecycle"
     );
     assert_eq!(
         grok.features

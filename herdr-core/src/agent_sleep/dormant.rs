@@ -551,7 +551,7 @@ mod tests {
         entry.phase = DormantPhase::Sleeping;
         entry.closed = true;
         assert!(store.dormant_snapshots()[0].wake_available);
-        for kind in ["pi", "omp"] {
+        for kind in ["pi", "omp", "grok"] {
             let entry = store.dormant.get_mut(&id).unwrap();
             entry.kind = kind.into();
             entry.label_owner =
@@ -562,10 +562,24 @@ mod tests {
             });
             assert!(store.dormant_snapshots()[0].wake_available, "{kind}");
         }
-        for kind in ["grok", "cursor", "opencode", "unknown"] {
-            store.dormant.get_mut(&id).unwrap().kind = kind.into();
+        // OpenCode's record is otherwise valid, so only its missing resume
+        // keeps it asleep; Cursor and an unknown kind have no reader at all.
+        for kind in ["opencode", "cursor", "unknown"] {
+            let entry = store.dormant.get_mut(&id).unwrap();
+            entry.kind = kind.into();
+            if let Some(owner) = hide_session::label_reference_token(kind, "id", "native-one") {
+                entry.label_owner = owner;
+            }
             assert!(!store.dormant_snapshots()[0].wake_available, "{kind}");
         }
+        let entry = store.dormant.get_mut(&id).unwrap();
+        entry.kind = "opencode".into();
+        entry.label_owner =
+            hide_session::label_reference_token("opencode", "id", "native-one").unwrap();
+        assert!(
+            entry.validate().is_ok(),
+            "only the capability gate refuses it"
+        );
         assert_eq!(store.dormant.len(), 1);
     }
 
