@@ -1295,6 +1295,61 @@ pub(crate) mod tests {
         assert!(!guard.ingest_terminal_reports(vec![typed(10_003, true)]));
     }
 
+    /// A runtime lock held long enough to fill the report queue loses no
+    /// pane's state: past the limit a report takes the place of the waiting
+    /// one about the same pane, so the core still ends at the node's last
+    /// word and the last key's time. The queue fills before its pump starts,
+    /// as it does behind a held lock.
+    #[test]
+    fn reports_past_the_waiting_limit_keep_a_panes_last_state_and_key() {
+        use hide_node_link::terminal::{PaneTerminalState, ReportSink};
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        {
+            let mut guard = runtime.lock().unwrap();
+            observe_recipient_status(&mut guard, "idle", 2);
+            clocks(&mut guard, "recipient", true);
+        }
+        let (channel, reports) = crate::terminal_reports::terminal_reports();
+        let state = |state: &str| TerminalReport::State {
+            pane: "recipient".to_owned(),
+            state: PaneTerminalState {
+                state: state.to_owned(),
+                mode: Some("control".to_owned()),
+                generation: 2,
+                attempt: 1,
+                message: None,
+                exit_category: None,
+                retry_decision: "none".to_owned(),
+                last_attempt_at_unix_ms: None,
+            },
+        };
+        for at in 1..=20_000 {
+            channel.report(key_report("recipient", at, false));
+        }
+        channel.report(state("controlling"));
+        for at in 20_001..=20_100 {
+            channel.report(key_report("recipient", at, false));
+        }
+        channel.report(state("closing"));
+        let pump = crate::terminal_reports::ReportPump::spawn(
+            reports,
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+        )
+        .unwrap();
+        drop(pump);
+        let mut guard = runtime.lock().unwrap();
+        assert_eq!(
+            guard
+                .terminal_states
+                .get("recipient")
+                .map(|state| state.state.as_str()),
+            Some("closing")
+        );
+        assert_eq!(clocks(&mut guard, "recipient", false).0, 20_100);
+    }
+
     /// PRD core-host-node-terminal B7: the node reports the first key after
     /// a quiet pane at once and folds the keys behind it into one report a
     /// second later, so a letter that arrives inside that second is held

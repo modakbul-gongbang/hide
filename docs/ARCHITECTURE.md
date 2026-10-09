@@ -1106,7 +1106,8 @@ A key is a fact for the core only as its time and whether it submitted (`Termina
 A key's time comes from a screen's or a device's clock, so the core takes it as no later than its own now.
 The node compares a key's pane with the keyboard's pane as the core last told it (`TerminalControl::Focus`, sent when the snapshot a screen reads shows the keyboard moved, by a key or not: Herdr's own focus move, a close focusing a neighbour, the editor taking it), so the operator's next key into a pane the keyboard left moves it back however long they kept typing there (B1).
 Labels' submit time, the doorbell's draft hold and its 30-second quiet wait read the same facts they did before, a second late at most, and no key takes the core's lock or publishes a snapshot (B5).
-Reports reach the core through `herdr_core::terminal_reports`: sending never blocks (an unbounded channel that drops past 16,384 waiting reports with a `terminal.report_dropped` diagnostic), and one thread takes them into the runtime in batches and notifies once per batch.
+Reports reach the core through `herdr_core::terminal_reports`: sending never waits for the runtime lock, and one thread takes them into the runtime in batches and notifies once per batch.
+Past 16,384 waiting reports a report takes the place of the waiting one about the same subject (a pane's state, first frame, shown frame or keys, a paste's result, a creation's discard), so the core still ends at each node's last word; only a report about a subject none waiting names adds to the queue, and past 65,536 such a report is dropped with a `terminal.report_dropped` diagnostic.
 
 | Goes to the core (control) | Goes between the screen and a node without the core (data) |
 | --- | --- |
