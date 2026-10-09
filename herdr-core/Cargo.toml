@@ -45,6 +45,8 @@ typify = "=0.7.0"
 
 [dev-dependencies]
 hide-node = { path = "../hide-node" }
+hex = "=0.4.3"
+md5 = "=0.8.1"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

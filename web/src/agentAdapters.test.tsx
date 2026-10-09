@@ -32,12 +32,12 @@ it.each([
   expect(resumeProvider(kind)).toBe(canonical);
 });
 
-it.each(["opencode", "cursor", "future-agent"])("keeps %s neutral and ineligible for resume", (kind) => {
+it.each(["opencode", "future-agent"])("keeps %s neutral and ineligible for resume", (kind) => {
   expect(renderToStaticMarkup(<AgentMark kind={kind} />)).toContain('data-agent-mark="neutral"');
   expect(resumeProvider(kind)).toBeNull();
 });
 
-it.each(["grok", "pi", "omp"])("keeps %s neutral while enabling its completed exact resume reader", (kind) => {
+it.each(["grok", "pi", "omp", "cursor"])("keeps %s neutral while enabling its completed exact resume reader", (kind) => {
   expect(renderToStaticMarkup(<AgentMark kind={kind} />)).toContain('data-agent-mark="neutral"');
   expect(resumeProvider(` ${kind.toUpperCase()} `)).toBe(kind);
 });
@@ -55,7 +55,7 @@ it("derives all seven supported phone starts and the existing default from the g
   expect(agentAdapter("future-agent")).toBeUndefined();
 });
 
-it.each([[" CLAUDE_CODE ", "claude"], [" CODEX ", "codex"], [" GROK ", "grok"], [" PI ", "pi"], [" OMP ", "omp"]])("dispatches a canonical resume from the actual %s session button", async (kind, canonical) => {
+it.each([[" CLAUDE_CODE ", "claude"], [" CODEX ", "codex"], [" GROK ", "grok"], [" PI ", "pi"], [" OMP ", "omp"], [" CURSOR ", "cursor"]])("dispatches a canonical resume from the actual %s session button", async (kind, canonical) => {
   const saved = useShellStore.getState();
   const checkout = { id: "checkout", workspace_id: "project", path: "/project/task", branch: "task", exists: true } as Checkout;
   const project = { id: "project", device_id: "local", path: "/project", label: "Project", checkouts: [checkout] } as Workspace;

@@ -59,6 +59,22 @@ pub fn read(home: &Path, request: &SessionActivityRequest) -> Result<SessionActi
         crate::native_file::confirm_route(home, request.agent, &path, native_id, Path::new(cwd))
             .map_err(|error| error.to_string())?;
     }
+    if request.agent == Agent::Cursor {
+        let native_id = before
+            .native_session_id
+            .as_deref()
+            .ok_or("session_route_unconfirmed")?;
+        let cwd = request.cwd.as_deref().ok_or("session_route_unconfirmed")?;
+        let activity = crate::cursor::activity(home, &path, native_id, cwd)
+            .map_err(|error| error.to_string())?;
+        let after =
+            crate::confirm_session_file(home, request.agent, &path, Some(native_id), Some(cwd))
+                .map_err(|error| error.to_string())?;
+        if before.owner != after.owner || before.incarnation != after.incarnation {
+            return Err("session_activity_read_changed".into());
+        }
+        return Ok(activity);
+    }
     let metadata =
         std::fs::metadata(&path).map_err(|_| "session_activity_stat_failed".to_owned())?;
     let identity = FileIdentity::from_metadata(&metadata);
@@ -107,7 +123,7 @@ mod tests {
         let root = match agent {
             Agent::Claude => home.join(".claude/projects/project"),
             Agent::Codex => home.join(".codex/sessions/2026/01/01"),
-            Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
+            Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode | Agent::Cursor => {
                 unreachable!("legacy metadata fixtures")
             }
         };
@@ -116,7 +132,7 @@ mod tests {
         let header = match agent {
             Agent::Claude => serde_json::json!({"type":"user","sessionId":"native-a"}),
             Agent::Codex => serde_json::json!({"type":"session_meta","payload":{"id":"native-a"}}),
-            Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
+            Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode | Agent::Cursor => {
                 unreachable!("legacy metadata fixtures")
             }
         };

@@ -50,7 +50,7 @@ fn home(agent: Agent) -> tempfile::TempDir {
             &fixtures().join("codex-0.160.0"),
             &home.path().join(".codex"),
         ),
-        Agent::Grok | Agent::Pi | Agent::Omp => {
+        Agent::Grok | Agent::Pi | Agent::Omp | Agent::Cursor => {
             unreachable!("Native file fixtures bind their cwd to an owned checkout")
         }
         Agent::OpenCode => {
@@ -75,6 +75,7 @@ fn request(agent: Agent) -> LabelTranscriptRequest {
         Agent::Grok => GROK_ID,
         Agent::Pi => "pi-native-a",
         Agent::Omp => "omp-native-a",
+        Agent::Cursor => "a1b2c3d4-0000-4000-8000-000000000001",
         Agent::OpenCode => "ses_0a1b2c3d4e5f60718293a4b5c6",
     };
     LabelTranscriptRequest {

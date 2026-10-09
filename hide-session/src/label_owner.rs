@@ -14,7 +14,7 @@ pub fn label_reference_token(provider: &str, kind: &str, value: &str) -> Option<
     reference_token(Agent::from_kind(provider)?, kind, value)
 }
 
-fn reference_token(agent: Agent, kind: &str, value: &str) -> Option<String> {
+pub(crate) fn reference_token(agent: Agent, kind: &str, value: &str) -> Option<String> {
     let provider = agent.as_str();
     if !matches!(kind, "id" | "path")
         || value.trim().is_empty()
@@ -127,6 +127,15 @@ fn confirm_metadata(
     cwd: Option<&str>,
     home: Option<&Path>,
 ) -> Result<ConfirmedLabelSession> {
+    if agent == Agent::Cursor {
+        return crate::cursor::proof(
+            home.ok_or_else(|| anyhow!("label_session_outside_roots"))?,
+            path,
+            reported_id,
+            cwd.ok_or_else(|| anyhow!("label_session_cwd_unconfirmed"))?,
+        )
+        .map_err(|error| anyhow!(error.to_string()));
+    }
     if !std::fs::metadata(path)
         .map_err(|_| anyhow!("label_session_file_unavailable"))?
         .is_file()
@@ -305,7 +314,7 @@ mod tests {
                 Agent::Claude => {
                     serde_json::json!({"type":"user","sessionId":"native-a","message":{"role":"user","content":"content must not identify the owner"}})
                 }
-                Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
+                Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode | Agent::Cursor => {
                     unreachable!("legacy metadata fixtures")
                 }
             };

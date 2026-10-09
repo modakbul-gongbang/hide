@@ -1637,7 +1637,7 @@ mod scope_tests {
                         "content": [{"type": "input_text", "text": context}],
                     },
                 }),
-                Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode => {
+                Agent::Grok | Agent::Pi | Agent::Omp | Agent::OpenCode | Agent::Cursor => {
                     unreachable!("legacy hook-only fixture")
                 }
             };
@@ -2749,24 +2749,91 @@ pub(super) fn load_session_detail(
     let agent = Agent::from_kind(&row.provider)
         .filter(|agent| agent.has_session_file())
         .ok_or_else(|| format!("Unsupported session provider: {}", row.provider))?;
-    let contents: String = hide_node_link::link::call_as_reader(
-        sessions_node,
-        agent,
-        hide_node_link::sessions::ReaderFeature::Conversation,
-        Call::SessionText {
-            scope: Some(hide_session::SessionReadScope {
-                id: row.id.clone(),
-                cwd: row.checkout_path.clone(),
-            }),
-            path: row.locator.clone(),
-        },
-        SESSION_CALL_TIMEOUT,
-    )
-    .map_err(|error| format!("Session unavailable: {error}"))?;
+    let scope = hide_session::SessionReadScope {
+        id: row.id.clone(),
+        cwd: row.checkout_path.clone(),
+    };
+    let mut parsed = if agent == Agent::Cursor {
+        let mut parsed = hide_session::ParsedSession::default();
+        let mut checkpoint = None;
+        let mut read_bytes = 0u64;
+        let mut text_bytes = 0u64;
+        let mut pages = 0;
+        let mut previous_offset = None;
+        loop {
+            pages += 1;
+            if pages > hide_session::cursor::ARCHIVE_PAGE_LIMIT {
+                return Err("session_conversation_capacity".to_owned());
+            }
+            let page: hide_session::ConversationRead = hide_node_link::link::call_as_reader(
+                sessions_node,
+                agent,
+                hide_node_link::sessions::ReaderFeature::Conversation,
+                Call::SessionConversation {
+                    agent,
+                    path: row.locator.clone(),
+                    scope: scope.clone(),
+                    checkpoint,
+                },
+                SESSION_CALL_TIMEOUT,
+            )
+            .map_err(|_| "session_conversation_unavailable".to_owned())?;
+            if page.rescanned || page.events.len() != page.event_offsets.len() {
+                return Err("session_conversation_changed".to_owned());
+            }
+            if page.read_bytes > hide_session::SESSION_INCREMENT_READ_LIMIT_BYTES
+                || (page.has_more
+                    && previous_offset.is_some_and(|offset| page.checkpoint.offset() <= offset))
+                || page.event_offsets.windows(2).any(|pair| pair[0] >= pair[1])
+                || page.event_offsets.iter().any(|offset| {
+                    *offset >= page.checkpoint.offset()
+                        || previous_offset.is_some_and(|previous| *offset < previous)
+                })
+            {
+                return Err("session_conversation_no_progress".to_owned());
+            }
+            read_bytes = read_bytes.saturating_add(page.read_bytes);
+            text_bytes = text_bytes.saturating_add(
+                page.events
+                    .iter()
+                    .map(|event| event.text.len() as u64)
+                    .sum::<u64>(),
+            );
+            if read_bytes > hide_session::SESSION_READ_LIMIT_BYTES
+                || text_bytes > hide_session::SESSION_READ_LIMIT_BYTES
+                || parsed.events.len() + page.events.len() > hide_session::SESSION_DISCOVERY_LIMIT
+            {
+                return Err("session_conversation_capacity".to_owned());
+            }
+            if page.has_more && page.read_bytes == 0 {
+                return Err("session_conversation_no_progress".to_owned());
+            }
+            parsed.events.extend(page.events);
+            parsed.event_offsets.extend(page.event_offsets);
+            if !page.has_more {
+                break;
+            }
+            previous_offset = Some(page.checkpoint.offset());
+            checkpoint = Some(page.checkpoint);
+        }
+        parsed
+    } else {
+        let contents: String = hide_node_link::link::call_as_reader(
+            sessions_node,
+            agent,
+            hide_node_link::sessions::ReaderFeature::Conversation,
+            Call::SessionText {
+                scope: Some(scope),
+                path: row.locator.clone(),
+            },
+            SESSION_CALL_TIMEOUT,
+        )
+        .map_err(|error| format!("Session unavailable: {error}"))?;
+        hide_session::parse_events(agent, &contents)
+    };
     let store = MemoryStore::exists(database)
         .then(|| MemoryStore::open_read_only(database).map_err(|error| error.to_string()))
         .transpose()?;
-    let mut parsed = hide_session::parse_events(agent, &contents);
     // A message a format splits into records is one message to read.
     parsed.coalesce();
     let events = parsed
