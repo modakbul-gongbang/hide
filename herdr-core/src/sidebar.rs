@@ -714,6 +714,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         lineage_collapsed: false,
         sleep: None,
         row_facts: agent.facts,
+        reply_wait: false,
         request: None,
     };
     Ok(projected)

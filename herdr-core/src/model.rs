@@ -1153,6 +1153,11 @@ pub struct SidebarAgentSnapshot {
     /// block is built from (PRD overview-request-view D-14).
     #[serde(skip_serializing)]
     pub(crate) row_facts: Option<crate::request_view::RowFacts>,
+    /// The agent sent a request or block letter whose answer it still waits
+    /// for. Set by the runtime from the delivery ledger, never by a session
+    /// read, so it does not make `row_facts` present.
+    #[serde(skip_serializing)]
+    pub(crate) reply_wait: bool,
     /// The request view's part of the row: the verb and since when, the
     /// request and reply lines, the pull requests (`request_view.rs`).
     /// Absent until the core has built it.

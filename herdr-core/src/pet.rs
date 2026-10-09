@@ -211,6 +211,7 @@ mod tests {
             lineage_collapsed: false,
             sleep: None,
             row_facts: None,
+            reply_wait: false,
             request: None,
         }
     }

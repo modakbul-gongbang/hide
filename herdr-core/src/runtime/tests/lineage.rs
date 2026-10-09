@@ -2456,13 +2456,15 @@ fn a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply() {
     assert_eq!(wait_of(&rows, "child"), None);
     assert_eq!(wait_of(&rows, "parent"), None);
 
-    rows[1].row_facts = Some(crate::request_view::RowFacts {
-        reply_wait: true,
-        ..Default::default()
-    });
+    rows[1].row_facts = None;
+    rows[1].reply_wait = true;
     crate::agent_state::apply_lineage(&mut rows, &[], &[]);
     let child = rows.iter().find(|row| row.pane_id == "child").unwrap();
     assert_eq!(child.wait, Some(crate::model::AgentWait::Reply));
+    assert!(
+        child.row_facts.is_none(),
+        "a waiting letter does not stand in for a proven session read"
+    );
     assert_eq!(child.group, "working", "a delegated row that waits works");
     assert_eq!(
         wait_of(&rows, "parent"),
@@ -2470,8 +2472,8 @@ fn a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply() {
         "the parent waits on a child that waits"
     );
 
+    rows[1].reply_wait = true;
     rows[1].row_facts = Some(crate::request_view::RowFacts {
-        reply_wait: true,
         wake_devices: 2,
         ..Default::default()
     });
@@ -2483,6 +2485,7 @@ fn a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply() {
     );
 
     rows[1].row_facts = None;
+    rows[1].reply_wait = false;
     crate::agent_state::apply_lineage(&mut rows, &[], &[]);
     assert_eq!(wait_of(&rows, "child"), None);
     assert_eq!(wait_of(&rows, "parent"), None);

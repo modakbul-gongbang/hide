@@ -2391,17 +2391,7 @@ impl Runtime {
                 .is_some_and(|at| {
                     !crate::agent_state::escalation::took_up_request_after(agent, at)
                 });
-            if waits
-                || agent
-                    .row_facts
-                    .as_ref()
-                    .is_some_and(|facts| facts.reply_wait)
-            {
-                agent
-                    .row_facts
-                    .get_or_insert_with(Default::default)
-                    .reply_wait = waits;
-            }
+            agent.reply_wait = waits;
         }
     }
 

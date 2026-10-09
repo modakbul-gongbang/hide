@@ -246,7 +246,6 @@ fn row_facts(facts: &SessionFacts) -> RowFacts {
         user_turn: None,
         wake_devices: 0,
         wake_vanished: false,
-        reply_wait: false,
     }
 }
 

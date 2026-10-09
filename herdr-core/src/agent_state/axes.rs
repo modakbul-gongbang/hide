@@ -331,10 +331,13 @@ pub(crate) fn own_wait(agent: &SidebarAgentSnapshot) -> Option<AgentWait> {
     if !quiet_itself(agent) {
         return None;
     }
-    let facts = agent.row_facts.as_ref()?;
-    if facts.wake_devices > 0 {
+    if agent
+        .row_facts
+        .as_ref()
+        .is_some_and(|facts| facts.wake_devices > 0)
+    {
         Some(AgentWait::Background)
-    } else if facts.reply_wait {
+    } else if agent.reply_wait {
         Some(AgentWait::Reply)
     } else {
         None

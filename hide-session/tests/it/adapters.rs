@@ -446,8 +446,12 @@ mod wake_devices {
             &path,
             &[
                 boot("SessionStart:startup"),
-                started("docs/status-model.md:106: the text 'Command running in background with ID: X' starts a device"),
-                started("note: the shell said Command did not complete within its 5s timeout and was moved to the background (ID: Y)"),
+                started(
+                    "docs/status-model.md:106: the text 'Command running in background with ID: X' starts a device",
+                ),
+                started(
+                    "note: the shell said Command did not complete within its 5s timeout and was moved to the background (ID: Y)",
+                ),
                 started("see Monitor started (task Z, expires in 30m)"),
                 started("quoted Async agent launched successfully agentId: W"),
             ],

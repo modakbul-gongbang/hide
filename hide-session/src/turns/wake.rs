@@ -162,7 +162,9 @@ fn user(item: &Value, marks: &mut Vec<WakeMark>) {
                         expires_at_unix_ms: expires,
                     }),
                 );
-            } else if text.trim_start().starts_with("Async agent launched successfully")
+            } else if text
+                .trim_start()
+                .starts_with("Async agent launched successfully")
                 && let Some(id) = after(text, "agentId: ").and_then(token)
             {
                 push(
