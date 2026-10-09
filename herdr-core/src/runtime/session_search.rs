@@ -486,7 +486,16 @@ fn run(
                     .saved(&request.project, &row.id)
                     .map_err(Failure::Index)
                     .and_then(|saved| {
-                        read_on_node(request.node.as_ref(), agent, &row.locator, saved)
+                        read_on_node(
+                            request.node.as_ref(),
+                            agent,
+                            &row.locator,
+                            Some(hide_session::SessionReadScope {
+                                id: row.id.clone(),
+                                cwd: row.checkout_path.clone(),
+                            }),
+                            saved,
+                        )
                     });
                 let applied = step.and_then(|step| {
                     check_reader_support(request.node.as_ref(), agent, ReaderFeature::Search)
@@ -564,6 +573,21 @@ fn run(
                             node,
                             Call::SessionStamps {
                                 paths: paths.to_vec(),
+                                scopes: Some(
+                                    paths
+                                        .iter()
+                                        .map(|path| {
+                                            request
+                                                .rows
+                                                .iter()
+                                                .find(|row| row.locator == *path)
+                                                .map(|row| hide_session::SessionReadScope {
+                                                    id: row.id.clone(),
+                                                    cwd: row.checkout_path.clone(),
+                                                })
+                                        })
+                                        .collect(),
+                                ),
                             },
                             NODE_READ_TIMEOUT,
                         )
@@ -615,6 +639,7 @@ fn read_on_node(
     node: &dyn NodeLink,
     agent: hide_session::Agent,
     path: &str,
+    scope: Option<hide_session::SessionReadScope>,
     saved: Option<hide_session::search::SavedFile>,
 ) -> Result<IndexStep, Failure> {
     call_as(
@@ -622,6 +647,7 @@ fn read_on_node(
         Call::SessionIndexRead {
             agent,
             path: path.to_owned(),
+            scope,
             saved,
         },
         NODE_READ_TIMEOUT,
@@ -746,7 +772,15 @@ mod tests {
                 })
             }
         }
-        let read = |error| read_on_node(&Answering(error), hide_session::Agent::Codex, "/s", None);
+        let read = |error| {
+            read_on_node(
+                &Answering(error),
+                hide_session::Agent::Codex,
+                "/s",
+                None,
+                None,
+            )
+        };
         assert!(matches!(
             read(LinkError::NotConnected("gone".into())),
             Err(Failure::Node(_))

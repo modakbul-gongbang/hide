@@ -80,14 +80,39 @@ fn acknowledged() -> Result<RemoteControlOutcome, live::ControlFailure> {
     })
 }
 
+/// Waits until the request `action` sends has reached `herdr`. The lane's
+/// worker sends it on its own thread, and Herdr answers only what it has
+/// received; an answer handed over before that starts the next job while
+/// the first is still on its way, and the two can reach Herdr in either
+/// order (issue 837).
+fn received(herdr: &FakeHerdr, action: &RemoteControlAction) {
+    let (method, tab_id) = match action {
+        RemoteControlAction::FocusTab { tab_id } => ("tab.focus", Some(tab_id.as_str())),
+        RemoteControlAction::CreateTab { .. } => ("tab.create", None),
+        other => panic!("no fake Herdr answer for {other:?}"),
+    };
+    let mut count = 1;
+    loop {
+        herdr.wait_for_requests(count, Duration::from_secs(5));
+        if herdr.calls().iter().any(|(sent, params)| {
+            sent == method && tab_id.is_none_or(|tab_id| params["tab_id"] == tab_id)
+        }) {
+            return;
+        }
+        count += 1;
+    }
+}
+
 /// Herdr's answer to the control on the wire reaches the runtime. The lane's
 /// worker would carry the next job on from here; the test does it, because
 /// its own workers cannot report back.
 fn answer(
     runtime: &mut Runtime,
+    herdr: &FakeHerdr,
     action: RemoteControlAction,
     result: Result<RemoteControlOutcome, live::ControlFailure>,
 ) -> (bool, bool) {
+    received(herdr, &action);
     let (changed, next) = runtime.complete_lane_tab(action, result, 4);
     let started = next.is_some();
     if let Some(next) = next {
@@ -179,11 +204,21 @@ fn rapid_tab_focus_sends_the_first_and_the_latest_one_after_the_other() {
     assert_eq!(focused_tabs(&herdr), ["w-order:t2"]);
 
     // Only now does Herdr's answer to the first reach the runtime.
-    answer(&mut runtime, focus_action("w-order:t2"), acknowledged());
+    answer(
+        &mut runtime,
+        &herdr,
+        focus_action("w-order:t2"),
+        acknowledged(),
+    );
     herdr.wait_for_requests(2, Duration::from_secs(5));
     assert_eq!(focused_tabs(&herdr), ["w-order:t2", "w-order:t1"]);
 
-    answer(&mut runtime, focus_action("w-order:t1"), acknowledged());
+    answer(
+        &mut runtime,
+        &herdr,
+        focus_action("w-order:t1"),
+        acknowledged(),
+    );
     assert!(!runtime.control_lane.is_busy());
 }
 
@@ -218,6 +253,7 @@ fn a_lost_tab_focus_answer_does_not_release_the_focus_waiting_behind_it() {
 
     let (changed, started) = answer(
         &mut runtime,
+        &herdr,
         focus_action("w-order:t2"),
         Err(live::ControlFailure::Ambiguous(
             "tab.focus result is unknown: response timed out".into(),
@@ -262,6 +298,7 @@ fn a_refused_tab_focus_lets_the_next_control_through_and_keeps_the_tab() {
 
     answer(
         &mut runtime,
+        &herdr,
         focus_action("w-order:t2"),
         Err(live::ControlFailure::Definite(
             "tab.focus was refused: tab_not_found".into(),
@@ -300,6 +337,7 @@ fn a_tab_created_before_a_click_does_not_take_the_screen_back_from_it() {
 
     answer(
         &mut runtime,
+        &herdr,
         create_action(),
         Ok(RemoteControlOutcome::Acknowledged {
             created_tab_id: Some("w-order:t9".to_owned()),
@@ -337,6 +375,7 @@ fn a_tab_created_with_no_later_click_takes_the_screen() {
 
     answer(
         &mut runtime,
+        &herdr,
         create_action(),
         Ok(RemoteControlOutcome::Acknowledged {
             created_tab_id: Some("w-order:t9".to_owned()),
@@ -365,6 +404,7 @@ fn a_refused_tab_creation_releases_the_lane_for_the_focus_behind_it() {
 
     answer(
         &mut runtime,
+        &herdr,
         create_action(),
         Err(live::ControlFailure::Definite(
             "tab.create was refused: invalid_cwd".into(),
@@ -461,7 +501,12 @@ fn a_replacing_focus_queues_behind_the_control_accepted_between_the_two() {
     assert_eq!(runtime.control_lane.queued_len(), 2);
 
     herdr.wait_for_requests(1, Duration::from_secs(5));
-    answer(&mut runtime, focus_action("w-order:t2"), acknowledged());
+    answer(
+        &mut runtime,
+        &herdr,
+        focus_action("w-order:t2"),
+        acknowledged(),
+    );
     herdr.wait_for_requests(2, Duration::from_secs(5));
     let methods = || {
         herdr
@@ -472,7 +517,7 @@ fn a_replacing_focus_queues_behind_the_control_accepted_between_the_two() {
     };
     assert_eq!(methods(), ["tab.focus", "tab.create"]);
 
-    answer(&mut runtime, create_action(), acknowledged());
+    answer(&mut runtime, &herdr, create_action(), acknowledged());
     herdr.wait_for_requests(3, Duration::from_secs(5));
     assert_eq!(focused_tabs(&herdr), ["w-order:t2", "w-order:t1"]);
 }
@@ -584,7 +629,12 @@ fn a_tab_move_replaced_while_it_waited_is_not_sent() {
     assert_eq!(runtime.control_lane.queued_len(), 1);
 
     herdr.wait_for_requests(1, Duration::from_secs(5));
-    let (_, started) = answer(&mut runtime, focus_action("w-order:t2"), acknowledged());
+    let (_, started) = answer(
+        &mut runtime,
+        &herdr,
+        focus_action("w-order:t2"),
+        acknowledged(),
+    );
 
     assert!(!started, "no pending move carries this generation");
     assert!(!runtime.control_lane.is_busy());

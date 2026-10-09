@@ -18,7 +18,7 @@ use hide_platform::process::OwnedChild;
 use crate::programs;
 use crate::stand_ins;
 
-const PANE: &str = "w1:p2";
+pub(crate) const PANE: &str = "w1:p2";
 
 /// The stand-in `hide`: it answers `workspace bootstrap` the way the file
 /// `mode` beside the test's HOME says, and records every call there.
@@ -42,24 +42,37 @@ case "$(/bin/cat "$fixture/mode")" in
 esac
 "#;
 
-struct Machine {
+pub(crate) struct Machine {
     _dir: tempfile::TempDir,
-    root: PathBuf,
-    home: PathBuf,
-    hook: PathBuf,
+    pub(crate) root: PathBuf,
+    pub(crate) home: PathBuf,
+    pub(crate) hook: PathBuf,
     /// A checkout on branch `topic`, the agent's working directory.
-    checkout: PathBuf,
+    pub(crate) checkout: PathBuf,
 }
 
-struct Run {
-    stdout: String,
-    stderr: String,
-    status_ok: bool,
-    elapsed: Duration,
+/// Writes the agent's payload to the guard and closes its input. A guard that
+/// has already decided (no pane, no checkout, a refused owner handshake) ends
+/// without reading its payload, and an agent writing to it meets a closed
+/// pipe whenever the guard wins that race (issue 827); what the agent
+/// observes is the guard's answer, not whether its write landed.
+fn send_payload(mut stdin: impl Write, payload: &str) {
+    match stdin.write_all(payload.as_bytes()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(error) => panic!("the payload could not be written to the guard: {error}"),
+    }
+}
+
+pub(crate) struct Run {
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+    pub(crate) status_ok: bool,
+    pub(crate) elapsed: Duration,
 }
 
 impl Machine {
-    fn new(daemon: &str) -> Self {
+    pub(crate) fn new(daemon: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let home = root.join("home");
@@ -104,9 +117,21 @@ impl Machine {
     /// One guard run as `runtime` runs its entry for `payload`, with `pane` as
     /// its pane and `extra` in its environment.
     fn run(&self, runtime: &str, payload: &str, pane: Option<&str>, extra: &[(&str, &str)]) -> Run {
+        self.run_event(runtime, "PreToolUse", payload, pane, extra)
+    }
+
+    /// One hook run as `runtime` runs its entry for `event`.
+    pub(crate) fn run_event(
+        &self,
+        runtime: &str,
+        event: &str,
+        payload: &str,
+        pane: Option<&str>,
+        extra: &[(&str, &str)],
+    ) -> Run {
         let mut command = Command::new(&self.hook);
         command
-            .args(["hook", "--runtime", runtime, "--event", "PreToolUse"])
+            .args(["hook", "--runtime", runtime, "--event", event])
             .args(["--source", "hide-subagents@6"])
             .env(hide_platform::host::HOME_VARIABLE, &self.home)
             .env("PATH", &self.home)
@@ -128,17 +153,7 @@ impl Machine {
         command.envs(extra.iter().copied());
         let started = Instant::now();
         let mut child = OwnedChild::spawn(&mut command).unwrap();
-        let mut stdin = child.take_stdin().unwrap();
-        // A guard that has already decided (no pane, no checkout) ends without
-        // reading its payload, and an agent writing to it meets a closed pipe
-        // whenever the guard wins that race; what the agent observes is the
-        // guard's answer, not whether its write landed.
-        match stdin.write_all(payload.as_bytes()) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
-            Err(error) => panic!("the payload could not be written to the guard: {error}"),
-        }
-        drop(stdin);
+        send_payload(child.take_stdin().unwrap(), payload);
         let output = child
             .capture_until(Instant::now() + Duration::from_secs(15), 64 * 1024)
             .expect("the guard ends within its bound");
@@ -151,7 +166,7 @@ impl Machine {
     }
 
     /// The calls the guard made of `hide`.
-    fn calls(&self) -> Vec<String> {
+    pub(crate) fn calls(&self) -> Vec<String> {
         std::fs::read_to_string(self.root.join("hide-calls"))
             .unwrap_or_default()
             .lines()
@@ -159,12 +174,12 @@ impl Machine {
             .collect()
     }
 
-    fn guard_log(&self) -> String {
+    pub(crate) fn guard_log(&self) -> String {
         std::fs::read_to_string(self.home.join(".hide/agent-hooks/spawn-guard.log"))
             .unwrap_or_default()
     }
 
-    fn reason(&self, run: &Run) -> String {
+    pub(crate) fn reason(&self, run: &Run) -> String {
         let answer: serde_json::Value = serde_json::from_str(run.stdout.trim()).expect(&run.stdout);
         assert_eq!(answer["hookSpecificOutput"]["hookEventName"], "PreToolUse");
         assert_eq!(answer["hookSpecificOutput"]["permissionDecision"], "deny");
@@ -175,7 +190,7 @@ impl Machine {
     }
 }
 
-const START: &str = "herdr agent start set-g --kind claude --pane w1:p9 -- --model opus";
+pub(crate) const START: &str = "herdr agent start set-g --kind claude --pane w1:p9 -- --model opus";
 
 #[test]
 fn current_factory_worker_questions_are_redirected_through_one_authenticated_query() {
@@ -480,12 +495,7 @@ fn a_failed_owner_handshake_never_ends_the_guard_with_a_refusal_code() {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(machine.payload(START).as_bytes())
-        .unwrap();
+    send_payload(child.stdin.take().unwrap(), &machine.payload(START));
     let output = child.wait_with_output().unwrap();
     assert!(output.status.success(), "{:?}", output.status);
     assert_eq!(output.stdout, b"");

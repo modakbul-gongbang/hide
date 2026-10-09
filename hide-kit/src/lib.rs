@@ -395,6 +395,9 @@ pub(crate) enum Observed {
     Current,
     /// There, but not this build's; the sentence says what is there.
     Stale(String),
+    /// Hide's, edited by the operator after Hide wrote it: theirs until
+    /// Reinstall, read as out of date with the sentence saying so.
+    Edited(String),
     Missing,
     /// Neither installed nor installable as things stand.
     Blocked(String),
@@ -470,10 +473,12 @@ fn report(
         (None, Observed::Current) => (ComponentState::Installed, None),
         // An agent that is switched off gets nothing from a pass, so a hook
         // that is out of date or cannot be judged is not a repair to offer.
-        (None, Observed::Stale(_) | Observed::Blocked(_)) if switched_off => {
+        (None, Observed::Stale(_) | Observed::Edited(_) | Observed::Blocked(_)) if switched_off => {
             (ComponentState::Off, None)
         }
-        (None, Observed::Stale(reason)) => (ComponentState::Outdated, Some(reason)),
+        (None, Observed::Stale(reason) | Observed::Edited(reason)) => {
+            (ComponentState::Outdated, Some(reason))
+        }
         // Gone after Hide applied it: the operator turned it off or undid it
         // by hand, and either way it is theirs now (B36).
         (None, Observed::Missing) if switched_off => (ComponentState::Off, None),
@@ -754,6 +759,7 @@ fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
             && !agent_off
             && match &observed {
                 Observed::Stale(_) => true,
+                Observed::Edited(_) => restoring,
                 Observed::Missing => restoring || (!recorded && record_failure.is_none()),
                 Observed::Current
                 | Observed::Blocked(_)
@@ -764,8 +770,10 @@ fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
         // an older CLI): only Hide's marked entries are taken.
         let hook_part = matches!(id, ComponentId::ClaudeCodeHook | ComponentId::CodexHook);
         let undo_now = turning_off
-            && (matches!(observed, Observed::Current | Observed::Stale(_))
-                || (hook_part && matches!(observed, Observed::Blocked(_))));
+            && (matches!(
+                observed,
+                Observed::Current | Observed::Stale(_) | Observed::Edited(_)
+            ) || (hook_part && matches!(observed, Observed::Blocked(_))));
         let mut failure = None;
         if install_now {
             match install(id, target) {

@@ -8,8 +8,9 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +50,56 @@ fn record_path(home: &Path, pane_id: &str) -> PathBuf {
     state_directory(home).join(format!("{safe}.json"))
 }
 
+/// How long one event waits for another event of the same pane to finish its
+/// update. Parallel subagents start and stop together, and an update read
+/// before another one's write would lose that one.
+const LOCK_WAIT: Duration = Duration::from_millis(1_000);
+
+/// One change an event makes to a pane's counts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Change {
+    /// A new session took over the pane: its counts start again.
+    Reset,
+    /// One subagent started.
+    Started,
+    /// One subagent finished.
+    Stopped,
+    /// The turn ended with this many subagents still running: none for an
+    /// agent whose subagents end with its turn, and the background ones Grok
+    /// lists for a turn that leaves them running.
+    Settled { running: u32 },
+    /// The event changes no count; the pane's counts are only republished.
+    None,
+}
+
+impl Change {
+    /// The change a six-event runtime's hook makes.
+    ///
+    /// - `SessionStart` starts the pane over: a new session in a reused pane
+    ///   must not inherit the last one's numbers.
+    /// - `Stop` sweeps `working` to zero. The turn is over, so nothing this
+    ///   session spawned is still running, and a `SubagentStop` that never
+    ///   arrived cannot leave a count behind (PRD B31).
+    pub fn of(event: HookEvent) -> Self {
+        match event {
+            HookEvent::SessionStart => Self::Reset,
+            HookEvent::UserPromptSubmit | HookEvent::PreToolUse => Self::None,
+            HookEvent::SubagentStart => Self::Started,
+            HookEvent::SubagentStop => Self::Stopped,
+            HookEvent::Stop => Self::Settled { running: 0 },
+        }
+    }
+}
+
+/// The pane's record as the last finished change left it, read under the
+/// shared side of the lock, so a change being written is never read half
+/// way; a record that cannot be read fails rather than answering zeros.
+pub fn read_settled(home: &Path, pane_id: &str) -> io::Result<PaneCounters> {
+    let _held = hold(home, hide_platform::fs::lock::Mode::Shared)?;
+    let raw = fs::read(record_path(home, pane_id))?;
+    serde_json::from_slice(&raw).map_err(io::Error::from)
+}
+
 pub fn read(home: &Path, pane_id: &str) -> PaneCounters {
     let path = record_path(home, pane_id);
     fs::read_to_string(&path)
@@ -57,31 +108,85 @@ pub fn read(home: &Path, pane_id: &str) -> PaneCounters {
         .unwrap_or_default()
 }
 
-/// Applies one hook event and returns the pane's new counts.
-///
-/// - `SessionStart` starts the pane over: a new session in a reused pane must
-///   not inherit the last one's numbers.
-/// - `Stop` sweeps `working` to zero. The turn is over, so nothing this
-///   session spawned is still running, and a `SubagentStop` that never
-///   arrived cannot leave a count behind (PRD B31).
-pub fn apply(home: &Path, pane_id: &str, event: HookEvent) -> io::Result<PaneCounters> {
+/// Applies one [`Change`] under the pane's lock and returns the new counts.
+/// The record is read, changed and written while the lock is held, so two
+/// events of one pane never both start from the same count. The write is
+/// not synced: a count describes running sessions and is rebuilt by their
+/// next events, so it does not have to survive a crash, and a sync inside
+/// the lock would make parallel subagent starts wait out the lock.
+pub fn change(home: &Path, pane_id: &str, change: Change) -> io::Result<PaneCounters> {
+    let path = record_path(home, pane_id);
+    if let Some(parent) = path.parent() {
+        hide_platform::fs::private::create_dir_all(parent)?;
+    }
+    if change == Change::None {
+        // A pane no event has counted yet has nothing running.
+        return match read_settled(home, pane_id) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(PaneCounters::default()),
+            settled => settled,
+        };
+    }
+    let held = hold(home, hide_platform::fs::lock::Mode::Exclusive)?;
     let mut counters = read(home, pane_id);
-    match event {
-        HookEvent::SessionStart => counters = PaneCounters::default(),
-        HookEvent::UserPromptSubmit | HookEvent::PreToolUse => return Ok(counters),
-        HookEvent::SubagentStart => counters.working = counters.working.saturating_add(1),
-        HookEvent::SubagentStop => {
+    match change {
+        Change::Reset => counters = PaneCounters::default(),
+        Change::Started => counters.working = counters.working.saturating_add(1),
+        Change::Stopped => {
             counters.working = counters.working.saturating_sub(1);
             counters.done = counters.done.saturating_add(1);
         }
-        HookEvent::Stop => counters.working = 0,
+        Change::Settled { running } => counters.working = running,
+        Change::None => {}
     }
+    write_record(&path, counters)?;
+    drop(held);
+    Ok(counters)
+}
+
+/// Replaces a pane's counts with ones its agent keeps itself: OpenCode's
+/// plugin follows its child sessions and sends the totals, not events. It
+/// holds the same lock as [`change`], so a total and an event never
+/// interleave.
+pub fn store(home: &Path, pane_id: &str, counters: PaneCounters) -> io::Result<()> {
     let path = record_path(home, pane_id);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        hide_platform::fs::private::create_dir_all(parent)?;
     }
-    fs::write(&path, serde_json::to_vec(&counters)?)?;
-    Ok(counters)
+    let held = hold(home, hide_platform::fs::lock::Mode::Exclusive)?;
+    write_record(&path, counters)?;
+    drop(held);
+    Ok(())
+}
+
+/// Writes a record in place, private to the account, under a held lock.
+fn write_record(path: &Path, counters: PaneCounters) -> io::Result<()> {
+    let mut record = hide_platform::fs::private::open_or_create_file(path)?;
+    record.set_len(0)?;
+    record.write_all(&serde_json::to_vec(&counters)?)
+}
+
+/// One lock file beside the records, not the record itself: Windows locks a
+/// byte range against every other handle, so a record locked by one handle
+/// could not be rewritten through another. It is the account's own, so no
+/// other account can hold it and stall every count.
+fn hold(
+    home: &Path,
+    mode: hide_platform::fs::lock::Mode,
+) -> io::Result<hide_platform::fs::lock::Lock> {
+    let lock = hide_platform::fs::private::open_or_create_file(&lock_path(home))?;
+    match hide_platform::fs::lock::lock_file(lock, mode, LOCK_WAIT, &|| false)? {
+        hide_platform::fs::lock::Waited::Locked(held) => Ok(held),
+        _ => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "another hook event held the pane counts",
+        )),
+    }
+}
+
+/// The lock every count update holds. It sits beside the records' folder,
+/// so the sweep in [`retain`] never takes it for a record.
+fn lock_path(home: &Path) -> PathBuf {
+    home.join(".hide").join("agent-hooks").join("panes.lock")
 }
 
 /// Drops a pane's record. Used by the diagnosis when a pane is gone.
@@ -148,11 +253,11 @@ mod tests {
         let root = home("lifecycle");
         let pane = "w7B:pM";
         assert_eq!(
-            apply(&root, pane, HookEvent::SessionStart).unwrap(),
+            change(&root, pane, Change::of(HookEvent::SessionStart)).unwrap(),
             PaneCounters::default()
         );
-        apply(&root, pane, HookEvent::SubagentStart).unwrap();
-        let two = apply(&root, pane, HookEvent::SubagentStart).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
+        let two = change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
         assert_eq!(
             two,
             PaneCounters {
@@ -160,7 +265,7 @@ mod tests {
                 done: 0
             }
         );
-        let one = apply(&root, pane, HookEvent::SubagentStop).unwrap();
+        let one = change(&root, pane, Change::of(HookEvent::SubagentStop)).unwrap();
         assert_eq!(
             one,
             PaneCounters {
@@ -175,10 +280,10 @@ mod tests {
     fn a_turn_that_ends_sweeps_a_count_a_missing_stop_left_behind() {
         let root = home("sweep");
         let pane = "w7B:pM";
-        apply(&root, pane, HookEvent::SessionStart).unwrap();
-        apply(&root, pane, HookEvent::SubagentStart).unwrap();
-        apply(&root, pane, HookEvent::SubagentStart).unwrap();
-        let swept = apply(&root, pane, HookEvent::Stop).unwrap();
+        change(&root, pane, Change::of(HookEvent::SessionStart)).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
+        let swept = change(&root, pane, Change::of(HookEvent::Stop)).unwrap();
         assert_eq!(swept.working, 0, "no subagent outlives its turn");
         assert_eq!(swept.done, 0, "the sweep does not invent completions");
         fs::remove_dir_all(&root).unwrap();
@@ -188,8 +293,8 @@ mod tests {
     fn a_new_session_in_the_same_pane_does_not_inherit_the_last_ones_numbers() {
         let root = home("reset");
         let pane = "w7B:pM";
-        apply(&root, pane, HookEvent::SubagentStart).unwrap();
-        apply(&root, pane, HookEvent::SubagentStop).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStop)).unwrap();
         assert_eq!(
             read(&root, pane),
             PaneCounters {
@@ -198,7 +303,7 @@ mod tests {
             }
         );
         assert_eq!(
-            apply(&root, pane, HookEvent::SessionStart).unwrap(),
+            change(&root, pane, Change::of(HookEvent::SessionStart)).unwrap(),
             PaneCounters::default()
         );
         fs::remove_dir_all(&root).unwrap();
@@ -207,9 +312,9 @@ mod tests {
     #[test]
     fn a_sweep_drops_the_records_of_panes_that_are_gone_and_keeps_the_rest() {
         let root = home("retain");
-        apply(&root, "w1:pA", HookEvent::SubagentStart).unwrap();
-        apply(&root, "w1:pB", HookEvent::SubagentStart).unwrap();
-        apply(&root, "w2:pC", HookEvent::SubagentStart).unwrap();
+        change(&root, "w1:pA", Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, "w1:pB", Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, "w2:pC", Change::of(HookEvent::SubagentStart)).unwrap();
         // A file the sweep did not write is not its business.
         fs::write(state_directory(&root).join("notes.txt"), b"kept").unwrap();
 
@@ -236,11 +341,42 @@ mod tests {
     }
 
     #[test]
+    fn parallel_starts_of_one_pane_all_count() {
+        let root = home("parallel");
+        let pane = "w7B:pM";
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let root = root.clone();
+                std::thread::spawn(move || change(&root, pane, Change::Started).unwrap())
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert_eq!(read(&root, pane).working, 8);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_turn_that_leaves_background_subagents_running_keeps_them_counted() {
+        let root = home("settled");
+        let pane = "w7B:pM";
+        for _ in 0..3 {
+            change(&root, pane, Change::Started).unwrap();
+        }
+        let settled = change(&root, pane, Change::Settled { running: 2 }).unwrap();
+        assert_eq!(settled.working, 2);
+        let one = change(&root, pane, Change::Stopped).unwrap();
+        assert_eq!((one.working, one.done), (1, 1));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn two_panes_keep_separate_counts() {
         let root = home("panes");
-        apply(&root, "w1:pA", HookEvent::SubagentStart).unwrap();
-        apply(&root, "w2:pB", HookEvent::SubagentStart).unwrap();
-        apply(&root, "w2:pB", HookEvent::SubagentStart).unwrap();
+        change(&root, "w1:pA", Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, "w2:pB", Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, "w2:pB", Change::of(HookEvent::SubagentStart)).unwrap();
         assert_eq!(read(&root, "w1:pA").working, 1);
         assert_eq!(read(&root, "w2:pB").working, 2);
         fs::remove_dir_all(&root).unwrap();

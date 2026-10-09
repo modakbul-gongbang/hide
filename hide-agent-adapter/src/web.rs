@@ -17,6 +17,17 @@ pub struct WebAdapter {
     /// Whether the start command takes a model.
     pub can_pick_model: bool,
     pub sidebar_mark: Option<super::SidebarMark>,
+    /// What Settings calls the agent's hook piece: a hook entry, a plugin
+    /// file or an extension file; absent for an agent Hide writes no hook for.
+    pub hook_kind: Option<HookKind>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookKind {
+    Hook,
+    Plugin,
+    Extension,
 }
 
 pub fn web_contract() -> impl Iterator<Item = WebAdapter> {
@@ -36,5 +47,15 @@ pub fn web_contract() -> impl Iterator<Item = WebAdapter> {
             .start
             .is_some_and(|start| !start.options().model.is_empty()),
         sidebar_mark: row.sidebar_mark,
+        hook_kind: match row.hook {
+            super::HookInstall::Runtime(_) | super::HookInstall::Guidance(_) => {
+                Some(HookKind::Hook)
+            }
+            super::HookInstall::Plugin(super::PluginDialect::OpenCode) => Some(HookKind::Plugin),
+            super::HookInstall::Plugin(super::PluginDialect::Pi | super::PluginDialect::Omp) => {
+                Some(HookKind::Extension)
+            }
+            super::HookInstall::None => None,
+        },
     })
 }

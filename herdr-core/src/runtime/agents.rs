@@ -1168,16 +1168,33 @@ impl Runtime {
     pub(super) fn sync_pane_lineage(&mut self) -> bool {
         let agents = std::mem::take(&mut self.snapshot.navigator.agents);
         let diagnosis = self.hook_diagnosis.clone();
-        let status_of = |runtime: hide_agent_hooks::AgentRuntime| {
-            diagnosis
-                .as_ref()
-                .and_then(|diagnosis| diagnosis.status_of(runtime))
-                .cloned()
+        let local_kit = self.kit_states.get(self.node.as_str());
+        // Claude Code's and Codex's hooks are read from their files; OpenCode's
+        // plugin and Grok's and Cursor's hooks from this Mac's kit, the one
+        // place that judges them, read here once rather than holding the kit
+        // across the pass.
+        let from_kit: Vec<_> = hide_agent_adapter::HookDialect::ALL
+            .into_iter()
+            .filter(|dialect| hide_agent_hooks::AgentRuntime::from_dialect(*dialect).is_none())
+            .map(|dialect| {
+                let status =
+                    local_kit.and_then(|kit| crate::agent_hooks::kit_hook_status(kit, dialect));
+                (dialect, status)
+            })
+            .collect();
+        let codex_daemon_on = local_kit.is_some_and(crate::model::KitSnapshot::shares_codex_server);
+        let status_of = |dialect: hide_agent_adapter::HookDialect| {
+            match hide_agent_hooks::AgentRuntime::from_dialect(dialect) {
+                Some(runtime) => diagnosis
+                    .as_ref()
+                    .and_then(|diagnosis| diagnosis.status_of(runtime))
+                    .cloned(),
+                None => from_kit
+                    .iter()
+                    .find(|(known, _)| *known == dialect)
+                    .and_then(|(_, status)| status.clone()),
+            }
         };
-        let codex_daemon_on = self
-            .kit_states
-            .get(self.node.as_str())
-            .is_some_and(crate::model::KitSnapshot::shares_codex_server);
         let mut changed = false;
         let mut reopen_scope = ReopenScope::default();
         let mut delegated_tabs_changed = false;
@@ -1979,6 +1996,45 @@ impl Runtime {
         if let Err(message) = self.write_ui_state() {
             self.set_error("ui_state.save_failed", message, true);
         }
+    }
+
+    /// A Pi fork is bound to the admitted live execution, not just its pane.
+    /// The worker checks this without doing file I/O under Runtime.
+    pub(crate) fn fork_request_is_current(
+        &self,
+        request: &ForkRequest,
+        connector: &Arc<dyn hide_herdr_client::ApiConnector>,
+    ) -> bool {
+        request.connection_generation == self.live_generation
+            && self
+                .live
+                .as_ref()
+                .is_some_and(|live| Arc::ptr_eq(&live.api_connector, connector))
+            && request.parent_state_change_seq.is_some()
+            && self.snapshot.navigator.agents.iter().any(|agent| {
+                agent.pane_id == request.parent_pane_id
+                    && hide_agent_adapter::canonical_kind(&agent.agent_kind) == request.agent.kind()
+                    && agent.state_change_seq == request.parent_state_change_seq
+                    && agent.session_id.as_deref() == Some(request.session_id.as_str())
+                    && agent.row_facts.is_some()
+                    && agent
+                        .row_facts
+                        .as_ref()
+                        .and_then(|facts| facts.native_reference.as_ref())
+                        == request.source_reference.as_ref()
+            })
+            && self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.checkouts)
+                .flat_map(|checkout| &checkout.tabs)
+                .flat_map(|tab| &tab.panes)
+                .any(|pane| {
+                    pane.id == request.parent_pane_id
+                        && Some(pane.cwd.as_str()) == request.cwd.as_deref()
+                })
     }
 
     pub fn ingest_fork_result(

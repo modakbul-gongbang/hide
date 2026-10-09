@@ -2,8 +2,9 @@
 //! D-25): run as the agent runs it, the compiled helper beside a stand-in
 //! `hide` that answers `inbox` with one letter and records every call.
 //! Outside such a session the hook takes and confirms the letter; inside
-//! Grok or OpenCode it takes and confirms nothing, and its counters, Memory
-//! and guidance are what they were.
+//! Grok it takes and confirms nothing, and its counters, Memory and guidance
+//! are what they were; inside Cursor or OpenCode, whose own Hide hook or
+//! plugin speaks there, it does nothing at all.
 
 #![cfg(unix)]
 
@@ -157,50 +158,54 @@ fn inside_grok_or_opencode_the_hook_takes_and_confirms_no_letter() {
     }
 }
 
+/// Grok and Cursor run Claude Code's hooks beside their own, and Hide's own
+/// hook for each is the one that counts and refuses (PRD grok-cursor-hooks
+/// D-05). Grok's session start is passive, so the guidance Claude Code's hook
+/// printed there never reached the model.
 #[test]
-fn inside_grok_or_opencode_guidance_and_counters_are_what_they_are_outside() {
-    let outside = Machine::new();
-    let guidance = outside.run("SessionStart", &[]);
-    outside.run("SubagentStart", &[]);
-    assert!(guidance.contains("hookSpecificOutput"), "{guidance}");
-    assert!(!outside.files().is_empty(), "the counters wrote a record");
-
-    for origin in [
-        &[("OPENCODE", "1")][..],
-        &[("GROK_HOOK_EVENT", "SessionStart")][..],
+fn inside_grok_the_whole_hook_is_silent() {
+    let machine = Machine::new();
+    let origin = &[
+        ("GROK_HOOK_EVENT", "SessionStart"),
+        ("GROK_SESSION_ID", "s1"),
+    ][..];
+    for event in [
+        "SessionStart",
+        "SubagentStart",
+        "SubagentStop",
+        "Stop",
+        "PreToolUse",
     ] {
-        let inside = Machine::new();
-
-        let stdout = inside.run("SessionStart", origin);
-        inside.run("SubagentStart", origin);
-
-        assert_eq!(stdout, guidance, "{origin:?}");
-        let names = |machine: &Machine| {
-            machine
-                .files()
-                .into_keys()
-                .map(|path| path.strip_prefix(&machine.home).unwrap().to_owned())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(names(&inside), names(&outside), "{origin:?}");
-        assert!(inside.calls().is_empty(), "{origin:?}");
+        assert_eq!(machine.run(event, origin), "", "{event}");
     }
+    assert!(machine.calls().is_empty());
+    assert!(machine.files().is_empty());
+
+    // A Claude Code started from a Grok session's shell may inherit its
+    // session id, but Grok does not run its hook: it counts, and takes no
+    // letters meant for the Grok pane.
+    let launched = Machine::new();
+    let origin = &[("GROK_SESSION_ID", "s1")][..];
+    launched.run("SubagentStart", origin);
+    assert!(!launched.files().is_empty(), "the counters wrote a record");
+    assert_eq!(launched.run("UserPromptSubmit", origin), "");
+    assert!(launched.calls().is_empty());
 }
 
 #[test]
-fn cursor_still_silences_the_whole_hook() {
-    let machine = Machine::new();
+fn cursor_and_opencode_silence_the_whole_hook() {
+    for origin in [
+        &[("CURSOR_VERSION", "2.0.0")][..],
+        &[("OPENCODE", "1"), ("OPENCODE_PID", "4242")][..],
+    ] {
+        let machine = Machine::new();
 
-    assert_eq!(
-        machine.run("SessionStart", &[("CURSOR_VERSION", "2.0.0")]),
-        ""
-    );
-    assert_eq!(
-        machine.run("UserPromptSubmit", &[("CURSOR_VERSION", "2.0.0")]),
-        ""
-    );
-    assert!(machine.calls().is_empty());
-    assert!(machine.files().is_empty());
+        assert_eq!(machine.run("SessionStart", origin), "", "{origin:?}");
+        assert_eq!(machine.run("UserPromptSubmit", origin), "", "{origin:?}");
+        machine.run("SubagentStart", origin);
+        assert!(machine.calls().is_empty(), "{origin:?}");
+        assert!(machine.files().is_empty(), "{origin:?}");
+    }
 }
 
 #[test]

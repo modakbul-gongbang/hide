@@ -51,19 +51,15 @@ test("omp is a row after Pi, and its switch installs Herdr's omp integration in 
   const integration = path.join(home, ".omp", "agent", "extensions", "herdr-omp-agent-state.ts");
   try {
     const list = await openAgents(page, daemon);
-    // B1, B5: the order of the supported agents, omp after Pi, off by default with the Partial chip.
+    // B1, B5: the order of the supported agents, omp after Pi, off by default.
     await expect(list.locator("[data-agent-row]")).toHaveCount(7, { timeout: 60_000 });
     const rows = await list.locator("[data-agent-row]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-agent-row")));
     const on = new Set(["claude-code", "codex"]);
     expect(rows).toEqual(["claude-code", "codex", "grok", "opencode", "pi", "omp", "cursor"].map((id) => `${daemon.node}:${id}:${on.has(id) ? "on" : "off"}`));
     const off = list.locator(`[data-agent-switch="${daemon.node}:omp:off"]`);
     await expect(off).toBeVisible();
-    await list.locator('[data-agent-partial="omp"]').click();
-    const popover = page.locator('[data-agent-partial-popover="omp"]');
-    for (const feature of ["skill:yes", "herdr_integration:yes", "letters:no", "bell:no", "spawn_guard:no", "guidance:no"]) {
-      await expect(popover.locator(`[data-agent-feature="${feature}"]`)).toBeVisible();
-    }
-    await page.keyboard.press("Escape");
+    // Hide's extension gives omp letters and the spawn guard, so it carries no Basic chip (PRD pi-omp-extension).
+    await expect(list.locator('[data-agent-partial="omp"]')).toHaveCount(0);
 
     // B6, B7: on, the shared skill is there; Herdr's integration waits for omp's own folder and nobody makes it.
     await off.click();

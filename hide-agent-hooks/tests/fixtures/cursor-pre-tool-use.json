@@ -1,0 +1,13 @@
+{
+  "conversation_id": "conversation-1",
+  "generation_id": "generation-1",
+  "model": "model",
+  "hook_event_name": "preToolUse",
+  "cursor_version": "2026.10.01",
+  "workspace_roots": ["/project"],
+  "transcript_path": null,
+  "tool_name": "Shell",
+  "tool_input": { "command": "npm install", "working_directory": "/project" },
+  "tool_use_id": "abc123",
+  "cwd": "/project"
+}

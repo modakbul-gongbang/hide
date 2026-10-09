@@ -149,6 +149,8 @@ impl Runtime {
                         reference_kind: reference.kind.clone(),
                         reference_value: reference.value.clone(),
                         cwd: agent.cwd.clone().filter(|cwd| cwd.len() <= 4096),
+                        exact_route: false,
+                        expected_id: None,
                     }
                 });
             let observation = Observation {
@@ -391,7 +393,7 @@ impl Runtime {
             ..
         } = &command
         {
-            if !crate::delivery::valid_key(session) {
+            if !crate::delivery::valid_session(session) {
                 return Err("session_invalid".into());
             }
             if crate::wire::session_digest(session) == actor.session {
@@ -1723,7 +1725,7 @@ pub(crate) mod tests {
             bell: false,
             session: Some(session),
         };
-        // An id past the key bound is refused before it is hashed under the lock.
+        // An id past the session bound is refused before it is hashed under the lock.
         assert_eq!(
             guard
                 .prepare_delivery(
@@ -1731,7 +1733,7 @@ pub(crate) mod tests {
                     "recipient",
                     &context,
                     None,
-                    pull("x".repeat(257))
+                    pull("x".repeat(crate::delivery::SESSION_LIMIT + 1))
                 )
                 .err()
                 .as_deref(),

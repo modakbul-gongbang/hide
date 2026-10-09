@@ -255,6 +255,11 @@ pub fn apply(
             ))
         }
         Command::Pull { bell: true, .. } => Ok(json!(pull(ledger, actor)?)),
+        // An agent no bell rings for takes its letters on its next prompt,
+        // whoever typed it: no turn of Hide's own will ever bring them.
+        Command::Pull { bell: false, .. } if next_prompt_letters(&actor.kind) => {
+            Ok(json!(pull(ledger, actor)?))
+        }
         Command::Pull { bell: false, .. } => Ok(json!(operator_prompt_intake(ledger, actor, now)?)),
         Command::Confirm { ids } => {
             if ids.len() > HOOK_LETTERS {
@@ -342,6 +347,13 @@ pub struct Intake {
 /// that agent having read anything.
 pub(crate) fn prompt_hook(kind: &str) -> bool {
     hide_agent_adapter::adapter(kind).is_some_and(|row| row.prompt_hook.is_some())
+}
+
+/// Whether the kind's prompt hook hands letters over on any prompt: it has one
+/// and is never belled (OpenCode, whose plugin confirms them only after
+/// OpenCode stored the prompt that carries them).
+pub(crate) fn next_prompt_letters(kind: &str) -> bool {
+    prompt_hook(kind) && !super::doorbell::bell_target(kind)
 }
 
 /// Whether a bell is still coming for the letter. A letter whose three bells
@@ -825,7 +837,7 @@ mod tests {
 
     #[test]
     fn a_prompt_hook_that_runs_inside_an_agent_without_one_hands_over_nothing() {
-        for kind in ["grok", "opencode", "gemini", "cursor"] {
+        for kind in ["grok", "gemini", "cursor"] {
             let mut ledger = Ledger::default();
             let mut recipient = actor("recipient");
             recipient.kind = kind.into();
@@ -835,6 +847,38 @@ mod tests {
                 assert!(intake.ids.is_empty() && intake.context.is_empty(), "{kind}");
             }
         }
+    }
+
+    #[test]
+    fn an_agent_no_bell_rings_for_gets_its_letters_on_any_prompt_and_confirms_them_later() {
+        let mut ledger = Ledger::default();
+        let mut recipient = actor("recipient");
+        recipient.kind = "opencode".into();
+        let ids = pending_for(&mut ledger, &recipient, 2);
+        for bell in [false, true] {
+            let intake = pull_for(&mut ledger, &recipient, bell);
+            assert_eq!(intake.ids, ids, "bell={bell}");
+            assert!(intake.context.contains("body-0") && intake.context.contains("body-1"));
+            assert!(!intake.context.contains("대기 중"));
+        }
+        // A pull is not a receipt: the plugin confirms after OpenCode stored
+        // the prompt, and a prompt lost before that leaves them pending.
+        assert!(
+            ledger
+                .letters
+                .iter()
+                .all(|letter| !letter.intake_confirmed())
+        );
+        apply(
+            &mut ledger,
+            &recipient,
+            None,
+            &Command::Confirm { ids: ids.clone() },
+            101,
+        )
+        .unwrap();
+        assert!(ledger.letters.iter().all(Letter::intake_confirmed));
+        assert!(pull_for(&mut ledger, &recipient, false).ids.is_empty());
     }
 
     #[test]

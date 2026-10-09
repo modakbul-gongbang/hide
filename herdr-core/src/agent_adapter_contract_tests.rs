@@ -111,7 +111,7 @@ fn a_newer_helpers_unknown_row_is_omitted_while_known_rows_keep_their_features()
         doc_url: String::new(),
     };
     let report = hide_kit::KitReport {
-        agents: vec![row("CLAUDE_CODE"), row("future-agent"), row("omp")],
+        agents: vec![row("CLAUDE_CODE"), row("future-agent"), row("grok")],
         ..Default::default()
     };
     let snapshot = crate::model::KitSnapshot::from_report(&report);
@@ -121,7 +121,7 @@ fn a_newer_helpers_unknown_row_is_omitted_while_known_rows_keep_their_features()
             .iter()
             .map(|row| row.id.as_str())
             .collect::<Vec<_>>(),
-        ["claude-code", "omp"]
+        ["claude-code", "grok"]
     );
     assert!(
         snapshot.agents[0]
@@ -136,6 +136,12 @@ fn a_newer_helpers_unknown_row_is_omitted_while_known_rows_keep_their_features()
             .filter(|feature| feature.supported)
             .map(|feature| feature.id)
             .collect::<Vec<_>>(),
-        [Feature::Skill, Feature::HerdrIntegration, Feature::Start]
+        [
+            Feature::Skill,
+            Feature::Subagents,
+            Feature::SpawnGuard,
+            Feature::HerdrIntegration,
+            Feature::Start
+        ]
     );
 }

@@ -69,6 +69,7 @@ impl WorktreeTarget {
 #[derive(Clone)]
 pub struct TabTarget {
     connector: Arc<dyn ApiConnector>,
+    connection_generation: Option<u64>,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     /// The node whose PATH must hold the chosen agent, asked before Herdr
@@ -77,12 +78,13 @@ pub struct TabTarget {
 }
 
 impl TabTarget {
-    pub(crate) fn local(context: &LiveContext) -> Self {
+    pub(crate) fn local(context: &LiveContext, generation: u64) -> Self {
         Self {
             connector: Arc::clone(&context.api_connector),
             runtime: context.runtime.clone(),
             notifier: context.notifier.clone(),
             agent_node: Some(Arc::clone(&context.node)),
+            connection_generation: Some(generation),
         }
     }
 
@@ -92,7 +94,18 @@ impl TabTarget {
             runtime: context.runtime.clone(),
             notifier: context.notifier.clone(),
             agent_node: None,
+            connection_generation: None,
         }
+    }
+
+    fn check_current(&self, id: u64) -> Result<(), String> {
+        let runtime = self.runtime.upgrade().ok_or("runtime stopped")?;
+        let runtime = runtime.lock().map_err(|_| "runtime unavailable")?;
+        if !runtime.task_session_control_is_current(id, &self.connector, self.connection_generation)
+        {
+            return Err("session_resume_control_changed".into());
+        }
+        Ok(())
     }
 }
 
@@ -726,11 +739,12 @@ fn spawn_worktree_task(
                 context.notifier.notify();
             }
             start_task_agent(
-                context.connector.as_ref(),
+                &context.connector,
                 &context.runtime,
                 &context.notifier,
                 context.local.then_some(context.host.as_ref()),
                 request.id,
+                &|| Ok(()),
             );
         })
         .map(|_| ())
@@ -907,6 +921,8 @@ pub struct CheckoutTabRequest {
     pub checkout_path: String,
     pub label: String,
     pub host: crate::checkout_owner::TabHost,
+    pub resume_scope: Option<hide_session::SessionReadScope>,
+    pub(crate) resume_reference: Option<crate::sidebar::SessionAgentSessionPayload>,
 }
 
 /// What the task's worker starts once the creation is settled: the pane, the
@@ -917,6 +933,8 @@ pub struct PendingAgentStart {
     pub kind: String,
     pub prompt: Option<String>,
     pub args: Vec<String>,
+    pub resume_scope: Option<hide_session::SessionReadScope>,
+    pub(crate) resume_reference: Option<crate::sidebar::SessionAgentSessionPayload>,
     pub(crate) codex_daemon: crate::codex_launch::CodexDaemon,
 }
 
@@ -941,11 +959,12 @@ const AGENT_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 /// the answer back on its own axis. The creation was already published, so a
 /// failure here never hides the worktree or the pane.
 fn start_task_agent(
-    connector: &dyn ApiConnector,
+    connector: &Arc<dyn ApiConnector>,
     runtime: &Weak<Mutex<Runtime>>,
     notifier: &ChangeNotifier,
     agent_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
+    current: &(dyn Fn() -> Result<(), String> + Sync),
 ) {
     let Some(runtime) = runtime.upgrade() else {
         return;
@@ -957,7 +976,59 @@ fn start_task_agent(
     let Some(start) = pending else {
         return;
     };
-    let outcome = launch_with_prompt(connector, agent_node, id, start);
+    let generation = runtime
+        .lock()
+        .ok()
+        .and_then(|runtime| runtime.task_session_control_generation(id, connector));
+    let reader = start
+        .resume_scope
+        .as_ref()
+        .map(|_| task_session_node(&runtime, id))
+        .transpose();
+    let outcome = match reader {
+        Err(reason) => TaskAgentOutcome::Failed(reason),
+        Ok(reader) => {
+            let expected = start.clone();
+            let current_start = || {
+                if let Some(reader) = reader.as_ref() {
+                    current()?;
+                    if !runtime
+                        .lock()
+                        .map_err(|_| "runtime unavailable")?
+                        .task_session_control_is_current(id, connector, generation)
+                    {
+                        return Err("session_resume_control_changed".into());
+                    }
+                    let pending = runtime
+                        .lock()
+                        .map_err(|_| "runtime unavailable")?
+                        .pending_task_agent_start(id);
+                    if pending.as_ref() != Some(&expected)
+                        || !Arc::ptr_eq(&task_session_node(&runtime, id)?, reader)
+                    {
+                        return Err("session_resume_intent_changed".into());
+                    }
+                }
+                Ok(())
+            };
+            let checked = CurrentSessionConnector {
+                connector: connector.as_ref(),
+                current: &current_start,
+            };
+            let launch_connector: &dyn ApiConnector = if reader.is_some() {
+                &checked
+            } else {
+                connector.as_ref()
+            };
+            launch_with_prompt_checked(
+                launch_connector,
+                reader.as_deref().or(agent_node),
+                id,
+                start,
+                &current_start,
+            )
+        }
+    };
     if let Ok(mut guard) = runtime.lock() {
         guard.ingest_task_agent_result(id, outcome);
     } else {
@@ -975,11 +1046,22 @@ fn start_task_agent(
 /// typed prompt would answer the question. A prompt that cannot be passed,
 /// or a start Herdr refuses, fails the start with the reason; the surface
 /// that sent it keeps the text.
+#[cfg(test)]
 fn launch_with_prompt(
     connector: &dyn ApiConnector,
     agent_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
     start: PendingAgentStart,
+) -> TaskAgentOutcome {
+    launch_with_prompt_checked(connector, agent_node, id, start, &|| Ok(()))
+}
+
+fn launch_with_prompt_checked(
+    connector: &dyn ApiConnector,
+    agent_node: Option<&dyn crate::node_access::NodeLink>,
+    id: u64,
+    start: PendingAgentStart,
+    current: &dyn Fn() -> Result<(), String>,
 ) -> TaskAgentOutcome {
     let PendingAgentStart {
         pane_id,
@@ -987,7 +1069,17 @@ fn launch_with_prompt(
         prompt,
         mut args,
         codex_daemon,
+        resume_scope,
+        resume_reference,
     } = start;
+    if hide_agent_adapter::canonical_kind(&kind) == "pi"
+        && args.first().map(String::as_str) == Some("--session")
+        && !resume_scope
+            .as_ref()
+            .is_some_and(|scope| args.get(1) == Some(&scope.id))
+    {
+        return TaskAgentOutcome::Failed("session_resume_scope_required".into());
+    }
     let Some(dialect) = hide_agent_adapter::adapter(&kind).and_then(|row| row.start) else {
         return TaskAgentOutcome::Failed("This agent has no supported start dialect".to_owned());
     };
@@ -1005,6 +1097,19 @@ fn launch_with_prompt(
         &kind,
         args,
         codex_daemon,
+        &|| {
+            current()?;
+            if let Some(scope) = resume_scope.as_ref() {
+                crate::live::confirm_session_launch(
+                    agent_node.ok_or("session_route_reader_unavailable")?,
+                    &kind,
+                    &scope.id,
+                    Some(&scope.cwd),
+                    resume_reference.as_ref(),
+                )?;
+            }
+            current()
+        },
     )
     .into()
 }
@@ -1057,11 +1162,12 @@ pub fn spawn_task_agent_start(context: WorktreeTarget, id: u64) -> Result<(), St
         .name("herdr-core-task-agent-start".into())
         .spawn(move || {
             start_task_agent(
-                context.connector.as_ref(),
+                &context.connector,
                 &context.runtime,
                 &context.notifier,
                 context.local.then_some(context.host.as_ref()),
                 id,
+                &|| Ok(()),
             )
         })
         .map(|_| ())
@@ -1090,6 +1196,7 @@ impl From<Launch> for TaskAgentOutcome {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // the task/pane launch identity plus its effect admission
 fn launch_agent(
     connector: &dyn ApiConnector,
     agent_node: Option<&dyn crate::node_access::NodeLink>,
@@ -1098,7 +1205,11 @@ fn launch_agent(
     kind: &str,
     args: Vec<String>,
     codex_daemon: crate::codex_launch::CodexDaemon,
+    check: &dyn Fn() -> Result<(), String>,
 ) -> Launch {
+    if let Err(reason) = check() {
+        return Launch::Failed(reason);
+    }
     // Herdr would type the command into the pane's shell and wait for an
     // agent that can never appear; say so before asking it. A device's PATH
     // is not this machine's, so there its Herdr answers for it.
@@ -1128,12 +1239,13 @@ fn launch_agent(
         Ok(params) => params,
         Err(message) => return Launch::Failed(message),
     };
-    match crate::agent_start::start_at_shell(
+    match crate::agent_start::start_at_shell_checked(
         connector,
         &format!("herdr-core:task:{id}:agent"),
         pane_id,
         params,
         Duration::from_millis(AGENT_START_TIMEOUT_MS + 5_000),
+        check,
     ) {
         Ok(value) => match wire::started_agent(value) {
             Ok(_) => Launch::Started,
@@ -1164,7 +1276,39 @@ pub fn spawn_checkout_tab_create(
 
 /// Opens the task's tab, publishes it, then starts the task's agent in it.
 fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
-    let result = create_checkout_tab(target.connector.as_ref(), request);
+    let result = (|| {
+        if let Some(scope) = request.resume_scope.as_ref() {
+            target.check_current(request.id)?;
+            let runtime = target.runtime.upgrade().ok_or("runtime stopped")?;
+            let node = task_session_node(&runtime, request.id)?;
+            crate::live::confirm_session_launch(
+                node.as_ref(),
+                "pi",
+                &scope.id,
+                Some(&scope.cwd),
+                request.resume_reference.as_ref(),
+            )?;
+            if !Arc::ptr_eq(&node, &task_session_node(&runtime, request.id)?) {
+                return Err("session_resume_reader_changed".into());
+            }
+            target.check_current(request.id)?;
+            let current = || {
+                target.check_current(request.id)?;
+                if !Arc::ptr_eq(&node, &task_session_node(&runtime, request.id)?) {
+                    return Err("session_resume_reader_changed".into());
+                }
+                Ok(())
+            };
+            return create_checkout_tab(
+                &CurrentSessionConnector {
+                    connector: target.connector.as_ref(),
+                    current: &current,
+                },
+                request,
+            );
+        }
+        create_checkout_tab(target.connector.as_ref(), request)
+    })();
     let Some(runtime) = target.runtime.upgrade() else {
         return;
     };
@@ -1176,12 +1320,31 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
     drop(runtime);
     target.notifier.notify();
     start_task_agent(
-        target.connector.as_ref(),
+        &target.connector,
         &target.runtime,
         &target.notifier,
         target.agent_node.as_deref(),
         request.id,
+        &|| target.check_current(request.id),
     );
+}
+
+fn task_session_node(
+    runtime: &Arc<Mutex<Runtime>>,
+    id: u64,
+) -> Result<Arc<dyn crate::node_access::NodeLink>, String> {
+    let mut runtime = runtime.lock().map_err(|_| "runtime unavailable")?;
+    let operation = runtime
+        .snapshot()
+        .task_operation
+        .as_ref()
+        .filter(|operation| operation.id == id)
+        .ok_or("task superseded")?;
+    let device = operation
+        .device_id
+        .clone()
+        .unwrap_or_else(|| runtime.node().as_str().into());
+    runtime.node_link(&device)
 }
 
 /// How long the helper may take to bring a Home in step: a stat per
@@ -3356,6 +3519,83 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn a_pi_archive_resume_never_launches_an_unconfirmed_or_superseded_owner() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
+        let folder = home.path().join(".pi/agent/sessions").join(format!(
+            "--{}--",
+            cwd.to_string_lossy()
+                .trim_start_matches(['/', '\\'])
+                .replace(['/', '\\', ':'], "-")
+        ));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("native.jsonl");
+        let header = format!(
+            "{}\n",
+            json!({"type":"session", "version":3, "id":"native-pi", "cwd":cwd})
+        );
+        std::fs::write(&path, &header).unwrap();
+        std::fs::copy(&path, folder.join("duplicate.jsonl")).unwrap();
+        let node = hide_node::Local::new(Some(home.path().to_path_buf()));
+        let make = || PendingAgentStart {
+            resume_reference: Some(crate::sidebar::SessionAgentSessionPayload {
+                kind: "path".into(),
+                value: path.display().to_string(),
+            }),
+            pane_id: "w1:p1".into(),
+            kind: "pi".into(),
+            prompt: None,
+            args: vec!["--session".into(), "native-pi".into()],
+            resume_scope: Some(hide_session::SessionReadScope {
+                id: "native-pi".into(),
+                cwd: cwd.display().to_string(),
+            }),
+            codex_daemon: Default::default(),
+        };
+        let server = server(vec![]);
+        assert_eq!(
+            launch_with_prompt(&server, Some(&node), 7, make()),
+            TaskAgentOutcome::Failed("session_route_unconfirmed".into())
+        );
+        let mut missing_scope = make();
+        missing_scope.resume_scope = None;
+        assert_eq!(
+            launch_with_prompt(&server, Some(&node), 7, missing_scope),
+            TaskAgentOutcome::Failed("session_resume_scope_required".into())
+        );
+        std::fs::remove_file(folder.join("duplicate.jsonl")).unwrap();
+        let other_history = format!(
+            "{header}{}\n",
+            json!({"type":"message", "id":"other-message", "message":{"role":"assistant", "content":[{"type":"text", "text":"different history"}]}})
+        );
+        std::fs::write(folder.join("other.jsonl"), &other_history).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            launch_with_prompt(&server, Some(&node), 7, make()),
+            TaskAgentOutcome::Failed("session_route_unconfirmed".into())
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder.join("other.jsonl")).unwrap(),
+            other_history
+        );
+        std::fs::remove_file(folder.join("other.jsonl")).unwrap();
+        std::fs::write(&path, header.replace("native-pi", "native-pi-prefix")).unwrap();
+        assert_eq!(
+            launch_with_prompt(&server, Some(&node), 7, make()),
+            TaskAgentOutcome::Failed("session_route_unconfirmed".into())
+        );
+        std::fs::write(&path, &header).unwrap();
+        assert_eq!(
+            launch_with_prompt_checked(&server, Some(&node), 7, make(), &|| Err(
+                "session_resume_intent_changed".into()
+            )),
+            TaskAgentOutcome::Failed("session_resume_intent_changed".into())
+        );
+        assert!(requests_of(&server).is_empty());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), header);
+    }
+
     /// The installed CLI help fixes these expectations independently of the
     /// adapter. Every first prompt travels in argv, never as PTY input.
     #[test]
@@ -3383,6 +3623,8 @@ mod tests {
                 None,
                 7,
                 PendingAgentStart {
+                    resume_reference: None,
+                    resume_scope: None,
                     pane_id: "w1:p1".into(),
                     kind: kind.into(),
                     prompt: Some("fix the tests".into()),
@@ -3420,6 +3662,8 @@ mod tests {
             None,
             7,
             PendingAgentStart {
+                resume_reference: None,
+                resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "codex".into(),
                 prompt: Some("fix the tests".into()),
@@ -3456,6 +3700,8 @@ mod tests {
             Some(&node),
             7,
             PendingAgentStart {
+                resume_reference: None,
+                resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "claude".into(),
                 prompt: None,
@@ -3489,6 +3735,8 @@ mod tests {
             None,
             7,
             PendingAgentStart {
+                resume_reference: None,
+                resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "codex".into(),
                 prompt: Some("fix the tests".into()),
@@ -3518,6 +3766,8 @@ mod tests {
             None,
             7,
             PendingAgentStart {
+                resume_reference: None,
+                resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "claude".into(),
                 prompt: Some("1\nfix the tests\r\n\tthen push".into()),
@@ -3549,6 +3799,8 @@ mod tests {
             None,
             7,
             PendingAgentStart {
+                resume_reference: None,
+                resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "claude".into(),
                 prompt: Some("fix\u{7}the bell".into()),
@@ -3575,6 +3827,8 @@ mod tests {
             None,
             7,
             PendingAgentStart {
+                resume_reference: None,
+                resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "claude".into(),
                 prompt: Some(format!("{at_cap}a\n")),
@@ -3602,6 +3856,8 @@ mod tests {
             None,
             7,
             PendingAgentStart {
+                resume_reference: None,
+                resume_scope: None,
                 pane_id: "w1:p1".into(),
                 kind: "claude".into(),
                 prompt: Some("fix the tests".into()),

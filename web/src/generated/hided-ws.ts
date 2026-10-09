@@ -4,7 +4,14 @@
  * Handshake, server frames, close reason codes, path refusal reason codes, and client dispatch events for hided.
  */
 export type HidedWebSocketContract =
-  Handshake | ServerFrame | ClientEvent | WorkspaceQuery | WorkspaceAction | LinksQuery | WorkspaceResult;
+  | Handshake
+  | ServerFrame
+  | ClientEvent
+  | WorkspaceQuery
+  | FactoryQuestionGuard
+  | WorkspaceAction
+  | LinksQuery
+  | WorkspaceResult;
 export type WorkspaceRequestId = string;
 export type WorkspaceCommand =
   | {
@@ -96,6 +103,15 @@ export interface WorkspaceQuery {
   type: "workspace_query";
   request_id: WorkspaceRequestId;
   query: "info" | "view_list";
+}
+/**
+ * One bounded readonly check against an already-open Factory. Only an attested pane on its issuing connection may ask. A successful workspace_result has result.deny true only for the current Task-held spawn joined to its fresh native execution; every unresolved identity or failure allows the hook tool.
+ */
+export interface FactoryQuestionGuard {
+  type: "factory_question_guard";
+  request_id: WorkspaceRequestId;
+  session: string;
+  runtime: "claude-code" | "codex" | "opencode" | "omp";
 }
 /**
  * One pane-scoped document or View transition. Repeating the same request ID and command returns its recorded result within the ten-minute retry window.

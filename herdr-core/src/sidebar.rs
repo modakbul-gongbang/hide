@@ -243,7 +243,7 @@ pub struct SessionAgentPayload {
     pub(crate) facts: Option<crate::request_view::RowFacts>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, serde::Serialize, Eq, PartialEq)]
 pub struct SessionAgentSessionPayload {
     pub kind: String,
     pub value: String,
@@ -402,16 +402,15 @@ pub fn project_pane_children(
     agents: &[SidebarAgentSnapshot],
     pane_id: &str,
     tokens: crate::agent_hooks::PaneHookTokens,
-    status_of: &dyn Fn(hide_agent_hooks::AgentRuntime) -> Option<hide_agent_hooks::HookStatus>,
+    status_of: &dyn Fn(hide_agent_adapter::HookDialect) -> Option<hide_agent_hooks::HookStatus>,
 ) -> Option<crate::model::PaneChildrenSnapshot> {
     let agent = agents.iter().find(|agent| agent.pane_id == pane_id)?;
-    let runtime = hide_agent_adapter::adapter(&agent.agent_kind)
-        .and_then(|row| row.subagent_counts)
-        .map(hide_agent_hooks::AgentRuntime::from_dialect);
-    let status = runtime.and_then(status_of);
+    let dialect =
+        hide_agent_adapter::adapter(&agent.agent_kind).and_then(|row| row.subagent_counts);
+    let status = dialect.and_then(status_of);
     let instrumentation = hide_agent_hooks::diagnosis::instrumentation(
         hide_agent_hooks::diagnosis::PaneObservation {
-            runtime,
+            dialect,
             token_version: tokens.version,
             working: tokens.working,
             done: tokens.done,
@@ -467,7 +466,7 @@ pub fn project_pane_children_connected(
     agents: &[SidebarAgentSnapshot],
     pane_id: &str,
     tokens: crate::agent_hooks::PaneHookTokens,
-    status_of: &dyn Fn(hide_agent_hooks::AgentRuntime) -> Option<hide_agent_hooks::HookStatus>,
+    status_of: &dyn Fn(hide_agent_adapter::HookDialect) -> Option<hide_agent_hooks::HookStatus>,
     codex_daemon_on: bool,
 ) -> Option<crate::model::PaneChildrenSnapshot> {
     let mut children = project_pane_children(agents, pane_id, tokens, status_of)?;
@@ -481,8 +480,9 @@ pub fn project_pane_children_connected(
 
 /// Whether Hide hears one pane's session, and why not.
 ///
-/// Only Claude Code and Codex have a hook that can speak, so no other agent
-/// has a connection to judge (B19). An agent switched off has no status, and
+/// Only Claude Code's and Codex's sessions can be reopened to connect them, so
+/// no other agent has a connection to judge (B19); an OpenCode session started
+/// before Hide's plugin keeps its children mark and reason instead. An agent switched off has no status, and
 /// a machine whose hooks Hide has not read leaves the cause unknown rather
 /// than naming one (B16).
 fn pane_connection(
@@ -668,6 +668,9 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .as_ref()
             .and_then(|facts| facts.native_session_id.clone())
             .or_else(|| {
+                if hide_agent_adapter::canonical_kind(agent_kind) == "pi" {
+                    return None;
+                }
                 agent
                     .agent_session
                     .as_ref()
@@ -1646,6 +1649,24 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_reported_pi_id_grants_no_fork_until_the_current_reader_proves_it() {
+        let mut agent: SessionAgentPayload = serde_json::from_value(json!({
+            "pane_id":"p", "agent":"pi", "agent_status":"idle", "state_change_seq":1,
+            "agent_session":{"kind":"id", "value":"reported-native-id"}
+        }))
+        .unwrap();
+        assert!(project_agent(agent.clone()).unwrap().session_id.is_none());
+        agent.facts = Some(crate::request_view::RowFacts {
+            native_session_id: Some("proven-native-id".into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            project_agent(agent).unwrap().session_id.as_deref(),
+            Some("proven-native-id")
+        );
     }
 
     /// The old `summary` token is not read: a plugin still publishing it

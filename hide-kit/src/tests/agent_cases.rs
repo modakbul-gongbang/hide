@@ -104,7 +104,10 @@ fn an_agent_that_is_not_on_gets_nothing_until_the_operator_switches_it_on() {
     assert!(
         std::fs::read_to_string(cursor_hooks(&fixture))
             .unwrap()
-            .contains("hide-guidance@1")
+            .contains(&format!(
+                "hide-guidance@{}",
+                hide_agent_hooks::guidance::GUIDANCE_VERSION
+            ))
     );
     assert_eq!(record(&fixture)["agents"]["cursor"], true);
 }
@@ -728,7 +731,10 @@ fn cursor_gets_the_guidance_hook_with_the_switch_and_loses_it_with_it() {
     let hook = agent(&report, "cursor").hook.as_ref().unwrap();
     assert_eq!(hook.state, ComponentState::Installed, "{hook:?}");
     let written = std::fs::read_to_string(fixture.home().join(file)).unwrap();
-    assert!(written.contains("hide-guidance@1"));
+    assert!(written.contains(&format!(
+        "hide-guidance@{}",
+        hide_agent_hooks::guidance::GUIDANCE_VERSION
+    )));
 
     let report = apply(&fixture.target, &Scope::agents([], ["cursor"]));
 
@@ -741,26 +747,82 @@ fn cursor_gets_the_guidance_hook_with_the_switch_and_loses_it_with_it() {
 }
 
 #[test]
-fn only_claude_code_and_codex_do_everything_and_the_others_are_partial() {
+fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_and_cursor_are_partial()
+ {
     use crate::agents::Feature::{self, *};
-    // The expected rows come from the PRD and the hook research, not from
-    // the table: what Hide does for each agent in this build (D-10, B18).
-    // The session-reader common contract B1/B6 enables starts for the five
-    // partial agents without enabling their future reader/sleep/fork features.
-    let expected: [(&str, &[Feature]); 7] = [
-        ("claude-code", &Feature::ALL),
-        ("codex", &Feature::ALL),
-        ("grok", &[Skill, HerdrIntegration, Start]),
-        ("opencode", &[Skill, HerdrIntegration, Start]),
-        ("pi", &[Skill, HerdrIntegration, Start]),
-        ("omp", &[Skill, HerdrIntegration, Start]),
-        ("cursor", &[Skill, Guidance, HerdrIntegration, Start]),
+    // The expected rows come from the PRDs and the hook research, not from
+    // the table: what Hide does for each agent in this build (D-10, B18;
+    // opencode-plugin D-11: OpenCode takes letters and is refused a launch,
+    // so it is no longer Basic, while no bell rings for it; grok-cursor-hooks:
+    // Grok and Cursor get the spawn guard and the subagent count from their
+    // official hooks, take no letters and stay Basic, and Grok discards a
+    // session-start hook's output). The session-reader common contract B1/B6
+    // enables starts for the five agents besides Claude Code and Codex
+    // without enabling their future reader/sleep/fork features. The complete
+    // Pi slice adds native title and exact sleep/fork beside the letters and
+    // spawn guard of Hide's extension.
+    let opencode = [
+        Skill,
+        Guidance,
+        Letters,
+        Memory,
+        Subagents,
+        SpawnGuard,
+        HerdrIntegration,
+        Start,
+    ];
+    // pi-omp-extension D-08, D-10: Pi and omp take letters and are refused a
+    // launch through Hide's extension; only omp runs subagents, and no bell
+    // rings for either. Pi's session reader adds its sleep, fork and titles.
+    let pi = [
+        Skill,
+        Guidance,
+        Letters,
+        SpawnGuard,
+        HerdrIntegration,
+        Sleep,
+        Fork,
+        Start,
+        Titles,
+    ];
+    let omp = [
+        Skill,
+        Guidance,
+        Letters,
+        Subagents,
+        SpawnGuard,
+        HerdrIntegration,
+        Start,
+    ];
+    let expected: [(&str, &[Feature], bool); 7] = [
+        ("claude-code", &Feature::ALL, false),
+        ("codex", &Feature::ALL, false),
+        (
+            "grok",
+            &[Skill, Subagents, SpawnGuard, HerdrIntegration, Start],
+            true,
+        ),
+        ("opencode", &opencode, false),
+        ("pi", &pi, false),
+        ("omp", &omp, false),
+        (
+            "cursor",
+            &[
+                Skill,
+                Guidance,
+                Subagents,
+                SpawnGuard,
+                HerdrIntegration,
+                Start,
+            ],
+            true,
+        ),
     ];
     assert_eq!(
         ADAPTERS.iter().map(|row| row.id).collect::<Vec<_>>(),
-        expected.map(|(id, _)| id)
+        expected.map(|(id, _, _)| id)
     );
-    for (id, supported) in expected {
+    for (id, supported, partial) in expected {
         let row = crate::agents::adapter(id).unwrap();
         for feature in Feature::ALL {
             assert_eq!(
@@ -769,15 +831,18 @@ fn only_claude_code_and_codex_do_everything_and_the_others_are_partial() {
                 "{id}: {feature:?}"
             );
         }
-        assert_eq!(row.partial(), supported.len() != Feature::ALL.len(), "{id}");
+        assert_eq!(row.partial(), partial, "{id}");
     }
 }
 
 #[test]
 fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
-    // Letters, Memory and subagent counts are the six-event hook, which the
-    // hook crate has a runtime for; an agent claiming them without one would
-    // be a popover that says more than the kit installs.
+    // Letters and Memory come from the six-event hook or a script file of
+    // Hide's (OpenCode's plugin, Pi's and omp's extension),
+    // which the hook crate speaks a dialect for; the subagent count and the
+    // spawn guard also come from Grok's and Cursor's own hook files. An agent
+    // claiming them without a hook would be a popover that says more than
+    // the kit installs.
     let with_runtime: Vec<&str> = ADAPTERS
         .iter()
         .filter(|row| row.supports(crate::agents::Feature::Letters))
@@ -785,27 +850,275 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
         .collect();
     assert_eq!(
         with_runtime.len(),
-        hide_agent_hooks::AgentRuntime::ALL.len()
+        hide_agent_adapter::HookDialect::ALL
+            .iter()
+            .filter(|dialect| ADAPTERS.iter().any(|row| {
+                hide_agent_adapter::adapter(row.id)
+                    .is_some_and(|adapter| adapter.prompt_hook == Some(**dialect))
+            }))
+            .count()
     );
     for row in ADAPTERS {
-        let part = matches!(row.hook, HookSupport::Part(_));
+        let instrumented = matches!(row.hook, HookSupport::Part(_) | HookSupport::Plugin(_));
         assert_eq!(
             row.supports(crate::agents::Feature::Letters),
-            part,
+            instrumented,
             "{}",
             row.id
         );
+        // Memory needs the hook too, and its own declaration (Pi's and omp's
+        // Memory waits).
+        let declared = hide_agent_adapter::adapter(row.id).unwrap();
         assert_eq!(
             row.supports(crate::agents::Feature::Memory),
-            part,
-            "{}",
+            instrumented && declared.memory.is_some(),
+            "{}: memory",
+            row.id
+        );
+        // The subagent count and the spawn guard need any hook of Hide's,
+        // including Grok's and Cursor's own hook files, and each its own
+        // declaration (Pi runs no subagents).
+        let hook = !matches!(row.hook, HookSupport::None);
+        assert_eq!(
+            row.supports(crate::agents::Feature::Subagents),
+            hook && declared.subagent_counts.is_some(),
+            "{}: subagents",
             row.id
         );
         assert_eq!(
-            row.supports(crate::agents::Feature::Subagents),
-            part,
-            "{}",
+            row.supports(crate::agents::Feature::SpawnGuard),
+            hook && declared.spawn_guard.is_some(),
+            "{}: spawn guard",
             row.id
         );
     }
+}
+
+fn grok_hooks(fixture: &Fixture) -> PathBuf {
+    fixture.home().join(".grok/hooks/hide.json")
+}
+
+#[test]
+fn grok_gets_its_own_hook_file_beside_the_others_and_only_inside_its_own_folder() {
+    let fixture = Fixture::new();
+    install(&fixture, "grok", ".grok");
+    // Herdr's and Orca's files are already there and stay byte for byte.
+    let herdr = br#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/herdr.sh"}]}]}}"#;
+    set_up(&fixture, ".grok/hooks");
+    std::fs::write(fixture.home().join(".grok/hooks/herdr.json"), herdr).unwrap();
+
+    let report = apply(&fixture.target, &Scope::agents(["grok"], []));
+    let grok = agent(&report, "grok");
+    assert_eq!(
+        grok.hook.as_ref().unwrap().state,
+        ComponentState::Installed,
+        "{grok:?}"
+    );
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(grok_hooks(&fixture)).unwrap()).unwrap();
+    for event in [
+        "SessionStart",
+        "PreToolUse",
+        "SubagentStart",
+        "SubagentStop",
+        "Stop",
+    ] {
+        let command = written["hooks"][event][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{event}: {written}"));
+        assert!(command.contains("--runtime grok"), "{command}");
+        assert!(command.contains(&format!("--event {event}")), "{command}");
+    }
+    assert_eq!(
+        written["hooks"]["PreToolUse"][0]["matcher"],
+        "Bash|ask_user_question|exit_plan_mode"
+    );
+    assert_eq!(
+        std::fs::read(fixture.home().join(".grok/hooks/herdr.json")).unwrap(),
+        herdr
+    );
+
+    // An entry the operator edited reads Outdated and is theirs until
+    // Reinstall, which puts Hide's back (B8).
+    let edited = std::fs::read_to_string(grok_hooks(&fixture))
+        .unwrap()
+        .replace("--event Stop", "--event Stop --verbose");
+    std::fs::write(grok_hooks(&fixture), &edited).unwrap();
+    let report = apply(&fixture.target, &Scope::automatic());
+    let hook = agent(&report, "grok").hook.clone().unwrap();
+    assert_eq!(hook.state, ComponentState::Outdated, "{hook:?}");
+    assert!(hook.reason.unwrap().contains("edited"));
+    assert_eq!(
+        std::fs::read_to_string(grok_hooks(&fixture)).unwrap(),
+        edited
+    );
+    let report = apply(&fixture.target, &Scope::agents(["grok"], []));
+    assert_eq!(
+        agent(&report, "grok").hook.as_ref().unwrap().state,
+        ComponentState::Installed
+    );
+    assert!(
+        !std::fs::read_to_string(grok_hooks(&fixture))
+            .unwrap()
+            .contains("--verbose")
+    );
+
+    // Switched off, Hide's own file goes and Herdr's stays.
+    let report = apply(&fixture.target, &Scope::agents([], ["grok"]));
+    assert_eq!(
+        agent(&report, "grok").hook.as_ref().unwrap().state,
+        ComponentState::Off
+    );
+    assert!(!grok_hooks(&fixture).exists());
+    assert_eq!(
+        std::fs::read(fixture.home().join(".grok/hooks/herdr.json")).unwrap(),
+        herdr
+    );
+}
+
+#[test]
+fn grok_without_its_own_folder_gets_no_folder_and_its_row_says_why() {
+    let fixture = Fixture::new();
+    executable(&fixture.home().join(".local/bin/grok"), "#!/bin/sh\n");
+    let report = apply(&fixture.target, &Scope::agents(["grok"], []));
+    let hook = agent(&report, "grok").hook.clone().unwrap();
+    assert_eq!(hook.state, ComponentState::Absent, "{hook:?}");
+    assert!(hook.reason.unwrap().contains(".grok"));
+    assert!(!fixture.home().join(".grok").exists());
+}
+
+fn opencode_plugin(fixture: &Fixture) -> PathBuf {
+    hide_agent_hooks::opencode::PLUGIN.path(fixture.home())
+}
+
+#[cfg(unix)]
+#[test]
+fn opencode_switched_on_gets_hides_plugin_beside_herdrs_and_reads_installed() {
+    let fixture = Fixture::new();
+    install(&fixture, "opencode", ".config/opencode");
+    let herdr = fixture
+        .home()
+        .join(".config/opencode/plugins/herdr-agent-state.js");
+    std::fs::create_dir_all(herdr.parent().unwrap()).unwrap();
+    std::fs::write(&herdr, b"herdr's plugin").unwrap();
+
+    let report = apply(&fixture.target, &Scope::agents(["opencode"], []));
+
+    let opencode = agent(&report, "opencode");
+    let hook = opencode.hook.as_ref().unwrap();
+    assert_eq!(hook.state, ComponentState::Installed, "{opencode:?}");
+    assert_eq!(hook.location.as_deref(), opencode_plugin(&fixture).to_str());
+    assert_eq!(
+        std::fs::read_to_string(opencode_plugin(&fixture)).unwrap(),
+        hide_agent_hooks::opencode::PLUGIN.text(&fixture.target.kit_dir.join("hide-agent-hooks"))
+    );
+    assert_eq!(std::fs::read(&herdr).unwrap(), b"herdr's plugin");
+    assert!(
+        record(&fixture)["installed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("hook:opencode"))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_edited_opencode_plugin_reads_outdated_and_stays_until_reinstall() {
+    let fixture = Fixture::new();
+    install(&fixture, "opencode", ".config/opencode");
+    apply(&fixture.target, &Scope::agents(["opencode"], []));
+    let edited = std::fs::read_to_string(opencode_plugin(&fixture))
+        .unwrap()
+        .replace("RUNNING_LIMIT = 8", "RUNNING_LIMIT = 3");
+    std::fs::write(opencode_plugin(&fixture), &edited).unwrap();
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    let hook = agent(&report, "opencode").hook.clone().unwrap();
+    assert_eq!(hook.state, ComponentState::Outdated);
+    assert!(hook.reason.unwrap().contains("edited"));
+    assert_eq!(
+        std::fs::read_to_string(opencode_plugin(&fixture)).unwrap(),
+        edited
+    );
+
+    // Reinstall is the agent's switch made again.
+    let report = apply(&fixture.target, &Scope::agents(["opencode"], []));
+    assert_eq!(
+        agent(&report, "opencode").hook.as_ref().unwrap().state,
+        ComponentState::Installed
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn switching_opencode_off_removes_only_an_unedited_plugin() {
+    let fixture = Fixture::new();
+    install(&fixture, "opencode", ".config/opencode");
+    apply(&fixture.target, &Scope::agents(["opencode"], []));
+
+    let report = apply(&fixture.target, &Scope::agents([], ["opencode"]));
+
+    assert_eq!(
+        agent(&report, "opencode").hook.as_ref().unwrap().state,
+        ComponentState::Off
+    );
+    assert!(!opencode_plugin(&fixture).exists());
+    assert!(
+        !record(&fixture)["installed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("hook:opencode"))
+    );
+
+    // An edited plugin is the operator's: switching off leaves it.
+    apply(&fixture.target, &Scope::agents(["opencode"], []));
+    let edited = std::fs::read_to_string(opencode_plugin(&fixture))
+        .unwrap()
+        .replace("RUNNING_LIMIT = 8", "RUNNING_LIMIT = 3");
+    std::fs::write(opencode_plugin(&fixture), &edited).unwrap();
+    apply(&fixture.target, &Scope::agents([], ["opencode"]));
+    assert_eq!(
+        std::fs::read_to_string(opencode_plugin(&fixture)).unwrap(),
+        edited
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn opencode_without_its_config_folder_gets_no_folder_made_and_says_why() {
+    let fixture = Fixture::new();
+    executable(&fixture.home().join(".local/bin/opencode"), "#!/bin/sh\n");
+
+    let report = apply(&fixture.target, &Scope::agents(["opencode"], []));
+
+    let hook = agent(&report, "opencode").hook.clone().unwrap();
+    assert_eq!(hook.state, ComponentState::Absent);
+    assert!(hook.reason.unwrap().contains("has not created"));
+    assert!(!fixture.home().join(".config/opencode").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_plugin_named_like_hides_that_hide_did_not_write_is_left_alone() {
+    let fixture = Fixture::new();
+    install(&fixture, "opencode", ".config/opencode");
+    std::fs::create_dir_all(opencode_plugin(&fixture).parent().unwrap()).unwrap();
+    std::fs::write(
+        opencode_plugin(&fixture),
+        "export const Mine = async () => ({})\n",
+    )
+    .unwrap();
+
+    let report = apply(&fixture.target, &Scope::agents(["opencode"], []));
+
+    let hook = agent(&report, "opencode").hook.clone().unwrap();
+    assert_eq!(hook.state, ComponentState::Absent);
+    assert!(hook.reason.unwrap().contains("did not write"));
+    assert_eq!(
+        std::fs::read_to_string(opencode_plugin(&fixture)).unwrap(),
+        "export const Mine = async () => ({})\n"
+    );
+    apply(&fixture.target, &Scope::agents([], ["opencode"]));
+    assert!(opencode_plugin(&fixture).exists());
 }

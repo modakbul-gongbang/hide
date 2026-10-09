@@ -87,15 +87,33 @@ export function checkFailedReason(code: string): "agents.checkReason.unreachable
 }
 
 /** The pieces of one agent that a Reinstall would repair, the failed ones first (B13, B20). */
-export type AgentProblem = { part: "skill" | "hook" | "herdr"; piece: KitPiece };
+/** The hook piece is named by what the contract says it is: OpenCode's is a plugin, Pi's and omp's an extension. */
+export type AgentProblem = { part: "skill" | "hook" | "plugin" | "extension" | "herdr"; piece: KitPiece };
+
+function hookPart(agent: KitAgent): "hook" | "plugin" | "extension" {
+  const kind = agentAdapter(agent.id)?.hook_kind;
+  return kind === "plugin" || kind === "extension" ? kind : "hook";
+}
 
 export function agentProblems(agent: KitAgent): AgentProblem[] {
   if (!agent.enabled) return [];
   const pieces: AgentProblem[] = [{ part: "skill", piece: agent.skill }];
-  if (agent.hook) pieces.push({ part: "hook", piece: agent.hook });
+  if (agent.hook) pieces.push({ part: hookPart(agent), piece: agent.hook });
   if (agent.herdr) pieces.push({ part: "herdr", piece: agent.herdr });
   const broken = pieces.filter(({ piece }) => kitPartNeedsReinstall(piece));
   return [...broken.filter(({ piece }) => piece.state === "failed"), ...broken.filter(({ piece }) => piece.state !== "failed")];
+}
+
+/**
+ * Why Hide could not put an agent's hook in, for an agent that is on and found (PRD opencode-plugin B14): the
+ * agent has not made its configuration folder yet, or a file of that name is not Hide's. It is no repair, so it
+ * is a quiet line without Reinstall, and an agent whose program is gone says that elsewhere.
+ */
+export function agentHookWait(agent: KitAgent): AgentProblem | null {
+  if (!agent.enabled || agent.availability !== "available") return null;
+  const hook = agent.hook;
+  if (hook?.state !== "absent" || !hook.reason) return null;
+  return { part: hookPart(agent), piece: hook };
 }
 
 /**

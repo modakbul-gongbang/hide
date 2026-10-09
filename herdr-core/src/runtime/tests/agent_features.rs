@@ -18,23 +18,50 @@ fn herdr_kind(adapter: &hide_kit::AgentAdapter) -> &'static str {
 fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
     for adapter in hide_kit::agents::ADAPTERS {
         let kind = herdr_kind(adapter);
-        let hook = crate::agent_hooks::runtime_of(kind).is_some();
-        for feature in [Feature::Letters, Feature::Memory, Feature::Subagents] {
-            assert_eq!(adapter.supports(feature), hook, "{kind}: {feature:?}");
-        }
+        // What instruments a session: a settings-file hook the core reads a
+        // runtime for, or a script file of Hide's the kit installs (OpenCode's
+        // plugin, Pi's and omp's extension).
+        let hook = crate::agent_hooks::runtime_of(kind).is_some()
+            || matches!(adapter.hook, hide_kit::HookSupport::Plugin(_));
+        assert_eq!(adapter.supports(Feature::Letters), hook, "{kind}: letters");
+        // Memory needs that hook and its own declaration (Pi's and omp's
+        // Memory waits).
+        let declared = hide_agent_adapter::adapter(adapter.id).unwrap();
+        assert_eq!(
+            adapter.supports(Feature::Memory),
+            hook && declared.memory.is_some(),
+            "{kind}: memory"
+        );
+        // The pane header reads a count for the agents the leaf names a
+        // counting dialect for: the instrumented ones, and Grok's and
+        // Cursor's own hooks (PRD grok-cursor-hooks); Pi runs no subagents.
+        let counted = declared.subagent_counts.is_some();
+        assert_eq!(
+            adapter.supports(Feature::Subagents),
+            counted,
+            "{kind}: subagents"
+        );
+        // Letters reach exactly the kinds the mailbox hands them to.
+        assert_eq!(
+            adapter.supports(Feature::Letters),
+            crate::delivery::mailbox::prompt_hook(kind),
+            "{kind}: letters"
+        );
         // The doorbell rings for the core's own target list.
         assert_eq!(
             adapter.supports(Feature::Bell),
             crate::delivery::doorbell::bell_target(kind),
             "{kind}: bell"
         );
-        // The guard is the hook's `PreToolUse` entry, so an agent has it
-        // exactly when the hook the core instruments for it registers that
-        // event.
+        // The guard is the hook's `PreToolUse` entry, the plugin's or
+        // extension's tool call, or Grok's and Cursor's own hook, so an agent
+        // has it exactly when one of those counts for it and declares it.
         assert_eq!(
             adapter.supports(Feature::SpawnGuard),
-            hook && hide_agent_hooks::HookEvent::ALL
-                .contains(&hide_agent_hooks::HookEvent::PreToolUse),
+            (hook || matches!(adapter.hook, hide_kit::HookSupport::Guidance(_)))
+                && declared.spawn_guard.is_some()
+                && hide_agent_hooks::HookEvent::ALL
+                    .contains(&hide_agent_hooks::HookEvent::PreToolUse),
             "{kind}: spawn guard"
         );
         assert_eq!(
@@ -86,7 +113,7 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
         doc_url: String::new(),
     };
     let report = hide_kit::KitReport {
-        agents: vec![row("claude-code"), row("omp")],
+        agents: vec![row("claude-code"), row("grok")],
         ..Default::default()
     };
     let kit = crate::model::KitSnapshot::from_report(&report);
@@ -94,19 +121,28 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
     let claude = &kit.agents[0];
     assert!(!claude.partial);
     assert!(claude.features.iter().all(|feature| feature.supported));
-    let omp = &kit.agents[1];
-    assert!(omp.partial, "the chip shows whether or not the agent is on");
+    let grok = &kit.agents[1];
+    assert!(
+        grok.partial,
+        "the chip shows whether or not the agent is on"
+    );
     assert_eq!(
-        omp.features
+        grok.features
             .iter()
             .filter(|feature| feature.supported)
             .map(|feature| feature.id)
             .collect::<Vec<_>>(),
-        [Feature::Skill, Feature::HerdrIntegration, Feature::Start],
-        "omp can start, independently of its reader and lifecycle features"
+        [
+            Feature::Skill,
+            Feature::Subagents,
+            Feature::SpawnGuard,
+            Feature::HerdrIntegration,
+            Feature::Start
+        ],
+        "grok can start and guards and counts through its own hook, independently of its reader and lifecycle features"
     );
     assert_eq!(
-        omp.features
+        grok.features
             .iter()
             .map(|feature| feature.id)
             .collect::<Vec<_>>(),

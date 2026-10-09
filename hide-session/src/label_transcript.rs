@@ -8,8 +8,9 @@
 //! checkpoint and hands it back on the next read. A read locates the session
 //! Herdr's reference names (a Claude Code or Codex file, an OpenCode
 //! database row), proves the provider's native owner before and after the
-//! read, and returns only conversation events, never injected scaffolding or
-//! a path. Failures are stable reason codes.
+//! read, and returns conversation events without injected scaffolding.
+//! Pi additionally returns its resolved source as an internal effect expectation;
+//! callers never project that path into UI snapshots. Failures are stable codes.
 //!
 //! What every adapter answers, and nothing more: the session's own title,
 //! each person's message with its time, images and Hide letter sender, each
@@ -25,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::turns::TurnTracker;
 use crate::{
     Agent, ConfirmedLabelSession, ConversationCheckpoint, ConversationCursor, EventKind,
-    SessionError, SessionIdentity, SessionLocator, confirm_label_session,
+    SessionError, SessionIdentity, SessionLocator,
 };
 
 /// What the caller knows about the pane's conversation.
@@ -48,6 +49,15 @@ pub struct LabelTranscriptRequest {
     /// when the read starts over.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turns: Option<TurnTracker>,
+}
+
+/// One receipt line and the message it was stored in.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryReceiptPart {
+    /// The message's index in the session, as [`LabelEvent::offset`].
+    pub offset: u64,
+    /// The `<hide-memory-receipt …/>` line, and nothing else of the part.
+    pub text: String,
 }
 
 /// A conversation event as the label analysis reads it.
@@ -114,6 +124,12 @@ pub struct LabelTranscript {
     /// covered (PRD overview-request-view D-31).
     #[serde(default)]
     pub pr_sightings: Vec<crate::PrSighting>,
+    /// Hide's Project Memory receipts the session stored in a part only Hide's
+    /// own plugin writes (OpenCode's synthetic prompt part); the core checks
+    /// each one's tag before it records the injection (PRD opencode-plugin
+    /// D-12). Claude Code's and Codex's receipts are read by Memory's own pass.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memory_receipts: Vec<MemoryReceiptPart>,
     /// Where each subagent file was read up to, for the next request.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub subagents: BTreeMap<String, ConversationCheckpoint>,
@@ -155,6 +171,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         request.cwd.as_deref(),
     )?;
     let reported_id = (request.reference_kind == "id").then_some(request.reference_value.as_str());
+    let stamp = crate::search_read::stamp_at(&path);
     let mut cursor = request
         .checkpoint
         .clone()
@@ -177,12 +194,15 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
             return Err(reason.as_str().to_owned());
         }
     }
-    let after = confirm_label_session(request.agent, &path, reported_id)
-        .map_err(|error| error.to_string())?;
-    if after.owner != before.owner
-        || after.incarnation != before.incarnation
-        || after.bytes < before.bytes
-    {
+    let after = crate::confirm_session_file(
+        home,
+        request.agent,
+        &path,
+        reported_id,
+        request.cwd.as_deref(),
+    )
+    .map_err(|error| error.to_string())?;
+    if !crate::label_owner::same_read(&path, &before, &after, stamp.as_deref()) {
         return Err("label_session_read_changed".to_owned());
     }
     let mut events = Vec::with_capacity(parsed.events.len());
@@ -237,7 +257,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     }
     let title = match request.agent {
         Agent::Codex => codex_thread_name(home, request, &path),
-        Agent::Claude | Agent::OpenCode => parsed.title.clone(),
+        Agent::Claude | Agent::Pi | Agent::OpenCode => parsed.title.clone(),
     };
     let anchor = events
         .iter()
@@ -266,6 +286,7 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         title,
         custom_title: parsed.custom_title.clone(),
         pr_sightings,
+        memory_receipts: Vec::new(),
         subagents,
         turns,
     })
@@ -301,8 +322,8 @@ pub(crate) fn locate_confirmed(
         })?;
     let path = inside_agent_root(home, agent, &located)?;
     let reported_id = (reference_kind == "id").then_some(reference_value);
-    let confirmed =
-        confirm_label_session(agent, &path, reported_id).map_err(|error| error.to_string())?;
+    let confirmed = crate::confirm_session_file(home, agent, &path, reported_id, cwd)
+        .map_err(|error| error.to_string())?;
     Ok((path, confirmed))
 }
 

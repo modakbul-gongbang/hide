@@ -1598,7 +1598,7 @@
                     "required": false,
                     "requires": [],
                     "value": {
-                        "type": "key"
+                        "type": "session"
                     }
                 }
             ],
@@ -1736,7 +1736,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:b0759ca1374df712b0de93061334cb7662b30dab37c49b1553a2b777cad0c99a",
+    "digest": "sha256:61ac1f75358671367bea4f3ceb8e4a7ea92d0f7aa7b2d6d2e0a00a4ff8248c46",
     "envelopes": {
         "agent": {
             "answer": "value",
@@ -1765,6 +1765,7 @@
         "body": "not blank, at most 16384 bytes",
         "key": "non-empty, at most 256 bytes, no control characters, does not start with -",
         "one_of": "one of the listed values",
+        "session": "non-empty, at most 4096 bytes, no control characters, does not start with -",
         "text": "non-empty, no control characters, does not start with --",
         "unsigned": "a decimal integer from 0 to 18446744073709551615"
     }
