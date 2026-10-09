@@ -727,9 +727,12 @@ fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<
         fixture.signal_running_node(libc::SIGSTOP)?;
         let dialed = Instant::now();
         let answer = (|| {
-            let stream = hide_platform::ipc::LocalStream::connect(
-                &fixture.core_state.join("node-attach-socket"),
-            )?;
+            // The record names the socket the core bound in its own folder.
+            let socket = hide_node::pane_proof::recorded_socket_path(
+                &hided::attach::attach_record(&fixture.core_state),
+            )
+            .map_err(anyhow::Error::msg)?;
+            let stream = hide_platform::ipc::LocalStream::connect(&socket)?;
             stream.set_read_timeout(Some(Duration::from_secs(20)))?;
             let mut reader = std::io::BufReader::new(stream.duplicate());
             let mut writer = stream;
@@ -1032,42 +1035,76 @@ async fn draw_at(socket: &mut Socket, pane: &str, cols: u16, rows: u16) -> Resul
     Ok(())
 }
 
-/// Asks `pane` its terminal size from `typing`, or from `reading` when
-/// none is named, and reads `reading` until the answer, marked `mark` so a
-/// redraw of an earlier answer cannot pass for it; answers `rows cols`.
-async fn pane_grid(
-    typing: Option<&mut Socket>,
-    reading: &mut Socket,
-    pane: &str,
-    mark: u32,
-) -> Result<String> {
-    // The typed line reads `G$((N))`, which only the shell turns into `GN`.
-    // The answer has no spaces, which a whole redraw of the pane (another
-    // window's view of it) may draw as cursor moves.
-    let line = format!("echo G$(({mark}))x$(stty size | tr ' ' x)xend\r");
+/// Starts a loop in `pane` that writes the grid it runs at to `file`
+/// every 100 ms as `rows cols count`, so the test reads the grid without
+/// typing: a key typed to ask would itself be input, and would reach the
+/// node's pane ahead of a resize that goes through the core. A file, not
+/// the screen, because Herdr sends a screen as the cells that changed.
+async fn watch_grid(socket: &mut Socket, pane: &str, file: &std::path::Path) -> Result<()> {
+    let file = file.display();
+    let line = format!(
+        "n=0; while sleep 0.1; do n=$((n+1)); \
+         echo \"$(stty size) $n\" > '{file}.tmp' && mv -f '{file}.tmp' '{file}'; done\r"
+    );
     let keys = base64::engine::general_purpose::STANDARD.encode(line);
-    let event = json!({"pane_id": pane, "bytes_base64": keys});
-    match typing {
-        Some(typing) => send(typing, "key", event).await?,
-        None => send(reading, "key", event).await?,
-    }
-    let mut screen = String::new();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let marked = format!("G{mark}x");
-    while let Some(frame) = next_frame(reading, deadline).await? {
-        for (from, bytes) in chunks(&frame) {
-            if from == pane {
-                screen.push_str(&String::from_utf8_lossy(&bytes));
-            }
+    send(
+        socket,
+        "key",
+        json!({"pane_id": pane, "bytes_base64": keys}),
+    )
+    .await
+}
+
+/// One key from `socket` into `pane`: input, nothing the loop reads.
+async fn type_space(socket: &mut Socket, pane: &str) -> Result<()> {
+    let keys = base64::engine::general_purpose::STANDARD.encode(" ");
+    send(
+        socket,
+        "key",
+        json!({"pane_id": pane, "bytes_base64": keys}),
+    )
+    .await
+}
+
+/// The grid the loop wrote last, as `rows cols`, and its count.
+fn written_grid(file: &std::path::Path) -> Option<(String, u64)> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let mut parts = text.split_whitespace();
+    let (rows, cols, count) = (parts.next()?, parts.next()?, parts.next()?);
+    Some((format!("{rows} {cols}"), count.parse().ok()?))
+}
+
+/// Waits until the loop writes `expected`, within 20 s.
+async fn grid_becomes(file: &std::path::Path, expected: &str) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut last = None;
+    while Instant::now() < deadline {
+        last = written_grid(file);
+        if last.as_ref().is_some_and(|(grid, _)| grid == expected) {
+            return Ok(());
         }
-        let text = plain(&screen);
-        if let Some(at) = text.find(&marked)
-            && let Some((answer, _)) = text[at + marked.len()..].split_once("xend")
-        {
-            return Ok(answer.replace('x', " "));
-        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    bail!("{pane} never answered its size: {:?}", plain(&screen))
+    bail!("the pane ran at {last:?}, not {expected}")
+}
+
+/// Reads ten of the loop's samples (about a second) and requires each is
+/// `expected`.
+async fn grid_holds(file: &std::path::Path, expected: &str) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut seen = std::collections::BTreeSet::new();
+    while seen.len() < 10 {
+        ensure!(
+            Instant::now() < deadline,
+            "the loop wrote {seen:?} samples only"
+        );
+        if let Some((grid, count)) = written_grid(file) {
+            ensure!(grid == expected, "the pane ran at {grid}, not {expected}");
+            seen.insert(count);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    Ok(())
 }
 
 #[test]
@@ -1097,30 +1134,31 @@ fn a_pane_runs_at_the_grid_of_the_screen_that_last_typed_into_it() -> Result<()>
             )
             .await?;
             focus_checkout(&fixture, &mut socket, &node, &project).await?;
-            // The screen machine's window draws the pane wide and types.
+            // The screen machine's window types into the pane and draws it
+            // wide: the pane takes its grid.
             type_and_read(&mut socket, &pane, "echo wide-\"ok\"", "wide-ok").await?;
+            let grids = fixture.root.join("grid");
+            watch_grid(&mut socket, &pane, &grids).await?;
+            // The node tells the core of a pane's typing at most once a
+            // second, so the second is counted from the wide window's last.
+            let typed_wide = Instant::now();
             draw_at(&mut socket, &pane, 120, 33).await?;
-            let grid = pane_grid(None, &mut socket, &pane, 1).await.context("grid 1")?;
-            ensure!(grid == "33 120", "the typing window's grid: {grid}");
+            grid_becomes(&grids, "33 120").await.context("grid 1")?;
             // The core machine's window draws it narrow: the pane stays wide
             // while that window only looks.
             let (core_port, core_token) = fixture.core_screen();
             let mut window = screen_socket(core_port, &core_token).await?;
             first_snapshot(&mut window, Duration::from_secs(20)).await?;
             draw_at(&mut window, &pane, 70, 21).await?;
-            let grid = pane_grid(None, &mut socket, &pane, 2).await.context("grid 2")?;
-            ensure!(grid == "33 120", "a window that only looks resized the pane: {grid}");
-            // The node tells the core of a pane's typing at most once a
-            // second, so the second is counted from the wide window's last.
-            let typed_wide = Instant::now();
+            grid_holds(&grids, "33 120").await.context("grid 2")?;
             // It types: the pane takes its grid.
-            let grid = pane_grid(Some(&mut window), &mut socket, &pane, 3).await.context("grid 3")?;
-            ensure!(grid == "21 70", "the window that typed last: {grid}");
+            type_space(&mut window, &pane).await?;
+            grid_becomes(&grids, "21 70").await.context("grid 3")?;
             // The wide window types again, once its last notice of typing is
             // a second old: the pane is wide again.
             tokio::time::sleep_until((typed_wide + Duration::from_millis(1100)).into()).await;
-            let grid = pane_grid(None, &mut socket, &pane, 4).await.context("grid 4")?;
-            ensure!(grid == "33 120", "the wide window typed last: {grid}");
+            type_space(&mut socket, &pane).await?;
+            grid_becomes(&grids, "33 120").await.context("grid 4")?;
             Ok::<_, anyhow::Error>(())
         })
     })();
