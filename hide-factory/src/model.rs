@@ -323,14 +323,36 @@ impl GithubBlock {
 pub const COPY_COMMAND_LIMIT: usize = 400;
 
 /// A command a person is shown to copy, when it is one: one line with no
-/// control characters and no longer than [`COPY_COMMAND_LIMIT`]. A
-/// diagnosis writes it from facts a worker can shape, and the copy button
-/// writes it as it is, so a second line hidden from the screen or a cut
-/// marker would run too when pasted.
+/// control or invisible characters and no longer than
+/// [`COPY_COMMAND_LIMIT`]. A diagnosis writes it from facts a worker can
+/// shape, and the copy button writes it as it is, so a second line hidden
+/// from the screen, a cut marker, or a character that reorders or hides what
+/// is drawn would make the pasted text differ from the shown one.
 pub fn copyable_command(text: &str) -> Option<&str> {
     let text = text.trim();
-    (!text.is_empty() && text.len() <= COPY_COMMAND_LIMIT && !text.chars().any(char::is_control))
-        .then_some(text)
+    (!text.is_empty()
+        && text.len() <= COPY_COMMAND_LIMIT
+        && !text.chars().any(|c| c.is_control() || drawn_otherwise(c)))
+    .then_some(text)
+}
+
+/// The format characters and separators Unicode draws as nothing or as a
+/// change of direction: soft hyphen, bidirectional marks, embeddings,
+/// overrides and isolates, zero-width spaces and joiners, the word joiner
+/// and invisible operators, the byte-order mark, interlinear annotation and
+/// the line and paragraph separators.
+fn drawn_otherwise(c: char) -> bool {
+    matches!(
+        c,
+        '\u{AD}'
+            | '\u{61C}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+    )
 }
 
 /// A GitHub token scope as gh names one: lowercase words joined by `_` or
@@ -2178,6 +2200,25 @@ impl Task {
 #[cfg(test)]
 mod summary_tests {
     use super::*;
+
+    #[test]
+    fn a_copied_command_is_exactly_the_one_line_drawn() {
+        assert_eq!(copyable_command("  gh auth login "), Some("gh auth login"));
+        assert_eq!(
+            copyable_command("ls ~/작업/빌드"),
+            Some("ls ~/작업/빌드")
+        );
+        for hidden in [
+            "echo \u{202E}txt.hs",
+            "a\u{200B}b",
+            "echo \u{2066}x\u{2069}",
+            "\u{FEFF}gh auth login",
+            "one\u{2028}two",
+            "one\ntwo",
+        ] {
+            assert_eq!(copyable_command(hidden), None, "{hidden:?}");
+        }
+    }
 
     #[test]
     fn factory_sleep_preserves_the_workers_pane() {

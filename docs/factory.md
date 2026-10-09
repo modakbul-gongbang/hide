@@ -613,7 +613,7 @@ A cleanup line also lists the worktrees it removed and the disk it freed.
 A Task whose stop the schedule is working on is not a person's yet: its card is `recovering` and 결정 필요 does not list it.
 At 180 minutes it appears as a stopped item carrying what was tried (`attempts`) and, when a diagnosis gave one, its cause as evidence, and `retry` starts it again.
 A hold of the Factory that reaches 180 minutes becomes one `hold` to-do, and `hide factory resolve hold:<name>` (`start-disk_floor`, `start-disk_full`, `start-memory_critical`, `halt` or `reads`) starts its schedule over from that moment.
-A diagnosis that names a command outside the list gives a `command` to-do when the command is one line of at most 400 bytes with no control characters (anything else is refused and logged, never cut, since the copy button writes it as it is): the cause in one sentence, the command to copy, what running it does, and a button, `hide factory resolve C<n>`, that marks it done.
+A diagnosis that names a command outside the list gives a `command` to-do when the command is one line of at most 400 bytes with no control characters and none Unicode draws as nothing or as a change of direction (anything else is refused and logged, never cut, since the copy button writes it as it is): the cause in one sentence, the command to copy, what running it does, and a button, `hide factory resolve C<n>`, that marks it done.
 The same command is not added twice while one is open, and a Factory keeps at most 20 open.
 The diagnosis is told that logging in, deleting outside the Factory and installing tools are only ever a command for a person.
 
