@@ -515,6 +515,8 @@ Same-length title updates at EOF change no event offset and replay no conversati
 The existing label reader refreshes native-file titles and questions at a minimum three-second interval without requiring a Herdr lifecycle transition; failed native proofs revoke the row's authority and retry after fifteen seconds.
 Unanswered native `ask` calls supply exact bounded text and choices, and only their correlated result, a later human turn or an abort clears them.
 A failed current omp reread revokes native identity and question authority until a fresh proof, and nested child artifacts supply no root conversation or inferred child relationship.
+Before an omp resume or fork, Hide refuses option-like IDs, non-ASCII filenames with uncertain native case matching, and pending native directory migration or orphaned backup recovery.
+These action-only checks never move or repair a history; read-only labels and conversations retain their own proof, and the native CLI must resolve the pending maintenance before a fresh route can be admitted.
 The agent's own title rides the same proof as the label: it is laid on the row only while the pane's reference proves the session it was read from.
 The Herdr workspace label is never a name: it is whatever the workspace was called when it was opened, and one workspace can hold agents for several checkouts.
 The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.

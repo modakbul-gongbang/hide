@@ -8,6 +8,7 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::{
     Agent, ConversationEvent, DiscoveryBudget, EventKind, LineResult, RootRefusal,
@@ -43,41 +44,156 @@ fn encode_path(path: &Path) -> String {
         .collect()
 }
 
+fn absolute_directory_name(cwd: &Path) -> String {
+    let spelling = cwd.to_string_lossy();
+    let spelling = spelling.strip_prefix(['/', '\\']).unwrap_or(&spelling);
+    format!("--{}--", encode_path(Path::new(spelling)))
+}
+
+fn relative_directory_name(prefix: &str, relative: &Path) -> String {
+    let encoded = encode_path(relative);
+    if encoded.is_empty() {
+        prefix.to_owned()
+    } else if prefix.ends_with('-') {
+        format!("{prefix}{encoded}")
+    } else {
+        format!("{prefix}-{encoded}")
+    }
+}
+
+struct OmpDirectory {
+    name: String,
+    scope: &'static str,
+    shadowed_home: Option<String>,
+    canonical_home: PathBuf,
+}
+
+fn omp_directory(home: &Path, cwd: &Path) -> Result<OmpDirectory> {
+    let canonical_home = hide_platform::fs::identity::canonical(home)
+        .map_err(|_| anyhow!("label_session_default_directory_unconfirmed"))?;
+    let temp = hide_platform::fs::identity::canonical(&std::env::temp_dir())
+        .map_err(|_| anyhow!("label_session_default_directory_unconfirmed"))?;
+    // This is upstream's isRelativeWithin, including its refusal of a child
+    // whose first name starts with '..'. A broader containment test routes
+    // such a checkout to a different native bucket.
+    let within = |root: &Path| {
+        cwd.strip_prefix(root)
+            .ok()
+            .filter(|relative| !relative.to_string_lossy().starts_with(".."))
+            .map(Path::to_path_buf)
+    };
+    let home_relative = within(&canonical_home);
+    // Native omp checks temp before home, including temp nested under home.
+    let (name, scope, shadowed_home) = if let Some(relative) = within(&temp) {
+        (
+            relative_directory_name("-tmp", &relative),
+            "tmp",
+            home_relative.map(|relative| relative_directory_name("-", &relative)),
+        )
+    } else if let Some(relative) = home_relative {
+        (relative_directory_name("-", &relative), "home", None)
+    } else {
+        (absolute_directory_name(cwd), "abs", None)
+    };
+    Ok(OmpDirectory {
+        name,
+        scope,
+        shadowed_home,
+        canonical_home,
+    })
+}
+
 pub(crate) fn default_directory(home: &Path, agent: Agent, cwd: &Path) -> Result<PathBuf> {
-    if agent == Agent::Omp {
-        let canonical_home = hide_platform::fs::identity::canonical(home)
-            .map_err(|_| anyhow!("label_session_default_directory_unconfirmed"))?;
-        let temp = hide_platform::fs::identity::canonical(&std::env::temp_dir())
-            .map_err(|_| anyhow!("label_session_default_directory_unconfirmed"))?;
-        // Native omp checks the temporary root before home, including when
-        // the system temporary directory is nested under the account home.
-        for (root, prefix) in [(temp, "-tmp"), (canonical_home, "-")] {
-            if let Ok(relative) = cwd.strip_prefix(root) {
-                let encoded = encode_path(relative);
-                let bucket = if encoded.is_empty() {
-                    prefix.to_owned()
-                } else if prefix.ends_with('-') {
-                    format!("{prefix}{encoded}")
+    let name = if agent == Agent::Omp {
+        omp_directory(home, cwd)?.name
+    } else {
+        absolute_directory_name(cwd)
+    };
+    Ok(home.join(root_suffix(agent)).join(name))
+}
+
+/// OMP startup migrates these fixed aliases before resolving a selector.
+/// Refuse the pending native work; Hide neither migrates nor edits histories.
+fn confirm_omp_migrations(home: &Path, cwd: &Path, directory: &Path) -> Result<()> {
+    if !cwd.is_absolute() || cwd.components().any(|part| part == Component::ParentDir) {
+        return Err(anyhow!("session_route_unconfirmed"));
+    }
+    let canonical_cwd = hide_platform::fs::identity::canonical(cwd)
+        .map_err(|_| anyhow!("session_route_unconfirmed"))?;
+    let policy = omp_directory(home, &canonical_cwd)?;
+    let root = home.join(crate::OMP_SESSIONS);
+    for spelling in [home, policy.canonical_home.as_path()] {
+        let legacy = absolute_directory_name(spelling);
+        let prefix = format!("{}-", legacy.strip_suffix("--").unwrap());
+        if policy.name == legacy
+            || (policy.name.starts_with(&prefix) && policy.name.ends_with("--"))
+        {
+            // Root-wide home migration can also move the selected absolute
+            // bucket itself when an unrelated path shares the encoded prefix.
+            return Err(anyhow!("session_route_requires_native_migration"));
+        }
+    }
+    let mut aliases = vec![
+        absolute_directory_name(cwd),
+        absolute_directory_name(&canonical_cwd),
+    ];
+    if let Some(shadowed) = &policy.shadowed_home {
+        aliases.push(shadowed.clone());
+    }
+    // Root-wide home migration precedes the cwd-specific shadow migration.
+    for target in std::iter::once(&policy.name).chain(policy.shadowed_home.iter()) {
+        if let Some(remainder) = target.strip_prefix('-') {
+            for spelling in [home, policy.canonical_home.as_path()] {
+                let encoded = absolute_directory_name(spelling);
+                let home_name = encoded.strip_suffix("--").unwrap();
+                aliases.push(if remainder.is_empty() {
+                    encoded
                 } else {
-                    format!("{prefix}-{encoded}")
-                };
-                return Ok(home.join(root_suffix(agent)).join(bucket));
+                    format!("{home_name}-{remainder}--")
+                });
             }
         }
     }
-    let spelling = cwd.to_string_lossy();
-    let spelling = spelling.strip_prefix(['/', '\\']).unwrap_or(&spelling);
-    let encoded: String = spelling
+    // Reconstruct the native 17.2.5-17.2.8 migration key, action-only.
+    let mut readable = String::new();
+    for ch in canonical_cwd
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
         .chars()
-        .map(|ch| {
-            if matches!(ch, '/' | '\\' | ':') {
-                '-'
-            } else {
-                ch
-            }
-        })
-        .collect();
-    Ok(home.join(root_suffix(agent)).join(format!("--{encoded}--")))
+    {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+            readable.push(ch);
+        } else if !readable.ends_with('-') {
+            readable.push('-');
+        }
+    }
+    let readable = readable.trim_matches('-');
+    let readable = &readable[readable.len().saturating_sub(80)..];
+    let readable = if readable.is_empty() {
+        "project"
+    } else {
+        readable
+    };
+    let normalized = canonical_cwd.to_string_lossy().replace('\\', "/");
+    aliases.push(format!(
+        "{}-{readable}-{:x}",
+        policy.scope,
+        Sha256::digest(normalized.as_bytes())
+    ));
+    // At most eight fixed metadata probes, independent of session count.
+    for name in aliases {
+        let candidate = root.join(name);
+        if candidate.file_name() == directory.file_name() {
+            continue;
+        }
+        match fs::symlink_metadata(candidate) {
+            Ok(_) => return Err(anyhow!("session_route_requires_native_migration")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(anyhow!("session_route_unconfirmed")),
+        }
+    }
+    Ok(())
 }
 
 /// The home itself may have a platform alias. No component below it may be
@@ -207,12 +323,21 @@ pub(crate) fn header_from_reader(
 /// matching header, skips malformed prefixes and falls back to prefix/global
 /// matches. Refuse uncertainty instead of depending on directory enumeration.
 /// This directory scan is action-only, never a snapshot or per-file catalog read.
-pub(crate) fn confirm_route(home: &Path, agent: Agent, path: &Path, id: &str) -> Result<()> {
+pub(crate) fn confirm_route(
+    home: &Path,
+    agent: Agent,
+    path: &Path,
+    id: &str,
+    cwd: &Path,
+) -> Result<()> {
     let expected =
         inside_root(home, agent, path).map_err(|_| anyhow!("session_route_unconfirmed"))?;
     let directory = path
         .parent()
         .ok_or_else(|| anyhow!("session_route_unconfirmed"))?;
+    if agent == Agent::Omp {
+        confirm_omp_migrations(home, cwd, directory)?;
+    }
     let mut budget = DiscoveryBudget::default();
     let mut remaining = crate::SESSION_INCREMENT_READ_LIMIT_BYTES;
     let paths = crate::read_directory(directory, &mut budget).map_err(|error| match error {
@@ -221,6 +346,22 @@ pub(crate) fn confirm_route(home: &Path, agent: Agent, path: &Path, id: &str) ->
     })?;
     let mut matches = 0;
     for candidate in paths {
+        if agent == Agent::Omp
+            && let Some(primary) = candidate
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_suffix(".bak"))
+                .and_then(|name| name.rsplit_once('.').map(|(primary, _)| primary))
+                .filter(|name| name.ends_with(".jsonl"))
+        {
+            match fs::metadata(directory.join(primary)) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(anyhow!("session_route_requires_native_recovery"));
+                }
+                Err(_) => return Err(anyhow!("session_route_unconfirmed")),
+            }
+        }
         if !candidate
             .file_name()
             .is_some_and(|name| name.to_string_lossy().ends_with(".jsonl"))
@@ -250,8 +391,11 @@ pub(crate) fn confirm_route(home: &Path, agent: Agent, path: &Path, id: &str) ->
             let stem = candidate
                 .file_stem()
                 .and_then(|name| name.to_str())
+                .filter(|name| name.is_ascii())
                 .ok_or_else(|| anyhow!("session_route_unconfirmed"))?
                 .to_ascii_lowercase();
+            // Native uses ECMAScript Unicode lowercasing. Only ASCII native
+            // filenames have the same guaranteed selector semantics here.
             header.id.to_ascii_lowercase().starts_with(&needle)
                 || stem.starts_with(&needle)
                 || stem

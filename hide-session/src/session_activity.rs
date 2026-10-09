@@ -55,7 +55,8 @@ pub fn read(home: &Path, request: &SessionActivityRequest) -> Result<SessionActi
             .native_session_id
             .as_deref()
             .ok_or("session_route_unconfirmed")?;
-        crate::native_file::confirm_route(home, request.agent, &path, native_id)
+        let cwd = request.cwd.as_deref().ok_or("session_route_unconfirmed")?;
+        crate::native_file::confirm_route(home, request.agent, &path, native_id, Path::new(cwd))
             .map_err(|error| error.to_string())?;
     }
     let metadata =

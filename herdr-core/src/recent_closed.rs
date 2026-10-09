@@ -309,6 +309,9 @@ impl ClosedLayoutNode {
 
 pub fn resume_arguments(agent: &ClosedAgent) -> Option<Vec<String>> {
     let session_id = agent.session_id.as_ref()?;
+    if !hide_session::valid_native_id(session_id) {
+        return None;
+    }
     let dialect = hide_agent_adapter::adapter(&agent.kind)?.resume?;
     match dialect {
         hide_agent_adapter::LaunchDialect::Claude
@@ -394,6 +397,15 @@ mod tests {
 
     #[test]
     fn resume_arguments_resume_without_forking() {
+        for kind in ["pi", "omp"] {
+            assert!(
+                resume_arguments(&ClosedAgent {
+                    kind: kind.into(),
+                    session_id: Some("--yolo".into()),
+                })
+                .is_none()
+            );
+        }
         assert_eq!(
             resume_arguments(&ClosedAgent {
                 kind: "claude".into(),
