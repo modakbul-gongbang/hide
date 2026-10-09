@@ -16,7 +16,7 @@ use hide_session::turns::Waiting;
 
 use super::analysis::LabelEnd;
 use super::facts::SessionFacts;
-use super::store::{self, PaneRecord};
+use super::store::{self, PaneRecord, WakeRead};
 use crate::request_view::RowFacts;
 use crate::sidebar::{AgentLabel, SessionAgentPayload, SessionSnapshotPayload};
 
@@ -50,7 +50,7 @@ struct ProvenLabel {
     user_turn: Option<(u64, hide_session::turns::UserTurnFact)>,
     /// The expiries of the background tasks the session read proves alive,
     /// with the Herdr state it was read under.
-    wake: Option<(u64, Vec<Option<u64>>)>,
+    wake: Option<(u64, WakeRead)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -183,15 +183,18 @@ impl LabelOverlay {
             facts.user_turn = label.user_turn.as_ref().and_then(|(seq, fact)| {
                 (agent.state_change_seq == Some(*seq)).then(|| fact.clone())
             });
-            facts.wake_devices = label.wake.as_ref().map_or(0, |(seq, expiries)| {
-                if agent.state_change_seq != Some(*seq) {
-                    return 0;
-                }
-                let live = expiries
+            if let Some((_, read)) = label
+                .wake
+                .as_ref()
+                .filter(|(seq, _)| agent.state_change_seq == Some(*seq))
+            {
+                let live = read
+                    .expiries
                     .iter()
                     .filter(|expiry| expiry.is_none_or(|at| at > now));
-                u32::try_from(live.count()).unwrap_or(u32::MAX)
-            });
+                facts.wake_devices = u32::try_from(live.count()).unwrap_or(u32::MAX);
+                facts.wake_vanished = read.vanished;
+            }
             if let Some(summary) = &label.summary {
                 let working = agent.agent_status.as_deref() == Some("working");
                 let asking = summary.end == Some(LabelEnd::Question);
@@ -242,6 +245,7 @@ fn row_facts(facts: &SessionFacts) -> RowFacts {
         awaiting_operator: false,
         user_turn: None,
         wake_devices: 0,
+        wake_vanished: false,
         reply_wait: false,
     }
 }

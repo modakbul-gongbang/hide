@@ -18,15 +18,17 @@ import type { AgentRow, MarkCounts, TabAgent } from "./snapshot";
  * - `waiting`: what a waiting row waits for; it stays while the row waits.
  * - `quiet`: nothing to report; the line shows only on the selected or hovered
  *   row, where it is revealed in full.
+ * - `vanished`: the work the agent was waiting for died with its process; the
+ *   core sends no text and the sidebar says it in the operator's language.
  */
-export type LineMode = "request" | "news" | "waiting" | "quiet" | "raised_child";
+export type LineMode = "request" | "news" | "waiting" | "quiet" | "raised_child" | "vanished";
 
 export type RowLine = { text: string; mode: LineMode };
 
 /** The row's second line and why it shows, or null when the core gave it no sentence. */
 export function rowLine(agent: Pick<AgentRow, "state">): RowLine | null {
   const line = agent.state.line;
-  return line ? { text: line.text, mode: line.mode } : null;
+  return line && line.mode !== "vanished" ? { text: line.text, mode: line.mode } : null;
 }
 
 /**
@@ -36,8 +38,8 @@ export function rowLine(agent: Pick<AgentRow, "state">): RowLine | null {
  * sentence is read in the row's tooltip.
  */
 export function sidebarLine(agent: Pick<AgentRow, "state">): RowLine | null {
-  const line = rowLine(agent);
-  return line && line.mode !== "quiet" ? line : null;
+  const line = agent.state.line;
+  return line && line.mode !== "quiet" ? { text: line.text, mode: line.mode } : null;
 }
 
 /**
@@ -47,6 +49,7 @@ export function sidebarLine(agent: Pick<AgentRow, "state">): RowLine | null {
  * 남음`, `대기 · CI 끝나기를 기다림`.
  */
 export function lineText(t: TFunction<"translation">, agent: Pick<AgentRow, "state" | "wait" | "status_code">, line: RowLine): string {
+  if (line.mode === "vanished") return `${statusText(t, agent.status_code)} · ${t("agents.line.vanished")}`;
   const worded = line.mode !== "raised_child" && line.mode !== "request" && (agent.wait || agent.status_code === "stopped");
   return worded ? `${statusText(t, agent.status_code)} · ${line.text}` : line.text;
 }

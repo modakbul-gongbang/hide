@@ -150,6 +150,18 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
                 },
             }
         });
+    if super::axes::wake_vanished(agent) {
+        // The sentence is the web's, in the operator's language: the core
+        // says only that the work it waited for is gone.
+        line = Some(RowLine {
+            text: String::new(),
+            mode: "vanished",
+            tone: Tone {
+                kind: "subtle",
+                read: false,
+            },
+        });
+    }
     if let Some(child) = agent.raised_children.first() {
         line = Some(RowLine {
             text: child.reason.as_ref().map_or_else(

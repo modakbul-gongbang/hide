@@ -181,6 +181,14 @@ describe("the stopped and waiting words (blocked-state D-07, D-10)", () => {
     expect(lineText(t, blocked, sidebarLine(blocked)!)).toBe("디스크 여유가 없음");
   });
 
+  it("says in words that the work a stopped row waited for is gone, only on the sidebar (B16)", async () => {
+    const { t } = await createInterfaceI18n("ko");
+    const gone = row("g", { activity: "stopped", symbol: "◐", status_code: "stopped", detail: "CI 끝나기를 기다림" });
+    gone.state = { ...gone.state, line: { text: "", mode: "vanished", tone: { kind: "subtle", read: false } } };
+    expect(lineText(t, gone, sidebarLine(gone)!)).toBe("멈춤 · 기다리던 작업이 사라짐");
+    expect(rowLine(gone)).toBeNull();
+  });
+
   it("counts a stopped agent on the badge between working and done", () => {
     expect(badgeParts({ error: 1, working: 1, stopped: 2, done: 1 }).map((part) => part.symbol)).toEqual(["▲", "●", "◐", "✓"]);
   });

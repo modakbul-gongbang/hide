@@ -583,6 +583,14 @@ fn the_enter_that_approves_a_waiting_plan_is_the_operators_submit() {
 /// The overlay a label worker publishes after reading, under Herdr state
 /// `seq`, a Claude Code session whose process started background work.
 fn wake_overlay(seq: u64, marks: &[hide_session::turns::WakeMark]) -> LabelOverlay {
+    wake_overlay_with(seq, marks, false)
+}
+
+fn wake_overlay_with(
+    seq: u64,
+    marks: &[hide_session::turns::WakeMark],
+    summaries: bool,
+) -> LabelOverlay {
     use hide_session::turns::{TurnMark, TurnTracker};
     let mut turns = TurnTracker::default();
     for (offset, mark) in marks.iter().enumerate() {
@@ -593,9 +601,12 @@ fn wake_overlay(seq: u64, marks: &[hide_session::turns::WakeMark]) -> LabelOverl
         facts: operator_asked("빌드를 돌려줘"),
         turns: Some(turns),
         turns_seq: Some(seq),
+        goal: Some("빌드 돌리기".to_owned()),
+        line: "CI가 끝나기를 기다림".to_owned(),
+        end: Some(crate::labels::analysis::LabelEnd::Waiting),
         ..PaneRecord::default()
     };
-    LabelOverlay::of_records([(&PANE.to_owned(), &record)], true, false)
+    LabelOverlay::of_records([(&PANE.to_owned(), &record)], true, summaries)
 }
 
 fn claude_projection(status: &str, seq: u64) -> SessionSnapshotPayload {
@@ -655,6 +666,18 @@ fn a_proven_background_task_keeps_a_stopped_claude_row_waiting() {
         serde_json::Value::Null,
         "the task ended"
     );
+
+    // B16: the process that ran the task is gone and nothing has begun since.
+    runtime.set_label_overlay(wake_overlay_with(
+        4,
+        &[WakeMark::Boot, started(), WakeMark::Boot],
+        true,
+    ));
+    runtime.ingest_session(Ok(claude_projection("done", 4)));
+    let gone = row(&runtime);
+    assert_eq!(gone["wait"], serde_json::Value::Null, "{gone}");
+    assert_eq!(gone["status_code"], "stopped", "{gone}");
+    assert_eq!(gone["state"]["line"]["mode"], "vanished");
 
     let mut passed = wake_overlay(
         4,

@@ -214,6 +214,11 @@ pub struct TurnTracker {
     wake: Vec<WakeDevice>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     wake_overflow: bool,
+    /// A new process started while devices were proven alive, so the work the
+    /// agent was waiting for is gone. It holds until a turn or a device
+    /// begins.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    wake_vanished: bool,
 }
 
 fn is_zero(value: &u64) -> bool {
@@ -322,6 +327,12 @@ impl TurnTracker {
             .collect()
     }
 
+    /// The devices the agent waited for died with the process that ran them,
+    /// and nothing has begun since.
+    pub fn wake_vanished(&self) -> bool {
+        self.wake_vanished
+    }
+
     /// More devices were running at once than are tracked.
     pub fn wake_overflowed(&self) -> bool {
         self.wake_overflow
@@ -336,6 +347,7 @@ impl TurnTracker {
             match mark {
                 WakeMark::Boot => {
                     self.booted = true;
+                    self.wake_vanished = !self.wake.is_empty();
                     self.wake.clear();
                     self.wake_overflow = false;
                 }
@@ -346,6 +358,7 @@ impl TurnTracker {
                     if !self.booted || self.wake_overflow {
                         continue;
                     }
+                    self.wake_vanished = false;
                     if let Some(known) = self.wake.iter_mut().find(|device| device.id == *id) {
                         known.expires_at_unix_ms = *expires_at_unix_ms;
                     } else if self.wake.len() == WAKE_DEVICE_LIMIT {
@@ -392,6 +405,7 @@ impl TurnTracker {
         self.through = offset + 1;
         match mark {
             TurnMark::Started { turn, mode } => {
+                self.wake_vanished = false;
                 // A provider may repeat a native start at another byte
                 // offset. It must not reopen an answered plan or question.
                 if turn.is_some()
@@ -473,6 +487,7 @@ impl TurnTracker {
                 self.current(turn).end = Some(End::Aborted);
             }
             TurnMark::Human => {
+                self.wake_vanished = false;
                 self.questions.clear();
                 self.question_capacity = false;
                 self.unreadable = false;
@@ -483,6 +498,7 @@ impl TurnTracker {
                 }
             }
             TurnMark::HumanTurn => {
+                self.wake_vanished = false;
                 self.questions.clear();
                 self.question_capacity = false;
                 self.unreadable = false;

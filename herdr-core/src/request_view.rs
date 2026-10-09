@@ -57,6 +57,9 @@ pub struct RowFacts {
     /// Herdr state. Zero is "none proven", which for an agent whose session
     /// cannot report them is every case.
     pub(crate) wake_devices: u32,
+    /// The devices the agent waited for died with their process and nothing
+    /// has begun since (B16).
+    pub(crate) wake_vanished: bool,
     /// The agent sent a request or block letter whose answer it still waits
     /// for. Set by the runtime from the delivery ledger, never by a session
     /// read.

@@ -886,10 +886,28 @@ impl LabelWorker {
         record.incarnation = Some(transcript.confirmed.incarnation.clone());
         // The wait is bound to the state the read was asked under, and known
         // only once the backlog is read (D-06).
-        let waited = (record.turn_read(), record.user_turn());
+        let waited = (record.turn_read(), record.user_turn(), record.wake_read());
+        let overflowed = record
+            .turns
+            .as_ref()
+            .is_some_and(hide_session::turns::TurnTracker::wake_overflowed);
         record.turns = transcript.turns.clone();
         record.turns_seq = asked_seq.filter(|_| !transcript.has_more);
-        changed |= (record.turn_read(), record.user_turn()) != waited;
+        changed |= (record.turn_read(), record.user_turn(), record.wake_read()) != waited;
+        if !overflowed
+            && record
+                .turns
+                .as_ref()
+                .is_some_and(hide_session::turns::TurnTracker::wake_overflowed)
+        {
+            crate::diagnostic!(json!({
+                "component": "labels",
+                "kind": "wake_devices.capacity",
+                "pane_id": pane_id,
+                "limit": hide_session::turns::WAKE_DEVICE_LIMIT,
+                "message": "More background tasks ran at once than are tracked; the row does not wait on them",
+            }));
+        }
         self.dirty = true;
         let pane = self.panes.get_mut(pane_id).expect("checked above");
         if verdicts_forgotten {

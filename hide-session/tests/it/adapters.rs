@@ -390,11 +390,32 @@ mod wake_devices {
         assert_eq!(two[0], None);
         assert_eq!(two[1], Some(1_790_989_200_000 + 10 * 60_000 + 30 * 60_000));
 
+        assert!(
+            !read_whole(home.path(), Agent::Claude)
+                .turns
+                .unwrap()
+                .wake_vanished()
+        );
         append(&path, &[boot("SessionStart:startup")]);
+        let restarted = read_whole(home.path(), Agent::Claude);
         assert_eq!(
-            live(&read_whole(home.path(), Agent::Claude)),
+            live(&restarted),
             [],
             "a new process ends the old one's tasks"
+        );
+        assert!(
+            restarted.turns.unwrap().wake_vanished(),
+            "the work it waited for is gone"
+        );
+        append(
+            &path,
+            &[started("Command running in background with ID: fresh")],
+        );
+        let fresh = read_whole(home.path(), Agent::Claude);
+        assert_eq!(live(&fresh), [None]);
+        assert!(
+            !fresh.turns.unwrap().wake_vanished(),
+            "a new device begins again"
         );
     }
 

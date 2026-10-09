@@ -22,7 +22,7 @@ export type AgentState = {
   title_emphasized: boolean; selection_emphasizes_title: boolean;
   asking: boolean; working: boolean; waits_on_children: boolean;
   chip_tone: StatusTone; mark_tone: StatusTone;
-  line: { text: string; mode: "request" | "news" | "waiting" | "quiet" | "raised_child"; tone: StatusTone } | null;
+  line: { text: string; mode: "request" | "news" | "waiting" | "quiet" | "raised_child" | "vanished"; tone: StatusTone } | null;
   branch_badge: string | null;
   bucket: "turn" | "working" | "delegating" | "resting";
   attention_rank: number; graph_rank: 0 | 1 | 2 | 3; graph_chip: "turn" | "working" | "resting"; graph_resting: boolean;

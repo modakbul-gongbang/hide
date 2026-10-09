@@ -352,10 +352,19 @@ pub(crate) fn stopped_unfinished(agent: &SidebarAgentSnapshot) -> bool {
     demand == AgentDemand::None
         && activity == AgentActivity::Stopped
         && agent.wait.is_none()
-        && matches!(
-            agent.row_facts.as_ref().and_then(|facts| facts.end),
-            Some(LabelEnd::Unfinished | LabelEnd::Waiting)
-        )
+        && agent.row_facts.as_ref().is_some_and(|facts| {
+            matches!(facts.end, Some(LabelEnd::Unfinished | LabelEnd::Waiting))
+                || (facts.wake_vanished && facts.end.is_some())
+        })
+}
+
+/// A stopped row whose awaited work died with its process (B16).
+pub(crate) fn wake_vanished(agent: &SidebarAgentSnapshot) -> bool {
+    stopped_unfinished(agent)
+        && agent
+            .row_facts
+            .as_ref()
+            .is_some_and(|facts| facts.wake_vanished)
 }
 
 /// Whether any live descendant is still busy: working, or holding a
