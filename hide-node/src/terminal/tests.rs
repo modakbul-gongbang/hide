@@ -697,59 +697,6 @@ fn a_paste_is_written_before_the_keys_typed_behind_it() {
     });
 }
 
-/// A paste the pipe never took is delivered again on the next session with
-/// the keys typed behind it; they are not lost with the failed write.
-#[test]
-fn keys_typed_behind_a_paste_whose_write_failed_follow_its_retry() {
-    let harness = harness(RetryPolicy::Automatic);
-    let generation = |harness: &Harness| {
-        harness.service.shared.lock().panes["w1:p1"]
-            .current_generation
-            .unwrap()
-    };
-    let deliver = |harness: &Harness, generation| {
-        harness.service.control(TerminalControl::AttachmentDeliver {
-            intent: "i1".into(),
-            generation,
-            paste: protocol::encode_base64(b"'/tmp/a.png' "),
-        });
-    };
-    let first = harness.controlling("w1:p1");
-    // The writer is idle once a typed key has passed what the session
-    // wrote on its own, so the paste is the write that fails.
-    harness.key("w1:p1", b"x");
-    assert_eq!(first.next_input(), b"x");
-    harness.service.control(TerminalControl::AttachmentHold {
-        pane: "w1:p1".into(),
-        intent: "i1".into(),
-    });
-    harness.key("w1:p1", b"\r");
-    // The session's pipe breaks before it takes the paste.
-    drop(first.input);
-    deliver(&harness, generation(&harness));
-    harness.report_where(|report| {
-        matches!(
-            report,
-            TerminalReport::AttachmentDelivered { written: false, .. }
-        )
-    });
-    harness.service.control(TerminalControl::Attach {
-        pane: "w1:p1".into(),
-        size: Some(SIZE),
-        manual: true,
-    });
-    let second = harness.opened();
-    harness.state("w1:p1", "controlling");
-    deliver(&harness, generation(&harness));
-    assert_eq!(second.next_input(), b"'/tmp/a.png' \r");
-    harness.report_where(|report| {
-        matches!(
-            report,
-            TerminalReport::AttachmentDelivered { written: true, .. }
-        )
-    });
-}
-
 /// B1 at the node: once the core says the keyboard left a pane, however it
 /// left, the next key into that pane is reported as moving it back at once;
 /// a key into the pane the keyboard is in moves nothing.

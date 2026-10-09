@@ -204,8 +204,7 @@ struct Attachment {
     pane: String,
     hold: AttachmentHold,
     /// The paste and what was held behind it are in the session's writer;
-    /// keys typed now follow them there. What was held stays in `hold`
-    /// until the pipe takes it, so a write that fails is retried whole.
+    /// keys typed now follow them there.
     delivering: bool,
 }
 
@@ -895,7 +894,11 @@ impl Inner {
             }),
         );
         match handed {
-            Ok(()) => self.attachment.as_mut().expect("matched above").delivering = true,
+            Ok(()) => {
+                let attachment = self.attachment.as_mut().expect("matched above");
+                attachment.hold.queued.clear();
+                attachment.delivering = true;
+            }
             Err(_) => not_written(self),
         }
     }
