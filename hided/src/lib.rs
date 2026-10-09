@@ -25,6 +25,7 @@ pub mod node_daemon;
 pub mod node_panes;
 pub mod node_role;
 pub mod pane_auth;
+mod pane_sizes;
 pub mod placement;
 pub mod relay;
 pub mod server;
@@ -472,6 +473,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         mobile: Arc::clone(&mobile),
         relay_grants: Arc::clone(&relay_grants),
         own_screens: Arc::new(Mutex::new(0)),
+        pane_sizes: Arc::default(),
     };
     node_panes.serve(app.clone());
     let env_state_dir = env.state_dir.clone();

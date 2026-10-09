@@ -119,6 +119,8 @@ pub struct AppState {
     pub relay_grants: Arc<crate::attach::RelayGrants>,
     /// Windows of this machine open now (`OwnScreen`).
     pub own_screens: Arc<Mutex<usize>>,
+    /// Which screen each pane's terminal size follows (`pane_sizes`).
+    pub pane_sizes: Arc<crate::pane_sizes::PaneSizes>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1026,6 +1028,9 @@ async fn screen_loop(
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
+                        if relay.is_some() && relay_input(&state, connection, &text) {
+                            continue;
+                        }
                         match handle_client_text(&state, &text, connection) {
                             Ok(ClientAction::FileBytes(event)) => {
                                 if let Some(device) = event_device(&state.boundary, &event) {
@@ -1729,6 +1734,7 @@ fn handle_client_text(
             )));
         }
         Some("attachment_commit") => {
+            screen_input(state, connection, &payload_str(&event, "pane_id"));
             return Ok(ClientAction::Replies(handle_attachment_commit(
                 state, &event,
             )));
@@ -1747,12 +1753,27 @@ fn handle_client_text(
         // D-05).
         Some("key") => {
             let (target, bytes) = terminal_key(&event)?;
+            if let KeyTarget::Pane(pane) = &target {
+                screen_input(state, connection, pane);
+            }
             state.core.terminals.key(target, bytes, unix_ms_now());
             return Ok(ClientAction::Replies(Vec::new()));
         }
+        Some("terminal_click") => {
+            screen_input(state, connection, &payload_str(&event, "pane_id"));
+        }
+        // A screen's grid goes on to the core only while the pane follows
+        // that screen (`pane_sizes`).
+        Some("terminal_resize") => {
+            let (pane, size) = terminal_grid(&event)?;
+            if state.pane_sizes.resized(connection, &pane, size).is_none() {
+                return Ok(ClientAction::Replies(Vec::new()));
+            }
+        }
         Some("terminal_viewport") => {
             let (pane, size, new_view) = terminal_view(&event)?;
-            state.core.terminals.view(&pane, size, new_view);
+            let shown = state.pane_sizes.view(connection, &pane, size);
+            state.core.terminals.view(&pane, shown, new_view);
             return Ok(ClientAction::Replies(Vec::new()));
         }
         Some("request_view") => {
@@ -2951,6 +2972,70 @@ pub(crate) fn terminal_view(event: &Value) -> Result<(String, GridSize, bool), S
     Ok((pane, GridSize { rows, cols }, new_view))
 }
 
+/// A `terminal_resize` event's pane and grid; the core refuses a grid that
+/// is not positive, so one is passed on as it came.
+fn terminal_grid(event: &Value) -> Result<(String, GridSize), String> {
+    let pane = payload_str(event, "pane_id");
+    let dimension = |name: &str| {
+        event
+            .pointer(&format!("/payload/{name}"))
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+    };
+    match (dimension("rows"), dimension("cols")) {
+        (Some(rows), Some(cols)) if !pane.is_empty() => Ok((pane, GridSize { rows, cols })),
+        _ => Err("terminal_resize needs a pane_id, rows and cols".to_owned()),
+    }
+}
+
+/// `connection` sent `pane` input: the pane takes that screen's grid when
+/// it now follows it (`pane_sizes`).
+fn screen_input(state: &AppState, connection: u64, pane: &str) {
+    if pane.is_empty() {
+        return;
+    }
+    if let Some(size) = state.pane_sizes.input(connection, pane) {
+        send_grid(state, pane, size);
+    }
+}
+
+/// A screen relay's notice that its screen sent a pane input this daemon
+/// does not see (a node's own pane, typed on its machine): taken here and
+/// never passed to the core. `false` for any other event.
+fn relay_input(state: &AppState, connection: u64, text: &str) -> bool {
+    if !text.contains(r#""kind":"terminal_input""#) {
+        return false;
+    }
+    let Ok(event) = serde_json::from_str::<Value>(text) else {
+        return false;
+    };
+    if event.get("kind").and_then(Value::as_str) != Some("terminal_input") {
+        return false;
+    }
+    screen_input(state, connection, &payload_str(&event, "pane_id"));
+    true
+}
+
+/// Views and sizes `pane` at `size`, as the screen that now sizes it would:
+/// its node expects frames at the new grid before the core's resize brings
+/// them.
+fn send_grid(state: &AppState, pane: &str, size: GridSize) {
+    state.core.terminals.view(pane, size, false);
+    let event = json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "terminal_resize",
+        "payload": {"pane_id": pane, "cols": size.cols, "rows": size.rows},
+    });
+    if let Err(error) = state.core.dispatch(event.to_string().into_bytes()) {
+        herdr_core::diagnostic!(json!({
+            "component": "pane_sizes",
+            "kind": "pane_sizes.dispatch_failed",
+            "pane_id": pane,
+            "message": error,
+        }));
+    }
+}
+
 pub(crate) fn unix_ms_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3429,6 +3514,9 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
     }
     state.attachments.release(connection);
     state.mobile.release(connection);
+    for (pane, size) in state.pane_sizes.left(connection) {
+        send_grid(state, &pane, size);
+    }
     for demand in [Demand::Settings, Demand::Start, Demand::RequestView] {
         demand.of(state).release(connection, |observing| {
             dispatch_observation(&state.core, demand, connection, observing)

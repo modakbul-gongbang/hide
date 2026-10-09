@@ -293,7 +293,7 @@ pub async fn link_ended(link: &RemoteHost) {
 
 /// Serves one linked node's terminals relay until the node closes it or its
 /// link ends: every pane's output but the node's own goes down it, and the
-/// node's keys, views and redraws for those panes come up it.
+/// node's keys and redraws for those panes come up it.
 pub async fn serve_terminals(
     mut socket: WebSocket,
     outputs: Arc<ScreenOutputs>,
@@ -378,16 +378,9 @@ fn take_down(text: &str, terminals: &dyn TerminalNode, own_prefix: &str) -> Resu
             // this machine is.
             terminals.key(target, bytes, crate::server::unix_ms_now());
         }
-        TerminalDown::View {
-            pane,
-            size,
-            new_view,
-        } => {
-            if pane.starts_with(own_prefix) {
-                return Err("own_pane".to_owned());
-            }
-            terminals.view(&pane, size, new_view);
-        }
+        // A node's screens send their views with their other events, so the
+        // core decides the grid each is drawn at (`pane_sizes`).
+        TerminalDown::View { .. } => return Err("view".to_owned()),
         TerminalDown::Redraw { pane } => {
             if pane.starts_with(own_prefix) {
                 return Err("own_pane".to_owned());

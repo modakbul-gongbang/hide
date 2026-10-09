@@ -900,3 +900,114 @@ fn capabilities(info: &Value) -> Vec<String> {
         .filter_map(|capability| capability.as_str().map(str::to_owned))
         .collect()
 }
+
+/// Sends `pane`'s grid from `socket` as a window's fit does.
+async fn draw_at(socket: &mut Socket, pane: &str, cols: u16, rows: u16) -> Result<()> {
+    for kind in ["terminal_viewport", "terminal_resize"] {
+        send(
+            socket,
+            kind,
+            json!({"pane_id": pane, "cols": cols, "rows": rows, "new_view": true}),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Asks `pane` its terminal size from `typing`, or from `reading` when
+/// none is named, and reads `reading` until the answer, marked `mark` so a
+/// redraw of an earlier answer cannot pass for it; answers `rows cols`.
+async fn pane_grid(
+    typing: Option<&mut Socket>,
+    reading: &mut Socket,
+    pane: &str,
+    mark: u32,
+) -> Result<String> {
+    // The typed line reads `G$((N))`, which only the shell turns into `GN`.
+    let line = format!("echo G$(({mark})) $(stty size) end\r");
+    let keys = base64::engine::general_purpose::STANDARD.encode(line);
+    let event = json!({"pane_id": pane, "bytes_base64": keys});
+    match typing {
+        Some(typing) => send(typing, "key", event).await?,
+        None => send(reading, "key", event).await?,
+    }
+    let mut screen = String::new();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let marked = format!("G{mark} ");
+    while let Some(frame) = next_frame(reading, deadline).await? {
+        for (from, bytes) in chunks(&frame) {
+            if from == pane {
+                screen.push_str(&String::from_utf8_lossy(&bytes));
+            }
+        }
+        let text = plain(&screen);
+        if let Some(at) = text.find(&marked)
+            && let Some(answer) = text[at + marked.len()..].split(" end").next()
+            && text[at..].contains(" end")
+        {
+            return Ok(answer.trim().to_owned());
+        }
+    }
+    bail!("{pane} never answered its size: {:?}", plain(&screen))
+}
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_pane_runs_at_the_grid_of_the_screen_that_last_typed_into_it() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let project = fixture.screen_home().join("project");
+        let herdr_pane = fixture.screen.workspace_at(&project)?;
+        let pane = format!("remote:{node}:pane:{herdr_pane}");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            // The screen machine's window draws the pane wide and types.
+            type_and_read(&mut socket, &pane, "echo wide-\"ok\"", "wide-ok").await?;
+            draw_at(&mut socket, &pane, 120, 33).await?;
+            let grid = pane_grid(None, &mut socket, &pane, 1).await.context("grid 1")?;
+            ensure!(grid == "33 120", "the typing window's grid: {grid}");
+            // The core machine's window draws it narrow: the pane stays wide
+            // while that window only looks.
+            let (core_port, core_token) = fixture.core_screen();
+            let mut window = screen_socket(core_port, &core_token).await?;
+            first_snapshot(&mut window, Duration::from_secs(20)).await?;
+            draw_at(&mut window, &pane, 70, 21).await?;
+            let typed_wide = Instant::now();
+            let grid = pane_grid(None, &mut socket, &pane, 2).await.context("grid 2")?;
+            ensure!(grid == "33 120", "a window that only looks resized the pane: {grid}");
+            // It types: the pane takes its grid.
+            let grid = pane_grid(Some(&mut window), &mut socket, &pane, 3).await.context("grid 3")?;
+            ensure!(grid == "21 70", "the window that typed last: {grid}");
+            // The wide window types again, once its last notice of typing is
+            // a second old: the pane is wide again.
+            tokio::time::sleep_until((typed_wide + Duration::from_millis(1100)).into()).await;
+            let grid = pane_grid(None, &mut socket, &pane, 4).await.context("grid 4")?;
+            ensure!(grid == "33 120", "the wide window typed last: {grid}");
+            Ok::<_, anyhow::Error>(())
+        })
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}

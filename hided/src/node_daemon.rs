@@ -17,7 +17,7 @@
 //! once, so its next attempt is the held one (amendment 4 of the plan's
 //! review). Keys typed meanwhile are never delivered later (B8).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -45,7 +45,7 @@ use crate::node_role::{LiveLink, NodeIdentity, NodeRole, Phase};
 use crate::placement::Placement;
 use crate::server::{
     CloseReason, FIRST_FRAME_TIMEOUT, Handshake, RELAY_GRANT_HEADER, check_origin, refuse,
-    terminal_key, terminal_view,
+    terminal_key,
 };
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 use crate::terminal_hub::{HubClient, Resume, TerminalHub};
@@ -96,7 +96,7 @@ impl OutputSink for OwnPanes {
     }
 }
 
-/// Where a screen's keys, views and redraws go: this machine's panes to
+/// Where a screen's keys and redraws go: this machine's panes to
 /// its own terminals for the link's life, every other pane up the
 /// terminals relay.
 pub struct ScreenTerminals {
@@ -152,19 +152,10 @@ impl TerminalNode for ScreenTerminals {
         });
     }
 
-    fn view(&self, pane: &str, size: hide_node_link::terminal::GridSize, new_view: bool) {
-        if let Some(own) = pane.strip_prefix(&self.own_prefix) {
-            if let Some(link) = self.own() {
-                link.terminals.view(own, size, new_view);
-            }
-            return;
-        }
-        self.up(TerminalDown::View {
-            pane: pane.to_owned(),
-            size,
-            new_view,
-        });
-    }
+    /// A screen's view goes to the core with its other events, which
+    /// decides the grid every screen's view of a pane is drawn at
+    /// (`pane_sizes`); none comes here.
+    fn view(&self, _pane: &str, _size: hide_node_link::terminal::GridSize, _new_view: bool) {}
 
     fn redraw(&self, pane: &str) {
         if let Some(own) = pane.strip_prefix(&self.own_prefix) {
@@ -463,6 +454,7 @@ async fn attached(
     }
     let mut live = state.live.clone();
     let mut terminals: Option<HubClient> = None;
+    let mut told = InputNotices::default();
     loop {
         tokio::select! {
             changed = live.changed() => {
@@ -531,10 +523,20 @@ async fn attached(
                 match message {
                     Message::Text(text) => {
                         if let Some(reply) = take_terminal_event(state, &text) {
-                            if let Err(error) = reply {
-                                let frame = json!({"type":"error","payload":{},"message": error});
-                                if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
-                                    return "screen_closed";
+                            match reply {
+                                Ok(Some(pane)) => {
+                                    if let Some(notice) = told.notice(&pane, Instant::now())
+                                        && upstream.send(tungstenite::Message::Text(notice.into())).await.is_err()
+                                    {
+                                        return "link_ended";
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    let frame = json!({"type":"error","payload":{},"message": error});
+                                    if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                                        return "screen_closed";
+                                    }
                                 }
                             }
                             continue;
@@ -592,29 +594,73 @@ fn resume(first: FrameStart, handshake: &Handshake) -> Resume {
     }
 }
 
-/// A screen's key or view, taken here; `None` for every other event, which
-/// goes to the core.
-fn take_terminal_event(state: &NodeState, text: &str) -> Option<Result<(), String>> {
-    // A key or a view names its kind first; anything else is not parsed.
-    if !text.contains(r#""kind":"key""#) && !text.contains(r#""kind":"terminal_viewport""#) {
+/// How often a screen tells the core it still types into one pane.
+const INPUT_NOTICE_EVERY: Duration = Duration::from_secs(1);
+/// The panes a screen's notices are remembered for; past it they start over.
+const INPUT_NOTICE_PANES: usize = 64;
+
+/// The panes one screen told its core it typed into, and when: the core
+/// sizes a pane at the grid of the screen that last sent it input
+/// (`pane_sizes`), and never sees the keys this daemon takes. A screen that
+/// keeps typing says so once a second, so another screen's input in
+/// between is overruled within that.
+#[derive(Default)]
+struct InputNotices {
+    told: HashMap<String, Instant>,
+}
+
+impl InputNotices {
+    /// The notice to send for a key into `pane` at `now`, if one is due.
+    fn notice(&mut self, pane: &str, now: Instant) -> Option<String> {
+        if self
+            .told
+            .get(pane)
+            .is_some_and(|told| now.duration_since(*told) < INPUT_NOTICE_EVERY)
+        {
+            return None;
+        }
+        if self.told.len() >= INPUT_NOTICE_PANES && !self.told.contains_key(pane) {
+            self.told.clear();
+        }
+        self.told.insert(pane.to_owned(), now);
+        Some(
+            json!({
+                "schema_version": SCHEMA_VERSION,
+                "kind": "terminal_input",
+                "payload": {"pane_id": pane},
+            })
+            .to_string(),
+        )
+    }
+}
+
+/// A screen's key, taken here; `None` for every other event, which goes to
+/// the core. A key into a pane answers that pane. A view goes to the core
+/// too, which decides the grid every screen's view of a pane is drawn at
+/// (`pane_sizes`) and sends it to the pane's node.
+fn take_terminal_event(state: &NodeState, text: &str) -> Option<Result<Option<String>, String>> {
+    // A key names its kind first; anything else is not parsed.
+    if !text.contains(r#""kind":"key""#) {
         return None;
     }
     let event: Value = serde_json::from_str(text).ok()?;
     match event.get("kind").and_then(Value::as_str) {
         Some("key") => Some(terminal_key(&event).map(|(target, bytes)| {
+            let typed = match &target {
+                KeyTarget::Pane(pane) => Some(pane.clone()),
+                KeyTarget::Request(_) => None,
+            };
             state
                 .terminals
                 .key(target, bytes, crate::server::unix_ms_now());
-        })),
-        Some("terminal_viewport") => Some(terminal_view(&event).map(|(pane, size, new_view)| {
-            state.terminals.view(&pane, size, new_view);
+            typed
         })),
         _ => None,
     }
 }
 
 /// Keeps one terminals relay to the core for each live link: the core's
-/// panes' output into this daemon's hub, and screens' keys, views and
+/// panes' output into this daemon's hub, and screens' keys and
 /// redraws for those panes up to the core.
 async fn keep_terminals_relay(
     mut live: watch::Receiver<Option<Arc<LiveLink>>>,
@@ -714,4 +760,30 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_screen_tells_its_core_it_types_into_a_pane_once_a_second() {
+        let mut told = InputNotices::default();
+        let start = Instant::now();
+        let notice = told.notice("p", start).expect("the first key is told");
+        let notice: Value = serde_json::from_str(&notice).unwrap();
+        assert_eq!(notice["kind"], "terminal_input");
+        assert_eq!(notice["payload"]["pane_id"], "p");
+        assert!(
+            told.notice("p", start + Duration::from_millis(999))
+                .is_none()
+        );
+        assert!(told.notice("q", start).is_some(), "each pane on its own");
+        assert!(told.notice("p", start + INPUT_NOTICE_EVERY).is_some());
+        // Past the cap the panes start over rather than grow.
+        for pane in 0..INPUT_NOTICE_PANES * 2 {
+            told.notice(&pane.to_string(), start);
+        }
+        assert!(told.told.len() <= INPUT_NOTICE_PANES);
+    }
 }
