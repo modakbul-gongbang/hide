@@ -560,6 +560,24 @@ pub enum Call {
     HerdrClose {
         stream: u64,
     },
+    /// Takes the label generator lock of the Herdr server at `herdr_socket`
+    /// on this node's machine, or of the server this link's pane service
+    /// serves when it names none, for the core's worker `generator`, and
+    /// holds it while the link lives. Answered with [`LabelLock`]; asked
+    /// again by the same worker while held, it is held, and by another
+    /// worker of the same core, it is not.
+    LabelLock {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        herdr_socket: Option<String>,
+        generator: u64,
+    },
+    /// Gives back the lock [`Call::LabelLock`] took for `generator` on the
+    /// same server; a lock another worker holds stays held.
+    LabelUnlock {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        herdr_socket: Option<String>,
+        generator: u64,
+    },
     /// Stops the reporting call `request`: its next report is answered with
     /// false, and it answers as stopped. Answered at once, before any
     /// waiting request, and a request that is no longer running is left
@@ -655,6 +673,8 @@ impl Call {
             | Self::HerdrOpen { .. }
             | Self::HerdrWrite { .. }
             | Self::HerdrClose { .. }
+            | Self::LabelLock { .. }
+            | Self::LabelUnlock { .. }
             | Self::Cancel { .. } => true,
             Self::AiAvailability { .. }
             | Self::AiModels { .. }
@@ -787,6 +807,16 @@ impl MachineIdentity {
             Self::Unavailable { reason } => Err(reason),
         }
     }
+}
+
+/// What [`Call::LabelLock`] answers: whether this core now generates labels
+/// for the server, and the process that holds its lock when the system lets
+/// it be read.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LabelLock {
+    pub held: bool,
+    #[serde(default)]
+    pub holder: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

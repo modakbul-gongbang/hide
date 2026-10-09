@@ -196,7 +196,7 @@ impl Harness {
             },
             reads: AtomicUsize::new(0),
         });
-        let (worker, woken) = self.spawn(store, LOCAL_TARGET, "local.lock", source.clone());
+        let (worker, woken) = self.spawn(store, LOCAL_TARGET, "local.sock", source.clone());
         (worker, woken, source)
     }
 
@@ -205,7 +205,7 @@ impl Harness {
         self.spawn(
             self.store(),
             "device:mini",
-            "device-mini.lock",
+            "device-mini.sock",
             Arc::new(NodeTranscripts::new(channel)),
         )
     }
@@ -214,7 +214,7 @@ impl Harness {
         &self,
         store: Arc<LabelStore>,
         target: &str,
-        lock_name: &str,
+        socket_name: &str,
         source: Arc<dyn TranscriptSource>,
     ) -> (LabelWorker, Receiver<()>) {
         let (wake, woken) = channel();
@@ -222,7 +222,16 @@ impl Harness {
         let worker = LabelWorker::spawn(
             WorkerConfig {
                 target: target.to_owned(),
-                lock_path: Some(self.locks.path().join(lock_name)),
+                // Each worker is a core of its own, with a node of its own,
+                // meeting the others at the lock beside the server's socket.
+                lock: super::generator::LockPlace {
+                    node: {
+                        let node: Arc<dyn crate::node_access::NodeLink> =
+                            Arc::new(hide_node::Local::new(None));
+                        Box::new(move || Ok(Arc::clone(&node)))
+                    },
+                    herdr_socket: Some(self.locks.path().join(socket_name).display().to_string()),
+                },
                 input: Arc::clone(&self.input),
             },
             store,
@@ -893,7 +902,7 @@ fn a_read_that_panics_does_not_stop_the_servers_reads() {
     let (mut worker, woken) = harness.spawn(
         harness.store(),
         LOCAL_TARGET,
-        "local.lock",
+        "local.sock",
         Arc::new(Panicking),
     );
     observe(&mut worker, &agent(&path, "idle", 1));
@@ -1761,7 +1770,7 @@ fn a_failed_same_state_follow_up_forgets_structured_question_without_ai() {
             reads: AtomicUsize::new(0),
         });
         let (mut worker, woken) =
-            harness.spawn(harness.store(), LOCAL_TARGET, "local.lock", source.clone());
+            harness.spawn(harness.store(), LOCAL_TARGET, "local.sock", source.clone());
         worker.set_summaries(false, Instant::now());
         let path = harness.session("question-follow-up", "native-question", &[]);
         let question = json!({"type":"assistant","sessionId":"native-question",

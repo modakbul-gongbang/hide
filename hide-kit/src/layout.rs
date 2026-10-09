@@ -69,11 +69,6 @@ pub fn workspace_bridges(state_dir: &Path) -> PathBuf {
     state_dir.join("workspace-bridges")
 }
 
-/// The locks that keep one label generator per registered device (D-06).
-pub fn label_generators(state_dir: &Path) -> PathBuf {
-    state_dir.join("label-generators")
-}
-
 /// Durable local requests and watches; its owner is the core delivery worker.
 pub fn delivery_ledger(state_dir: &Path) -> PathBuf {
     state_dir.join("delivery-ledger.json")

@@ -30,6 +30,7 @@ pub mod herdr_bridge;
 pub mod home;
 pub mod index;
 pub mod kit;
+pub mod label_lock;
 pub mod list;
 pub mod mutate;
 pub mod pane_peer;

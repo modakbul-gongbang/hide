@@ -202,6 +202,13 @@ impl Panes {
         })
     }
 
+    /// The Herdr server this service serves, once started.
+    pub fn herdr_socket(&self) -> Option<String> {
+        self.started
+            .get()
+            .map(|started| started.herdr_socket.display().to_string())
+    }
+
     /// Ends the listener, every stream and every waiting proof, and removes
     /// the folder with the references in it. The serve loop calls it when
     /// its input ends.

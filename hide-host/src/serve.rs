@@ -247,6 +247,28 @@ fn serve_in(
                             }
                             None => Err(no_herdr_bridge()),
                         },
+                        // A core that names no server labels the one this
+                        // link's pane service serves.
+                        Call::LabelLock {
+                            herdr_socket,
+                            generator,
+                        } => handle_in(
+                            Call::LabelLock {
+                                herdr_socket: herdr_socket.or_else(|| panes.herdr_socket()),
+                                generator,
+                            },
+                            env,
+                        ),
+                        Call::LabelUnlock {
+                            herdr_socket,
+                            generator,
+                        } => handle_in(
+                            Call::LabelUnlock {
+                                herdr_socket: herdr_socket.or_else(|| panes.herdr_socket()),
+                                generator,
+                            },
+                            env,
+                        ),
                         Call::RootOpen { root } => {
                             let opened = handle_in(Call::RootOpen { root: root.clone() }, env);
                             if opened.is_ok()
@@ -324,6 +346,15 @@ fn serve_in(
     });
     panes.remove_folder();
     result
+}
+
+/// Why a node asked for the label lock of no named server refuses: its
+/// pane service has not started, so it serves no Herdr server yet.
+fn no_labeled_server() -> HostError {
+    HostError::new(
+        ErrorCode::Unsupported,
+        "This node serves no Herdr server whose labels it could lock",
+    )
 }
 
 /// Why a node with no Herdr bridge refuses a Herdr stream: its core
@@ -607,6 +638,9 @@ pub struct Env {
     /// The verify bundles this node runs for its core's Factory, ended when
     /// the last copy of the environment is dropped.
     pub factory: Arc<crate::factory::Verifies>,
+    /// The label generator locks this node's core took, released when the
+    /// last copy of the environment is dropped: with the link it served.
+    pub label_locks: Arc<crate::label_lock::LabelLocks>,
 }
 
 /// The AI backends a node answering for this process keeps, shared by every
@@ -639,6 +673,7 @@ impl Env {
             stop: crate::kit::process_stop(),
             ai: process_ai(),
             factory: Arc::default(),
+            label_locks: Arc::default(),
         }
     }
 
@@ -651,6 +686,7 @@ impl Env {
             stop: Arc::default(),
             ai: Arc::default(),
             factory: Arc::default(),
+            label_locks: Arc::default(),
         }
     }
 
@@ -701,6 +737,24 @@ pub fn handle_with_progress(
             },
             reader_features: Some(hide_node_link::sessions::ReaderFeatures::implemented()),
         }),
+        Call::LabelLock {
+            herdr_socket,
+            generator,
+        } => {
+            let socket = herdr_socket.ok_or_else(no_labeled_server)?;
+            env.label_locks
+                .take(Path::new(&socket), generator)
+                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))
+                .and_then(to_value)
+        }
+        Call::LabelUnlock {
+            herdr_socket,
+            generator,
+        } => {
+            let socket = herdr_socket.ok_or_else(no_labeled_server)?;
+            env.label_locks.release(Path::new(&socket), generator);
+            to_value(())
+        }
         Call::RootOpen { root } => {
             let opened = Root::open(Path::new(&root))?;
             to_value(RootOpened {
