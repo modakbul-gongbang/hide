@@ -1108,6 +1108,10 @@ pub struct Runtime {
     /// Each device's repositories' worktrees, read through its helper
     /// (`hide_host::worktrees`); the device's rows carry them.
     device_worktrees: HashMap<String, crate::device_catalog::DeviceWorktrees>,
+    /// The TCP listeners of each node that dials this core, read through its
+    /// link; that device's panes carry them (PRD core-host-node-remote-core
+    /// B13). An SSH device's listeners are not read, so its panes have none.
+    device_ports: HashMap<String, Vec<crate::model::ListeningPortSnapshot>>,
     /// This machine's file host: the helper's dispatch, run in place.
     own_node: Arc<dyn crate::node_access::NodeLink>,
     /// Opens the transport to each registered device; the node that holds
@@ -1877,6 +1881,7 @@ impl Runtime {
             device_facts: HashMap::new(),
             device_recent_tabs: HashMap::new(),
             device_worktrees: HashMap::new(),
+            device_ports: HashMap::new(),
             own_node,
             devices,
             document_places: HashMap::new(),

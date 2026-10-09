@@ -531,7 +531,15 @@ impl Runtime {
         self.listening_ports = ports;
         let entries = self.listening_ports.entries.clone();
         let mut changed = status_changed;
-        for workspace in self.snapshot.navigator.workspaces.iter_mut() {
+        // This machine's listeners are its own panes'; a device's panes carry
+        // its own (`ingest_device_listening_ports`) or none.
+        for workspace in self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter_mut()
+            .filter(|workspace| workspace.remote_target_id.is_none())
+        {
             for checkout in workspace.checkouts.iter_mut() {
                 for tab in checkout.tabs.iter_mut() {
                     for pane in tab.panes.iter_mut() {
@@ -548,6 +556,38 @@ impl Runtime {
         }
         changed
     }
+    /// A node that dials this core read its machine's listeners: they are
+    /// attributed to that device's panes only, as this machine's are to its
+    /// own. A failed read leaves its panes with none, as a failed local read
+    /// does, and is logged once until a read succeeds again.
+    pub(crate) fn ingest_device_listening_ports(
+        &mut self,
+        device_id: &str,
+        ports: crate::model::ListeningPortsSnapshot,
+    ) -> bool {
+        if !self.is_inbound(device_id) {
+            return false;
+        }
+        if let Some(reason) = ports.unavailable_reason.as_deref() {
+            if self.device_ports.remove(device_id).is_none() {
+                return false;
+            }
+            crate::diagnostic!(serde_json::json!({
+                "component": "ports",
+                "kind": "device.read_failed",
+                "target": device_id,
+                "reason": reason,
+            }));
+            return self.refresh_device_catalog(device_id);
+        }
+        if self.device_ports.get(device_id) == Some(&ports.entries) {
+            return false;
+        }
+        self.device_ports
+            .insert(device_id.to_owned(), ports.entries);
+        self.refresh_device_catalog(device_id)
+    }
+
     /// Stores what a pane search found and moves the viewport to the match.
     ///
     /// The scroll goes through the same router the wheel uses, because Herdr

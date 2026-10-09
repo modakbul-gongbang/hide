@@ -121,15 +121,11 @@ fn run_coordinator(
     let mut usage_reader = usage_paths
         .zip(context.node().map(Arc::clone))
         .map(|(paths, node)| crate::usage::ProviderUsageReader::new(paths, node));
-    // A listening port is this machine's, so only the local coordinator looks.
+    // A listening port is its machine's: the local coordinator looks at this
+    // machine's, and a node that dials this core is asked for its own.
     let mut ports_reader = context
-        .is_local()
-        .then(|| {
-            context
-                .node()
-                .map(|node| crate::ports::PortsReader::new(Arc::clone(node)))
-        })
-        .flatten();
+        .machine()
+        .map(|node| crate::ports::PortsReader::new(Arc::clone(node)));
     // The three project-panel readers describe this machine's repositories:
     // its worktrees, its `gh` login's view of their pull requests, and one
     // checkout's size on this disk. All three run their subprocess on a worker
@@ -1984,9 +1980,12 @@ fn publish_ports(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_listening_ports(ports),
-        Err(_) => return false,
+    let changed = match (runtime.lock(), &context.target) {
+        (Ok(mut guard), SessionSyncTarget::Local { .. }) => guard.ingest_listening_ports(ports),
+        (Ok(mut guard), SessionSyncTarget::Remote { target_id, .. }) => {
+            guard.ingest_device_listening_ports(target_id, ports)
+        }
+        (Err(_), _) => return false,
     };
     drop(runtime);
     if changed {

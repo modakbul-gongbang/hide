@@ -1519,3 +1519,91 @@ fn a_page_an_agent_of_the_core_opens_shows_on_the_node_and_reaches_the_cores_loo
         }
     }
 }
+
+/// The pane object named `id` anywhere in a core snapshot.
+fn pane_row<'a>(value: &'a Value, id: &str) -> Option<&'a Value> {
+    match value {
+        Value::Object(fields) => {
+            if fields.get("id").and_then(Value::as_str) == Some(id)
+                && fields.contains_key("servers")
+            {
+                return Some(value);
+            }
+            fields.values().find_map(|field| pane_row(field, id))
+        }
+        Value::Array(items) => items.iter().find_map(|item| pane_row(item, id)),
+        _ => None,
+    }
+}
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_server_started_in_a_node_pane_is_that_panes_on_the_core() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let project = fixture.screen_home().join("project");
+        let herdr_pane = fixture.screen.workspace_at(&project)?;
+        let pane = format!("remote:{node}:pane:{herdr_pane}");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            // A listener started in the node's pane, in its checkout.
+            let screen = type_and_read(
+                &mut socket,
+                &pane,
+                "python3 -c 'import socket,time;s=socket.socket();s.bind((\"127.0.0.1\",0));s.listen();print(\"LISTEN\"+\"ING\"+str(s.getsockname()[1])+\"x\",flush=True);time.sleep(600)'",
+                "LISTENING",
+            )
+            .await?;
+            let listening: u16 = {
+                let after = screen
+                    .split("LISTENING")
+                    .nth(1)
+                    .context("the listener's port")?;
+                let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+                digits.parse().with_context(|| format!("{screen:?}"))?
+            };
+            // The core reads the node's listeners through its link and
+            // gives the pane its server, as it does for its own panes.
+            let mut last = Value::Null;
+            tokio::task::block_in_place(|| {
+                wait_for("the node pane's server on the core", || {
+                    let snapshot = fixture.snapshot()?;
+                    let row = pane_row(&snapshot, &pane).cloned().unwrap_or(Value::Null);
+                    last = row.clone();
+                    Ok(row["servers"]
+                        .as_array()
+                        .is_some_and(|servers| {
+                            servers.iter().any(|server| server["port"] == listening)
+                        })
+                        .then_some(()))
+                })
+            })
+            .with_context(|| format!("the pane's row: {last}"))?;
+            Ok::<_, anyhow::Error>(())
+        })
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}

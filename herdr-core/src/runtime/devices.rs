@@ -169,13 +169,19 @@ impl Runtime {
             context.notifier.clone(),
         ));
         self.install_remote_file_transport(device_id.clone(), Arc::clone(&transport));
-        let sync_context = session_sync::SessionSyncContext::remote(
+        let mut sync_context = session_sync::SessionSyncContext::remote(
             device_id.clone(),
             registration.label.clone(),
             connector,
             context.runtime.clone(),
             context.notifier.clone(),
         );
+        if registration.inbound {
+            sync_context = sync_context.dialed_in(super::inbound::InboundLink::for_device(
+                &device_id,
+                context.runtime.clone(),
+            ));
+        }
         let (sync, changed) = match session_sync::spawn(sync_context, None) {
             Ok(handle) => (Some(handle), false),
             Err(message) => {
@@ -237,6 +243,7 @@ impl Runtime {
     /// lock, by whoever drains `take_retired_remote_syncs`.
     pub(super) fn disconnect_remote_device(&mut self, device_id: &str) {
         self.device_machine_ids.remove(device_id);
+        self.device_ports.remove(device_id);
         self.forget_device_host(device_id);
         if let Some(connection) = self.remote_connections.remove(device_id)
             && let Some(sync) = connection.sync

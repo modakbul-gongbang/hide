@@ -44,6 +44,9 @@ impl Runtime {
                 }
             }
         }
+        if let Some(listeners) = self.device_ports.get(target) {
+            device_catalog::apply_ports(&mut session, listeners);
+        }
         self.judge_device_pane_children(target, &mut session);
         self.agent_scope_cache
             .restore_projects(&mut session.workspaces);

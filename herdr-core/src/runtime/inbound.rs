@@ -148,3 +148,47 @@ impl Runtime {
         self.inbound_transports.remove(device_id)
     }
 }
+
+/// The link of a node that dials this core, as its machine's readers ask it:
+/// each call takes the device's live link under a brief runtime lock and
+/// runs outside it, so a link the node brings again is the one asked next
+/// (PRD core-host-node-remote-core B13).
+pub(crate) struct InboundLink {
+    device_id: String,
+    runtime: std::sync::Weak<Mutex<Runtime>>,
+}
+
+impl InboundLink {
+    pub(crate) fn for_device(
+        device_id: &str,
+        runtime: std::sync::Weak<Mutex<Runtime>>,
+    ) -> Arc<dyn crate::node_access::NodeLink> {
+        Arc::new(Self {
+            device_id: device_id.to_owned(),
+            runtime,
+        })
+    }
+
+    fn current(&self) -> Result<Arc<dyn crate::node_access::NodeLink>, String> {
+        let runtime = self
+            .runtime
+            .upgrade()
+            .ok_or_else(|| "the runtime has ended".to_owned())?;
+        let mut guard = runtime
+            .lock()
+            .map_err(|_| "the runtime lock is poisoned".to_owned())?;
+        guard.node_link(&self.device_id)
+    }
+}
+
+impl crate::node_access::NodeLink for InboundLink {
+    fn call(
+        &self,
+        call: hide_node_link::protocol::Call,
+        timeout: std::time::Duration,
+    ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+        self.current()
+            .map_err(crate::node_access::LinkError::NotConnected)?
+            .call(call, timeout)
+    }
+}
