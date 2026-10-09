@@ -1106,8 +1106,12 @@ impl LabelWorker {
             phase.label(),
             context_fingerprint(&context)
         );
-        let request =
-            context_label::request(&format!("{}/{pane_id}", self.target), request_id, &context);
+        let request = context_label::request(
+            phase,
+            &format!("{}/{pane_id}", self.target),
+            request_id,
+            &context,
+        );
         let meta = AnalysisMeta {
             pane: pane_id.to_owned(),
             generation,
@@ -1123,6 +1127,7 @@ impl LabelWorker {
         let sender = self.sender.clone();
         let wake = Arc::clone(&self.wake);
         self.analyzer.submit(AnalysisJob {
+            phase,
             request,
             done: Box::new(move |result| {
                 let _ = sender.send(WorkerResult::Analysis(AnalysisOutcome { meta, result }));

@@ -49,7 +49,7 @@ test("Factory questions redirect to ask while a nonworker publishes and clears i
     const row = () => agents.find((agent) => agent.pane_id === nonworker);
     await expect.poll(() => row()?.session_id, { message: "independent native session reached the core", timeout: 20_000 }).toBe(session);
     expect(await fixture.hooks(nonworker)).toEqual({ AskUserQuestion: "", ExitPlanMode: "" });
-    const transcript = writeFixtureTranscript(claudeProjects(stack.herdr), session, { task: "Independent native question", end: "working" });
+    const transcript = writeFixtureTranscript(claudeProjects(stack.herdr), session, { task: "Independent native question" });
     await fixture.state(nonworker, "working");
     fs.appendFileSync(transcript, `${JSON.stringify({ type: "assistant", sessionId: session, timestamp: "2026-10-08T09:00:00Z", message: { role: "assistant", content: [{ type: "tool_use", id: "target-question", name: "AskUserQuestion", input: { questions: [{ question: "배포 대상을 골라주세요", header: "배포", options: [{ label: "미리보기", description: "검토용 배포" }, { label: "운영", description: "공개 배포" }], multiSelect: false }] } }] } })}\n`);
     await fixture.state(nonworker, "idle");
