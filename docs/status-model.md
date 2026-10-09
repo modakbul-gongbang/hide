@@ -562,7 +562,9 @@ Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull
 ### The Sessions tool
 
 `agent_state/sessions.rs` maps the verb to one group and one task tag in `row.state.session`.
-Answer, Fix, Stopped and Result belong to My turn; Review to Review · Merge; Working and Waiting to In progress; Idle to Resting.
+Answer belongs to My turn; Review to Review · Merge; Working and Waiting to In progress; Fix, Stopped, Result and Idle to Resting.
+My turn holds only what stays stopped until the operator moves: an answer, a menu or plan approval, and a raised child (design principle #13).
+A result, a failed check or an unfinished turn is news the operator may read, not a wait on them, so it rests with its tag and the row's unread mark, and the pane's band still carries it.
 A blocked menu takes Approval before an unread AI question's Answer.
 A current native `user_turn.kind = question` instead takes Answer while its session holds for a reply, including after it is read and when its content is absent.
 Native plan approval keeps Approval; the typed native wait, rather than a provider name or an AI question label, distinguishes these cases.
