@@ -16,7 +16,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { agentsIn, claudeProjects, startHerdr } from "./herdr-fixture";
-import { PI_ID, preparePiWriter } from "./session-reader-fixture";
+import { OMP_ID, PI_ID, prepareNativeWriter } from "./session-reader-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { countSent, screenshot } from "./wire";
@@ -212,7 +212,8 @@ test("a pull request's panel shows the sessions that made it and worked on it af
 });
 
 // B5/B8: the selected native file reaches the actual queued resume worker.
-test("a Pi archive resume keeps its selected source and uses the current control", async ({ page }) => {
+for (const [kind, id, resumeFlag] of [["pi", PI_ID, "--session"], ["omp", OMP_ID, "--resume"]] as const) {
+test(`a ${kind} archive resume keeps its selected source and uses the current control`, async ({ page }) => {
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
   try {
@@ -225,8 +226,8 @@ test("a Pi archive resume keeps its selected source and uses the current control
     git(repo, ["add", "README.md"]);
     git(repo, ["commit", "-m", "initial"]);
     git(repo, ["worktree", "add", "-b", BRANCH, tree]);
-    const session = preparePiWriter(herdr, tree);
-    const source = fs.readFileSync(path.join(herdr.root, "pi-session-seed.jsonl"), "utf8") + `${JSON.stringify({
+    const session = prepareNativeWriter(herdr, kind, tree);
+    const source = fs.readFileSync(path.join(herdr.root, `${kind}-session-seed.jsonl`), "utf8") + `${JSON.stringify({
       type: "message", id: "pr-tool-result", timestamp: at(CREATED + 1_000),
       message: { role: "toolResult", toolCallId: "pr-tool", toolName: "bash", isError: false,
         content: [{ type: "text", text: "https://github.com/acme/repo/pull/31" }], timestamp: CREATED + 1_000 },
@@ -234,14 +235,14 @@ test("a Pi archive resume keeps its selected source and uses the current control
     fs.writeFileSync(session, source);
     herdr.run(["workspace", "create", "--cwd", repo, "--label", "repo", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
     const gh = fakeGh(herdr.root);
-    daemon = await startHided(herdr, "pi-archive", herdr.env.HOME, { PATH: `${gh}${path.delimiter}${herdr.fixturePath}` });
+    daemon = await startHided(herdr, `${kind}-archive`, herdr.env.HOME, { PATH: `${gh}${path.delimiter}${herdr.fixturePath}` });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await openProjectOverview(page, "repo");
     const overview = page.locator("[data-overview-screen]");
     await overview.locator('[data-lens-tile-button="prs"]').click();
     await overview.locator('[data-pr-row="31"]').click({ timeout: 30_000 });
     const panel = overview.locator('[data-pr-panel="31"]');
-    const archived = panel.locator(`[data-link-session="${PI_ID}"]`);
+    const archived = panel.locator(`[data-link-session="${id}"]`);
     await expect(archived).toBeVisible({ timeout: 60_000 });
     // The line can show before the panel has its worktree, and a line's
     // buttons show only under the pointer, so it is hovered once the panel
@@ -251,15 +252,28 @@ test("a Pi archive resume keeps its selected source and uses the current control
     const resume = archived.locator('[data-link-button="resume"]');
     await expect(resume).toBeEnabled();
     await archived.hover();
+    await archived.locator('[data-link-button="view"]').click();
+    await expect(overview).toHaveAttribute("data-overview-view", "sessions");
+    const detail = page.locator(`[data-session-header="${id}"]`);
+    await expect(detail).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("[data-session-turns]")).toContainText("요청 보기를 만들어줘");
+    await screenshot(page, `${kind}-archive-conversation`);
+    await detail.locator('[data-session-pr="31"]').click();
+    await expect(overview).toHaveAttribute("data-overview-view", "prs");
+    await expect(panel.locator(`[data-pr-panel-worktree="${tree}"]`)).not.toHaveAttribute("data-removed", "true");
+    await expect(panel.locator("[data-link-loading]")).toHaveCount(0, { timeout: 60_000 });
+    await expect(resume).toBeEnabled();
+    await archived.hover();
     await resume.click();
-    await expect.poll(() => agentsIn(herdr, tree), { timeout: 60_000 }).toContain("pi");
-    await expect.poll(() => fs.existsSync(path.join(herdr.root, "pi-launches.jsonl"))).toBe(true);
-    const launches = fs.readFileSync(path.join(herdr.root, "pi-launches.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line) as string[]);
-    expect(launches).toEqual([["--session", PI_ID]]);
+    await expect.poll(() => agentsIn(herdr, tree), { timeout: 60_000 }).toContain(kind);
+    await expect.poll(() => fs.existsSync(path.join(herdr.root, `${kind}-launches.jsonl`))).toBe(true);
+    const launches = fs.readFileSync(path.join(herdr.root, `${kind}-launches.jsonl`), "utf8").trim().split("\n").map(line => JSON.parse(line) as string[]);
+    expect(launches).toEqual([[resumeFlag, id]]);
     expect(fs.readFileSync(session, "utf8")).toBe(source);
-    await screenshot(page, "pi-archive-resume");
+    await screenshot(page, `${kind}-archive-resume`);
   } finally {
     daemon?.stop();
     herdr.stop();
   }
 });
+}

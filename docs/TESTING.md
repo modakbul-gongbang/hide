@@ -62,6 +62,7 @@ Keep one representative journey per user-visible flow; when a long spec carries 
 - A test's own waiting must not compete with a deadline the product enforces.
   While the test holds a request the product will time out, run nothing slow between holding and releasing it, and give every observation poll in that window explicit `intervals`.
   Playwright's default poll backoff grows to a second between attempts, which is time taken from the product's deadline.
+  A process start is slow in that sense: `a_slow_ask_for_one_home_does_not_hold_another_home_behind_it` in `hide-platform/tests/it/programs.rs` started the second home's login shell while it held the first home's ten-second ask, and at load 32 the first ask reached its deadline (issue 859); it now reads the second home's answer before the hold, so the held window starts no process, and counts the shell's starts to show it.
 
 `web/e2e/pane-focus-ordering.spec.ts`'s rapid-click test showed the cost.
 It holds the first focus request, whose transport deadline is five seconds, while it sends forty clicks.

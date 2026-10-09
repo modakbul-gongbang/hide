@@ -154,13 +154,33 @@ impl ConversationCursor {
     ) -> Result<ParsedSession> {
         self.has_more = false;
         self.read_bytes = 0;
+        let title = if agent == Agent::Omp {
+            Some(read_current_title(
+                path,
+                file,
+                budget,
+                &mut self.read_bytes,
+            )?)
+        } else {
+            None
+        };
+        let remaining = budget.saturating_sub(self.read_bytes);
+        let mut appended_read_bytes = 0;
+        let appended_result = read_appended_file(
+            &mut self.cursor,
+            path,
+            file,
+            remaining,
+            &mut appended_read_bytes,
+        );
+        self.read_bytes += appended_read_bytes;
         let AppendedBytes {
             contents: appended,
             start_offset,
             identity,
             rescan_reason,
             has_more,
-        } = read_appended_file(&mut self.cursor, path, file, budget, &mut self.read_bytes)?;
+        } = appended_result?;
         if rescan_reason.is_some() {
             self.discarded_bytes = 0;
             self.classifier = None;
@@ -255,6 +275,10 @@ impl ConversationCursor {
             pending.clear();
         }
         parsed.links = found.finish();
+        if let Some((title, custom_title)) = title {
+            parsed.title = Some(title);
+            parsed.custom_title = Some(custom_title);
+        }
         // Commit only a successful poll: a relevant capacity failure cannot
         // silently consume a Human turn or publish a partial result.
         self.cursor.offset = offset;
@@ -264,6 +288,105 @@ impl ConversationCursor {
         self.classifier = classifier;
         self.has_more = has_more;
         Ok(parsed)
+    }
+}
+
+/// Refresh the physical first line through the same descriptor without
+/// changing event offsets. Every byte read, including a block's tail after
+/// the newline, is charged against this poll's existing allowance.
+fn read_current_title(
+    path: &Path,
+    file: &File,
+    budget: u64,
+    read_bytes: &mut u64,
+) -> Result<(String, String)> {
+    let mut file = file
+        .try_clone()
+        .map_err(|e| SessionError::io("clone", path, e))?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| SessionError::io("seek", path, e))?;
+    let mut prefix = Vec::new();
+    loop {
+        let allowance = budget
+            .min(crate::SESSION_INCREMENT_READ_LIMIT_BYTES)
+            .saturating_sub(*read_bytes);
+        if allowance == 0 {
+            return Err(SessionError::Capacity {
+                resource: "title_read_bytes",
+                limit: budget,
+            });
+        }
+        let mut block = [0_u8; 256];
+        let limit = block
+            .len()
+            .min(allowance as usize)
+            .min(SESSION_LINE_LIMIT_BYTES + 1 - prefix.len());
+        let n = file
+            .read(&mut block[..limit])
+            .map_err(|e| SessionError::io("read", path, e))?;
+        *read_bytes += n as u64;
+        let newline = block[..n]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|index| prefix.len() + index);
+        prefix.extend_from_slice(&block[..n]);
+        if let Some(end) = newline {
+            if end + 1 > SESSION_LINE_LIMIT_BYTES {
+                return Err(SessionError::Capacity {
+                    resource: "line_bytes",
+                    limit: SESSION_LINE_LIMIT_BYTES as u64,
+                });
+            }
+            let value = serde_json::from_slice(&prefix[..end]).map_err(|_| {
+                SessionError::Checkpoint("label_session_metadata_unconfirmed".to_owned())
+            })?;
+            return crate::native_file::title_snapshot(&value).ok_or_else(|| {
+                SessionError::Checkpoint("label_session_metadata_unconfirmed".to_owned())
+            });
+        }
+        if prefix.len() > SESSION_LINE_LIMIT_BYTES {
+            return Err(SessionError::Capacity {
+                resource: "line_bytes",
+                limit: SESSION_LINE_LIMIT_BYTES as u64,
+            });
+        }
+        if n == 0 {
+            return Err(SessionError::Checkpoint(
+                "label_session_metadata_unconfirmed".to_owned(),
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refused_title_prefix_spends_the_poll_budget_without_advancing_the_checkpoint() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("session.jsonl");
+        let header = serde_json::json!({"type":"session","version":3,"title":"현재 제목","titleSource":"user","pad":"x".repeat(400)});
+        std::fs::write(&path, format!("{header}\n")).unwrap();
+        let mut cursor = ConversationCursor::new();
+        let before = cursor.checkpoint();
+        assert!(matches!(
+            cursor.read_with_budget(Agent::Omp, &path, 256),
+            Err(SessionError::Capacity {
+                resource: "title_read_bytes",
+                limit: 256
+            })
+        ));
+        assert_eq!(cursor.read_bytes(), 256);
+        assert_eq!(cursor.checkpoint(), before);
+        let current = cursor.read(Agent::Omp, &path).unwrap();
+        assert_eq!(current.custom_title.as_deref(), Some("현재 제목"));
+        assert!(current.events.is_empty());
+        assert!(cursor.read_bytes() <= crate::SESSION_INCREMENT_READ_LIMIT_BYTES);
+        assert_eq!(
+            cursor.checkpoint().offset(),
+            std::fs::metadata(path).unwrap().len()
+        );
     }
 }
 
@@ -605,7 +728,7 @@ impl LargeRecord {
             return None;
         }
         match agent {
-            Agent::OpenCode | Agent::Pi => None,
+            Agent::OpenCode | Agent::Pi | Agent::Omp => None,
             Agent::Codex => self.codex(),
             Agent::Claude => self.claude(),
         }

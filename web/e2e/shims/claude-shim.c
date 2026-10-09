@@ -160,19 +160,22 @@ static int factory_question_runner(void) {
   return 1;
 }
 
-/* The Pi format fixture writes its own native session, rather than having
+/* The native-file fixture writes its own session, rather than having
    the spec plant an already-readable transcript. The private root supplies
    a bounded seed and destination; resumed launches preserve the same file. */
-static int pi_session(int argc, char **argv) {
+static int native_session(int argc, char **argv) {
   const char *base = argv[0];
   for (const char *at = argv[0]; *at; at++) if (*at == '/' || *at == '\\') base = at + 1;
-  if (strcmp(base, "pi") != 0 && strcmp(base, "pi.exe") != 0) return 0;
+  const char *kind, *resume_flag;
+  if (strcmp(base, "pi") == 0 || strcmp(base, "pi.exe") == 0) { kind = "pi"; resume_flag = "--session"; }
+  else if (strcmp(base, "omp") == 0 || strcmp(base, "omp.exe") == 0) { kind = "omp"; resume_flag = "--resume"; }
+  else return 0;
   const char *root = getenv("HIDE_E2E_ROOT");
   if (!root) return 1;
   char config[4096], destination[4096], seed[4096], launches[4096];
-  if (snprintf(config, sizeof config, "%s/pi-session-path.config", root) >= (int)sizeof config ||
-      snprintf(seed, sizeof seed, "%s/pi-session-seed.jsonl", root) >= (int)sizeof seed ||
-      snprintf(launches, sizeof launches, "%s/pi-launches.jsonl", root) >= (int)sizeof launches) return 1;
+  if (snprintf(config, sizeof config, "%s/%s-session-path.config", root, kind) >= (int)sizeof config ||
+      snprintf(seed, sizeof seed, "%s/%s-session-seed.jsonl", root, kind) >= (int)sizeof seed ||
+      snprintf(launches, sizeof launches, "%s/%s-launches.jsonl", root, kind) >= (int)sizeof launches) return 1;
   FILE *file = fopen(config, "rb");
   if (!file) return 1;
   size_t size = fread(destination, 1, sizeof destination - 1, file);
@@ -180,7 +183,7 @@ static int pi_session(int argc, char **argv) {
   fclose(file);
   destination[size] = 0;
   if (!complete || !size || strchr(destination, '\n') || strchr(destination, '\r')) return 1;
-  int resume = argc == 3 && strcmp(argv[1], "--session") == 0;
+  int resume = argc == 3 && strcmp(argv[1], resume_flag) == 0;
   if (resume) {
     file = fopen(destination, "rb");
     if (!file) return 1;
@@ -212,7 +215,7 @@ static int pi_session(int argc, char **argv) {
   }
   fputs("]\n", file);
   if (fclose(file) != 0) return 1;
-  puts("pi fixture ready");
+  printf("%s fixture ready\n", kind);
   return 0;
 }
 
@@ -226,7 +229,7 @@ int main(int argc, char **argv) {
     if (strcmp(argv[i], "--json-schema") == 0 || (i == 1 && strcmp(argv[i], "auth") == 0)) return provider(argc, argv);
     if (strcmp(argv[i], "--input-format") == 0) return models();
   }
-  if (pi_session(argc, argv) != 0) return 1;
+  if (native_session(argc, argv) != 0) return 1;
   if (factory_question_runner() != 0) return 1;
   const char *log_path = getenv("HIDE_E2E_INPUT_LOG");
   int flags = O_WRONLY | O_CREAT | O_APPEND;

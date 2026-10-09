@@ -130,7 +130,11 @@ impl DormantRecord {
     /// An over-bound capture is refused, never truncated into another owner.
     pub fn validate(&self) -> Result<(), &'static str> {
         self.validate_context()?;
-        if hide_agent_adapter::canonical_kind(&self.kind) == "pi"
+        if !hide_session::valid_native_id(&self.native_session_id) {
+            return Err("Sleeping-session native identity is unconfirmed");
+        }
+        if hide_session::Agent::from_kind(&self.kind)
+            .is_some_and(hide_session::Agent::requires_native_file_proof)
             && self.source_reference.as_ref().is_none_or(|reference| {
                 reference.value.len() > 4096
                     || hide_session::label_reference_token(
@@ -243,6 +247,7 @@ impl DormantRecord {
             group: crate::agent_state::dormant_group().name(),
             wake_available: self.closed
                 && matches!(self.phase, DormantPhase::Sleeping | DormantPhase::Failed)
+                && self.validate().is_ok()
                 && hide_agent_adapter::adapter(&self.kind)
                     .is_some_and(|adapter| adapter.resume.is_some()),
             checking: false,
@@ -429,6 +434,34 @@ mod tests {
     }
 
     #[test]
+    fn restored_native_flags_never_become_dormant_resume_authority() {
+        for kind in ["pi", "omp"] {
+            for id in ["-", "--", "--no-session", "--yolo", "-r"] {
+                let mut value = record("p1");
+                value.kind = kind.into();
+                value.native_session_id = id.into();
+                value.label_owner = hide_session::label_reference_token(kind, "id", id).unwrap();
+                value.source_reference = Some(crate::sidebar::SessionAgentSessionPayload {
+                    kind: "path".into(),
+                    value: "/fixture/native.jsonl".into(),
+                });
+                value.phase = DormantPhase::Sleeping;
+                value.closed = true;
+                let mut store = AgentSleepStore::default();
+                assert!(store.admit_dormant(value.clone()).is_err(), "{kind} {id}");
+                let sleep_id = store.admit_dormant(record("p1")).unwrap();
+                store.dormant.insert(sleep_id.clone(), value);
+                let mut restored: AgentSleepStore =
+                    serde_json::from_value(serde_json::to_value(store).unwrap()).unwrap();
+                restored.after_load();
+                assert_eq!(restored.dormant.len(), 1, "history stays visible");
+                assert!(restored.dormant[&sleep_id].validate().is_err());
+                assert!(!restored.dormant_snapshots()[0].wake_available);
+            }
+        }
+    }
+
+    #[test]
     fn duplicate_sleep_converges_and_save_receipts_reject_changed_work() {
         let mut store = AgentSleepStore::default();
         let id = store.admit_dormant(record("p1")).unwrap();
@@ -518,9 +551,18 @@ mod tests {
         entry.phase = DormantPhase::Sleeping;
         entry.closed = true;
         assert!(store.dormant_snapshots()[0].wake_available);
-        store.dormant.get_mut(&id).unwrap().kind = "pi".into();
-        assert!(store.dormant_snapshots()[0].wake_available);
-        for kind in ["omp", "grok", "cursor", "opencode", "unknown"] {
+        for kind in ["pi", "omp"] {
+            let entry = store.dormant.get_mut(&id).unwrap();
+            entry.kind = kind.into();
+            entry.label_owner =
+                hide_session::label_reference_token(kind, "id", "native-one").unwrap();
+            entry.source_reference = Some(crate::sidebar::SessionAgentSessionPayload {
+                kind: "path".into(),
+                value: "/fixture/native.jsonl".into(),
+            });
+            assert!(store.dormant_snapshots()[0].wake_available, "{kind}");
+        }
+        for kind in ["grok", "cursor", "opencode", "unknown"] {
             store.dormant.get_mut(&id).unwrap().kind = kind.into();
             assert!(!store.dormant_snapshots()[0].wake_available, "{kind}");
         }
