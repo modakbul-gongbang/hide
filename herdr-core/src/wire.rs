@@ -1164,37 +1164,6 @@ pub(crate) fn agent_start_params(
     })
 }
 
-/// Whether Herdr holds `name` on `pane_id` for a start that never showed its
-/// agent: `launch_pending` with no agent detected there. The pinned v0.9.3
-/// keeps such a name after its start's own deadline (`agent_start`).
-pub(crate) fn holds_unstarted_launch(
-    value: Value,
-    pane_id: &str,
-    name: &str,
-) -> Result<bool, String> {
-    let missing = "agent.list returned no agent list";
-    match response(value, missing)? {
-        res::ResponseResult::AgentList { agents } => Ok(agents.iter().any(|agent| {
-            agent.pane_id == pane_id
-                && agent.name.as_deref() == Some(name)
-                && agent.launch_pending == Some(true)
-                && agent.agent.is_none()
-        })),
-        _ => Err(missing.into()),
-    }
-}
-
-/// Gives back the name Herdr holds on `pane_id` for an `agent` start,
-/// reported as Hide's own; no hook source of an agent is touched.
-pub(crate) fn pane_release_agent_params(pane_id: &str, agent: &str) -> Result<Value, String> {
-    params(req::PaneReleaseAgentParams {
-        agent: agent.into(),
-        pane_id: pane_id.into(),
-        seq: None,
-        source: HIDE_METADATA_SOURCE.into(),
-    })
-}
-
 /// The most bytes the pinned Herdr types into the pane's shell for
 /// `agent.start` with `params`: the kind's program, then each argument
 /// quoted for a POSIX shell (`'…'`, a `'` inside written `'\''`; PowerShell
