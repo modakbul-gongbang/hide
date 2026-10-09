@@ -140,8 +140,14 @@ fn confirm_omp_migrations(home: &Path, cwd: &Path, directory: &Path) -> Result<(
     if let Some(shadowed) = &policy.shadowed_home {
         aliases.push(shadowed.clone());
     }
-    // Root-wide home migration precedes the cwd-specific shadow migration.
-    for target in std::iter::once(&policy.name).chain(policy.shadowed_home.iter()) {
+    // Reverse the root-wide first stage through every later migration input.
+    // It can materialize an absent legacy absolute alias before that alias
+    // is merged into the selected bucket, as well as populate it directly.
+    let targets: Vec<_> = std::iter::once(&policy.name)
+        .chain(aliases.iter())
+        .cloned()
+        .collect();
+    for target in targets {
         if let Some(remainder) = target.strip_prefix('-') {
             for spelling in [home, policy.canonical_home.as_path()] {
                 let encoded = absolute_directory_name(spelling);
@@ -156,6 +162,7 @@ fn confirm_omp_migrations(home: &Path, cwd: &Path, directory: &Path) -> Result<(
     }
     // Reconstruct the native 17.2.5-17.2.8 migration key, action-only.
     let mut readable = String::new();
+    let mut invalid_run = false;
     for ch in canonical_cwd
         .file_name()
         .unwrap_or_default()
@@ -164,8 +171,12 @@ fn confirm_omp_migrations(home: &Path, cwd: &Path, directory: &Path) -> Result<(
     {
         if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
             readable.push(ch);
-        } else if !readable.ends_with('-') {
-            readable.push('-');
+            invalid_run = false;
+        } else {
+            if !invalid_run {
+                readable.push('-');
+            }
+            invalid_run = true;
         }
     }
     let readable = readable.trim_matches('-');
@@ -181,7 +192,7 @@ fn confirm_omp_migrations(home: &Path, cwd: &Path, directory: &Path) -> Result<(
         policy.scope,
         Sha256::digest(normalized.as_bytes())
     ));
-    // At most eight fixed metadata probes, independent of session count.
+    // At most twelve fixed metadata probes, independent of session count.
     for name in aliases {
         let candidate = root.join(name);
         if candidate.file_name() == directory.file_name() {

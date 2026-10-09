@@ -200,6 +200,8 @@ fn a_native_dormant_journey_refuses_a_changed_route_before_close_wake_or_start()
         "recovery-before-close",
         "recovery-before-wake",
         "recovery-before-start",
+        "hashed-before-close",
+        "chained-migration-before-close",
     ] {
         durable_dormant_journey("omp", phase);
     }
@@ -208,7 +210,14 @@ fn a_native_dormant_journey_refuses_a_changed_route_before_close_wake_or_start()
 #[cfg(unix)]
 fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     use crate::agent_sleep::DormantPhase;
-    let folder = tempfile::tempdir().unwrap();
+    let folder = tempfile::Builder::new()
+        .prefix(if interference == "hashed-before-close" {
+            "repo-한글x"
+        } else {
+            ".tmp"
+        })
+        .tempdir()
+        .unwrap();
     let cwd = folder
         .path()
         .canonicalize()
@@ -277,6 +286,45 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     if interference == "recovery-before-close" {
         std::fs::write(&backup_path, &backup_bytes).unwrap();
     }
+    let migration_alias = match interference {
+        "hashed-before-close" => {
+            use sha2::{Digest, Sha256};
+            // Pinned native regex preserves the literal '-' then replaces
+            // this invalid run with another '-', retaining the temp suffix.
+            let basename = std::path::Path::new(&cwd)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace("한글", "-");
+            Some(format!(
+                "tmp-{basename}-{:x}",
+                Sha256::digest(cwd.replace('\\', "/").as_bytes())
+            ))
+        }
+        "chained-migration-before-close" => {
+            let encoded_home = home
+                .path()
+                .to_str()
+                .unwrap()
+                .trim_start_matches(['/', '\\'])
+                .replace(['/', '\\', ':'], "-");
+            let encoded_cwd = cwd
+                .trim_start_matches(['/', '\\'])
+                .replace(['/', '\\', ':'], "-");
+            // Native root-home migration first creates --<cwd>--, then
+            // the cwd-specific legacy migration merges it into the default.
+            Some(format!("--{encoded_home}--{encoded_cwd}----"))
+        }
+        _ => None,
+    }
+    .map(|bucket| {
+        let bucket = native_folder.parent().unwrap().join(bucket);
+        std::fs::create_dir(&bucket).unwrap();
+        let alias = bucket.join(format!("date_{native_id}-alias.jsonl"));
+        std::fs::write(&alias, &backup_bytes).unwrap();
+        alias
+    });
     if interference == "missing-source-before-close" {
         std::fs::write(native_folder.join("other.jsonl"), &other_before).unwrap();
         std::fs::remove_file(&native_path).unwrap();
@@ -389,7 +437,11 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     shared.lock().unwrap().write_ui_state().unwrap();
     if matches!(
         interference,
-        "before-close" | "missing-source-before-close" | "recovery-before-close"
+        "before-close"
+            | "missing-source-before-close"
+            | "recovery-before-close"
+            | "hashed-before-close"
+            | "chained-migration-before-close"
     ) {
         wait_for("refused native close", || {
             !shared
@@ -413,6 +465,9 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
             herdr.methods()
         );
         assert_eq!(row(&shared.lock().unwrap())["pane_id"], SLEEPER);
+        if let Some(alias) = migration_alias {
+            assert_eq!(std::fs::read_to_string(alias).unwrap(), backup_bytes);
+        }
         assert_eq!(
             std::fs::read(if native_path.exists() {
                 native_path.clone()

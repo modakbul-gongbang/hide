@@ -380,8 +380,12 @@ mod omp {
 
     impl Native {
         fn new() -> Self {
+            Self::with_checkout("checkout")
+        }
+
+        fn with_checkout(name: &str) -> Self {
             let home = tempfile::tempdir().unwrap();
-            let cwd = home.path().join("checkout");
+            let cwd = home.path().join(name);
             fs::create_dir(&cwd).unwrap();
             let cwd = cwd.canonicalize().unwrap();
             // Upstream session-paths checks the system temporary root first,
@@ -588,8 +592,8 @@ mod omp {
         native.request.reference_value = native.path.display().to_string();
         let source = fs::read_to_string(&native.path).unwrap();
         for id in ["-", "--", "--no-session", "--yolo", "-r"] {
-            // omp's optional-value parser treats these as flags, not the
-            // preceding --resume/--fork's selector (args.ts, pinned 18.7.0).
+            // omp's optional-value --resume parser treats these as flags,
+            // not its selector (args.ts, pinned 18.7.0); --fork requires a value.
             fs::write(&native.path, source.replace("omp-native-a", id)).unwrap();
             let action = hide_session::session_activity::SessionActivityRequest {
                 agent: Agent::Omp,
@@ -611,84 +615,114 @@ mod omp {
     #[test]
     fn native_preprocessing_inputs_refuse_effects_without_mutating_the_selected_source() {
         use sha2::{Digest, Sha256};
-        let native = Native::new();
-        let source = fs::read(&native.path).unwrap();
-        let alias_source = String::from_utf8(source.clone())
-            .unwrap()
-            .replace("omp-native-a", "different-native-owner");
-        let cwd = Path::new(native.request.cwd.as_deref().unwrap());
-        let root = native.home.path().join(".omp/agent/sessions");
-        let action = hide_session::session_activity::SessionActivityRequest {
-            agent: Agent::Omp,
-            reference_kind: "path".into(),
-            reference_value: native.path.display().to_string(),
-            cwd: native.request.cwd.clone(),
-            exact_route: true,
-            expected_id: Some("omp-native-a".into()),
-        };
-        let check = || hide_session::session_activity::read(native.home.path(), &action);
-        assert!(check().is_ok());
-        // These names come from upstream session-paths/session-listing, not
-        // Hide's policy helpers: native startup moves/promotes their aliases.
-        let absolute = format!(
-            "--{}--",
-            cwd.to_str()
+        // Pinned native regex replaces each invalid run separately from an
+        // adjacent literal '-'; the expected readable names are native facts.
+        for (checkout, readable) in [
+            ("repo-한글x", "repo--x"),
+            ("checkout", "checkout"),
+            ("repo한글-x", "repo--x"),
+            ("한글", "project"),
+        ] {
+            let native = Native::with_checkout(checkout);
+            let source = fs::read(&native.path).unwrap();
+            let alias_source = String::from_utf8(source.clone())
                 .unwrap()
-                .trim_start_matches(['/', '\\'])
-                .replace(['/', '\\', ':'], "-")
-        );
-        let hashed = format!(
-            "tmp-checkout-{:x}",
-            Sha256::digest(cwd.to_str().unwrap().replace('\\', "/").as_bytes())
-        );
-        let old_home = format!(
-            "--{}-{}--",
-            native
-                .home
-                .path()
-                .to_str()
-                .unwrap()
-                .trim_start_matches(['/', '\\'])
-                .replace(['/', '\\', ':'], "-"),
-            native
+                .replace("omp-native-a", "different-native-owner");
+            let cwd = Path::new(native.request.cwd.as_deref().unwrap());
+            let root = native.home.path().join(".omp/agent/sessions");
+            let action = hide_session::session_activity::SessionActivityRequest {
+                agent: Agent::Omp,
+                reference_kind: "path".into(),
+                reference_value: native.path.display().to_string(),
+                cwd: native.request.cwd.clone(),
+                exact_route: true,
+                expected_id: Some("omp-native-a".into()),
+            };
+            let check = || hide_session::session_activity::read(native.home.path(), &action);
+            assert!(check().is_ok());
+            // These names come from upstream session-paths/session-listing, not
+            // Hide's policy helpers: native startup moves/promotes their aliases.
+            let absolute = format!(
+                "--{}--",
+                cwd.to_str()
+                    .unwrap()
+                    .trim_start_matches(['/', '\\'])
+                    .replace(['/', '\\', ':'], "-")
+            );
+            let hashed = format!(
+                "tmp-{readable}-{:x}",
+                Sha256::digest(cwd.to_str().unwrap().replace('\\', "/").as_bytes())
+            );
+            let old_home = format!(
+                "--{}-{}--",
+                native
+                    .home
+                    .path()
+                    .to_str()
+                    .unwrap()
+                    .trim_start_matches(['/', '\\'])
+                    .replace(['/', '\\', ':'], "-"),
+                native
+                    .path
+                    .parent()
+                    .unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .strip_prefix('-')
+                    .unwrap()
+            );
+            // Root-wide home migration runs before cwd legacy migration. This
+            // entry first creates the absent absolute alias, then merges into
+            // the selected default bucket during the same native startup.
+            let old_absolute = format!(
+                "--{}-{}--",
+                native
+                    .home
+                    .path()
+                    .to_str()
+                    .unwrap()
+                    .trim_start_matches(['/', '\\'])
+                    .replace(['/', '\\', ':'], "-"),
+                absolute.strip_prefix('-').unwrap()
+            );
+            for bucket in [
+                absolute,
+                format!("-{checkout}"),
+                hashed,
+                old_home,
+                old_absolute,
+            ] {
+                let migrated = root.join(&bucket);
+                fs::create_dir(&migrated).unwrap();
+                let alias = migrated.join("date_omp-native-a-newer.jsonl");
+                fs::write(&alias, &alias_source).unwrap();
+                assert_eq!(
+                    check().map(|_| ()),
+                    Err("session_route_requires_native_migration".to_owned()),
+                    "{checkout}: {bucket}"
+                );
+                assert!(native.read().is_ok(), "migration refusal is action-only");
+                assert_eq!(fs::read(&native.path).unwrap(), source);
+                assert!(alias.exists(), "Hide must not perform the native migration");
+                fs::remove_dir_all(migrated).unwrap();
+                assert!(check().is_ok(), "a resolved migration restores the route");
+            }
+            let backup = native
                 .path
-                .parent()
-                .unwrap()
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .strip_prefix('-')
-                .unwrap()
-        );
-        for bucket in [absolute, "-checkout".into(), hashed, old_home] {
-            let migrated = root.join(bucket);
-            fs::create_dir(&migrated).unwrap();
-            let alias = migrated.join("date_omp-native-a-newer.jsonl");
-            fs::write(&alias, &alias_source).unwrap();
+                .with_file_name("date_omp-native-a-newer.jsonl.123.bak");
+            fs::write(&backup, &alias_source).unwrap();
             assert_eq!(
                 check().unwrap_err(),
-                "session_route_requires_native_migration"
+                "session_route_requires_native_recovery"
             );
-            assert!(native.read().is_ok(), "migration refusal is action-only");
+            assert!(backup.exists(), "Hide must not promote the native backup");
+            assert!(native.read().is_ok());
             assert_eq!(fs::read(&native.path).unwrap(), source);
-            assert!(alias.exists(), "Hide must not perform the native migration");
-            fs::remove_dir_all(migrated).unwrap();
-            assert!(check().is_ok(), "a resolved migration restores the route");
+            fs::remove_file(backup).unwrap();
+            assert!(check().is_ok());
         }
-        let backup = native
-            .path
-            .with_file_name("date_omp-native-a-newer.jsonl.123.bak");
-        fs::write(&backup, &alias_source).unwrap();
-        assert_eq!(
-            check().unwrap_err(),
-            "session_route_requires_native_recovery"
-        );
-        assert!(backup.exists(), "Hide must not promote the native backup");
-        assert!(native.read().is_ok());
-        assert_eq!(fs::read(&native.path).unwrap(), source);
-        fs::remove_file(backup).unwrap();
-        assert!(check().is_ok());
     }
 
     #[test]
