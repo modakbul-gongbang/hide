@@ -8,8 +8,9 @@
 //! a device the core dials is checked, and ends when its owner drops it.
 
 use std::io::{self, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
+use std::time::Duration;
 
 use hide_node_link::device::{RemoteResult, RemoteStage};
 use hide_platform::ipc::LocalStream;
@@ -199,6 +200,45 @@ impl Upstream {
         );
         drop(_cancel);
         forward
+    }
+
+    /// Whether the connection still answers: one SSH ping, answered
+    /// within `within`. A connection that is not up is not alive. Asked after
+    /// the machine woke or its network changed, when a connection that looks
+    /// up may lead nowhere.
+    pub fn alive(&self, within: Duration) -> bool {
+        let connection = &self.client.connection;
+        self.client.runtime.block_on(async {
+            let session = connection.session.lock().await.clone();
+            let Some(session) = session.filter(|session| !session.is_closed()) else {
+                return false;
+            };
+            let answered = tokio::time::timeout(within, session.send_ping())
+                .await
+                .is_ok_and(|sent| sent.is_ok());
+            answered && !session.is_closed()
+        })
+    }
+
+    /// Whether the core machine's SSH server answers now: a connection to
+    /// its port that reads the server's `SSH-` greeting within `within`, each
+    /// of the connect and the read. A server that takes the connection and
+    /// closes it, or a port nothing answers, is not reachable.
+    pub fn reachable(&self, within: Duration) -> bool {
+        let host = &self.client.host;
+        let Ok(addresses) = (host.hostname.as_str(), host.port).to_socket_addrs() else {
+            return false;
+        };
+        addresses.into_iter().any(|address| {
+            let Ok(mut socket) = TcpStream::connect_timeout(&address, within) else {
+                return false;
+            };
+            if socket.set_read_timeout(Some(within)).is_err() {
+                return false;
+            }
+            let mut greeting = [0_u8; 4];
+            socket.read_exact(&mut greeting).is_ok() && &greeting == b"SSH-"
+        })
     }
 
     /// Ends the connection and every channel on it.

@@ -593,3 +593,17 @@ fn herdrs_default_socket_is_resolved_in_herdrs_own_order() {
         ErrorKind::NotFound
     );
 }
+
+#[test]
+fn the_network_address_set_leaves_loopback_out() {
+    match host::network_addresses() {
+        Ok(addresses) => assert!(
+            addresses.iter().all(|address| !address.is_loopback()),
+            "{addresses:?}"
+        ),
+        Err(error) => assert!(
+            cfg!(windows) && error.kind() == ErrorKind::Unsupported,
+            "{error}"
+        ),
+    }
+}

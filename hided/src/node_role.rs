@@ -7,15 +7,21 @@
 //!
 //! While the core cannot be reached the node waits and tries again, two
 //! seconds after the first failure and doubling to a minute; a link that
-//! lived a while starts the wait over, and [`NodeRole::wake`] (the machine
-//! woke or its network changed) tries at once. Dropping the role ends the
-//! link, the SSH connection and the thread that holds them.
+//! lived a while starts the wait over. A watch thread looks every two
+//! seconds for what makes the wait wrong (D-09): when the machine slept or
+//! its network addresses changed, a waiting node tries at once and a live
+//! link must answer an SSH ping within three seconds or is dropped and
+//! dialed again; while the core's machine is unreachable, its SSH port is
+//! probed and the node tries at once when the port answers again. Dropping
+//! the role ends the link, the SSH connection and both threads.
 
+use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use hide_node::ssh::SshAlias;
 use hide_node::ssh::upstream::Upstream;
@@ -36,6 +42,17 @@ const LONGEST_WAIT: Duration = Duration::from_secs(60);
 const SETTLED: Duration = Duration::from_secs(30);
 /// How long the core's machine has to answer the handshake.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often the watch looks at the clocks, the network and, while the
+/// core's machine is unreachable, its SSH port.
+const WATCH_EVERY: Duration = Duration::from_secs(2);
+/// The wall clock moving this much further than the monotonic clock, which
+/// stops while the machine sleeps, between two looks means it slept.
+const SLEPT: Duration = Duration::from_secs(5);
+/// How long a live link's connection has to answer a ping after a wake.
+const ANSWER_WITHIN: Duration = Duration::from_secs(3);
+/// How long the core machine's SSH port has to take a probe's connection,
+/// and then to greet it.
+const PROBE_WITHIN: Duration = Duration::from_secs(1);
 
 /// Who this node is, as it tells its core.
 #[derive(Clone, Debug)]
@@ -97,6 +114,7 @@ struct Shared {
 pub struct NodeRole {
     shared: Arc<Shared>,
     thread: Option<JoinHandle<()>>,
+    watch: Option<JoinHandle<()>>,
 }
 
 impl NodeRole {
@@ -129,10 +147,20 @@ impl NodeRole {
                 .spawn(move || keep_linked(&shared, &config, &placement, &identity))
                 .map_err(|error| format!("the node link thread could not start: {error}"))?
         };
-        Ok(Self {
+        let mut role = Self {
             shared,
             thread: Some(thread),
-        })
+            watch: None,
+        };
+        // Dropping `role` on a failure here ends the link thread.
+        let shared = Arc::clone(&role.shared);
+        role.watch = Some(
+            std::thread::Builder::new()
+                .name("node-role-watch".to_owned())
+                .spawn(move || watch(&shared))
+                .map_err(|error| format!("the node watch thread could not start: {error}"))?,
+        );
+        Ok(role)
     }
 
     pub fn phase(&self) -> Phase {
@@ -167,17 +195,21 @@ impl NodeRole {
     /// The machine woke or its network changed: a link that may be dead is
     /// dropped and the next attempt goes at once.
     pub fn wake(&self) {
-        let mut state = lock(&self.shared.state);
-        state.woken = true;
-        if let Some(link) = state.link.take() {
-            link.shutdown();
-        }
-        drop(state);
-        if let Some(upstream) = lock(&self.shared.upstream).as_ref() {
-            upstream.close();
-        }
-        self.shared.changed.notify_all();
+        wake(&self.shared);
     }
+}
+
+fn wake(shared: &Shared) {
+    let mut state = lock(&shared.state);
+    state.woken = true;
+    if let Some(link) = state.link.take() {
+        link.shutdown();
+    }
+    drop(state);
+    if let Some(upstream) = lock(&shared.upstream).as_ref() {
+        upstream.close();
+    }
+    shared.changed.notify_all();
 }
 
 impl Drop for NodeRole {
@@ -193,7 +225,10 @@ impl Drop for NodeRole {
             upstream.close();
         }
         self.shared.changed.notify_all();
-        if let Some(thread) = self.thread.take() {
+        for thread in [self.thread.take(), self.watch.take()]
+            .into_iter()
+            .flatten()
+        {
             let _ = thread.join();
         }
     }
@@ -216,6 +251,9 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
         if started.elapsed() >= SETTLED {
             wait = FIRST_WAIT;
         }
+        // The wait about to start: woken, it starts over, and otherwise the
+        // one after it is twice as long.
+        let this_wait = wait;
         herdr_core::diagnostic!(json!({
             "component": "node_role",
             "kind": "link.ended",
@@ -227,7 +265,7 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
         if set_phase(shared, Phase::Waiting { reason }) {
             return;
         }
-        let deadline = Instant::now() + wait;
+        let deadline = Instant::now() + this_wait;
         let mut state = lock(&shared.state);
         while !state.stopping && !state.woken {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -243,11 +281,141 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
         if state.stopping {
             return;
         }
-        if std::mem::take(&mut state.woken) {
-            wait = FIRST_WAIT;
-        } else {
-            wait = (wait * 2).min(LONGEST_WAIT);
+        wait = next_wait(this_wait, std::mem::take(&mut state.woken));
+    }
+}
+
+/// The wait after `wait`: a wake starts it over, and otherwise it doubles
+/// up to [`LONGEST_WAIT`].
+fn next_wait(wait: Duration, woken: bool) -> Duration {
+    if woken {
+        FIRST_WAIT
+    } else {
+        (wait * 2).min(LONGEST_WAIT)
+    }
+}
+
+/// Looks every [`WATCH_EVERY`] for a sleep, a network change, or the core
+/// machine's SSH port coming back, until the role stops.
+fn watch(shared: &Shared) {
+    let mut look = Look::new(SystemTime::now(), Instant::now(), network_addresses());
+    let mut port = PortWatch::default();
+    loop {
+        {
+            let state = lock(&shared.state);
+            let (state, _) = shared
+                .changed
+                .wait_timeout_while(state, WATCH_EVERY, |state| !state.stopping)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if state.stopping {
+                return;
+            }
         }
+        let moved = look.moved(SystemTime::now(), Instant::now(), network_addresses());
+        let phase = lock(&shared.state).phase.clone();
+        let upstream = lock(&shared.upstream).clone();
+        if let Some(moved) = moved {
+            port = PortWatch::default();
+            let answered = match (&phase, &upstream) {
+                (Phase::Live(_), Some(upstream)) => Some(upstream.alive(ANSWER_WITHIN)),
+                _ => None,
+            };
+            herdr_core::diagnostic!(json!({
+                "component": "node_role",
+                "kind": "machine.moved",
+                "moved": moved,
+                "live_link_answered": answered,
+            }));
+            if answered != Some(true) && !matches!(phase, Phase::Connecting) {
+                wake(shared);
+            }
+            continue;
+        }
+        match (&phase, &upstream) {
+            (Phase::Waiting { reason }, Some(upstream)) if reason.starts_with(UNREACHABLE) => {
+                if port.came_back(upstream.reachable(PROBE_WITHIN)) {
+                    herdr_core::diagnostic!(json!({
+                        "component": "node_role",
+                        "kind": "core.reachable_again",
+                    }));
+                    wake(shared);
+                }
+            }
+            _ => port = PortWatch::default(),
+        }
+    }
+}
+
+/// The reason a dial failed because the core's machine could not be
+/// reached.
+const UNREACHABLE: &str = "unreachable";
+
+fn network_addresses() -> Option<BTreeSet<IpAddr>> {
+    hide_platform::host::network_addresses().ok()
+}
+
+/// What the watch saw at its last look.
+struct Look {
+    wall: SystemTime,
+    monotonic: Instant,
+    addresses: Option<BTreeSet<IpAddr>>,
+}
+
+impl Look {
+    fn new(wall: SystemTime, monotonic: Instant, addresses: Option<BTreeSet<IpAddr>>) -> Self {
+        Self {
+            wall,
+            monotonic,
+            addresses,
+        }
+    }
+
+    /// Takes a new look, and answers what moved since the last one:
+    /// `"slept"` when the wall clock ran [`SLEPT`] past the monotonic one,
+    /// `"network"` when the address set changed. An address set that could
+    /// not be read says nothing.
+    fn moved(
+        &mut self,
+        wall: SystemTime,
+        monotonic: Instant,
+        addresses: Option<BTreeSet<IpAddr>>,
+    ) -> Option<&'static str> {
+        let walked = wall.duration_since(self.wall).unwrap_or_default();
+        let ran = monotonic.saturating_duration_since(self.monotonic);
+        let slept = walked.saturating_sub(ran) >= SLEPT;
+        let network = match (&self.addresses, &addresses) {
+            (Some(before), Some(now)) => before != now,
+            _ => false,
+        };
+        self.wall = wall;
+        self.monotonic = monotonic;
+        if addresses.is_some() {
+            self.addresses = addresses;
+        }
+        if slept {
+            Some("slept")
+        } else if network {
+            Some("network")
+        } else {
+            None
+        }
+    }
+}
+
+/// The core machine's SSH port across the probes of one unreachable wait.
+#[derive(Default)]
+struct PortWatch {
+    last: Option<bool>,
+}
+
+impl PortWatch {
+    /// Records a probe; `true` when the port answers after a probe it did
+    /// not. A port that answers from the first probe on says nothing: the
+    /// dial failed on something a new attempt at once would not change.
+    fn came_back(&mut self, answers: bool) -> bool {
+        let came_back = self.last == Some(false) && answers;
+        self.last = Some(answers);
+        came_back
     }
 }
 
@@ -286,7 +454,7 @@ fn link_once(
     };
     let channel = upstream
         .attach(&placement.program, placement.state_dir.as_deref())
-        .map_err(|error| format!("unreachable: {error}"))?;
+        .map_err(|error| format!("{UNREACHABLE}: {error}"))?;
     let stream = channel.stream;
     {
         let mut state = lock(&shared.state);
@@ -413,4 +581,69 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wait_doubles_to_a_minute_and_a_wake_starts_it_over() {
+        let mut wait = FIRST_WAIT;
+        let mut waits = Vec::new();
+        for _ in 0..7 {
+            waits.push(wait.as_secs());
+            wait = next_wait(wait, false);
+        }
+        assert_eq!(waits, [2, 4, 8, 16, 32, 60, 60]);
+        assert_eq!(next_wait(LONGEST_WAIT, true), FIRST_WAIT);
+    }
+
+    fn addresses(last: u8) -> Option<BTreeSet<IpAddr>> {
+        Some(BTreeSet::from([IpAddr::from([192, 168, 1, last])]))
+    }
+
+    #[test]
+    fn a_sleep_or_a_new_address_set_is_seen_and_an_ordinary_look_is_not() {
+        let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let monotonic = Instant::now();
+        let mut look = Look::new(wall, monotonic, addresses(2));
+        let step = WATCH_EVERY;
+        assert_eq!(
+            look.moved(wall + step, monotonic + step, addresses(2)),
+            None
+        );
+        // The monotonic clock stood still for a minute the wall clock ran.
+        let wall = wall + step + Duration::from_secs(60);
+        let monotonic = monotonic + step * 2;
+        assert_eq!(look.moved(wall, monotonic, addresses(2)), Some("slept"));
+        let (wall, monotonic) = (wall + step, monotonic + step);
+        assert_eq!(look.moved(wall, monotonic, addresses(3)), Some("network"));
+        // An unreadable set says nothing and keeps the last one.
+        let (wall, monotonic) = (wall + step, monotonic + step);
+        assert_eq!(look.moved(wall, monotonic, None), None);
+        let (wall, monotonic) = (wall + step, monotonic + step);
+        assert_eq!(look.moved(wall, monotonic, addresses(3)), None);
+        // A wall clock set back is not a sleep.
+        assert_eq!(
+            look.moved(
+                wall - Duration::from_secs(3600),
+                monotonic + step,
+                addresses(3)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn only_a_port_that_was_silent_and_answers_again_wakes_the_node() {
+        let mut port = PortWatch::default();
+        assert!(!port.came_back(true), "a port answering from the start");
+        assert!(!port.came_back(true));
+        let mut port = PortWatch::default();
+        assert!(!port.came_back(false));
+        assert!(!port.came_back(false));
+        assert!(port.came_back(true));
+        assert!(!port.came_back(true), "once per return");
+    }
 }

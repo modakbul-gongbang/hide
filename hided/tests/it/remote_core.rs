@@ -316,6 +316,83 @@ async fn focus_checkout(
     .await
 }
 
+/// Waits up to `bound` for the node's link to reach `phase`, as its
+/// `/health` reports it, and answers that report.
+async fn node_link(port: u16, phase: &str, bound: Duration) -> Result<Value> {
+    let deadline = Instant::now() + bound;
+    loop {
+        let health = node_health(port).await?;
+        ensure!(
+            health["role"] == "node",
+            "the daemon is not in the node role: {health}"
+        );
+        if health["core_link"] == phase {
+            return Ok(health);
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "the node's link never reached {phase}: {health}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// The first snapshot frame `socket` receives within `bound`.
+async fn first_snapshot(socket: &mut Socket, bound: Duration) -> Result<Value> {
+    let deadline = Instant::now() + bound;
+    loop {
+        let frame = next_frame(socket, deadline)
+            .await?
+            .context("no snapshot reached the screen")?;
+        if frame["type"] == "snapshot" {
+            return Ok(frame);
+        }
+    }
+}
+
+/// Reads `socket` until it closes within `bound`, and answers the close
+/// frame's code and reason; a frame that is not a close is skipped.
+async fn close_of(socket: &mut Socket, bound: Duration) -> Result<(u16, String)> {
+    let deadline = Instant::now() + bound;
+    loop {
+        let left = deadline
+            .checked_duration_since(Instant::now())
+            .context("the screen socket never closed")?;
+        let message = tokio::time::timeout(left, socket.next())
+            .await
+            .context("the screen socket never closed")?;
+        match message {
+            Some(Ok(Message::Close(Some(frame)))) => {
+                return Ok((u16::from(frame.code), frame.reason.to_string()));
+            }
+            Some(Ok(Message::Close(None))) | None => bail!("the screen closed with no frame"),
+            Some(Ok(_)) => {}
+            Some(Err(error)) => bail!("the screen socket failed before its close: {error}"),
+        }
+    }
+}
+
+/// Everything `pane` draws on `socket` for `bound` after a new view asks
+/// it whole, without its control sequences.
+async fn pane_text(socket: &mut Socket, pane: &str, bound: Duration) -> Result<String> {
+    send(
+        socket,
+        "terminal_viewport",
+        json!({"pane_id": pane, "cols": 100, "rows": 30, "new_view": true}),
+    )
+    .await?;
+    let mut screen = String::new();
+    let deadline = Instant::now() + bound;
+    while let Some(frame) = next_frame(socket, deadline).await? {
+        for (from, bytes) in chunks(&frame) {
+            if from == pane {
+                screen.push_str(&String::from_utf8_lossy(&bytes));
+            }
+        }
+    }
+    Ok(plain(&screen))
+}
+
 async fn node_health(port: u16) -> Result<Value> {
     let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -388,16 +465,7 @@ fn a_screen_on_the_node_draws_the_cores_state_and_its_own_pane() -> Result<()> {
             .enable_all()
             .build()?;
         runtime.block_on(async {
-            let deadline = Instant::now() + LINK_BOUND;
-            loop {
-                let health = node_health(port).await?;
-                ensure!(health["role"] == "node", "the daemon is not in the node role: {health}");
-                if health["core_link"] == "live" {
-                    break;
-                }
-                ensure!(Instant::now() < deadline, "the node never linked: {health}");
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
+            node_link(port, "live", LINK_BOUND).await?;
             ensure!(
                 !fixture.node_log("node_daemon", "started")?.is_empty(),
                 "the node role logged no start beside its state"
@@ -405,15 +473,7 @@ fn a_screen_on_the_node_draws_the_cores_state_and_its_own_pane() -> Result<()> {
             let mut socket = screen_socket(port, &token).await?;
             // The screen's first state is the core's: the node is one of its
             // devices.
-            let deadline = Instant::now() + Duration::from_secs(20);
-            let snapshot = loop {
-                let frame = next_frame(&mut socket, deadline)
-                    .await?
-                    .context("no snapshot reached the node's screen")?;
-                if frame["type"] == "snapshot" {
-                    break frame;
-                }
-            };
+            let snapshot = first_snapshot(&mut socket, Duration::from_secs(20)).await?;
             let devices = snapshot["payload"]["rest"]["navigator"]["devices"].clone();
             ensure!(
                 devices
@@ -482,6 +542,124 @@ fn a_screen_on_the_node_draws_the_cores_state_and_its_own_pane() -> Result<()> {
                     break;
                 }
             }
+            Ok::<_, anyhow::Error>(())
+        })
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
+
+/// What a screen shows of the operator's layout: the focus, the tab and
+/// the panes' places, as one snapshot frame carries them.
+fn layout(snapshot: &Value) -> Value {
+    let rest = &snapshot["payload"]["rest"];
+    json!({
+        "focused": rest["focused"],
+        "tab": rest["tab"],
+        "zoomed": rest["zoomed"],
+        "pane_layouts": rest["pane_layouts"],
+    })
+}
+
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let project = fixture.screen_home().join("project");
+        let herdr_pane = fixture.screen.workspace_at(&project)?;
+        let pane = format!("remote:{node}:pane:{herdr_pane}");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            type_and_read(&mut socket, &pane, "echo before-\"ok\"", "before-ok").await?;
+            // The layout as a screen opened now draws it.
+            let mut look = screen_socket(port, &token).await?;
+            let before = layout(&first_snapshot(&mut look, Duration::from_secs(20)).await?);
+            drop(look);
+
+            // The core's machine stops answering SSH: the open screen is
+            // closed as one whose core is lost, and the node waits.
+            tokio::task::block_in_place(|| fixture.ssh.online(false))?;
+            let (code, reason) = close_of(&mut socket, Duration::from_secs(15)).await?;
+            ensure!(
+                (code, reason.as_str()) == (1012, "core_link_lost"),
+                "the screen closed as {code} {reason}"
+            );
+            // The link's end, then a dial that finds no SSH server.
+            let deadline = Instant::now() + LINK_BOUND;
+            loop {
+                let waiting = node_link(port, "waiting", LINK_BOUND).await?;
+                let reason = waiting["core_link_reason"].as_str().unwrap_or_default();
+                if reason.starts_with("unreachable") {
+                    break;
+                }
+                ensure!(
+                    Instant::now() < deadline,
+                    "the node waits for another reason: {waiting}"
+                );
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            // A screen opened meanwhile is held: nothing reaches it, and the
+            // keys it sends are dropped rather than kept for later.
+            let mut held = screen_socket(port, &token).await?;
+            let keys = base64::engine::general_purpose::STANDARD.encode("echo held-\"leak\"\r");
+            send(&mut held, "key", json!({"pane_id": pane, "bytes_base64": keys})).await?;
+            let quiet = next_frame(&mut held, Instant::now() + Duration::from_secs(5)).await?;
+            ensure!(quiet.is_none(), "a held screen received {quiet:?}");
+            // The outage lasts until the node's next try is further away than
+            // the return is allowed to take: only the node noticing SSH
+            // answer again brings it back in time.
+            tokio::task::block_in_place(|| {
+                wait_for("a retry wait past the return bound", || {
+                    let ended = fixture.node_log("node_role", "link.ended")?;
+                    Ok(ended
+                        .iter()
+                        .any(|entry| entry["retry_ms"].as_u64() >= Some(16_000))
+                        .then_some(()))
+                })
+            })?;
+            let quiet = next_frame(&mut held, Instant::now()).await?;
+            ensure!(quiet.is_none(), "a held screen received {quiet:?}");
+
+            // SSH answers again: the held screen attaches within ten seconds
+            // and draws the layout it left.
+            tokio::task::block_in_place(|| fixture.ssh.online(true))?;
+            let back = Instant::now();
+            let snapshot = first_snapshot(&mut held, Duration::from_secs(10))
+                .await
+                .context("the held screen did not attach within ten seconds")?;
+            let returned = back.elapsed();
+            let after = layout(&snapshot);
+            ensure!(before == after, "the layout moved: {before} then {after}");
+            type_and_read(&mut held, &pane, "echo after-\"ok\"", "after-ok").await?;
+            let text = pane_text(&mut held, &pane, Duration::from_secs(3)).await?;
+            ensure!(
+                text.contains("after-ok") && !text.contains("held-"),
+                "the pane after the outage reads {text:?}"
+            );
+            eprintln!("reattached {returned:?} after SSH answered again");
             Ok::<_, anyhow::Error>(())
         })
     })();
