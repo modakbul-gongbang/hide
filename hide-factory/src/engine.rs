@@ -6233,7 +6233,7 @@ impl Engine {
         let answer = match target {
             ResolveTarget::Github => self.resolve_access(&factory)?,
             ResolveTarget::Start(task) => {
-                let (factory, id) = self.resolve(role, task)?;
+                let (factory, id) = self.resolve_within(Some(&factory), task)?;
                 if !self.task(&factory, &id).is_some_and(|t| t.start_waiting) {
                     return Err(refuse(
                         "item_not_found",
