@@ -1078,6 +1078,7 @@ else:raise RuntimeError("group_survived_reap")
             library.sysctl.side_effect = query
             library.proc_pidinfo.side_effect = replacement
             with self.subTest(environment=environment), \
+                    patch.object(sys, "platform", "darwin"), \
                     patch("agent_live_check.process_table.ctypes.CDLL", return_value=library):
                 self.assertEqual(marked_descendants(table, "fixture-run", 1), {})
             self.assertEqual(table.vanished, [111])

@@ -1562,7 +1562,9 @@ mod scope_tests {
                         "content": [{"type": "input_text", "text": context}],
                     },
                 }),
-                Agent::Pi | Agent::OpenCode => unreachable!("legacy hook-only fixture"),
+                Agent::Pi | Agent::Omp | Agent::OpenCode => {
+                    unreachable!("legacy hook-only fixture")
+                }
             };
             fs::write(&locator, format!("{transcript}\n")).unwrap();
             let session = ProjectSession {

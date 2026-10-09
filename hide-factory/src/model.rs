@@ -186,10 +186,15 @@ impl Runtime {
             .map(|kind| Self(kind))
     }
 
-    /// Whether the agent's adapter declares a sleep; one that does not keeps
-    /// working where the Factory would put it to sleep (D-28).
+    /// Factory workers keep their pane identity through sleep (D-28).
+    /// A declared sleep that closes its pane is supported only by manual
+    /// agent sleep until Factory can own the fresh execution's identity.
+    /// Remove this restriction when #857 binds the new worker, coordination,
+    /// letter and watch identities.
     pub fn sleeps(self) -> bool {
-        self.adapter().sleep.is_some()
+        self.adapter()
+            .sleep
+            .is_some_and(|dialect| !dialect.closes_pane_when_sleeping())
     }
 
     /// How the agent's start takes a model and an effort.
@@ -1517,6 +1522,30 @@ impl Task {
 #[cfg(test)]
 mod summary_tests {
     use super::*;
+
+    #[test]
+    fn factory_sleep_preserves_the_workers_pane() {
+        for (kind, supported) in [
+            ("claude", true),
+            ("codex", true),
+            ("pi", false),
+            ("omp", false),
+            ("grok", false),
+            ("opencode", false),
+            ("cursor", false),
+        ] {
+            assert_eq!(Runtime::parse(kind).unwrap().sleeps(), supported, "{kind}");
+        }
+        // Their manual sleep is declared and closes the pane, so the guard,
+        // not a missing declaration, keeps Factory from sleeping them.
+        for kind in ["pi", "omp", "opencode"] {
+            let sleep = Runtime::parse(kind).unwrap().adapter().sleep;
+            assert!(
+                sleep.is_some_and(|dialect| dialect.closes_pane_when_sleeping()),
+                "{kind}"
+            );
+        }
+    }
 
     #[test]
     fn an_old_card_skips_title_and_template_headings_and_bounds_unicode() {

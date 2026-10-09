@@ -182,17 +182,28 @@ fn a_durable_dormant_journey_has_one_resume_authority_and_exact_native_confirmat
 
 #[test]
 #[cfg(unix)]
-fn a_pi_dormant_journey_refuses_a_changed_route_before_close_wake_or_start() {
+fn a_native_dormant_journey_refuses_a_changed_route_before_close_wake_or_start() {
+    for kind in ["pi", "omp"] {
+        for phase in [
+            "none",
+            "before-close",
+            "before-wake",
+            "before-start",
+            "missing-source-before-close",
+            "missing-source-before-wake",
+            "missing-source-before-start",
+        ] {
+            durable_dormant_journey(kind, phase);
+        }
+    }
     for phase in [
-        "none",
-        "before-close",
-        "before-wake",
-        "before-start",
-        "missing-source-before-close",
-        "missing-source-before-wake",
-        "missing-source-before-start",
+        "recovery-before-close",
+        "recovery-before-wake",
+        "recovery-before-start",
+        "hashed-before-close",
+        "chained-migration-before-close",
     ] {
-        durable_dormant_journey("pi", phase);
+        durable_dormant_journey("omp", phase);
     }
 }
 
@@ -226,7 +237,7 @@ struct NativeRecord {
 
 #[cfg(unix)]
 impl NativeRecord {
-    /// Another session where this one was (Pi), or this session moved to
+    /// Another session where this one was (Pi, omp), or this session moved to
     /// another checkout (OpenCode).
     fn duplicate(&self) {
         if self.kind == "opencode" {
@@ -282,7 +293,14 @@ impl NativeRecord {
 #[cfg(unix)]
 fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     use crate::agent_sleep::DormantPhase;
-    let folder = tempfile::tempdir().unwrap();
+    let folder = tempfile::Builder::new()
+        .prefix(if interference == "hashed-before-close" {
+            "repo-한글x"
+        } else {
+            ".tmp"
+        })
+        .tempdir()
+        .unwrap();
     let cwd = folder
         .path()
         .canonicalize()
@@ -304,11 +322,11 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
             path,
         }
     } else {
-        let native_folder = home.path().join(".pi/agent/sessions").join(format!(
-            "--{}--",
-            cwd.trim_start_matches(['/', '\\'])
-                .replace(['/', '\\', ':'], "-")
-        ));
+        let native_folder = crate::fixture::native_session_folder(
+            home.path(),
+            if kind == "omp" { "omp" } else { "pi" },
+            std::path::Path::new(&cwd),
+        );
         std::fs::create_dir_all(&native_folder).unwrap();
         let native_path = native_folder.join("native.jsonl");
         std::fs::write(
@@ -330,6 +348,11 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         }
     };
     let native = Arc::new(native);
+    let native_folder = native.folder.clone();
+    let backup_path = native_folder.join(format!("date_{native_id}-alias.jsonl.123.bak"));
+    let backup_bytes = String::from_utf8(native.other.clone())
+        .unwrap()
+        .replace(native_id, "different-native-owner");
     if kind != "claude" {
         runtime.own_node = Arc::new(hide_node::Local::new(Some(home.path().to_path_buf())));
         runtime.live.as_mut().unwrap().node = runtime.own_node();
@@ -371,6 +394,48 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     if interference == "before-close" {
         native.duplicate();
     }
+    if interference == "recovery-before-close" {
+        std::fs::write(&backup_path, &backup_bytes).unwrap();
+    }
+    let migration_alias = match interference {
+        "hashed-before-close" => {
+            use sha2::{Digest, Sha256};
+            // Pinned native regex preserves the literal '-' then replaces
+            // this invalid run with another '-', retaining the temp suffix.
+            let basename = std::path::Path::new(&cwd)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace("한글", "-");
+            Some(format!(
+                "tmp-{basename}-{:x}",
+                Sha256::digest(cwd.replace('\\', "/").as_bytes())
+            ))
+        }
+        "chained-migration-before-close" => {
+            let encoded_home = home
+                .path()
+                .to_str()
+                .unwrap()
+                .trim_start_matches(['/', '\\'])
+                .replace(['/', '\\', ':'], "-");
+            let encoded_cwd = cwd
+                .trim_start_matches(['/', '\\'])
+                .replace(['/', '\\', ':'], "-");
+            // Native root-home migration first creates --<cwd>--, then
+            // the cwd-specific legacy migration merges it into the default.
+            Some(format!("--{encoded_home}--{encoded_cwd}----"))
+        }
+        _ => None,
+    }
+    .map(|bucket| {
+        let bucket = native_folder.parent().unwrap().join(bucket);
+        std::fs::create_dir(&bucket).unwrap();
+        let alias = bucket.join(format!("date_{native_id}-alias.jsonl"));
+        std::fs::write(&alias, &backup_bytes).unwrap();
+        alias
+    });
     if interference == "missing-source-before-close" {
         native.remove();
     }
@@ -380,6 +445,8 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     let saved_id = id.clone();
     let saved_cwd = cwd.clone();
     let create_native = Arc::clone(&native);
+    let create_backup = backup_path.clone();
+    let create_backup_bytes = backup_bytes.clone();
     let (effects, observed) = std::sync::mpsc::channel();
     let mut created = false;
     let herdr = FakeHerdr::start("dormant-success", move |method, params| match method {
@@ -411,6 +478,9 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
             serde_json::json!({"type":"session_snapshot","snapshot":dormant_wire_session(&saved_cwd, &tabs)})
         }
         "layout.apply" => {
+            if interference == "recovery-before-start" {
+                std::fs::write(&create_backup, &create_backup_bytes).unwrap();
+            }
             if interference == "missing-source-before-start" {
                 create_native.remove();
             }
@@ -469,7 +539,14 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
     let shared = Arc::new(std::sync::Mutex::new(runtime));
     shared.lock().unwrap().live.as_mut().unwrap().runtime = Arc::downgrade(&shared);
     shared.lock().unwrap().write_ui_state().unwrap();
-    if matches!(interference, "before-close" | "missing-source-before-close") {
+    if matches!(
+        interference,
+        "before-close"
+            | "missing-source-before-close"
+            | "recovery-before-close"
+            | "hashed-before-close"
+            | "chained-migration-before-close"
+    ) {
         wait_for("refused native close", || {
             !shared
                 .lock()
@@ -492,6 +569,9 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
             herdr.methods()
         );
         assert_eq!(row(&shared.lock().unwrap())["pane_id"], SLEEPER);
+        if let Some(alias) = migration_alias {
+            assert_eq!(std::fs::read_to_string(alias).unwrap(), backup_bytes);
+        }
         native.assert_untouched(interference);
         return;
     }
@@ -528,13 +608,19 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         if interference == "before-wake" {
             native.duplicate();
         }
+        if interference == "recovery-before-wake" {
+            std::fs::write(&backup_path, &backup_bytes).unwrap();
+        }
         if interference == "missing-source-before-wake" {
             native.remove();
         }
         assert!(runtime.request_dormant_wake(&id));
         assert!(!runtime.request_dormant_wake(&id));
     }
-    if matches!(interference, "before-wake" | "missing-source-before-wake") {
+    if matches!(
+        interference,
+        "before-wake" | "missing-source-before-wake" | "recovery-before-wake"
+    ) {
         wait_for("refused native wake tab", || {
             shared.lock().unwrap().snapshot.ui_state.agent_sleep.dormant[&id].phase
                 == DormantPhase::Failed
@@ -557,7 +643,10 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         observed.recv_timeout(Duration::from_secs(5)).unwrap(),
         "create"
     );
-    if matches!(interference, "before-start" | "missing-source-before-start") {
+    if matches!(
+        interference,
+        "before-start" | "missing-source-before-start" | "recovery-before-start"
+    ) {
         wait_for("refused native wake start", || {
             shared.lock().unwrap().snapshot.ui_state.agent_sleep.dormant[&id].phase
                 == DormantPhase::Failed

@@ -404,15 +404,10 @@ pub fn candidates(
         &mut visited,
     )?;
     opencode_candidates(home, window, &mut found)?;
-    if let Ok(pi_root) = crate::pi::root(home) {
-        walk(
-            &pi_root,
-            crate::Agent::Pi,
-            1,
-            window,
-            &mut found,
-            &mut visited,
-        )?;
+    for agent in [crate::Agent::Pi, crate::Agent::Omp] {
+        if let Ok(root) = crate::native_file::root(home, agent) {
+            walk(&root, agent, 1, window, &mut found, &mut visited)?;
+        }
     }
     found.sort_by(|left, right| {
         right
@@ -594,8 +589,8 @@ fn read_one(home: &std::path::Path, request: &ReadRequest) -> ReadAnswer {
         crate::ConversationCursor::new,
         crate::ConversationCursor::restore,
     );
-    let pi_before = if request.agent == crate::Agent::Pi {
-        match crate::pi::header(&path).and_then(|header| {
+    let pi_before = if request.agent.requires_native_file_proof() {
+        match crate::native_file::header(request.agent, &path).and_then(|header| {
             crate::confirm_session_file(
                 home,
                 request.agent,

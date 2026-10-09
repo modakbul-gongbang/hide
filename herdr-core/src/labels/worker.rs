@@ -45,8 +45,8 @@ use super::input::{OperatorInput, Submit};
 use super::overlay::LabelOverlay;
 use super::store::{LabelStore, PaneRecord};
 
-/// How long after a turn starts a pane whose prompt was not in the
-/// transcript yet is read once more.
+/// The minimum interval between native-file current-metadata reads, also
+/// used for the single follow-up when a starting turn has no prompt yet.
 const FOLLOW_UP_READ: Duration = Duration::from_secs(3);
 /// How long a read the machine could not answer (a device whose helper is
 /// not connected) waits before it is tried again, so the pane catches up
@@ -384,7 +384,10 @@ impl LabelWorker {
                             events_loaded: false,
                             needs_read: reference_token.is_some() && !resumable,
                             next_analysis_at: None,
-                            follow_up_at: None,
+                            // Native-file titles and waits can change without
+                            // a Herdr lifecycle transition, including at EOF.
+                            follow_up_at: (resumable && agent.requires_native_file_proof())
+                                .then_some(now + FOLLOW_UP_READ),
                             follow_up_armed: status_moved,
                             last_failure: None,
                             input_observed_since_unix_ms: now_unix_ms,
@@ -809,6 +812,11 @@ impl LabelWorker {
             }
             Err(ReadFailure::Refused(reason)) => {
                 self.log_failure(pane_id, "read.refused", &reason);
+                if let Some(pane) = self.panes.get_mut(pane_id)
+                    && pane.agent.requires_native_file_proof()
+                {
+                    pane.follow_up_at = Some(now + UNAVAILABLE_RETRY);
+                }
                 return self.invalidate_turn_read(pane_id);
             }
         };
@@ -957,6 +965,14 @@ impl LabelWorker {
                 pane.follow_up_at = Some(now + FOLLOW_UP_READ);
             }
         }
+        // One serialized, budgeted read per native-file pane, no sooner than
+        // three seconds after its last result. The existing worker owns the
+        // I/O; unchanged facts neither publish nor rewrite the saved store.
+        if let Some(pane) = self.panes.get_mut(pane_id)
+            && pane.agent.requires_native_file_proof()
+        {
+            pane.follow_up_at = Some(now + FOLLOW_UP_READ);
+        }
         changed
     }
 
@@ -972,6 +988,7 @@ impl LabelWorker {
                 record.owner.is_some()
                     || record.proven_reference.is_some()
                     || record.native_session_id.is_some()
+                    || record.turns_seq.is_some()
             });
             if let Some(record) = self.records.get_mut(pane_id) {
                 record.reset_session(None);

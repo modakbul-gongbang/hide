@@ -918,6 +918,7 @@ pub fn spawn_remote_purpose_write(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckoutTabRequest {
     pub id: u64,
+    pub agent_kind: Option<String>,
     pub checkout_path: String,
     pub label: String,
     pub host: crate::checkout_owner::TabHost,
@@ -983,7 +984,7 @@ fn start_task_agent(
     let reader = start
         .resume_scope
         .as_ref()
-        .map(|_| task_session_node(&runtime, id))
+        .map(|_| task_session_node(&runtime, id, &start.kind))
         .transpose();
     let outcome = match reader {
         Err(reason) => TaskAgentOutcome::Failed(reason),
@@ -1004,7 +1005,7 @@ fn start_task_agent(
                         .map_err(|_| "runtime unavailable")?
                         .pending_task_agent_start(id);
                     if pending.as_ref() != Some(&expected)
-                        || !Arc::ptr_eq(&task_session_node(&runtime, id)?, reader)
+                        || !Arc::ptr_eq(&task_session_node(&runtime, id, &expected.kind)?, reader)
                     {
                         return Err("session_resume_intent_changed".into());
                     }
@@ -1286,21 +1287,25 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
         if let Some(scope) = request.resume_scope.as_ref() {
             target.check_current(request.id)?;
             let runtime = target.runtime.upgrade().ok_or("runtime stopped")?;
-            let node = task_session_node(&runtime, request.id)?;
+            let kind = request
+                .agent_kind
+                .as_deref()
+                .ok_or("session_resume_agent_required")?;
+            let node = task_session_node(&runtime, request.id, kind)?;
             crate::live::confirm_session_launch(
                 node.as_ref(),
-                "pi",
+                kind,
                 &scope.id,
                 Some(&scope.cwd),
                 request.resume_reference.as_ref(),
             )?;
-            if !Arc::ptr_eq(&node, &task_session_node(&runtime, request.id)?) {
+            if !Arc::ptr_eq(&node, &task_session_node(&runtime, request.id, kind)?) {
                 return Err("session_resume_reader_changed".into());
             }
             target.check_current(request.id)?;
             let current = || {
                 target.check_current(request.id)?;
-                if !Arc::ptr_eq(&node, &task_session_node(&runtime, request.id)?) {
+                if !Arc::ptr_eq(&node, &task_session_node(&runtime, request.id, kind)?) {
                     return Err("session_resume_reader_changed".into());
                 }
                 Ok(())
@@ -1338,6 +1343,7 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
 fn task_session_node(
     runtime: &Arc<Mutex<Runtime>>,
     id: u64,
+    kind: &str,
 ) -> Result<Arc<dyn crate::node_access::NodeLink>, String> {
     let mut runtime = runtime.lock().map_err(|_| "runtime unavailable")?;
     let operation = runtime
@@ -1346,6 +1352,9 @@ fn task_session_node(
         .as_ref()
         .filter(|operation| operation.id == id)
         .ok_or("task superseded")?;
+    if operation.agent_kind.as_deref() != Some(kind) {
+        return Err("session_resume_intent_changed".into());
+    }
     let device = operation
         .device_id
         .clone()
@@ -2030,6 +2039,21 @@ pub(crate) fn close_checkout_panes(
     wait: ProcessWait,
     timeout: Duration,
 ) -> Result<(), String> {
+    close_checkout_panes_checked(connector, node, paths, pane_ids, wait, timeout, &|_| Ok(()))
+}
+
+/// Recheck the execution on both sides of the actual close connection.
+/// Herdr answers one request per connection; every other close rule stays shared.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
+pub(crate) fn close_checkout_panes_checked(
+    connector: &dyn ApiConnector,
+    node: &dyn crate::node_access::NodeLink,
+    paths: &[String],
+    pane_ids: &[String],
+    wait: ProcessWait,
+    timeout: Duration,
+    before_close: &dyn Fn(&str) -> Result<(), String>,
+) -> Result<(), String> {
     let path = paths.join(",");
     let path = path.as_str();
     let result = (|| {
@@ -2042,8 +2066,18 @@ pub(crate) fn close_checkout_panes(
             }
         }
         for pane_id in pane_ids {
+            before_close(pane_id)?;
+            let mut stream = connector.connect().map_err(|error| error.to_string())?;
+            before_close(pane_id)?;
             trace(path, std::slice::from_ref(pane_id), "close_requested", None);
-            control_request(connector, "pane.close", json!({"pane_id":pane_id}))?;
+            hide_herdr_client::request_on_stream(
+                stream.as_mut(),
+                "herdr-core:pane.close",
+                "pane.close",
+                json!({"pane_id":pane_id}),
+                timeout,
+            )
+            .map_err(|error| error.to_string())?;
         }
         if pane_ids.is_empty() {
             return Ok(());
@@ -3526,15 +3560,16 @@ mod tests {
     }
 
     #[test]
-    fn a_pi_archive_resume_never_launches_an_unconfirmed_or_superseded_owner() {
+    fn a_native_archive_resume_never_launches_an_unconfirmed_or_superseded_owner() {
+        for (kind, flag) in [("pi", "--session"), ("omp", "--resume")] {
+            native_archive_resume_journey(kind, flag);
+        }
+    }
+
+    fn native_archive_resume_journey(kind: &str, flag: &str) {
         let home = tempfile::tempdir().unwrap();
         let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
-        let folder = home.path().join(".pi/agent/sessions").join(format!(
-            "--{}--",
-            cwd.to_string_lossy()
-                .trim_start_matches(['/', '\\'])
-                .replace(['/', '\\', ':'], "-")
-        ));
+        let folder = crate::fixture::native_session_folder(home.path(), kind, &cwd);
         std::fs::create_dir_all(&folder).unwrap();
         let path = folder.join("native.jsonl");
         let header = format!(
@@ -3550,9 +3585,9 @@ mod tests {
                 value: path.display().to_string(),
             }),
             pane_id: "w1:p1".into(),
-            kind: "pi".into(),
+            kind: kind.into(),
             prompt: None,
-            args: vec!["--session".into(), "native-pi".into()],
+            args: vec![flag.into(), "native-pi".into()],
             resume_scope: Some(hide_session::SessionReadScope {
                 id: "native-pi".into(),
                 cwd: cwd.display().to_string(),

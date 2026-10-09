@@ -44,7 +44,8 @@ pub(crate) mod cleanup;
 #[path = "worktree_control.rs"]
 mod worktree_control;
 pub(crate) use worktree_control::{
-    CONFIRM_TIMEOUT, ProcessWait, close_checkout_panes, prompt_argument,
+    CONFIRM_TIMEOUT, ProcessWait, close_checkout_panes, close_checkout_panes_checked,
+    prompt_argument,
 };
 pub use worktree_control::{
     CheckoutTabRequest, HomeStartRequest, IssueWriteFailure, PendingAgentStart, PurposeMirror,
@@ -2832,9 +2833,9 @@ fn read_pane_text(
 /// Topology reads and opening an SSH stream can wait. Recheck the same
 /// control, file node and admitted intent on both sides of every connection.
 /// The callback reads only current runtime facts, never files or sockets.
-struct CurrentSessionConnector<'a> {
-    connector: &'a dyn ApiConnector,
-    current: &'a (dyn Fn() -> Result<(), String> + Sync),
+pub(crate) struct CurrentSessionConnector<'a> {
+    pub(crate) connector: &'a dyn ApiConnector,
+    pub(crate) current: &'a (dyn Fn() -> Result<(), String> + Sync),
 }
 
 impl CurrentSessionConnector<'_> {
@@ -3529,7 +3530,17 @@ mod tests {
     }
 
     #[test]
-    fn a_pi_fork_gets_its_own_unfocused_tab_and_failed_start_closes_only_its_pane() {
+    fn a_native_fork_gets_its_own_unfocused_tab_and_failed_start_closes_only_its_pane() {
+        for agent in [
+            crate::fork::ForkableAgent::Pi,
+            crate::fork::ForkableAgent::Omp,
+        ] {
+            native_fork_tab_journey(agent);
+        }
+    }
+
+    fn native_fork_tab_journey(agent: crate::fork::ForkableAgent) {
+        let kind = agent.kind();
         for case in [
             "success",
             "refused",
@@ -3542,12 +3553,7 @@ mod tests {
             let refused = case == "refused";
             let home = tempfile::tempdir().unwrap();
             let cwd = hide_platform::fs::identity::canonical(home.path()).unwrap();
-            let folder = home.path().join(".pi/agent/sessions").join(format!(
-                "--{}--",
-                cwd.to_string_lossy()
-                    .trim_start_matches('/')
-                    .replace(['/', '\\', ':'], "-")
-            ));
+            let folder = crate::fixture::native_session_folder(home.path(), kind, &cwd);
             std::fs::create_dir_all(&folder).unwrap();
             std::fs::write(
                 folder.join("native.jsonl"),
@@ -3612,7 +3618,7 @@ mod tests {
                         "foreground_processes":[{"pid":42,"name":"zsh"}]}}),
                     "agent.start" => {
                         assert_eq!(params["pane_id"], "child-pane");
-                        assert_eq!(params["kind"], "pi");
+                        assert_eq!(params["kind"], kind);
                         assert_eq!(params["args"], json!(["--fork", "native-pi"]));
                         if refused {
                             return Err(("start_refused".into(), "fixture refused".into()));
@@ -3636,7 +3642,7 @@ mod tests {
                 connection_generation: 0,
                 codex_daemon: Default::default(),
                 parent_pane_id: "parent-pane".into(),
-                agent: crate::fork::ForkableAgent::Pi,
+                agent,
                 session_id: "native-pi".into(),
                 cwd: Some(cwd.display().to_string()),
                 name: "fork-pi-1".into(),

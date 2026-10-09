@@ -90,28 +90,30 @@ pub(crate) fn row(agent: &SidebarAgentSnapshot, verb: RequestVerb) -> Row {
     if agent.escalation.is_some() {
         return Row {
             group: Group::MyTurn,
-            tag: Some(if agent.blocked {
-                Tag::Approval
-            } else if agent
-                .escalation
-                .as_ref()
-                .is_some_and(|e| e.cause != super::escalation::Cause::ObserverUnconfirmed)
-                || agent.demand == "question"
-            {
-                Tag::Answer
-            } else {
-                Tag::Stopped
-            }),
+            tag: Some(demand_tag(agent).unwrap_or_else(|| {
+                if agent
+                    .escalation
+                    .as_ref()
+                    .is_some_and(|e| e.cause != super::escalation::Cause::ObserverUnconfirmed)
+                {
+                    Tag::Answer
+                } else {
+                    Tag::Stopped
+                }
+            })),
         };
     }
     let tag = tag(agent, verb);
+    // My turn holds only what stays stopped until the operator moves; a
+    // result, a failed check or an unfinished turn rests with its tag and
+    // the row's unread mark (docs/status-model.md, The Sessions tool).
     let group = match verb {
-        RequestVerb::Answer | RequestVerb::Fix | RequestVerb::Stopped | RequestVerb::Result => {
-            Group::MyTurn
-        }
+        RequestVerb::Answer => Group::MyTurn,
         RequestVerb::Review => Group::ReviewMerge,
         RequestVerb::Working | RequestVerb::Waiting => Group::InProgress,
-        RequestVerb::Idle => Group::Resting,
+        RequestVerb::Fix | RequestVerb::Stopped | RequestVerb::Result | RequestVerb::Idle => {
+            Group::Resting
+        }
     };
     Row {
         group,
@@ -127,10 +129,27 @@ pub(super) fn mergeable(pull: &crate::request_view::AgentPullRequestSnapshot) ->
         && matches!(pull.review, None | Some(ReviewDecision::Approved))
 }
 
+/// A native unanswered question also holds the pane blocked until a reply.
+/// Only that proven native wait overrides the approval of a blocked menu;
+/// an AI question alone never changes what the menu asks the operator to do.
+fn demand_tag(agent: &SidebarAgentSnapshot) -> Option<Tag> {
+    let native_question = agent.demand == "question"
+        && agent
+            .user_turn
+            .as_ref()
+            .is_some_and(|turn| turn.kind == hide_session::turns::UserTurnKind::Question);
+    if agent.blocked && !native_question {
+        Some(Tag::Approval)
+    } else if agent.demand == "question" {
+        Some(Tag::Answer)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn tag(agent: &SidebarAgentSnapshot, verb: RequestVerb) -> Tag {
     match verb {
-        RequestVerb::Answer if agent.blocked => Tag::Approval,
-        RequestVerb::Answer => Tag::Answer,
+        RequestVerb::Answer => demand_tag(agent).unwrap_or(Tag::Answer),
         RequestVerb::Fix => Tag::Fix,
         RequestVerb::Review => {
             let mut duties = agent

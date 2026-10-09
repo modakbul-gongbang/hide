@@ -149,7 +149,7 @@
       "sample": "hide-agent-hooks/tests/fixtures/hook-bytes/omp-extension.ts"
     },
     "session": {
-      "absent": "No session reader in this build"
+      "sample": "hide-session/tests/fixtures/adapters/omp-18.7.0/session.jsonl"
     },
     "features": [
       "skill",
@@ -158,7 +158,10 @@
       "subagents",
       "spawn_guard",
       "herdr_integration",
-      "start"
+      "sleep",
+      "fork",
+      "start",
+      "titles"
     ],
     "factory": {
       "direct_ask": "available",

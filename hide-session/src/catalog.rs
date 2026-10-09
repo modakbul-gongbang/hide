@@ -24,6 +24,7 @@ pub enum SessionFilter {
     Codex,
     Claude,
     Pi,
+    Omp,
     #[serde(rename = "opencode")]
     OpenCode,
 }
@@ -36,6 +37,7 @@ impl SessionFilter {
                 (Self::Codex, Agent::Codex)
                     | (Self::Claude, Agent::Claude)
                     | (Self::Pi, Agent::Pi)
+                    | (Self::Omp, Agent::Omp)
                     | (Self::OpenCode, Agent::OpenCode)
             )
     }
@@ -157,15 +159,17 @@ impl SessionCatalog {
             &mut visited,
             SESSION_DISCOVERY_LIMIT,
         )?;
-        if let Ok(root) = crate::pi::root(&self.home) {
-            collect_jsonl(
-                &root,
-                Agent::Pi,
-                1,
-                &mut files,
-                &mut visited,
-                SESSION_DISCOVERY_LIMIT,
-            )?;
+        for agent in [Agent::Pi, Agent::Omp] {
+            if let Ok(root) = crate::native_file::root(&self.home, agent) {
+                collect_jsonl(
+                    &root,
+                    agent,
+                    1,
+                    &mut files,
+                    &mut visited,
+                    SESSION_DISCOVERY_LIMIT,
+                )?;
+            }
         }
 
         let mut refusals = Vec::new();
@@ -184,7 +188,9 @@ impl SessionCatalog {
             Vec::new()
         });
         for (agent, path) in files {
-            if agent == Agent::Pi && crate::pi::inside_root(&self.home, &path).is_err() {
+            if agent.requires_native_file_proof()
+                && crate::native_file::inside_root(&self.home, agent, &path).is_err()
+            {
                 continue;
             }
             let Some(cwd) = session_cwd(agent, &path) else {
@@ -276,7 +282,7 @@ fn collect_jsonl(
                 source,
             })?
             .path();
-        if agent == Agent::Pi
+        if agent.requires_native_file_proof()
             && fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink())
         {
             continue;
@@ -295,7 +301,9 @@ fn collect_jsonl(
 
 fn session_cwd(agent: Agent, path: &Path) -> Option<PathBuf> {
     match agent {
-        Agent::Pi => crate::pi::header(path).ok().map(|header| header.cwd),
+        Agent::Pi | Agent::Omp => crate::native_file::header(agent, path)
+            .ok()
+            .map(|header| header.cwd),
         Agent::Codex => crate::codex_session_cwd(path).map(PathBuf::from),
         Agent::Claude => {
             let file = File::open(path).ok()?;
@@ -332,10 +340,10 @@ fn read_project_session(
         .and_then(system_time_ms)
         .unwrap_or_default();
     let id = session_id(agent, &path);
-    if agent == Agent::Pi && id.is_empty() {
+    if agent.requires_native_file_proof() && id.is_empty() {
         return None;
     }
-    let pi_before = (agent == Agent::Pi)
+    let pi_before = (agent.requires_native_file_proof())
         .then(|| crate::confirm_session_file(home, agent, &path, Some(&id), cwd.to_str()));
     let stamp = crate::search_read::stamp_at(&path);
     let (mut parsed, mut unavailable) = match (pi_before.as_ref(), metadata) {
@@ -352,7 +360,7 @@ fn read_project_session(
             }
             Err(error) => (
                 None,
-                Some(if agent == Agent::Pi {
+                Some(if agent.requires_native_file_proof() {
                     "session_unreadable".to_owned()
                 } else {
                     format!("session_unreadable:{error}")
@@ -414,10 +422,10 @@ pub(crate) fn compact_snippet(value: &str) -> String {
 }
 
 fn session_id(agent: Agent, path: &Path) -> String {
-    if agent == Agent::Pi {
+    if agent.requires_native_file_proof() {
         // project_sessions already rejected invalid metadata, never synthesize
         // an identity from Pi's lossy pathname.
-        return crate::pi::header(path)
+        return crate::native_file::header(agent, path)
             .map(|header| header.id)
             .unwrap_or_default();
     }

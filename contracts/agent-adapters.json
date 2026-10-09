@@ -104,7 +104,7 @@
     "install_url": "https://omp.sh/docs/quickstart",
     "logo_id": "omp",
     "can_start": true,
-    "can_resume": false,
+    "can_resume": true,
     "efforts": [],
     "can_pick_model": false,
     "sidebar_mark": null,

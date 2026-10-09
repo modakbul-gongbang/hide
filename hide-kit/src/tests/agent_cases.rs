@@ -759,9 +759,9 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
     // session-start hook's output). The session-reader common contract B1/B6
     // enables starts for the five agents besides Claude Code and Codex
     // without enabling their future reader/sleep/fork features. The complete
-    // Pi slice adds native title and exact sleep/fork beside the letters and
-    // spawn guard of Hide's extension; the OpenCode slice does the same
-    // beside its plugin.
+    // Pi and OMP slices add native title and exact sleep/fork beside the
+    // accepted extension's collaboration features (reader B1/B2/B3/B14, D13);
+    // the OpenCode slice does the same beside its plugin.
     let opencode = [
         Skill,
         Guidance,
@@ -777,7 +777,7 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
     ];
     // pi-omp-extension D-08, D-10: Pi and omp take letters and are refused a
     // launch through Hide's extension; only omp runs subagents, and no bell
-    // rings for either. Pi's session reader adds its sleep, fork and titles.
+    // rings for either. Their session readers add sleep, fork and titles.
     let pi = [
         Skill,
         Guidance,
@@ -796,7 +796,10 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
         Subagents,
         SpawnGuard,
         HerdrIntegration,
+        Sleep,
+        Fork,
         Start,
+        Titles,
     ];
     let expected: [(&str, &[Feature], bool); 7] = [
         ("claude-code", &Feature::ALL, false),

@@ -135,7 +135,7 @@ struct FileTranscript {
     proof: Option<NativeProof>,
 }
 
-/// The phone retains no native authority beyond its source. Every Pi page,
+/// The phone retains no native authority beyond its source. Every native page,
 /// poll (including idle) and cloned pager proves that same source again.
 #[derive(Clone, Debug)]
 struct NativeProof {
@@ -166,7 +166,7 @@ impl NativeProof {
     }
 
     fn new(home: &Path, source: &Source, path: &Path) -> Result<Option<Self>, SessionError> {
-        if source.agent != Agent::Pi {
+        if !source.agent.requires_native_file_proof() {
             return Ok(None);
         }
         let confirmed = Self::confirm(home, source, path)?;
@@ -631,19 +631,38 @@ mod tests {
         assert_eq!(page.messages[0].text.chars().count(), MESSAGE_CHARS);
     }
 
-    fn pi_transcript() -> (tempfile::TempDir, PathBuf, Source) {
+    fn native_transcript(agent: Agent) -> (tempfile::TempDir, PathBuf, Source) {
         let home = tempfile::tempdir().unwrap();
         let cwd = home.path().join("checkout");
         std::fs::create_dir(&cwd).unwrap();
         let cwd = std::fs::canonicalize(cwd).unwrap();
-        let encoded = cwd
-            .to_string_lossy()
-            .trim_start_matches(['/', '\\'])
-            .replace(['/', '\\', ':'], "-");
+        let (root, bucket) = match agent {
+            Agent::Pi => (
+                ".pi/agent/sessions",
+                format!(
+                    "--{}--",
+                    cwd.to_string_lossy()
+                        .trim_start_matches(['/', '\\'])
+                        .replace(['/', '\\', ':'], "-")
+                ),
+            ),
+            Agent::Omp => {
+                let temporary = std::env::temp_dir().canonicalize().unwrap();
+                let relative = cwd.strip_prefix(temporary).unwrap();
+                (
+                    ".omp/agent/sessions",
+                    format!(
+                        "-tmp-{}",
+                        relative.to_string_lossy().replace(['/', '\\', ':'], "-")
+                    ),
+                )
+            }
+            _ => unreachable!("native-file fixture"),
+        };
         let path = home
             .path()
-            .join(".pi/agent/sessions")
-            .join(format!("--{encoded}--"))
+            .join(root)
+            .join(bucket)
             .join("timestamp_native-phone.jsonl");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut file = std::fs::File::create(&path).unwrap();
@@ -652,7 +671,7 @@ mod tests {
             writeln!(file, "{}", serde_json::json!({"type":"message","id":format!("entry-{index}"),"parentId":null,"timestamp":"2026-10-03T01:00:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hidden"},{"type":"text","text":format!("답변 {index}")}],"stopReason":"stop"}})).unwrap();
         }
         let source = Source {
-            agent: Agent::Pi,
+            agent,
             identity: SessionIdentity::path(&path),
             cwd: Some(cwd.display().to_string()),
         };
@@ -660,8 +679,14 @@ mod tests {
     }
 
     #[test]
-    fn pi_phone_pages_native_message_units_and_only_appends_new_messages() {
-        let (home, path, source) = pi_transcript();
+    fn native_phone_pages_native_message_units_and_only_appends_new_messages() {
+        for agent in [Agent::Pi, Agent::Omp] {
+            native_phone_pages(agent);
+        }
+    }
+
+    fn native_phone_pages(agent: Agent) {
+        let (home, path, source) = native_transcript(agent);
         let (mut transcript, page) = Transcript::open(home.path(), "pane", source).unwrap();
         assert_eq!(texts(&page.messages).first(), Some(&"답변 40"));
         assert_eq!(texts(&page.messages).last(), Some(&"답변 69"));
@@ -684,8 +709,14 @@ mod tests {
     }
 
     #[test]
-    fn pi_idle_poll_and_cloned_pager_reject_rebound_native_owner() {
-        let (home, path, source) = pi_transcript();
+    fn native_idle_poll_and_cloned_pager_reject_rebound_native_owner() {
+        for agent in [Agent::Pi, Agent::Omp] {
+            native_rebound_phone(agent);
+        }
+    }
+
+    fn native_rebound_phone(agent: Agent) {
+        let (home, path, source) = native_transcript(agent);
         let (mut transcript, page) = Transcript::open(home.path(), "pane", source).unwrap();
         let pager = transcript.pager();
         let original = std::fs::read_to_string(&path).unwrap();
@@ -700,8 +731,14 @@ mod tests {
     }
 
     #[test]
-    fn pi_same_owner_same_length_edit_resets_phone_and_invalidates_old_pager() {
-        let (home, path, source) = pi_transcript();
+    fn native_same_owner_same_length_edit_resets_phone_and_invalidates_old_pager() {
+        for agent in [Agent::Pi, Agent::Omp] {
+            native_rewritten_phone(agent);
+        }
+    }
+
+    fn native_rewritten_phone(agent: Agent) {
+        let (home, path, source) = native_transcript(agent);
         let (mut transcript, page) = Transcript::open(home.path(), "pane", source).unwrap();
         let pager = transcript.pager();
         let original = std::fs::read_to_string(&path).unwrap();

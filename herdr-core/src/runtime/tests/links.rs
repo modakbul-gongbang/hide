@@ -328,8 +328,8 @@ impl hide_herdr_client::ApiConnector for HerdrConnectTransition {
 /// file node's proof to create or launch a queued archived conversation.
 #[test]
 #[cfg(unix)]
-fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
-    const CHILD: &str = "HIDE_TEST_PI_ARCHIVE_CHILD";
+fn a_native_archive_worker_refuses_retired_control_before_creation_or_start() {
+    const CHILD: &str = "HIDE_TEST_NATIVE_ARCHIVE_CHILD";
     if std::env::var_os(CHILD).is_none() {
         // AgentInstalled reads the process account, whereas the session reader
         // below has its own home. Give both a private account in an owned child
@@ -338,13 +338,15 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
         let bin = account.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
         // FakeHerdr owns agent.start; only the real executable lookup reaches
-        // this stand-in. No operator Pi installation is needed or executed.
-        std::os::unix::fs::symlink("/usr/bin/true", bin.join("pi")).unwrap();
+        // this stand-in. No operator installation is needed or executed.
+        for kind in ["pi", "omp"] {
+            std::os::unix::fs::symlink("/usr/bin/true", bin.join(kind)).unwrap();
+        }
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
         command
             .args([
                 "--exact",
-                "runtime::tests::links::a_pi_archive_worker_refuses_retired_control_before_creation_or_start",
+                "runtime::tests::links::a_native_archive_worker_refuses_retired_control_before_creation_or_start",
                 "--nocapture",
                 "--test-threads=1",
             ])
@@ -360,21 +362,33 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
         .unwrap();
         assert!(
             output.succeeded(),
-            "private Pi archive test failed:\n{}\n{}",
+            "private native archive test failed:\n{}\n{}",
             output.stdout,
             output.stderr
         );
         return;
     }
+    for (kind, flag) in [("pi", "--session"), ("omp", "--resume")] {
+        native_archive_current_journey(kind, flag);
+    }
+}
+
+#[cfg(unix)]
+fn native_archive_current_journey(kind: &'static str, flag: &str) {
     assert_eq!(
-        hide_platform::programs::find_cli("pi"),
-        Some(std::path::PathBuf::from(std::env::var_os("HOME").unwrap()).join("bin/pi")),
-        "Pi availability must come from the private fixture"
+        hide_platform::programs::find_cli(kind),
+        Some(
+            std::path::PathBuf::from(std::env::var_os("HOME").unwrap())
+                .join("bin")
+                .join(kind)
+        ),
+        "Native CLI availability must come from the private fixture"
     );
     for case in [
         "current",
         "local-before",
         "remote-before",
+        "kind-before",
         "local-after-tab",
         "local-during-start-connect",
         "reader-during-start-connect",
@@ -382,10 +396,8 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
     ] {
         let home = tempfile::tempdir().unwrap();
         let cwd = home.path().canonicalize().unwrap().display().to_string();
-        let native_folder = home.path().join(".pi/agent/sessions").join(format!(
-            "--{}--",
-            cwd.trim_start_matches('/').replace(['/', '\\', ':'], "-")
-        ));
+        let native_folder =
+            crate::fixture::native_session_folder(home.path(), kind, std::path::Path::new(&cwd));
         std::fs::create_dir_all(&native_folder).unwrap();
         let native = native_folder.join("selected.jsonl");
         let bytes = format!(
@@ -402,10 +414,10 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
                 Some(cwd.clone()),
                 None,
                 None,
-                Some("pi".into()),
+                Some(kind.into()),
             )
             .unwrap();
-        runtime.set_task_agent_launch(id, None, vec!["--session".into(), "native-pi".into()]);
+        runtime.set_task_agent_launch(id, None, vec![flag.into(), "native-pi".into()]);
         let reference = crate::sidebar::SessionAgentSessionPayload {
             kind: "path".into(),
             value: native.display().to_string(),
@@ -505,6 +517,9 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
                 if case == "local-before" {
                     context.api_connector = Arc::clone(&replacement_connector);
                     runtime.set_live(context);
+                } else if case == "kind-before" {
+                    runtime.snapshot.task_operation.as_mut().unwrap().agent_kind =
+                        Some("codex".into());
                 }
                 target
             }
@@ -513,6 +528,7 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
             target,
             live::CheckoutTabRequest {
                 id,
+                agent_kind: Some(kind.into()),
                 checkout_path: cwd.clone(),
                 label: "resume".into(),
                 host: crate::checkout_owner::TabHost::Workspace("w-order".into()),
@@ -547,7 +563,10 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
                 .expect("retired execution must refuse the start");
             assert!(
                 reason.contains(
-                    if case.starts_with("reader-") || case.starts_with("intent-") {
+                    if case.starts_with("reader-")
+                        || case.starts_with("intent-")
+                        || case == "kind-before"
+                    {
                         "session_resume_intent_changed"
                     } else {
                         "session_resume_control_changed"
@@ -587,14 +606,19 @@ fn a_pi_archive_worker_refuses_retired_control_before_creation_or_start() {
 
 #[test]
 #[cfg(unix)]
-fn a_pi_fork_worker_refuses_control_retired_during_create_or_start_connect() {
+fn a_native_fork_worker_refuses_control_retired_during_create_or_start_connect() {
+    for kind in ["pi", "omp"] {
+        native_fork_current_journey(kind);
+    }
+}
+
+#[cfg(unix)]
+fn native_fork_current_journey(kind: &'static str) {
     for case in ["current", "during-tab-connect", "during-start-connect"] {
         let home = tempfile::tempdir().unwrap();
         let cwd = home.path().canonicalize().unwrap().display().to_string();
-        let folder = home.path().join(".pi/agent/sessions").join(format!(
-            "--{}--",
-            cwd.trim_start_matches('/').replace(['/', '\\', ':'], "-")
-        ));
+        let folder =
+            crate::fixture::native_session_folder(home.path(), kind, std::path::Path::new(&cwd));
         std::fs::create_dir_all(&folder).unwrap();
         let source = folder.join("native.jsonl");
         let bytes = format!(
@@ -611,7 +635,7 @@ fn a_pi_fork_worker_refuses_control_retired_during_create_or_start_connect() {
         let mut initial = tab_order_payload(&cwd, &["w-order:t1"], &["w-order:t1"], "w-order:t1");
         let mut owned: SessionSnapshotPayload =
             crate::sidebar::owned_label_fixture(serde_json::json!({"agents":[{
-                "pane_id":parent,"agent":"pi","agent_status":"idle","state_change_seq":4,"cwd":cwd,
+                "pane_id":parent,"agent":kind,"agent_status":"idle","state_change_seq":4,"cwd":cwd,
                 "agent_session":{"kind":"path","value":source.display().to_string()}
             }]}))
             .unwrap();
@@ -747,10 +771,11 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
         let mut value: serde_json::Value =
             serde_json::from_slice(&resume_event(provider, session)).unwrap();
         value["payload"]["checkout_path"] = path.clone().into();
-        if provider == "pi" {
+        if matches!(provider, "pi" | "omp") {
             // B5/B8 admission retains the catalog's selected file. The
             // owning worker proves this expectation before any effect.
-            value["payload"]["resume_session_path"] = "/fixture/selected-pi.jsonl".into();
+            value["payload"]["resume_session_path"] =
+                format!("/fixture/selected-{provider}.jsonl").into();
         }
         serde_json::to_vec(&value).unwrap()
     };
@@ -766,15 +791,17 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
         Some(vec!["resume".to_owned(), "019a-session".to_owned()])
     );
 
-    runtime.snapshot.task_operation = None;
-    assert!(runtime.dispatch_json(&event("pi", "native.one")));
-    assert_eq!(
-        runtime
-            .task_agent_launch
-            .as_ref()
-            .map(|launch| launch.args.clone()),
-        Some(vec!["--session".to_owned(), "native.one".to_owned()])
-    );
+    for (provider, flag) in [("pi", "--session"), ("omp", "--resume")] {
+        runtime.snapshot.task_operation = None;
+        assert!(runtime.dispatch_json(&event(provider, "native.one")));
+        assert_eq!(
+            runtime
+                .task_agent_launch
+                .as_ref()
+                .map(|launch| launch.args.clone()),
+            Some(vec![flag.to_owned(), "native.one".to_owned()])
+        );
+    }
 
     runtime.snapshot.task_operation = None;
     assert!(runtime.dispatch_json(&event("opencode", "ses_native1")));
@@ -799,7 +826,11 @@ fn resuming_starts_the_providers_resume_and_refuses_what_cannot_resume() {
         ("opencode", "--fork", "agent_start.invalid_resume"),
         ("pi", "native.jsonl", "agent_start.invalid_resume"),
         ("pi", "../native", "agent_start.invalid_resume"),
-        ("omp", "native-one", "agent_start.invalid_resume"),
+        ("pi", "--yolo", "agent_start.invalid_resume"),
+        ("omp", "native.jsonl", "agent_start.invalid_resume"),
+        ("omp", "../native", "agent_start.invalid_resume"),
+        ("omp", "--no-session", "agent_start.invalid_resume"),
+        ("omp", "--yolo", "agent_start.invalid_resume"),
         ("grok", "native-one", "agent_start.invalid_resume"),
         ("cursor", "native-one", "agent_start.invalid_resume"),
         ("unknown", "native-one", "agent_start.unknown_provider"),
