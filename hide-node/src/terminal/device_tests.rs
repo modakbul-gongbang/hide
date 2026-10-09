@@ -34,14 +34,10 @@ fn reports_go_up_first_and_panes_take_turns() {
         uplink.push_output("w1:p1", format!("flood {index}").as_bytes(), false);
     }
     uplink.push_output("w1:p2", b"quiet", false);
-    if let Some(line) = line_of(TerminalUp::Report {
-        report: TerminalReport::FirstFrame {
-            pane: "w1:p2".into(),
-            generation: 1,
-        },
-    }) {
-        uplink.push_report(line);
-    }
+    uplink.push_report(TerminalReport::FirstFrame {
+        pane: "w1:p2".into(),
+        generation: 1,
+    });
     let (first, _) = uplink.next().unwrap();
     assert!(matches!(up(&first.unwrap()), TerminalUp::Report { .. }));
     let mut panes = Vec::new();
@@ -53,6 +49,55 @@ fn reports_go_up_first_and_panes_take_turns() {
         panes.push(output.pane);
     }
     assert_eq!(panes, ["w1:p1", "w1:p2", "w1:p1"]);
+}
+
+/// A link that stopped taking lines past the device's unsent reports
+/// loses no pane's state: a later report takes the place of the waiting one
+/// about its pane, so the core still hears each pane's last word.
+#[test]
+fn a_device_past_its_unsent_reports_keeps_each_panes_last_state() {
+    let uplink = Arc::new(Uplink::default());
+    let reports = UplinkReports(Arc::clone(&uplink));
+    for at in 0..2 * MAX_UNSENT_REPORT_LINES as u64 {
+        reports.report(TerminalReport::Input {
+            pane: "w1:p1".into(),
+            at_unix_ms: at,
+            submitted: false,
+            focus: false,
+        });
+    }
+    let state = PaneTerminalState {
+        state: "controlling".into(),
+        mode: Some("control".into()),
+        generation: 3,
+        attempt: 1,
+        message: None,
+        exit_category: None,
+        retry_decision: "none".into(),
+        last_attempt_at_unix_ms: None,
+    };
+    reports.report(TerminalReport::State {
+        pane: "w1:p2".into(),
+        state: state.clone(),
+    });
+    let mut last_key = None;
+    let mut states = Vec::new();
+    while let (Some(line), _) = uplink.next().unwrap() {
+        match up(&line) {
+            TerminalUp::Report {
+                report: TerminalReport::Input { at_unix_ms, .. },
+            } => last_key = Some(at_unix_ms),
+            TerminalUp::Report {
+                report: TerminalReport::State { pane, state },
+            } => states.push((pane, state)),
+            _ => {}
+        }
+        if lock(&uplink.state).reports.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(states, [("w1:p2".to_owned(), state)]);
+    assert_eq!(last_key, Some(2 * MAX_UNSENT_REPORT_LINES as u64 - 1));
 }
 
 #[test]

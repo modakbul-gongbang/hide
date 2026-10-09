@@ -16,9 +16,10 @@ use crate::runtime::Runtime;
 /// Reports waiting for the runtime. Every report is a pane's state change, a
 /// coalesced input fact or an armed frame, so this many waiting means the
 /// runtime lock has been held for a long time. Past it a report takes the
-/// place of the waiting one about the same subject ([`Subject`]), so what
-/// the core keeps state from is never lost and the queue grows only by
-/// reports about a subject none waiting names.
+/// place of the waiting one about the same subject
+/// ([`TerminalReport::same_subject`]), so what the core keeps state from is
+/// never lost and the queue grows only by reports about a subject none
+/// waiting names.
 const WAITING_LIMIT: usize = 16_384;
 
 /// Subjects are panes, pastes and creations, each capped at its node, so
@@ -98,16 +99,15 @@ impl ReportSink for ReportChannel {
             return;
         }
         if waiting.reports.len() >= WAITING_LIMIT {
-            let subject = Subject::of(&report);
             let earlier = waiting
                 .reports
                 .iter()
-                .rposition(|waiting| Subject::of(waiting) == subject);
+                .rposition(|waiting| waiting.same_subject(&report));
             if let Some(at) = earlier {
                 let earlier = waiting.reports.remove(at).expect("found above");
-                match superseding(earlier, report) {
-                    (report, Place::Earlier) => waiting.reports.insert(at, report),
-                    (report, Place::Later) => waiting.reports.push_back(report),
+                match earlier.superseded_by(report) {
+                    (report, true) => waiting.reports.insert(at, report),
+                    (report, false) => waiting.reports.push_back(report),
                 }
                 return;
             }
@@ -124,94 +124,6 @@ impl ReportSink for ReportChannel {
         waiting.reports.push_back(report);
         drop(waiting);
         self.queue.arrived.notify_one();
-    }
-}
-
-/// What a report is about: of two waiting about the same subject, the later
-/// one says everything the core still needs.
-#[derive(PartialEq)]
-enum Subject<'a> {
-    State(&'a str),
-    FirstFrame(&'a str),
-    FrameShown(&'a str),
-    Input(&'a str),
-    Error(&'a str, &'a str),
-    Note(&'a str, &'a str),
-    RequestDiscarded(&'a str),
-    AttachmentInput(&'a str),
-    AttachmentDelivered(&'a str),
-}
-
-impl<'a> Subject<'a> {
-    fn of(report: &'a TerminalReport) -> Self {
-        match report {
-            TerminalReport::State { pane, .. } => Self::State(pane),
-            TerminalReport::FirstFrame { pane, .. } => Self::FirstFrame(pane),
-            TerminalReport::FrameShown { pane, .. } => Self::FrameShown(pane),
-            TerminalReport::Input { pane, .. } => Self::Input(pane),
-            TerminalReport::Error { pane, kind, .. } => Self::Error(pane, kind),
-            TerminalReport::Note { pane, kind, .. } => Self::Note(pane, kind),
-            TerminalReport::RequestDiscarded { request, .. } => Self::RequestDiscarded(request),
-            TerminalReport::AttachmentInput { intent, .. } => Self::AttachmentInput(intent),
-            TerminalReport::AttachmentDelivered { intent, .. } => Self::AttachmentDelivered(intent),
-        }
-    }
-}
-
-/// Where a report that took another's place waits.
-enum Place {
-    Earlier,
-    Later,
-}
-
-/// `later` in place of `earlier`, about the same subject, and where it
-/// waits. Keys fold in what the earlier ones said (a submit, a focus move)
-/// and keep their place unless the later key moves the keyboard, so the
-/// keyboard still ends in the pane typed into last; a refused paste's bytes
-/// add up; every other report's latest word is the state, applied after
-/// what arrived before it.
-fn superseding(earlier: TerminalReport, later: TerminalReport) -> (TerminalReport, Place) {
-    match (earlier, later) {
-        (
-            TerminalReport::Input {
-                submitted: submitted_before,
-                focus: focus_before,
-                ..
-            },
-            TerminalReport::Input {
-                pane,
-                at_unix_ms,
-                submitted,
-                focus,
-            },
-        ) => (
-            TerminalReport::Input {
-                pane,
-                at_unix_ms,
-                submitted: submitted || submitted_before,
-                focus: focus || focus_before,
-            },
-            if focus { Place::Later } else { Place::Earlier },
-        ),
-        (
-            TerminalReport::AttachmentInput {
-                bytes: bytes_before,
-                ..
-            },
-            TerminalReport::AttachmentInput {
-                intent,
-                outcome,
-                bytes,
-            },
-        ) => (
-            TerminalReport::AttachmentInput {
-                intent,
-                outcome,
-                bytes: bytes.saturating_add(bytes_before),
-            },
-            Place::Later,
-        ),
-        (_, later) => (later, Place::Later),
     }
 }
 

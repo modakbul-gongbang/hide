@@ -53,9 +53,17 @@ use serde_json::json;
 use super::protocol::{decode_base64, encode_base64};
 use super::{LocalAttacher, OutputSink, RetryPolicy, Service};
 
-/// Report and diagnostic lines a device keeps unsent before it drops new
-/// ones; a link that stalls this long has stopped being read.
+/// Reports a device keeps unsent before a new one takes the place of the
+/// waiting one about its subject ([`TerminalReport::same_subject`]), so a
+/// stalled link loses no pane's state; a link that stalls this long has
+/// stopped being read.
 const MAX_UNSENT_REPORT_LINES: usize = 4096;
+/// Past [`MAX_UNSENT_REPORT_LINES`], the reports about subjects none
+/// waiting names that a device keeps before it drops new ones. Subjects
+/// are panes, pastes and creations, each capped by the service.
+const MAX_UNSENT_REPORT_SUBJECTS: usize = 4 * MAX_UNSENT_REPORT_LINES;
+/// Diagnostic records a device keeps unsent before it drops new ones.
+const MAX_UNSENT_DIAGNOSTICS: usize = 1024;
 
 /// What a link hands each terminal line it reads.
 pub type LineHandler = Box<dyn Fn(&[u8]) + Send + Sync>;
@@ -90,8 +98,12 @@ struct PaneUplink {
 #[derive(Default)]
 struct UplinkState {
     stopped: bool,
-    reports: VecDeque<Vec<u8>>,
-    reports_dropped: usize,
+    /// Kept as what they say until the writer takes them, so a full queue
+    /// can fold a report into the waiting one about its subject.
+    reports: VecDeque<TerminalReport>,
+    diagnostics: VecDeque<serde_json::Value>,
+    /// Reports and diagnostics dropped since the last record of it.
+    dropped: usize,
     panes: HashMap<String, PaneUplink>,
     /// Panes with output waiting, in turn.
     order: VecDeque<String>,
@@ -104,21 +116,69 @@ struct Uplink {
 }
 
 impl Uplink {
-    fn push_report(&self, line: Vec<u8>) {
+    fn push_report(&self, report: TerminalReport) {
         let mut state = lock(&self.state);
         if state.stopped {
             return;
         }
         if state.reports.len() >= MAX_UNSENT_REPORT_LINES {
-            state.reports_dropped += 1;
+            let earlier = state
+                .reports
+                .iter()
+                .rposition(|waiting| waiting.same_subject(&report));
+            if let Some(at) = earlier {
+                let earlier = state.reports.remove(at).expect("found above");
+                match earlier.superseded_by(report) {
+                    (report, true) => state.reports.insert(at, report),
+                    (report, false) => state.reports.push_back(report),
+                }
+                return;
+            }
+            if state.reports.len() >= MAX_UNSENT_REPORT_SUBJECTS {
+                state.dropped += 1;
+                return;
+            }
+        }
+        state.reports.push_back(report);
+        drop(state);
+        self.ready.notify_one();
+    }
+
+    fn push_diagnostic(&self, record: serde_json::Value) {
+        let mut state = lock(&self.state);
+        if state.stopped {
             return;
         }
-        state.reports.push_back(line);
+        if state.diagnostics.len() >= MAX_UNSENT_DIAGNOSTICS {
+            state.dropped += 1;
+            return;
+        }
+        state.diagnostics.push_back(record);
         drop(state);
         self.ready.notify_one();
     }
 
     fn push_output(&self, pane: &str, bytes: &[u8], full: bool) {
+        // A pane waiting for its full frame takes nothing else, unencoded.
+        if !full
+            && lock(&self.state)
+                .panes
+                .get(pane)
+                .is_some_and(|entry| entry.dropping)
+        {
+            return;
+        }
+        // Encoded before the lock, so a large frame holds up no other
+        // pane's output, no report and not the writer's next line; the
+        // node hands a pane's output over one chunk at a time, so its order
+        // holds.
+        let Some(line) = line_of(TerminalUp::Output(TerminalOutput {
+            pane: pane.to_owned(),
+            data: encode_base64(bytes),
+            full,
+        })) else {
+            return;
+        };
         let mut state = lock(&self.state);
         if state.stopped {
             return;
@@ -135,13 +195,6 @@ impl Uplink {
             entry.dropping = false;
             entry.redraw = false;
         }
-        let Some(line) = line_of(TerminalUp::Output(TerminalOutput {
-            pane: pane.to_owned(),
-            data: encode_base64(bytes),
-            full,
-        })) else {
-            return;
-        };
         if line.len() > MAX_TERMINAL_LINE_BYTES {
             // No link takes a line this long. The pane waits for its next
             // full frame; one that was already full is not asked again, so
@@ -215,21 +268,25 @@ impl Uplink {
                     id.clone()
                 })
                 .collect::<Vec<_>>();
-            if state.reports_dropped > 0 && state.reports.len() < MAX_UNSENT_REPORT_LINES {
-                let dropped = std::mem::take(&mut state.reports_dropped);
-                if let Some(line) = line_of(TerminalUp::Diagnostic {
-                    record: json!({
-                        "component": "node_terminal",
-                        "kind": "terminal.reports_dropped",
-                        "lines": dropped,
-                        "cap": MAX_UNSENT_REPORT_LINES,
-                    }),
-                }) {
-                    state.reports.push_back(line);
-                }
+            if state.dropped > 0 && state.diagnostics.len() < MAX_UNSENT_DIAGNOSTICS {
+                let dropped = std::mem::take(&mut state.dropped);
+                state.diagnostics.push_back(json!({
+                    "component": "node_terminal",
+                    "kind": "terminal.reports_dropped",
+                    "lines": dropped,
+                    "cap": MAX_UNSENT_REPORT_SUBJECTS,
+                }));
             }
-            if let Some(line) = state.reports.pop_front() {
-                return Some((Some(line), redraws));
+            let ahead = match state.reports.pop_front() {
+                Some(report) => Some(TerminalUp::Report { report }),
+                None => state
+                    .diagnostics
+                    .pop_front()
+                    .map(|record| TerminalUp::Diagnostic { record }),
+            };
+            if let Some(ahead) = ahead {
+                drop(state);
+                return Some((line_of(ahead), redraws));
             }
             while let Some(pane) = state.order.pop_front() {
                 let Some(entry) = state.panes.get_mut(&pane) else {
@@ -260,6 +317,7 @@ impl Uplink {
         let mut state = lock(&self.state);
         state.stopped = true;
         state.reports.clear();
+        state.diagnostics.clear();
         state.panes.clear();
         state.order.clear();
         drop(state);
@@ -283,9 +341,7 @@ struct UplinkReports(Arc<Uplink>);
 
 impl ReportSink for UplinkReports {
     fn report(&self, report: TerminalReport) {
-        if let Some(line) = line_of(TerminalUp::Report { report }) {
-            self.0.push_report(line);
-        }
+        self.0.push_report(report);
     }
 }
 
@@ -300,11 +356,7 @@ pub fn forward_diagnostic(record: serde_json::Value) {
         .get()
         .and_then(|current| lock(current).upgrade());
     match uplink {
-        Some(uplink) => {
-            if let Some(line) = line_of(TerminalUp::Diagnostic { record }) {
-                uplink.push_report(line);
-            }
-        }
+        Some(uplink) => uplink.push_diagnostic(record),
         None => eprintln!("{record}"),
     }
 }

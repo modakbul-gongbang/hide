@@ -368,6 +368,99 @@ impl TerminalReport {
             | Self::AttachmentDelivered { .. } => None,
         }
     }
+
+    /// Whether the two reports are about the same subject: a pane's state,
+    /// first frame, shown frame or keys, one kind of a pane's error or note,
+    /// a creation's discard, or a paste's refused input or result. Of two
+    /// waiting about one subject, the later says what its reader still
+    /// needs ([`TerminalReport::superseded_by`]); a queue past its cap keeps
+    /// one, so it loses no state and grows only by new subjects.
+    pub fn same_subject(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::State { pane: a, .. }, Self::State { pane: b, .. })
+            | (Self::FirstFrame { pane: a, .. }, Self::FirstFrame { pane: b, .. })
+            | (Self::FrameShown { pane: a, .. }, Self::FrameShown { pane: b, .. })
+            | (Self::Input { pane: a, .. }, Self::Input { pane: b, .. })
+            | (
+                Self::RequestDiscarded { request: a, .. },
+                Self::RequestDiscarded { request: b, .. },
+            )
+            | (Self::AttachmentInput { intent: a, .. }, Self::AttachmentInput { intent: b, .. })
+            | (
+                Self::AttachmentDelivered { intent: a, .. },
+                Self::AttachmentDelivered { intent: b, .. },
+            ) => a == b,
+            (
+                Self::Error {
+                    pane: a, kind: k, ..
+                },
+                Self::Error {
+                    pane: b, kind: l, ..
+                },
+            )
+            | (
+                Self::Note {
+                    pane: a, kind: k, ..
+                },
+                Self::Note {
+                    pane: b, kind: l, ..
+                },
+            ) => a == b && k == l,
+            _ => false,
+        }
+    }
+
+    /// `later`, about this report's subject, in its place, and whether it
+    /// waits where this one did rather than where `later` arrived. Keys fold
+    /// in what the earlier ones said (a submit, a focus move) and keep the
+    /// earlier place unless the later key moves the keyboard, so the
+    /// keyboard still ends in the pane typed into last; a refused paste's
+    /// bytes add up; every other report's latest word is the state, applied
+    /// after what arrived before it.
+    pub fn superseded_by(self, later: Self) -> (Self, bool) {
+        match (self, later) {
+            (
+                Self::Input {
+                    submitted: submitted_before,
+                    focus: focus_before,
+                    ..
+                },
+                Self::Input {
+                    pane,
+                    at_unix_ms,
+                    submitted,
+                    focus,
+                },
+            ) => (
+                Self::Input {
+                    pane,
+                    at_unix_ms,
+                    submitted: submitted || submitted_before,
+                    focus: focus || focus_before,
+                },
+                !focus,
+            ),
+            (
+                Self::AttachmentInput {
+                    bytes: bytes_before,
+                    ..
+                },
+                Self::AttachmentInput {
+                    intent,
+                    outcome,
+                    bytes,
+                },
+            ) => (
+                Self::AttachmentInput {
+                    intent,
+                    outcome,
+                    bytes: bytes.saturating_add(bytes_before),
+                },
+                false,
+            ),
+            (_, later) => (later, false),
+        }
+    }
 }
 
 impl TerminalControl {
