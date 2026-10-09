@@ -2101,9 +2101,13 @@ pub fn over_local_stream(
             }
         })?;
     let writer: Pin<Box<dyn AsyncWrite + Send>> = Box::pin(BlockingWriter::new(stream));
+    // The read thread ends with the stream, whichever side ended it. The
+    // stream is shut down as this closure goes, run or not: a link dropped
+    // right after its close (a refused node) tears its runtime down before
+    // the reader runs it, and the peer would otherwise never read the end.
+    let shutdown = ShutdownOnDrop(shutdown);
     let ended = Box::new(move |reason: String| {
-        // The read thread ends with the stream, whichever side ended it.
-        shutdown.shutdown();
+        drop(shutdown);
         on_close(reason);
     });
     Ok(start_reader(
@@ -2115,6 +2119,15 @@ pub fn over_local_stream(
         panes,
         ended,
     ))
+}
+
+/// Shuts a local link's stream down when it goes.
+struct ShutdownOnDrop(hide_platform::ipc::ShutdownHandle);
+
+impl Drop for ShutdownOnDrop {
+    fn drop(&mut self) {
+        self.0.shutdown();
+    }
 }
 
 /// Chunks a local link's read thread holds before the reader takes them; a
