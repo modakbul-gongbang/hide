@@ -59,14 +59,18 @@ impl Engine {
             .is_some_and(|f| f.github_block.is_some())
     }
 
-    /// Checks each blocked Factory's access again every few minutes, so a
-    /// sign-in fixed elsewhere is noticed without a press.
+    /// Checks each Factory's lost sign-in again every few minutes, so a
+    /// sign-in fixed elsewhere is noticed without a press. A missing
+    /// permission is not: the check only reads, and a read passes while the
+    /// write GitHub refused still would be, so clearing it on its own would
+    /// raise the same to-do again at the next write. The person's press
+    /// lets the refused step try again.
     pub(super) fn access_tick(&mut self) {
         let now = self.now();
         let due: Vec<String> = self
             .factories
             .values()
-            .filter(|f| !f.closed && f.github_block.is_some())
+            .filter(|f| !f.closed && f.github_block.as_ref().is_some_and(|b| !b.forbidden))
             .filter(|f| {
                 self.access_checked_at
                     .get(&f.id)

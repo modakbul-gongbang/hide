@@ -420,6 +420,43 @@ fn a_lost_github_sign_in_is_one_to_do_and_a_passing_check_lets_the_steps_continu
 }
 
 #[test]
+fn a_missing_permission_waits_for_the_person_s_press_since_a_read_cannot_prove_it() {
+    let mut h = Bench::new(true);
+    let f = github(&mut h);
+    h.world().observe_failure = Some(Failure::environment(
+        "observe",
+        EnvSignal::GithubForbidden,
+        "HTTP 403: requires one of the following scopes: ['read:org']",
+    ));
+    h.advance(3 * MINUTE_MS);
+    h.engine.tick();
+    let block = h.engine.summary().factories[0].github_block.clone();
+    assert!(block.as_ref().is_some_and(|b| b.forbidden), "{block:?}");
+    // The reads the check makes pass, but the refused step would still be refused.
+    h.world().observe_failure = None;
+    for _ in 0..3 {
+        h.advance(6 * MINUTE_MS);
+        h.engine.tick();
+    }
+    assert!(
+        h.engine.summary().factories[0].github_block.is_some(),
+        "not cleared on its own"
+    );
+    let resolved = h.op(Command::Resolve {
+        project: None,
+        item: "github".into(),
+    });
+    assert_eq!(resolved["ok"], true, "{resolved}");
+    assert!(
+        h.engine
+            .summary()
+            .inbox
+            .iter()
+            .all(|item| item.factory != f || item.kind != "github")
+    );
+}
+
+#[test]
 fn done_takes_four_parts_and_refuses_the_retired_summary_with_the_new_ones() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

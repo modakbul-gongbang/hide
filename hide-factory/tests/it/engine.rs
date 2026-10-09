@@ -2761,6 +2761,37 @@ fn diagnose(h: &mut Bench, action: &str) -> String {
 }
 
 #[test]
+fn a_restart_while_a_hold_s_diagnosis_is_out_asks_again_at_the_next_step() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().disk_free = Some(1 << 30);
+    h.ready("Held", &[]);
+    h.world().env_diagnosis = Some(json!({"cause": "disk", "action": "retry_reads_and_reconnect"}));
+    h.world().hold_judgments = true;
+    h.advance(31 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    let diagnosing = |h: &Bench| {
+        h.engine
+            .factories()
+            .next()
+            .unwrap()
+            .holds
+            .iter()
+            .any(|hold| hold.diagnosing)
+    };
+    assert!(diagnosing(&h), "the diagnosis is out");
+    let mut h = h.restart();
+    h.world().hold_judgments = false;
+    assert!(!diagnosing(&h), "the answer went with the process");
+    h.engine.tick();
+    h.engine.tick();
+    let attempts = h.engine.factories().next().unwrap().holds[0].attempts.len();
+    assert_eq!(attempts, 1, "the 30-minute step ran after the restart");
+    let _ = f;
+}
+
+#[test]
 fn sleep_wake_reaches_only_a_worker_waiting_on_input() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
