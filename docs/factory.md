@@ -358,7 +358,7 @@ The Factory's mode (`observer_mode`) then decides where the answer comes from:
 
 A verdict that is unsure, or that sees any permission signal, goes to a person in every mode, and so does an answer the Observer left empty.
 A request also goes to a person when Factory AI could not decide it, and the reason is the inbox item's `fallback`: `failed` (the judgment failed or its answer was unusable), `daily_limit`, `paused` (the Factory is paused), `queue_full`, `dropped` (its Task was taken outside or finished while it was being sorted) or `restart` (the daemon restarted while it was being sorted).
-A request Factory AI sorted still goes to a person when it was unsure of the kind (`unsure`) or the request touches a permission (`permission`), and that is the item's `fallback` too, since the kind's line in the mode table is not why.
+A request Factory AI sorted still goes to a person when it was unsure of the kind (`unsure`), the request touches a permission (`permission`), or its answer to a closed question names none of the choices (`no_choice`), and that is the item's `fallback` too, since the kind's line in the mode table is not why.
 Factory AI's answer to a question whose answer runs a listed choice (every kind but intake, default and blocking) must be one of those choices; any other words send the question to a person.
 When a worker's question goes to a person, Factory AI also rewrites it as one question someone who has not read the Task can answer (`person_text`), which 결정 필요 and the Task page show; the worker's own words stay in the question's `text`.
 When the request goes to a person after being sorted, the kind and the reason stay on the item, and what the request holds up and where each choice leads are filled in from the verdict where the asker left them out.
@@ -857,7 +857,7 @@ An inbox item's `text` carries only its `kind`, and a question's own text, a spl
 | `stopped` | What the item holds up, as the asker wrote it. |
 | `holding` | The same as a `Holding` code, always set. |
 | `outcomes` | Each choice with what choosing it leads to, where the asker wrote it. |
-| `fallback` | Why Factory AI did not decide the item: `failed`, `daily_limit`, `paused`, `queue_full`, `dropped`, `restart`, `unsure` or `permission`; none when its kind is a person's in the Factory's mode. |
+| `fallback` | Why Factory AI did not decide the item: `failed`, `daily_limit`, `paused`, `queue_full`, `dropped`, `restart`, `unsure`, `permission` or `no_choice`; none when its kind is a person's in the Factory's mode. |
 | `evidence` | What the item unfolds: links, log paths, the worker's result line, the pane of a start to-do, the diagnosis's cause. |
 | `resolve` | For a to-do, the name `hide factory resolve` takes: `github`, `C<n>`, `start:<task>` or `hold:<name>`. |
 | `command`, `impact` | For a `github` or `command` to-do, the command to copy, and for a `command` to-do what running it does. |

@@ -216,6 +216,11 @@ fn factory_ai_words_that_are_no_listed_choice_leave_a_closed_question_to_a_perso
     assert_eq!(open.len(), 1, "{:?}", task.questions);
     assert!(open[0].choices.iter().any(|c| c == "retry-review"));
     assert_eq!(inbox(&mut h)["count"], 1);
+    assert_eq!(
+        open[0].routing.as_ref().and_then(|r| r.fallback),
+        Some(Fallback::NoChoice),
+        "the mode would have let Factory AI decide, so it is not why"
+    );
 }
 
 #[test]

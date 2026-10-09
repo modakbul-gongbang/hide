@@ -328,12 +328,15 @@ impl Engine {
             || Some(&answer) == question.default_action.as_ref())
         .then(|| answer.clone());
         let mut route = route(mode, &verdict);
+        let mut no_choice = None;
         // A closed question runs only a listed choice; any other words would
-        // settle it with nothing run, so they are a person's (D-33).
+        // settle it with nothing run, so they are a person's (D-33), and the
+        // mode is not why.
         if route == Route::Observer
             && (answer.is_empty() || (question.kind.closed() && chosen.is_none()))
         {
             route = Route::Person { proposal: false };
+            no_choice = Some(Fallback::NoChoice);
         }
         match route {
             Route::Observer => {
@@ -377,11 +380,11 @@ impl Engine {
                     None => false,
                 };
                 if !applied {
-                    self.person_with_verdict(factory, id, &question.id, &verdict, false);
+                    self.person_with_verdict(factory, id, &question.id, &verdict, false, None);
                 }
             }
             Route::Person { proposal } => {
-                self.person_with_verdict(factory, id, &question.id, &verdict, proposal)
+                self.person_with_verdict(factory, id, &question.id, &verdict, proposal, no_choice)
             }
         }
     }
@@ -393,17 +396,19 @@ impl Engine {
         question: &str,
         verdict: &Classification,
         attach: bool,
+        because: Option<Fallback>,
     ) {
         let proposal = verdict.proposal.clone().filter(|_| attach);
         let offered = proposal.is_some();
         // Unsure or a permission is a person's whatever the kind and mode,
-        // so the kind's line in the mode table is not why (B7).
+        // and so is an answer that names no listed choice, so the kind's
+        // line in the mode table is not why (B7).
         let fallback = if verdict.permission_signal {
             Some(Fallback::Permission)
         } else if verdict.ambiguous {
             Some(Fallback::Unsure)
         } else {
-            None
+            because
         };
         self.set_routing(factory, id, question, |routing| {
             routing.to = RouteTo::Person;

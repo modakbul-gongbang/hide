@@ -75,7 +75,7 @@ export const CRITERION_STATES = ["met", "unmet", "unknown"] as const;
 export type CriterionState = (typeof CRITERION_STATES)[number];
 
 /** `contracts/snapshot-wire-enums.json`: `factory_fallback`. Why a request went to a person other than the mode table (B7, B10). */
-export const FALLBACKS = ["failed", "daily_limit", "paused", "queue_full", "dropped", "restart", "unsure", "permission"] as const;
+export const FALLBACKS = ["failed", "daily_limit", "paused", "queue_full", "dropped", "restart", "unsure", "permission", "no_choice"] as const;
 export type Fallback = (typeof FALLBACKS)[number];
 /** `contracts/snapshot-wire-enums.json`: `factory_recovery_outcome`. */
 export const RECOVERY_OUTCOMES = ["improved", "partial", "unchanged"] as const;

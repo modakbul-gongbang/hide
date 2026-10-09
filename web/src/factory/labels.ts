@@ -216,6 +216,7 @@ export const FALLBACK_LABEL: Record<Fallback, MessageKey> = {
   restart: "factory.fallback.restart",
   unsure: "factory.fallback.unsure",
   permission: "factory.fallback.permission",
+  no_choice: "factory.fallback.noChoice",
 };
 
 export const DECISION_SOURCE_LABEL: Record<DecisionSource, MessageKey> = {

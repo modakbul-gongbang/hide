@@ -1752,6 +1752,7 @@ mod tests {
                 Restart => 5,
                 Unsure => 6,
                 Permission => 7,
+                NoChoice => 8,
             }
         });
         assert_eq!(
@@ -1764,7 +1765,8 @@ mod tests {
                 "dropped",
                 "restart",
                 "unsure",
-                "permission"
+                "permission",
+                "no_choice"
             ]
         );
         complete(&DecisionKind::ALL, |kind| match kind {

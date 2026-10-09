@@ -216,10 +216,12 @@ pub enum Fallback {
     Unsure,
     /// The request touches a permission.
     Permission,
+    /// Factory AI's answer named none of a closed question's choices.
+    NoChoice,
 }
 
 impl Fallback {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Failed,
         Self::DailyLimit,
         Self::Paused,
@@ -228,6 +230,7 @@ impl Fallback {
         Self::Restart,
         Self::Unsure,
         Self::Permission,
+        Self::NoChoice,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -240,6 +243,7 @@ impl Fallback {
             Self::Restart => "restart",
             Self::Unsure => "unsure",
             Self::Permission => "permission",
+            Self::NoChoice => "no_choice",
         }
     }
 }
