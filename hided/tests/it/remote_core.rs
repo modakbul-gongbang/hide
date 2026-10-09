@@ -2572,33 +2572,46 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
             // A page opened from the node's pane is connected to its own
             // window: the capability is on that machine's loopback.
             let node_in = (node_side.0.as_path(), node_side.1.as_path());
-            let opened = loop {
-                let printed = hide_in_pane(
+            let opened = workspace_answer(&hide_in_pane(
+                (&fixture.screen, &node_pane),
+                node_in,
+                &format!("browser open {url}"),
+                &out,
+            )?)?;
+            ensure!(opened["ok"] == true, "the node pane's page did not open: {opened}");
+            // The core may not have heard of the window when the page
+            // opened; the pane connects to the display once it has.
+            let deadline = Instant::now() + LINK_BOUND;
+            let mut connection = opened["result"].clone();
+            while !connection["cdp_http_url"].is_string() {
+                ensure!(
+                    Instant::now() < deadline
+                        && connection["browser_control"]["reason"] == "browser_control_unavailable",
+                    "the node pane's page was never connected: {connection}"
+                );
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let display = opened["result"]["view_id"].as_str().context("display")?;
+                let answer = workspace_answer(&hide_in_pane(
                     (&fixture.screen, &node_pane),
                     node_in,
-                    &format!("browser open {url}"),
+                    &format!("browser connect --display {display}"),
                     &out,
-                )?;
-                let answer = workspace_answer(&printed)?;
-                if answer["ok"] == true && answer["result"]["cdp_http_url"].is_string() {
-                    break answer;
-                }
-                ensure!(
-                    answer["reason"] == "browser_control_unavailable",
-                    "the node pane's page did not open: {answer}"
-                );
-                // The core has not heard of the window yet.
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            };
+                )?)?;
+                connection = if answer["ok"] == true {
+                    answer["result"].clone()
+                } else {
+                    json!({"browser_control": answer})
+                };
+            }
             ensure!(
-                opened["result"]["cdp_http_url"]
+                connection["cdp_http_url"]
                     .as_str()
                     .is_some_and(|capability| capability.starts_with(&format!("{endpoint}/cdp/"))),
-                "the node pane was not handed its own window's capability: {opened}"
+                "the node pane was not handed its own window's capability: {connection}"
             );
             let node_display = opened["result"]["view_id"].as_str().context("display")?.to_owned();
             let area = opened["result"]["area_id"].as_str().context("area")?.to_owned();
-            let capability = opened["result"]["browser_ws_url"]
+            let capability = connection["browser_ws_url"]
                 .as_str()
                 .context("capability")?
                 .to_owned();
@@ -2645,10 +2658,19 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
                 "the core relayed the node pane's CDP"
             );
             // A page action the window asks for runs on the core as the
-            // window: its own machine's daemon passes it on.
-            tokio::task::block_in_place(|| -> Result<()> {
+            // window: its own machine's daemon passes it on. A second page
+            // takes the area first, so the selection is the action's doing;
+            // a process that is no window here is refused.
+            let second = workspace_answer(&hide_in_pane(
+                (&fixture.screen, &node_pane),
+                node_in,
+                &format!("browser open {url}second"),
+                &out,
+            )?)?;
+            ensure!(second["ok"] == true, "the second page: {second}");
+            let page_action = |owner_pid: u32| -> Result<(u16, Value)> {
                 let action = json!({
-                    "owner_pid": std::process::id(),
+                    "owner_pid": owner_pid,
                     "device_id": node,
                     "checkout_path": project,
                     "area_id": area,
@@ -2668,14 +2690,37 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
                     .header("Authorization", format!("Bearer {token}"))
                     .header("Content-Type", "application/json")
                     .send(action.as_bytes())?;
-                let status = answer.status();
+                let status = answer.status().as_u16();
                 let body: Value = serde_json::from_str(&answer.body_mut().read_to_string()?)?;
-                ensure!(
-                    status == 200 && body["ok"] == true && body["result"]["view_id"] == node_display.as_str(),
-                    "the window's page action answered {status}: {body}"
-                );
-                Ok(())
-            })?;
+                Ok((status, body))
+            };
+            let (status, refusal) = tokio::task::block_in_place(|| page_action(1))?;
+            ensure!(
+                status == 409 && refusal["reason"] == "browser_control_unavailable",
+                "a process that is no window ran a page action: {status} {refusal}"
+            );
+            let selected = || -> Result<Value> {
+                let views = workspace_answer(&hide_in_pane(
+                    (&fixture.screen, &node_pane),
+                    node_in,
+                    "view list",
+                    &out,
+                )?)?;
+                Ok(views["result"]["views"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|view| view["area_id"] == area.as_str() && view["selected"] == true)
+                    .map(|view| view["view_id"].clone())
+                    .unwrap_or_default())
+            };
+            ensure!(selected()? == second["result"]["view_id"], "the second page did not take the area");
+            let (status, answer) = tokio::task::block_in_place(|| page_action(std::process::id()))?;
+            ensure!(
+                status == 200 && answer["ok"] == true && answer["result"]["view_id"] == node_display.as_str(),
+                "the window's page action answered {status}: {answer}"
+            );
+            ensure!(selected()? == node_display.as_str(), "the window's selection did not take effect");
             // A page of the core's checkout, driven from the core's pane: the
             // only window is the node's, so the core relays through the link
             // to it, and hands out no capability URL of another machine.
@@ -2728,6 +2773,9 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
             // The link ends: the window is asked to revoke what it handed
             // out, so the capability the node pane holds stops working, and
             // the node pane is turned away until the link is back.
+            // The capability works while the link lives.
+            let (mut held, _) = tokio_tungstenite::connect_async(capability.as_str()).await?;
+            held.close(None).await?;
             tokio::task::block_in_place(|| fixture.ssh.online(false))?;
             node_link(port, "waiting", LINK_BOUND).await?;
             tokio::task::block_in_place(|| {
@@ -2739,14 +2787,16 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
                 tokio_tungstenite::connect_async(capability.as_str()).await.is_err(),
                 "the node pane's capability still works after the link ended"
             );
-            let refused = tokio::task::block_in_place(|| -> Result<Value> {
-                let mut command = fixture.screen_command(&hide);
-                command
-                    .args(["browser", "snapshot", &node_display])
-                    .current_dir(&project);
-                workspace_answer(&String::from_utf8_lossy(&command.output()?.stdout))
-            })?;
-            ensure!(refused["ok"] == false, "answered without a link: {refused}");
+            let refused = workspace_answer(&hide_in_pane(
+                (&fixture.screen, &node_pane),
+                node_in,
+                &format!("browser snapshot {node_display}"),
+                &out,
+            )?)?;
+            ensure!(
+                refused["ok"] == false && refused["reason"] == "hide_unavailable",
+                "the node pane was answered without a link: {refused}"
+            );
             tokio::task::block_in_place(|| fixture.ssh.online(true))?;
             node_link(port, "live", LINK_BOUND).await?;
             // The window reattaches, as it does after its screen closed with
