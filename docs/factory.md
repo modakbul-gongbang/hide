@@ -319,7 +319,7 @@ A failed review marks the Task and raises an action question with the choices `r
 A review refused as `disabled` asks with two choices instead, `enable-ai` and `start-as-is`, because a retry or a provider fix cannot run while Hide AI is off.
 `start-as-is` starts the Task from its card as written, for a label the issue body and its checkboxes, without a review.
 While Hide AI is off or no agent is chosen to run it, every judgment fails as `disabled`, and the question says to turn it on in Settings › Hide AI or to start from the issue as written.
-While Hide AI is still off, picking `enable-ai` on the screen opens Settings › Hide AI and sends nothing; sent once it is on, `enable-ai` runs the review again as `retry-review` does.
+While Hide AI is still off, picking `enable-ai` on the screen opens Settings › Hide AI and holds the answer, and the screen sends it once Hide AI is on; sent, `enable-ai` runs the review again as `retry-review` does.
 A failed drift or check sends the Task to `merge_waiting` for a person, and so does a check whose answer cannot be read, or one that cannot read the Task's diff.
 A judgment that answers after its Task was cancelled, taken outside or finished is dropped and logged as `judgment.dropped`; a request it was sorting and that is still open goes to a person, so a revived Task shows it.
 A failed watch or diagnosis changes no Task and is logged.

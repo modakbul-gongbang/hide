@@ -162,14 +162,23 @@ function DecisionItem({ item, view, card, actions }: { item: InboxItem; view: Fa
   }, [needsText]);
   const command = single ? singleCommand(item, view) : choice ? choiceCommand(item, choice, text) : null;
   const sending = request.state.phase === "sending";
-  // Turning on Hide AI is the person's step in Settings; the engine retries the review once it can run.
+  // Turning on Hide AI is the person's step in Settings; the answer that runs the review again
+  // waits here and goes once Hide AI is on, so the person does not come back to press again.
   const aiOff = useShellStore((s) => s.rest?.status?.background_ai?.enabled === false);
   const opensAi = choice?.value === ENABLE_AI && aiOff;
+  const [awaitingAi, setAwaitingAi] = useState(false);
   // A taken answer stays taken until the summary drops the item, so it is not sent twice.
   const send = () => {
-    if (opensAi) useUiStore.getState().openSettings("hideAi");
-    else if (command && !sending && request.state.phase !== "taken") request.send(command);
+    if (opensAi) {
+      setAwaitingAi(true);
+      useUiStore.getState().openSettings("hideAi");
+    } else if (command && !sending && request.state.phase !== "taken") request.send(command);
   };
+  useEffect(() => {
+    if (!awaitingAi || aiOff) return;
+    setAwaitingAi(false);
+    if (choice?.value === ENABLE_AI && command && request.state.phase !== "sending" && request.state.phase !== "taken") request.send(command);
+  }, [awaitingAi, aiOff, choice?.value, command, request]);
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "Enter") {

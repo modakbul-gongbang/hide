@@ -169,22 +169,25 @@ it("takes an answer that comes after the wait ran out, since the engine may stil
   }
 });
 
-it("says the engine's choices in words, and opens Hide AI in Settings rather than answering while it is off (B5, B22)", async () => {
+it("says the engine's choices in words, and opens Hide AI in Settings while it is off, answering once it is on (B5, B22)", async () => {
   const failed: InboxItem = { ...MERGE, group: "stopped", kind: "action", question: "Q-1", text: "The intake review could not run because Hide AI is off.", holding: "start", suggestion: "enable-ai", choices: ["start-as-is"], result_code: "drafting", gates: [] };
   await act(async () => useShellStore.setState((state) => ({ rest: { ...state.rest, status: { ...state.rest?.status, background_ai: { enabled: false, provider: null, chosen: false, providers: [], unavailable_reason: null } } } as never })));
   const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [failed] });
   const choices = [...container.querySelectorAll("[data-factory-choice]")].map((choice) => choice.querySelector("span:nth-child(2) > span")!.textContent);
   expect(choices).toEqual([english["factory.choice.enableAi"], english["factory.choice.startAsIs"]]);
-  const send = container.querySelector<HTMLButtonElement>("[data-factory-send]")!;
-  expect(send.textContent).toBe(english["factory.choice.openAi"]);
+  const send = () => container.querySelector<HTMLButtonElement>("[data-factory-send]")!;
+  expect(send().textContent).toBe(english["factory.choice.openAi"]);
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-choice='2']")!.click());
+  expect(send().textContent).toBe(english["factory.decide.send"]);
+  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-choice='1']")!.click());
   const before = events.length;
-  await act(async () => send.click());
+  await act(async () => send().click());
   expect(events.length).toBe(before);
   expect(useUiStore.getState()).toMatchObject({ overlay: "settings", settingsTab: "hideAi" });
-  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-choice='2']")!.click());
-  expect(container.querySelector("[data-factory-send]")!.textContent).toBe(english["factory.decide.send"]);
-  await act(async () => container.querySelector<HTMLButtonElement>("[data-factory-send]")!.click());
-  expect(lastAction(events).payload.command).toMatchObject({ verb: "answer", task: "f1/T-1", question: "Q-1", choice: "start-as-is" });
+  // Turning it on sends the answer the person already gave, once.
+  await act(async () => useShellStore.setState((state) => ({ rest: { ...state.rest, status: { ...state.rest?.status, background_ai: { enabled: true, provider: "claude", chosen: true, providers: [], unavailable_reason: null } } } as never })));
+  expect(lastAction(events).payload.command).toMatchObject({ verb: "answer", task: "f1/T-1", question: "Q-1", choice: "suggestion" });
+  expect(events.length).toBe(before + 1);
 });
 
 it("offers a to-do's command to copy and one button that resolves it in its Factory (B16, B23)", async () => {
