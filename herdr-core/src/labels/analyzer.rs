@@ -22,12 +22,15 @@ use std::thread::JoinHandle;
 use hide_ai::{AiRequest, AiResult, AiRouter, AiSettings, CancelToken, ProviderId};
 use serde_json::json;
 
-use super::analysis::{Analysis, AnalysisFailure};
+use super::analysis::{Analysis, AnalysisFailure, AnalysisPhase};
 use super::context_label;
 
 pub(crate) type AnalysisResult = Result<(ProviderId, Analysis), AnalysisFailure>;
 
 pub(crate) struct AnalysisJob {
+    /// The turn boundary the request asks about, which decides how its
+    /// answer is read.
+    pub(crate) phase: AnalysisPhase,
     pub(crate) request: AiRequest,
     /// Called once on the analyzer thread with the outcome, including when
     /// the analyzer shuts down before running it.
@@ -195,7 +198,7 @@ fn run(
         // The outcome must arrive whatever happens on this thread: a panic
         // that escaped would leave the pane in flight forever.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            analyze(&active, &job.request, &cancel)
+            analyze(&active, job.phase, &job.request, &cancel)
         }))
         .unwrap_or_else(|_| {
             Err(AnalysisFailure::Worker(
@@ -208,7 +211,12 @@ fn run(
     }
 }
 
-fn analyze(router: &AiRouter, request: &AiRequest, cancel: &CancelToken) -> AnalysisResult {
+fn analyze(
+    router: &AiRouter,
+    phase: AnalysisPhase,
+    request: &AiRequest,
+    cancel: &CancelToken,
+) -> AnalysisResult {
     let AiResult { provider, value } = router.execute(request, cancel).map_err(|error| {
         if cancel.is_cancelled() {
             AnalysisFailure::Stopped
@@ -216,7 +224,7 @@ fn analyze(router: &AiRouter, request: &AiRequest, cancel: &CancelToken) -> Anal
             AnalysisFailure::Provider(error)
         }
     })?;
-    let analysis = context_label::parse(value)
+    let analysis = context_label::parse(phase, value)
         .map_err(|error| AnalysisFailure::Invalid(format!("{error:#}")))?;
     Ok((provider, analysis))
 }
@@ -304,7 +312,13 @@ mod tests {
             lock(&self.asked).clear();
             let (done, outcome) = channel();
             self.analyzer.submit(AnalysisJob {
-                request: context_label::request("pane", format!("job-{}", rand_id()), "context"),
+                phase: AnalysisPhase::TurnEnd,
+                request: context_label::request(
+                    AnalysisPhase::TurnEnd,
+                    "pane",
+                    format!("job-{}", rand_id()),
+                    "context",
+                ),
                 done: Box::new(move |result| {
                     let _ = done.send(result.is_err());
                 }),
