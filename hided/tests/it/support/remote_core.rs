@@ -420,9 +420,44 @@ impl Fixture {
             .cloned())
     }
 
-    /// The core's diagnostic rows of `component` and `kind`.
-    pub fn core_log(&self, component: &str, kind: &str) -> Result<Vec<Value>> {
-        log_rows(&self.core_state.join("Logs/core.jsonl"), component, kind)
+    /// The core's records of `kind` once `ready` holds for them: a daemon's
+    /// log writer writes a record after the answer the test already read.
+    pub fn core_log_until(
+        &self,
+        component: &str,
+        kind: &str,
+        ready: impl Fn(&[Value]) -> bool,
+    ) -> Result<Vec<Value>> {
+        log_until(
+            &self.core_state.join("Logs/core.jsonl"),
+            component,
+            kind,
+            ready,
+        )
+    }
+
+    /// What the core logged of its nodes' links, in order, for a failure's
+    /// message: its log lives in a folder the fixture removes as it ends.
+    pub fn core_link_records(&self) -> Vec<String> {
+        let path = self.core_state.join("Logs/core.jsonl");
+        let Ok(text) = read(&path) else {
+            return vec![format!("no log at {}", path.display())];
+        };
+        String::from_utf8_lossy(&text)
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|row| row["component"] == "node_link" || row["component"] == "remote_host")
+            .map(|row| {
+                format!(
+                    "{} {}",
+                    row["kind"],
+                    row["reason"]
+                        .as_str()
+                        .or(row["error"].as_str())
+                        .unwrap_or_default()
+                )
+            })
+            .collect()
     }
 
     /// Whether `text` is in anything either daemon logged: its diagnostic
@@ -482,6 +517,24 @@ impl Drop for Fixture {
             eprintln!("private remote core fixture cleanup failed, evidence retained: {error}");
         }
     }
+}
+
+fn log_until(
+    path: &Path,
+    component: &str,
+    kind: &str,
+    ready: impl Fn(&[Value]) -> bool,
+) -> Result<Vec<Value>> {
+    let mut last = Vec::new();
+    wait_for(&format!("{component} {kind} records"), || {
+        let rows = log_rows(path, component, kind)?;
+        if ready(&rows) {
+            return Ok(Some(rows));
+        }
+        last = rows;
+        Ok(None)
+    })
+    .with_context(|| format!("the records read: {last:?}"))
 }
 
 fn log_rows(path: &Path, component: &str, kind: &str) -> Result<Vec<Value>> {

@@ -90,10 +90,9 @@ fn a_node_dials_its_core_and_the_core_reaches_its_herdr_through_the_link() -> Re
                 })
                 .then_some(()))
         })?;
-        ensure!(
-            !fixture.core_log("node_link", "attach.linked")?.is_empty(),
-            "the core logged no linked node"
-        );
+        fixture
+            .core_log_until("node_link", "attach.linked", |rows| !rows.is_empty())
+            .context("the core logged no linked node")?;
         // The node's end ends the link, and the core's row says so.
         drop(role);
         wait_for("the core's row after the node left", || {
@@ -677,11 +676,11 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
         })?;
         // B19: the link's start, end and retries are recorded with the
         // machines they joined, and nothing typed is.
-        let linked = fixture.core_log("node_link", "attach.linked")?;
-        ensure!(
-            linked.len() >= 2 && linked.iter().all(|row| row["node"] == node.as_str()),
-            "the core's link records: {linked:?}"
-        );
+        fixture
+            .core_log_until("node_link", "attach.linked", |linked| {
+                linked.len() >= 2 && linked.iter().all(|row| row["node"] == node.as_str())
+            })
+            .context("the core's link records")?;
         let ended = fixture.node_log("node_role", "link.ended")?;
         ensure!(
             ended
@@ -723,6 +722,9 @@ fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<
             .enable_all()
             .build()?;
         runtime.block_on(node_link(port, "live", LINK_BOUND))?;
+        // The node reads its link live once the core accepts it; the core
+        // holds it as the node's link once its Hello is answered.
+        fixture.core_log_until("node_link", "attach.linked", |rows| !rows.is_empty())?;
         // The node stops answering and its link stays open.
         fixture.signal_running_node(libc::SIGSTOP)?;
         let dialed = Instant::now();
@@ -762,12 +764,11 @@ fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<
             took < Duration::from_secs(10),
             "the second link waited {took:?}"
         );
-        ensure!(
-            !fixture
-                .core_log("node_link", "attach.superseded")?
-                .is_empty(),
-            "the core never recorded the earlier link as superseded"
-        );
+        fixture
+            .core_log_until("node_link", "attach.superseded", |rows| !rows.is_empty())
+            .with_context(|| {
+                format!("the core's link records: {:?}", fixture.core_link_records())
+            })?;
         // The node finds its own link ended and returns.
         runtime.block_on(node_link(port, "live", LINK_BOUND))?;
         Ok(())
@@ -863,13 +864,13 @@ fn a_screen_of_another_build_than_its_core_is_told_so() -> Result<()> {
             answer["ok"] == false && answer["reason"] == "other_build",
             "hide connect did not answer other_build: {answer}"
         );
-        let refused = fixture.core_log("node_link", "attach.refused")?;
-        ensure!(
-            refused
-                .iter()
-                .any(|row| row["reason"] == "other_build" && row["node_build"] != row["core_build"]),
-            "the core logged no build mismatch: {refused:?}"
-        );
+        fixture
+            .core_log_until("node_link", "attach.refused", |refused| {
+                refused.iter().any(|row| {
+                    row["reason"] == "other_build" && row["node_build"] != row["core_build"]
+                })
+            })
+            .context("the core logged no build mismatch")?;
         Ok(())
     })();
     match journey {
@@ -954,13 +955,16 @@ fn a_node_pane_calls_its_core_through_the_link() -> Result<()> {
             );
             // B19: the refusal is recorded with its node and reason; no pane
             // was proven, so it names none.
-            let refused = fixture.core_log("node_panes", "pane.refused")?;
-            ensure!(
-                refused.iter().any(|row| row["node"] == node.as_str()
-                    && row["reason"] == "checkout_not_registered"
-                    && row["pane_id"].is_null()),
-                "the refusal records: {refused:?}"
-            );
+            tokio::task::block_in_place(|| {
+                fixture.core_log_until("node_panes", "pane.refused", |refused| {
+                    refused.iter().any(|row| {
+                        row["node"] == node.as_str()
+                            && row["reason"] == "checkout_not_registered"
+                            && row["pane_id"].is_null()
+                    })
+                })
+            })
+            .context("the refusal records")?;
             // The link ends: the node's callers are refused at once, and
             // answered again once it is back.
             tokio::task::block_in_place(|| fixture.ssh.online(false))?;
