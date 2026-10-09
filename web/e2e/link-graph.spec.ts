@@ -240,10 +240,18 @@ test("a Pi archive resume keeps its selected source and uses the current control
     const overview = page.locator("[data-overview-screen]");
     await overview.locator('[data-lens-tile-button="prs"]').click();
     await overview.locator('[data-pr-row="31"]').click({ timeout: 30_000 });
-    const archived = page.locator(`[data-pr-panel="31"] [data-link-session="${PI_ID}"]`);
+    const panel = overview.locator('[data-pr-panel="31"]');
+    const archived = panel.locator(`[data-link-session="${PI_ID}"]`);
     await expect(archived).toBeVisible({ timeout: 60_000 });
+    // The line can show before the panel has its worktree, and a line's
+    // buttons show only under the pointer, so it is hovered once the panel
+    // has settled and Resume has a worktree to start in.
+    await expect(panel.locator(`[data-pr-panel-worktree="${tree}"]`)).not.toHaveAttribute("data-removed", "true");
+    await expect(panel.locator("[data-link-loading]")).toHaveCount(0, { timeout: 60_000 });
+    const resume = archived.locator('[data-link-button="resume"]');
+    await expect(resume).toBeEnabled();
     await archived.hover();
-    await archived.locator('[data-link-button="resume"]').click();
+    await resume.click();
     await expect.poll(() => agentsIn(herdr, tree), { timeout: 60_000 }).toContain("pi");
     await expect.poll(() => fs.existsSync(path.join(herdr.root, "pi-launches.jsonl"))).toBe(true);
     const launches = fs.readFileSync(path.join(herdr.root, "pi-launches.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line) as string[]);
