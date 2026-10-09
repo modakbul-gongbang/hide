@@ -42,8 +42,10 @@
   "request_verb": ["answer", "blocked", "fix", "review", "stopped", "result", "working", "waiting", "idle"],
   "user_turn_kind": ["plan_approval", "question"],
   "review_decision": ["review_required", "changes_requested", "approved"],
-  "session_group": ["my_turn", "review_merge", "in_progress", "resting", "resolved_today"],
-  "session_tag": ["answer", "approval", "blocked", "fix", "review", "merge", "stopped", "result", "working", "ci_wait", "waiting", "idle"],
+  "session_group": ["needs_you", "working", "done", "idle", "resolved"],
+  "raise_verb": ["approval", "answer", "confirm", "draft"],
+  "pr_state": ["failed", "pending", "mergeable", "merged"],
+  "descendant_mark": ["raised", "working"],
   "right_panel_section": ["overview", "explorer", "changes", "agent_sessions", "sessions"],
   "strip_tab_kind": ["herdr", "file", "diff", "session", "memory"]
 }

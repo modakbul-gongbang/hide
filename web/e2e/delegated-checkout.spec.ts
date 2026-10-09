@@ -49,16 +49,17 @@ test("a checkout whose only tab is delegated opens on the child's pane", async (
     await expect(page.locator('[data-agent-tab-bar] [role="tab"]')).toHaveCount(0);
     await screenshot(page, "delegated-checkout-open");
 
-    // Session UI B1/B38: lineage belongs to the pane header and root badge.
-    const raisedArrow = page.locator(`[data-pane-view="${child}"] [data-pane-return="${parent}"] svg`);
+    // Session UI B1/B38: lineage belongs to the pane header and the root's tree.
+    // The child's header names the path back to its root (agent-hierarchy-screens B20).
+    const raisedArrow = page.locator(`[data-pane-view="${child}"] [data-pane-path="${child}"] [data-pane-return="${parent}"]`);
     await expect(raisedArrow).toBeVisible();
     await screenshot(page, "delegated-checkout-raised-from");
 
-    // Back on the first checkout, the root's badge opens its direct child.
+    // Back on the first checkout, the root's chevron opens its child in place (agent-hierarchy-screens B10).
     await page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first().click();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toBeVisible({ timeout: 20_000 });
-    await page.locator(`nav[data-sidebar] [data-pane="${parent}"] [data-descendant-badge]`).click();
-    await page.locator(`[data-agent-child="${child}"]`).click();
+    await page.locator(`nav[data-sidebar] [data-pane="${parent}"] [data-tree-chevron="${parent}"]`).first().click();
+    await page.locator(`nav[data-sidebar] [data-pane="${child}"] [data-agent-open="${child}"]`).first().click();
     await expect.poll(() => last.get("focus_pane")?.pane_id).toBe(child);
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true", { timeout: 20_000 });
     await expect(page.locator("[data-empty-new-tab]")).toHaveCount(0);

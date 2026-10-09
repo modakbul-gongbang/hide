@@ -43,7 +43,7 @@ test("a pane taken over by another agent is a root, and so is a child of a paren
     // The parent pane is taken over: it adopts none of its old children.
     setFixtureSession(herdr, parent, "fixture-another-parent");
     await expect(row(child)).toBeVisible({ timeout: 20_000 });
-    await expect(row(parent).locator("[data-descendant-badge]")).toHaveCount(0);
+    await expect(row(parent).locator(`[data-tree-chevron="${parent}"]`)).toHaveCount(0);
   } finally {
     daemon?.stop();
     herdr.stop();

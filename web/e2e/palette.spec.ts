@@ -34,7 +34,8 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
     await expect(page.locator('[data-sidebar="projects"]')).toBeVisible();
     labelAgent(herdr, one, { task: "Agent one", progress: "팔레트 그룹 검증 중" });
     await setFixtureLifecycle(herdr, one, "working");
-    await expect(page.locator(`nav[data-sidebar] [data-pane="${one}"]`)).toContainText("팔레트 그룹 검증 중", { timeout: 20_000 });
+    // A tree row is one line (agent-hierarchy-screens B14): the label's title says it landed.
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${one}"] [data-agent-title]`)).toHaveText("Agent one", { timeout: 20_000 });
 
     // The sidebar's Search icon opens the palette with the query focused. The
     // page shows Main, which has nothing to relate to, so the palette holds

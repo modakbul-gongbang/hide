@@ -20,7 +20,8 @@ const PARTS = [
   "[data-agent-title]",
   "[data-branch-chip]",
   "[data-device-chip]",
-  "[data-descendant-badge]",
+  "[data-descendant-mark]",
+  "[data-pr-icon]",
   "[data-agent-elapsed]",
   "[data-fold-slot]",
   "[data-row-name]",
@@ -70,9 +71,12 @@ export async function rowTargets(page) {
       for (const row of document.querySelectorAll(`nav[data-sidebar] ${selector}`)) {
         if (row.getClientRects().length === 0) continue;
         const value = row.getAttribute(attribute) ?? "";
-        const rowSelector = `nav[data-sidebar] ${selector}[${attribute}="${CSS.escape(value)}"]`;
+        const base = `nav[data-sidebar] ${selector}[${attribute}="${CSS.escape(value)}"]`;
+        // An agent can be drawn twice (its Needs You row and its tree row), so each draw is addressed by its order.
+        const index = [...document.querySelectorAll(base)].indexOf(row);
+        const rowSelector = `${base} >> nth=${index}`;
         const inner = controls.find((control) => row.querySelector(control));
-        targets.push({ key: `${kind}:${value}`, row: rowSelector, control: inner ? `${rowSelector} ${inner}` : row.matches("button") ? rowSelector : null });
+        targets.push({ key: `${kind}:${value}${index ? `#${index}` : ""}`, row: rowSelector, control: inner ? `${rowSelector} >> ${inner}` : row.matches("button") ? rowSelector : null });
       }
     }
     return targets;

@@ -3,7 +3,7 @@ import { CircleAlertIcon, CircleIcon, CircleDotIcon, CircleCheckIcon, CircleHelp
 import type { Actions } from "../actions";
 import { statusText } from "../agentStatus";
 import { AgentLogo } from "../components/agent-logo";
-import { DescendantBadge } from "../components/agent-row";
+import { DescendantMark } from "../components/agent-tree";
 import { Elapsed } from "../components/elapsed";
 import { StatusMark } from "../components/status-mark";
 import { Button } from "../components/ui/button";
@@ -53,11 +53,6 @@ export function TaskCardView({ factory, card, showProject, dim = false, actions,
   const summaries = useShellStore((state) => state.rest?.ui_state?.agent_summary !== false);
   const byPane = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, agent])), [agents]);
   const worker = card.worker_pane ? byPane.get(card.worker_pane) : undefined;
-  const children = (worker?.lineage_child_pane_ids ?? []).flatMap((pane) => {
-    const child = byPane.get(pane);
-    return child ? [child] : [];
-  });
-  const descendants = worker?.close_descendant_pane_ids?.length ?? children.length;
   const line = summaries ? worker?.request?.line : undefined;
   // A worker whose pane was closed in Hide waits for a person to resume it (D-26).
   const closed = card.state === "paused" && card.pause_reason === "pane_closed";
@@ -89,7 +84,8 @@ export function TaskCardView({ factory, card, showProject, dim = false, actions,
           {card.pr ? <a className="factory-card-control flex min-w-0 items-center gap-xxs font-mono hover:underline" href={card.pr.url} target="_blank" rel="noreferrer" aria-label={`PR ${card.pr.number}`}><GitPullRequestIcon className="size-(--size-icon-sm) shrink-0" /><span className="truncate">{card.pr.number}</span></a> : null}
           <span className="flex-1" />
           {card.worker_runtime ? <span role="img" aria-label={card.worker_label ?? card.worker_runtime} title={card.worker_label ?? card.worker_runtime} className="factory-card-logo shrink-0"><AgentLogo agent={card.worker_runtime} label={card.worker_label ?? card.worker_runtime} /></span> : null}
-          {worker && descendants > 0 && children.length > 0 && actions ? <span className="factory-card-normal factory-card-control"><DescendantBadge agent={worker} descendants={descendants} childRows={children} onOpenChild={(pane) => actions.openAgent(pane)} onUnfold={null} returnFocus={() => main.current?.focus({ preventScroll: true })} /></span> : null}
+          {/* The one descendant mark every tree draws (PRD agent-hierarchy-screens B17); the card never unfolds. */}
+          {worker ? <span className="factory-card-normal"><DescendantMark agent={worker} /></span> : null}
           <Elapsed since={card.since} className="factory-card-normal shrink-0 text-caption" />
         </div>
         <div className="flex min-w-0 items-start gap-xs" data-factory-card-title-line="true">

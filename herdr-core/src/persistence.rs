@@ -61,6 +61,8 @@ struct StoredUiState {
     /// (PRD D-11).
     #[serde(default)]
     expanded_agent_pane_ids: Vec<String>,
+    #[serde(default)]
+    sessions_expanded_agent_pane_ids: Vec<String>,
     selected_path: Option<String>,
     selected_pane_id: Option<String>,
     #[serde(default)]
@@ -292,6 +294,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             expanded_inactive_project_device_ids: stored.expanded_inactive_project_device_ids,
             project_base_branches: stored.project_base_branches,
             expanded_agent_pane_ids: stored.expanded_agent_pane_ids,
+            sessions_expanded_agent_pane_ids: stored.sessions_expanded_agent_pane_ids,
             selected_path: stored.selected_path,
             selected_pane_id: stored.selected_pane_id,
             shortcut_bindings: stored.shortcut_bindings,
@@ -396,6 +399,7 @@ pub fn save(
         expanded_inactive_project_device_ids: state.expanded_inactive_project_device_ids.clone(),
         project_base_branches: state.project_base_branches.clone(),
         expanded_agent_pane_ids: state.expanded_agent_pane_ids.clone(),
+        sessions_expanded_agent_pane_ids: state.sessions_expanded_agent_pane_ids.clone(),
         selected_path: state.selected_path.clone(),
         selected_pane_id: state.selected_pane_id.clone(),
         shortcut_bindings: state.shortcut_bindings.clone(),

@@ -524,9 +524,11 @@ mod tests {
         SidebarAgentSnapshot {
             state: Default::default(),
             resolved: None,
-            resolved_today: false,
+            resolved_recent: false,
             escalation: None,
-            raised_children: Vec::new(),
+            raised: Vec::new(),
+            descendant_mark: None,
+            descendant_line: None,
             id: pane_id.to_owned(),
             herdr_name: None,
             pane_id: pane_id.to_owned(),

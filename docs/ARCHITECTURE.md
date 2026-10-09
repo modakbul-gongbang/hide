@@ -294,7 +294,7 @@ If normal placement is full, the unresolved child waits and the core moves its k
 
 Ownership is the fifth derived status axis and it is read off the lineage, never stored.
 Ordinary delegated rows can only be Working or Seen; their changes turn ancestors unread without changing the ancestors' own groups.
-The six core-owned escalation causes in `docs/status-model.md` are the explicit exception: the child enters Needs You and Sessions while the parent's warning line and direct-child badge point to it.
+The six core-owned escalation causes in `docs/status-model.md` are the explicit exception: the child's lineage root enters Needs You and Sessions carrying the child's ask, and the root's pane band opens the child.
 The lineage is therefore built before the read axis is applied on every ingest, and there is no clock, timer or second store for it.
 The single state owner is `herdr-core/src/agent_state/`: `axes.rs` derives lifecycle, completion, ownership and read state, `turn.rs` derives groups, request verbs and runtime action gates, `sessions.rs` derives the Sessions tool's groups and task tags, `escalation.rs` derives the six raise causes from delivery facts, `header.rs` derives quiet pane bands, `work.rs` associates PRs and issues and assigns each duty, and `tally.rs` owns marks, representative ranks and scope counts.
 Its scope projection also carries list sections and checkout trees; the web resolves their pane IDs and physical occurrence indexes and applies locale-aware typography and alphabetical placement without choosing status priority, membership or counts.
@@ -317,7 +317,7 @@ These functions operate on the facts already projected by the core, including re
 The existing `sidebar::tests`, `request_view::tests`, `pet::tests` and `runtime::tests::lineage` exercise these shared rules through their original projection callers.
 `runtime/session_state.rs` owns durable live resolution: a successful UI-state save acknowledgement publishes the saved resolution, an activity fingerprint rejects stale acknowledgements, and new input, delivery or working activity restores a row.
 The same coalesced writer acknowledges dormant conversation and live resolution records from the exact saved frame, applying both results before announcing a change outside the runtime lock.
-The owner-thread clock checks local-day rollover through the existing tick; it does not create a timer or per-frame publication.
+The owner-thread clock checks the end of the 24-hour Resolved window through the existing tick; it does not create a timer or per-frame publication.
 Closed-session PR links are read outside the runtime lock, and Sessions deduplicates them against live PR ownership.
 An unchanged remote raw session reuses its complete published projection, including resolution and machine-qualified lineage; applying read fields to a freshly built copy is not itself a runtime transition.
 Pane bands travel in `terminal.headers` through the terminal metadata wire and the rest-section stamp.
@@ -1524,7 +1524,7 @@ It draws `agent_scope.sessions` and row state through `web/src/AgentSessions.tsx
 Its visible-board demand reuses the existing running-checks observation gate rather than adding a polling worker or clock.
 Session escalation, resolve and pane headers are pure core projections over accepted agent, delivery and PR facts (`agent_state`, `runtime/session_state.rs`).
 Changed inputs refresh the projection under Runtime and publish only changed values; repeated transport-control frames do not rederive headers.
-Resolve uses the existing coalesced state-save worker and publishes its durable result after the save answers; local-day rollover compares one deadline on the existing coordinator tick.
+Resolve uses the existing coalesced state-save worker and publishes its durable result after the save answers; the end of the Resolved window compares one deadline on the existing coordinator tick.
 Remembered sidebar folds survive incomplete startup and reconnect catalogs, as recent checkouts do, and leave only with a confirmed project or device removal.
 
 That projection is never saved: `core-state.json` keeps the right panel it held when the process started (`ui_state_to_save`), so an older build started on the same state directory opens with its own panel.
@@ -1650,7 +1650,7 @@ The web also owns the pixel rule, because it has the geometry: an edge takes a d
 
 A pane's delegated children and ancestors come from the global machine-qualified pane rows the core projects (`children.chips`, `lineage_path`; rules in `web/src/lineage.ts`).
 The remote replica preserves a declared raw pane and machine id, and the runtime scopes it only after the consented helper greeting supplies that device's immutable machine identity.
-A parent's header opens the shared direct-child popover from one counted badge, a child's header has a compact Return, and the pane menu lists parent, siblings and children.
+A parent's header opens the tree popover from its tree button, a child's header draws its ancestor path, and the pane menu lists parent, siblings and children.
 Each explicit Open follows the same tracked navigation as the sidebar and Sessions; Escape returns to its badge and All opens Overview Agents.
 Each of those moves is one `focus_pane` carrying a `request_id` (on a device, `remote_control` with `report_pane_focus_outcome`), and the core's `status.pane_focus_request` is the only answer the header shows: pending until Herdr's layout confirms, or failed with the core's reason and Retry when it can be retried; a second click on the same target while one is in flight is dropped, and a failure never splits the parent or makes a pane.
 

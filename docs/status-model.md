@@ -13,7 +13,7 @@ What it needs from the operator, whether it is running, whether it has reported 
 
 `herdr-core/src/agent_state/axes.rs` is the single owner of all five.
 `agent_state/turn.rs` derives the group, request verb, close and rest gates from them; `sidebar.rs` assembles the snapshot rows.
-It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, the descendant badge, and whether closing the pane needs a confirmation or a fresh status check - so no surface decides any of it a second time.
+It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, the descendant mark, and whether closing the pane needs a confirmation or a fresh status check - so no surface decides any of it a second time.
 
 Ownership is not stored anywhere.
 It is read back off the row: a row whose lineage depth is greater than zero is delegated, and every other row, including an orphan whose parent is gone, is the operator's.
@@ -95,8 +95,12 @@ No new group value reaches the wire, so a decoder that does not know the field d
 | `reply` | A Hide `request` or `block` letter the row's session sent and whose answer is still awaited | The delivery ledger (`Ledger::reply_awaited_since`) |
 
 A merely ready or finished descendant is quiet, and one whose activity Herdr reports as unknown does not make its root wait, because a waiting state the projection cannot vouch for is not drawn.
-A descendant's question keeps the root waiting in Working, carries `?1` on its badge and turns it unread through the descendant signals above; it never moves the root to Needs You.
+A descendant's question keeps the root waiting in Working and turns it unread through the descendant signals above; it moves the root to Needs You only once one of the six escalation causes raises it (Delegated escalation).
 A delegated row that waits on its own (`background` or `reply`) is Working, like a delegated row that is running, and its root counts it as working, so the root waits on its children while it does; an ordinary delegated row that waits for nothing keeps Seen.
+
+Mark precedence on a root is its own demand, then its own work, then waiting, then idle or done.
+A row waits only with no demand of its own while it is not working, so the precedence is the order of the checks in `agent_group_for`, not a second rule.
+Only a lineage root waits on its children: an ordinary delegated middle row keeps its own mark and Working or Seen group, and the grandchild is drawn under it in the tree.
 An active escalation uses the six-cause exception below.
 
 Mark precedence on a row is: blocked, then a question, then an approval, then its own work, then waiting, then a stop, then done or idle.
@@ -180,12 +184,12 @@ Regression owners: `each_row_lists_its_live_descendants_deepest_first_and_a_leaf
 
 Needs You and Done ordinarily belong to operator-owned roots.
 A delegated row stays Working or Seen while its parent can handle it; `agent_state/escalation.rs` raises it to Needs You only under the six conditions below.
-The row keeps its own demand, mark and status word, so the parent's badge can still say what its child is asking for; what changes is only which group the row sits in and whether it is drawn bright.
+The row keeps its own demand, mark and status word, and its lineage root carries the ask (Delegated escalation below); what changes is only which group the row sits in and whether it is drawn bright.
 Done is therefore scoped to the lineage root: a delegated child that finishes leaves a dimmed Seen row, and the completion the operator acts on is the root's.
 
 ## Where a parent comes from
 
-Ownership, the tree, the breadcrumb and the descendant badge all start from one fact per agent: its responsibility parent.
+Ownership, the tree, the ancestor path and the descendant mark all start from one fact per agent: its responsibility parent.
 `hide agent spawn --parent here|<self id>` records delegation; omitting `--parent` hands the agent to the operator as an independent root.
 The latter has no indentation, from hint, parent line, descendant contribution, ancestor unread propagation, waiting-on-descendants effect or inclusion in the spawner's subtree close.
 Its own demand and completion enter Needs You and Done normally, and closing the spawner leaves it running.
@@ -212,7 +216,7 @@ A declaration whose machine cannot be matched stays a root and records one diagn
 
 A pane outlives the agent it hosted and the tokens outlive the agent with it, so a declaration is only a claim until the sessions prove it: it holds while the child's pane reports the `child_session` and the parent's pane the `parent_session`.
 `wire.rs` checks the child as it turns the tokens into a row, and `agent_state::apply_lineage` checks the parent because that is where both rows are known, on this machine or another.
-An agent that took over a pane is therefore a root, and a parent pane taken over by another agent adopts none of the old children: no line, no descendant badge, and no orphan hint, since the child was never that agent's.
+An agent that took over a pane is therefore a root, and a parent pane taken over by another agent adopts none of the old children: no line, no descendant mark, and no orphan hint, since the child was never that agent's.
 A pane Herdr reports without a session cannot prove a match, so its relationship does not hold until it reports the recorded session again, and a `parent_pane` without the session tokens is not a relationship at all.
 A parent whose pane no longer lists an agent is a different case: the child stays an orphan root with its hint.
 
@@ -221,16 +225,20 @@ The token is display-only in Herdr's own terms and dies with the pane, so a clos
 
 Regression owners: `a_parent_declared_as_a_pane_token_is_the_lineage`, `a_child_whose_pane_now_hosts_another_session_declares_no_parent` and the `lineage_sessions` tests in `herdr-core/src/session_sync/tests.rs`, `a_parent_pane_on_another_machine_reused_by_another_agent_adopts_no_local_child`, `a_sleeping_child_stays_under_its_parent_only_while_its_record_can_prove_it`, and `web/e2e/lineage-session.spec.ts`.
 
-## The descendant badge
+## The descendant mark and the tree popover
 
-The sidebar, Sessions and pane header share one badge and direct-child popover.
-`direct_child_counts` supplies one mark and count per state, error, approval, question, working and done, with zero states omitted; all-ready children read `↳N`.
-Unknown activity adds no invented count and is logged as `lineage.unknown_descendants`.
-The badge remains visible whenever there are direct children, including children in another checkout or device; the sidebar never unfolds delegated rows.
-Pointer, Enter or Space opens the current direct children with their mark, provider, title, last line, branch or PR, device when different and elapsed time.
-Arrow keys select a child, Enter or its arrow opens its pane, and Escape returns focus to the badge.
-The last item, All, opens the Overview Agents graph.
-A disconnected child's action is disabled with the current connection reason.
+`agent_state/escalation.rs::lift` gives each row one `descendant_mark` over its whole subtree (PRD D-40): `raised` with the number of raised descendants if there are any, else `working` with the number of working descendants, else none.
+The shell draws it as `! N` in the warning colour or `● N` in the working colour, and only where those descendants are hidden: a folded sidebar parent, a Sessions row whose tree is closed, and a Factory card.
+Idle, done and unknown descendants add nothing, so a mark never says only that children exist.
+`row.state.tree_rank` orders siblings in every tree: asking or raised, itself or below it, first; then working; then finished and unread; then the rest.
+The sidebar tree under an opened root is `agent_scope.sidebar_tree.visible_rows` from `agent_state/tally/lineage.rs::sidebar_tree`: children and grandchildren wherever they work, two levels only, with the digit shortcuts on roots alone.
+The shell shows five siblings per parent and folds the rest behind `N개 더` (`web/src/sidebarTree.ts`).
+A grandchild's own children open in the tree popover instead of a third level.
+The tree popover (`web/src/components/agent-tree-popover.tsx`) opens from the pane header's tree button, a grandchild's chevron and an ask band's `외 N건`.
+Its head names the parent with its direct child count, and its body draws the same rows two levels deep with five siblings each, the children that finished and were read, with nothing below them raised or working, folded below them behind `끝난 자식 N`; choosing a grandchild that has children re-roots the popover on it.
+Arrows move, Right and Left open and fold a branch, Enter opens the agent's pane, and Escape closes it and returns focus to what opened it.
+Opened from an ask band it starts with the raised branches open and draws each ask on the row it raised (`raised_pane_id`) with its verb, what to do and Open, which for a draft goes to the parent holding it.
+A pending or failed move shows at its footer with the retry rules of the relation, and the last line opens the Overview Agents graph.
 Disappearing children leave immediately and an empty popover closes.
 
 The one sidebar raises Needs You and Done above its project tree, at most five and three most recent roots respectively, with older rows behind More.
@@ -319,7 +327,7 @@ The same pass counts each agent under the mark its own row draws (`RowMark` in `
 A row Herdr reports as unknown draws `~` and is counted in none of them, so the badge claims nothing the projection cannot vouch for.
 The counts ride the summary as `marks`, and a project's badge is its checkouts' counts added up.
 The badge draws one mark and count per state, worst first (`▲ ! ? ● ◐ ✓ ○`), zero states left out, in the marks and colors the rows use, so it says what opening the rows would show.
-Unlike the descendant badge it counts idle agents, because on a folded checkout it is also how the operator sees that agents are there at all.
+Unlike the descendant mark it counts idle agents, because on a folded checkout it is also how the operator sees that agents are there at all.
 A checkout's badge stands for its folded agent rows and leaves while they are open; a project's stays, open or folded, because it is the project's own summary (docs/UI_BEHAVIOR.md, Sidebar hierarchy).
 Regression owners: `workspace_summary_uses_physical_ownership_priority_and_unique_panes` for the counts, `projects.test.ts` for the project sum, and `projects-sidebar.spec.ts` for where the badges are drawn.
 
@@ -598,27 +606,27 @@ Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull
 
 ### The Sessions tool
 
-`agent_state/sessions.rs` maps the verb to one group and one task tag in `row.state.session`.
-Answer belongs to My turn; Review to Review · Merge; Working and Waiting to In progress; Fix, Stopped, Result and Idle to Resting.
-My turn holds only what stays stopped until the operator moves: an answer, a menu or plan approval, and a raised child (design principle #13).
-A result, a failed check or an unfinished turn is news the operator may read, not a wait on them, so it rests with its tag and the row's unread mark, and the pane's band still carries it.
+`agent_state/sessions.rs` puts each root row in one of the sidebar's own groups (PRD D-16): Needs You, Working, Done, Idle, and Resolved for a session resolved within the last 24 hours; no PR stage and no task tag decides the group.
+A Needs You row draws its `row.state.ask` (verb and what to do) in place of a line, and a blocked one, which has no ask, its cause; a Working row its label line, or while it waits on its children the line of its most recently changed working descendant; a Done row its label line.
+An Idle row carries a line only for a stopped turn (`◐`, the same rule as the sidebar's Stopped mark), marked `unfinished`.
+Needs You is ordered by when the ask began, Working puts a failed PR first and then the most recent, Done is most recent first, and Resolved is most recently resolved first.
+Idle puts unfinished work first, then a failed, mergeable, pending and merged PR, then the rest, and publishes those with neither a PR nor unfinished work as `more`, which the panel folds behind `그 외 N`.
 A blocked menu takes Approval before an unread AI question's Answer.
 A current native `user_turn.kind = question` instead takes Answer while its session holds for a reply, including after it is read and when its content is absent.
 Native plan approval keeps Approval; the typed native wait, rather than a provider name or an AI question label, distinguishes these cases.
-Reading an AI question skips its demand rung and leaves a dimmed question; menu and plan approval remain My turn until answered.
-Merge requires every open duty PR on the row to have passing checks and an approved or absent review decision; absent or unknown checks never imply a pass.
-Without a label line the row keeps its outline but carries no invented task tag or result sentence.
-`agent_scope.sessions` publishes ordered member indices, nonempty groups and counts for checkout, project, device and overall scopes.
-Ordinary delegated children remain behind their parent's chip, raised children enter My turn, and Factory workers retain their dedicated surface.
-A closed session's recorded, unsettled PR enters Review · Merge only when no live session already carries it.
-The existing links reader reads this association off the runtime lock; neither a mention nor a timer creates a new link.
+Reading an AI question skips its demand rung and leaves a dimmed question; menu and plan approval stay in Needs You until answered.
+`row.state.pr` is the row's own PR summary (PRD D-18, D-39): the live PRs it holds the duty of, never a descendant's, with the count, the worst state (failed, pending, mergeable, merged) and each PR worst first; a closed PR is not counted.
+Mergeable requires passing checks and an approved or absent review decision; absent or unknown checks never imply a pass.
+Without a label line the row keeps its outline but carries no invented line.
+`agent_scope.sessions` publishes the ordered member indices and the nonempty groups for checkout, project, device and overall scopes, with no counts.
+Delegated children are never Sessions members of their own: they are drawn one level under their root when the operator expands it (`sessions_expanded_agent_pane_ids` in core UI state), and Factory workers retain their dedicated surface.
 
 Resolve records `resolved_sessions` in core UI state and publishes the hidden row only after the existing coalesced writer acknowledges that exact save.
 Failure keeps it visible with the existing actionable save error; input, activity, session replacement or pane closure invalidates a pending acknowledgement.
 New operator input, a received letter or renewed working activity restores the session.
 Automatic resolution requires a stopped agent, no demand and every assigned PR merged or closed; settlements before restored input cannot resolve it again.
-Only resolutions from the current local date enter Today resolved, folded by default; older resolutions stay in tabs and the graph but leave both lists.
-The existing runtime tick advances the local-day projection without adding a timer or per-snapshot clock read.
+Only resolutions from the last 24 hours (`RESOLVED_WINDOW_MS`) enter Resolved, folded by default; older resolutions stay in tabs and the graph but leave both lists.
+The existing runtime tick advances that window without adding a timer or per-snapshot clock read.
 Closing a pane prunes its resolution and input record.
 Regression owners: `runtime::tests::session_state`, `request_view::tests`, and `web/e2e/session-panel.spec.ts`.
 
@@ -627,8 +635,12 @@ Regression owners: `runtime::tests::session_state`, `request_view::tests`, and `
 `agent_state/escalation.rs` reads the existing doorbell and watch decisions rather than adding delivery clocks.
 A child rises when its letter is held by a blocked parent or operator draft, when three bells are exhausted and the parent is again eligible after thirty quiet seconds, when the letter becomes undelivered after sixty minutes, when the child's own pane is Herdr blocked, or when the first watch warning has had no parent response for sixty minutes.
 An idle or done parent still owns the child; only a closed parent pane or absent parent agent invokes the existing orphan-root rule.
-The parent keeps its group and gets a warning second line naming the first raised child and additional count; the child is a My turn row that opens its own pane.
-Menu blocking uses Approval, a letter or question uses Answer, and an unanswered watch uses Stopped.
+`escalation::lift` carries every raised descendant to its lineage root (PRD D-10, D-27) as a `RaisedAsk`: the verb, what to do, the agent named, the pane Open goes to, since when, the titles from the root and the checkout.
+The verb is Approval for a blocked child (Answer when it is blocked on a native question, with that question as what to do), Answer for an undelivered or unanswered letter, Confirm for an unanswered watch and Draft for a letter held by the parent's input, which names and opens that parent; a blocked parent stands for itself and adds no ask.
+An Answer also names the parent that has not received the letter.
+The root's asks are ordered by verb, then by age; the root enters Needs You and its second line is the lead ask, unless its own demand comes first, which an AI question or a block the operator has read no longer is.
+The raised child keeps its own place in the tree, and no ancestor between it and the root changes group.
+Menu blocking uses Approval, a letter or question uses Answer, an unanswered watch uses Confirm, and a draft uses Draft.
 The first three causes clear on receipt or a successful bell, menu blocking on answer, and watch escalation on response, cancellation or a new child activity episode.
 A letter's cause (the first three and an undelivered letter) also ends for good once the child's session takes up a request written after the letter, from the operator or a letter: the child started a new turn without the answer, so stopping again does not bring the raise back.
 That time is the session's own request record (`RowFacts` `operator_request` and `other_request`), which `labels.json` keeps and a device's helper reads again after a restart, so a restarted daemon gives the same answer; an agent whose session Hide cannot read keeps the cause until receipt, reply, cancellation or expiry.
@@ -640,19 +652,19 @@ Regression owners: `agent_state::escalation::tests`, `runtime::tests::lineage`, 
 
 ### Quiet pane headers
 
-`agent_state/header.rs` publishes quiet identity metadata, the selected PR/CI action, a working-line flag and at most one band per pane.
-Connection or sleep availability wins, then the pane's own demand, then the first raised child, then the ordinary task verb.
-Approval, Answer, Fix, Review, Merge, Stopped and Result have bands; Working has only a thin blue line, while CI wait, child wait and Idle have none.
-Bands carry the core reason, action and stable verb time; extra raised children appear as `+N`.
+`agent_state/header.rs` publishes a working-line flag and at most one band per pane.
+Connection or sleep availability wins, then the pane's own demand, then the lead raised descendant, then the ordinary task verb.
+Approval, Answer, Blocked, Fix, Review, Merge, Stopped and Result have bands; Working has only a thin blue line, while CI wait, child wait and Idle have none.
+An ask band (the pane's own Approval or Answer, or a raised descendant's `RaisedAsk`) is quiet text on the secondary fill with a warning rail (PRD D-43): the verb in its colour, what to do, who asks with the path, checkout and wait in its hover, the unreceived parent for an Answer, the elapsed time, `외 N건` for the other asks, and Open.
+Other bands carry the core reason, action and stable verb time.
 PR actions select the duty that produced the verb and retain the canonical URL, so equal PR numbers in different repositories cannot redirect the action.
 PR reason facts carry checks and review separately from label progress.
 The existing input does not supply an approval command or failed check names; the band explicitly says those details are unavailable rather than treating a generated sentence as that evidence.
-The quiet identity chip can still show the first linked live PR independently of the duty action.
 A failed exit is red with its real exit code, a normal termination is gray, and connection and sleep actions remain in their existing body surfaces.
 The band overlays the terminal so state changes never resize its PTY grid.
-The identity row retains provider, title, direct-child badge, parent return, PR/CI, Not connected chip and existing controls, dropping the parent text first when narrow.
-Pending or failed relationship navigation stays visible at its popover, return control or band with retry where available, and in the retained Agent-area status when the source pane is no longer on screen.
-Regression owners: `runtime::tests::session_state`, `web/e2e/sidebar-status.spec.ts`, and the pane/lineage desktop checks.
+The identity row reads the ancestor path, provider, title, the pane's own PR chip from `row.state.pr`, the tree button with the direct child count, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
+Pending or failed relationship navigation stays visible at its popover, ancestor step or band with retry where available, and in the retained Agent-area status when the source pane is no longer on screen.
+Regression owners: `runtime::tests::session_state`, `web/src/PaneHeaderBand.test.tsx`, `web/e2e/sidebar-status.spec.ts`, and the pane/lineage desktop checks.
 
 ### The second line
 
@@ -739,12 +751,12 @@ Physical row references include an occurrence index so duplicate pane IDs keep t
 The scope projection reads Factory worker panes from the current summary’s column cards, excludes them from Sessions and the Overview attention count, and keeps them in physical agent lists.
 A changed Factory summary refreshes the scope in the same publication; unchanged worker membership reuses the cache.
 The retained request projection keeps its previous internal scope semantics.
-Sessions separately excludes ordinary delegated children in every scope and publishes its five groups and counts.
+Sessions separately excludes delegated children in every scope and publishes its nonempty groups.
 Disconnected devices have empty physical totals but retain their last Overview members, matching the existing rail and board behavior.
 The scope cache compares owned agent rows, device connection facts and checkout membership and summaries; it restores cached values after a catalog rebuild and recomputes only when those inputs change.
 The frozen screen counts are asserted by `agent_state::tally::scope_tests::physical_groups_root_headings_and_requests_keep_the_frozen_screen_values`; ownership, unchanged projection and disconnect retention are asserted by `runtime::tests::agent_scopes`.
 
-`agent_state/tally/lineage.rs` projects the list headings, direct-child membership, folded checkout badges and checkout trees with their two card representatives.
+`agent_state/tally/lineage.rs` projects the list headings, the sidebar tree, folded checkout badges and checkout trees with their two card representatives.
 The sidebar uses the connected-device tree; the Issues board uses the project device's tree, preserving the previous scope difference.
 A done descendant turns a card yellow only when it is a root relative to that checkout.
 Folded checkout lines carry status-priority tiers; the browser keeps its existing locale-aware alphabetical placement inside a tier so Korean and English labels keep their displayed order.

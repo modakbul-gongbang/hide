@@ -630,9 +630,11 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let projected = SidebarAgentSnapshot {
         state: Default::default(),
         resolved: None,
-        resolved_today: false,
+        resolved_recent: false,
         escalation: None,
-        raised_children: Vec::new(),
+        raised: Vec::new(),
+        descendant_mark: None,
+        descendant_line: None,
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
         herdr_name: non_empty(agent.name.as_deref())
             .filter(|name| !crate::fork::hide_made_name(name, agent_kind, &pane_id))

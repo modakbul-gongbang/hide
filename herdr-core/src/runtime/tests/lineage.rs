@@ -1293,18 +1293,16 @@ fn a_descendants_demand_or_completion_turns_every_ancestor_unread_and_nothing_el
     let _ = std::fs::remove_file(&runtime.state_path);
 }
 
-// PRD B7, D-03: a child never makes its ancestor Needs You. A working root
-// stays Working on its own account; a quiet root with a busy child is waiting
-// on it and also stays Working (sidebar-agent-status D-01).
+// PRD B7, D-03: an ordinary child question never makes its ancestor Needs
+// You. A working root stays Working on its own account.
 #[test]
-fn a_blocked_child_raises_its_own_turn_while_its_parent_keeps_its_own_group() {
+fn a_childs_question_leaves_its_working_root_in_working() {
     let mut runtime = runtime();
     ingest_lineage(
         &mut runtime,
         &[
             ("w1:p1", None, "working", ""),
             ("w1:p2", Some("w1:p1"), "idle", "status_question_new"),
-            ("w1:p3", Some("w1:p1"), "blocked", ""),
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
@@ -1318,17 +1316,76 @@ fn a_blocked_child_raises_its_own_turn_while_its_parent_keeps_its_own_group() {
         !root.emphasized,
         "a working row is drawn as working, not raised"
     );
-    assert_eq!(
-        (
-            root.descendant_counts.question,
-            root.descendant_counts.approval
-        ),
-        (1, 1)
-    );
-    // Session-first-ui D33(5)/B28: the child, rather than the root, is raised.
-    assert_eq!(agent_row(&runtime, "w1:p3").group, "needs_you");
+    assert_eq!(root.descendant_counts.question, 1);
+    assert!(root.raised.is_empty());
     assert_eq!(agent_row(&runtime, "w1:p2").group, "seen");
-    assert_eq!(root.raised_children[0].pane_id, "w1:p3");
+    let _ = std::fs::remove_file(&runtime.state_path);
+}
+
+// agent-hierarchy-screens B1, B2, B17, D-10: a raised grandchild reaches the
+// operator as its lineage root, once: the root is Needs You with the verb
+// and what, the grandchild keeps its own group, and every ancestor between
+// wears the raised mark.
+#[test]
+fn a_blocked_grandchild_raises_its_lineage_root_once_and_never_itself() {
+    use crate::agent_state::escalation::{MarkKind, Verb};
+    let mut runtime = runtime();
+    ingest_lineage(
+        &mut runtime,
+        &[
+            ("w1:p1", None, "working", ""),
+            ("w1:p2", Some("w1:p1"), "working", ""),
+            ("w1:p3", Some("w1:p2"), "blocked", ""),
+        ],
+    );
+    let root = agent_row(&runtime, "w1:p1");
+    assert_eq!(root.group, "needs_you");
+    assert_eq!(root.raised.len(), 1);
+    assert_eq!(
+        (root.raised[0].verb, root.raised[0].open_pane_id.as_str()),
+        (Verb::Approval, "w1:p3")
+    );
+    assert_eq!(root.raised[0].path.len(), 3, "root, child, grandchild");
+    let ask = root.state.ask.as_ref().expect("a Needs You row asks");
+    assert_eq!((ask.verb, ask.more), (Verb::Approval, 0));
+    assert_eq!(
+        root.state.session.group,
+        crate::agent_state::sessions::Group::NeedsYou
+    );
+    let grandchild = agent_row(&runtime, "w1:p3");
+    assert!(grandchild.escalation.is_some());
+    assert_ne!(
+        grandchild.group, "needs_you",
+        "the raised descendant is not a second Needs You row"
+    );
+    assert!(grandchild.state.ask.is_none());
+    for pane in ["w1:p1", "w1:p2"] {
+        let mark = agent_row(&runtime, pane).descendant_mark.unwrap();
+        assert_eq!((mark.kind, mark.count), (MarkKind::Raised, 1), "{pane}");
+    }
+    let needs_you = runtime
+        .snapshot
+        .navigator
+        .agents
+        .iter()
+        .filter(|row| row.group == "needs_you")
+        .count();
+    assert_eq!(needs_you, 1, "Needs You counts the root alone");
+
+    // B7: the cause clears and the root leaves Needs You.
+    ingest_lineage(
+        &mut runtime,
+        &[
+            ("w1:p1", None, "working", ""),
+            ("w1:p2", Some("w1:p1"), "working", ""),
+            ("w1:p3", Some("w1:p2"), "working", ""),
+        ],
+    );
+    let root = agent_row(&runtime, "w1:p1");
+    assert_eq!(root.group, "working");
+    assert!(root.raised.is_empty());
+    let mark = root.descendant_mark.unwrap();
+    assert_eq!((mark.kind, mark.count), (MarkKind::Working, 2));
     let _ = std::fs::remove_file(&runtime.state_path);
 }
 

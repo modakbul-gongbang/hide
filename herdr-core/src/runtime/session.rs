@@ -2729,6 +2729,10 @@ impl Runtime {
                 &mut self.snapshot.ui_state.expanded_agent_pane_ids,
                 &agents,
                 ReadRecordScope::Local,
+            ) | crate::agent_state::prune_lineage_expansion(
+                &mut self.snapshot.ui_state.sessions_expanded_agent_pane_ids,
+                &agents,
+                ReadRecordScope::Local,
             ) {
                 self.persist_ui_state();
                 changed = true;

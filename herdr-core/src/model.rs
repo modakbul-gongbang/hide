@@ -948,9 +948,17 @@ pub struct DeviceTestStageSnapshot {
 pub struct SidebarAgentSnapshot {
     pub state: crate::agent_state::RowState,
     pub resolved: Option<crate::agent_state::sessions::Resolution>,
-    pub resolved_today: bool,
+    /// Resolved within the last 24 hours, so Sessions still lists it under Resolved.
+    pub resolved_recent: bool,
     pub escalation: Option<crate::agent_state::escalation::Escalation>,
-    pub raised_children: Vec<crate::agent_state::escalation::RaisedChild>,
+    /// On a lineage root: every raised descendant, lead first (PRD D-10, D-27).
+    pub raised: Vec<crate::agent_state::escalation::RaisedAsk>,
+    /// The one mark this row wears for its descendants while folded (PRD D-40).
+    pub descendant_mark: Option<crate::agent_state::escalation::DescendantMark>,
+    /// The label line of the most recently changed working descendant, the
+    /// Sessions line of a root waiting on its children (PRD B31).
+    #[serde(skip_serializing)]
+    pub descendant_line: Option<String>,
     pub id: String,
     /// The name someone gave the agent in Herdr (`hide agent spawn --name`,
     /// `herdr agent rename`), which ⌘K also finds it by; absent when it has
@@ -2738,6 +2746,11 @@ pub struct UiStateSnapshot {
     /// D-11).
     #[serde(default)]
     pub expanded_agent_pane_ids: Vec<String>,
+    /// Agent panes whose children the operator opened in Sessions, kept
+    /// apart from the sidebar's (PRD D-21, D-25); folded by default and
+    /// pruned when the pane closes.
+    #[serde(default)]
+    pub sessions_expanded_agent_pane_ids: Vec<String>,
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
     pub shortcut_bindings: BTreeMap<String, String>,
@@ -3251,6 +3264,7 @@ impl Default for UiStateSnapshot {
             expanded_inactive_project_device_ids: Vec::new(),
             project_base_branches: BTreeMap::new(),
             expanded_agent_pane_ids: Vec::new(),
+            sessions_expanded_agent_pane_ids: Vec::new(),
             selected_path: None,
             selected_pane_id: None,
             shortcut_bindings: BTreeMap::new(),
@@ -5156,51 +5170,45 @@ mod wire_enum_tests {
         assert_wire(&contract, "right_panel_section", &sections);
         checked.insert("right_panel_section");
 
-        use crate::agent_state::sessions::{Group, Tag};
+        use crate::agent_state::escalation::{MarkKind, Verb};
+        use crate::agent_state::sessions::{Group, PrState};
         let session_groups = crate::agent_state::sessions::GROUPS;
         for group in session_groups {
             match group {
-                Group::MyTurn
-                | Group::ReviewMerge
-                | Group::InProgress
-                | Group::Resting
-                | Group::ResolvedToday => {}
+                Group::NeedsYou | Group::Working | Group::Done | Group::Idle | Group::Resolved => {}
             }
         }
         assert_wire(&contract, "session_group", &session_groups);
         checked.insert("session_group");
-        let session_tags = [
-            Tag::Answer,
-            Tag::Approval,
-            Tag::Blocked,
-            Tag::Fix,
-            Tag::Review,
-            Tag::Merge,
-            Tag::Stopped,
-            Tag::Result,
-            Tag::Working,
-            Tag::CiWait,
-            Tag::Waiting,
-            Tag::Idle,
-        ];
-        for tag in session_tags {
-            match tag {
-                Tag::Answer
-                | Tag::Approval
-                | Tag::Blocked
-                | Tag::Fix
-                | Tag::Review
-                | Tag::Merge
-                | Tag::Stopped
-                | Tag::Result
-                | Tag::Working
-                | Tag::CiWait
-                | Tag::Waiting
-                | Tag::Idle => {}
+        let verbs = [Verb::Approval, Verb::Answer, Verb::Confirm, Verb::Draft];
+        for verb in verbs {
+            match verb {
+                Verb::Approval | Verb::Answer | Verb::Confirm | Verb::Draft => {}
             }
         }
-        assert_wire(&contract, "session_tag", &session_tags);
-        checked.insert("session_tag");
+        assert_wire(&contract, "raise_verb", &verbs);
+        checked.insert("raise_verb");
+        let pr_states = [
+            PrState::Failed,
+            PrState::Pending,
+            PrState::Mergeable,
+            PrState::Merged,
+        ];
+        for state in pr_states {
+            match state {
+                PrState::Failed | PrState::Pending | PrState::Mergeable | PrState::Merged => {}
+            }
+        }
+        assert_wire(&contract, "pr_state", &pr_states);
+        checked.insert("pr_state");
+        let marks = [MarkKind::Raised, MarkKind::Working];
+        for mark in marks {
+            match mark {
+                MarkKind::Raised | MarkKind::Working => {}
+            }
+        }
+        assert_wire(&contract, "descendant_mark", &marks);
+        checked.insert("descendant_mark");
 
         let strip_kinds = [
             StripTabKind::Herdr,

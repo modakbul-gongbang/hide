@@ -2,14 +2,15 @@ import type { AgentScope } from "./agentScope";
 import type { AgentRow, Workspace } from "./snapshot";
 
 /**
- * Every pane the sidebar draws a row for when nothing is folded: each
- * checkout's roots, the Home's roots, and the raised Needs You and Done rows.
+ * Every pane the sidebar draws a row for when no checkout is folded: each
+ * checkout's roots and the children and grandchildren of the roots opened,
+ * the Home's roots, and the raised Needs You and Done rows.
  */
 export function sidebarPanes(workspaces: readonly Workspace[], scope: AgentScope | null): Set<string> {
   const panes = new Set<string>();
   for (const workspace of workspaces) {
     const trees = workspace.is_home ? [workspace.agent_scope.sidebar_tree] : workspace.checkouts.map((checkout) => checkout.agent_scope.sidebar_tree);
-    for (const tree of trees) for (const row of tree.rows) panes.add(row.pane_id);
+    for (const tree of trees) for (const row of tree.visible_rows) panes.add(row.pane_id);
   }
   for (const raised of scope?.raised ?? []) for (const ref of [...raised.shown, ...raised.more]) panes.add(ref.pane_id);
   return panes;

@@ -87,9 +87,9 @@ test("a label belongs to its session: never shown for another, restored for its 
     const tab = page.locator(`[data-tab="${herdr.tab}"]`);
     const row = page.locator(`nav[data-sidebar] [data-checkout-agents-open] [data-pane="${pane}"]`);
 
-    // Session A is analyzed into its title and its question.
+    // Session A is analyzed into its title, which its tree row names too.
     await expect(tab).toContainText(A, { timeout: 30_000 });
-    await expect(row.locator('[data-agent-line="request"]')).toHaveText(A_REPLY);
+    await expect(row.locator("[data-agent-title]")).toHaveText(A);
     await capture("a");
 
     // A new session whose analysis is slow: nothing of A stays, the pane is
@@ -115,7 +115,7 @@ test("a label belongs to its session: never shown for another, restored for its 
     await expect(page.getByText(B, { exact: true })).toHaveCount(0, { timeout: 20_000 });
     await forbid(page, [B, LATE]);
     await expect(tab).toContainText(A, { timeout: 30_000 });
-    await expect(row.locator('[data-agent-line="request"]')).toHaveText(A_REPLY);
+    await expect(row.locator("[data-agent-title]")).toHaveText(A);
     expect(await forbiddenSeen(page)).toBe(0);
     await capture("a-again");
 

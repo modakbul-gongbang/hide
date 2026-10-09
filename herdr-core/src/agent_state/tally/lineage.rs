@@ -41,10 +41,22 @@ pub struct TreeRow {
     pub depth: usize,
 }
 
-/// The sidebar lists operator sessions only. Delegated agents remain available
-/// through their parent's direct-child badge and the unchanged graph tree.
-pub(super) fn sidebar_tree(agents: &[&SidebarAgentSnapshot]) -> Tree {
+/// The sidebar lists operator sessions as roots (`rows`, which the digit
+/// shortcuts number) and, under a root the operator opened, its children and
+/// grandchildren wherever they work (`visible_rows`, PRD D-12, D-38): two
+/// levels only, siblings most urgent first. A grandchild's own children open
+/// in its popover instead (D-28).
+pub(super) fn sidebar_tree(
+    agents: &[&SidebarAgentSnapshot],
+    all: &[&SidebarAgentSnapshot],
+) -> Tree {
     let references = row_references(agents);
+    let all_references = row_references(all);
+    let by_pane: HashMap<_, _> = all
+        .iter()
+        .rev()
+        .map(|row| (row.pane_id.as_str(), *row))
+        .collect();
     let roots: Vec<_> = agents
         .iter()
         .copied()
@@ -58,6 +70,38 @@ pub(super) fn sidebar_tree(agents: &[&SidebarAgentSnapshot]) -> Tree {
             depth: 0,
         })
         .collect();
+    fn open(
+        parent: &SidebarAgentSnapshot,
+        depth: usize,
+        by_pane: &HashMap<&str, &SidebarAgentSnapshot>,
+        references: &HashMap<*const SidebarAgentSnapshot, RowRef>,
+        out: &mut Vec<TreeRow>,
+    ) {
+        if parent.lineage_collapsed || depth > 2 {
+            return;
+        }
+        let mut children: Vec<_> = parent
+            .lineage_child_pane_ids
+            .iter()
+            .filter_map(|id| by_pane.get(id.as_str()).copied())
+            .collect();
+        children.sort_by_key(|child| child.state.tree_rank);
+        for child in children {
+            out.push(TreeRow {
+                pane_id: child.pane_id.clone(),
+                occurrence: references[&(child as *const _)].occurrence,
+                depth,
+            });
+            if depth < 2 {
+                open(child, depth + 1, by_pane, references, out);
+            }
+        }
+    }
+    let mut visible_rows = Vec::new();
+    for (root, row) in roots.iter().zip(&rows) {
+        visible_rows.push(row.clone());
+        open(root, 1, &by_pane, &all_references, &mut visible_rows);
+    }
     let needs_you = roots
         .iter()
         .any(|row| row.state.needs_you || row.group == "done");
@@ -71,7 +115,7 @@ pub(super) fn sidebar_tree(agents: &[&SidebarAgentSnapshot]) -> Tree {
     let mut priority = roots;
     priority.sort_by_key(|row| row.state.attention_rank);
     Tree {
-        visible_rows: rows.clone(),
+        visible_rows,
         rows,
         shown: priority
             .iter()
@@ -294,4 +338,86 @@ pub(super) fn folded(
             (parent.pane_id.clone(), result)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sidebar_tree;
+    use crate::model::SidebarAgentSnapshot;
+    use crate::sidebar::{SessionSnapshotPayload, project_agents};
+    use serde_json::json;
+
+    /// root opens to `asking` (rank 0) and `busy` (rank 1); `asking` opens to
+    /// `grand`, whose own child `deep` is the popover's, not the sidebar's.
+    fn lineage() -> Vec<SidebarAgentSnapshot> {
+        let ids = ["root", "busy", "asking", "grand", "deep"];
+        let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":
+            ids.map(|id| json!({"pane_id": id, "agent": "claude", "agent_status": "idle", "state_change_seq": 1}))
+        }))
+        .unwrap();
+        let mut rows = project_agents(payload).agents;
+        let parent = |id: &str| match id {
+            "busy" | "asking" => Some("root"),
+            "grand" => Some("asking"),
+            "deep" => Some("grand"),
+            _ => None,
+        };
+        for row in &mut rows {
+            row.lineage_parent_pane_id = parent(&row.pane_id).map(Into::into);
+            row.delegated = row.lineage_parent_pane_id.is_some();
+            row.lineage_child_pane_ids = ids
+                .iter()
+                .filter(|child| parent(child) == Some(row.pane_id.as_str()))
+                .map(|child| (*child).into())
+                .collect();
+            row.lineage_collapsed = false;
+            row.state.tree_rank = if row.pane_id == "asking" { 0 } else { 1 };
+        }
+        rows
+    }
+
+    fn drawn(rows: &[super::TreeRow]) -> Vec<(String, usize)> {
+        rows.iter()
+            .map(|row| (row.pane_id.clone(), row.depth))
+            .collect()
+    }
+
+    #[test]
+    fn an_opened_root_draws_two_levels_most_urgent_first_and_numbers_only_the_root() {
+        let rows = lineage();
+        let all: Vec<_> = rows.iter().collect();
+        let tree = sidebar_tree(&all, &all);
+        assert_eq!(drawn(&tree.rows), [("root".into(), 0)]);
+        assert_eq!(
+            drawn(&tree.visible_rows),
+            [
+                ("root".into(), 0),
+                ("asking".into(), 1),
+                ("grand".into(), 2),
+                ("busy".into(), 1),
+            ],
+            "a grandchild's own children open in its popover"
+        );
+    }
+
+    #[test]
+    fn a_folded_root_or_child_draws_nothing_below_it() {
+        let mut rows = lineage();
+        for row in &mut rows {
+            row.lineage_collapsed = row.pane_id == "asking";
+        }
+        let all: Vec<_> = rows.iter().collect();
+        assert_eq!(
+            drawn(&sidebar_tree(&all, &all).visible_rows),
+            [("root".into(), 0), ("asking".into(), 1), ("busy".into(), 1)]
+        );
+        for row in &mut rows {
+            row.lineage_collapsed = row.pane_id == "root";
+        }
+        let all: Vec<_> = rows.iter().collect();
+        assert_eq!(
+            drawn(&sidebar_tree(&all, &all).visible_rows),
+            [("root".into(), 0)]
+        );
+    }
 }

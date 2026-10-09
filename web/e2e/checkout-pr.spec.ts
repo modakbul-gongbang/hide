@@ -131,7 +131,7 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     // value; the row itself and the row after it do not move under it.
     const featureRow = feature.locator("[data-checkout]").locator("xpath=..");
     const parts = [feature.getByText(BRANCH, { exact: true }), feature.locator("[data-checkout-age]")];
-    // The row is measured once its purpose (the agent's title) and its age are on line two.
+    await feature.locator("[data-checkout-toggle]").click(); // Folded, line two is its purpose (the agent's title) and age (agent-hierarchy-screens B35).
     await expect(feature.locator("[data-purpose]")).toHaveText("PR 카드 구현");
     await expect(feature.locator("[data-checkout-age]")).toHaveText("now");
     await rest(page);

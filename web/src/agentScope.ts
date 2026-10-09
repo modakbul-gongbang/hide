@@ -3,16 +3,13 @@ import type { AgentRow, DescendantCounts, MarkCounts, RequestVerb, SessionGroup,
 /** Core-owned membership, status counts and display order for one scope. */
 export type AgentRef = { pane_id: string; occurrence: number };
 
-export type RowWork = { pull: number | null; more: number; issues: string[]; issue_chips: string[] };
 
 export type AgentScope = {
   sessions: {
-    closed_prs: { project_id: string; number: number; tag: "review" | "merge" }[];
-    counts: Record<SessionGroup, number>;
-    groups: { group: SessionGroup; members: number[] }[];
+    /** Nonempty groups in order; `more` holds the Idle rows folded as "N more". */
+    groups: { group: SessionGroup; members: number[]; more: number[] }[];
   };
   overview_needs_you: number;
-  work: Record<string, RowWork>;
   has_working: boolean;
   relations: Record<string, { issues: string[]; project_id: string; checkout_id: string; rows: { pane_id: string; occurrence: number; depth: number; tag: "here" | "parent" | null; caption_parent: string | null }[] }[]>;
   listed: { pane_id: string; device_id: string; device_label: string | null; remote: boolean; index: number }[];

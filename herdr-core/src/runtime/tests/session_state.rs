@@ -16,7 +16,7 @@ fn session_resolution_survives_restart_and_new_input_restores_the_live_pane() {
     let mut runtime = with_session();
     let _dirs = hold_dirs(&mut runtime);
     assert!(runtime.resolve_session("session", ResolveSource::Operator));
-    assert!(runtime.snapshot.navigator.agents[0].resolved_today);
+    assert!(runtime.snapshot.navigator.agents[0].resolved_recent);
     let loaded = persistence::load(&runtime.state_path).0;
     assert_eq!(
         loaded.resolved_sessions["session"].source,
@@ -51,7 +51,7 @@ fn session_resolution_save_failure_keeps_the_row_visible() {
 }
 
 #[test]
-fn older_resolution_is_hidden_from_today_without_closing_its_pane() {
+fn a_resolution_older_than_a_day_leaves_resolved_without_closing_its_pane() {
     let mut runtime = with_session();
     runtime.resolve_session("session", ResolveSource::Operator);
     runtime
@@ -60,11 +60,11 @@ fn older_resolution_is_hidden_from_today_without_closing_its_pane() {
         .resolved_sessions
         .get_mut("session")
         .unwrap()
-        .local_date = "2000-01-01".into();
+        .at_unix_ms -= crate::agent_state::sessions::RESOLVED_WINDOW_MS + 1;
     runtime.sync_session_state();
     let row = &runtime.snapshot.navigator.agents[0];
     assert!(row.resolved.is_some());
-    assert!(!row.resolved_today);
+    assert!(!row.resolved_recent);
     assert_eq!(runtime.snapshot.navigator.agents.len(), 1);
 }
 
@@ -87,7 +87,7 @@ fn session_resolve_waits_for_save_and_ignores_an_ack_after_new_input() {
     let current = runtime.ui_state_to_save();
     persistence::save(&runtime.state_path, &current, &BTreeMap::new()).unwrap();
     assert!(runtime.acknowledge_session_save(&current, true));
-    assert!(runtime.snapshot.navigator.agents[0].resolved_today);
+    assert!(runtime.snapshot.navigator.agents[0].resolved_recent);
     assert!(
         !runtime.acknowledge_session_save(&current, true),
         "duplicate acknowledgements do not publish"
@@ -104,20 +104,32 @@ fn session_resolve_waits_for_save_and_ignores_an_ack_after_new_input() {
 }
 
 #[test]
-fn session_resolution_expires_at_the_local_day_boundary_without_closing() {
+fn session_resolution_leaves_resolved_24_hours_later_without_closing() {
     let mut runtime = with_session();
     let _dirs = hold_dirs(&mut runtime);
     assert!(runtime.resolve_session("session", ResolveSource::Operator));
-    assert!(runtime.snapshot.navigator.agents[0].resolved_today);
-    assert!(runtime.tick_session_day(runtime.session_next_day_unix_ms));
-    assert!(!runtime.snapshot.navigator.agents[0].resolved_today);
+    assert!(runtime.snapshot.navigator.agents[0].resolved_recent);
+    let at = runtime.snapshot.ui_state.resolved_sessions["session"].at_unix_ms;
+    let leaves = at + crate::agent_state::sessions::RESOLVED_WINDOW_MS;
+    assert_eq!(runtime.session_window_deadline_unix_ms, leaves);
+    assert!(
+        !runtime.tick_session_window(leaves - 1),
+        "an idle tick before the deadline compares one number"
+    );
+    assert!(runtime.snapshot.navigator.agents[0].resolved_recent);
+    assert!(runtime.tick_session_window(leaves));
+    assert!(!runtime.snapshot.navigator.agents[0].resolved_recent);
     assert!(runtime.snapshot.navigator.agents[0].resolved.is_some());
-    assert!(!runtime.tick_session_day(runtime.session_next_day_unix_ms - 1));
+    assert_eq!(runtime.session_window_deadline_unix_ms, u64::MAX);
 }
 
 #[test]
-fn pane_bands_prioritize_connection_then_own_demand_then_raised_children() {
-    use crate::agent_state::{RequestVerb, escalation::RaisedChild, header, sessions::Tag};
+fn pane_bands_prioritize_connection_then_own_demand_then_raised_descendants() {
+    use crate::agent_state::{
+        RequestVerb,
+        escalation::{RaisedAsk, Verb},
+        header,
+    };
     let runtime = with_session();
     let mut agent = runtime.snapshot.navigator.agents[0].clone();
     let pane = pane("session", "/work/app");
@@ -126,20 +138,32 @@ fn pane_bands_prioritize_connection_then_own_demand_then_raised_children() {
     let working = header::of(&pane, Some(&agent), None, &project, None);
     assert!(working.working);
     assert!(working.band.is_none());
-    agent.raised_children = ["first", "second"]
-        .map(|id| RaisedChild {
+    agent.raised = ["first", "second"]
+        .map(|id| RaisedAsk {
+            verb: Verb::Approval,
+            what: Some("e2e 테스트 돌리던 중".into()),
+            raised_pane_id: id.into(),
             pane_id: id.into(),
             title: format!("Task {id}"),
-            tag: Tag::Answer,
-            reason: Some("Please answer".into()),
+            agent_kind: "claude".into(),
+            open_pane_id: id.into(),
             since_unix_ms: Some(123),
+            unreceived_by: None,
+            path: vec!["Root".into(), format!("Task {id}")],
+            checkout: None,
+            human_notice: false,
         })
         .into();
     let raised = header::of(&pane, Some(&agent), None, &project, None);
     let band = raised.band.unwrap();
     assert_eq!(
-        (band.kind.as_str(), band.more, band.child_tag),
-        ("raised_child", 1, Some(Tag::Answer))
+        (
+            band.kind.as_str(),
+            band.more,
+            band.raised.as_ref().map(|lead| lead.verb)
+        ),
+        ("raised", 1, Some(Verb::Approval)),
+        "the lead ask and the rest as 외 N건"
     );
     assert_eq!(
         band.action,
@@ -149,31 +173,14 @@ fn pane_bands_prioritize_connection_then_own_demand_then_raised_children() {
         })
     );
     assert!(!raised.working);
-    // A question already read is quiet; its outstanding descendant demand
-    // still owns the parent's warning line and band (B28).
+    // The root's own approval leads; its raised descendants are 외 N건.
     agent.demand = "question".into();
-    agent.unread = false;
-    agent.emphasized = false;
-    let line = crate::agent_state::turn::row_state(&agent).line.unwrap();
-    assert_eq!(line.mode, "raised_child");
-    assert_eq!(line.tone.kind, "warning");
     agent.state.verb = RequestVerb::Answer;
     agent.blocked = true;
-    assert_eq!(
-        crate::agent_state::turn::row_state(&agent)
-            .line
-            .unwrap()
-            .tone
-            .kind,
-        "warning"
-    );
-    assert_eq!(
-        header::of(&pane, Some(&agent), None, &project, None)
-            .band
-            .unwrap()
-            .kind,
-        "approval"
-    );
+    let own = header::of(&pane, Some(&agent), None, &project, None)
+        .band
+        .unwrap();
+    assert_eq!((own.kind.as_str(), own.more), ("approval", 2));
     agent.user_turn = Some(hide_session::turns::UserTurnFact {
         kind: hide_session::turns::UserTurnKind::Question,
         content: None,
@@ -270,10 +277,6 @@ fn pane_pr_band_targets_its_duty_instead_of_another_link_with_higher_sort_priori
     });
     agent.state = crate::agent_state::turn::row_state(agent);
     let projected = header::of(&pane, Some(agent), None, &project, None);
-    assert!(matches!(
-        projected.pull,
-        Some(header::Action::Pr { number: 1, .. })
-    ));
     let band = projected.band.unwrap();
     assert_eq!(band.kind, "merge");
     assert!(matches!(

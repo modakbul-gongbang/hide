@@ -21,7 +21,7 @@ import type { AgentRow, MarkCounts, TabAgent } from "./snapshot";
  * - `vanished`: the work the agent was waiting for died with its process; the
  *   core sends no text and the sidebar says it in the operator's language.
  */
-export type LineMode = "request" | "news" | "waiting" | "quiet" | "raised_child" | "vanished";
+export type LineMode = "request" | "news" | "waiting" | "quiet" | "vanished";
 
 export type RowLine = { text: string; mode: LineMode };
 
@@ -50,7 +50,7 @@ export function sidebarLine(agent: Pick<AgentRow, "state">): RowLine | null {
  */
 export function lineText(t: TFunction<"translation">, agent: Pick<AgentRow, "state" | "wait" | "status_code">, line: RowLine): string {
   if (line.mode === "vanished") return `${statusText(t, agent.status_code)} · ${t("agents.line.vanished")}`;
-  const worded = line.mode !== "raised_child" && line.mode !== "request" && (agent.wait || agent.status_code === "stopped");
+  const worded = line.mode !== "request" && (agent.wait || agent.status_code === "stopped");
   return worded ? `${statusText(t, agent.status_code)} · ${line.text}` : line.text;
 }
 
@@ -61,10 +61,6 @@ export function lineShownAtRest(line: RowLine, selected: boolean): boolean {
 
 /** The colour of a line: a request in its demand's colour, dimmed like its mark once read, news bright, a revealed line subdued. */
 export function lineTone(line: RowLine, agent: Pick<AgentRow, "state">): string {
-  if (line.mode === "raised_child") {
-    if (!agent.state.line) throw new Error("Raised child line has no core tone");
-    return toneClass(agent.state.line.tone);
-  }
   if (line.mode === "request") return toneClass(agent.state.chip_tone);
   return line.mode === "news" ? "text-foreground" : "text-subtle-foreground";
 }
@@ -119,12 +115,6 @@ export function badgeWords(counts: BadgeCounts | undefined, t: TFunction<"transl
   return badgeParts(counts)
     .map((part) => COUNT_WORDS[part.state](t, part.count))
     .join(", ");
-}
-
-/** The badge's accessible name: how many live descendants and what they are doing. */
-export function badgeLabel(counts: BadgeCounts | undefined, live: number, t: TFunction<"translation">): string {
-  const states = badgeWords(counts, t);
-  return states ? t("agents.liveDescendantStates", { count: live, states }) : t("agents.liveDescendants", { count: live });
 }
 
 /**

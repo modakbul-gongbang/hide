@@ -17,12 +17,12 @@ export type StatusTone = { kind: "warning" | "working" | "success" | "subtle" | 
 
 /** Agent decisions are projected by herdr-core::agent_state, never reconstructed by the shell. */
 export type AgentState = {
-  session: { group: SessionGroup; tag: SessionTag | null };
+  session: { group: SessionGroup; line: string | null; unfinished: boolean };
   attention: boolean; needs_you: boolean; root: boolean;
   title_emphasized: boolean; selection_emphasizes_title: boolean;
   asking: boolean; working: boolean; waits_on_children: boolean;
   chip_tone: StatusTone; mark_tone: StatusTone;
-  line: { text: string; mode: "request" | "news" | "waiting" | "quiet" | "raised_child" | "vanished"; tone: StatusTone } | null;
+  line: { text: string; mode: "request" | "news" | "waiting" | "quiet" | "vanished"; tone: StatusTone } | null;
   branch_badge: string | null;
   bucket: "turn" | "working" | "delegating" | "resting";
   attention_rank: number; graph_rank: 0 | 1 | 2 | 3; graph_chip: "turn" | "working" | "resting"; graph_resting: boolean;
@@ -31,13 +31,46 @@ export type AgentState = {
   subtree: "working" | "waiting" | "unread" | "unknown" | "quiet";
   link: "working" | "question" | "idle"; link_rank: 0 | 1 | 2;
   verb: RequestVerb; request_todo: boolean; descendant_asking: number; request_since: number | null;
+  /** A Needs You row's second line: a verb and what to do; `more` counts the other asks under the same root. */
+  ask: { verb: RaiseVerb; what: string | null; more: number } | null;
+  /** Where the row stands among its siblings in a tree: asking, working, finished unread, the rest. */
+  tree_rank: number;
+  /** The row's own PRs, worst first; never its descendants'. `index` points into `request.pull_requests`. */
+  pr: { count: number; worst: PrState; worst_count: number; pulls: { index: number; state: PrState }[] } | null;
+};
+
+/** What the operator does about a raised descendant, in lead order (`escalation::Verb`). */
+export type RaiseVerb = "approval" | "answer" | "confirm" | "draft";
+/** One PR's state as a chip or icon draws it, worst first (`sessions::PrState`). */
+export type PrState = "failed" | "pending" | "mergeable" | "merged";
+
+/** One raised descendant as its lineage root shows it (`escalation::RaisedAsk`). */
+export type RaisedAsk = {
+  verb: RaiseVerb;
+  what: string | null;
+  /** The raised descendant itself, where a tree draws the ask. */
+  raised_pane_id: string;
+  /** The agent the band names: the raised descendant, or for a draft the parent holding it. */
+  pane_id: string;
+  title: string;
+  agent_kind: string;
+  open_pane_id: string;
+  since_unix_ms: number | null;
+  unreceived_by?: string;
+  path: string[];
+  checkout: string | null;
+  human_notice: boolean;
 };
 
 export type AgentRow = {
-  resolved?: { at_unix_ms: number; source: "operator" | "automatic"; local_date: string } | null;
-  resolved_today?: boolean;
+  resolved?: { at_unix_ms: number; source: "operator" | "automatic" } | null;
+  /** Resolved within the last 24 hours, so Sessions still lists it. */
+  resolved_recent?: boolean;
   escalation?: { cause: "parent_blocked" | "draft" | "bell_exhausted" | "undelivered" | "child_blocked" | "observer_unconfirmed"; letter_id: string | null; since_unix_ms: number | null; human_notice: boolean } | null;
-  raised_children?: { pane_id: string; title: string; tag: SessionTag; reason: string | null; since_unix_ms: number | null }[];
+  /** On a lineage root: every raised descendant, lead first. */
+  raised?: RaisedAsk[];
+  /** The one mark a folded parent wears for its descendants: raised, else working, else none. */
+  descendant_mark?: { kind: "raised" | "working"; count: number } | null;
   state: AgentState;
   id: string;
   pane_id: string;
@@ -72,6 +105,8 @@ export type AgentRow = {
   /** Work another agent delegated; ordinary children are Working or Seen, with core escalation as the exception (docs/status-model.md). */
   delegated?: boolean;
   lineage_parent_pane_id?: string | null;
+  /** The ancestors from the lineage root down to the parent, root first. */
+  lineage_path_pane_ids?: string[];
   lineage_child_pane_ids?: string[];
   /** Every live descendant pane in the order closing this row takes them, deepest first; absent when none (PRD close-agent-subtree D-20). */
   close_descendant_pane_ids?: string[];
@@ -108,8 +143,7 @@ export type LabelEnd = "working" | "question" | "blocked" | "done" | "waiting" |
 /** What a row asks of the operator now (`RequestVerb`), in the order the request view draws its groups. */
 export type RequestVerb = "answer" | "blocked" | "fix" | "review" | "stopped" | "result" | "working" | "waiting" | "idle";
 
-export type SessionGroup = "my_turn" | "review_merge" | "in_progress" | "resting" | "resolved_today";
-export type SessionTag = "answer" | "approval" | "blocked" | "fix" | "review" | "merge" | "stopped" | "result" | "working" | "ci_wait" | "waiting" | "idle";
+export type SessionGroup = "needs_you" | "working" | "done" | "idle" | "resolved";
 
 /** Who sent the request a row shows (`RequestSender`). */
 export type RequestSender = { kind: "operator" } | { kind: "named"; name: string } | { kind: "agent" };
@@ -732,8 +766,7 @@ export type PaneLayout = {
 
 export type PaneHeader = {
   working: boolean;
-  pull: PaneHeaderAction | null;
-  band: {kind: string; tone: PaneHeaderTone; reason: string | null; since_unix_ms: number | null; action: PaneHeaderAction | null; more: number; exit_code: number | null; child_tag: SessionTag | null; facts?: {kind: "approval_command_unavailable"} | {kind: "pull_request"; checks: NonNullable<PullRequest["checks"]>; review: PullRequest["review"]}} | null;
+  band: {kind: string; tone: PaneHeaderTone; reason: string | null; since_unix_ms: number | null; action: PaneHeaderAction | null; more: number; exit_code: number | null; raised?: RaisedAsk; facts?: {kind: "approval_command_unavailable"} | {kind: "pull_request"; checks: NonNullable<PullRequest["checks"]>; review: PullRequest["review"]}} | null;
 };
 export type PaneHeaderTone = "muted" | "warning" | "error" | "success" | "pr";
 export type PaneHeaderAction = {kind: "pr"; workspace_id: string; url: string; number: number; checks: NonNullable<PullRequest["checks"]>; tone: PaneHeaderTone} | {kind: "child"; pane_id: string; label: string};
@@ -1519,6 +1552,10 @@ export type SnapshotRest = {
     /** Checkouts whose agent rows the Projects list opened; absence is closed, where line two names the agents. */
     expanded_checkout_ids?: string[];
     session_collapsed_checkout_ids?: string[];
+    /** Agents whose children the sidebar tree opened; absence is folded. */
+    expanded_agent_pane_ids?: string[];
+    /** Agents whose children Sessions opened, kept apart from the sidebar's. */
+    sessions_expanded_agent_pane_ids?: string[];
     selected_path?: string | null;
     selected_pane_id?: string | null;
     accent_hex?: string;
