@@ -183,13 +183,14 @@ function ChildRow({ parent, child, model, actions, staleness, place, workspace }
   </li>;
 }
 
-/** B31: the ask for Needs You, else the core's line. */
+/** B31: the ask for Needs You, else the core's line; a block's line is its cause. */
 function SecondLine({ agent }: { agent: AgentRow }) {
   const session = agent.state.session;
   const ask = session.group === "needs_you" ? agent.state.ask : null;
   if (ask) return <div className="flex min-w-0 text-micro" data-session-line="ask"><AskLine ask={ask} className="flex-1" /></div>;
   if (!session.line) return null;
-  return <div className="flex min-w-0 text-micro text-subtle-foreground" data-session-line={session.unfinished ? "unfinished" : "label"}>
+  const blocked = agent.status_code === "error";
+  return <div className={cn("flex min-w-0 text-micro", blocked ? "text-warning" : "text-subtle-foreground")} data-session-line={blocked ? "blocked" : session.unfinished ? "unfinished" : "label"}>
     <span className="min-w-0 truncate" title={session.line}>{session.line}</span>
   </div>;
 }

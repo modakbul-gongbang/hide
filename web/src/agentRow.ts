@@ -12,20 +12,23 @@ import type { AgentRow, MarkCounts, TabAgent } from "./snapshot";
 /**
  * Why a row's second line is on screen at rest.
  *
- * - `request`: the agent is asking the operator (question, approval, error);
+ * - `request`: the agent is asking the operator (question, approval) or is blocked;
  *   the line stays until the request is resolved, reading it does not end it.
  * - `news`: the row changed since the operator last looked; it goes once read.
+ * - `waiting`: what a waiting row waits for; it stays while the row waits.
  * - `quiet`: nothing to report; the line shows only on the selected or hovered
  *   row, where it is revealed in full.
+ * - `vanished`: the work the agent was waiting for died with its process; the
+ *   core sends no text and the sidebar says it in the operator's language.
  */
-export type LineMode = "request" | "news" | "quiet";
+export type LineMode = "request" | "news" | "waiting" | "quiet" | "vanished";
 
 export type RowLine = { text: string; mode: LineMode };
 
 /** The row's second line and why it shows, or null when the core gave it no sentence. */
 export function rowLine(agent: Pick<AgentRow, "state">): RowLine | null {
   const line = agent.state.line;
-  return line ? { text: line.text, mode: line.mode } : null;
+  return line && line.mode !== "vanished" ? { text: line.text, mode: line.mode } : null;
 }
 
 /**
@@ -35,8 +38,20 @@ export function rowLine(agent: Pick<AgentRow, "state">): RowLine | null {
  * sentence is read in the row's tooltip.
  */
 export function sidebarLine(agent: Pick<AgentRow, "state">): RowLine | null {
-  const line = rowLine(agent);
-  return line && line.mode !== "quiet" ? line : null;
+  const line = agent.state.line;
+  return line && line.mode !== "quiet" ? { text: line.text, mode: line.mode } : null;
+}
+
+/**
+ * The sentence as the sidebar draws it. A stopped turn and a waiting row sit
+ * where their mark alone does not say so (a half-disc among Done rows, a ring
+ * among Working ones), so their word leads the sentence: `멈춤 · 테스트 3개
+ * 남음`, `대기 · CI 끝나기를 기다림`.
+ */
+export function lineText(t: TFunction<"translation">, agent: Pick<AgentRow, "state" | "wait" | "status_code">, line: RowLine): string {
+  if (line.mode === "vanished") return `${statusText(t, agent.status_code)} · ${t("agents.line.vanished")}`;
+  const worded = line.mode !== "request" && (agent.wait || agent.status_code === "stopped");
+  return worded ? `${statusText(t, agent.status_code)} · ${line.text}` : line.text;
 }
 
 /** Whether the line is drawn without a pointer or selection on the row. */
@@ -51,9 +66,9 @@ export function lineTone(line: RowLine, agent: Pick<AgentRow, "state">): string 
 }
 
 /**
- * The status mark's colour. A root waiting on its children draws its hollow
- * ring in the working colour (D-01); every other row reads its own axes the
- * way the chips do.
+ * The status mark's colour. A waiting row draws its hollow ring in the
+ * working colour (D-01); every other row reads its own axes the way the chips
+ * do.
  */
 export function markTone(agent: Pick<TabAgent, "state">): string {
   return toneClass(agent.state.mark_tone);
@@ -66,10 +81,11 @@ export type BadgeCounts = Partial<MarkCounts>;
 export type BadgePart = { state: keyof MarkCounts; symbol: string; count: number; tone: string };
 
 const BADGE_ORDER: { state: keyof MarkCounts; symbol: string; tone: string }[] = [
-  { state: "error", symbol: "×", tone: "text-destructive" },
+  { state: "error", symbol: "▲", tone: "text-warning" },
   { state: "approval", symbol: "!", tone: "text-warning" },
   { state: "question", symbol: "?", tone: "text-warning" },
   { state: "working", symbol: "●", tone: "text-agent-working" },
+  { state: "stopped", symbol: "◐", tone: "text-subtle-foreground" },
   { state: "done", symbol: "✓", tone: "text-success" },
   { state: "idle", symbol: "○", tone: "text-subtle-foreground" },
 ];
@@ -89,6 +105,7 @@ const COUNT_WORDS: Record<keyof MarkCounts, (t: TFunction<"translation">, count:
   approval: (t, count) => t("agents.count.approval", { count }),
   question: (t, count) => t("agents.count.question", { count }),
   working: (t, count) => t("agents.count.working", { count }),
+  stopped: (t, count) => t("agents.count.stopped", { count }),
   done: (t, count) => t("agents.count.done", { count }),
   idle: (t, count) => t("agents.count.idle", { count }),
 };

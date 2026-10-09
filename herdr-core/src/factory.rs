@@ -355,6 +355,78 @@ struct Starts {
     in_flight: BTreeSet<String>,
     done: BTreeMap<String, Finished>,
     abandoned: BTreeSet<String>,
+    /// Starts that made no accepted worker yet, so the log can say why once
+    /// and how long it took. One entry per Task with a start under way,
+    /// ended when its start is accepted, refused or abandoned.
+    unfinished: BTreeMap<String, Unfinished>,
+}
+
+struct Unfinished {
+    /// When the first attempt began.
+    since: Instant,
+    /// The reason last logged; the same reason is not logged again.
+    reason: String,
+}
+
+impl Starts {
+    /// The log line for an attempt that did not make an accepted worker at
+    /// once, and for the one that finally did. A start that works the first
+    /// time logs nothing.
+    fn note(
+        &mut self,
+        key: &str,
+        job: &WorkerSpawn,
+        began: Instant,
+        result: &Result<StartedWorker, Failure>,
+    ) -> Option<Value> {
+        let since = self.unfinished.get(key).map_or(began, |entry| entry.since);
+        let waited_ms = u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let line = |kind: &str, detail: Value| {
+            let mut line = json!({
+                "component": "factory",
+                "kind": kind,
+                "factory_id": job.factory,
+                "task_id": job.task,
+                "resume": job.resume.is_some(),
+                "attempt": job.attempt,
+                "waited_ms": waited_ms,
+            });
+            if let (Some(line), Some(detail)) = (line.as_object_mut(), detail.as_object()) {
+                line.extend(detail.clone());
+            }
+            line
+        };
+        match result {
+            Ok(started) => {
+                self.unfinished.remove(key)?;
+                Some(line(
+                    "worker.start_accepted",
+                    json!({"pane_id": started.worker.pane}),
+                ))
+            }
+            Err(failure) if failure.starting => {
+                let entry = self.unfinished.entry(key.to_owned()).or_insert(Unfinished {
+                    since: began,
+                    reason: String::new(),
+                });
+                if entry.reason == failure.detail {
+                    return None;
+                }
+                entry.reason.clone_from(&failure.detail);
+                Some(line(
+                    "worker.start_unfinished",
+                    json!({"stage": failure.stage, "reason": failure.detail}),
+                ))
+            }
+            Err(failure) => {
+                self.unfinished.remove(key);
+                Some(line(
+                    "worker.start_refused",
+                    json!({"stage": failure.stage, "reason": failure.detail}),
+                ))
+            }
+        }
+    }
 }
 
 /// A start the engine has not asked for yet.
@@ -440,16 +512,20 @@ fn run_starts(
         if stop.load(Ordering::Acquire) {
             if let Ok(mut state) = state.lock() {
                 state.starts.in_flight.remove(&key);
+                state.starts.unfinished.remove(&key);
             }
             continue;
         }
+        let began = Instant::now();
         let result = start(&job);
-        let abandoned = {
+        let (abandoned, note) = {
             let Ok(mut state) = state.lock() else { return };
             state.starts.in_flight.remove(&key);
             if state.starts.abandoned.remove(&key) {
-                true
+                state.starts.unfinished.remove(&key);
+                (true, None)
             } else {
+                let note = state.starts.note(&key, &job, began, &result);
                 state.starts.done.insert(
                     key,
                     Finished {
@@ -457,9 +533,12 @@ fn run_starts(
                         result: result.clone(),
                     },
                 );
-                false
+                (false, note)
             }
         };
+        if let Some(note) = note {
+            crate::diagnostic!(note);
+        }
         if abandoned && let Ok(worker) = result {
             release(&job, &worker);
         }
@@ -508,6 +587,26 @@ struct Woken {
     worker: WorkerRef,
     letters: Vec<(String, String)>,
     since: Instant,
+    /// What the wake last waited on, so the log says each reason once.
+    waiting_on: Option<String>,
+}
+
+impl Woken {
+    /// Says why a woken worker's letters are still held, once per reason.
+    fn waits_on(&mut self, pane: &str, reason: &str) {
+        if self.waiting_on.as_deref() == Some(reason) {
+            return;
+        }
+        self.waiting_on = Some(reason.to_owned());
+        crate::diagnostic!(json!({
+            "component": "factory",
+            "kind": "worker.wake_waiting",
+            "factory_id": self.worker.factory,
+            "pane_id": pane,
+            "reason": reason,
+            "waited_ms": u64::try_from(self.since.elapsed().as_millis()).unwrap_or(u64::MAX),
+        }));
+    }
 }
 
 /// Letters held for one woken worker, and how long a wake may take before
@@ -1372,43 +1471,65 @@ impl CoreWorkers {
             else {
                 continue;
             };
+            let mut woken = woken;
             if !probe.present || probe.asleep {
                 if woken.since.elapsed() >= WAKE_LIMIT {
                     crate::diagnostic!(
                         json!({"component":"factory","kind":"worker.wake_timed_out","pane_id":pane,"letters":woken.letters.len()})
                     );
-                } else if let Ok(mut state) = self.state.lock() {
-                    state.waking.insert(pane, woken);
+                } else {
+                    woken.waits_on(
+                        &pane,
+                        if probe.asleep {
+                            "agent_asleep"
+                        } else {
+                            "agent_absent"
+                        },
+                    );
+                    if let Ok(mut state) = self.state.lock() {
+                        state.waking.insert(pane, woken);
+                    }
                 }
                 continue;
             }
+            let letters = std::mem::take(&mut woken.letters);
             let mut left = Vec::new();
-            for (intent, body) in woken.letters {
+            let mut sent = 0;
+            for (intent, body) in letters {
                 if !left.is_empty() {
                     left.push((intent, body));
                     continue;
                 }
-                if let Err(failure) = self.message(&woken.worker, &intent, None, &body) {
+                match self.message(&woken.worker, &intent, None, &body) {
+                    Ok(()) => sent += 1,
                     // The agent is back but its session is not observed yet.
-                    if woken.since.elapsed() >= WAKE_LIMIT {
+                    Err(failure) if woken.since.elapsed() >= WAKE_LIMIT => {
                         crate::diagnostic!(
                             json!({"component":"factory","kind":"worker.wake_letter_failed","pane_id":pane,"reason":failure.detail})
                         );
-                        continue;
                     }
-                    left.push((intent, body));
+                    Err(failure) => {
+                        woken.waits_on(&pane, &failure.detail);
+                        left.push((intent, body));
+                    }
                 }
+            }
+            if sent > 0 && woken.waiting_on.take().is_some() {
+                crate::diagnostic!(json!({
+                    "component": "factory",
+                    "kind": "worker.wake_delivered",
+                    "factory_id": woken.worker.factory,
+                    "pane_id": pane,
+                    "letters": sent,
+                    "waited_ms": u64::try_from(woken.since.elapsed().as_millis())
+                        .unwrap_or(u64::MAX),
+                }));
             }
             if !left.is_empty()
                 && let Ok(mut state) = self.state.lock()
             {
-                state.waking.insert(
-                    pane,
-                    Woken {
-                        letters: left,
-                        ..woken
-                    },
-                );
+                woken.letters = left;
+                state.waking.insert(pane, woken);
             }
         }
     }
@@ -1482,6 +1603,7 @@ impl WorkerRuntime for CoreWorkers {
                 if in_flight {
                     state.starts.abandoned.insert(key.clone());
                 }
+                state.starts.unfinished.remove(&key);
                 (in_flight, state.starts.done.remove(&key))
             }
             Err(_) => (false, None),
@@ -1570,6 +1692,7 @@ impl WorkerRuntime for CoreWorkers {
             worker: worker.clone(),
             letters: Vec::new(),
             since: Instant::now(),
+            waiting_on: None,
         });
         if woken.letters.len() >= WOKEN_LETTER_LIMIT {
             return Err(Failure::task(
@@ -3552,6 +3675,151 @@ mod tests {
         assert!(poll_start(&state, &key).is_none(), "answered once");
     }
 
+    /// Runs `job` through the starter once per result, in order, and returns
+    /// what the starter logged.
+    fn run_attempts(
+        state: &Arc<Mutex<WorkerState>>,
+        jobs: Receiver<WorkerSpawn>,
+        job: &WorkerSpawn,
+        results: Vec<Result<StartedWorker, Failure>>,
+    ) -> Vec<Value> {
+        let queue = state.lock().unwrap().starts.queue.clone().unwrap();
+        for _ in &results {
+            queue.try_send(job.clone()).unwrap();
+        }
+        drop(queue);
+        close(state);
+        let results = RefCell::new(results.into_iter());
+        crate::diagnostics::capture(|| {
+            run_starts(
+                jobs,
+                Arc::clone(state),
+                Arc::new(AtomicBool::new(false)),
+                |_| results.borrow_mut().next().unwrap(),
+                |_, _| panic!("nothing was abandoned"),
+            )
+        })
+        .1
+    }
+
+    fn kinds(records: &[Value]) -> Vec<&str> {
+        records
+            .iter()
+            .map(|record| record["kind"].as_str().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_start_that_is_not_accepted_logs_why_once_and_logs_when_it_is() {
+        let (state, jobs) = starter(8);
+        let job = request("T-1", None);
+        let slow = || Failure::starting("worker.spawn", "native_identity_unavailable");
+        let records = run_attempts(
+            &state,
+            jobs,
+            &job,
+            vec![Err(slow()), Err(slow()), Ok(unbound_start(worker(&job)))],
+        );
+        assert_eq!(
+            kinds(&records),
+            ["worker.start_unfinished", "worker.start_accepted"],
+            "the same reason is not logged again: {records:?}"
+        );
+        assert_eq!(records[0]["reason"], "native_identity_unavailable");
+        assert_eq!(records[0]["factory_id"], "f-1");
+        assert_eq!(records[0]["task_id"], "T-1");
+        assert_eq!(records[1]["pane_id"], "pane-T-1");
+        assert!(records[1]["waited_ms"].is_u64());
+        assert!(state.lock().unwrap().starts.unfinished.is_empty());
+    }
+
+    #[test]
+    fn a_start_that_works_at_once_logs_nothing_and_a_new_reason_is_logged() {
+        let (state, jobs) = starter(8);
+        let job = request("T-1", None);
+        assert!(run_attempts(&state, jobs, &job, vec![Ok(unbound_start(worker(&job)))]).is_empty());
+        let (state, jobs) = starter(8);
+        let records = run_attempts(
+            &state,
+            jobs,
+            &job,
+            vec![
+                Err(Failure::starting("worker.spawn", "spawn_busy")),
+                Err(Failure::starting(
+                    "worker.spawn",
+                    "native_identity_unavailable",
+                )),
+            ],
+        );
+        let reasons: Vec<&str> = records
+            .iter()
+            .map(|record| record["reason"].as_str().unwrap())
+            .collect();
+        assert_eq!(reasons, ["spawn_busy", "native_identity_unavailable"]);
+    }
+
+    #[test]
+    fn a_refused_start_logs_its_reason_and_ends_the_unfinished_record() {
+        let (state, jobs) = starter(8);
+        let job = request("T-1", None);
+        let records = run_attempts(
+            &state,
+            jobs,
+            &job,
+            vec![
+                Err(Failure::starting("worker.spawn", "spawn_busy")),
+                Err(Failure::task("worker.spawn", "worktree_create_failed")),
+            ],
+        );
+        assert_eq!(
+            kinds(&records),
+            ["worker.start_unfinished", "worker.start_refused"]
+        );
+        assert_eq!(records[1]["reason"], "worktree_create_failed");
+        assert!(state.lock().unwrap().starts.unfinished.is_empty());
+    }
+
+    #[test]
+    fn a_start_the_engine_gave_up_leaves_no_unfinished_record() {
+        let (state, jobs) = starter(8);
+        let job = request("T-1", None);
+        run_attempts(
+            &state,
+            jobs,
+            &job,
+            vec![Err(Failure::starting("worker.spawn", "spawn_busy"))],
+        );
+        assert_eq!(state.lock().unwrap().starts.unfinished.len(), 1);
+        let mut port = CoreWorkers {
+            runtime: Weak::new(),
+            state: Arc::clone(&state),
+        };
+        port.abandon_start("f-1", "T-1");
+        assert!(state.lock().unwrap().starts.unfinished.is_empty());
+    }
+
+    #[test]
+    fn a_woken_worker_says_each_reason_its_letters_wait_on_once() {
+        let job = request("T-1", None);
+        let mut woken = Woken {
+            worker: worker(&job),
+            letters: Vec::new(),
+            since: Instant::now(),
+            waiting_on: None,
+        };
+        let ((), records) = crate::diagnostics::capture(|| {
+            woken.waits_on("pane-T-1", "agent_absent");
+            woken.waits_on("pane-T-1", "agent_absent");
+            woken.waits_on("pane-T-1", "target_unavailable");
+        });
+        let reasons: Vec<&str> = records
+            .iter()
+            .map(|record| record["reason"].as_str().unwrap())
+            .collect();
+        assert_eq!(reasons, ["agent_absent", "target_unavailable"]);
+        assert_eq!(kinds(&records), ["worker.wake_waiting"; 2]);
+    }
+
     #[test]
     fn a_full_queue_is_asked_again_later_and_never_waited_on() {
         let (state, _jobs) = starter(1);
@@ -3693,5 +3961,15 @@ mod tests {
         assert!(busy.starting && busy.signal.is_none());
         assert_eq!(busy.again_in_ms, Some(2_000));
         assert!(!spawn_failure("worktree_create_failed").starting);
+    }
+
+    #[test]
+    fn an_agent_that_has_not_shown_its_session_leaves_the_pace_to_the_engine() {
+        let slow = spawn_failure("native_identity_unavailable");
+        assert!(slow.starting && slow.signal.is_none());
+        assert_eq!(
+            slow.again_in_ms, None,
+            "the engine asks a young start on its next tick and an old one every 30 s"
+        );
     }
 }

@@ -1,7 +1,6 @@
 //! The Sessions tool's groups, lines and order, from the row's own state
 //! (docs/status-model.md, The Sessions tool), and each row's own PR summary.
 //! Memory and conversation history are separate readers, not session state.
-use crate::labels::analysis::LabelEnd;
 use crate::model::{PullRequestBadge, PullRequestChecks, ReviewDecision, SidebarAgentSnapshot};
 use crate::request_view::AgentPullRequestSnapshot;
 use serde::{Deserialize, Serialize};
@@ -76,10 +75,7 @@ pub struct Row {
 
 pub(crate) fn row(agent: &SidebarAgentSnapshot) -> Row {
     let label_line = || agent.request.as_ref().and_then(|r| r.line.clone());
-    let unfinished = agent
-        .request
-        .as_ref()
-        .is_some_and(|r| r.end == Some(LabelEnd::Unfinished));
+    let unfinished = super::axes::stopped_unfinished(agent);
     if agent.resolved.is_some() {
         return Row {
             group: Group::Resolved,
@@ -87,13 +83,18 @@ pub(crate) fn row(agent: &SidebarAgentSnapshot) -> Row {
         };
     }
     match agent.group.as_str() {
+        // A Needs You row draws its ask; a block has none and draws its
+        // cause (agent-blocked-state B1).
         "needs_you" => Row {
             group: Group::NeedsYou,
-            ..Row::default()
+            line: (agent.demand == "error")
+                .then(|| agent.detail.clone())
+                .flatten(),
+            unfinished: false,
         },
         "working" => Row {
             group: Group::Working,
-            line: if agent.waiting_on_descendants {
+            line: if agent.wait == Some(crate::model::AgentWait::Children) {
                 agent.descendant_line.clone()
             } else {
                 label_line()

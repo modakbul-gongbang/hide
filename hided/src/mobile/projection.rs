@@ -141,14 +141,16 @@ mod tests {
     }
 
     #[test]
-    fn read_questions_and_waiting_roots_keep_their_current_phone_presentation() {
+    fn read_questions_waiting_roots_and_blocks_keep_their_phone_presentation() {
         let input = json!({"navigator": {"agents": [
-            agent("root", "working", json!({"waiting_on_descendants": true,
+            agent("root", "working", json!({"wait": "children",
                 "activity": "stopped", "emphasized": true, "unread": true, "detail": "waiting"})),
             agent("read-question", "seen", json!({"activity": "stopped", "demand": "question",
                 "emphasized": false, "unread": false, "detail": "  answer me  "})),
             agent("child", "seen", json!({"lineage_parent_pane_id": "root", "delegated": true,
                 "activity": "stopped", "demand": "error", "emphasized": false, "detail": "failed"})),
+            agent("stopped", "done", json!({"activity": "stopped", "status_code": "stopped",
+                "emphasized": true, "unread": true, "detail": "deploy left"})),
             agent("unknown", "seen", json!({"activity": "unknown", "detail": "quiet"})),
         ]}});
         let projection = project(&input, "local");
@@ -169,6 +171,14 @@ mod tests {
         assert_eq!(
             rows,
             [
+                // A stopped turn stays neutral in Done: only a block asks for attention.
+                (
+                    "stopped",
+                    "done",
+                    "stopped",
+                    "subtle",
+                    Some(("deploy left", "news"))
+                ),
                 (
                     "root",
                     "working",
@@ -183,7 +193,14 @@ mod tests {
                     "warning",
                     Some(("answer me", "warning"))
                 ),
-                ("child", "seen", "root", "error", Some(("failed", "error"))),
+                // A block is amber like a question; its shape tells them apart.
+                (
+                    "child",
+                    "seen",
+                    "root",
+                    "warning",
+                    Some(("failed", "warning"))
+                ),
                 ("unknown", "seen", "unknown", "subtle", None),
             ]
         );

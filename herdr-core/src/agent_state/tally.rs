@@ -18,10 +18,15 @@ use std::collections::BTreeMap;
 /// badge that stands for folded rows says what opening them would show.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RowMark {
-    Error,
+    /// The agent stopped and named what stopped it. Drawn as a filled
+    /// triangle, a shape no other demand shares.
+    Blocked,
     Approval,
     Question,
     Working,
+    /// The turn stopped before the request was done and nothing is left to
+    /// wake the agent. Drawn as a half-filled disc.
+    Stopped,
     Done,
     Idle,
     Unknown,
@@ -37,19 +42,22 @@ impl RowMark {
                 _ => Self::Approval,
             };
         }
-        // A root waiting on its children keeps the hollow ring and says so:
-        // its own completion is not the news while a child is still busy, and
-        // the badge beside it says what the children are doing (D-01, D-02).
-        if agent.waiting_on_descendants {
+        // A waiting row keeps the hollow ring and says so: its own
+        // completion is not the news while a child is still busy or a job
+        // it started still runs, and the badge beside it says what the
+        // children are doing (D-01, D-02). It has no demand of its own, so
+        // a block or a question still outranks it (D-25).
+        if agent.wait.is_some() {
             return Self::Idle;
         }
         let (demand, activity, unread) = axes_of(agent);
         match demand {
-            AgentDemand::Error => Self::Error,
+            AgentDemand::Error => Self::Blocked,
             AgentDemand::Question => Self::Question,
             AgentDemand::Approval => Self::Approval,
             AgentDemand::None => match activity {
                 AgentActivity::Working => Self::Working,
+                AgentActivity::Stopped if stopped_unfinished(agent) => Self::Stopped,
                 AgentActivity::Stopped if agent.completed && unread => Self::Done,
                 AgentActivity::Stopped => Self::Idle,
                 AgentActivity::Unknown => Self::Unknown,
@@ -59,22 +67,24 @@ impl RowMark {
 
     pub(crate) fn symbol(self) -> &'static str {
         match self {
-            Self::Error => "\u{d7}",
+            Self::Blocked => "\u{25b2}",
             Self::Approval => "!",
             Self::Question => "?",
             Self::Working => "\u{25cf}",
+            Self::Stopped => "\u{25d0}",
             Self::Done => "✓",
             Self::Idle => "\u{25cb}",
             Self::Unknown => "~",
         }
     }
 
-    fn count_into(self, counts: &mut crate::model::MarkCountsSnapshot) {
+    pub(crate) fn count_into(self, counts: &mut crate::model::MarkCountsSnapshot) {
         match self {
-            Self::Error => counts.error += 1,
+            Self::Blocked => counts.error += 1,
             Self::Approval => counts.approval += 1,
             Self::Question => counts.question += 1,
             Self::Working => counts.working += 1,
+            Self::Stopped => counts.stopped += 1,
             Self::Done => counts.done += 1,
             Self::Idle => counts.idle += 1,
             Self::Unknown => {}
@@ -122,7 +132,7 @@ fn rank_within(agent: &SidebarAgentSnapshot, ownership: Ownership) -> (u8, u8) {
         unread,
         agent.blocked,
         ownership,
-        agent.waiting_on_descendants,
+        agent.wait.is_some(),
     );
     (group.rank(), demand_rank)
 }
@@ -325,7 +335,7 @@ pub mod phone {
     #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
     pub struct Line {
         pub text: String,
-        /// `error`, `warning` (a question or approval), or `news`.
+        /// `warning` (a question, an approval or a block), or `news`.
         pub tone: &'static str,
     }
 
@@ -338,7 +348,7 @@ pub mod phone {
         pub root_pane_id: String,
         pub group: String,
         pub symbol: String,
-        /// `error`, `warning`, `working`, `success` or `subtle`, as the desktop row colors its mark.
+        /// `warning`, `working`, `success` or `subtle`, as the desktop row colors its mark.
         pub tone: &'static str,
         pub agent_kind: String,
         pub title: String,
@@ -468,18 +478,16 @@ pub mod phone {
     }
 
     fn tone(agent: &Value) -> &'static str {
-        if agent
-            .get("waiting_on_descendants")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
+        if agent.get("wait").is_some_and(|wait| !wait.is_null()) {
             return "working";
         }
         match str_of(agent, "demand") {
-            "error" => "error",
-            "question" | "approval" => "warning",
+            "error" | "question" | "approval" => "warning",
             _ => match str_of(agent, "activity") {
                 "working" => "working",
+                // The half-disc stays neutral: Done is quiet, and only a
+                // block asks for attention (design principle 13).
+                "stopped" if str_of(agent, "status_code") == "stopped" => "subtle",
                 "stopped"
                     if agent
                         .get("emphasized")
@@ -502,8 +510,7 @@ pub mod phone {
             .map(str::trim)
             .filter(|text| !text.is_empty())?;
         let tone = match str_of(agent, "demand") {
-            "error" => "error",
-            "question" | "approval" => "warning",
+            "error" | "question" | "approval" => "warning",
             _ if agent.get("unread").and_then(Value::as_bool) == Some(true) => "news",
             _ => return None,
         };

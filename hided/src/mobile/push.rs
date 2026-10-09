@@ -604,6 +604,51 @@ mod tests {
         assert!(notices.is_empty());
     }
 
+    /// B5: a block enters Needs You like a question, notifies once, and its
+    /// notification closes once the operator has read it.
+    #[test]
+    fn a_blocked_root_notifies_once_and_closes_when_read() {
+        let mut transitions = Transitions::default();
+        transitions.observe(&project(
+            &rest(json!([row("w1:p1", "working", "none", None)])),
+            "local",
+        ));
+        let blocked = project(
+            &rest(json!([row("w1:p1", "needs_you", "error", None)])),
+            "local",
+        );
+        let (notices, _) = transitions.observe(&blocked);
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].state, NoticeState::NeedsYou);
+        assert!(transitions.observe(&blocked).0.is_empty(), "not twice");
+        let read = project(&rest(json!([row("w1:p1", "seen", "error", None)])), "local");
+        let (notices, cleared) = transitions.observe(&read);
+        assert!(notices.is_empty());
+        assert_eq!(cleared.len(), 1);
+    }
+
+    /// B8, B5: an ordinary delegated child's block is the parent's to handle,
+    /// so the root is not announced; only a core escalation cause raises it.
+    #[test]
+    fn a_delegated_childs_block_never_announces_its_root() {
+        let mut transitions = Transitions::default();
+        transitions.observe(&project(
+            &rest(json!([
+                row("w1:p1", "working", "none", None),
+                row("w1:p2", "working", "none", Some("w1:p1")),
+            ])),
+            "local",
+        ));
+        let blocked = project(
+            &rest(json!([
+                row("w1:p1", "working", "none", None),
+                row("w1:p2", "working", "error", Some("w1:p1")),
+            ])),
+            "local",
+        );
+        assert!(transitions.observe(&blocked).0.is_empty());
+    }
+
     #[test]
     fn read_root_and_child_questions_never_reannounce_the_root() {
         let mut transitions = Transitions::default();

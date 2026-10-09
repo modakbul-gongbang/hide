@@ -319,6 +319,9 @@ impl Agent {
     pub const fn reports_turns(self) -> bool {
         self.format().reports_turns()
     }
+    pub const fn reports_wake_devices(self) -> bool {
+        self.format().reports_wake_devices()
+    }
     pub const fn has_session_file(self) -> bool {
         self.format().has_session_file()
     }
@@ -1401,6 +1404,9 @@ pub(crate) fn parse_events_into(
             links::claude_line,
             Turns {
                 parser: Some(turns::native::claude),
+                wake: agent
+                    .reports_wake_devices()
+                    .then_some(turns::wake::claude as turns::wake::Parser),
                 human_starts_turn: true,
                 large: None,
             },
@@ -1413,6 +1419,7 @@ pub(crate) fn parse_events_into(
             links::codex_line,
             Turns {
                 parser: Some(turns::native::codex),
+                wake: None,
                 human_starts_turn: false,
                 large: None,
             },
@@ -1425,6 +1432,7 @@ pub(crate) fn parse_events_into(
             links::grok_line,
             Turns {
                 parser: Some(grok::turn),
+                wake: None,
                 human_starts_turn: true,
                 large: Some(grok::reduced_line),
             },
@@ -1437,6 +1445,7 @@ pub(crate) fn parse_events_into(
             links::pi_line,
             Turns {
                 parser: None,
+                wake: None,
                 human_starts_turn: false,
                 large: None,
             },
@@ -1449,6 +1458,7 @@ pub(crate) fn parse_events_into(
             links::pi_line,
             Turns {
                 parser: Some(turns::native::omp),
+                wake: None,
                 human_starts_turn: true,
                 large: None,
             },
@@ -1462,6 +1472,10 @@ pub(crate) fn parse_events_into(
 /// than the line cap.
 struct Turns {
     parser: Option<turns::native::Parser>,
+    /// Reads the records that start or end background work the agent waits
+    /// on; only a format that declares it can prove one
+    /// ([`Agent::reports_wake_devices`]).
+    wake: Option<turns::wake::Parser>,
     human_starts_turn: bool,
     large: Option<fn(&str) -> Option<String>>,
 }
@@ -1479,6 +1493,7 @@ fn parse_lines_at(
 ) -> ParsedSession {
     let Turns {
         parser: turn,
+        wake,
         human_starts_turn,
         large,
     } = turns;
@@ -1517,6 +1532,13 @@ fn parse_lines_at(
         link(&value, line_offset, found);
         if let Some(turn) = turn {
             match turn(&value) {
+                Ok(Some(mark)) => parsed.turn_marks.push((line_offset, mark)),
+                Err(reason) => parsed.skipped(reason),
+                Ok(None) => {}
+            }
+        }
+        if let Some(wake) = wake {
+            match wake(&value) {
                 Ok(Some(mark)) => parsed.turn_marks.push((line_offset, mark)),
                 Err(reason) => parsed.skipped(reason),
                 Ok(None) => {}

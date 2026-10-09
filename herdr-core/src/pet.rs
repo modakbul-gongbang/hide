@@ -196,7 +196,7 @@ mod tests {
             delegated: false,
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
             direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
-            waiting_on_descendants: false,
+            wait: None,
             descendant_signals: std::collections::BTreeSet::new(),
             lineage_parent_pane_id: None,
             lineage_path_pane_ids: Vec::new(),
@@ -213,6 +213,7 @@ mod tests {
             lineage_collapsed: false,
             sleep: None,
             row_facts: None,
+            reply_wait: false,
             request: None,
         }
     }
@@ -230,7 +231,7 @@ mod tests {
     #[test]
     fn a_root_waiting_on_its_children_counts_as_working_not_done() {
         let mut waiting = agent("root", "done");
-        waiting.waiting_on_descendants = true;
+        waiting.wait = Some(crate::model::AgentWait::Children);
         let summary = summarize(&[waiting, agent("other", "done")], true);
         assert_eq!((summary.working, summary.done), (1, 1));
     }

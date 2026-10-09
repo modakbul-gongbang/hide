@@ -211,6 +211,29 @@ fn pane_bands_prioritize_connection_then_own_demand_then_raised_descendants() {
     );
 }
 
+/// B25, D-07, D-23: a blocked pane names its block in its own band, a stopped
+/// pane keeps the stop band, and a pane that waits has no band at all.
+#[test]
+fn pane_bands_name_a_block_and_a_stop_and_leave_a_wait_unmarked() {
+    use crate::agent_state::{RequestVerb, header};
+    let runtime = with_session();
+    let mut agent = runtime.snapshot.navigator.agents[0].clone();
+    let pane = pane("session", "/work/app");
+    let project = workspace("app", "App", "/work/app", vec![]);
+    let band_of =
+        |agent: &SidebarAgentSnapshot| header::of(&pane, Some(agent), None, &project, None).band;
+    agent.state.verb = RequestVerb::Blocked;
+    let blocked = band_of(&agent).expect("a block has a band");
+    assert_eq!(
+        (blocked.kind.as_str(), blocked.tone),
+        ("blocked", "warning")
+    );
+    agent.state.verb = RequestVerb::Stopped;
+    assert_eq!(band_of(&agent).expect("a stop has a band").kind, "stopped");
+    agent.state.verb = RequestVerb::Waiting;
+    assert!(band_of(&agent).is_none(), "a wait is drawn without a band");
+}
+
 #[test]
 fn pane_pr_band_targets_its_duty_instead_of_another_link_with_higher_sort_priority() {
     use crate::agent_state::{RequestVerb, header};

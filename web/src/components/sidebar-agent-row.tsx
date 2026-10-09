@@ -4,7 +4,7 @@ import { AgentMark } from "../AgentMark";
 import { agentClosing } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
-import { branchChip, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
+import { branchChip, lineText, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
 import { cn } from "../lib/utils";
 import type { AgentRow } from "../snapshot";
 import type { AgentMenuItem } from "../workspaceManage";
@@ -126,7 +126,9 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   const closing = useShellStore((s) => agentClosing(s.rest?.status?.async_operations, agent.pane_id));
   const stale = useShellStore((s) => (ask ? undefined : prStaleness(s.rest, agent)?.stale));
   const lastRead = useShellStore((s) => (ask ? undefined : prStaleness(s.rest, agent)?.lastRead));
-  const line = tree ? null : sidebarLine(agent);
+  // A tree row is one line (B14), except that a block keeps its cause, read or
+  // not (agent-blocked-state B2): the triangle alone does not say what stopped it.
+  const line = tree && agent.status_code !== "error" ? null : sidebarLine(agent);
   const branch = branchShown ? branchChip(agent) : null;
   const attention = agent.state.attention;
   const unreachable = remote !== null && !remote.reachable;
@@ -160,7 +162,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       data-pane={agent.pane_id}
       data-attention={attention ? "true" : "false"}
       data-delegated={agent.delegated ? "true" : "false"}
-      data-waiting={agent.waiting_on_descendants ? "true" : "false"}
+      data-waiting={agent.wait ?? "false"}
       data-agent-device={device ?? undefined}
       data-depth={depth}
       data-unreachable={unreachable ? "true" : undefined}
@@ -185,7 +187,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       {tree ? <RowChevron agent={agent} tree={tree} returnFocus={() => main.current?.focus()} /> : null}
       <span className={cn("flex min-w-0 flex-1 items-start gap-xs", tree && "py-xs pl-xs")}>
         <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
-          <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_code} />
+          <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.wait ? "waiting" : agent.status_code} />
           <AgentMark kind={agent.agent_kind} />
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
@@ -216,7 +218,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           </span>
           {ask && agent.state.ask ? <span aria-hidden="true" className="pointer-events-none flex min-w-0 leading-(--size-sidebar-line-detail)"><AskLine ask={agent.state.ask} className="flex-1" /></span> : line ? (
             <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))}>
-              {line.text}
+              {lineText(t, agent, line)}
             </span>
           ) : null}
           {remote ? (

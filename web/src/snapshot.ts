@@ -8,9 +8,12 @@ import type { AgentScope } from "./agentScope";
 import type { ProviderUsage } from "./generated/hided-ws";
 
 /** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
-export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "attached" | "sleeping" | "waking" | "sleep_failed";
+export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "stopped" | "attached" | "sleeping" | "waking" | "sleep_failed";
 
-export type StatusTone = { kind: "error" | "warning" | "working" | "success" | "subtle" | "news"; read: boolean };
+/** What a quiet row waits on (`AgentWait`): its descendants, a background job its session proves is running, or the reply to a Hide request it sent. */
+export type AgentWait = "children" | "background" | "reply";
+
+export type StatusTone = { kind: "warning" | "working" | "success" | "subtle" | "news"; read: boolean };
 
 /** Agent decisions are projected by herdr-core::agent_state, never reconstructed by the shell. */
 export type AgentState = {
@@ -19,12 +22,12 @@ export type AgentState = {
   title_emphasized: boolean; selection_emphasizes_title: boolean;
   asking: boolean; working: boolean; waits_on_children: boolean;
   chip_tone: StatusTone; mark_tone: StatusTone;
-  line: { text: string; mode: "request" | "news" | "quiet"; tone: StatusTone } | null;
+  line: { text: string; mode: "request" | "news" | "waiting" | "quiet" | "vanished"; tone: StatusTone } | null;
   branch_badge: string | null;
   bucket: "turn" | "working" | "delegating" | "resting";
   attention_rank: number; graph_rank: 0 | 1 | 2 | 3; graph_chip: "turn" | "working" | "resting"; graph_resting: boolean;
   edge: "ask" | "flow" | "wait" | "rest";
-  search_tone: "failed" | "attention" | "working" | "done" | "muted";
+  search_tone: "attention" | "working" | "done" | "muted";
   subtree: "working" | "waiting" | "unread" | "unknown" | "quiet";
   link: "working" | "question" | "idle"; link_rank: 0 | 1 | 2;
   verb: RequestVerb; request_todo: boolean; descendant_asking: number; request_since: number | null;
@@ -110,8 +113,8 @@ export type AgentRow = {
   /** What every live descendant is doing, counted by state; unknown activity is in none. */
   descendant_counts?: DescendantCounts;
   direct_child_counts?: DescendantCounts;
-  /** A quiet root whose live descendant is still working or asking: drawn as a ring in Working (docs/status-model.md). */
-  waiting_on_descendants?: boolean;
+  /** Why a quiet row waits instead of being done or stopped: drawn as a ring in Working (docs/status-model.md); absent when it does not. */
+  wait?: AgentWait;
   /** How deep under its lineage root; a root is 0. */
   lineage_depth?: number;
   /** Whether the operator has this row's descendants folded away; folded is the default. */
@@ -135,10 +138,10 @@ export type UserTurnFact = {
 };
 
 /** How the label read a turn's end (`LabelEnd`). */
-export type LabelEnd = "working" | "question" | "done" | "waiting" | "unfinished";
+export type LabelEnd = "working" | "question" | "blocked" | "done" | "waiting" | "unfinished";
 
 /** What a row asks of the operator now (`RequestVerb`), in the order the request view draws its groups. */
-export type RequestVerb = "answer" | "fix" | "review" | "stopped" | "result" | "working" | "waiting" | "idle";
+export type RequestVerb = "answer" | "blocked" | "fix" | "review" | "stopped" | "result" | "working" | "waiting" | "idle";
 
 export type SessionGroup = "needs_you" | "working" | "done" | "idle" | "resolved";
 
@@ -476,7 +479,7 @@ export type CheckoutAgentSummary = {
 };
 
 /** How many rows draw each status mark (`MarkCountsSnapshot`); a row Herdr cannot classify is in none. */
-export type MarkCounts = { error: number; approval: number; question: number; working: number; done: number; idle: number };
+export type MarkCounts = { error: number; approval: number; question: number; working: number; stopped: number; done: number; idle: number };
 
 export type PaneRow = {
   ports?: number[];
@@ -495,7 +498,7 @@ export type PaneRow = {
   sleep_action?: AgentSleepAction;
 };
 
-export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "waiting_on_descendants" | "status_code"> & { state: Pick<AgentState, "mark_tone"> };
+export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "wait" | "status_code"> & { state: Pick<AgentState, "mark_tone"> };
 
 export type Tab = {
   agent?: TabAgent | null;

@@ -136,7 +136,7 @@ pub(crate) fn of(
 /// raises it, however the turn ends. The time is the session's own record,
 /// which the label store keeps across restarts (and reads again for a
 /// device), never this daemon's view of the pane.
-fn took_up_request_after(child: &SidebarAgentSnapshot, at: u64) -> bool {
+pub(crate) fn took_up_request_after(child: &SidebarAgentSnapshot, at: u64) -> bool {
     child.row_facts.as_ref().is_some_and(|facts| {
         [&facts.operator_request, &facts.other_request]
             .into_iter()
@@ -687,5 +687,48 @@ mod tests {
             of(&child, None, &BTreeMap::new()).unwrap().cause,
             Cause::ChildBlocked
         );
+    }
+
+    #[test]
+    fn a_reply_is_awaited_until_answered_overdue_or_from_another_session() {
+        let mut ledger = Ledger::default();
+        mailbox::send(
+            &mut ledger,
+            &actor("child"),
+            &actor("parent"),
+            "request",
+            "question",
+            "request",
+            None,
+            100,
+        )
+        .unwrap();
+        let id = ledger.letters[0].id.clone();
+        let session = Some("child-session");
+        assert_eq!(ledger.reply_awaited_since("child", session, 200), Some(100));
+        assert_eq!(
+            ledger.reply_awaited_since("child", Some("older"), 200),
+            None
+        );
+        assert_eq!(ledger.reply_awaited_since("child", None, 200), None);
+        assert_eq!(
+            ledger.reply_awaited_since("parent", Some("parent-session"), 200),
+            None
+        );
+        let late = 100 + crate::delivery::ANSWER_WAIT_MS;
+        assert_eq!(ledger.reply_awaited_since("child", session, late), None);
+        mailbox::apply(
+            &mut ledger,
+            &actor("parent"),
+            None,
+            &crate::delivery::Command::Reply {
+                id,
+                intent: "answer".into(),
+                body: "reply".into(),
+            },
+            300,
+        )
+        .unwrap();
+        assert_eq!(ledger.reply_awaited_since("child", session, 400), None);
     }
 }

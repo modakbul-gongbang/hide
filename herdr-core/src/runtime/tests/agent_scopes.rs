@@ -177,6 +177,13 @@ fn graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor() {
     leaf.symbol = "✓".into();
     leaf.lineage_parent_pane_id = Some("child".into());
     agents.push(leaf);
+    for (pane, symbol) in [("blocked", "\u{25b2}"), ("stopped", "\u{25d0}")] {
+        let mut hidden = agents[1].clone();
+        hidden.pane_id = pane.into();
+        hidden.symbol = symbol.into();
+        hidden.lineage_parent_pane_id = Some("child".into());
+        agents.push(hidden);
+    }
     runtime.snapshot.navigator.agents = agents;
     let mut main = checkout(
         "project",
@@ -189,6 +196,9 @@ fn graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor() {
     let mut leaf = checkout("project", "leaf", "/leaf", Some(pane("leaf", "/leaf")));
     leaf.is_worktree = true;
     leaf.landed = true;
+    leaf.tabs[0]
+        .panes
+        .extend([pane("blocked", "/leaf"), pane("stopped", "/leaf")]);
     let mut project = workspace("project", "Project", "/fixture", vec![main, child, leaf]);
     project.is_git = true;
     runtime.snapshot.navigator.workspaces = vec![project];
@@ -199,6 +209,8 @@ fn graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor() {
     assert_eq!(graph.checkouts["leaf"].fold, Some("cleanup"));
     assert_eq!(graph.tucked[graph.variants[8]]["root"]["idle"], 1);
     assert_eq!(graph.tucked[graph.variants[8]]["root"]["done"], 1);
+    assert_eq!(graph.tucked[graph.variants[8]]["root"]["error"], 1);
+    assert_eq!(graph.tucked[graph.variants[8]]["root"]["stopped"], 1);
     assert_eq!(graph.tucked[graph.variants[12]]["child"]["done"], 1);
     assert!(graph.tucked[graph.variants[15]].is_empty());
     let relations = &runtime.snapshot.navigator.devices[0].agent_scope.relations;

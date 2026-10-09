@@ -21,7 +21,7 @@ const LABELS: Record<string, MessageKey> = {
   disconnected: "panes.transport.disconnected", closing: "panes.transport.closing", starting: "panes.transport.starting",
   unavailable: "panes.transport.remoteUnavailable", terminated: "panes.transport.remoteEnded", exit: "agentSessions.exitCode",
   controlled_elsewhere: "panes.transport.scrollElsewhere", device_offline: "panes.transport.disconnected",
-  stopped: "agentSessions.tag.stopped",
+  blocked: "agentSessions.tag.blocked", stopped: "agentSessions.tag.stopped",
   result: "agentSessions.tag.result", fix: "agentSessions.tag.fix", review: "agentSessions.tag.review", merge: "agentSessions.tag.merge",
 };
 const TONES = { muted: "bg-secondary text-muted-foreground", warning: "bg-warning/10 text-warning", error: "bg-destructive/10 text-destructive", success: "bg-success/10 text-success", pr: "bg-pr-open/10 text-pr-open" };

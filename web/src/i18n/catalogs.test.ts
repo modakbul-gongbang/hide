@@ -35,6 +35,16 @@ describe("interface resources", () => {
     expect(() => validateCatalogs(english, catalogs)).not.toThrow();
   });
 
+  it("gives every agent status word its own text in each language", () => {
+    for (const [locale, catalog] of Object.entries(catalogs)) {
+      const words = Object.entries(catalog as Record<string, string>)
+        .filter(([key]) => /^agents\.status\.(error|question|approval|working|done|idle|unknown|waiting|stopped)$/.test(key))
+        .map(([, word]) => word);
+      expect(words.length, locale).toBe(9);
+      expect(new Set(words).size, locale).toBe(words.length);
+    }
+  });
+
   it("keeps domain keys separate so composition cannot overwrite a message", () => {
     const keys = [
       agentSessionsEnglish,

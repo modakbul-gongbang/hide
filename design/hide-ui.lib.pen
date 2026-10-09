@@ -7251,6 +7251,69 @@
                   "fontFamily": "$--font-mono",
                   "fontSize": "$--text-caption",
                   "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "idn-blocked",
+                  "name": "Blocked",
+                  "enabled": false,
+                  "width": 12,
+                  "height": 12,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "path",
+                      "id": "idn-blocked-shape",
+                      "name": "Triangle with notch",
+                      "x": 0,
+                      "y": 0,
+                      "width": 12,
+                      "height": 12,
+                      "viewBox": [
+                        0,
+                        0,
+                        12,
+                        12
+                      ],
+                      "geometry": "M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z",
+                      "fill": "$--warning"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "idn-stopped",
+                  "name": "Stopped",
+                  "enabled": false,
+                  "width": 12,
+                  "height": 12,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "idn-stopped-ring",
+                      "x": 2.5,
+                      "y": 2.5,
+                      "name": "Ring",
+                      "width": 7,
+                      "height": 7,
+                      "stroke": "$--subtle-foreground",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner"
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "idn-stopped-half",
+                      "x": 2.5,
+                      "y": 2.5,
+                      "name": "Half",
+                      "startAngle": 90,
+                      "sweepAngle": 180,
+                      "fill": "$--subtle-foreground",
+                      "width": 7,
+                      "height": 7
+                    }
+                  ]
                 }
               ]
             },
@@ -7510,11 +7573,11 @@
         {
           "type": "text",
           "id": "o00hzr",
-          "name": "Unread error label",
+          "name": "Unread block label",
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "Unread error",
+          "content": "Unread block",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
           "fontWeight": "normal"
@@ -7523,24 +7586,100 @@
           "id": "s8Xiy",
           "type": "ref",
           "ref": "HXWFK",
-          "name": "Unread error",
+          "name": "Unread block",
           "width": "fill_container",
           "descendants": {
             "sWhWS": {
               "enabled": false
             },
-            "PCeNa": {
-              "enabled": true,
-              "content": "×",
-              "fill": "$--destructive"
+            "idn-blocked": {
+              "enabled": true
             },
             "x0h40": {
               "content": "기술 교육 콘텐츠 통합",
               "fill": "$--foreground"
             },
             "X6LdE": {
-              "content": "Error",
-              "fill": "$--destructive"
+              "content": "Blocked",
+              "fill": "$--warning"
+            },
+            "BsCNW": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "idn-read-block-label",
+          "name": "Read block label",
+          "fill": "$--subtle-foreground",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Read block",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "idn-read-block",
+          "type": "ref",
+          "ref": "HXWFK",
+          "name": "Read block",
+          "width": "fill_container",
+          "descendants": {
+            "sWhWS": {
+              "enabled": false
+            },
+            "idn-blocked": {
+              "enabled": true,
+              "opacity": 0.55
+            },
+            "x0h40": {
+              "content": "기술 교육 콘텐츠 통합",
+              "fill": "$--subtle-foreground"
+            },
+            "X6LdE": {
+              "content": "Blocked",
+              "fill": "$--warning",
+              "opacity": 0.55
+            },
+            "BsCNW": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "idn-stopped-label",
+          "name": "Stopped label",
+          "fill": "$--subtle-foreground",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Stopped",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "idn-stopped-ref",
+          "type": "ref",
+          "ref": "HXWFK",
+          "name": "Stopped",
+          "width": "fill_container",
+          "descendants": {
+            "sWhWS": {
+              "enabled": false
+            },
+            "idn-stopped": {
+              "enabled": true
+            },
+            "x0h40": {
+              "content": "기술 교육 콘텐츠 통합",
+              "fill": "$--foreground"
+            },
+            "X6LdE": {
+              "content": "Stopped",
+              "fill": "$--subtle-foreground"
             },
             "BsCNW": {
               "enabled": false
@@ -12684,7 +12823,7 @@
                       "id": "project-error",
                       "x": 0,
                       "y": 0,
-                      "name": "error",
+                      "name": "blocked",
                       "enabled": false,
                       "gap": "$--spacing-xxs",
                       "alignItems": "center",
@@ -12702,10 +12841,10 @@
                               "type": "text",
                               "id": "project-error-glyph",
                               "name": "Glyph",
-                              "fill": "$--destructive",
+                              "fill": "$--warning",
                               "textGrowth": "fixed-width",
                               "width": 12,
-                              "content": "×",
+                              "content": "▲",
                               "textAlign": "center",
                               "fontFamily": "$--font-mono",
                               "fontSize": "$--text-caption",
@@ -12846,6 +12985,52 @@
                           "name": "Count",
                           "fill": "$--subtle-foreground",
                           "content": "2",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "project-stopped",
+                      "x": 0,
+                      "y": 0,
+                      "name": "stopped",
+                      "enabled": false,
+                      "gap": "$--spacing-xxs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "project-stopped-mark",
+                          "name": "Mark",
+                          "width": 12,
+                          "height": 12,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "project-stopped-glyph",
+                              "name": "Glyph",
+                              "fill": "$--subtle-foreground",
+                              "textGrowth": "fixed-width",
+                              "width": 12,
+                              "content": "◐",
+                              "textAlign": "center",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "project-stopped-count",
+                          "name": "Count",
+                          "fill": "$--subtle-foreground",
+                          "content": "1",
                           "fontFamily": "$--font-mono",
                           "fontSize": "$--text-micro",
                           "fontWeight": "500"
@@ -14543,7 +14728,7 @@
                               "id": "checkout-error",
                               "x": 0,
                               "y": 0,
-                              "name": "error",
+                              "name": "blocked",
                               "enabled": false,
                               "gap": "$--spacing-xxs",
                               "alignItems": "center",
@@ -14561,10 +14746,10 @@
                                       "type": "text",
                                       "id": "checkout-error-glyph",
                                       "name": "Glyph",
-                                      "fill": "$--destructive",
+                                      "fill": "$--warning",
                                       "textGrowth": "fixed-width",
                                       "width": 12,
-                                      "content": "×",
+                                      "content": "▲",
                                       "textAlign": "center",
                                       "fontFamily": "$--font-mono",
                                       "fontSize": "$--text-caption",
@@ -14705,6 +14890,52 @@
                                 {
                                   "type": "text",
                                   "id": "checkout-working-count",
+                                  "name": "Count",
+                                  "fill": "$--subtle-foreground",
+                                  "content": "1",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "checkout-stopped",
+                              "x": 0,
+                              "y": 0,
+                              "name": "stopped",
+                              "enabled": false,
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "checkout-stopped-mark",
+                                  "name": "Mark",
+                                  "width": 12,
+                                  "height": 12,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "checkout-stopped-glyph",
+                                      "name": "Glyph",
+                                      "fill": "$--subtle-foreground",
+                                      "textGrowth": "fixed-width",
+                                      "width": 12,
+                                      "content": "◐",
+                                      "textAlign": "center",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "checkout-stopped-count",
                                   "name": "Count",
                                   "fill": "$--subtle-foreground",
                                   "content": "1",
@@ -15485,6 +15716,69 @@
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-caption",
                       "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sar-blocked",
+                      "name": "Blocked",
+                      "enabled": false,
+                      "width": 12,
+                      "height": 12,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "sar-blocked-shape",
+                          "name": "Triangle with notch",
+                          "x": 0,
+                          "y": 0,
+                          "width": 12,
+                          "height": 12,
+                          "viewBox": [
+                            0,
+                            0,
+                            12,
+                            12
+                          ],
+                          "geometry": "M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z",
+                          "fill": "$--warning"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sar-stopped",
+                      "name": "Stopped",
+                      "enabled": false,
+                      "width": 12,
+                      "height": 12,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "sar-stopped-ring",
+                          "x": 2.5,
+                          "y": 2.5,
+                          "name": "Ring",
+                          "width": 7,
+                          "height": 7,
+                          "stroke": "$--subtle-foreground",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner"
+                        },
+                        {
+                          "type": "ellipse",
+                          "id": "sar-stopped-half",
+                          "x": 2.5,
+                          "y": 2.5,
+                          "name": "Half",
+                          "startAngle": 90,
+                          "sweepAngle": 180,
+                          "fill": "$--subtle-foreground",
+                          "width": 7,
+                          "height": 7
+                        }
+                      ]
                     }
                   ]
                 },
@@ -16011,7 +16305,7 @@
         {
           "type": "frame",
           "id": "sidebar-agent-row-state-error",
-          "name": "State / Error",
+          "name": "State / Blocked: a filled triangle, the cause in the warning colour",
           "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-xxs",
@@ -16021,7 +16315,7 @@
               "id": "sidebar-agent-row-state-error-label",
               "name": "State name",
               "fill": "$--subtle-foreground",
-              "content": "Error",
+              "content": "Blocked: a filled triangle, the cause in the warning colour",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -16031,7 +16325,7 @@
               "type": "ref",
               "ref": "sidebar-agent-row",
               "width": "fill_container",
-              "name": "Row / error",
+              "name": "Row / blocked",
               "descendants": {
                 "sar-dot": {
                   "enabled": false
@@ -16040,21 +16334,130 @@
                   "enabled": false
                 },
                 "sar-glyph": {
-                  "enabled": true,
-                  "content": "×",
-                  "fill": "$--destructive"
+                  "enabled": false
+                },
+                "sar-blocked": {
+                  "enabled": true
                 },
                 "sar-title": {
-                  "content": "테스트 실행 실패",
+                  "content": "CI 복구 시도",
                   "fill": "$--foreground"
                 },
                 "sar-elapsed": {
-                  "content": "18s"
+                  "content": "2m"
                 },
                 "sar-line": {
                   "enabled": true,
-                  "content": "실패한 테스트 결과를 확인해 주세요",
-                  "fill": "$--destructive"
+                  "content": "디스크 여유가 부족해 검증을 못 함",
+                  "fill": "$--warning"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-read-blocked",
+          "name": "State / Read block: the same triangle dimmed, the cause stays",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-read-blocked-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Read block: the same triangle dimmed, the cause stays",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-read-blocked",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / read-blocked",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": false
+                },
+                "sar-blocked": {
+                  "enabled": true,
+                  "opacity": 0.55
+                },
+                "sar-title": {
+                  "content": "CI 복구 시도",
+                  "fill": "$--subtle-foreground"
+                },
+                "sar-elapsed": {
+                  "content": "6m"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "디스크 여유가 부족해 검증을 못 함",
+                  "fill": "$--warning",
+                  "opacity": 0.55
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-stopped",
+          "name": "State / Stopped: a half-disc in Done, the word leads the line",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-stopped-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Stopped: a half-disc in Done, the word leads the line",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-stopped",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / stopped",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": false
+                },
+                "sar-stopped": {
+                  "enabled": true
+                },
+                "sar-title": {
+                  "content": "어댑터 정리",
+                  "fill": "$--foreground"
+                },
+                "sar-elapsed": {
+                  "content": "14m"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "멈춤 · 테스트 3개 남음",
+                  "fill": "$--subtle-foreground"
                 }
               }
             }
@@ -16063,7 +16466,7 @@
         {
           "type": "frame",
           "id": "sidebar-agent-row-state-waiting",
-          "name": "State / Waiting on its children: ring in Working, badge, folded chevron",
+          "name": "State / Waiting on its children, a background task or a reply: ring in Working, the word leads the line",
           "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-xxs",
@@ -16073,7 +16476,7 @@
               "id": "sidebar-agent-row-state-waiting-label",
               "name": "State name",
               "fill": "$--subtle-foreground",
-              "content": "Waiting on its children: ring in Working, badge, folded chevron",
+              "content": "Waiting on its children, a background task or a reply: ring in Working, the word leads the line",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -16110,6 +16513,11 @@
                 },
                 "sar-fold": {
                   "opacity": 1
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "대기 · CI 끝나기를 기다림",
+                  "fill": "$--subtle-foreground"
                 }
               }
             }
@@ -36342,6 +36750,69 @@
                               "fontSize": "$--text-caption",
                               "fontWeight": "400",
                               "enabled": false
+                            },
+                            {
+                              "type": "frame",
+                              "id": "agb-row1-blocked",
+                              "name": "Blocked",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "agb-row1-blocked-shape",
+                                  "name": "Triangle with notch",
+                                  "x": 0,
+                                  "y": 0,
+                                  "width": 12,
+                                  "height": 12,
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    12,
+                                    12
+                                  ],
+                                  "geometry": "M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z",
+                                  "fill": "$--warning"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "none",
+                              "enabled": false
+                            },
+                            {
+                              "type": "frame",
+                              "id": "agb-row1-stopped",
+                              "name": "Stopped",
+                              "children": [
+                                {
+                                  "type": "ellipse",
+                                  "id": "agb-row1-stopped-ring",
+                                  "x": 3.5,
+                                  "y": 3.5,
+                                  "name": "Ring",
+                                  "width": 7,
+                                  "height": 7,
+                                  "stroke": "$--subtle-foreground",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner"
+                                },
+                                {
+                                  "type": "ellipse",
+                                  "id": "agb-row1-stopped-half",
+                                  "x": 3.5,
+                                  "y": 3.5,
+                                  "name": "Half",
+                                  "startAngle": 90,
+                                  "sweepAngle": 180,
+                                  "width": 7,
+                                  "height": 7,
+                                  "fill": "$--subtle-foreground"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "none",
+                              "enabled": false
                             }
                           ],
                           "width": 12,
@@ -36588,6 +37059,69 @@
                               "fontFamily": "$--font-mono",
                               "fontSize": "$--text-caption",
                               "fontWeight": "400",
+                              "enabled": false
+                            },
+                            {
+                              "type": "frame",
+                              "id": "agb-row2-blocked",
+                              "name": "Blocked",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "agb-row2-blocked-shape",
+                                  "name": "Triangle with notch",
+                                  "x": 0,
+                                  "y": 0,
+                                  "width": 12,
+                                  "height": 12,
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    12,
+                                    12
+                                  ],
+                                  "geometry": "M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z",
+                                  "fill": "$--warning"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "none",
+                              "enabled": false
+                            },
+                            {
+                              "type": "frame",
+                              "id": "agb-row2-stopped",
+                              "name": "Stopped",
+                              "children": [
+                                {
+                                  "type": "ellipse",
+                                  "id": "agb-row2-stopped-ring",
+                                  "x": 3.5,
+                                  "y": 3.5,
+                                  "name": "Ring",
+                                  "width": 7,
+                                  "height": 7,
+                                  "stroke": "$--subtle-foreground",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner"
+                                },
+                                {
+                                  "type": "ellipse",
+                                  "id": "agb-row2-stopped-half",
+                                  "x": 3.5,
+                                  "y": 3.5,
+                                  "name": "Half",
+                                  "startAngle": 90,
+                                  "sweepAngle": 180,
+                                  "width": 7,
+                                  "height": 7,
+                                  "fill": "$--subtle-foreground"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "none",
                               "enabled": false
                             }
                           ],
@@ -36836,6 +37370,69 @@
                               "fontFamily": "$--font-mono",
                               "fontSize": "$--text-caption",
                               "fontWeight": "400",
+                              "enabled": false
+                            },
+                            {
+                              "type": "frame",
+                              "id": "agb-row3-blocked",
+                              "name": "Blocked",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "agb-row3-blocked-shape",
+                                  "name": "Triangle with notch",
+                                  "x": 0,
+                                  "y": 0,
+                                  "width": 12,
+                                  "height": 12,
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    12,
+                                    12
+                                  ],
+                                  "geometry": "M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z",
+                                  "fill": "$--warning"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "none",
+                              "enabled": false
+                            },
+                            {
+                              "type": "frame",
+                              "id": "agb-row3-stopped",
+                              "name": "Stopped",
+                              "children": [
+                                {
+                                  "type": "ellipse",
+                                  "id": "agb-row3-stopped-ring",
+                                  "x": 3.5,
+                                  "y": 3.5,
+                                  "name": "Ring",
+                                  "width": 7,
+                                  "height": 7,
+                                  "stroke": "$--subtle-foreground",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner"
+                                },
+                                {
+                                  "type": "ellipse",
+                                  "id": "agb-row3-stopped-half",
+                                  "x": 3.5,
+                                  "y": 3.5,
+                                  "name": "Half",
+                                  "startAngle": 90,
+                                  "sweepAngle": 180,
+                                  "width": 7,
+                                  "height": 7,
+                                  "fill": "$--subtle-foreground"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "none",
                               "enabled": false
                             }
                           ],
@@ -37120,6 +37717,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -37176,6 +37779,12 @@
                       "enabled": false
                     },
                     "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
                       "enabled": false
                     },
                     "agb-row2-provider": {
@@ -37322,6 +37931,12 @@
                       "content": "?",
                       "fill": "$--warning"
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -37387,6 +38002,12 @@
                     "agb-row2-glyph": {
                       "enabled": false
                     },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
+                      "enabled": false
+                    },
                     "agb-row2-provider": {
                       "fill": {
                         "type": "image",
@@ -37431,6 +38052,215 @@
                     },
                     "agb-row2-q-t": {
                       "content": ""
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-blocked-l-cell",
+              "name": "Worktree with a blocked and a stopped row",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-blocked-l-cap",
+                  "name": "Worktree with a blocked and ",
+                  "content": "Worktree with a blocked and a stopped row",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-blocked-l",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Worktree with a blocked and a stopped row",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "git-branch",
+                      "fill": "$--muted-foreground"
+                    },
+                    "agb-branch": {
+                      "content": "fix/ci-recovery"
+                    },
+                    "agb-purpose": {
+                      "content": "CI 복구"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": true,
+                      "content": "↑2"
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": false,
+                      "content": "에이전트 0"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": false
+                    },
+                    "agb-row1-ring": {
+                      "enabled": false
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-blocked": {
+                      "enabled": true
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "contain"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "CI 복구 시도",
+                      "fontWeight": "600"
+                    },
+                    "agb-row1-age": {
+                      "content": "2m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
+                    "agb-row1-q": {
+                      "enabled": true,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ]
+                    },
+                    "agb-row1-q-t": {
+                      "content": "디스크 여유가 부족해 검증을 못 함"
+                    },
+                    "agb-row2": {
+                      "enabled": true
+                    },
+                    "agb-row2-dot": {
+                      "enabled": false
+                    },
+                    "agb-row2-ring": {
+                      "enabled": false
+                    },
+                    "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
+                      "enabled": true
+                    },
+                    "agb-row2-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "contain"
+                      }
+                    },
+                    "agb-row2-title": {
+                      "content": "어댑터 정리"
+                    },
+                    "agb-row2-age": {
+                      "content": "14m"
+                    },
+                    "agb-row2-ind": {
+                      "enabled": false
+                    },
+                    "agb-row2-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row2-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-cross": {
+                      "enabled": false
+                    },
+                    "agb-row2-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row2-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row2-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
+                    "agb-row2-q": {
+                      "enabled": true,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ]
+                    },
+                    "agb-row2-q-t": {
+                      "content": "멈춤 · 테스트 3개 남음",
+                      "fill": "$--subtle-foreground"
                     },
                     "agb-row3": {
                       "enabled": false
@@ -37527,6 +38357,12 @@
                       "stroke": "$--muted-foreground"
                     },
                     "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
                       "enabled": false
                     },
                     "agb-row1-provider": {
@@ -37659,6 +38495,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -37789,6 +38631,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -37845,6 +38693,12 @@
                       "stroke": "$--muted-foreground"
                     },
                     "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
                       "enabled": false
                     },
                     "agb-row2-provider": {
@@ -37973,6 +38827,12 @@
                       "stroke": "$--muted-foreground"
                     },
                     "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
                       "enabled": false
                     },
                     "agb-row1-provider": {
@@ -38122,6 +38982,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -38178,6 +39044,12 @@
                       "enabled": false
                     },
                     "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
                       "enabled": false
                     },
                     "agb-row2-provider": {
@@ -38324,6 +39196,12 @@
                       "content": "?",
                       "fill": "$--warning"
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -38389,6 +39267,12 @@
                     "agb-row2-glyph": {
                       "enabled": false
                     },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
+                      "enabled": false
+                    },
                     "agb-row2-provider": {
                       "fill": {
                         "type": "image",
@@ -38433,6 +39317,215 @@
                     },
                     "agb-row2-q-t": {
                       "content": ""
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-blocked-d-cell",
+              "name": "Worktree with a blocked and a stopped row",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-blocked-d-cap",
+                  "name": "Worktree with a blocked and ",
+                  "content": "Worktree with a blocked and a stopped row",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-blocked-d",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Worktree with a blocked and a stopped row",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "git-branch",
+                      "fill": "$--muted-foreground"
+                    },
+                    "agb-branch": {
+                      "content": "fix/ci-recovery"
+                    },
+                    "agb-purpose": {
+                      "content": "CI 복구"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": true,
+                      "content": "↑2"
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": false,
+                      "content": "에이전트 0"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": false
+                    },
+                    "agb-row1-ring": {
+                      "enabled": false
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-blocked": {
+                      "enabled": true
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "contain"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "CI 복구 시도",
+                      "fontWeight": "600"
+                    },
+                    "agb-row1-age": {
+                      "content": "2m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
+                    "agb-row1-q": {
+                      "enabled": true,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ]
+                    },
+                    "agb-row1-q-t": {
+                      "content": "디스크 여유가 부족해 검증을 못 함"
+                    },
+                    "agb-row2": {
+                      "enabled": true
+                    },
+                    "agb-row2-dot": {
+                      "enabled": false
+                    },
+                    "agb-row2-ring": {
+                      "enabled": false
+                    },
+                    "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
+                      "enabled": true
+                    },
+                    "agb-row2-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "contain"
+                      }
+                    },
+                    "agb-row2-title": {
+                      "content": "어댑터 정리"
+                    },
+                    "agb-row2-age": {
+                      "content": "14m"
+                    },
+                    "agb-row2-ind": {
+                      "enabled": false
+                    },
+                    "agb-row2-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row2-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-cross": {
+                      "enabled": false
+                    },
+                    "agb-row2-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row2-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row2-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
+                    "agb-row2-q": {
+                      "enabled": true,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ]
+                    },
+                    "agb-row2-q-t": {
+                      "content": "멈춤 · 테스트 3개 남음",
+                      "fill": "$--subtle-foreground"
                     },
                     "agb-row3": {
                       "enabled": false
@@ -38529,6 +39622,12 @@
                       "stroke": "$--muted-foreground"
                     },
                     "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
                       "enabled": false
                     },
                     "agb-row1-provider": {
@@ -38661,6 +39760,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -38791,6 +39896,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -38847,6 +39958,12 @@
                       "stroke": "$--muted-foreground"
                     },
                     "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
                       "enabled": false
                     },
                     "agb-row2-provider": {
@@ -38975,6 +40092,12 @@
                       "stroke": "$--muted-foreground"
                     },
                     "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
                       "enabled": false
                     },
                     "agb-row1-provider": {

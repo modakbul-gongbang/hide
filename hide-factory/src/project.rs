@@ -288,11 +288,13 @@ impl Projects {
             .read(FactoryCall::VerifyPoll { id: id.to_owned() })
         {
             Ok(outcome) => read_outcome(outcome),
-            // The link failed, not the run: a poll is a read, and the next
-            // one asks again.
-            Err(LinkError::Busy | LinkError::NotConnected(_) | LinkError::Unknown(_)) => {
-                VerifyPoll::Pending
-            }
+            // The link is busy or down, not the run: the next poll asks again.
+            Err(LinkError::Busy | LinkError::NotConnected(_)) => VerifyPoll::Pending,
+            // An answer that cannot be read would read the same next time.
+            Err(LinkError::Unknown(detail)) => VerifyPoll::Unread {
+                check: "verify".into(),
+                detail,
+            },
             Err(refused @ LinkError::Refused(_)) => VerifyPoll::Failed {
                 check: "verify".into(),
                 link: refused.to_string(),
@@ -321,11 +323,12 @@ impl Projects {
                 let _ = check;
                 MainCheck::Pending
             }
+            VerifyPoll::Unread { check, detail } => return Err(Failure::task(&check, detail)),
         })
     }
 
     /// Required check runs on a commit (B35, B44), read at most once per
-    /// `ci_poll_every` while they are pending.
+    /// `ci_poll_every` while they decide nothing.
     fn checks(&mut self, factory: &Factory, sha: &str) -> Result<MainCheck, Failure> {
         if self
             .ci_pending
@@ -334,8 +337,10 @@ impl Projects {
         {
             return Ok(MainCheck::Pending);
         }
-        let answer = self.read_checks(factory, sha)?;
-        if answer == MainCheck::Pending {
+        // A read that decided nothing, an error included, waits out the
+        // same interval before GitHub is asked again.
+        let answer = self.read_checks(factory, sha);
+        if matches!(answer, Ok(MainCheck::Pending) | Err(_)) {
             if self.ci_pending.len() >= CI_PENDING_LIMIT
                 && let Some(oldest) = self
                     .ci_pending
@@ -349,28 +354,46 @@ impl Projects {
         } else {
             self.ci_pending.remove(sha);
         }
-        Ok(answer)
+        answer
     }
 
     fn read_checks(&mut self, factory: &Factory, sha: &str) -> Result<MainCheck, Failure> {
         let repo = repo(factory)?;
-        let value = self.gh_json(
+        let text = self.gh(
             "github.checks",
             FactoryGh::CheckRuns {
                 repo,
                 sha: sha.to_owned(),
             },
         )?;
+        // One run per line; a line that is not a run, such as one the
+        // node's output cap cut, leaves the whole answer unread.
+        let all = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str::<Value>(line)
+                    .ok()
+                    .filter(|run| run["name"].is_string() && run["status"].is_string())
+            })
+            .collect::<Option<Vec<Value>>>()
+            .ok_or_else(|| {
+                Failure::task(
+                    "github.checks",
+                    format!(
+                        "gh answered a line that is not a check run ({} bytes)",
+                        text.len()
+                    ),
+                )
+            })?;
         let required = match &factory.config.verification {
             Verification::Ci { checks } => checks.clone(),
             _ => Vec::new(),
         };
         // Only named checks decide; a Factory that names none never reads a
         // pass from whichever run finished first.
-        let runs: Vec<&Value> = value["check_runs"]
-            .as_array()
-            .into_iter()
-            .flatten()
+        let runs: Vec<&Value> = all
+            .iter()
             .filter(|run| {
                 required
                     .iter()
@@ -1500,7 +1523,10 @@ impl Verifier for SharedProjects {
                         signal,
                         check: "github.checks".into(),
                     },
-                    None => VerifyPoll::Pending,
+                    None => VerifyPoll::Unread {
+                        check: "github.checks".into(),
+                        detail: failure.detail,
+                    },
                 },
             };
         }

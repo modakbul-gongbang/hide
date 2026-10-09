@@ -28,7 +28,7 @@ test("roots stay in one sidebar, open their children in place, and the header's 
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     const parentRow = page.locator(`nav[data-sidebar] [data-pane="${parent}"]`).first();
     const childRow = page.locator(`nav[data-sidebar] [data-pane="${child}"]`);
-    await expect(parentRow).toHaveAttribute("data-waiting", "true", { timeout: 20_000 });
+    await expect(parentRow).toHaveAttribute("data-waiting", "children", { timeout: 20_000 });
     await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
     // Folded, the root wears one mark for its working descendants (B10, B17).
     await expect(childRow).toHaveCount(0);
@@ -37,7 +37,7 @@ test("roots stay in one sidebar, open their children in place, and the header's 
     await setFixtureLifecycle(herdr, child, "idle");
     // An ordinary question keeps the root waiting, never raised, and a quiet child adds no mark.
     await expect(parentRow.locator("[data-descendant-mark]")).toHaveCount(0, { timeout: 20_000 });
-    await expect(parentRow).toHaveAttribute("data-waiting", "true");
+    await expect(parentRow).toHaveAttribute("data-waiting", "children");
     await expect(page.locator('[data-raised-group="needs_you"]')).toHaveCount(0);
 
     // Right opens the root in place and Left folds it (B15).

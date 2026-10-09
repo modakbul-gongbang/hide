@@ -173,7 +173,7 @@ pub(crate) fn of(
     let Some(agent) = agent else {
         return Header::default();
     };
-    let demand = matches!(tag, Some(Tag::Approval | Tag::Answer));
+    let demand = matches!(tag, Some(Tag::Approval | Tag::Answer | Tag::Blocked));
     if !demand && let Some(lead) = agent.raised.first() {
         return Header {
             working: false,
@@ -198,6 +198,7 @@ pub(crate) fn of(
     let (kind, tone, action) = match tag {
         Some(Tag::Approval) => ("approval", "warning", None),
         Some(Tag::Answer) => ("answer", "warning", None),
+        Some(Tag::Blocked) => ("blocked", "warning", None),
         Some(Tag::Fix) => ("fix", "error", duty.map(action)),
         Some(Tag::Review) => {
             let action = duty.map(action);
@@ -255,6 +256,7 @@ pub(crate) fn of(
 enum Tag {
     Answer,
     Approval,
+    Blocked,
     Fix,
     Review,
     Merge,
@@ -271,6 +273,7 @@ fn task_kind(agent: &SidebarAgentSnapshot) -> Tag {
             Some(Verb::Approval) => Tag::Approval,
             _ => Tag::Answer,
         },
+        RequestVerb::Blocked => Tag::Blocked,
         RequestVerb::Fix => Tag::Fix,
         RequestVerb::Review => {
             let mut duties = agent
