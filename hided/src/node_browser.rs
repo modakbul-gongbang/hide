@@ -118,6 +118,13 @@ impl NodeBrowser {
             }
         }
         let (http, ws) = self.control.gateway_capability(scope).map_err(failed)?;
+        // A link that ended while the gateway was asked may already have
+        // had everything revoked, which this capability missed. One that
+        // ends after this look is revoked after the capability was issued.
+        if !self.answering(generation) {
+            self.control.revoke_all();
+            return Err(unanswered());
+        }
         let Some(display_id) = display_id.filter(|_| relay) else {
             return Ok(json!({"cdp_http_url": http, "browser_ws_url": ws}));
         };
@@ -125,6 +132,8 @@ impl NodeBrowser {
         if !self.answering(generation) {
             return Err(unanswered());
         }
+        // Another question took the last room meanwhile: this capability
+        // is never handed out and goes with the link's revocation.
         if !self.room(&mut tickets) {
             return Err("browser_relay_limit".to_owned());
         }
