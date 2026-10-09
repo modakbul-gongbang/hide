@@ -210,6 +210,7 @@ impl SleepRecord {
             progress: self.progress.clone(),
             expected_reply: None,
             question: false,
+            blocked: false,
         });
         // Any other key is Herdr's padded sequence, which the sequence below
         // reproduces.
@@ -523,9 +524,11 @@ mod tests {
         SidebarAgentSnapshot {
             state: Default::default(),
             resolved: None,
-            resolved_today: false,
+            resolved_recent: false,
             escalation: None,
-            raised_children: Vec::new(),
+            raised: Vec::new(),
+            descendant_mark: None,
+            descendant_line: None,
             id: pane_id.to_owned(),
             herdr_name: None,
             pane_id: pane_id.to_owned(),
@@ -563,7 +566,7 @@ mod tests {
             delegated: false,
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
             direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
-            waiting_on_descendants: false,
+            wait: None,
             descendant_signals: std::collections::BTreeSet::new(),
             lineage_parent_pane_id: None,
             lineage_path_pane_ids: Vec::new(),
@@ -580,6 +583,7 @@ mod tests {
             lineage_collapsed: false,
             sleep: None,
             row_facts: None,
+            reply_wait: false,
             request: None,
         }
     }

@@ -241,6 +241,33 @@ pub fn judgment_language_rule(language: Language) -> String {
     )
 }
 
+/// What the engine tells a person in the Task's activity, in their language.
+#[derive(Clone, Copy, Debug)]
+pub enum Noted<'a> {
+    /// A verification's answer could not be read three times in a row.
+    VerifyUnread { check: &'a str, detail: &'a str },
+}
+
+pub fn noted(language: Language, note: Noted<'_>) -> String {
+    use Language::*;
+    match note {
+        Noted::VerifyUnread { check, detail } => match language {
+            English => format!(
+                "The verification result could not be read, so verification has not finished ({check}): {detail}. It continues as soon as it can be read."
+            ),
+            Korean => format!(
+                "검증 결과를 읽지 못해 검증이 끝나지 않습니다 ({check}): {detail}. 읽히는 대로 이어집니다."
+            ),
+            SimplifiedChinese => {
+                format!("无法读取验证结果，验证尚未结束（{check}）：{detail}。一旦能读取就会继续。")
+            }
+            Japanese => format!(
+                "検証結果を読めないため検証が終わっていません（{check}）: {detail}。読めしだい続けます。"
+            ),
+        },
+    }
+}
+
 /// A decision Factory AI made that the engine records in its own words,
 /// shown on the Task page as Factory AI's (B36).
 #[derive(Clone, Copy, Debug)]

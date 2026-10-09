@@ -73,6 +73,8 @@
   --color-pr-open: var(--pr-open);
   --color-pr-merged: var(--pr-merged);
   --color-pr-closed: var(--pr-closed);
+  --color-pr-pending: var(--pr-pending);
+  --color-lineage-rail: var(--lineage-rail);
   --color-pr-draft: var(--pr-draft);
   --color-diff-added: var(--diff-added);
   --color-diff-removed: var(--diff-removed);
@@ -202,6 +204,8 @@
   --size-checkout-metadata-inset: 22px;
   --size-lineage-indent: 18px;
   --size-lineage-chevron: 16px;
+  --size-lineage-rail-x: 8px;
+  --size-lineage-departure-y: 18px;
   --size-worktree-dialog: 440px;
   --size-tab-preferred: 180px;
   --size-tab-title-min: 104px;
@@ -339,6 +343,8 @@
   --pr-open: #1a7f37;
   --pr-merged: #8250df;
   --pr-closed: #cf222e;
+  --pr-pending: #bf8700;
+  --lineage-rail: #c9c9ce;
   --pr-draft: #6e7781;
   --diff-added: #15803d;
   --diff-removed: #d62323;
@@ -412,6 +418,8 @@
   --pr-open: #3fb950;
   --pr-merged: #a371f7;
   --pr-closed: #f85149;
+  --pr-pending: #d29922;
+  --lineage-rail: #55585e;
   --pr-draft: #9198a1;
   --diff-added: #5ee69e;
   --diff-removed: #ff595c;

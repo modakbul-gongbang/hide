@@ -177,6 +177,13 @@ fn graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor() {
     leaf.symbol = "✓".into();
     leaf.lineage_parent_pane_id = Some("child".into());
     agents.push(leaf);
+    for (pane, symbol) in [("blocked", "\u{25b2}"), ("stopped", "\u{25d0}")] {
+        let mut hidden = agents[1].clone();
+        hidden.pane_id = pane.into();
+        hidden.symbol = symbol.into();
+        hidden.lineage_parent_pane_id = Some("child".into());
+        agents.push(hidden);
+    }
     runtime.snapshot.navigator.agents = agents;
     let mut main = checkout(
         "project",
@@ -189,6 +196,9 @@ fn graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor() {
     let mut leaf = checkout("project", "leaf", "/leaf", Some(pane("leaf", "/leaf")));
     leaf.is_worktree = true;
     leaf.landed = true;
+    leaf.tabs[0]
+        .panes
+        .extend([pane("blocked", "/leaf"), pane("stopped", "/leaf")]);
     let mut project = workspace("project", "Project", "/fixture", vec![main, child, leaf]);
     project.is_git = true;
     runtime.snapshot.navigator.workspaces = vec![project];
@@ -199,6 +209,8 @@ fn graph_folds_count_hidden_marks_on_the_nearest_visible_ancestor() {
     assert_eq!(graph.checkouts["leaf"].fold, Some("cleanup"));
     assert_eq!(graph.tucked[graph.variants[8]]["root"]["idle"], 1);
     assert_eq!(graph.tucked[graph.variants[8]]["root"]["done"], 1);
+    assert_eq!(graph.tucked[graph.variants[8]]["root"]["error"], 1);
+    assert_eq!(graph.tucked[graph.variants[8]]["root"]["stopped"], 1);
     assert_eq!(graph.tucked[graph.variants[12]]["child"]["done"], 1);
     assert!(graph.tucked[graph.variants[15]].is_empty());
     let relations = &runtime.snapshot.navigator.devices[0].agent_scope.relations;
@@ -752,106 +764,6 @@ fn raised_sections_keep_five_questions_three_completions_and_first_number_owner(
     assert!(
         !scope.owners.contains_key("p12"),
         "an agent outside every drawn checkout is not raised or numbered in Projects"
-    );
-}
-
-#[test]
-fn request_work_keeps_current_chips_and_expanded_history_in_source_order() {
-    use crate::request_view::{
-        AgentPullRequestSnapshot, AgentRequestSnapshot, RequestLineSnapshot, RequestSender,
-    };
-    let mut runtime = runtime();
-    let mut agents = rows();
-    let issue = |n: u32, open, closed| crate::tasks::TaskSnapshot {
-        key: format!("github:acme/app#{n}"),
-        source: "github".into(),
-        id: Some(format!("#{n}")),
-        url: None,
-        title: format!("Issue {n}"),
-        open,
-        updated_at_unix_ms: Some(200),
-        created_at_unix_ms: None,
-        closed_at_unix_ms: closed,
-        blocked_by: vec![],
-        sub_issues: None,
-        labels: vec![],
-    };
-    let pull = |n, live, issues: &[u32]| AgentPullRequestSnapshot {
-        number: n,
-        title: format!("PR {n}"),
-        url: format!("https://github.com/acme/app/pull/{n}"),
-        badge: crate::model::PullRequestBadge::Open,
-        checks: PullRequestChecks::None,
-        review: None,
-        head_branch: "feature".into(),
-        closing_issues: issues
-            .iter()
-            .map(|n| {
-                serde_json::from_value(serde_json::json!({"repository":"acme/app","number":n}))
-                    .unwrap()
-            })
-            .collect(),
-        live,
-        duty: false,
-        created: false,
-        settled_at_unix_ms: None,
-    };
-    agents[0].request = Some(AgentRequestSnapshot {
-        verb: crate::agent_state::RequestVerb::Review,
-        verb_since_unix_ms: 100,
-        line: None,
-        end: None,
-        request: Some(RequestLineSnapshot {
-            text: "Next work".into(),
-            cut: false,
-            images: 0,
-            at_unix_ms: 100,
-            sender: RequestSender::Operator,
-        }),
-        later_by: None,
-        reply: None,
-        pull_requests: vec![
-            pull(1, false, &[7]),
-            pull(2, true, &[8]),
-            pull(3, true, &[9, 10, 11, 99]),
-        ],
-    });
-    let mut main = checkout(
-        "project",
-        "main",
-        "/fixture",
-        Some(pane("root", "/fixture")),
-    );
-    main.task_key = Some("github:acme/app#7".into());
-    let mut project = workspace("project", "Project", "/fixture", vec![main]);
-    project.tasks.tasks = vec![
-        issue(7, false, Some(99)),
-        issue(8, false, Some(101)),
-        issue(9, true, None),
-        issue(10, false, None),
-        issue(11, false, Some(100)),
-    ];
-    runtime.snapshot.navigator.workspaces = vec![project];
-    runtime.snapshot.navigator.agents = agents;
-    assert!(runtime.refresh_agent_scopes());
-    let work = &runtime.snapshot.navigator.workspaces[0].agent_scope.work["root"];
-    assert_eq!((work.pull, work.more), (Some(1), 1));
-    assert_eq!(
-        work.issues,
-        [
-            "github:acme/app#8",
-            "github:acme/app#7",
-            "github:acme/app#9",
-            "github:acme/app#10",
-            "github:acme/app#11"
-        ]
-    );
-    assert_eq!(work.issue_chips, ["github:acme/app#8", "github:acme/app#9"]);
-    runtime.snapshot.navigator.workspaces[0].tasks.tasks[1].closed_at_unix_ms = Some(100);
-    assert!(runtime.refresh_agent_scopes());
-    assert_eq!(
-        runtime.snapshot.navigator.workspaces[0].agent_scope.work["root"].issue_chips,
-        ["github:acme/app#9"]
     );
 }
 

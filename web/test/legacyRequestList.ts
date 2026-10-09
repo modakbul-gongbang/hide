@@ -1,4 +1,5 @@
 import type { AgentScope } from "../src/agentScope";
+import type { LegacyScope } from "./legacyAgentScope";
 // Frozen pre-Sessions request view fixture, retained to pin legacy tests over the
 // snapshot: which rows it draws, in which group and order, the Requests tile,
 // and the words each row's lines say. The verb is the core's (D-07); this
@@ -15,10 +16,11 @@ import { parseToken, type LinkTarget } from "../src/terminalLinks";
 // --- groups ------------------------------------------------------------------
 
 /** The verbs that are the operator's to do, the groups the tile counts (D-06). */
-export const TODO_VERBS: readonly RequestVerb[] = ["answer", "fix", "review", "stopped", "result"];
+export const TODO_VERBS: readonly RequestVerb[] = ["answer", "blocked", "fix", "review", "stopped", "result"];
 
 export const VERB_LABEL: Record<RequestVerb, MessageKey> = {
   answer: "requests.verb.answer",
+  blocked: "requests.verb.blocked",
   fix: "requests.verb.fix",
   review: "requests.verb.review",
   stopped: "requests.verb.stopped",
@@ -231,6 +233,7 @@ export function resultLine(row: RequestRow): string {
 const END_LABEL: Record<LabelEnd, MessageKey> = {
   working: "requests.end.working",
   question: "requests.end.question",
+  blocked: "requests.end.blocked",
   done: "requests.end.done",
   waiting: "requests.end.waiting",
   unfinished: "requests.end.unfinished",
@@ -269,7 +272,7 @@ export function childrenSummary(row: RequestRow, t: TFunction<"translation">): {
 
 /** Work membership and current chips are the core's; this file resolves their labels. */
 function workOf(row: RequestRow, project: Workspace) {
-  const work = project.agent_scope.work[row.lens.agent.pane_id];
+  const work = (project.agent_scope as LegacyScope).work[row.lens.agent.pane_id];
   if (!work) throw new Error("Missing core request work for the selected row");
   return work;
 }

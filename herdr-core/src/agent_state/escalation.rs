@@ -136,7 +136,7 @@ pub(crate) fn of(
 /// raises it, however the turn ends. The time is the session's own record,
 /// which the label store keeps across restarts (and reads again for a
 /// device), never this daemon's view of the pane.
-fn took_up_request_after(child: &SidebarAgentSnapshot, at: u64) -> bool {
+pub(crate) fn took_up_request_after(child: &SidebarAgentSnapshot, at: u64) -> bool {
     child.row_facts.as_ref().is_some_and(|facts| {
         [&facts.operator_request, &facts.other_request]
             .into_iter()
@@ -145,13 +145,219 @@ fn took_up_request_after(child: &SidebarAgentSnapshot, at: u64) -> bool {
     })
 }
 
+/// What the operator does about one raised descendant, in the order a root
+/// shows them: an approval first, then an answer, a confirmation, a draft.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verb {
+    Approval,
+    Answer,
+    Confirm,
+    Draft,
+}
+
+impl Cause {
+    /// `ParentBlocked` has no verb: the blocked parent's own approval stands
+    /// for it (a raised child's `ChildBlocked`, or the root's own demand).
+    pub(crate) fn verb(self) -> Option<Verb> {
+        match self {
+            Cause::ChildBlocked => Some(Verb::Approval),
+            Cause::Undelivered | Cause::BellExhausted => Some(Verb::Answer),
+            Cause::ObserverUnconfirmed => Some(Verb::Confirm),
+            Cause::Draft => Some(Verb::Draft),
+            Cause::ParentBlocked => None,
+        }
+    }
+}
+
+/// One raised descendant as its lineage root shows it (docs/status-model.md,
+/// Delegated escalation): the verb, what to do, who asks, where Open goes and
+/// since when. `what` is absent when no label line or letter says it; the
+/// shell then words the verb's own fallback.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct RaisedChild {
+pub struct RaisedAsk {
+    pub verb: Verb,
+    pub what: Option<String>,
+    /// The raised descendant itself, where a tree draws the ask.
+    pub raised_pane_id: String,
+    /// The agent the band names: the raised descendant, or for a draft the
+    /// parent whose input holds it.
     pub pane_id: String,
     pub title: String,
-    pub tag: super::sessions::Tag,
-    pub reason: Option<String>,
+    pub agent_kind: String,
+    /// The pane Open goes to: the raised descendant, or the parent holding a draft.
+    pub open_pane_id: String,
     pub since_unix_ms: Option<u64>,
+    /// For an answer: the parent that has not received the letter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unreceived_by: Option<String>,
+    /// Titles from the root to the agent named, for the name's hover.
+    pub path: Vec<String>,
+    pub checkout: Option<String>,
+    /// The delivery notice already announces this cause (no second push).
+    pub human_notice: bool,
+}
+
+/// Lifts every raised descendant to its lineage root (PRD D-10, D-27): the
+/// root's asks, lead first, and each row's descendant mark. Rows are the
+/// session rows in projection order; `letters` reads a letter's first line.
+pub(crate) fn lift(
+    rows: &mut [SidebarAgentSnapshot],
+    letter_line: impl Fn(&str) -> Option<String>,
+) {
+    use std::collections::HashMap;
+    let index: HashMap<String, usize> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, row)| (row.pane_id.clone(), i))
+        .rev()
+        .collect();
+    let parent_of = |i: usize| -> Option<usize> {
+        rows[i]
+            .lineage_parent_pane_id
+            .as_deref()
+            .and_then(|parent| index.get(parent).copied())
+            .filter(|&p| p != i)
+    };
+    // Ancestors nearest first, bounded by the row count against a cycle.
+    let ancestors = |i: usize| -> Vec<usize> {
+        let mut chain = Vec::new();
+        let mut at = i;
+        while let Some(parent) = parent_of(at) {
+            if chain.contains(&parent) || chain.len() > rows.len() {
+                break;
+            }
+            chain.push(parent);
+            at = parent;
+        }
+        chain
+    };
+    let mut asks: HashMap<usize, Vec<RaisedAsk>> = HashMap::new();
+    let mut raised_below: HashMap<usize, usize> = HashMap::new();
+    let mut working_below: HashMap<usize, usize> = HashMap::new();
+    // The most recently changed working descendant under each ancestor.
+    let mut latest_working: HashMap<usize, usize> = HashMap::new();
+    for i in 0..rows.len() {
+        let chain = ancestors(i);
+        if rows[i].activity == "working" {
+            for &a in &chain {
+                *working_below.entry(a).or_default() += 1;
+                let latest = latest_working.entry(a).or_insert(i);
+                if rows[i].changed_at_unix_ms > rows[*latest].changed_at_unix_ms {
+                    *latest = i;
+                }
+            }
+        }
+        let Some(escalation) = rows[i].escalation.as_ref() else {
+            continue;
+        };
+        let Some(verb) = escalation.cause.verb() else {
+            continue;
+        };
+        // A child blocked on a native question asks for an answer, as its own
+        // row does (`turn::demand_verb`), not for an approval.
+        let verb = match escalation.cause {
+            Cause::ChildBlocked => super::turn::demand_verb(&rows[i]).unwrap_or(verb),
+            _ => verb,
+        };
+        let Some(&root) = chain.last() else {
+            continue;
+        };
+        for &a in &chain {
+            *raised_below.entry(a).or_default() += 1;
+        }
+        let row = &rows[i];
+        let parent = chain.first().map(|&p| &rows[p]);
+        let named = if verb == Verb::Draft {
+            parent.unwrap_or(row)
+        } else {
+            row
+        };
+        let label_line = |row: &SidebarAgentSnapshot| {
+            row.request
+                .as_ref()
+                .and_then(|request| request.line.clone())
+                .or_else(|| row.progress.clone())
+        };
+        let what = match verb {
+            Verb::Approval | Verb::Confirm => label_line(row),
+            Verb::Answer if escalation.cause == Cause::ChildBlocked => {
+                row.detail.clone().or_else(|| label_line(row))
+            }
+            Verb::Answer => escalation.letter_id.as_deref().and_then(&letter_line),
+            Verb::Draft => None,
+        };
+        let named_at = index[&named.pane_id];
+        let path = ancestors(named_at)
+            .iter()
+            .rev()
+            .map(|&a| rows[a].identity_label.clone())
+            .chain(std::iter::once(named.identity_label.clone()))
+            .collect();
+        asks.entry(root).or_default().push(RaisedAsk {
+            verb,
+            what,
+            raised_pane_id: row.pane_id.clone(),
+            pane_id: named.pane_id.clone(),
+            title: named.identity_label.clone(),
+            agent_kind: named.agent_kind.clone(),
+            open_pane_id: named.pane_id.clone(),
+            since_unix_ms: escalation.since_unix_ms,
+            // Only a letter can wait unreceived; a child's own native
+            // question was never sent to its parent.
+            unreceived_by: (verb == Verb::Answer && escalation.cause != Cause::ChildBlocked)
+                .then(|| parent.map(|p| p.identity_label.clone()))
+                .flatten(),
+            path,
+            checkout: named.checkout_label.clone(),
+            human_notice: escalation.human_notice,
+        });
+    }
+    let working_lines: HashMap<usize, Option<String>> = latest_working
+        .into_iter()
+        .map(|(a, i)| {
+            let row = &rows[i];
+            (
+                a,
+                row.request
+                    .as_ref()
+                    .and_then(|request| request.line.clone())
+                    .or_else(|| row.progress.clone()),
+            )
+        })
+        .collect();
+    for (i, row) in rows.iter_mut().enumerate() {
+        row.descendant_line = working_lines.get(&i).cloned().flatten();
+        let mut raised = asks.remove(&i).unwrap_or_default();
+        raised.sort_by_key(|ask| (ask.verb, ask.since_unix_ms));
+        row.raised = raised;
+        row.descendant_mark = match (raised_below.get(&i), working_below.get(&i)) {
+            (Some(&count), _) => Some(DescendantMark {
+                kind: MarkKind::Raised,
+                count,
+            }),
+            (None, Some(&count)) => Some(DescendantMark {
+                kind: MarkKind::Working,
+                count,
+            }),
+            (None, None) => None,
+        };
+    }
+}
+
+/// The one mark a folded parent wears for its descendants (PRD D-40): the
+/// raised ones if any, else the working ones, else none.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct DescendantMark {
+    pub kind: MarkKind,
+    pub count: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarkKind {
+    Raised,
+    Working,
 }
 
 #[cfg(test)]
@@ -172,6 +378,91 @@ mod tests {
         row.lineage_session = Some("child-session".into());
         row.declared_parent_session = Some("parent-session".into());
         row
+    }
+
+    /// A root, its child and a grandchild the given cause raised, as `lift` reads them.
+    fn raised_lineage(cause: Cause) -> Vec<SidebarAgentSnapshot> {
+        let mut root = child();
+        root.pane_id = "root".into();
+        root.identity_label = "Root".into();
+        root.delegated = false;
+        root.lineage_parent_pane_id = None;
+        let mut middle = child();
+        middle.pane_id = "middle".into();
+        middle.identity_label = "Middle".into();
+        middle.lineage_parent_pane_id = Some("root".into());
+        let mut raised = child();
+        raised.pane_id = "raised".into();
+        raised.identity_label = "Raised".into();
+        raised.lineage_parent_pane_id = Some("middle".into());
+        raised.escalation = Some(Escalation {
+            cause,
+            letter_id: None,
+            since_unix_ms: Some(10),
+            human_notice: false,
+        });
+        vec![root, middle, raised]
+    }
+
+    // agent-hierarchy-screens B3: a descendant blocked on a native question
+    // asks the operator to answer it, in its own words.
+    #[test]
+    fn a_descendant_blocked_on_a_native_question_is_lifted_as_an_answer() {
+        let mut rows = raised_lineage(Cause::ChildBlocked);
+        rows[2].blocked = true;
+        rows[2].demand = "question".into();
+        rows[2].detail = Some("Keep the old stdin path?".into());
+        rows[2].user_turn = Some(hide_session::turns::UserTurnFact {
+            kind: hide_session::turns::UserTurnKind::Question,
+            content: None,
+        });
+        lift(&mut rows, |_| None);
+        let ask = &rows[0].raised[0];
+        assert_eq!(ask.verb, Verb::Answer);
+        assert_eq!(ask.what.as_deref(), Some("Keep the old stdin path?"));
+        assert_eq!(ask.path, ["Root", "Middle", "Raised"]);
+        assert_eq!(ask.unreceived_by, None);
+    }
+
+    // B1 with agent-blocked-state B2: once its own block is read, a root that
+    // waits on its children asks the raised approval, in the warning colour.
+    #[test]
+    fn a_read_block_on_a_waiting_root_gives_way_to_the_raised_ask() {
+        let mut rows = raised_lineage(Cause::ChildBlocked);
+        rows[2].blocked = true;
+        rows[0].demand = "error".into();
+        rows[0].unread = false;
+        rows[0].group = "needs_you".into();
+        rows[0].wait = Some(crate::model::AgentWait::Children);
+        lift(&mut rows, |_| None);
+        assert_eq!(super::super::turn::demand_verb(&rows[0]), None);
+        let state = super::super::turn::row_state(&rows[0]);
+        assert_eq!(state.ask.map(|ask| ask.verb), Some(Verb::Approval));
+        assert_eq!(state.mark_tone.kind, "warning");
+    }
+
+    // B3, B6: a blocked menu stays an approval; a draft names and opens the
+    // parent holding it, while the tree still draws it on the raised row.
+    #[test]
+    fn a_blocked_menu_is_an_approval_and_a_draft_opens_the_parent_holding_it() {
+        let mut rows = raised_lineage(Cause::ChildBlocked);
+        rows[2].blocked = true;
+        lift(&mut rows, |_| None);
+        assert_eq!(rows[0].raised[0].verb, Verb::Approval);
+
+        let mut rows = raised_lineage(Cause::Draft);
+        lift(&mut rows, |_| None);
+        let ask = &rows[0].raised[0];
+        assert_eq!(ask.verb, Verb::Draft);
+        assert_eq!(
+            (
+                ask.raised_pane_id.as_str(),
+                ask.pane_id.as_str(),
+                ask.open_pane_id.as_str()
+            ),
+            ("raised", "middle", "middle")
+        );
+        assert_eq!(ask.path, ["Root", "Middle"]);
     }
 
     fn actor(pane: &str) -> Actor {
@@ -413,5 +704,48 @@ mod tests {
             of(&child, None, &BTreeMap::new()).unwrap().cause,
             Cause::ChildBlocked
         );
+    }
+
+    #[test]
+    fn a_reply_is_awaited_until_answered_overdue_or_from_another_session() {
+        let mut ledger = Ledger::default();
+        mailbox::send(
+            &mut ledger,
+            &actor("child"),
+            &actor("parent"),
+            "request",
+            "question",
+            "request",
+            None,
+            100,
+        )
+        .unwrap();
+        let id = ledger.letters[0].id.clone();
+        let session = Some("child-session");
+        assert_eq!(ledger.reply_awaited_since("child", session, 200), Some(100));
+        assert_eq!(
+            ledger.reply_awaited_since("child", Some("older"), 200),
+            None
+        );
+        assert_eq!(ledger.reply_awaited_since("child", None, 200), None);
+        assert_eq!(
+            ledger.reply_awaited_since("parent", Some("parent-session"), 200),
+            None
+        );
+        let late = 100 + crate::delivery::ANSWER_WAIT_MS;
+        assert_eq!(ledger.reply_awaited_since("child", session, late), None);
+        mailbox::apply(
+            &mut ledger,
+            &actor("parent"),
+            None,
+            &crate::delivery::Command::Reply {
+                id,
+                intent: "answer".into(),
+                body: "reply".into(),
+            },
+            300,
+        )
+        .unwrap();
+        assert_eq!(ledger.reply_awaited_since("child", session, 400), None);
     }
 }

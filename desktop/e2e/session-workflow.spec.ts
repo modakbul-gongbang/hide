@@ -26,8 +26,9 @@ test("Sessions and raised-child pane bands preserve native terminal geometry in 
     await enterWorkspace(page, "fixture");
     const pane = page.locator(`[data-pane-view="${parent}"]`);
     const host = pane.locator(`[data-terminal-host="${parent}"]`);
-    await expect(pane.locator('[data-pane-header-band="raised_child"]')).toBeVisible({ timeout: 30_000 });
-    await expect(pane.locator("[data-descendant-badge]")).toBeVisible();
+    await expect(pane.locator('[data-pane-header-band="raised"]')).toBeVisible({ timeout: 30_000 });
+    const treeButton = pane.locator(`[data-pane-tree="${parent}"]`);
+    await expect(treeButton).toBeVisible();
     const terminal = await host.boundingBox();
     const facts = { head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: path.resolve(__dirname, "../.."), encoding: "utf8" }).trim(), parent, child, home: run.env.HOME, socket: herdr.socket, state: run.env.HIDE_STATE_DIR, provider: "synthetic agent transcript and lifecycle" };
     for (const theme of ["light", "dark"] as const) {
@@ -37,19 +38,21 @@ test("Sessions and raised-child pane bands preserve native terminal geometry in 
       await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
       await page.keyboard.press("Escape");
       await captureNativeWindow(app, `session-header-${theme}`, { ...facts, terminal });
-      await pane.locator("[data-descendant-badge]").click();
+      await treeButton.click();
       await expect(page.locator(`[data-agent-child="${child}"]`)).toBeVisible();
       await captureNativeWindow(app, `session-children-${theme}`, facts);
       await page.keyboard.press("Escape");
-      await expect(pane.locator("[data-descendant-badge]")).toBeFocused();
+      await expect(treeButton).toBeFocused();
       await page.getByRole("button", { name: "Tools", exact: true }).click();
       await page.locator('[data-tool-tab="agent_sessions"]').click();
-      await expect(page.locator(`[data-session-row="${child}"]`)).toContainText("Approve");
+      // The raised child asks through its root's row (agent-hierarchy-screens B1, B2).
+      await expect(page.locator(`[data-session-group="needs_you"] [data-session-row="${parent}"]`)).toContainText("Approve");
+      await expect(page.locator(`[data-session-row="${child}"]`)).toHaveCount(0);
       await captureNativeWindow(app, `sessions-${theme}`, facts);
       await page.getByRole("button", { name: "Tools", exact: true }).click();
     }
     await setFixtureLifecycle(herdr, child, "working");
-    await expect(pane.locator('[data-pane-header-band="raised_child"]')).toHaveCount(0);
+    await expect(pane.locator('[data-pane-header-band="raised"]')).toHaveCount(0);
     expect(await host.boundingBox()).toEqual(terminal);
     await expect(page.locator(`nav[data-sidebar] [data-pane="${child}"]`)).toHaveCount(0);
     await captureNativeWindow(app, "session-working-restored", { ...facts, terminal });

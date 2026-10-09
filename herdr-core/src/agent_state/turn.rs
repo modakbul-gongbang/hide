@@ -81,6 +81,68 @@ pub struct RowState {
     pub request_todo: bool,
     pub descendant_asking: u32,
     pub request_since: Option<u64>,
+    /// What a Needs You row asks the operator (PRD B2): its own demand, else
+    /// its lead raised descendant; absent outside Needs You.
+    pub ask: Option<Ask>,
+    /// Where the row stands among its siblings in a tree (PRD B11): asking or
+    /// raised (itself or below it), working, finished unread, then the rest.
+    pub tree_rank: u8,
+    /// The row's own PRs (PRD D-18, D-39).
+    pub pr: Option<super::sessions::PrSummary>,
+}
+
+/// A Needs You row's second line: a verb and what to do, nothing else (PRD
+/// D-37). `what` is absent when no label line or letter says it; the shell
+/// then words the verb's own fallback. `more` counts the other asks under
+/// the same root, which only its pane band names.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct Ask {
+    pub verb: super::escalation::Verb,
+    pub what: Option<String>,
+    pub more: usize,
+}
+
+/// The verb of the row's own demand. A native unanswered question also holds
+/// the pane blocked until a reply; only that proven native wait overrides
+/// the approval of a blocked menu. An AI question the operator has read is
+/// no longer a demand (docs/status-model.md, The Sessions tool); a native one
+/// holds until it is answered.
+pub(crate) fn demand_verb(agent: &SidebarAgentSnapshot) -> Option<super::escalation::Verb> {
+    use super::escalation::Verb;
+    let native_question = agent.demand == "question"
+        && agent
+            .user_turn
+            .as_ref()
+            .is_some_and(|turn| turn.kind == hide_session::turns::UserTurnKind::Question);
+    if (agent.blocked || agent.demand == "approval") && !native_question {
+        Some(Verb::Approval)
+    } else if (agent.demand == "error" && agent.unread)
+        || (agent.demand == "question" && (native_question || agent.unread))
+    {
+        Some(Verb::Answer)
+    } else {
+        None
+    }
+}
+
+fn ask_of(agent: &SidebarAgentSnapshot, needs_you: bool) -> Option<Ask> {
+    // A block is not asked of the operator in a verb: its row draws the
+    // cause instead (agent-blocked-state B1).
+    if !needs_you || (agent.demand == "error" && agent.unread) {
+        return None;
+    }
+    if let Some(verb) = demand_verb(agent) {
+        return Some(Ask {
+            verb,
+            what: agent.detail.clone(),
+            more: agent.raised.len(),
+        });
+    }
+    agent.raised.first().map(|lead| Ask {
+        verb: lead.verb,
+        what: lead.what.clone(),
+        more: agent.raised.len() - 1,
+    })
 }
 
 pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
@@ -90,11 +152,15 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
     let asking = matches!(demand, "error" | "question" | "approval");
     let needs_you = group == "needs_you";
     let attention = needs_you || agent.unread;
+    // A raised root waits on its children too, but the raise is the news.
+    let waiting = agent.wait.is_some() && agent.raised.is_empty();
+    // A block draws in the warning colour with the question and the approval;
+    // its own shape, not a red, is what tells the three apart.
     let chip_kind = match demand {
-        "error" => "error",
-        "question" | "approval" => "warning",
-        _ if agent.escalation.is_some() => "warning",
+        "error" | "question" | "approval" => "warning",
+        _ if agent.escalation.is_some() || !agent.raised.is_empty() => "warning",
         _ if activity == "working" => "working",
+        _ if stopped_unfinished(agent) => "subtle",
         _ if activity == "stopped" && agent.emphasized => "success",
         _ => "subtle",
     };
@@ -102,7 +168,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         kind: chip_kind,
         read: asking && !agent.emphasized,
     };
-    let mark_tone = if agent.waiting_on_descendants {
+    let mark_tone = if waiting {
         Tone {
             kind: "working",
             read: false,
@@ -118,6 +184,10 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         .map(|text| {
             let mode = if asking {
                 "request"
+            } else if waiting {
+                // What a waiting row waits for stays on its second line while
+                // it waits, read or not (B12).
+                "waiting"
             } else if agent.unread {
                 "news"
             } else {
@@ -132,6 +202,10 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
                         kind: "news",
                         read: false,
                     },
+                    "waiting" => Tone {
+                        kind: "subtle",
+                        read: false,
+                    },
                     _ => Tone {
                         kind: "subtle",
                         read: false,
@@ -139,22 +213,21 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
                 },
             }
         });
-    if let Some(child) = agent.raised_children.first() {
+    if super::axes::wake_vanished(agent) {
+        // The sentence is the web's, in the operator's language: the core
+        // says only that the work it waited for is gone.
         line = Some(RowLine {
-            text: child.reason.as_ref().map_or_else(
-                || format!("↳ {}", child.title),
-                |reason| format!("↳ {}: {reason}", child.title),
-            ),
-            mode: "raised_child",
+            text: String::new(),
+            mode: "vanished",
             tone: Tone {
-                kind: "warning",
+                kind: "subtle",
                 read: false,
             },
         });
     }
     let bucket = if needs_you || group == "done" {
         "turn"
-    } else if agent.waiting_on_descendants {
+    } else if waiting {
         "delegating"
     } else if group == "working" {
         "working"
@@ -162,9 +235,9 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         "resting"
     };
     let counts = agent.descendant_counts;
-    let waits_on_children = agent.waiting_on_descendants
-        || counts.working + counts.question + counts.approval + counts.error > 0;
-    let working = group == "working" || agent.waiting_on_descendants;
+    let waits_on_children =
+        waiting || counts.working + counts.question + counts.approval + counts.error > 0;
+    let working = group == "working" || waiting;
     let verb = agent
         .request
         .as_ref()
@@ -177,13 +250,14 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
     let request_todo = matches!(
         verb,
         RequestVerb::Answer
+            | RequestVerb::Blocked
             | RequestVerb::Fix
             | RequestVerb::Review
             | RequestVerb::Stopped
             | RequestVerb::Result
     );
     RowState {
-        session: super::sessions::row(agent, verb),
+        session: super::sessions::row(agent),
         attention,
         needs_you,
         root: !agent.delegated,
@@ -235,7 +309,6 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             "rest"
         },
         search_tone: match chip_kind {
-            "error" => "failed",
             "warning" => "attention",
             "working" => "working",
             "success" => "done",
@@ -247,7 +320,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             "waiting"
         } else if activity == "working" {
             "working"
-        } else if agent.unread && agent.symbol == "✓" {
+        } else if agent.unread && (agent.symbol == "✓" || agent.symbol == "\u{25d0}") {
             "unread"
         } else {
             "quiet"
@@ -269,8 +342,11 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         verb,
         request_todo,
         descendant_asking: agent.descendant_counts.question + agent.descendant_counts.approval,
-        request_since: if let Some(escalation) = &agent.escalation {
-            escalation.since_unix_ms
+        request_since: if needs_you
+            && demand_verb(agent).is_none()
+            && let Some(lead) = agent.raised.first()
+        {
+            lead.since_unix_ms
         } else if request_todo {
             agent
                 .request
@@ -279,6 +355,23 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         } else {
             agent.changed_at_unix_ms
         },
+        ask: ask_of(agent, needs_you),
+        tree_rank: if asking
+            || agent.escalation.is_some()
+            || !agent.raised.is_empty()
+            || agent
+                .descendant_mark
+                .is_some_and(|mark| mark.kind == super::escalation::MarkKind::Raised)
+        {
+            0
+        } else if activity == "working" || waiting {
+            1
+        } else if agent.symbol == "✓" || agent.symbol == "\u{25d0}" {
+            2
+        } else {
+            3
+        },
+        pr: super::sessions::own_prs(agent),
     }
 }
 
@@ -324,7 +417,6 @@ pub(crate) fn rest_refusal(agent: &SidebarAgentSnapshot) -> Option<&'static str>
         None
     }
 }
-use crate::labels::analysis::LabelEnd;
 use crate::model::{AgentStatusCode, PullRequestChecks, SidebarAgentSnapshot};
 use crate::request_view::AgentPullRequestSnapshot;
 use serde::{Deserialize, Serialize};
@@ -363,12 +455,13 @@ impl AgentGroup {
 
 /// The group a row belongs to, given who owns it.
 ///
-/// `waiting_on_descendants` is the lineage pass's answer for a root that is
-/// quiet itself while a descendant is still busy: such a row has not
-/// finished, so it sits in Working, and it reaches Done only once it and
-/// every descendant are quiet (sidebar-agent-status D-01). Its own unread
-/// demand or a blocked prompt still wins, because the flag is only ever set
-/// on a row with no demand of its own.
+/// `waiting` is the answer for a row that is quiet itself while something it
+/// started is still going: a busy descendant, a background job, a request
+/// awaiting its reply. Such a row has not finished, so it sits in Working,
+/// and it reaches Done only once nothing is left to wait on
+/// (sidebar-agent-status D-01). Its own unread demand or a blocked prompt
+/// still wins, because the flag is only ever set on a row with no demand of
+/// its own.
 pub fn agent_group_for(
     demand: AgentDemand,
     activity: AgentActivity,
@@ -376,12 +469,12 @@ pub fn agent_group_for(
     unread: bool,
     blocked: bool,
     ownership: Ownership,
-    waiting_on_descendants: bool,
+    waiting: bool,
 ) -> AgentGroup {
     if ownership == Ownership::Delegated {
         // The row keeps its own mark and status word; only its claim on the
         // operator's attention is withheld.
-        return if activity == AgentActivity::Working {
+        return if activity == AgentActivity::Working || waiting {
             AgentGroup::Working
         } else {
             AgentGroup::Seen
@@ -389,7 +482,7 @@ pub fn agent_group_for(
     }
     if blocked || (demand != AgentDemand::None && unread) {
         AgentGroup::NeedsYou
-    } else if waiting_on_descendants {
+    } else if waiting {
         AgentGroup::Working
     } else if demand == AgentDemand::None
         && activity == AgentActivity::Stopped
@@ -421,8 +514,8 @@ pub(crate) fn dormant_group() -> AgentGroup {
 /// The one short word a row shows. A reported completion the operator has not
 /// read is `Done`; an ordinary stopped pane and a read completion are `Idle`.
 /// No view ever shows an axis value, so nothing underscored can reach the
-/// screen.
-/// The status word of a root waiting on its children.
+/// screen. A waiting row (`Waiting`) and one the label read as not finished
+/// (`Stopped`) are decided by the caller, which knows the rest of the row.
 pub(crate) fn agent_status_code(
     demand: AgentDemand,
     activity: AgentActivity,
@@ -533,7 +626,7 @@ pub fn group_of(agent: &SidebarAgentSnapshot) -> AgentGroup {
         unread,
         agent.blocked,
         ownership_of(agent),
-        agent.waiting_on_descendants,
+        agent.wait.is_some(),
     )
 }
 
@@ -543,7 +636,7 @@ pub fn group_of(agent: &SidebarAgentSnapshot) -> AgentGroup {
 /// describe a different read state than the row they sit on.
 pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     let (demand, activity, unread) = axes_of(agent);
-    let waiting = agent.waiting_on_descendants;
+    let waiting = agent.wait.is_some();
     let group = agent_group_for(
         demand,
         activity,
@@ -553,7 +646,7 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
         ownership_of(agent),
         waiting,
     );
-    let group = if agent.escalation.is_some() {
+    let group = if !agent.raised.is_empty() {
         AgentGroup::NeedsYou
     } else {
         group
@@ -563,8 +656,10 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     // A row the operator still has to deal with is drawn bright; everything
     // already read or merely running is subdued.
     agent.emphasized = matches!(group, AgentGroup::NeedsYou | AgentGroup::Done);
-    agent.status_code = if waiting {
+    agent.status_code = if waiting && agent.raised.is_empty() {
         AgentStatusCode::Waiting
+    } else if stopped_unfinished(agent) {
+        AgentStatusCode::Stopped
     } else {
         agent_status_code(demand, activity, agent.completed, unread)
     };
@@ -601,11 +696,16 @@ pub fn rederive(agent: &mut SidebarAgentSnapshot) {
 pub enum RequestVerb {
     /// A question or an approval waits on the operator.
     Answer,
+    /// The agent stopped and named what stopped it; clearing it is the
+    /// operator's. It follows `Answer` (D-07).
+    Blocked,
     /// A pull request's checks failed.
     Fix,
     /// A pull request is ready to review or merge.
     Review,
-    /// The agent stopped before its work was done (AI `unfinished`).
+    /// The agent stopped before its work was done and nothing is left to
+    /// wake it: an AI `unfinished`, a `waiting` the session cannot prove, or
+    /// a block the operator has already read.
     Stopped,
     /// A finished turn, or a pull request settled since the last request,
     /// the operator has not looked at.
@@ -622,8 +722,11 @@ pub(crate) fn verb_of(
     pull_requests: &[AgentPullRequestSnapshot],
     result_opened: Option<u64>,
 ) -> RequestVerb {
-    if row.blocked || (row.demand == "question" && row.unread) || row.demand == "error" {
+    if row.blocked || (row.demand == "question" && row.unread) {
         return RequestVerb::Answer;
+    }
+    if row.demand == "error" && row.unread {
+        return RequestVerb::Blocked;
     }
     if row.activity == "working" {
         return RequestVerb::Working;
@@ -648,10 +751,10 @@ pub(crate) fn verb_of(
     ]) {
         return RequestVerb::Review;
     }
-    // Only the label analysis reads a turn as unfinished (D-33); a row
-    // without one never stops here.
-    let end = row.row_facts.as_ref().and_then(|facts| facts.end);
-    if end == Some(LabelEnd::Unfinished) && !row.waiting_on_descendants {
+    // Only the label analysis reads a turn as not finished (D-33); a row
+    // without one never stops here. A block the operator has read stops here
+    // too, keeping its cause.
+    if stopped_unfinished(row) || row.demand == "error" {
         return RequestVerb::Stopped;
     }
     if open(&[PullRequestChecks::Pending]) {
@@ -669,7 +772,7 @@ pub(crate) fn verb_of(
     {
         return RequestVerb::Result;
     }
-    if row.waiting_on_descendants || end == Some(LabelEnd::Waiting) {
+    if row.wait.is_some() {
         return RequestVerb::Waiting;
     }
     RequestVerb::Idle
@@ -747,9 +850,10 @@ pub mod push {
         pub place: String,
     }
 
-    /// Root rows and escalated children use their core group. Ordinary child
-    /// questions stay with their parent. Existing human delivery notices own
-    /// undelivered-letter and unconfirmed-watch notifications.
+    /// Root rows use their core group, which a raised descendant already moved
+    /// to Needs You; a delegated row never notifies on its own (PRD B9).
+    /// Existing human delivery notices own undelivered-letter and
+    /// unconfirmed-watch notifications.
     fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, String, String)> {
         let mut roots: BTreeMap<AgentKey, (Effective, String, String)> = BTreeMap::new();
         for agent in projection.agents() {
@@ -758,9 +862,9 @@ pub mod push {
                 .as_deref()
                 .map(|place| place.split(" · ").next().unwrap_or(place).to_owned())
                 .unwrap_or_default();
-            let state = if agent.root_pane_id != agent.pane_id && !agent.escalated {
-                // Still present, but no longer the operator's responsibility:
-                // clear its previous escalation without a disappearance grace.
+            let state = if agent.root_pane_id != agent.pane_id {
+                // Its root carries any raise; clear a delegated row's previous
+                // state without a disappearance grace.
                 Effective::Seen
             } else if agent.human_notice {
                 Effective::Other
@@ -865,6 +969,46 @@ mod row_tests {
         project_agents(payload).agents.remove(0)
     }
 
+    // A root whose own AI question was read, with a raised descendant, asks
+    // the descendant's ask, not its read question; a native question holds
+    // until answered.
+    #[test]
+    fn a_read_ai_question_is_no_demand_while_a_native_one_still_is() {
+        use super::super::escalation::Verb;
+        let mut agent = row();
+        agent.demand = "question".into();
+        agent.unread = true;
+        assert_eq!(demand_verb(&agent), Some(Verb::Answer));
+        agent.unread = false;
+        assert_eq!(demand_verb(&agent), None);
+        agent.user_turn = Some(hide_session::turns::UserTurnFact {
+            kind: hide_session::turns::UserTurnKind::Question,
+            content: None,
+        });
+        assert_eq!(demand_verb(&agent), Some(Verb::Answer));
+    }
+
+    // agent-blocked-state B1 with agent-hierarchy-screens B14: a block in
+    // Needs You is asked in no verb; its row and Sessions line carry the cause.
+    #[test]
+    fn a_block_in_needs_you_has_no_ask_and_its_cause_is_the_line() {
+        let mut agent = row();
+        agent.demand = "error".into();
+        agent.group = "needs_you".into();
+        agent.unread = true;
+        agent.detail = Some("디스크가 가득 차 멈췄어요".into());
+        let state = row_state(&agent);
+        assert_eq!(state.ask, None);
+        assert_eq!(
+            state.line.map(|line| (line.text, line.mode)),
+            Some(("디스크가 가득 차 멈췄어요".to_owned(), "request"))
+        );
+        assert_eq!(
+            super::super::sessions::row(&agent).line.as_deref(),
+            Some("디스크가 가득 차 멈췄어요")
+        );
+    }
+
     #[test]
     fn read_question_keeps_its_request_line_and_hue_without_operator_attention() {
         let mut agent = row();
@@ -915,7 +1059,7 @@ mod row_tests {
         agent.activity = "stopped".into();
         agent.emphasized = false;
         agent.unread = false;
-        agent.waiting_on_descendants = true;
+        agent.wait = Some(crate::model::AgentWait::Children);
         let state = row_state(&agent);
         assert_eq!(state.mark_tone.kind, "working");
         assert_eq!(state.chip_tone.kind, "subtle");
@@ -927,5 +1071,76 @@ mod row_tests {
         assert!(state.working);
         assert!(!state.title_emphasized);
         assert!(state.selection_emphasizes_title);
+    }
+
+    /// B2, B6, B7, D-06: a block the operator has read leaves Needs You and
+    /// keeps its mark and cause dimmed; it counts under its own mark.
+    #[test]
+    fn a_read_block_keeps_its_mark_and_cause_dimmed_in_seen() {
+        let mut agent = row();
+        agent.demand = "error".into();
+        agent.activity = "stopped".into();
+        agent.progress = Some("디스크 여유가 없어 검증을 못 함".into());
+        agent.unread = true;
+        derive_from_axes(&mut agent);
+        assert_eq!(agent.group, "needs_you");
+        assert_eq!(agent.symbol, "\u{25b2}");
+        assert_eq!(agent.state.attention_rank, 0);
+        assert!(!agent.state.chip_tone.read);
+
+        agent.unread = false;
+        derive_from_axes(&mut agent);
+        assert_eq!(agent.group, "seen");
+        assert_eq!(agent.symbol, "\u{25b2}");
+        assert_eq!(agent.status_code, AgentStatusCode::Error);
+        assert_eq!(
+            agent.detail.as_deref(),
+            Some("디스크 여유가 없어 검증을 못 함")
+        );
+        assert_eq!(
+            agent.state.chip_tone,
+            Tone {
+                kind: "warning",
+                read: true
+            }
+        );
+        let mut counts = crate::model::MarkCountsSnapshot::default();
+        RowMark::of(&agent).count_into(&mut counts);
+        assert_eq!((counts.error, counts.stopped), (1, 0));
+    }
+
+    /// B24, D-25: waiting outranks a stop, and a block outranks waiting.
+    #[test]
+    fn precedence_is_a_block_then_waiting_then_a_stop_then_done() {
+        use crate::labels::analysis::LabelEnd;
+        let mut agent = row();
+        agent.activity = "stopped".into();
+        agent.completed = true;
+        agent.unread = true;
+        agent.row_facts = Some(crate::request_view::RowFacts {
+            end: Some(LabelEnd::Unfinished),
+            ..Default::default()
+        });
+        derive_from_axes(&mut agent);
+        assert_eq!(
+            (agent.group.as_str(), agent.symbol.as_str()),
+            ("done", "\u{25d0}")
+        );
+
+        agent.wait = Some(crate::model::AgentWait::Children);
+        derive_from_axes(&mut agent);
+        assert_eq!(
+            (agent.group.as_str(), agent.symbol.as_str()),
+            ("working", "\u{25cb}")
+        );
+        assert_eq!(agent.status_code, AgentStatusCode::Waiting);
+
+        agent.demand = "error".into();
+        agent.wait = None;
+        derive_from_axes(&mut agent);
+        assert_eq!(
+            (agent.group.as_str(), agent.symbol.as_str()),
+            ("needs_you", "\u{25b2}")
+        );
     }
 }

@@ -15,25 +15,28 @@ import { legacyAgentRow } from "./legacyAgentRow";
 // Frozen scope fixture adapter from main 9f144877. Test data only.
 // Assertions keep the old screen values; production reads the core wire.
 import type { AgentScope } from "../src/agentScope";
+import type { RowWork } from "./legacyRequestWork";
 import type { AgentRow, Workspace, Checkout, RequestVerb, SnapshotRest } from "../src/snapshot";
 import type { BoardProject } from "../src/projectBoard";
 import { agentsTile as drawAgentsTile, scopeAgents as drawScopeAgents, type LensAgent } from "../src/overviewLens";
 import { requestRows as drawRequestRows, requestGroups as drawRequestGroups, requestsTile as drawRequestsTile, type RequestRow } from "./legacyRequestList";
 
-const verbs: RequestVerb[] = ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"];
-const todo = verbs.slice(0, 5);
+const verbs: RequestVerb[] = ["answer", "blocked", "fix", "review", "stopped", "result", "working", "waiting", "idle"];
+const todo = verbs.slice(0, 6);
+/** The frozen scope with the retired `work` map the legacy request list still reads. */
+export type LegacyScope = AgentScope & { work: Record<string, RowWork> };
 export function emptyScope(): AgentScope {
-  return { sessions: { closed_prs: [], counts: { my_turn: 0, review_merge: 0, in_progress: 0, resting: 0, resolved_today: 0 }, groups: [] }, overview_needs_you: 0, work: {}, has_working: false, relations: {}, listed: [], places: {}, places_live: false, graph: { cross: {}, attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { counts: { turn: 0, fixing: 0, blocked: 0, review: 0, draft: 0, look: 0 }, rows: [], groups: [], open: 0 }, rows: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, sidebar_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
+  return { sessions: { groups: [] }, overview_needs_you: 0, has_working: false, relations: {}, listed: [], places: {}, places_live: false, graph: { cross: {}, attention: 4, recency: "", checkouts: {}, variants: Array(16).fill(0), tucked: [{}] }, closes: {}, raised: [], owners: {}, badge_total: 0, prs: { counts: { turn: 0, fixing: 0, blocked: 0, review: 0, draft: 0, look: 0 }, rows: [], groups: [], open: 0 }, rows: [], group_rows: [], descendants: {}, children: {}, folded: {}, tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, sidebar_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, global_tree: { rows: [], visible_rows: [], shown: [], more: 0, needs_you: false, turn_kind: null }, total: 0, overview_total: 0, roots: [], groups: { needs_you: 0, done: 0, working: 0, seen: 0 }, marks: { error: 0, approval: 0, question: 0, working: 0, stopped: 0, done: 0, idle: 0 }, sections: [], members: [], buckets: { turn: 0, working: 0, delegating: 0, resting: 0 }, turns: { question: 0, approval: 0, error: 0, done: 0 }, requests: { rows: [], groups: [], counts: Object.fromEntries(verbs.map((verb) => [verb, 0])) as Record<RequestVerb, number>, todo: 0, answer: 0 } };
 }
 
-export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[] = lens.map((l) => l.agent), workers: ReadonlySet<string> = new Set()): AgentScope {
-  const scope = emptyScope();
+export function legacyScope(lens: readonly LensAgent[], all: readonly AgentRow[] = lens.map((l) => l.agent), workers: ReadonlySet<string> = new Set()): LegacyScope {
+  const scope: LegacyScope = { ...emptyScope(), work: {} };
   scope.members = lens.map(({ agent, project, checkout }) => ({ pane_id: agent.pane_id, project_id: project.id, checkout_id: checkout.id }));
   scope.overview_total = lens.length;
   const inScope = new Set(lens.map((l) => l.agent.pane_id));
   const byPane = new Map(all.map((a) => [a.pane_id, a]));
   lens.forEach(({ agent }, member) => {
-    const bucket = agent.group === "needs_you" || agent.group === "done" ? "turn" : agent.waiting_on_descendants ? "delegating" : agent.group === "working" ? "working" : "resting";
+    const bucket = agent.group === "needs_you" || agent.group === "done" ? "turn" : agent.wait ? "delegating" : agent.group === "working" ? "working" : "resting";
     scope.buckets[bucket]++;
     if (agent.group === "done") scope.turns.done++;
     if (agent.group === "needs_you" && ["question", "approval", "error"].includes(agent.demand ?? "")) scope.turns[agent.demand as "question" | "approval" | "error"]++;

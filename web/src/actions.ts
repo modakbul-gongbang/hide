@@ -184,9 +184,10 @@ export function createActions(send: DispatchFn) {
    * older snapshot can never undo a registration that landed after it.
    * Sidebar width is also patch-only: echoing it could undo a completed drag
    * while its snapshot is still in flight. The folds (`collapsed_workspace_ids`,
-   * `expanded_checkout_ids`, `expanded_agent_pane_ids`) are left out for the
-   * same reason: the core owns them through `project_checkouts_fold`,
-   * `checkout_agents_toggle` and `agent_tree_toggle`. The recent lists
+   * `expanded_checkout_ids`, `expanded_agent_pane_ids`,
+   * `sessions_expanded_agent_pane_ids`) are left out for the same reason: the
+   * core owns them through `project_checkouts_fold`, `checkout_agents_toggle`,
+   * `agent_tree_toggle` and `session_tree_toggle`. The recent lists
    * (`recent_checkouts`, `recent_pane_ids`) ride along and the core ignores
    * them, keeping its own. The keyboard's pane, checkout and device are left
    * out too: the core moves them on their own events, and this copy can be
@@ -203,6 +204,7 @@ export function createActions(send: DispatchFn) {
       collapsed_workspace_ids: _projectFolds,
       expanded_checkout_ids: _checkoutFolds,
       expanded_agent_pane_ids: _lineageFolds,
+      sessions_expanded_agent_pane_ids: _sessionFolds,
       selected_pane_id: _pane,
       focused_checkout_id: _checkout,
       focused_device_id: _device,
@@ -215,6 +217,7 @@ export function createActions(send: DispatchFn) {
     void _projectFolds;
     void _checkoutFolds;
     void _lineageFolds;
+    void _sessionFolds;
     void _pane;
     void _checkout;
     void _device;
@@ -1327,7 +1330,7 @@ export function createActions(send: DispatchFn) {
     },
 
     /** A session link retains repository identity even when its maker moved projects. */
-    openSessionPullRequest(pull: {workspace_id: string; url: string; number: number}) {
+    openSessionPullRequest(pull: {workspace_id: string | null; url: string; number: number}) {
       const projects = catalogWorkspaces(rest());
       const project = projects.find((row) => row.id === pull.workspace_id && row.pull_requests?.some((pr) => pr.url === pull.url))
         ?? projects.find((row) => row.pull_requests?.some((pr) => pr.url === pull.url));
@@ -1835,9 +1838,14 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "pane_visit", payload: { pane_id: paneId } });
     },
 
-    /** Folds or unfolds an agent's descendants in the Agents list; the core keeps the choice. */
+    /** Folds or unfolds an agent's children in the sidebar tree; the core keeps the choice. */
     toggleAgentTree(paneId: string) {
       dispatch({ schema_version: 2, kind: "agent_tree_toggle", payload: { pane_id: paneId } });
+    },
+
+    /** Folds or unfolds an agent's children in Sessions, kept apart from the sidebar's (PRD D-25). */
+    toggleSessionTree(paneId: string) {
+      dispatch({ schema_version: 2, kind: "session_tree_toggle", payload: { pane_id: paneId } });
     },
 
     toggleInactiveProjects(deviceId: string) {

@@ -62,7 +62,7 @@ An open card confirmation is confirmed, each unrelated finding becomes an open f
 Every recovery action is turned on, and each Factory's events record `store.migrated`.
 A schema 1 store kept no recovery clock and no GitHub block, so the move writes none: a Task already stopped, a start already held or a GitHub step already refused opens its hold or its block the first time the engine meets that condition after the move, and its clock starts then.
 The engine loads the whole store at start and saves each change before the command that made it answers, so a restart resumes Factories, Tasks, questions, workers and in-flight work.
-A restart starts verification again from the recorded attempt and asks a pending review again.
+A restart starts verification again from the recorded attempt, closes as cancelled any earlier attempt still unfinished, and asks a pending review again.
 A store write that fails does not stop the engine: it is counted, `hide factory status` says how many failed since start, and the host writes each one to the diagnostic log (`store.write_failed`, with the Factory, Task and stage).
 A main recovery the restart cut short is not guessed again, since which merge it was finding or reverting lived only in the old process: it goes to a person with the same choices as a recovery that could not decide.
 The engine opens the store when a store file already exists at start, or on the first command, so a machine that never created a Factory opens nothing.
@@ -219,8 +219,11 @@ The record is registered when needed and converges on the existing one.
 - **Lineage and watch.** The spawn writes lineage and starts a watch whose observer is the Factory.
 
 A worker whose pane exists but whose agent has not shown a session yet is still starting.
-It holds its slot, the Task stays `waiting`, and the same spawn is asked again every 30 seconds.
+It holds its slot, the Task stays `waiting`, and the same spawn is asked again.
+Each ask itself waits up to 5 seconds for the session, so a young start, in its first 30 seconds, is asked again on the next tick and the worker is accepted that soon after its agent shows; a start older than that is more likely waiting on a trust or login prompt and is asked every 30 seconds.
 After 10 minutes the Task gets a `start` to-do in 결정 필요 asking the person to look at the pane, where a trust or login prompt may be waiting; its button is `hide factory resolve start:<task>`, which asks the same spawn again at once, and the to-do goes away when the worker shows a session.
+The starter thread logs why a start has no accepted worker yet as `worker.start_unfinished` (the stage and the reason, such as `native_identity_unavailable`, once per reason), `worker.start_refused` for a start the runtime refused, and `worker.start_accepted` with `waited_ms` once an unfinished start succeeds; a start that works the first time logs nothing.
+A woken worker whose letters are still held logs `worker.wake_waiting` with its reason (`agent_absent`, `agent_asleep` or the delivery's reason), once per reason, and `worker.wake_delivered` when they go out.
 A Codex worker waits for this Mac's install kit to have read the machine since launch: the first start asks the kit to read and reports the worker as still starting.
 
 A start the runtime refuses, other than for an environment signal, stops the Task with the reason "worker start failed" and the runtime's reason (cut at 300 characters) beside it.
@@ -436,11 +439,15 @@ A check's send-back counts like a failed verification.
 Environment failures and merge conflicts do not count.
 `retry` resets the count.
 
-**CI.** The check runs of the worktree's head commit are read on each tick with `gh api`.
+**CI.** The check runs of the worktree's head commit are read with `gh api --paginate`, keeping only each run's name, status, conclusion and link, one line per run.
+A whole run is about 3.5 KB and a node keeps 64 KiB of a command's output, so the full answer of a commit with twenty runs would be cut; a line is about 180 bytes.
+A commit whose read decided nothing is read again after 30 seconds.
 Every named check must have a completed run, and only named checks decide; a commit with no run of a named check yet is pending, never passed.
 `--ci` with no names takes the default branch's required checks from its protection, and `init` and `config ci=` refuse a Factory that would name no check (`ci_checks_required`).
 A completed run passes on `success` or `neutral`, decides nothing on `skipped`, `cancelled` or `stale` (still pending), and fails on any other conclusion with the run's link.
-A GitHub error that carries an environment signal is the environment's; any other read error stays pending.
+A GitHub error that carries an environment signal is the environment's.
+Any other read error, a line that is not a check run among them, is an unread answer: it decides nothing and counts as no failure, the run stays running and is read again, and the third unread answer of a run adds a `note` line to the Task's activity naming what the read answered, in the operator's language, so a read that fails the same way each time is never shown as verifying in silence.
+A verify bundle's poll the node answered in a shape the Factory cannot read is unread the same way.
 
 **Verify bundle.** Bundles run one at a time on the machine, in a queue of at most 256, each command through the shell with its output in the run's log.
 The cap, `verify_timeout_minutes` (60 by default), applies to the whole bundle from its first command, and the command running when it passes fails the run.
@@ -650,7 +657,9 @@ A watch that is slow or fails changes no Task.
 ## Configuration
 
 `hide factory config [--project <path>]` prints the Factory's settings and the machine's worker limit, and `--set <key>=<value>` changes them for the next decision.
-Only an operator may set values, and an invalid key or value answers `config_invalid`.
+`config` is the stored record, which keeps durations in milliseconds and the disk floor in bytes; `settable` prints each of those under the key and in the unit `--set` takes (`disk_floor_gb`, `stall_minutes` and the like).
+Only an operator may set values.
+A value a key does not take answers `config_invalid` naming the key, and a key `--set` does not take answers `config_invalid` with the key and every key it takes (`detail.keys`).
 A Factory's `merge_mode` cannot be `auto` while it has no verification (`auto_needs_verification`).
 
 | Key | Value | Default |
@@ -995,7 +1004,7 @@ The log keeps at most 500 lines for a Factory and 200 for a Task, dropping the o
 | `cleanup_kept` | `worktree`, `detail` | A finished Task's worktree was kept because it holds leftovers. |
 | `watch` | `text`, `action` | The watch saw something, and the action it ran when it named one. |
 | `daily_limit` | `limit` | Factory AI reached the day's cap. |
-| `note` | `text` | A notice from before the log, kept with its words. |
+| `note` | `text` | A notice from before the log, kept with its words, or a verification whose answer could not be read three times. |
 
 **`WorkerLine`**
 
@@ -1012,7 +1021,7 @@ The log keeps at most 500 lines for a Factory and 200 for a Task, dropping the o
 | `number` | Its place in the Task's attempts, from 1, so a run after an environment failure or a cancelled run is the next number; `n/3` counts failures, not attempts. |
 | `stage` | `task` (after `done`) or `pre_merge`. |
 | `started_at` | When it started. |
-| `outcome` | `passed`, `failed`, `environment`, `cancelled` (the run was ended before it answered: the Task went back to its worker, was cancelled or was taken outside) or `running`; only the last attempt can be running. |
+| `outcome` | `passed`, `failed`, `environment`, `cancelled` (the run was ended before it answered: the Task went back to its worker, was cancelled or was taken outside, or a restart found it unfinished behind a later attempt) or `running`; only the last attempt can be running. |
 | `check` | The failing check or command. |
 | `link` | The CI link or the log path. |
 | `log_tail` | The last 4 KiB of a local log. |

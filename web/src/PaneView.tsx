@@ -1,5 +1,5 @@
 import type { TFunction } from "i18next";
-import { CircleAlertIcon, EllipsisIcon, GitPullRequestIcon, Maximize2Icon, MoonIcon, TerminalSquareIcon, XIcon } from "lucide-react";
+import { CircleAlertIcon, EllipsisIcon, Maximize2Icon, MoonIcon, TerminalSquareIcon, XIcon } from "lucide-react";
 import { memo, useEffect, useRef } from "react";
 import type { Actions } from "./actions";
 import { refusalText, submitFiles } from "./attachments";
@@ -7,11 +7,9 @@ import { AgentMark } from "./AgentMark";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
-import { PaneHeaderBand, PaneChildrenBadge } from "./PaneHeaderBand";
-import { ChecksMark } from "./TaskBoards";
-import { cn } from "./lib/utils";
+import { PaneHeaderBand, PanePrChip, PaneTreeButton } from "./PaneHeaderBand";
 import { PaneConnectionChip } from "./PaneConnection";
-import { ReturnToParent, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
+import { AncestorPath, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
 import { chordLabel, commandLabel } from "./shortcutLabels";
 import { keySystem } from "./host";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -295,16 +293,17 @@ export const PaneView = memo(function PaneView({
           paneMenu.openAt(event.clientX, event.clientY);
         }}
       >
-        <ReturnToParent pane={pane} actions={actions} />
+        <AncestorPath pane={pane} actions={actions} />
         {agentKind && markSymbol ? <StatusMark symbol={markSymbol} className={markTone} data-pane-status-mark={markSymbol} /> : null}
         {agentKind ? <AgentMark kind={agentKind} /> : <TerminalSquareIcon className="size-(--size-icon-sm) shrink-0" aria-label={t("agentSessions.shell")} />}
         <Hint label={title} reveals>
-        <span className="min-w-0 flex-1 truncate">
+        <span className="min-w-0 truncate">
           {title}
         </span>
         </Hint>
-        {header?.pull?.kind === "pr" ? <Hint label={`#${header.pull.number}`}><button type="button" className={cn("flex shrink-0 items-center gap-xxs rounded-xs px-xs text-micro outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring", { muted: "text-muted-foreground", warning: "text-warning", error: "text-destructive", success: "text-success", pr: "text-pr-open" }[header.pull.tone])} data-pane-pr={header.pull.number} onClick={() => {if (header.pull?.kind === "pr") actions.openSessionPullRequest(header.pull);}}><GitPullRequestIcon className="size-(--size-icon-sm)" />#{header.pull.number}{(header.pull.checks === "passing" || header.pull.checks === "failed" || header.pull.checks === "pending") ? <ChecksMark checks={header.pull.checks} /> : null}</button></Hint> : null}
-        {agentKind ? <PaneChildrenBadge paneId={paneId} actions={actions} /> : null}
+        {agentKind ? <PanePrChip paneId={paneId} actions={actions} /> : null}
+        {agentKind ? <PaneTreeButton paneId={paneId} actions={actions} /> : null}
+        <span className="flex-1" />
         <PaneConnectionChip pane={pane} actions={actions} local={local} />
         {zoomed ? (
           <Hint label={zoomChord ? t("panes.unzoomChord", { chord: zoomChord }) : t("panes.unzoom")}>

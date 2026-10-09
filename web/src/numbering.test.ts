@@ -143,7 +143,9 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
 it("numbers a plain-folder row even when its project expansion is false", () => {
   // Literal core scope membership, independent of the retired test projector.
   const parent = agent("folder-pane");
-  const scope = { ...emptyScope(), sidebar_tree: { ...emptyScope().sidebar_tree, rows: [{pane_id: parent.pane_id, occurrence: 0, depth: 0, descendants: 0}] } };
+  // The core lists every root in both: `rows` numbers them, `visible_rows` draws them with any opened children.
+  const root = {pane_id: parent.pane_id, occurrence: 0, depth: 0, descendants: 0};
+  const scope = { ...emptyScope(), sidebar_tree: { ...emptyScope().sidebar_tree, rows: [root], visible_rows: [root] } };
   const folder = { ...checkoutWith(["folder-tab"]), id: "folder-checkout", agent_scope: scope };
   const project = { id: "folder", device_id: "local", is_git: false, expanded: false, pinned: false, checkouts: [folder], agent_scope: scope, inactive_checkouts: {expanded: false, checkout_ids: []} } as unknown as Workspace;
   const rest = { navigator: {focused_device_id: "local", workspaces: [project], devices: [{id: "local", kind: "local", agent_scope: scope}]}, status: {remote: []} } as unknown as SnapshotRest;

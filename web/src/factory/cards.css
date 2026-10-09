@@ -18,8 +18,6 @@
 .factory-card-logo > span { width: var(--size-icon); height: var(--size-icon); }
 .factory-card-logo img { padding: 0; }
 .factory-card-action { max-width: 100%; min-width: 0; font-weight: 400; white-space: normal; overflow-wrap: anywhere; height: auto; min-height: var(--size-control-sm); }
-.factory-card [data-descendant-badge] { color: var(--muted-foreground); }
-.factory-card [data-descendant-badge] [data-mark] { color: var(--muted-foreground); }
 .factory-card [data-agent-monogram] { font-weight: 400; }
 .factory-stage-bar { gap: var(--spacing-xxs); }
 .factory-stage-cell { width: var(--spacing-md); height: calc(var(--size-hairline) * 3); background: var(--secondary); }

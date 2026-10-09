@@ -101,7 +101,7 @@ export function agentsTile(scope: AgentScope, availability: DeviceAvailability, 
   const parts = [
     { key: "question", label: t("board.turn.question"), count: scope.turns.question },
     { key: "approval", label: t("overview.approval"), count: scope.turns.approval },
-    { key: "error", label: t("common.error"), count: scope.turns.error },
+    { key: "error", label: t("agents.status.error"), count: scope.turns.error },
     { key: "done", label: t("overview.finished"), count: scope.turns.done },
   ].filter((part) => part.count > 0);
   return {

@@ -1033,6 +1033,10 @@ impl Runtime {
             &mut self.snapshot.ui_state.expanded_agent_pane_ids,
             &session.agents,
             ReadRecordScope::Remote(&prefix),
+        ) | crate::agent_state::prune_lineage_expansion(
+            &mut self.snapshot.ui_state.sessions_expanded_agent_pane_ids,
+            &session.agents,
+            ReadRecordScope::Remote(&prefix),
         );
         crate::agent_state::apply_lineage(
             &mut session.agents,
@@ -2371,6 +2375,30 @@ impl Runtime {
         }
     }
 
+    /// Marks the rows whose session asked for a reply it still waits for. The
+    /// ledger is the only source of that fact, so it is laid here, before the
+    /// lineage counts a delegated child that waits as working.
+    fn lay_reply_waits(&self, agents: &mut [SidebarAgentSnapshot]) {
+        let ledger = self.delivery_ledger.as_ref().ok();
+        let now = unix_milliseconds();
+        for agent in agents {
+            // A turn the session began after the letter went out took the
+            // request up without the reply, so the wait is over.
+            let waits = ledger
+                .and_then(|ledger| {
+                    ledger.reply_awaited_since(
+                        &agent.pane_id,
+                        agent.lineage_session.as_deref(),
+                        now,
+                    )
+                })
+                .is_some_and(|at| {
+                    !crate::agent_state::escalation::took_up_request_after(agent, at)
+                });
+            agent.reply_wait = waits;
+        }
+    }
+
     pub(super) fn refresh_agent_lineage(&mut self) -> bool {
         let before_local = self.snapshot.navigator.agents.clone();
         let before_remote = self
@@ -2441,6 +2469,7 @@ impl Runtime {
             }));
         }
         self.unresolved_machine_lineage = unresolved;
+        self.lay_reply_waits(&mut agents);
         crate::agent_state::apply_lineage(
             &mut agents,
             &workspaces,

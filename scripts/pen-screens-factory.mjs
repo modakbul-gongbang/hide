@@ -782,16 +782,14 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
       ], {gap: '$--spacing-xl', alignItems: 'start'})),
     ]);
   }
-  // A Task that has not started yet, with the worker menu open (B33): the Factory AI's pick is
-  // checked and carries its reason; picking another candidate makes it the person's.
+  // A Task that has not started yet, on the Task page (PRD factory-human-loop B27), with the worker
+  // menu open (B33): the Factory AI's pick is checked and carries its reason; picking another
+  // candidate makes it the person's. The menu sits under the track, where the page puts it.
   function obsPickPage(id) {
     const task = TASKS.t431;
     const inner = MAIN - 2 * GUTTER;
-    const colW = Math.floor((inner - 48) / 2);
-    const left = col(`${id}-left`, [
-      col(`${id}-goal`, [sectionLabel(`${id}-gl`, '목표'), text(`${id}-gt`, 'docs 안의 상대 링크가 모두 열린다.', {size: '$--text-body', width: colW})]),
-      col(`${id}-crit`, [sectionLabel(`${id}-cl`, '완료 조건'), ...['깨진 상대 링크 23개가 맞는 문서를 가리킨다', 'check-doc-links가 docs 전체에서 통과한다'].map((line, i) => bullet(`${id}-d${i}`, null, line, colW))]),
-    ], {gap: '$--spacing-xl', width: colW});
+    const TEXT_W = 760;
+    const pickW = 520;
     const label = w => (w.model ? `${w.agent} · ${w.model} · ${w.effort}` : `${w.agent} · CLI 기본값`);
     const AI_PICK = 2;
     const HOVER = 1;
@@ -800,25 +798,16 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
     const pickItem = (mid, w, i) => themedXref(mid, 'mnu-item-m', label(w), i === HOVER ? {fill: '$--accent'} : {}, {
       'mnu-item-icon': {icon: 'check', enabled: true, fill: i === AI_PICK ? FG : i === HOVER ? '$--accent' : '$--popover'},
       'mnu-item-label': {content: label(w), fill: i === HOVER ? '$--accent-foreground' : FG},
-      'mnu-item-reason': {content: i === AI_PICK ? `${w.when} · Factory AI가 고름` : w.when, enabled: true, textGrowth: 'fixed-width', width: colW - 48},
+      'mnu-item-reason': {content: i === AI_PICK ? `${w.when} · Factory AI가 고름` : w.when, enabled: true, textGrowth: 'fixed-width', width: pickW - 48},
       'mnu-item-shortcut': {enabled: false},
     });
-    const menu = screenMenuContent(`${id}-menu`, colW, [
+    const menu = screenMenuContent(`${id}-menu`, pickW, [
       ...WORKERS.map((w, i) => pickItem(`${id}-mi${i}`, w, i)),
       screenMenuSeparator(`${id}-msep`),
       screenMenuItem(`${id}-mfoot`, '후보는 설정의 작업자에서 바꿉니다', {state: 'disabled'}),
     ]);
-    const right = col(`${id}-right`, [
-      col(`${id}-prog`, [
-        sectionLabel(`${id}-pl`, '진행'),
-        row(`${id}-wk`, [icon(`${id}-wk-g`, 'square-terminal', {size: 14, fill: MUT}), body(`${id}-wk-t`, '작업자'), spacer(`${id}-wk-s`), screenSelect(`${id}-wk-sel`, {content: label(WORKERS[AI_PICK]), width: 240})], {width: colW}),
-        menu,
-        row(`${id}-pick`, [icon(`${id}-pick-g`, 'sparkles', {size: 12, fill: MUT}), cap(`${id}-pick-t`, `Factory AI가 고른 후보: ${WORKERS[AI_PICK].when} · 문서 링크만 고치는 작은 변경`, SUB)], {gap: '$--spacing-xs'}),
-        cap(`${id}-pick-h`, '다른 후보를 고르면 그 후보로 시작하고 Factory AI는 고르지 않습니다', MUT),
-      ], {gap: '$--spacing-sm'}),
-    ], {gap: '$--spacing-xl', width: colW});
-    return frame(`${id}-page`, 'Task page', {width: MAIN, height: 'fill_container', layout: 'vertical', gap: '$--spacing-lg', padding: [14, GUTTER, '$--spacing-lg', GUTTER], clip: true}, [
-      row(`${id}-nav`, [screenButton(`${id}-back`, '보드', {variant: 'ghost', height: controlSm, icon: 'arrow-left'}), spacer(`${id}-ns`)], {width: 'fill_container'}),
+    return frame(`${id}-page`, 'Task page', {width: MAIN, height: 'fill_container', layout: 'vertical', gap: '$--spacing-xl', padding: [14, GUTTER, '$--spacing-xl', GUTTER], clip: true}, [
+      row(`${id}-nav`, [screenButton(`${id}-back`, '라인', {variant: 'ghost', height: controlSm, icon: 'arrow-left'}), spacer(`${id}-ns`)], {width: 'fill_container'}),
       col(`${id}-title`, [
         row(`${id}-tr`, [
           text(`${id}-t`, task.title, {size: '$--text-headline', weight: '600'}),
@@ -826,10 +815,19 @@ export function factoryRows(tokens, {themedXref, screenButton, screenSelect, scr
           spacer(`${id}-ts`),
           screenButton(`${id}-cancel`, '취소', {variant: 'ghost', height: controlSm}),
         ], {gap: '$--spacing-md', width: 'fill_container'}),
-        cap(`${id}-meta`, `${task.id} · herdr-ide · 431-doc-links`),
-      ], {gap: '$--spacing-xs', width: 'fill_container'}),
+        body(`${id}-state`, '작업자 자리를 기다림', {fill: SUB}),
+        row(`${id}-meta`, [taskRef(`${id}-ref`, task.id), cap(`${id}-meta-t`, 'herdr-ide · 431-doc-links')], {gap: '$--spacing-xs', width: 'fill_container'}),
+      ], {gap: 6, width: 'fill_container'}),
+      trackWide(`${id}-track`, 1, MUT, {0: [['ai', '가정 1']]}, 720),
+      col(`${id}-pick`, [
+        row(`${id}-wk`, [icon(`${id}-wk-g`, 'square-terminal', {size: 14, fill: MUT}), body(`${id}-wk-t`, '작업자'), spacer(`${id}-wk-s`), screenSelect(`${id}-wk-sel`, {content: label(WORKERS[AI_PICK]), width: 240})], {width: pickW}),
+        menu,
+        row(`${id}-why`, [icon(`${id}-why-g`, 'sparkles', {size: 12, fill: MUT}), cap(`${id}-why-t`, `Factory AI가 고른 후보: ${WORKERS[AI_PICK].when} · 문서 링크만 고치는 작은 변경`, SUB)], {gap: '$--spacing-xs'}),
+        cap(`${id}-pick-h`, '다른 후보를 고르면 그 후보로 시작하고 Factory AI는 고르지 않습니다', MUT),
+      ], {gap: '$--spacing-sm'}),
       rule(`${id}-rule`),
-      row(`${id}-cols`, [left, right], {gap: 48, alignItems: 'start', width: inner}),
+      col(`${id}-sum`, [section(`${id}-sum-h`, '요약'), body(`${id}-sum-t`, task.summary, {width: TEXT_W})]),
+      col(`${id}-cr`, [section(`${id}-cr-h`, '완료 기준'), ...['깨진 상대 링크 23개가 맞는 문서를 가리킨다', 'check-doc-links가 docs 전체에서 통과한다'].map((line, i) => bullet(`${id}-d${i}`, null, line, inner))]),
     ]);
   }
   function obsPickMain(id) {

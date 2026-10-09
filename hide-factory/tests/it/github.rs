@@ -13,9 +13,10 @@ use hide_factory::exec::{Machine, Output};
 use hide_factory::model::*;
 use hide_factory::project::{IssueBook, SharedProjects};
 use hide_node_link::cleanup::PathState;
-use hide_node_link::factory::{FactoryCall, RunAnswer};
+use hide_node_link::factory::{CHECK_RUN_FIELDS, FactoryCall, RunAnswer};
 use hide_node_link::protocol::Call;
 use hide_node_link::{LinkAnswer, LinkError, NodeLink};
+use hide_platform::process::RUN_OUTPUT_CAP;
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -76,11 +77,17 @@ impl NodeLink for FakeGh {
             }
             other => panic!("a call the GitHub path never makes: {other:?}"),
         };
+        // The node keeps only the start of what a command writes.
+        let cut = |text: String| {
+            let mut bytes = text.into_bytes();
+            bytes.truncate(RUN_OUTPUT_CAP);
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
         Ok(LinkAnswer::Parsed(
             serde_json::to_value(RunAnswer::Finished {
                 code: answer.code,
-                stdout: answer.stdout,
-                stderr: answer.stderr,
+                stdout: cut(answer.stdout),
+                stderr: cut(answer.stderr),
             })
             .unwrap(),
         ))
@@ -185,9 +192,25 @@ impl FakeGh {
                 hub.writes.push(format!("pr reopen {number}"));
                 ok("")
             }
-            ["api", path] if path.contains("/check-runs") => {
+            ["api", "--paginate", path, "--jq", fields] if path.contains("/check-runs") => {
+                assert_eq!(*fields, CHECK_RUN_FIELDS);
                 hub.check_reads += 1;
-                ok(json!({"check_runs": hub.checks}).to_string())
+                let lines: String = hub
+                    .checks
+                    .iter()
+                    .map(|run| {
+                        let mut line = json!({
+                            "name": run["name"],
+                            "status": run["status"],
+                            "conclusion": run.get("conclusion").cloned().unwrap_or(Value::Null),
+                            "html_url": run.get("html_url").cloned().unwrap_or(Value::Null),
+                        })
+                        .to_string();
+                        line.push('\n');
+                        line
+                    })
+                    .collect();
+                ok(lines)
             }
             ["api", path] if path.contains("/actions/runs") => ok(json!({"workflow_runs": [{"id": 7, "conclusion": "cancelled"}, {"id": 8, "conclusion": "success"}]}).to_string()),
             ["run", "rerun", id, ..] => {
@@ -492,6 +515,65 @@ fn required_checks_decide_and_a_cancelled_run_is_asked_again() {
     gh.0.lock().unwrap().checks =
         vec![json!({"name": "test", "status": "completed", "conclusion": "success"})];
     assert_eq!(p.main_check(&factory, "abc123").unwrap(), MainCheck::Green);
+}
+
+#[test]
+fn a_commit_with_many_check_runs_passes_on_its_named_check() {
+    let gh = FakeGh::default();
+    let mut p = projects(&gh);
+    let factory = factory();
+    let mut t = task("T-1", Some(1));
+    t.pr = Some(PullRequest {
+        number: 3,
+        url: "u".into(),
+        head: "h".into(),
+        by_factory: true,
+        open: true,
+    });
+    // Twenty runs as GitHub answers them, each about 3.5 KB with its app
+    // and output: more than the node keeps of one answer.
+    let run = |name: &str| {
+        json!({
+            "name": name, "status": "completed", "conclusion": "success",
+            "html_url": format!("https://ci/{name}"),
+            "app": {"description": "x".repeat(3_000)},
+            "output": {"summary": "y".repeat(400)},
+        })
+    };
+    let mut checks: Vec<Value> = (1..20).map(|n| run(&format!("lane {n}"))).collect();
+    checks.push(run("test"));
+    assert!(Value::Array(checks.clone()).to_string().len() > RUN_OUTPUT_CAP);
+    gh.0.lock().unwrap().checks = checks;
+    let started = p.start(&factory, &t).unwrap();
+    assert_eq!(p.poll(&factory, &started), VerifyPoll::Passed);
+}
+
+#[test]
+fn an_unreadable_check_answer_is_unread_and_asked_again_at_its_pace() {
+    let gh = FakeGh::default();
+    let mut p = projects(&gh).with_ci_poll_every(Duration::from_secs(3600));
+    let factory = factory();
+    let mut t = task("T-1", Some(1));
+    t.pr = Some(PullRequest {
+        number: 3,
+        url: "u".into(),
+        head: "h".into(),
+        by_factory: true,
+        open: true,
+    });
+    // A run with no name is not a check run the Factory can read.
+    gh.0.lock().unwrap().checks = vec![json!({"status": "completed"})];
+    let started = p.start(&factory, &t).unwrap();
+    assert!(
+        matches!(p.poll(&factory, &started), VerifyPoll::Unread { ref check, .. } if check == "github.checks"),
+        "never pending in silence"
+    );
+    assert_eq!(p.poll(&factory, &started), VerifyPoll::Pending);
+    assert_eq!(
+        gh.0.lock().unwrap().check_reads,
+        1,
+        "a failed read is not asked again on every tick"
+    );
 }
 
 #[test]

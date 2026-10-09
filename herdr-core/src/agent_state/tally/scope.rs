@@ -116,7 +116,6 @@ pub struct Raised {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Scope {
     pub overview_needs_you: usize,
-    pub work: BTreeMap<String, crate::agent_state::work::RowWork>,
     pub has_working: bool,
     pub relations: BTreeMap<String, Vec<super::relations::Group>>,
     pub listed: Vec<Listed>,
@@ -330,7 +329,7 @@ pub(super) fn scope(
     let mut value = Scope {
         marks,
         sections: sections(physical),
-        sidebar_tree: super::lineage::sidebar_tree(physical),
+        sidebar_tree: super::lineage::sidebar_tree(physical, all),
         ..Scope::default()
     };
     let references = row_references(physical);
@@ -531,7 +530,6 @@ struct DeviceInput {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Input {
-    closed_session_prs: BTreeMap<String, std::collections::BTreeSet<u32>>,
     factory_workers: HashSet<String>,
     places: Vec<PlaceInput>,
     devices: Vec<DeviceInput>,
@@ -607,17 +605,6 @@ impl Cache {
                 .and_then(|f| f.summary.as_deref()),
         );
         let input = Input {
-            closed_session_prs: snapshot
-                .link_summaries
-                .as_ref()
-                .map(|links| {
-                    links
-                        .projects
-                        .iter()
-                        .map(|(id, summary)| (id.clone(), summary.closed_session_prs.clone()))
-                        .collect()
-                })
-                .unwrap_or_default(),
             factory_workers,
             devices: devices
                 .iter()
@@ -779,36 +766,6 @@ impl Cache {
                 let projected = projects
                     .get_mut(&(project.device_id.clone(), project.id.clone()))
                     .expect("project scope inserted");
-                crate::agent_state::sessions::add_closed_prs(
-                    &mut projected.sessions,
-                    project,
-                    input.closed_session_prs.get(&project.id),
-                    &device.agents,
-                );
-                let tasks: HashMap<_, _> = project
-                    .tasks
-                    .tasks
-                    .iter()
-                    .map(|t| (t.key.as_str(), t))
-                    .collect();
-                for member in &projected.members {
-                    let agent = device
-                        .agents
-                        .iter()
-                        .find(|a| a.pane_id == member.pane_id)
-                        .expect("scope member");
-                    let task = project
-                        .checkouts
-                        .iter()
-                        .find(|c| c.id == member.checkout_id)
-                        .and_then(|c| c.task_key.as_deref())
-                        .and_then(|key| tasks.get(key))
-                        .copied();
-                    projected.work.insert(
-                        member.pane_id.clone(),
-                        crate::agent_state::work::row_work(agent, task, &project.tasks.tasks),
-                    );
-                }
                 projected.prs =
                     crate::agent_state::work::board::project(project, &device.agents, &trees);
                 projected.graph = super::graph::project(
@@ -859,28 +816,6 @@ impl Cache {
                         + checkout.agent_summary.working
                         + checkout.agent_summary.seen;
                     value.tree = trees.remove(&checkout.id).expect("checkout tree projected");
-                    value.sidebar_tree = super::lineage::sidebar_tree(&physical);
-                    let closed = input.closed_session_prs.get(&project.id).map(|numbers| {
-                        numbers
-                            .iter()
-                            .copied()
-                            .filter(|number| {
-                                project
-                                    .pull_requests
-                                    .iter()
-                                    .find(|pr| pr.number == *number)
-                                    .is_some_and(|pr| {
-                                        checkout.branch.as_deref() == Some(pr.head_branch.as_str())
-                                    })
-                            })
-                            .collect()
-                    });
-                    crate::agent_state::sessions::add_closed_prs(
-                        &mut value.sessions,
-                        project,
-                        closed.as_ref(),
-                        &device.agents,
-                    );
                     value.global_tree = global_trees
                         .remove(&checkout.id)
                         .expect("global checkout tree projected");
@@ -933,7 +868,7 @@ impl Cache {
                         .filter(|a| {
                             a.resolved.is_none()
                                 && a.group == group
-                                && (!a.delegated || a.escalation.is_some())
+                                && !a.delegated
                                 && drawn.contains(a.pane_id.as_str())
                         })
                         .map(|a| live_references[&(*a as *const _)].clone())
@@ -1004,14 +939,6 @@ impl Cache {
                     .collect();
             }
             device_scope.raised = raised;
-            for project in &device.projects {
-                crate::agent_state::sessions::add_closed_prs(
-                    &mut device_scope.sessions,
-                    project,
-                    input.closed_session_prs.get(&project.id),
-                    &device.agents,
-                );
-            }
             device_scope.owners = owners;
             device_scopes
                 .get_mut(device.id)

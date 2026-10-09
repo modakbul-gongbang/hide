@@ -66,7 +66,7 @@ test("handoff roots have provenance without delegation or a focus change in eith
     }
     const parentRow = page.locator(`nav[data-sidebar] [data-pane="${parent}"]`);
     await expect(parentRow).toHaveAttribute("data-waiting", "false");
-    await expect(parentRow.locator("[data-agent-tree-toggle], [data-agent-children]")).toHaveCount(0);
+    await expect(parentRow.locator("[data-tree-chevron], [data-descendant-mark]")).toHaveCount(0);
     for (const root of roots) {
       const row = page.locator(`nav[data-sidebar] [data-pane="${root.pane}"]`);
       await expect(row).toHaveAttribute("data-delegated", "false");

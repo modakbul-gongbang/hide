@@ -58,7 +58,8 @@ function sidebarAgentOrder(state: { rest: SnapshotRest | null; agents: AgentRow[
   const collapsed = rest?.ui_state?.session_collapsed_checkout_ids ?? [];
   const checkout = (workspace: import("./snapshot").Workspace, value: Checkout) => {
     for (const row of checkoutAgentRows(workspace, agents, "sidebar").get(value.id) ?? []) {
-      if (!collapsed.includes(value.id) || row.agent.state.needs_you) append(row.agent, value.id);
+      // Digits number the roots; an opened root's children and grandchildren take none.
+      if (row.depth === 0 && (!collapsed.includes(value.id) || row.agent.state.needs_you)) append(row.agent, value.id);
     }
   };
   for (const row of projects) {

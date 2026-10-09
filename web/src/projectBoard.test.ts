@@ -469,7 +469,7 @@ describe("the PRs tab", () => {
         listed(8, "draft", { is_draft: true }),
       ],
     );
-    const agents = [agent("w", "working"), agent("parent", "seen", { activity: "idle", waiting_on_descendants: true }), agent("d", "done")];
+    const agents = [agent("w", "working"), agent("parent", "seen", { activity: "idle", wait: "children" }), agent("d", "done")];
     const board = buildPullRequests({ workspace: project, agents, device: null }, NOW);
     expect(groups(board)).toEqual([
       ["turn", [6, 7, 8]],

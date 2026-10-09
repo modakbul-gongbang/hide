@@ -2,7 +2,8 @@
 import type { AgentPullRequest, Task, Workspace } from "../src/snapshot";
 import type { RequestRow } from "./legacyRequestList";
 import type { LensAgent } from "../src/overviewLens";
-import type { RowWork } from "../src/agentScope";
+/** The retired scope `work` entry: a row's chip index, its `+N`, and its issue keys. */
+export type RowWork = { pull: number | null; more: number; issues: string[]; issue_chips: string[] };
 /** The row's chip and how many other live pull requests its `+N` counts; the core put the chip first. */
 export function pullRequestChip(pulls: readonly AgentPullRequest[]): { chip: AgentPullRequest; more: number } | null {
   const live = pulls.filter((pull) => pull.live);

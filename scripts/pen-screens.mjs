@@ -380,6 +380,40 @@ function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-wor
   });
 }
 
+// agent-tree's tree row (PRD agent-hierarchy-screens D-38), from the library's
+// Agent tree parts row master: the rails of each level above, the elbow from
+// the parent's chevron lane, the chevron (open, closed, or none), the marks,
+// the title, the own PR icon, a folded parent's descendant mark and the age;
+// a child on another machine adds its device line. `rails` says, per level
+// above the elbow, whether an ancestor's later sibling keeps a rail running.
+const PR_TREE = {failed: ['git-pull-request', '$--destructive'], pending: ['git-pull-request', '$--pr-pending'], mergeable: ['git-pull-request', '$--success'], merged: ['git-merge', '$--pr-merged']};
+function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', provider = 'claude', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, inset = 0, width = 268}) {
+  const descendants = {
+    ...markOverrides({dot: 'ath-row-dot', ring: 'ath-row-ring', glyph: 'ath-row-glyph'}, symbol, color),
+    'ath-row-provider': {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'contain'}},
+    'ath-row-title': {content: title, ...(bright || selected ? {fill: '$--foreground'} : {})},
+    'ath-row-age': {content: age},
+    'ath-row-rail': {enabled: depth > 1},
+    'ath-row-rail-v': {enabled: rail},
+    'ath-row-elbow': {enabled: depth > 0},
+    'ath-row-elbow-v': {height: last ? 13 : 28},
+    'ath-row-chev': chevron ? {enabled: true, icon: chevron === 'open' ? 'chevron-down' : 'chevron-right'} : {enabled: false},
+    'ath-row-pr': pr ? {enabled: true} : {enabled: false},
+    ...(pr ? {'ath-row-pr/ath-pr-g': {icon: PR_TREE[pr][0], fill: PR_TREE[pr][1]}} : {}),
+    'ath-row-desc': mark ? {enabled: true} : {enabled: false},
+    ...(mark ? {
+      'ath-row-desc/ath-mark-bang': {enabled: mark.kind === 'raised'},
+      'ath-row-desc/ath-mark-dot': {enabled: mark.kind === 'working'},
+      'ath-row-desc/ath-mark-n': {content: String(mark.count), fill: mark.kind === 'raised' ? '$--warning' : '$--agent-working'},
+    } : {}),
+    'ath-row-device': device ? {enabled: true} : {enabled: false},
+    'ath-row-device-t': {content: device ? `${device}${offline ? ' · 연결 안 됨' : ''}` : ''},
+    // "N개 더" is a tree line too: its chevron opens the rest in place, with no mark or provider.
+    ...(more ? {'ath-row-mark': {enabled: false}, 'ath-row-provider': {enabled: false}} : {}),
+  };
+  return themedXref(id, 'ath-row', title, {width, padding: [0, 0, 0, inset], ...(selected ? {fill: '$--secondary'} : {}), ...(offline ? {opacity: 0.5} : {})}, descendants);
+}
+
 function screenSessionRow(id, {title, checkout, provider, time, width = 360}) {
   return themedXref(id, 'session-row', title, {width}, {'session-row-provider': {content: provider}, 'session-row-time': {content: time}, 'session-row-title': {content: title}, 'session-row-checkout': {content: checkout}});
 }
@@ -3922,6 +3956,14 @@ function buildProjectsSidebar(tokens) {
     return screenSidebarAgentRow(id, {fold: 'none', symbol: SYMBOL[status], color: STATUS[status], inset: nameColumn + depth * indent, width: row, ...options});
   }
 
+  // An opened checkout's tree row: the chevron lane sits in the checkout glyph's
+  // column, so the marks start under the checkout name, one indent per level.
+  const TREE_STATUS = {working: ['●', '$--agent-working'], waiting: ['○', '$--agent-working'], asking: ['?', '$--warning'], approval: ['!', '$--warning'], done: ['✓', '$--success'], seen: ['○', '$--muted-foreground']};
+  function tree(id, {status, ...options}) {
+    const [symbol, color] = status ? TREE_STATUS[status] : ['', '$--muted-foreground'];
+    return screenTreeRow(id, {symbol, color, inset: nameColumn - num(tokens, '--size-lineage-chevron') - xs, width: row, ...options});
+  }
+
   // An opened checkout and its agent rows, on one small group fill.
   function group(id, rows) {
     return frame(id, 'Opened checkout', {width: row, layout: 'vertical', padding: ['$--spacing-xs', 0], fill: '$--muted', cornerRadius: '$--radius-sm'}, rows);
@@ -4051,8 +4093,8 @@ function buildProjectsSidebar(tokens) {
   // Agent rows the device sidebars share: title, mark, and the context line the
   // Needs You and Agents lists carry; a remote row wears the device chip.
   const AGENTS = {
-    deploy: {title: '배포 전 확인', status: 'asking', age: '30s', line: '변경 내용을 확인해 주세요', place: 'herdr-ide › main', bright: true},
-    blog: {title: '블로그 초안 정리', status: 'asking', age: '2m', line: '톤을 이대로 갈까요?', place: 'Home', bright: true},
+    deploy: {title: '배포 전 확인', status: 'asking', age: '30s', line: '승인  e2e 테스트 돌리던 중', place: 'herdr-ide › main', bright: true},
+    blog: {title: '블로그 초안 정리', status: 'asking', age: '2m', line: '답변  톤을 이대로 갈까요?', place: 'Home', bright: true},
     research: {title: '두 프로젝트 비교 조사', status: 'seen', provider: 'codex', age: '14m', place: 'Home'},
     ci: {title: 'CI 러너 샤드 정리', status: 'done', age: '6m', place: 'herdr-ide › ci-shards', bright: true},
     readable: {title: '사이드바 가독성 개선', status: 'working', age: '1m', place: 'herdr-ide › main'},
@@ -4105,11 +4147,18 @@ function buildProjectsSidebar(tokens) {
         folderRow(`psb-p-notes-${s}`, {name: 'team-notes', marks: {idle: 1}, purpose: '회의록 요약 정리'}),
         section(`psb-sec-recent-${s}`, 'Projects · Recent activity · 5'),
         projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
+        // main opened (PRD agent-hierarchy-screens D-12, D-38, B35): one line, its agents as a tree.
         group(`psb-g-main-${s}`, [
-          checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, purpose: '사이드바 가독성 개선', expanded: true}),
-          agentRow(`psb-a1-${s}`, {title: '사이드바 가독성 개선', status: 'working', age: '1m', badge: '↳2', fold: 'none'}),
-          agentRow(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'working', age: '2m', badge: '?1', fold: 'none'}),
-          agentRow(`psb-a3-${s}`, {title: '배포 전 확인', status: 'asking', age: '30s', line: '프로덕션 배포 전에 변경 내용을 확인해…', bright: true}),
+          checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, expanded: true}),
+          tree(`psb-t0-${s}`, {title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: 'mergeable', bright: true}),
+          tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', provider: 'codex', age: '19h', depth: 1, chevron: 'open', pr: 'failed'}),
+          tree(`psb-t2-${s}`, {title: '테스트 작성', status: 'approval', provider: 'codex', age: '12m', depth: 2, rail: true}),
+          tree(`psb-t3-${s}`, {title: '문서 정리', status: 'done', provider: 'codex', age: '40m', depth: 2, rail: true, last: true}),
+          tree(`psb-t4-${s}`, {title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: 'pending'}),
+          tree(`psb-t5-${s}`, {title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
+          tree(`psb-t6-${s}`, {title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
+          tree(`psb-t7-${s}`, {title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', chevron: 'closed', mark: {kind: 'working', count: 1}}),
+          tree(`psb-t8-${s}`, {title: '에이전트 패널 표시 규칙', status: 'working', age: '38s'}),
         ]),
         checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, raisedFrom: 'main', purpose: '#155 browser display (WebCon…'}),
         checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, raisedFrom: 'main', purpose: '#154 ⌘K search palette UI'}),
@@ -4300,7 +4349,7 @@ function buildProjectsSidebar(tokens) {
     });
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10): one sidebar follows the selected device, with bounded Needs You and Done groups, Home and default-open project checkouts. Only roots and orphans draw as agent rows. A root badge opens its direct-child popover, and All opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx and core agent_state (session-first-ui B1-B10; agent-hierarchy-screens D-12, D-37 to D-42): one sidebar follows the selected device, with bounded Needs You and Done groups, Home and default-open project checkouts. A Needs You row’s second line is the verb and what to do. Roots and orphans head an opened checkout; a root the operator opened draws its children and grandchildren as one-line tree rows with elbow rails and a chevron lane, five siblings and then N개 더, each row with its own PR icon and, folded, its descendant mark; an opened checkout is one line. A grandchild’s chevron opens its tree popover, and the popover’s last line opens the Overview Agents graph. Clean worktrees without agents start in No agents; closed agent worktrees and missing paths start in Cleanup. Explicit checkout folds persist and retain Needs You rows. Project and checkout menus, glyphs, age columns, the device rail and usage footer retain their existing behavior.', build, build);
 }
 
 // -- Screen / Mobile ---------------------------------------------------------------

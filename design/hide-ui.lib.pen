@@ -7251,6 +7251,69 @@
                   "fontFamily": "$--font-mono",
                   "fontSize": "$--text-caption",
                   "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "idn-blocked",
+                  "name": "Blocked",
+                  "enabled": false,
+                  "width": 12,
+                  "height": 12,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "path",
+                      "id": "idn-blocked-shape",
+                      "name": "Triangle with notch",
+                      "x": 0,
+                      "y": 0,
+                      "width": 12,
+                      "height": 12,
+                      "viewBox": [
+                        0,
+                        0,
+                        12,
+                        12
+                      ],
+                      "geometry": "M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z",
+                      "fill": "$--warning"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "idn-stopped",
+                  "name": "Stopped",
+                  "enabled": false,
+                  "width": 12,
+                  "height": 12,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "idn-stopped-ring",
+                      "x": 2.5,
+                      "y": 2.5,
+                      "name": "Ring",
+                      "width": 7,
+                      "height": 7,
+                      "stroke": "$--subtle-foreground",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner"
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "idn-stopped-half",
+                      "x": 2.5,
+                      "y": 2.5,
+                      "name": "Half",
+                      "startAngle": 90,
+                      "sweepAngle": 180,
+                      "fill": "$--subtle-foreground",
+                      "width": 7,
+                      "height": 7
+                    }
+                  ]
                 }
               ]
             },
@@ -7510,11 +7573,11 @@
         {
           "type": "text",
           "id": "o00hzr",
-          "name": "Unread error label",
+          "name": "Unread block label",
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "Unread error",
+          "content": "Unread block",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
           "fontWeight": "normal"
@@ -7523,24 +7586,100 @@
           "id": "s8Xiy",
           "type": "ref",
           "ref": "HXWFK",
-          "name": "Unread error",
+          "name": "Unread block",
           "width": "fill_container",
           "descendants": {
             "sWhWS": {
               "enabled": false
             },
-            "PCeNa": {
-              "enabled": true,
-              "content": "×",
-              "fill": "$--destructive"
+            "idn-blocked": {
+              "enabled": true
             },
             "x0h40": {
               "content": "기술 교육 콘텐츠 통합",
               "fill": "$--foreground"
             },
             "X6LdE": {
-              "content": "Error",
-              "fill": "$--destructive"
+              "content": "Blocked",
+              "fill": "$--warning"
+            },
+            "BsCNW": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "idn-read-block-label",
+          "name": "Read block label",
+          "fill": "$--subtle-foreground",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Read block",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "idn-read-block",
+          "type": "ref",
+          "ref": "HXWFK",
+          "name": "Read block",
+          "width": "fill_container",
+          "descendants": {
+            "sWhWS": {
+              "enabled": false
+            },
+            "idn-blocked": {
+              "enabled": true,
+              "opacity": 0.55
+            },
+            "x0h40": {
+              "content": "기술 교육 콘텐츠 통합",
+              "fill": "$--subtle-foreground"
+            },
+            "X6LdE": {
+              "content": "Blocked",
+              "fill": "$--warning",
+              "opacity": 0.55
+            },
+            "BsCNW": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "idn-stopped-label",
+          "name": "Stopped label",
+          "fill": "$--subtle-foreground",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Stopped",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "idn-stopped-ref",
+          "type": "ref",
+          "ref": "HXWFK",
+          "name": "Stopped",
+          "width": "fill_container",
+          "descendants": {
+            "sWhWS": {
+              "enabled": false
+            },
+            "idn-stopped": {
+              "enabled": true
+            },
+            "x0h40": {
+              "content": "기술 교육 콘텐츠 통합",
+              "fill": "$--foreground"
+            },
+            "X6LdE": {
+              "content": "Stopped",
+              "fill": "$--subtle-foreground"
             },
             "BsCNW": {
               "enabled": false
@@ -12684,7 +12823,7 @@
                       "id": "project-error",
                       "x": 0,
                       "y": 0,
-                      "name": "error",
+                      "name": "blocked",
                       "enabled": false,
                       "gap": "$--spacing-xxs",
                       "alignItems": "center",
@@ -12702,10 +12841,10 @@
                               "type": "text",
                               "id": "project-error-glyph",
                               "name": "Glyph",
-                              "fill": "$--destructive",
+                              "fill": "$--warning",
                               "textGrowth": "fixed-width",
                               "width": 12,
-                              "content": "×",
+                              "content": "▲",
                               "textAlign": "center",
                               "fontFamily": "$--font-mono",
                               "fontSize": "$--text-caption",
@@ -12846,6 +12985,52 @@
                           "name": "Count",
                           "fill": "$--subtle-foreground",
                           "content": "2",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "project-stopped",
+                      "x": 0,
+                      "y": 0,
+                      "name": "stopped",
+                      "enabled": false,
+                      "gap": "$--spacing-xxs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "project-stopped-mark",
+                          "name": "Mark",
+                          "width": 12,
+                          "height": 12,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "project-stopped-glyph",
+                              "name": "Glyph",
+                              "fill": "$--subtle-foreground",
+                              "textGrowth": "fixed-width",
+                              "width": 12,
+                              "content": "◐",
+                              "textAlign": "center",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "project-stopped-count",
+                          "name": "Count",
+                          "fill": "$--subtle-foreground",
+                          "content": "1",
                           "fontFamily": "$--font-mono",
                           "fontSize": "$--text-micro",
                           "fontWeight": "500"
@@ -14543,7 +14728,7 @@
                               "id": "checkout-error",
                               "x": 0,
                               "y": 0,
-                              "name": "error",
+                              "name": "blocked",
                               "enabled": false,
                               "gap": "$--spacing-xxs",
                               "alignItems": "center",
@@ -14561,10 +14746,10 @@
                                       "type": "text",
                                       "id": "checkout-error-glyph",
                                       "name": "Glyph",
-                                      "fill": "$--destructive",
+                                      "fill": "$--warning",
                                       "textGrowth": "fixed-width",
                                       "width": 12,
-                                      "content": "×",
+                                      "content": "▲",
                                       "textAlign": "center",
                                       "fontFamily": "$--font-mono",
                                       "fontSize": "$--text-caption",
@@ -14705,6 +14890,52 @@
                                 {
                                   "type": "text",
                                   "id": "checkout-working-count",
+                                  "name": "Count",
+                                  "fill": "$--subtle-foreground",
+                                  "content": "1",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "checkout-stopped",
+                              "x": 0,
+                              "y": 0,
+                              "name": "stopped",
+                              "enabled": false,
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "checkout-stopped-mark",
+                                  "name": "Mark",
+                                  "width": 12,
+                                  "height": 12,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "checkout-stopped-glyph",
+                                      "name": "Glyph",
+                                      "fill": "$--subtle-foreground",
+                                      "textGrowth": "fixed-width",
+                                      "width": 12,
+                                      "content": "◐",
+                                      "textAlign": "center",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "checkout-stopped-count",
                                   "name": "Count",
                                   "fill": "$--subtle-foreground",
                                   "content": "1",
@@ -15485,6 +15716,69 @@
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-caption",
                       "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sar-blocked",
+                      "name": "Blocked",
+                      "enabled": false,
+                      "width": 12,
+                      "height": 12,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "path",
+                          "id": "sar-blocked-shape",
+                          "name": "Triangle with notch",
+                          "x": 0,
+                          "y": 0,
+                          "width": 12,
+                          "height": 12,
+                          "viewBox": [
+                            0,
+                            0,
+                            12,
+                            12
+                          ],
+                          "geometry": "M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z",
+                          "fill": "$--warning"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sar-stopped",
+                      "name": "Stopped",
+                      "enabled": false,
+                      "width": 12,
+                      "height": 12,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "sar-stopped-ring",
+                          "x": 2.5,
+                          "y": 2.5,
+                          "name": "Ring",
+                          "width": 7,
+                          "height": 7,
+                          "stroke": "$--subtle-foreground",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner"
+                        },
+                        {
+                          "type": "ellipse",
+                          "id": "sar-stopped-half",
+                          "x": 2.5,
+                          "y": 2.5,
+                          "name": "Half",
+                          "startAngle": 90,
+                          "sweepAngle": 180,
+                          "fill": "$--subtle-foreground",
+                          "width": 7,
+                          "height": 7
+                        }
+                      ]
                     }
                   ]
                 },
@@ -16011,7 +16305,7 @@
         {
           "type": "frame",
           "id": "sidebar-agent-row-state-error",
-          "name": "State / Error",
+          "name": "State / Blocked: a filled triangle, the cause in the warning colour",
           "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-xxs",
@@ -16021,7 +16315,7 @@
               "id": "sidebar-agent-row-state-error-label",
               "name": "State name",
               "fill": "$--subtle-foreground",
-              "content": "Error",
+              "content": "Blocked: a filled triangle, the cause in the warning colour",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -16031,7 +16325,7 @@
               "type": "ref",
               "ref": "sidebar-agent-row",
               "width": "fill_container",
-              "name": "Row / error",
+              "name": "Row / blocked",
               "descendants": {
                 "sar-dot": {
                   "enabled": false
@@ -16040,21 +16334,130 @@
                   "enabled": false
                 },
                 "sar-glyph": {
-                  "enabled": true,
-                  "content": "×",
-                  "fill": "$--destructive"
+                  "enabled": false
+                },
+                "sar-blocked": {
+                  "enabled": true
                 },
                 "sar-title": {
-                  "content": "테스트 실행 실패",
+                  "content": "CI 복구 시도",
                   "fill": "$--foreground"
                 },
                 "sar-elapsed": {
-                  "content": "18s"
+                  "content": "2m"
                 },
                 "sar-line": {
                   "enabled": true,
-                  "content": "실패한 테스트 결과를 확인해 주세요",
-                  "fill": "$--destructive"
+                  "content": "디스크 여유가 부족해 검증을 못 함",
+                  "fill": "$--warning"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-read-blocked",
+          "name": "State / Read block: the same triangle dimmed, the cause stays",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-read-blocked-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Read block: the same triangle dimmed, the cause stays",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-read-blocked",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / read-blocked",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": false
+                },
+                "sar-blocked": {
+                  "enabled": true,
+                  "opacity": 0.55
+                },
+                "sar-title": {
+                  "content": "CI 복구 시도",
+                  "fill": "$--subtle-foreground"
+                },
+                "sar-elapsed": {
+                  "content": "6m"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "디스크 여유가 부족해 검증을 못 함",
+                  "fill": "$--warning",
+                  "opacity": 0.55
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-stopped",
+          "name": "State / Stopped: a half-disc in Done, the word leads the line",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-stopped-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Stopped: a half-disc in Done, the word leads the line",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-stopped",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / stopped",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": false
+                },
+                "sar-stopped": {
+                  "enabled": true
+                },
+                "sar-title": {
+                  "content": "어댑터 정리",
+                  "fill": "$--foreground"
+                },
+                "sar-elapsed": {
+                  "content": "14m"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "멈춤 · 테스트 3개 남음",
+                  "fill": "$--subtle-foreground"
                 }
               }
             }
@@ -16063,7 +16466,7 @@
         {
           "type": "frame",
           "id": "sidebar-agent-row-state-waiting",
-          "name": "State / Waiting on its children: ring in Working, badge, folded chevron",
+          "name": "State / Waiting on its children, a background task or a reply: ring in Working, the word leads the line",
           "width": "fill_container",
           "layout": "vertical",
           "gap": "$--spacing-xxs",
@@ -16073,7 +16476,7 @@
               "id": "sidebar-agent-row-state-waiting-label",
               "name": "State name",
               "fill": "$--subtle-foreground",
-              "content": "Waiting on its children: ring in Working, badge, folded chevron",
+              "content": "Waiting on its children, a background task or a reply: ring in Working, the word leads the line",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -16110,6 +16513,11 @@
                 },
                 "sar-fold": {
                   "opacity": 1
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "대기 · CI 끝나기를 기다림",
+                  "fill": "$--subtle-foreground"
                 }
               }
             }
@@ -36342,6 +36750,69 @@
                               "fontSize": "$--text-caption",
                               "fontWeight": "400",
                               "enabled": false
+                            },
+                            {
+                              "type": "frame",
+                              "id": "agb-row1-blocked",
+                              "name": "Blocked",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "agb-row1-blocked-shape",
+                                  "name": "Triangle with notch",
+                                  "x": 0,
+                                  "y": 0,
+                                  "width": 12,
+                                  "height": 12,
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    12,
+                                    12
+                                  ],
+                                  "geometry": "M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z",
+                                  "fill": "$--warning"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "none",
+                              "enabled": false
+                            },
+                            {
+                              "type": "frame",
+                              "id": "agb-row1-stopped",
+                              "name": "Stopped",
+                              "children": [
+                                {
+                                  "type": "ellipse",
+                                  "id": "agb-row1-stopped-ring",
+                                  "x": 3.5,
+                                  "y": 3.5,
+                                  "name": "Ring",
+                                  "width": 7,
+                                  "height": 7,
+                                  "stroke": "$--subtle-foreground",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner"
+                                },
+                                {
+                                  "type": "ellipse",
+                                  "id": "agb-row1-stopped-half",
+                                  "x": 3.5,
+                                  "y": 3.5,
+                                  "name": "Half",
+                                  "startAngle": 90,
+                                  "sweepAngle": 180,
+                                  "width": 7,
+                                  "height": 7,
+                                  "fill": "$--subtle-foreground"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "none",
+                              "enabled": false
                             }
                           ],
                           "width": 12,
@@ -36588,6 +37059,69 @@
                               "fontFamily": "$--font-mono",
                               "fontSize": "$--text-caption",
                               "fontWeight": "400",
+                              "enabled": false
+                            },
+                            {
+                              "type": "frame",
+                              "id": "agb-row2-blocked",
+                              "name": "Blocked",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "agb-row2-blocked-shape",
+                                  "name": "Triangle with notch",
+                                  "x": 0,
+                                  "y": 0,
+                                  "width": 12,
+                                  "height": 12,
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    12,
+                                    12
+                                  ],
+                                  "geometry": "M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z",
+                                  "fill": "$--warning"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "none",
+                              "enabled": false
+                            },
+                            {
+                              "type": "frame",
+                              "id": "agb-row2-stopped",
+                              "name": "Stopped",
+                              "children": [
+                                {
+                                  "type": "ellipse",
+                                  "id": "agb-row2-stopped-ring",
+                                  "x": 3.5,
+                                  "y": 3.5,
+                                  "name": "Ring",
+                                  "width": 7,
+                                  "height": 7,
+                                  "stroke": "$--subtle-foreground",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner"
+                                },
+                                {
+                                  "type": "ellipse",
+                                  "id": "agb-row2-stopped-half",
+                                  "x": 3.5,
+                                  "y": 3.5,
+                                  "name": "Half",
+                                  "startAngle": 90,
+                                  "sweepAngle": 180,
+                                  "width": 7,
+                                  "height": 7,
+                                  "fill": "$--subtle-foreground"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "none",
                               "enabled": false
                             }
                           ],
@@ -36836,6 +37370,69 @@
                               "fontFamily": "$--font-mono",
                               "fontSize": "$--text-caption",
                               "fontWeight": "400",
+                              "enabled": false
+                            },
+                            {
+                              "type": "frame",
+                              "id": "agb-row3-blocked",
+                              "name": "Blocked",
+                              "children": [
+                                {
+                                  "type": "path",
+                                  "id": "agb-row3-blocked-shape",
+                                  "name": "Triangle with notch",
+                                  "x": 0,
+                                  "y": 0,
+                                  "width": 12,
+                                  "height": 12,
+                                  "viewBox": [
+                                    0,
+                                    0,
+                                    12,
+                                    12
+                                  ],
+                                  "geometry": "M6 1.2 L11.4 10.6 L0.6 10.6 Z M5.4 4.8 L5.4 7.6 L6.6 7.6 L6.6 4.8 Z M5.4 8.4 L5.4 9.4 L6.6 9.4 L6.6 8.4 Z",
+                                  "fill": "$--warning"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "none",
+                              "enabled": false
+                            },
+                            {
+                              "type": "frame",
+                              "id": "agb-row3-stopped",
+                              "name": "Stopped",
+                              "children": [
+                                {
+                                  "type": "ellipse",
+                                  "id": "agb-row3-stopped-ring",
+                                  "x": 3.5,
+                                  "y": 3.5,
+                                  "name": "Ring",
+                                  "width": 7,
+                                  "height": 7,
+                                  "stroke": "$--subtle-foreground",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner"
+                                },
+                                {
+                                  "type": "ellipse",
+                                  "id": "agb-row3-stopped-half",
+                                  "x": 3.5,
+                                  "y": 3.5,
+                                  "name": "Half",
+                                  "startAngle": 90,
+                                  "sweepAngle": 180,
+                                  "width": 7,
+                                  "height": 7,
+                                  "fill": "$--subtle-foreground"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "none",
                               "enabled": false
                             }
                           ],
@@ -37120,6 +37717,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -37176,6 +37779,12 @@
                       "enabled": false
                     },
                     "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
                       "enabled": false
                     },
                     "agb-row2-provider": {
@@ -37322,6 +37931,12 @@
                       "content": "?",
                       "fill": "$--warning"
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -37387,6 +38002,12 @@
                     "agb-row2-glyph": {
                       "enabled": false
                     },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
+                      "enabled": false
+                    },
                     "agb-row2-provider": {
                       "fill": {
                         "type": "image",
@@ -37431,6 +38052,215 @@
                     },
                     "agb-row2-q-t": {
                       "content": ""
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-blocked-l-cell",
+              "name": "Worktree with a blocked and a stopped row",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-blocked-l-cap",
+                  "name": "Worktree with a blocked and ",
+                  "content": "Worktree with a blocked and a stopped row",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-blocked-l",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Worktree with a blocked and a stopped row",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "git-branch",
+                      "fill": "$--muted-foreground"
+                    },
+                    "agb-branch": {
+                      "content": "fix/ci-recovery"
+                    },
+                    "agb-purpose": {
+                      "content": "CI 복구"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": true,
+                      "content": "↑2"
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": false,
+                      "content": "에이전트 0"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": false
+                    },
+                    "agb-row1-ring": {
+                      "enabled": false
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-blocked": {
+                      "enabled": true
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "contain"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "CI 복구 시도",
+                      "fontWeight": "600"
+                    },
+                    "agb-row1-age": {
+                      "content": "2m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
+                    "agb-row1-q": {
+                      "enabled": true,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ]
+                    },
+                    "agb-row1-q-t": {
+                      "content": "디스크 여유가 부족해 검증을 못 함"
+                    },
+                    "agb-row2": {
+                      "enabled": true
+                    },
+                    "agb-row2-dot": {
+                      "enabled": false
+                    },
+                    "agb-row2-ring": {
+                      "enabled": false
+                    },
+                    "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
+                      "enabled": true
+                    },
+                    "agb-row2-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "contain"
+                      }
+                    },
+                    "agb-row2-title": {
+                      "content": "어댑터 정리"
+                    },
+                    "agb-row2-age": {
+                      "content": "14m"
+                    },
+                    "agb-row2-ind": {
+                      "enabled": false
+                    },
+                    "agb-row2-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row2-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-cross": {
+                      "enabled": false
+                    },
+                    "agb-row2-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row2-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row2-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
+                    "agb-row2-q": {
+                      "enabled": true,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ]
+                    },
+                    "agb-row2-q-t": {
+                      "content": "멈춤 · 테스트 3개 남음",
+                      "fill": "$--subtle-foreground"
                     },
                     "agb-row3": {
                       "enabled": false
@@ -37527,6 +38357,12 @@
                       "stroke": "$--muted-foreground"
                     },
                     "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
                       "enabled": false
                     },
                     "agb-row1-provider": {
@@ -37659,6 +38495,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -37789,6 +38631,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -37845,6 +38693,12 @@
                       "stroke": "$--muted-foreground"
                     },
                     "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
                       "enabled": false
                     },
                     "agb-row2-provider": {
@@ -37973,6 +38827,12 @@
                       "stroke": "$--muted-foreground"
                     },
                     "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
                       "enabled": false
                     },
                     "agb-row1-provider": {
@@ -38122,6 +38982,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -38178,6 +39044,12 @@
                       "enabled": false
                     },
                     "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
                       "enabled": false
                     },
                     "agb-row2-provider": {
@@ -38324,6 +39196,12 @@
                       "content": "?",
                       "fill": "$--warning"
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -38389,6 +39267,12 @@
                     "agb-row2-glyph": {
                       "enabled": false
                     },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
+                      "enabled": false
+                    },
                     "agb-row2-provider": {
                       "fill": {
                         "type": "image",
@@ -38433,6 +39317,215 @@
                     },
                     "agb-row2-q-t": {
                       "content": ""
+                    },
+                    "agb-row3": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "agb-blocked-d-cell",
+              "name": "Worktree with a blocked and a stopped row",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "agb-blocked-d-cap",
+                  "name": "Worktree with a blocked and ",
+                  "content": "Worktree with a blocked and a stopped row",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "agb-blocked-d",
+                  "type": "ref",
+                  "ref": "agb-m",
+                  "name": "Worktree with a blocked and a stopped row",
+                  "descendants": {
+                    "agb-glyph": {
+                      "icon": "git-branch",
+                      "fill": "$--muted-foreground"
+                    },
+                    "agb-branch": {
+                      "content": "fix/ci-recovery"
+                    },
+                    "agb-purpose": {
+                      "content": "CI 복구"
+                    },
+                    "agb-issue": {
+                      "enabled": false
+                    },
+                    "agb-issue-t": {
+                      "content": ""
+                    },
+                    "agb-pr": {
+                      "enabled": false
+                    },
+                    "agb-dist": {
+                      "enabled": true,
+                      "content": "↑2"
+                    },
+                    "agb-files": {
+                      "enabled": false,
+                      "content": "0 files"
+                    },
+                    "agb-agents": {
+                      "enabled": false,
+                      "content": "에이전트 0"
+                    },
+                    "agb-clean": {
+                      "enabled": false
+                    },
+                    "agb-head": {
+                      "opacity": 1
+                    },
+                    "agb-row1": {
+                      "enabled": true
+                    },
+                    "agb-row1-dot": {
+                      "enabled": false
+                    },
+                    "agb-row1-ring": {
+                      "enabled": false
+                    },
+                    "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-blocked": {
+                      "enabled": true
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
+                    "agb-row1-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "contain"
+                      }
+                    },
+                    "agb-row1-title": {
+                      "content": "CI 복구 시도",
+                      "fontWeight": "600"
+                    },
+                    "agb-row1-age": {
+                      "content": "2m"
+                    },
+                    "agb-row1-ind": {
+                      "enabled": false
+                    },
+                    "agb-row1-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row1-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row1-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row1-cross": {
+                      "enabled": false
+                    },
+                    "agb-row1-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row1-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row1-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
+                    "agb-row1-q": {
+                      "enabled": true,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ]
+                    },
+                    "agb-row1-q-t": {
+                      "content": "디스크 여유가 부족해 검증을 못 함"
+                    },
+                    "agb-row2": {
+                      "enabled": true
+                    },
+                    "agb-row2-dot": {
+                      "enabled": false
+                    },
+                    "agb-row2-ring": {
+                      "enabled": false
+                    },
+                    "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
+                      "enabled": true
+                    },
+                    "agb-row2-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "contain"
+                      }
+                    },
+                    "agb-row2-title": {
+                      "content": "어댑터 정리"
+                    },
+                    "agb-row2-age": {
+                      "content": "14m"
+                    },
+                    "agb-row2-ind": {
+                      "enabled": false
+                    },
+                    "agb-row2-arrow": {
+                      "enabled": false
+                    },
+                    "agb-row2-tucked": {
+                      "enabled": false
+                    },
+                    "agb-row2-tk-n": {
+                      "content": "0"
+                    },
+                    "agb-row2-cross": {
+                      "enabled": false
+                    },
+                    "agb-row2-cross-g": {
+                      "icon": "arrow-right"
+                    },
+                    "agb-row2-cross-p": {
+                      "content": ""
+                    },
+                    "agb-row2-cross-n": {
+                      "enabled": false,
+                      "content": "0"
+                    },
+                    "agb-row2-q": {
+                      "enabled": true,
+                      "padding": [
+                        0,
+                        "$--spacing-sm",
+                        0,
+                        20
+                      ]
+                    },
+                    "agb-row2-q-t": {
+                      "content": "멈춤 · 테스트 3개 남음",
+                      "fill": "$--subtle-foreground"
                     },
                     "agb-row3": {
                       "enabled": false
@@ -38529,6 +39622,12 @@
                       "stroke": "$--muted-foreground"
                     },
                     "agb-row1-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
                       "enabled": false
                     },
                     "agb-row1-provider": {
@@ -38661,6 +39760,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -38791,6 +39896,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -38847,6 +39958,12 @@
                       "stroke": "$--muted-foreground"
                     },
                     "agb-row2-glyph": {
+                      "enabled": false
+                    },
+                    "agb-row2-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row2-stopped": {
                       "enabled": false
                     },
                     "agb-row2-provider": {
@@ -38977,6 +40094,12 @@
                     "agb-row1-glyph": {
                       "enabled": false
                     },
+                    "agb-row1-blocked": {
+                      "enabled": false
+                    },
+                    "agb-row1-stopped": {
+                      "enabled": false
+                    },
                     "agb-row1-provider": {
                       "fill": {
                         "type": "image",
@@ -39057,6 +40180,1699 @@
       "width": "fit_content",
       "x": 1200,
       "y": 8281
+    },
+    {
+      "type": "frame",
+      "id": "cmp-agent-tree-parts",
+      "name": "Component / Agent tree parts",
+      "children": [
+        {
+          "type": "text",
+          "id": "cmp-agent-tree-parts-title",
+          "name": "Agent tree parts",
+          "content": "Agent tree parts",
+          "fill": "$--foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "cmp-agent-tree-parts-spec",
+          "name": "web/src/components/agent-tre",
+          "content": "web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the sidebar PR icon in the worst state of the agent's own PRs (failed red, pending amber, mergeable green, merged purple) and dimmed while GitHub cannot be read; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header's tree button, a tree icon and the direct child count; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. The Sessions and pane header PR chip and its list are the existing PR chip.",
+          "fill": "$--subtle-foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "400",
+          "textGrowth": "fixed-width",
+          "width": 820
+        },
+        {
+          "type": "frame",
+          "id": "cmp-agent-tree-parts-masters",
+          "name": "Masters",
+          "children": [
+            {
+              "type": "frame",
+              "id": "ath-verb",
+              "name": "Verb",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-verb-t",
+                  "name": "승인",
+                  "content": "승인",
+                  "fill": "$--warning",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "600"
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-pr-icon",
+              "name": "PR icon",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "ath-pr-g",
+                  "name": "Glyph",
+                  "enabled": true,
+                  "width": 14,
+                  "height": 14,
+                  "icon": "git-pull-request",
+                  "library": "lucide",
+                  "fill": "$--destructive"
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "width": 14,
+              "height": 14,
+              "justifyContent": "center",
+              "alignItems": "center"
+            },
+            {
+              "type": "frame",
+              "id": "ath-mark",
+              "name": "Descendant mark",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-mark-bang",
+                  "name": "!",
+                  "content": "!",
+                  "fill": "$--warning",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "ellipse",
+                  "id": "ath-mark-dot",
+                  "name": "Dot",
+                  "enabled": false,
+                  "width": 7,
+                  "height": 7,
+                  "fill": "$--agent-working"
+                },
+                {
+                  "type": "text",
+                  "id": "ath-mark-n",
+                  "name": "2",
+                  "content": "2",
+                  "fill": "$--warning",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "600"
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "gap": "$--spacing-xxs",
+              "alignItems": "center",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-tree-button",
+              "name": "Tree button",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "ath-tb-tree",
+                  "name": "Glyph",
+                  "enabled": true,
+                  "width": 12,
+                  "height": 12,
+                  "icon": "list-tree",
+                  "library": "lucide",
+                  "fill": "$--muted-foreground"
+                },
+                {
+                  "type": "text",
+                  "id": "ath-tb-n",
+                  "name": "8",
+                  "content": "8",
+                  "fill": "$--subtle-foreground",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "400"
+                },
+                {
+                  "type": "icon",
+                  "id": "ath-tb-chev",
+                  "name": "Glyph",
+                  "enabled": true,
+                  "width": 12,
+                  "height": 12,
+                  "icon": "chevron-down",
+                  "library": "lucide",
+                  "fill": "$--muted-foreground"
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "gap": "$--spacing-xxs",
+              "alignItems": "center",
+              "height": 16,
+              "padding": [
+                0,
+                "$--spacing-xs"
+              ],
+              "cornerRadius": "$--radius-xs",
+              "stroke": "$--border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner"
+            },
+            {
+              "type": "frame",
+              "id": "ath-row",
+              "name": "Tree row",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ath-row-rail",
+                  "name": "Ancestor rail",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ath-row-rail-v",
+                      "name": "Rail",
+                      "children": [],
+                      "fill": "$--lineage-rail",
+                      "x": 8,
+                      "y": 0,
+                      "width": 1,
+                      "height": 28
+                    }
+                  ],
+                  "layout": "none",
+                  "width": 18,
+                  "height": 28,
+                  "enabled": false
+                },
+                {
+                  "type": "frame",
+                  "id": "ath-row-elbow",
+                  "name": "Elbow",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ath-row-elbow-v",
+                      "name": "Rail",
+                      "children": [],
+                      "fill": "$--lineage-rail",
+                      "x": 8,
+                      "y": 0,
+                      "width": 1,
+                      "height": 13
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ath-row-elbow-h",
+                      "name": "Rail",
+                      "children": [],
+                      "fill": "$--lineage-rail",
+                      "x": 8,
+                      "y": 13,
+                      "width": 10,
+                      "height": 1
+                    }
+                  ],
+                  "layout": "none",
+                  "width": 18,
+                  "height": 28,
+                  "enabled": false
+                },
+                {
+                  "type": "frame",
+                  "id": "ath-row-lane",
+                  "name": "Chevron lane",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ath-row-chev",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 12,
+                      "height": 12,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "width": 16,
+                  "height": 28,
+                  "justifyContent": "center",
+                  "padding": [
+                    "$--spacing-xs",
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ath-row-body",
+                  "name": "Body",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ath-row-l1",
+                      "name": "Line one",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ath-row-mark",
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "ath-row-dot",
+                              "name": "Dot",
+                              "enabled": false,
+                              "width": 7,
+                              "height": 7,
+                              "fill": "$--agent-working"
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "ath-row-ring",
+                              "name": "Ring",
+                              "width": 7,
+                              "height": 7,
+                              "stroke": "$--agent-working",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ath-row-glyph",
+                              "name": "!",
+                              "content": "!",
+                              "fill": "$--warning",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "600",
+                              "enabled": false
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ath-row-provider",
+                          "name": "Provider artwork",
+                          "children": [],
+                          "width": 14,
+                          "height": 14,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "contain"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "ath-row-title",
+                          "name": "에이전트 제목",
+                          "content": "에이전트 제목",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        },
+                        {
+                          "id": "ath-row-pr",
+                          "type": "ref",
+                          "ref": "ath-pr-icon",
+                          "name": "PR icon"
+                        },
+                        {
+                          "id": "ath-row-desc",
+                          "type": "ref",
+                          "ref": "ath-mark",
+                          "name": "Descendant mark",
+                          "enabled": false
+                        },
+                        {
+                          "type": "text",
+                          "id": "ath-row-age",
+                          "name": "3m",
+                          "content": "3m",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "width": "fill_container",
+                      "height": 20
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ath-row-device",
+                      "name": "Device line",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ath-row-device-g",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "server",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ath-row-device-t",
+                          "name": "Mac mini",
+                          "content": "Mac mini",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xxs",
+                      "alignItems": "center",
+                      "height": 16,
+                      "padding": [
+                        0,
+                        "$--spacing-xs"
+                      ],
+                      "cornerRadius": "$--radius-xs",
+                      "stroke": "$--border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "enabled": false
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0,
+                  "width": "fill_container",
+                  "padding": [
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    "$--spacing-xs"
+                  ]
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "alignItems": "start",
+              "width": 260,
+              "cornerRadius": "$--radius-sm"
+            }
+          ],
+          "layout": "horizontal",
+          "gap": "$--spacing-xl",
+          "alignItems": "start"
+        },
+        {
+          "type": "frame",
+          "id": "cmp-agent-tree-parts-light",
+          "name": "Light",
+          "children": [
+            {
+              "type": "frame",
+              "id": "ath-l-verb-0-cell",
+              "name": "Verb 1",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-verb-0-cap",
+                  "name": "Verb 1",
+                  "content": "Verb 1",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-verb-0",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "승인"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-verb-1-cell",
+              "name": "Verb 2",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-verb-1-cap",
+                  "name": "Verb 2",
+                  "content": "Verb 2",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-verb-1",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "답변"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-verb-2-cell",
+              "name": "Verb 3",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-verb-2-cap",
+                  "name": "Verb 3",
+                  "content": "Verb 3",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-verb-2",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "확인"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-verb-3-cell",
+              "name": "Verb 4",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-verb-3-cap",
+                  "name": "Verb 4",
+                  "content": "Verb 4",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-verb-3",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "초안"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-failed-cell",
+              "name": "CI 실패",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-failed-cap",
+                  "name": "CI 실패",
+                  "content": "CI 실패",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-failed",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--destructive"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-pending-cell",
+              "name": "CI 도는 중 · 리뷰 대기",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-pending-cap",
+                  "name": "CI 도는 중 · 리뷰 대기",
+                  "content": "CI 도는 중 · 리뷰 대기",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-pending",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--pr-pending"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-mergeable-cell",
+              "name": "머지 가능",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-mergeable-cap",
+                  "name": "머지 가능",
+                  "content": "머지 가능",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-mergeable",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--success"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-merged-cell",
+              "name": "머지됨",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-merged-cap",
+                  "name": "머지됨",
+                  "content": "머지됨",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-merged",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-merge",
+                      "fill": "$--pr-merged"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-stale-cell",
+              "name": "흐림 (GitHub 못 읽음)",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-stale-cap",
+                  "name": "흐림 (GitHub 못 읽음)",
+                  "content": "흐림 (GitHub 못 읽음)",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-stale",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "opacity": 0.5,
+                  "descendants": {
+                    "ath-pr-g": {
+                      "fill": "$--destructive"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-mark-raised-cell",
+              "name": "! N raised",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-mark-raised-cap",
+                  "name": "! N raised",
+                  "content": "! N raised",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-mark-raised",
+                  "type": "ref",
+                  "ref": "ath-mark",
+                  "name": "Descendant mark"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-mark-working-cell",
+              "name": "● N working",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-mark-working-cap",
+                  "name": "● N working",
+                  "content": "● N working",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-mark-working",
+                  "type": "ref",
+                  "ref": "ath-mark",
+                  "name": "Descendant mark",
+                  "descendants": {
+                    "ath-mark-bang": {
+                      "enabled": false
+                    },
+                    "ath-mark-dot": {
+                      "enabled": true
+                    },
+                    "ath-mark-n": {
+                      "content": "3",
+                      "fill": "$--agent-working"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-tb-rest-cell",
+              "name": "Tree button rest",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-tb-rest-cap",
+                  "name": "Tree button rest",
+                  "content": "Tree button rest",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-tb-rest",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-tb-open-cell",
+              "name": "Tree button open",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-tb-open-cap",
+                  "name": "Tree button open",
+                  "content": "Tree button open",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-tb-open",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button",
+                  "fill": "$--secondary",
+                  "descendants": {
+                    "ath-tb-n": {
+                      "content": "2"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-row-root-cell",
+              "name": "Root, opened",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-row-root-cap",
+                  "name": "Root, opened",
+                  "content": "Root, opened",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-row-root",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-chev": {
+                      "icon": "chevron-down"
+                    },
+                    "ath-row-ring": {
+                      "enabled": false
+                    },
+                    "ath-row-dot": {
+                      "enabled": true
+                    },
+                    "ath-row-title": {
+                      "content": "루트 에이전트",
+                      "fill": "$--foreground"
+                    },
+                    "ath-row-pr/ath-pr-g": {
+                      "fill": "$--success"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-row-child-cell",
+              "name": "Child, folded with a raised descendant",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-row-child-cap",
+                  "name": "Child, folded with a raised ",
+                  "content": "Child, folded with a raised descendant",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-row-child",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-title": {
+                      "content": "자식"
+                    },
+                    "ath-row-desc": {
+                      "enabled": true
+                    },
+                    "ath-row-age": {
+                      "content": "19h"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-row-grand-cell",
+              "name": "Grandchild, no children",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-row-grand-cap",
+                  "name": "Grandchild, no children",
+                  "content": "Grandchild, no children",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-row-grand",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-rail": {
+                      "enabled": true
+                    },
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-chev": {
+                      "enabled": false
+                    },
+                    "ath-row-ring": {
+                      "enabled": false
+                    },
+                    "ath-row-glyph": {
+                      "enabled": true,
+                      "content": "✓",
+                      "fill": "$--success"
+                    },
+                    "ath-row-title": {
+                      "content": "손자"
+                    },
+                    "ath-row-pr": {
+                      "enabled": false
+                    },
+                    "ath-row-age": {
+                      "content": "40m"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-row-remote-cell",
+              "name": "Child on another device",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-row-remote-cap",
+                  "name": "Child on another device",
+                  "content": "Child on another device",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-row-remote",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-chev": {
+                      "enabled": false
+                    },
+                    "ath-row-ring": {
+                      "stroke": "$--muted-foreground"
+                    },
+                    "ath-row-title": {
+                      "content": "다른 기기의 자식"
+                    },
+                    "ath-row-pr": {
+                      "enabled": false
+                    },
+                    "ath-row-device": {
+                      "enabled": true
+                    },
+                    "ath-row-age": {
+                      "content": "5h"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            }
+          ],
+          "theme": {
+            "Mode": "Light"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "end",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "width": "fit_content",
+          "cornerRadius": "$--radius-md"
+        },
+        {
+          "type": "frame",
+          "id": "cmp-agent-tree-parts-dark",
+          "name": "Dark",
+          "children": [
+            {
+              "type": "frame",
+              "id": "ath-d-verb-0-cell",
+              "name": "Verb 1",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-verb-0-cap",
+                  "name": "Verb 1",
+                  "content": "Verb 1",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-verb-0",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "승인"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-verb-1-cell",
+              "name": "Verb 2",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-verb-1-cap",
+                  "name": "Verb 2",
+                  "content": "Verb 2",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-verb-1",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "답변"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-verb-2-cell",
+              "name": "Verb 3",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-verb-2-cap",
+                  "name": "Verb 3",
+                  "content": "Verb 3",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-verb-2",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "확인"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-verb-3-cell",
+              "name": "Verb 4",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-verb-3-cap",
+                  "name": "Verb 4",
+                  "content": "Verb 4",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-verb-3",
+                  "type": "ref",
+                  "ref": "ath-verb",
+                  "name": "Verb",
+                  "descendants": {
+                    "ath-verb-t": {
+                      "content": "초안"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-failed-cell",
+              "name": "CI 실패",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-failed-cap",
+                  "name": "CI 실패",
+                  "content": "CI 실패",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-failed",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--destructive"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-pending-cell",
+              "name": "CI 도는 중 · 리뷰 대기",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-pending-cap",
+                  "name": "CI 도는 중 · 리뷰 대기",
+                  "content": "CI 도는 중 · 리뷰 대기",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-pending",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--pr-pending"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-mergeable-cell",
+              "name": "머지 가능",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-mergeable-cap",
+                  "name": "머지 가능",
+                  "content": "머지 가능",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-mergeable",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--success"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-merged-cell",
+              "name": "머지됨",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-merged-cap",
+                  "name": "머지됨",
+                  "content": "머지됨",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-merged",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-merge",
+                      "fill": "$--pr-merged"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-stale-cell",
+              "name": "흐림 (GitHub 못 읽음)",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-stale-cap",
+                  "name": "흐림 (GitHub 못 읽음)",
+                  "content": "흐림 (GitHub 못 읽음)",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-stale",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR icon",
+                  "opacity": 0.5,
+                  "descendants": {
+                    "ath-pr-g": {
+                      "fill": "$--destructive"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-mark-raised-cell",
+              "name": "! N raised",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-mark-raised-cap",
+                  "name": "! N raised",
+                  "content": "! N raised",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-mark-raised",
+                  "type": "ref",
+                  "ref": "ath-mark",
+                  "name": "Descendant mark"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-mark-working-cell",
+              "name": "● N working",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-mark-working-cap",
+                  "name": "● N working",
+                  "content": "● N working",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-mark-working",
+                  "type": "ref",
+                  "ref": "ath-mark",
+                  "name": "Descendant mark",
+                  "descendants": {
+                    "ath-mark-bang": {
+                      "enabled": false
+                    },
+                    "ath-mark-dot": {
+                      "enabled": true
+                    },
+                    "ath-mark-n": {
+                      "content": "3",
+                      "fill": "$--agent-working"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-tb-rest-cell",
+              "name": "Tree button rest",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-tb-rest-cap",
+                  "name": "Tree button rest",
+                  "content": "Tree button rest",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-tb-rest",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-tb-open-cell",
+              "name": "Tree button open",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-tb-open-cap",
+                  "name": "Tree button open",
+                  "content": "Tree button open",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-tb-open",
+                  "type": "ref",
+                  "ref": "ath-tree-button",
+                  "name": "Tree button",
+                  "fill": "$--secondary",
+                  "descendants": {
+                    "ath-tb-n": {
+                      "content": "2"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-row-root-cell",
+              "name": "Root, opened",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-row-root-cap",
+                  "name": "Root, opened",
+                  "content": "Root, opened",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-row-root",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-chev": {
+                      "icon": "chevron-down"
+                    },
+                    "ath-row-ring": {
+                      "enabled": false
+                    },
+                    "ath-row-dot": {
+                      "enabled": true
+                    },
+                    "ath-row-title": {
+                      "content": "루트 에이전트",
+                      "fill": "$--foreground"
+                    },
+                    "ath-row-pr/ath-pr-g": {
+                      "fill": "$--success"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-row-child-cell",
+              "name": "Child, folded with a raised descendant",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-row-child-cap",
+                  "name": "Child, folded with a raised ",
+                  "content": "Child, folded with a raised descendant",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-row-child",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-title": {
+                      "content": "자식"
+                    },
+                    "ath-row-desc": {
+                      "enabled": true
+                    },
+                    "ath-row-age": {
+                      "content": "19h"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-row-grand-cell",
+              "name": "Grandchild, no children",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-row-grand-cap",
+                  "name": "Grandchild, no children",
+                  "content": "Grandchild, no children",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-row-grand",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-rail": {
+                      "enabled": true
+                    },
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-chev": {
+                      "enabled": false
+                    },
+                    "ath-row-ring": {
+                      "enabled": false
+                    },
+                    "ath-row-glyph": {
+                      "enabled": true,
+                      "content": "✓",
+                      "fill": "$--success"
+                    },
+                    "ath-row-title": {
+                      "content": "손자"
+                    },
+                    "ath-row-pr": {
+                      "enabled": false
+                    },
+                    "ath-row-age": {
+                      "content": "40m"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-row-remote-cell",
+              "name": "Child on another device",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-row-remote-cap",
+                  "name": "Child on another device",
+                  "content": "Child on another device",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-row-remote",
+                  "type": "ref",
+                  "ref": "ath-row",
+                  "name": "Tree row",
+                  "descendants": {
+                    "ath-row-elbow": {
+                      "enabled": true
+                    },
+                    "ath-row-chev": {
+                      "enabled": false
+                    },
+                    "ath-row-ring": {
+                      "stroke": "$--muted-foreground"
+                    },
+                    "ath-row-title": {
+                      "content": "다른 기기의 자식"
+                    },
+                    "ath-row-pr": {
+                      "enabled": false
+                    },
+                    "ath-row-device": {
+                      "enabled": true
+                    },
+                    "ath-row-age": {
+                      "content": "5h"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            }
+          ],
+          "theme": {
+            "Mode": "Dark"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "end",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "width": "fit_content",
+          "cornerRadius": "$--radius-md"
+        }
+      ],
+      "layout": "vertical",
+      "gap": "$--spacing-xl",
+      "padding": "$--spacing-xl",
+      "fill": "$--card",
+      "cornerRadius": "$--radius-lg",
+      "width": "fit_content",
+      "x": 8800,
+      "y": 7264
     }
   ],
   "themes": {
@@ -40865,6 +43681,42 @@
     "--size-pane-state-example": {
       "type": "number",
       "value": 144
+    },
+    "--lineage-rail": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#C9C9CE"
+        },
+        {
+          "value": "#55585E",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--pr-pending": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#BF8700"
+        },
+        {
+          "value": "#D29922",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--size-lineage-departure-y": {
+      "type": "number",
+      "value": 18
+    },
+    "--size-lineage-rail-x": {
+      "type": "number",
+      "value": 8
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

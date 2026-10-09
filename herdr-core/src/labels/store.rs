@@ -122,6 +122,14 @@ pub(crate) fn proves(
     owner == reference || proven_reference == Some(reference)
 }
 
+/// What a read says of the agent's background tasks.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct WakeRead {
+    /// When each task proven alive expires on its own, if it does.
+    pub(crate) expiries: Vec<Option<u64>>,
+    pub(crate) vanished: bool,
+}
+
 impl PaneRecord {
     pub(crate) fn first_seen(state_change_seq: u64, now_unix_ms: u64) -> Self {
         Self {
@@ -189,6 +197,19 @@ impl PaneRecord {
     /// not settle it.
     pub(crate) fn turn_read(&self) -> Option<(u64, Option<Waiting>)> {
         Some((self.turns_seq?, self.turns.as_ref()?.waiting()))
+    }
+
+    /// When each background task the session proves alive expires on its own,
+    /// with the Herdr state the read was made under.
+    pub(crate) fn wake_read(&self) -> Option<(u64, WakeRead)> {
+        let turns = self.turns.as_ref()?;
+        Some((
+            self.turns_seq?,
+            WakeRead {
+                expiries: turns.wake_expiries(),
+                vanished: turns.wake_vanished(),
+            },
+        ))
     }
 
     pub(crate) fn user_turn(&self) -> Option<(u64, hide_session::turns::UserTurnFact)> {

@@ -40,6 +40,10 @@ pub const PROJECT_FILE_LIMIT: usize = 4 * 1024;
 pub const SEARCH_LIMIT: usize = 200;
 /// The most issues or pull requests a related lookup answers.
 pub const SEARCH_RESULTS: &str = "5";
+/// The fields of a check run a verification reads. A whole run is about
+/// 3.5 KB and a node keeps 64 KiB of a command's output, so twenty runs would
+/// be cut; a line of these fields is about 180 bytes.
+pub const CHECK_RUN_FIELDS: &str = ".check_runs[] | {name, status, conclusion, html_url}";
 
 /// The files a project read answers the text of: the guides a judgment
 /// reads, and the two the probe reads verify candidates from.
@@ -476,6 +480,8 @@ pub enum FactoryGh {
     RecentPrs {
         repo: String,
     },
+    /// Every check run of a commit, one JSON object per line holding only
+    /// [`CHECK_RUN_FIELDS`].
     CheckRuns {
         repo: String,
         sha: String,
@@ -669,11 +675,14 @@ impl FactoryGh {
             ]),
             Self::CheckRuns { repo, sha } => owned(&[
                 "api",
+                "--paginate",
                 &format!(
                     "repos/{}/commits/{}/check-runs?per_page=100",
                     repository(repo)?,
                     commit(sha)?
                 ),
+                "--jq",
+                CHECK_RUN_FIELDS,
             ]),
             Self::PrView { repo, number } => owned(&[
                 "pr",

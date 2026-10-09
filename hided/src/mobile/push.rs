@@ -5,8 +5,8 @@
 //! `ring` for the curve, HMAC and AES-GCM and `ureq` over rustls for the
 //! POST: both are already in the build, and no other TLS stack is added.
 //!
-//! What is sent: one notification per root or escalated child entering Needs You
-//! or Done, as data: the task as
+//! What is sent: one notification per root entering Needs You or Done (a
+//! raised descendant reaches the phone as its lineage root), as data: the task as
 //! the title, the state (`needs_you` or `done`) and the project; never
 //! terminal content and never a sentence. The words for the state belong to
 //! the phone's language, so the phone page hands them to its service worker
@@ -604,6 +604,51 @@ mod tests {
         assert!(notices.is_empty());
     }
 
+    /// B5: a block enters Needs You like a question, notifies once, and its
+    /// notification closes once the operator has read it.
+    #[test]
+    fn a_blocked_root_notifies_once_and_closes_when_read() {
+        let mut transitions = Transitions::default();
+        transitions.observe(&project(
+            &rest(json!([row("w1:p1", "working", "none", None)])),
+            "local",
+        ));
+        let blocked = project(
+            &rest(json!([row("w1:p1", "needs_you", "error", None)])),
+            "local",
+        );
+        let (notices, _) = transitions.observe(&blocked);
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].state, NoticeState::NeedsYou);
+        assert!(transitions.observe(&blocked).0.is_empty(), "not twice");
+        let read = project(&rest(json!([row("w1:p1", "seen", "error", None)])), "local");
+        let (notices, cleared) = transitions.observe(&read);
+        assert!(notices.is_empty());
+        assert_eq!(cleared.len(), 1);
+    }
+
+    /// B8, B5: an ordinary delegated child's block is the parent's to handle,
+    /// so the root is not announced; only a core escalation cause raises it.
+    #[test]
+    fn a_delegated_childs_block_never_announces_its_root() {
+        let mut transitions = Transitions::default();
+        transitions.observe(&project(
+            &rest(json!([
+                row("w1:p1", "working", "none", None),
+                row("w1:p2", "working", "none", Some("w1:p1")),
+            ])),
+            "local",
+        ));
+        let blocked = project(
+            &rest(json!([
+                row("w1:p1", "working", "none", None),
+                row("w1:p2", "working", "error", Some("w1:p1")),
+            ])),
+            "local",
+        );
+        assert!(transitions.observe(&blocked).0.is_empty());
+    }
+
     #[test]
     fn read_root_and_child_questions_never_reannounce_the_root() {
         let mut transitions = Transitions::default();
@@ -638,32 +683,35 @@ mod tests {
         assert!(transitions.observe(&child).0.is_empty());
     }
 
+    // agent-hierarchy-screens B9: a raised descendant notifies through its
+    // lineage root, once, and never on its own row.
     #[test]
-    fn escalations_notify_the_child_once_and_clear_when_the_parent_can_handle_it() {
-        for cause in [
-            "parent_blocked",
-            "draft",
-            "bell_exhausted",
-            "child_blocked",
-            "undelivered",
-            "observer_unconfirmed",
+    fn a_raised_descendant_notifies_its_root_once_and_clears_with_the_raise() {
+        for (cause, human_notice) in [
+            ("draft", false),
+            ("bell_exhausted", false),
+            ("child_blocked", false),
+            ("undelivered", true),
+            ("observer_unconfirmed", true),
         ] {
             let mut transitions = Transitions::default();
-            let parent = row("w1:p1", "working", "none", None);
+            // A quiet root, so clearing the raise returns it to Seen.
+            let parent = row("w1:p1", "seen", "none", None);
             let child = row("w1:p2", "seen", "question", Some("w1:p1"));
             let quiet = project(&rest(json!([parent.clone(), child.clone()])), "local");
             transitions.observe(&quiet);
-            let mut raised = child.clone();
-            raised["group"] = json!("needs_you");
-            let human_notice = matches!(cause, "undelivered" | "observer_unconfirmed");
-            raised["escalation"] = json!({"cause": cause, "human_notice": human_notice});
-            let raised = project(&rest(json!([parent, raised])), "local");
+            let mut root = parent.clone();
+            root["group"] = json!("needs_you");
+            root["raised"] = json!([{"verb": "answer", "human_notice": human_notice}]);
+            let mut escalated = child.clone();
+            escalated["escalation"] = json!({"cause": cause, "human_notice": human_notice});
+            let raised = project(&rest(json!([root, escalated])), "local");
             let (notices, _) = transitions.observe(&raised);
             if human_notice {
                 assert!(notices.is_empty(), "{cause} already has a delivery notice");
             } else {
                 assert_eq!(notices.len(), 1, "{cause}");
-                assert_eq!(notices[0].key.pane_id, "w1:p2");
+                assert_eq!(notices[0].key.pane_id, "w1:p1", "the root, not the child");
                 assert_eq!(notices[0].state, NoticeState::NeedsYou);
             }
             assert!(transitions.observe(&raised).0.is_empty());
@@ -671,11 +719,11 @@ mod tests {
             assert!(notices.is_empty());
             assert_eq!(cleared.len(), usize::from(!human_notice), "{cause}");
             if !human_notice {
-                assert_eq!(cleared.first().unwrap().pane_id, "w1:p2");
+                assert_eq!(cleared.first().unwrap().pane_id, "w1:p1");
                 assert_eq!(
                     transitions.observe(&raised).0.len(),
                     1,
-                    "a new escalation is a new transition"
+                    "a new raise is a new transition"
                 );
             }
         }

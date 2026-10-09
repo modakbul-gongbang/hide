@@ -1,10 +1,9 @@
-import { CornerUpLeftIcon } from "lucide-react";
 import { useState } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
-import { parentStep, relationEntries, relationState } from "./lineage";
+import { relationEntries, relationState } from "./lineage";
 import { herdrPaneId } from "./remote";
 import { type PaneRow } from "./snapshot";
 import { useShellStore } from "./store";
@@ -22,32 +21,41 @@ import { splitLabel } from "./areaLayout";
 // and a failure never splits the parent or makes a pane.
 
 /**
- * The compact Return control in a child pane's identity row (B16): one mark,
- * so the pane's own name keeps the room, with the parent named in its
- * tooltip and accessible name.
+ * A child pane's ancestors left of its title, root first (PRD
+ * agent-hierarchy-screens D-14, B20): each name opens that pane. A narrow
+ * pane drops the names and keeps each arrow, whose accessible name and
+ * tooltip still say where it goes. A root pane has none.
  */
-export function ReturnToParent({ pane, actions }: { pane: PaneRow; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
-  const parent = parentStep(pane);
-  const progress = useRelationProgress(pane.id, parent?.pane_id ?? null);
-  const pending = progress?.phase === "pending";
-  if (!parent) return null;
-  const label = t("panes.relation.return", { name: parent.label });
+export function AncestorPath({ pane, actions }: { pane: PaneRow; actions: Actions }) {
+  const ancestors = (pane.lineage_path ?? []).slice(0, -1);
+  if (ancestors.length === 0) return null;
   return (
-    <Hint label={progress?.phase === "failed" ? progress.message : label}>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        className={`w-auto shrink-0 gap-xs px-xs hover:bg-popover hover:text-foreground ${progress?.phase === "failed" ? "text-destructive" : ""}`}
+    <nav className="flex min-w-0 shrink items-center" data-pane-path={pane.id}>
+      {ancestors.map((step) => <AncestorStep key={step.pane_id} pane={pane} step={step} actions={actions} />)}
+    </nav>
+  );
+}
+
+function AncestorStep({ pane, step, actions }: { pane: PaneRow; step: NonNullable<PaneRow["lineage_path"]>[number]; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const progress = useRelationProgress(pane.id, step.pane_id);
+  const pending = progress?.phase === "pending";
+  const failed = progress?.phase === "failed";
+  const label = t("panes.relation.return", { name: step.label });
+  return (
+    <Hint label={failed ? progress.message : label}>
+      <button
+        type="button"
+        className={`flex min-w-0 shrink items-center gap-xxs rounded-xs px-xxs outline-none hover:bg-popover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 ${failed ? "text-destructive" : ""}`}
         aria-label={label}
         aria-busy={pending}
-        data-pane-return={parent.pane_id}
-        disabled={pending || (progress?.phase === "failed" && !progress.retryable)}
-        onClick={() => actions.followRelation(pane.id, parent.pane_id, parent.label)}
+        data-pane-return={step.pane_id}
+        disabled={pending || (failed && !progress.retryable)}
+        onClick={() => actions.followRelation(pane.id, step.pane_id, step.label)}
       >
-        {pending ? <span aria-hidden="true">…</span> : <CornerUpLeftIcon />}
-        <span className="hidden max-w-[var(--size-pane-child-chip-max)] truncate @min-[var(--size-pane-parent-breakpoint)]/pane:inline">{progress?.phase === "failed" && progress.retryable ? t("common.retry") : parent.label}</span>
-      </Button>
+        <span className="hidden min-w-0 max-w-(--size-pane-child-chip-max) truncate @min-[var(--size-pane-parent-breakpoint)]/pane:inline">{failed && progress.retryable ? t("common.retry") : step.label}</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground">{pending ? "…" : "›"}</span>
+      </button>
     </Hint>
   );
 }

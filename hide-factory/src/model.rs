@@ -182,7 +182,9 @@ pub enum ActivityEvent {
     },
     /// Factory AI reached today's cap; the rest of the day goes to a person.
     DailyLimit { limit: u32 },
-    /// A notice from before this log, kept with its words (D-39).
+    /// A line in words: a notice from before this log, kept with its words
+    /// (D-39), or what the engine tells a person it cannot act on for them,
+    /// in the operator's language.
     Note { text: String },
 }
 

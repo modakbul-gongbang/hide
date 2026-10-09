@@ -146,6 +146,14 @@ impl SessionFormat {
             Self::Claude | Self::Codex | Self::Grok | Self::Omp | Self::OpenCode
         )
     }
+    /// Whether the session records prove which background tasks are still
+    /// running and when a new process began. Claude Code's do; Codex writes no
+    /// record when a session's command ends, and no other format keeps a
+    /// process boundary, so their waits are Herdr's alone (PRD
+    /// agent-blocked-state B18, D-26).
+    pub const fn reports_wake_devices(self) -> bool {
+        matches!(self, Self::Claude)
+    }
     pub const fn has_session_file(self) -> bool {
         matches!(
             self,
