@@ -420,6 +420,50 @@ mod wake_devices {
     }
 
     #[test]
+    fn several_start_hook_records_in_a_row_keep_the_vanished_device_known() {
+        let home = home(Agent::Claude);
+        let path = session_file(home.path(), Agent::Claude);
+        append(
+            &path,
+            &[
+                boot("SessionStart:startup"),
+                started("Command running in background with ID: bg1"),
+                boot("SessionStart:resume"),
+                boot("SessionStart:resume"),
+                boot("SessionStart:resume"),
+            ],
+        );
+        let read = read_whole(home.path(), Agent::Claude);
+        assert_eq!(live(&read), []);
+        assert!(read.turns.unwrap().wake_vanished());
+    }
+
+    #[test]
+    fn a_start_marker_quoted_inside_a_tool_result_proves_no_device() {
+        let home = home(Agent::Claude);
+        let path = session_file(home.path(), Agent::Claude);
+        append(
+            &path,
+            &[
+                boot("SessionStart:startup"),
+                started("docs/status-model.md:106: the text 'Command running in background with ID: X' starts a device"),
+                started("note: the shell said Command did not complete within its 5s timeout and was moved to the background (ID: Y)"),
+                started("see Monitor started (task Z, expires in 30m)"),
+                started("quoted Async agent launched successfully agentId: W"),
+            ],
+        );
+        assert_eq!(live(&read_whole(home.path(), Agent::Claude)), []);
+
+        append(
+            &path,
+            &[started(
+                "Command did not complete within its 600s timeout and was moved to the background (ID: real)",
+            )],
+        );
+        assert_eq!(live(&read_whole(home.path(), Agent::Claude)), [None]);
+    }
+
+    #[test]
     fn an_incremental_read_continues_the_devices_of_the_read_before_it() {
         let home = home(Agent::Claude);
         let path = session_file(home.path(), Agent::Claude);

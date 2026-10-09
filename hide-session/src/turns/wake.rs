@@ -102,6 +102,13 @@ fn after<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
     Some(&text[text.find(marker)? + marker.len()..])
 }
 
+/// What follows `marker` when the tool's own message opens with it. A start
+/// marker quoted in a file or a search result the agent read sits mid-text and
+/// proves nothing.
+fn opening<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
+    text.trim_start().strip_prefix(marker)
+}
+
 fn user(item: &Value, marks: &mut Vec<WakeMark>) {
     let Some(blocks) = item.pointer("/message/content").and_then(Value::as_array) else {
         return;
@@ -122,8 +129,10 @@ fn user(item: &Value, marks: &mut Vec<WakeMark>) {
             _ => continue,
         };
         for text in texts {
-            if let Some(id) = after(text, "Command running in background with ID: ")
-                .or_else(|| after(text, "was moved to the background (ID: "))
+            let timed_out = opening(text, "Command did not complete within its ")
+                .and_then(|rest| after(rest, "was moved to the background (ID: "));
+            if let Some(id) = opening(text, "Command running in background with ID: ")
+                .or(timed_out)
                 .and_then(token)
             {
                 push(
@@ -133,7 +142,7 @@ fn user(item: &Value, marks: &mut Vec<WakeMark>) {
                         expires_at_unix_ms: None,
                     }),
                 );
-            } else if let Some(rest) = after(text, "Monitor started (task ")
+            } else if let Some(rest) = opening(text, "Monitor started (task ")
                 && let Some(id) = token(rest)
             {
                 // A monitor that announces an expiry but has no time to count
@@ -153,7 +162,7 @@ fn user(item: &Value, marks: &mut Vec<WakeMark>) {
                         expires_at_unix_ms: expires,
                     }),
                 );
-            } else if text.starts_with("Async agent launched successfully")
+            } else if text.trim_start().starts_with("Async agent launched successfully")
                 && let Some(id) = after(text, "agentId: ").and_then(token)
             {
                 push(

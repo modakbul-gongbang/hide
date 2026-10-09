@@ -347,7 +347,9 @@ impl TurnTracker {
             match mark {
                 WakeMark::Boot => {
                     self.booted = true;
-                    self.wake_vanished = !self.wake.is_empty();
+                    // Claude writes one record per start hook, so a start is several
+                    // Boots in a row; the later ones find nothing left to lose.
+                    self.wake_vanished |= !self.wake.is_empty();
                     self.wake.clear();
                     self.wake_overflow = false;
                 }
@@ -361,7 +363,7 @@ impl TurnTracker {
                     self.wake_vanished = false;
                     if let Some(known) = self.wake.iter_mut().find(|device| device.id == *id) {
                         known.expires_at_unix_ms = *expires_at_unix_ms;
-                    } else if self.wake.len() == WAKE_DEVICE_LIMIT {
+                    } else if self.wake.len() >= WAKE_DEVICE_LIMIT {
                         self.wake_overflow = true;
                         self.wake.clear();
                     } else {
