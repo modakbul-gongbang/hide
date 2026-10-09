@@ -1405,18 +1405,16 @@ mod tests {
     }
 
     #[test]
-    fn factory_sleep_refuses_an_agent_that_declares_no_sleep_without_touching_its_row() {
-        for kind in ["opencode", "cursor"] {
-            let mut runtime = crate::runtime::tests::live_runtime();
-            let mut row = worker_row("worker", kind, "none", "stopped");
-            row.session_id = Some("11111111-2222-3333-4444-555555555555".into());
-            runtime.snapshot.navigator.agents = vec![row];
-            let before = serde_json::to_value(runtime.snapshot()).unwrap();
-            assert_eq!(runtime.factory_sleep("worker"), Err("agent_cannot_sleep"));
-            assert_eq!(serde_json::to_value(runtime.snapshot()).unwrap(), before);
-            assert!(runtime.snapshot.ui_state.agent_sleep.dormant.is_empty());
-            assert!(runtime.snapshot.ui_state.agent_sleep.records.is_empty());
-        }
+    fn factory_sleep_refuses_an_agent_with_no_adapter_without_touching_its_row() {
+        let mut runtime = crate::runtime::tests::live_runtime();
+        let mut row = worker_row("worker", "unknown-agent", "none", "stopped");
+        row.session_id = Some("11111111-2222-3333-4444-555555555555".into());
+        runtime.snapshot.navigator.agents = vec![row];
+        let before = serde_json::to_value(runtime.snapshot()).unwrap();
+        assert_eq!(runtime.factory_sleep("worker"), Err("agent_cannot_sleep"));
+        assert_eq!(serde_json::to_value(runtime.snapshot()).unwrap(), before);
+        assert!(runtime.snapshot.ui_state.agent_sleep.dormant.is_empty());
+        assert!(runtime.snapshot.ui_state.agent_sleep.records.is_empty());
     }
 
     #[test]
