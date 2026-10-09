@@ -342,13 +342,15 @@ impl Runtime {
         {
             let known = entry.facts.len();
             entry.facts.retain(|path, _| needed.contains(path));
-            crate::diagnostic!(serde_json::json!({
-                "component": "device_catalog",
-                "kind": "catalog.facts_pruned",
-                "target": target,
-                "known": known,
-                "kept": entry.facts.len(),
-            }));
+            if entry.facts.len() < known {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "device_catalog",
+                    "kind": "catalog.facts_pruned",
+                    "target": target,
+                    "known": known,
+                    "kept": entry.facts.len(),
+                }));
+            }
         }
         if missing.is_empty() {
             return self.refresh_device_catalog(target);
@@ -470,13 +472,15 @@ impl Runtime {
         if entry.projects.len() > MAX_KNOWN_PATHS {
             let known = entry.projects.len();
             entry.projects.retain(|root, _| roots.contains(root));
-            crate::diagnostic!(serde_json::json!({
-                "component": "device_catalog",
-                "kind": "catalog.worktrees_pruned",
-                "target": target,
-                "known": known,
-                "kept": entry.projects.len(),
-            }));
+            if entry.projects.len() < known {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "device_catalog",
+                    "kind": "catalog.worktrees_pruned",
+                    "target": target,
+                    "known": known,
+                    "kept": entry.projects.len(),
+                }));
+            }
         }
         let all = all || entry.reread;
         if entry.in_flight.is_some() {
@@ -524,6 +528,7 @@ impl Runtime {
         if let Err(error) = spawned {
             let entry = self.device_worktrees.entry(target.to_owned()).or_default();
             entry.in_flight = None;
+            entry.reread |= all;
             entry.unavailable = Some(format!("The worktree reader could not start: {error}"));
         }
         false
@@ -602,8 +607,8 @@ impl Runtime {
     /// there. What its helper answered about its directories stays: a Retry
     /// connects to the same device again, and that connection asks again
     /// (`reread_device_facts`), so meanwhile the device's panes keep their
-    /// checkouts. Removing the device forgets those answers too
-    /// (`forget_device_directories`).
+    /// checkouts. Removing the device, or a helper answering as another
+    /// machine, forgets those answers too (`forget_device_directories`).
     pub(super) fn forget_device_catalog(&mut self, target: &str) {
         self.device_raw_sessions.remove(target);
         self.device_recent_tabs.remove(target);
@@ -611,7 +616,8 @@ impl Runtime {
             .retain(|(owner, _), _| owner != target);
     }
 
-    /// The device was removed: nothing its helper answered is kept.
+    /// The device was removed, or another machine answers its address:
+    /// nothing its helper answered is kept.
     pub(super) fn forget_device_directories(&mut self, target: &str) {
         self.device_facts.remove(target);
         self.device_worktrees.remove(target);
