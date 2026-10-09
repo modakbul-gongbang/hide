@@ -800,11 +800,15 @@ impl Inner {
                 self.watches.remove(&pane);
                 self.deliveries.push(Delivery::Forget { pane });
             }
-            TerminalControl::Closing { pane, closing } => {
-                if let Some(entry) = self.panes.get_mut(&pane) {
-                    entry.closing = closing;
+            TerminalControl::Closing { pane, closing } => match self.panes.get_mut(&pane) {
+                Some(entry) => entry.closing = closing,
+                // A pane this node never heard of is not closing; one told
+                // so first (a device's new link) is, before it attaches.
+                None if !closing => {}
+                None => {
+                    self.panes.entry(pane).or_default().closing = true;
                 }
-            }
+            },
             TerminalControl::Resize { pane, size, force } => {
                 self.resize(shared, &pane, size, force, now)
             }

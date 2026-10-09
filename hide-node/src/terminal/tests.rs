@@ -710,6 +710,24 @@ fn a_reader_goes_back_to_its_pane_while_another_readers_frame_is_handed() {
     );
 }
 
+/// A pane told it is closing before this node tracks it (a device's new
+/// link is told so before the core attaches the pane) refuses keys as a
+/// closing pane, not as one with no terminal.
+#[test]
+fn a_pane_told_closing_before_this_node_tracks_it_refuses_keys_as_closing() {
+    let harness = harness(RetryPolicy::Automatic);
+    harness.service.control(TerminalControl::Closing {
+        pane: "w1:p1".into(),
+        closing: true,
+    });
+    harness.key("w1:p1", b"x");
+    let refused = harness.report_where(|report| matches!(report, TerminalReport::Error { .. }));
+    assert!(
+        matches!(&refused, TerminalReport::Error { kind, .. } if kind == "terminal.close_pending"),
+        "{refused:?}"
+    );
+}
+
 #[test]
 fn an_ended_session_says_so_on_the_pane_and_a_closing_one_does_not() {
     let harness = harness(RetryPolicy::Automatic);
