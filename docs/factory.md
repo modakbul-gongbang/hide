@@ -191,7 +191,7 @@ A worker starts when the Task may start.
 The engine asks the core to spawn it through coordination, the same path as `hide agent spawn`, under the Factory's own agent record as parent.
 The spawn runs on the host's starter thread, one at a time with at most 16 waiting, because it waits for Herdr to make the worktree and start the agent: the engine keeps the Task's slot, answers commands and worker reports meanwhile, and takes the started worker on the next tick.
 A Task cancelled or paused while its worker starts on the starter has that worker ended when it arrives, and a worktree that start made removed; its next start is a new attempt with its own spawn intent.
-For Pi and omp, this abandoned-start rollback closes only the execution that start created, even though normal Factory sleep and stop are refused; a resumed start keeps its existing worktree, branch, conversation and other panes.
+For Pi, omp and Grok, this abandoned-start rollback closes only the execution that start created, even though normal Factory sleep and stop are refused; a resumed start keeps its existing worktree, branch, conversation and other panes.
 The unclaimed start retains its original connection generation and file node only until it is claimed or released.
 Rollback rechecks the created native session and terminal before and after opening the actual close connection, and refuses a replaced connection or execution before closing or deleting files.
 A refused rollback preserves the worktree and branch and records a cleanup failure; it never redirects the old pane ID to the replacement server.
@@ -221,9 +221,9 @@ A start that fails with an environment signal leaves the Task `waiting` and is h
 
 A Task's worker is put to sleep when the Task blocks, pauses, goes to `verifying`, or waits for a slot, and woken when it runs again.
 Sleep goes through agent sleep and is deferred until the agent's turn ends; a worker that never slept is sent the message instead, and a worker without Factory-supported same-pane sleep is never counted asleep.
-Pi and omp's manual Sleep/Wake closes the original pane and resumes in a fresh one; Factory cannot bind that new execution's worker, coordination, letter and watch identities yet, so Factory pause keeps their live panes.
+Pi's, omp's and Grok's manual Sleep/Wake closes the original pane and resumes in a fresh one; Factory cannot bind that new execution's worker, coordination, letter and watch identities yet, so Factory pause keeps their live panes.
 Stopping a worker, when its Task is cancelled or an outside pull request takes it over, ends its ledger record at once and puts its agent to sleep the same way, so the pane and session stay for `revive`; an agent that cannot sleep is left awake in its pane.
-For Pi and omp, that stop is refused with `agent_cannot_sleep` before changing the ledger or pane.
+For Pi, omp and Grok, that stop is refused with `agent_cannot_sleep` before changing the ledger or pane.
 A wake restarts the agent in the same pane and session.
 An older asleep Pi/omp worker or a worker whose original pane has a dormant record is refused before wake letters or a replacement start; the dormant native session is preserved without guessing a new pane or starting a new conversation.
 Letters for a woken worker are held, at most 16, until its agent is back, and are dropped to the diagnostic log after 10 minutes.
@@ -357,7 +357,7 @@ In 직접 and 함께 a risk path always waits for a person.
 
 **Pausing a Factory.**
 `hide factory pause --factory` stops the Factory's starts, judgments and auto merges, and asks each running worker to sleep, which it does when its current turn ends, while a worker whose agent cannot sleep keeps working and the answer names its Task; a request that arrives meanwhile goes to a person.
-For Pi and omp, Factory pause keeps the live pane and does not end the agent; manual Sleep/Wake remains a separate action.
+For Pi, omp and Grok, Factory pause keeps the live pane and does not end the agent; manual Sleep/Wake remains a separate action.
 A worker that reports `done` in that last turn is verified as usual, but its checks wait for the resume rather than failing.
 A Task verified while paused that a person must merge, by its mode, an open question or a gate such as a failed check or a risk path, goes through its usual merge checks to `merge_waiting`, where `hide factory merge` takes it; one that would merge on its own waits for the resume, and nothing toward its merge is read meanwhile.
 A Task sent back to its worker while paused, by a conflict with main, a failed check or a person, goes back to `running` with its worker asleep where its agent can sleep, and the worker hears why on resume, as it hears every answer given during the pause.
