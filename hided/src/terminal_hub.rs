@@ -12,7 +12,9 @@
 //!
 //! A client that leaves a pane's output unsent past
 //! [`MAX_UNSENT_OUTPUT_BYTES`] loses that pane's backlog and gets nothing
-//! more of it until a full frame, which it asks the pane's node for. A full
+//! more of it until a full frame, which it asks the pane's node for, and
+//! asks again each [`REDRAW_RETRY`] none answers, quiet pane or not, for at
+//! most [`REDRAW_PENDING_LIMIT`]. A full
 //! frame replaces whatever of its pane waits for a client, since it draws
 //! over it, and is never counted against the cap, so a pane whose full
 //! frame alone passes the cap still draws. A
@@ -49,6 +51,11 @@ const MAX_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 /// A redraw asked for and not answered by a full frame is asked again
 /// after this long.
 const REDRAW_RETRY: Duration = Duration::from_secs(2);
+/// How long a client's request for a pane's full frame is asked for at
+/// most: a node that answers none in this long cannot draw the pane now
+/// (its session ended or failed), and its next session's first frame is
+/// full.
+const REDRAW_PENDING_LIMIT: Duration = Duration::from_secs(10);
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
@@ -147,8 +154,11 @@ struct Client {
     unsent: HashMap<Arc<str>, usize>,
     /// Panes this client gets nothing of until their next full frame.
     awaiting_full: HashSet<Arc<str>>,
-    /// Panes whose redraw this client asks the node for on its next turn.
-    redraw: HashSet<Arc<str>>,
+    /// Panes whose full frame this client waits for and asks the node for,
+    /// and since when: a request stays until a full frame of its pane comes
+    /// or [`REDRAW_PENDING_LIMIT`] passes, and is asked again each
+    /// [`REDRAW_RETRY`] no full frame answered.
+    redraw: HashMap<Arc<str>, Instant>,
     /// The last sequence decided for this client, sent or withheld.
     examined: u64,
     /// The client's cursor is to be told even with no chunk to carry it: it
@@ -213,7 +223,7 @@ impl TerminalHub {
             queue: Waiting::default(),
             unsent: HashMap::new(),
             awaiting_full: HashSet::new(),
-            redraw: HashSet::new(),
+            redraw: HashMap::new(),
             examined: state.sequence,
             announce: resume == Resume::Fresh,
             wake: Arc::clone(&wake),
@@ -323,11 +333,15 @@ fn drop_oversized(state: &mut HubState, pane: &str, bytes: usize, full: bool) {
     if full {
         ring.redraw_asked = None;
     }
+    let now = Instant::now();
     for client in state.clients.values_mut() {
         drop(client.queue.clear(&pane));
         client.unsent.remove(&pane);
         client.awaiting_full.insert(Arc::clone(&pane));
-        if !full && client.redraw.insert(Arc::clone(&pane)) {
+        if full {
+            client.redraw.remove(&pane);
+        } else if !client.redraw.contains_key(&pane) {
+            client.redraw.insert(Arc::clone(&pane), now);
             client.wake.notify_one();
         }
     }
@@ -347,7 +361,10 @@ fn drop_oversized(state: &mut HubState, pane: &str, bytes: usize, full: bool) {
 fn await_full(client: &mut Client, ring: &mut PaneRing, pane: &Arc<str>, cause: &str) {
     ring.unrepaired_drop = true;
     client.awaiting_full.insert(Arc::clone(pane));
-    client.redraw.insert(Arc::clone(pane));
+    client
+        .redraw
+        .entry(Arc::clone(pane))
+        .or_insert_with(Instant::now);
     herdr_core::diagnostic!(json!({
         "component": "terminal_hub",
         "kind": "terminal.redraw_wanted",
@@ -417,23 +434,14 @@ impl OutputSink for TerminalHub {
         let mut freed = Vec::new();
         let HubState { panes, clients, .. } = &mut *state;
         let ring = panes.get_mut(&pane).expect("present");
-        let now = Instant::now();
-        // The pane keeps drawing and no full frame has come since a redraw
-        // was asked for: a client still waiting asks again.
-        let ask_again = !full
-            && ring
-                .redraw_asked
-                .is_some_and(|asked| now.duration_since(asked) >= REDRAW_RETRY);
         for client in clients.values_mut() {
             client.examined = sequence;
             if client.awaiting_full.contains(&pane) {
                 if !full {
-                    if ask_again && client.redraw.insert(Arc::clone(&pane)) {
-                        client.wake.notify_one();
-                    }
                     continue;
                 }
                 client.awaiting_full.remove(&pane);
+                client.redraw.remove(&pane);
             }
             let unsent = client.unsent.entry(Arc::clone(&pane)).or_default();
             if full {
@@ -484,9 +492,34 @@ impl OutputSink for TerminalHub {
 
 impl HubClient {
     /// Resolves when this client has something to send or a redraw to ask
-    /// for.
+    /// for, including one no full frame answered that comes due again.
     pub async fn ready(&self) {
-        self.wake.notified().await;
+        let Some(due) = self.redraw_due() else {
+            return self.wake.notified().await;
+        };
+        tokio::select! {
+            () = self.wake.notified() => {}
+            () = tokio::time::sleep_until(due.into()) => {}
+        }
+    }
+
+    /// When this client's next turn is due for its redraws alone: one of
+    /// its requests may be asked again, or has waited its longest.
+    fn redraw_due(&self) -> Option<Instant> {
+        let state = lock(&self.hub.state);
+        let client = state.clients.get(&self.id)?;
+        client
+            .redraw
+            .iter()
+            .map(|(pane, since)| {
+                let ask = state
+                    .panes
+                    .get(pane)
+                    .and_then(|ring| ring.redraw_asked)
+                    .map_or(*since, |asked| asked + REDRAW_RETRY);
+                ask.min(*since + REDRAW_PENDING_LIMIT)
+            })
+            .min()
     }
 
     /// The client drew every pane again from scratch (a self-contained
@@ -517,22 +550,32 @@ impl HubClient {
         let Some(client) = clients.get_mut(&self.id) else {
             return (None, Vec::new());
         };
-        // Each pane's redraw is asked for once across clients until it is
-        // answered or overdue.
+        // Each pane's redraw is asked for once across clients until a full
+        // frame answers it or the ask is overdue; a client's request stays
+        // until then, for at most REDRAW_PENDING_LIMIT.
         let mut redraws = Vec::new();
-        for pane in client.redraw.drain() {
-            let Some(ring) = panes.get_mut(&pane) else {
-                continue;
+        client.redraw.retain(|pane, since| {
+            let Some(ring) = panes.get_mut(pane) else {
+                return false;
             };
+            if now.duration_since(*since) >= REDRAW_PENDING_LIMIT {
+                herdr_core::diagnostic!(json!({
+                    "component": "terminal_hub",
+                    "kind": "terminal.redraw_unanswered",
+                    "pane_id": pane.as_ref(),
+                    "waited_ms": REDRAW_PENDING_LIMIT.as_millis() as u64,
+                }));
+                return false;
+            }
             if ring
                 .redraw_asked
-                .is_some_and(|asked| now.duration_since(asked) < REDRAW_RETRY)
+                .is_none_or(|asked| now.duration_since(asked) >= REDRAW_RETRY)
             {
-                continue;
+                ring.redraw_asked = Some(now);
+                redraws.push(pane.to_string());
             }
-            ring.redraw_asked = Some(now);
-            redraws.push(pane.to_string());
-        }
+            true
+        });
         if client.queue.is_empty() && !client.announce {
             return (None, redraws);
         }
@@ -798,10 +841,10 @@ mod tests {
         assert_eq!(chunks, [("w1:p1".to_owned(), b"\x1bcwhole".to_vec())]);
     }
 
-    /// A redraw that no full frame answered is asked again once the pane
-    /// keeps drawing past the retry interval, and only then.
+    /// A redraw that no full frame answered is asked again once the retry
+    /// interval passes, and not before, however the pane draws meanwhile.
     #[test]
-    fn an_unanswered_redraw_is_asked_again_while_the_pane_keeps_drawing() {
+    fn an_unanswered_redraw_is_asked_again_after_the_retry_interval() {
         let hub = TerminalHub::new();
         hub.output("w1:p1", b"a", true);
         let client = hub.connect(Resume::Redraw);
@@ -820,6 +863,72 @@ mod tests {
         let (frame, redraws) = client.take();
         assert!(redraws.is_empty());
         assert_eq!(frame_chunks(&frame.unwrap()).0.len(), 2);
+    }
+
+    /// Two clients wait for one pane's full frame. The second's request,
+    /// made while the first's is answered, is kept; when no full frame
+    /// comes within the retry interval and the pane prints nothing, the
+    /// second client wakes and asks again. A full frame ends both.
+    #[tokio::test]
+    async fn a_redraw_no_full_frame_answered_is_asked_again_for_a_quiet_pane() {
+        let hub = TerminalHub::new();
+        hub.output("w1:p1", b"a", true);
+        let first = hub.connect(Resume::Redraw);
+        assert_eq!(first.take().1, ["w1:p1"]);
+        let second = hub.connect(Resume::Redraw);
+        second.ready().await;
+        assert!(
+            second.take().1.is_empty(),
+            "asked once across clients within the interval"
+        );
+        // The node's answer is lost and the pane stays quiet.
+        lock(&hub.state)
+            .panes
+            .get_mut("w1:p1")
+            .unwrap()
+            .redraw_asked = Some(Instant::now() - REDRAW_RETRY + Duration::from_millis(50));
+        tokio::time::timeout(Duration::from_secs(1), second.ready())
+            .await
+            .expect("the waiting client woke when its redraw came due");
+        assert_eq!(second.take().1, ["w1:p1"]);
+        hub.output("w1:p1", b"\x1bcwhole", true);
+        for client in [&first, &second] {
+            let (frame, redraws) = client.take();
+            assert!(redraws.is_empty());
+            assert_eq!(
+                frame_chunks(&frame.unwrap()).0,
+                [("w1:p1".to_owned(), b"\x1bcwhole".to_vec())]
+            );
+        }
+    }
+
+    /// A request no full frame answered within its limit is given up, so a
+    /// pane whose node cannot draw it is not asked for ever; the client
+    /// still draws the pane's next full frame.
+    #[test]
+    fn a_redraw_unanswered_past_its_limit_is_no_longer_asked() {
+        let hub = TerminalHub::new();
+        hub.output("w1:p1", b"a", true);
+        let client = hub.connect(Resume::Redraw);
+        assert_eq!(client.take().1, ["w1:p1"]);
+        {
+            let mut state = lock(&hub.state);
+            let long_ago = Instant::now() - REDRAW_PENDING_LIMIT;
+            state.panes.get_mut("w1:p1").unwrap().redraw_asked = Some(long_ago);
+            for since in state
+                .clients
+                .values_mut()
+                .flat_map(|c| c.redraw.values_mut())
+            {
+                *since = long_ago;
+            }
+        }
+        assert!(client.take().1.is_empty());
+        assert_eq!(client.redraw_due(), None);
+        hub.output("w1:p1", b"more", false);
+        hub.output("w1:p1", b"\x1bcwhole", true);
+        let (chunks, _) = frame_chunks(&client.take().0.unwrap());
+        assert_eq!(chunks, [("w1:p1".to_owned(), b"\x1bcwhole".to_vec())]);
     }
 
     /// A full frame larger than a client's unsent cap reaches the client
