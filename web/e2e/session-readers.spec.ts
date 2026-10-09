@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { OMP_ID, OMP_TITLE, OMP_UPDATED_TITLE, PI_ID, PI_TITLE, appendOmpQuestion, prepareNativeWriter, reportNativeWriter, updateOmpTitle } from "./session-reader-fixture";
+import { GROK_ID, GROK_PLAN, GROK_TITLE, OMP_ID, OMP_TITLE, OMP_UPDATED_TITLE, PI_ID, PI_TITLE, appendOmpQuestion, prepareNativeWriter, reportNativeWriter, setGrokPlanApproval, updateOmpTitle } from "./session-reader-fixture";
 import { screenshot } from "./wire";
 import { afterCleanup } from "./worker-owned";
 import type { AgentRow } from "../src/snapshot";
@@ -14,7 +14,7 @@ type QuestionRow = AgentRow & { user_turn?: { kind: string; content: { text: str
 
 test.describe.configure({ timeout: 150_000 });
 
-for (const [kind, id, initialTitle, resumeFlag] of [["pi", PI_ID, PI_TITLE, "--session"], ["omp", OMP_ID, OMP_TITLE, "--resume"]] as const) {
+for (const [kind, id, initialTitle, resumeFlag] of [["pi", PI_ID, PI_TITLE, "--session"], ["omp", OMP_ID, OMP_TITLE, "--resume"], ["grok", GROK_ID, GROK_TITLE, "--resume"]] as const) {
 test(`${kind} native title and durable sleep wake the exact conversation in a fresh pane`, async ({ page }) => {
   let agents: QuestionRow[] = [];
   page.on("websocket", (socket) => socket.on("framereceived", (frame) => {
@@ -56,6 +56,16 @@ test(`${kind} native title and durable sleep wake the exact conversation in a fr
       appendOmpQuestion(session, true);
       await expect.poll(() => observed()?.user_turn, { timeout: 30_000 }).toBeUndefined();
       await expect(row.locator('[data-agent-status-mark="question"]')).toHaveCount(0);
+    }
+    if (kind === "grok") {
+      // Herdr reads Grok's plan approval as working; Grok's own state is the wait.
+      const observed = () => agents.find((agent) => agent.pane_id === sourcePane);
+      setGrokPlanApproval(session, true);
+      await expect.poll(() => observed()?.user_turn, { timeout: 30_000 }).toEqual({ kind: "plan_approval", content: { text: GROK_PLAN, choices: [], truncated: false } });
+      await expect(row.locator('[data-agent-status-mark="approval"]')).toBeVisible();
+      await screenshot(page, "grok-plan-approval");
+      setGrokPlanApproval(session, false);
+      await expect.poll(() => observed()?.user_turn, { timeout: 30_000 }).toBeUndefined();
     }
     await row.click();
     await page.locator(`[data-pane-menu="${sourcePane}"]`).click();

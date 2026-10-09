@@ -716,8 +716,13 @@ mod tests {
                     serde_json::json!({"agentTimestampMs":1_790_989_200_000_u64,"promptId":part}),
                 ),
             };
-            writeln!(file, "{}", serde_json::json!({"timestamp":1_790_989_200_u64,"method":"session/update",
-                "params":{"sessionId":"x","update":update,"_meta":meta}})).unwrap();
+            writeln!(
+                file,
+                "{}",
+                serde_json::json!({"timestamp":1_790_989_200_u64,"method":"session/update",
+                "params":{"sessionId":"x","update":update,"_meta":meta}})
+            )
+            .unwrap();
         }
     }
 
@@ -741,12 +746,18 @@ mod tests {
         let older = transcript.pager().before(page.before.unwrap()).unwrap();
         assert!(texts(&older.messages).contains(&"답변 10\n\n이어서"));
 
-        grok_append(&path, &[("user", "40", "새 요청"), ("agent", "p-40", "새 답")]);
+        grok_append(
+            &path,
+            &[("user", "40", "새 요청"), ("agent", "p-40", "새 답")],
+        );
         let Tail::Messages(appended) = transcript.poll().unwrap() else {
             panic!("a new turn is appended");
         };
         assert_eq!(texts(&appended), ["새 요청", "새 답"]);
-        grok_append(&path, &[("tool", "p-40", "call-2"), ("agent", "p-40", "마저")]);
+        grok_append(
+            &path,
+            &[("tool", "p-40", "call-2"), ("agent", "p-40", "마저")],
+        );
         assert_eq!(
             transcript.poll().unwrap(),
             Tail::Reset,
