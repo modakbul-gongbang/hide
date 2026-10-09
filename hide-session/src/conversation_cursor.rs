@@ -15,8 +15,10 @@ pub struct ConversationCheckpoint {
     cursor: crate::CursorCheckpoint,
     discarded_bytes: u64,
     has_more: bool,
+    /// Boxed: a scan exists only inside an oversized record, and every
+    /// label request carries a checkpoint.
     #[serde(default)]
-    classifier: Option<LargeRecord>,
+    classifier: Option<Box<LargeRecord>>,
 }
 
 impl ConversationCheckpoint {
@@ -46,7 +48,7 @@ pub struct ConversationCursor {
     cursor: SessionCursor,
     discarded_bytes: u64,
     has_more: bool,
-    classifier: Option<LargeRecord>,
+    classifier: Option<Box<LargeRecord>>,
     read_bytes: u64,
 }
 
@@ -221,7 +223,7 @@ impl ConversationCursor {
                     };
                     scan.feed(&pending)?;
                     scan.feed(&fragment[retained..])?;
-                    classifier = Some(scan);
+                    classifier = Some(Box::new(scan));
                     discarded_bytes = pending.len() as u64 + (fragment.len() - retained) as u64;
                     pending.clear();
                 }
@@ -259,7 +261,7 @@ impl ConversationCursor {
                     parsed.skipped(SkipReason::BodyCapacity);
                     pending = line.into_bytes();
                 } else {
-                    let Some(turn) = scan.and_then(|scan| scan.discard(agent)) else {
+                    let Some(turn) = scan.and_then(|scan| (*scan).discard(agent)) else {
                         return Err(SessionError::Capacity {
                             resource: "line_bytes",
                             limit: SESSION_LINE_LIMIT_BYTES as u64,
