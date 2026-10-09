@@ -306,6 +306,8 @@ The gateway's own limits stay the ones that hold: its client cap answers a relay
 A page action the gateway asks for (open, close, select) goes to this Mac's daemon, which passes it to the core's `POST /relay/browser-control/action`; the core runs it as that window, through the same prepare/read/commit contract as its own window's, and refuses a pid the node never announced (`browser_control_unavailable`).
 A node's window shows every checkout the core knows, as the core's own window does, so it holds the same authority: its page actions may name any of them.
 Revocation follows the link: when it ends, the node drops its unused tickets, ends every relay it runs with `browser_relay_gateway_lost` (close code 4011), as a relay through the link ends, and asks the gateway's `POST /revoke` to drop every capability it issued, three times before it logs `revoke.failed` (the desktop host's own lease, which revokes everything when its daemon changes or goes, is the backstop); the gateway stays available for the next link, whose core is told about the window again.
+The next link's browser questions wait for that revocation, so a gateway that does not answer it delays them by up to about seven seconds, and they read `browser_control_unavailable` meanwhile; nothing is handed out that the revocation could miss.
+The core hides an ended link's windows rather than forgetting them, so a page action retried across a reconnect is recognized as the same window's (at most 16 nodes; ended ones go first).
 Each relay logs one `relay.ended` row with where its CDP ran (`core`, `link` or `node`) and the bytes it carried.
 
 A page the operator loaded can still follow its own links.

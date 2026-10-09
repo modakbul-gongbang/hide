@@ -2641,18 +2641,17 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
                 relay_streams(&fixture)? == 0,
                 "the node pane's CDP crossed the link"
             );
-            let node_rows = tokio::task::block_in_place(|| {
-                wait_for("the node's relays logged", || {
+            // Each relay logs as it ends, which may be after the command
+            // printed.
+            let mut last = (0, 0);
+            tokio::task::block_in_place(|| {
+                wait_for("the node's relays to have carried what the gateway did", || {
                     let rows = fixture.node_log("browser_relay", "relay.ended")?;
-                    Ok((rows.len() >= 2).then_some(rows))
+                    last = (relayed(&rows, "node"), seen.lock().unwrap().bytes as u64);
+                    Ok((last.1 > 0 && last.0 == last.1).then_some(()))
                 })
-            })?;
-            let carried = seen.lock().unwrap().bytes as u64;
-            ensure!(
-                carried > 0 && relayed(&node_rows, "node") == carried,
-                "the node relayed {} bytes, the gateway carried {carried}: {node_rows:?}",
-                relayed(&node_rows, "node")
-            );
+            })
+            .with_context(|| format!("the node relayed {} bytes, the gateway carried {}", last.0, last.1))?;
             ensure!(
                 fixture.core_log("browser_relay", "relay.ended")?.is_empty(),
                 "the core relayed the node pane's CDP"
@@ -2706,6 +2705,13 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
                     "view list",
                     &out,
                 )?)?;
+                // Delivery is offered only to a caller proven as a pane.
+                ensure!(
+                    views["result"]["capabilities"]
+                        .as_array()
+                        .is_some_and(|offered| offered.iter().any(|name| name == "inbox")),
+                    "the node's commands did not run as its pane: {views}"
+                );
                 Ok(views["result"]["views"]
                     .as_array()
                     .into_iter()
