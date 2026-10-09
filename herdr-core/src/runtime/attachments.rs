@@ -936,7 +936,7 @@ mod tests {
             pane_id: "pane-one".to_owned(),
             bracketed_paste: true,
             clipboard: false,
-            paths: vec!["/Users/screen/shot.png".to_owned()],
+            paths: vec!["/Users/example/shot.png".to_owned()],
             staged_on: Some("mini".to_owned()),
         }));
         assert!(runtime.attachment.is_none());
