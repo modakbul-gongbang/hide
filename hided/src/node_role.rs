@@ -79,9 +79,6 @@ pub struct LiveLink {
     /// This node's terminals for the link's life: the node's screens send
     /// its own panes' keys here, without the link.
     pub terminals: Arc<NodeTerminals>,
-    /// The checkout roots the core opened on this node over the link: the
-    /// node's screens read files under them without the core.
-    pub roots: Arc<hide_host::serve::OpenedRoots>,
     /// The link's SSH connection, which a page of the core's machine
     /// reaches the core's loopback through (`node_pages`).
     pub upstream: Arc<Upstream>,
@@ -149,7 +146,14 @@ struct Shared {
     /// This machine's desktop windows' browser gateways, which the core
     /// asks over each link (`node_browser`).
     browser: Option<Arc<crate::node_browser::NodeBrowser>>,
+    /// Told the checkout roots the core opened on this node over the live
+    /// link each time they change, and none when a link starts: the
+    /// node's screens read files under them without the core.
+    roots_changed: Option<RootsChanged>,
 }
+
+/// Hears the checkout roots the core opened on this node over the live link.
+pub type RootsChanged = Arc<dyn Fn(&[String]) + Send + Sync>;
 
 /// The node role's link to its core, held for as long as the daemon runs.
 pub struct NodeRole {
@@ -168,17 +172,20 @@ impl NodeRole {
         identity: NodeIdentity,
         screen: Arc<dyn OutputSink>,
     ) -> Result<Self, String> {
-        Self::start_with_browser(home, placement, identity, screen, None)
+        Self::start_for_screens(home, placement, identity, screen, None, None)
     }
 
-    /// [`NodeRole::start`] whose links also answer the core for this
-    /// machine's desktop windows (`browser`).
-    pub fn start_with_browser(
+    /// [`NodeRole::start`] for a daemon whose screens work on this machine:
+    /// its links also answer the core for this machine's desktop windows
+    /// (`browser`), and the roots the core opens on each are told to
+    /// `roots_changed`.
+    pub fn start_for_screens(
         home: &Path,
         placement: Placement,
         identity: NodeIdentity,
         screen: Arc<dyn OutputSink>,
         browser: Option<Arc<crate::node_browser::NodeBrowser>>,
+        roots_changed: Option<RootsChanged>,
     ) -> Result<Self, String> {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
@@ -192,6 +199,7 @@ impl NodeRole {
             live: watch::Sender::new(None),
             screen,
             browser,
+            roots_changed,
         });
         let config = home.join(".ssh/config");
         let thread = {
@@ -636,7 +644,14 @@ fn serve_link(
         Arc::clone(&shared.screen),
         identity.herdr_bin.clone(),
     ));
-    let roots = Arc::new(hide_host::serve::OpenedRoots::default());
+    let roots = match &shared.roots_changed {
+        Some(changed) => {
+            changed(&[]);
+            let changed = Arc::clone(changed);
+            hide_host::serve::OpenedRoots::telling(move |roots| changed(roots))
+        }
+        None => hide_host::serve::OpenedRoots::telling(|_| {}),
+    };
     if set_phase(shared, Phase::Live(accepted.clone())) {
         return Err(LinkFailure::Stopping);
     }
@@ -645,7 +660,6 @@ fn serve_link(
         accepted,
         relay_port: forward.port(),
         terminals: Arc::clone(&terminals),
-        roots: Arc::clone(&roots),
         upstream: Arc::clone(upstream),
     })));
     let browser = shared
@@ -666,6 +680,9 @@ fn serve_link(
             .map(|browser| browser as &dyn hide_host::link_bridge::BrowserGateway),
     );
     shared.live.send_replace(None);
+    if let Some(changed) = &shared.roots_changed {
+        changed(&[]);
+    }
     drop(forward);
     Ok(LinkFailure::Ended(match link_end {
         Ok(reason) | Err(reason) => reason,

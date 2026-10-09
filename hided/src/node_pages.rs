@@ -70,27 +70,12 @@ impl NodePages {
     /// inside a checkout the core opened here over the live link, at the
     /// path that was checked, as a core's own `file:` pages are judged; the
     /// core passes this machine's addresses through unread.
-    fn own_page(
-        &self,
-        link: &LiveLink,
-        mut source: BrowserRouteSource,
-    ) -> Result<BrowserRouteSource, &'static str> {
+    fn own_page(&self, mut source: BrowserRouteSource) -> Result<BrowserRouteSource, &'static str> {
         if !crate::file_url::is_file_url(&source.url) {
             return Ok(source);
         }
         let (path, suffix) =
             crate::file_url::file_path(&source.url).ok_or("file_page_outside_checkout")?;
-        self.boundary.set_roots(
-            link.roots
-                .roots()
-                .into_iter()
-                .map(|root| crate::boundary::Root {
-                    workspace_id: String::new(),
-                    checkout_id: String::new(),
-                    path: std::path::PathBuf::from(root),
-                })
-                .collect(),
-        );
         let real = self
             .boundary
             .resolve_target(&path)
@@ -148,7 +133,7 @@ impl PageSources for NodePages {
         let answer: SourceAnswer =
             serde_json::from_slice(&bytes).map_err(|_| "core_unavailable")?;
         match answer.source {
-            Some(source) if device == self.node => self.own_page(&link, source).map(Some),
+            Some(source) if device == self.node => self.own_page(source).map(Some),
             source => Ok(source),
         }
     }

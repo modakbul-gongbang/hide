@@ -114,24 +114,40 @@ pub struct Services<'a> {
 /// The checkout roots a node's core opened on it over one link, which are
 /// the checkouts the core's catalog carries for this machine. Capped; past
 /// the cap a root is not kept, and the screen asks the core for its files.
-#[derive(Debug, Default)]
 pub struct OpenedRoots {
     roots: Mutex<Vec<String>>,
     /// Whether a root past the cap was left out and logged.
     full: std::sync::atomic::AtomicBool,
+    /// Told every roots list a newly kept root makes, in order.
+    changed: RootsChanged,
 }
+
+/// Hears the roots list each time a root is kept.
+type RootsChanged = Box<dyn Fn(&[String]) + Send + Sync>;
 
 impl OpenedRoots {
     /// The most roots kept.
     pub const CAP: usize = 256;
 
-    fn record(&self, root: &str) {
+    /// None opened yet; `changed` is told the list each time a root is
+    /// kept, under the list's lock, so it hears every list in order.
+    pub fn telling(changed: impl Fn(&[String]) + Send + Sync + 'static) -> Self {
+        Self {
+            roots: Mutex::new(Vec::new()),
+            full: std::sync::atomic::AtomicBool::new(false),
+            changed: Box::new(changed),
+        }
+    }
+
+    /// Keeps `root`, which the core opened on this link.
+    pub fn record(&self, root: &str) {
         let mut roots = lock(&self.roots);
         if roots.iter().any(|kept| kept == root) {
             return;
         }
         if roots.len() < Self::CAP {
             roots.push(root.to_owned());
+            (self.changed)(&roots);
             return;
         }
         drop(roots);
@@ -145,11 +161,6 @@ impl OpenedRoots {
                 })
             );
         }
-    }
-
-    /// The roots opened so far, in the order they were first opened.
-    pub fn roots(&self) -> Vec<String> {
-        lock(&self.roots).clone()
     }
 }
 

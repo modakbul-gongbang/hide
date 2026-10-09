@@ -1188,7 +1188,7 @@ Every other pane's output comes down one terminals relay per node (`/relay?mode=
 While that relay is away (C restarted it, or the forward blinked) the keys wait on M in order, 64 KiB and 3 s each with one line of any size always taken, as keys wait for a pane that does not exist yet; a key past the bound is refused to its screen, and one that waited too long is dropped and reported to it (`terminals.held_dropped`).
 When C forgets a pane it tells M on the same relay, so M's hub and the screens' pane sizes let it go.
 M's panes' output goes up the link only while C has a screen of its own looking (`TerminalControl::Mirror`).
-A file read of M's checkout is served by M itself, under the roots C opened on M over the live link (`hide_host::serve::OpenedRoots`, confined by M's `Boundary`); any other path goes to C (B4).
+A file read of M's checkout is served by M itself, under the roots C opened on M over the live link (`hide_host::serve::OpenedRoots`, confined by M's `Boundary`, whose roots follow each root C opens and empty when a link starts or ends, so no read sets them); any other path goes to C (B4).
 
 A pane runs at the grid of the screen that last sent it input (D-11, `hided/src/pane_sizes.rs`).
 Every screen of the core, its own windows and M's through their relays, says the grid it draws each pane at; input is a key, a mouse report or an attachment's paste, never a view, a scroll or a focus.

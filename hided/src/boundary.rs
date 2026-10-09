@@ -199,6 +199,18 @@ pub struct Root {
     pub path: PathBuf,
 }
 
+impl Root {
+    /// A checkout root the core opened on this node over its link: it
+    /// names no workspace or checkout here, only its path.
+    pub fn opened_on_node(path: &str) -> Self {
+        Self {
+            workspace_id: String::new(),
+            checkout_id: String::new(),
+            path: PathBuf::from(path),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RegisteredRoot {
     source: Root,

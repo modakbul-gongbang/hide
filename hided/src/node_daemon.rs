@@ -334,7 +334,7 @@ impl NodeDaemon {
             herdr_core::node::NodeId::parse(&identity.node)?,
         )?);
         let browser = NodeBrowser::new(server.browser_relay_port);
-        let role = Arc::new(NodeRole::start_with_browser(
+        let role = Arc::new(NodeRole::start_for_screens(
             home,
             placement,
             identity,
@@ -343,6 +343,7 @@ impl NodeDaemon {
                 prefix: own_prefix.clone(),
             }),
             Some(Arc::clone(&browser)),
+            Some(roots_follow(Arc::clone(&boundary))),
         )?);
         let live = role.live();
         let follow = browser.spawn_follow(live.clone());
@@ -785,7 +786,7 @@ async fn attached(
                         let routed = screen_event::read(&text, TAKEN_HERE);
                         let routed = routed.as_ref().map(|routed| (routed.kind, &routed.event));
                         if let Some((Kind::FileBytes, event)) = routed
-                            && let Some(opened) = own_file(state, &link, event)
+                            && let Some(opened) = own_file(state, event)
                         {
                             *local_reads += 1;
                             if crate::server::send_opened_file_bytes(socket, event, opened).await.is_err() {
@@ -1129,33 +1130,32 @@ const TAKEN_HERE: &[Kind] = &[
     Kind::Key,
 ];
 
+/// Keeps `boundary`'s roots at the checkouts the core opened on this node
+/// over the live link, as they change: every read of a screen, and every
+/// page, is judged against the same roots, never set by the read itself.
+fn roots_follow(boundary: Arc<Boundary>) -> crate::node_role::RootsChanged {
+    Arc::new(move |roots: &[String]| {
+        boundary.set_roots(
+            roots
+                .iter()
+                .map(|root| Root::opened_on_node(root))
+                .collect(),
+        );
+    })
+}
+
 /// A screen's read of a file of this machine, under a checkout the core
 /// opened here (PRD core-host-node-remote-core B4, D-05): the file, opened
 /// under its root, or the refusal. `None` for a read of another machine's
 /// file, and for a path under no root the core opened here, which the core
 /// answers as it answers any device's.
-fn own_file(
-    state: &NodeState,
-    link: &LiveLink,
-    event: &Value,
-) -> Option<crate::server::OpenedFile> {
+fn own_file(state: &NodeState, event: &Value) -> Option<crate::server::OpenedFile> {
     let device = event
         .pointer("/payload/device_id")
         .and_then(Value::as_str)?;
     if state.boundary.node() != device {
         return None;
     }
-    state.boundary.set_roots(
-        link.roots
-            .roots()
-            .into_iter()
-            .map(|root| Root {
-                workspace_id: String::new(),
-                checkout_id: String::new(),
-                path: PathBuf::from(root),
-            })
-            .collect(),
-    );
     let path = event.pointer("/payload/path").and_then(Value::as_str)?;
     match state.boundary.open_file(path) {
         Err(Refusal::OutsideCheckout) => None,
@@ -1368,6 +1368,41 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The node's boundary holds the checkout roots the core opened over
+    /// the link as the core opens them, and none once a link ends: a
+    /// screen's read is judged against them and never sets them (arch
+    /// review item 8).
+    #[test]
+    fn the_node_s_boundary_follows_the_roots_the_core_opens() {
+        let home = tempfile::tempdir().unwrap();
+        let home = hide_platform::fs::identity::canonical(home.path()).unwrap();
+        let checkout = home.join("app");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::write(checkout.join("a.txt"), "a").unwrap();
+        let boundary = Arc::new(
+            Boundary::for_node(&home, herdr_core::node::NodeId::parse("test-node").unwrap())
+                .unwrap(),
+        );
+        let follow = roots_follow(Arc::clone(&boundary));
+        let roots = {
+            let follow = Arc::clone(&follow);
+            hide_host::serve::OpenedRoots::telling(move |roots| follow(roots))
+        };
+        let file = checkout.join("a.txt").to_string_lossy().into_owned();
+        assert!(matches!(
+            boundary.open_file(&file),
+            Err(Refusal::OutsideCheckout)
+        ));
+        roots.record(&checkout.to_string_lossy());
+        assert!(boundary.open_file(&file).is_ok(), "the opened root is read");
+        // The link ended.
+        follow(&[]);
+        assert!(matches!(
+            boundary.open_file(&file),
+            Err(Refusal::OutsideCheckout)
+        ));
+    }
 
     /// A frame is a snapshot or a delta by its `type`, wherever the core's
     /// serializer put that key; any other frame starts nothing.
