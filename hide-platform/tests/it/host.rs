@@ -593,3 +593,45 @@ fn herdrs_default_socket_is_resolved_in_herdrs_own_order() {
         ErrorKind::NotFound
     );
 }
+
+#[test]
+fn a_posix_locale_names_its_language_in_the_order_messages_are_read() {
+    let locale = |pairs: Vec<(&'static str, &'static str)>| {
+        let pairs: Vec<(&'static str, PathBuf)> = pairs
+            .into_iter()
+            .map(|(name, value)| (name, PathBuf::from(value)))
+            .collect();
+        host::primary_language_from(&variables(pairs))
+    };
+    assert_eq!(locale(vec![("LANG", "ko_KR.UTF-8")]).unwrap(), "ko-KR");
+    assert_eq!(
+        locale(vec![
+            ("LANG", "en_US.UTF-8"),
+            ("LC_MESSAGES", "ja_JP.UTF-8")
+        ])
+        .unwrap(),
+        "ja-JP"
+    );
+    assert_eq!(
+        locale(vec![
+            ("LC_MESSAGES", "ja_JP"),
+            ("LC_ALL", "zh_CN.GB2312@stroke")
+        ])
+        .unwrap(),
+        "zh-CN"
+    );
+    for named_none in [vec![], vec![("LANG", "C.UTF-8")], vec![("LC_ALL", "POSIX")]] {
+        assert_eq!(locale(named_none).unwrap_err().kind(), ErrorKind::NotFound);
+    }
+}
+
+#[test]
+fn the_primary_language_is_a_tag_or_says_the_system_names_none() {
+    match host::primary_language() {
+        Ok(tag) => assert!(
+            !tag.is_empty() && tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
+            "{tag}"
+        ),
+        Err(error) => assert_eq!(error.kind(), ErrorKind::NotFound, "{error}"),
+    }
+}

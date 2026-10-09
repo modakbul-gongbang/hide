@@ -2615,6 +2615,34 @@ pub enum InterfaceLanguage {
     Japanese,
 }
 
+impl InterfaceLanguage {
+    /// The interface language a system's primary language means, by the
+    /// rules `web/src/i18n/locale.ts` (`systemLanguage`) resolves it with:
+    /// English, Korean and Japanese by their base language, Chinese only in
+    /// the Simplified script, and `None` for anything else.
+    pub fn from_system(tag: &str) -> Option<Self> {
+        let mut subtags = tag.split(['-', '_']);
+        let language = subtags.next()?.to_ascii_lowercase();
+        match language.as_str() {
+            "en" => Some(Self::English),
+            "ko" => Some(Self::Korean),
+            "ja" => Some(Self::Japanese),
+            "zh" => {
+                // The script, else the one the region implies when a tag is
+                // filled in (`zh-TW` is Traditional, `zh` and `zh-CN` Simplified).
+                let next = subtags.next().unwrap_or_default();
+                let simplified = if next.len() == 4 {
+                    next.eq_ignore_ascii_case("hans")
+                } else {
+                    !["tw", "hk", "mo"].contains(&next.to_ascii_lowercase().as_str())
+                };
+                simplified.then_some(Self::SimplifiedChinese)
+            }
+            _ => None,
+        }
+    }
+}
+
 /// The store retains an invalid value; the wire exposes its English fallback.
 fn serialize_interface_language<S: serde::Serializer>(
     value: &Option<serde_json::Value>,
@@ -4819,6 +4847,34 @@ pub struct TerminalMetaWire<'a> {
 }
 
 #[cfg(test)]
+mod interface_language_tests {
+    use super::InterfaceLanguage;
+
+    /// The cases `web/src/i18n/locale.test.ts` resolves, so a closed-window
+    /// reader in the core and a shell agree on the system's language.
+    #[test]
+    fn a_system_language_resolves_as_the_shell_resolves_it() {
+        for (tag, expected) in [
+            ("en-GB", Some(InterfaceLanguage::English)),
+            ("ko-KR", Some(InterfaceLanguage::Korean)),
+            ("ja-JP", Some(InterfaceLanguage::Japanese)),
+            ("zh-CN", Some(InterfaceLanguage::SimplifiedChinese)),
+            ("zh-Hans", Some(InterfaceLanguage::SimplifiedChinese)),
+            ("zh-Hans-KR", Some(InterfaceLanguage::SimplifiedChinese)),
+            ("zh-SG", Some(InterfaceLanguage::SimplifiedChinese)),
+            ("zh", Some(InterfaceLanguage::SimplifiedChinese)),
+            ("zh-TW", None),
+            ("zh-Hant", None),
+            ("zh-Hant-HK", None),
+            ("fr-FR", None),
+            ("", None),
+        ] {
+            assert_eq!(InterfaceLanguage::from_system(tag), expected, "{tag}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod wire_enum_tests {
     //! The shell decodes these strings strictly, so the values the core emits
     //! are a contract, pinned in `contracts/snapshot-wire-enums.json` and
@@ -5474,6 +5530,7 @@ mod wire_enum_tests {
                 signal: String::new(),
                 check: String::new(),
             }),
+            Some(AttemptOutcome::Cancelled),
             None,
         ]
         .iter()
@@ -5481,7 +5538,8 @@ mod wire_enum_tests {
             Some(
                 outcome @ (AttemptOutcome::Passed
                 | AttemptOutcome::Failed { .. }
-                | AttemptOutcome::Environment { .. }),
+                | AttemptOutcome::Environment { .. }
+                | AttemptOutcome::Cancelled),
             ) => serde_json::to_value(outcome).unwrap()["result"].clone(),
             None => serde_json::json!("running"),
         })

@@ -16,22 +16,19 @@ const OUTPUT_LIMIT: usize = 64 * 1024;
 const CONTEXT_LIMIT: usize = 8 * 1024;
 const CONFIRM_RESERVE: Duration = Duration::from_millis(400);
 
-/// The line the doorbell types into an idle agent pane. The prompt hook
-/// recognizes the turn the bell opened by exactly this text, so the doorbell
-/// and the hook share the one constant.
-pub const BELL_PROMPT: &str = "Hide has pending mail. Read hide inbox for the full letter if the prompt hook did not include it.";
-
 #[derive(Deserialize)]
 struct PromptInput {
     prompt: Option<String>,
     session_id: Option<String>,
 }
 
-/// The submitted prompt and the session id of a runtime's `UserPromptSubmit`
-/// payload; a truncated or unreadable payload yields neither, so its prompt is
-/// never taken for the bell and its hook never counts as a submission.
+/// The digest of the submitted prompt and the session id of a runtime's
+/// `UserPromptSubmit` payload; a truncated or unreadable payload yields
+/// neither, so its prompt is never taken for the bell and its hook never
+/// counts as a submission.
+#[derive(Default)]
 pub struct Prompt {
-    pub bell: bool,
+    pub digest: Option<String>,
     pub session: Option<String>,
 }
 
@@ -40,14 +37,36 @@ pub fn read_prompt(payload: &[u8], truncated: bool) -> Prompt {
         .then(|| serde_json::from_slice::<PromptInput>(payload).ok())
         .flatten();
     Prompt {
-        bell: input
+        digest: input
             .as_ref()
             .and_then(|input| input.prompt.as_deref())
-            .is_some_and(|prompt| prompt.trim() == BELL_PROMPT),
+            .map(prompt_digest),
         session: input
             .and_then(|input| input.session_id)
             .filter(|id| valid_session(id)),
     }
+}
+
+/// What the hook tells the core about the submitted prompt: the SHA-256 of
+/// its trimmed text in lowercase hex. Only the core knows which line its
+/// doorbell typed into the pane, so the prompt is the bell exactly when this
+/// matches the digest of that line; the hook never decides it from the text,
+/// and the prompt itself never leaves the hook.
+pub fn prompt_digest(prompt: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(prompt.trim().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Whether `digest` is one [`prompt_digest`] could have made, so it may travel
+/// as a `hide` argument.
+pub fn valid_prompt_digest(digest: &str) -> bool {
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// The longest native session a letter pull or a Factory question guard
@@ -86,12 +105,13 @@ impl From<&'static str> for Failure {
 }
 
 /// What the agent receives for the submitted prompt: the letter bodies when
-/// `bell` says the prompt was Hide's bell, otherwise at most a count.
+/// the core recognizes the prompt as the line its doorbell typed, otherwise
+/// at most a count.
 pub fn pull(deadline: Instant, prompt: &Prompt) -> Result<Option<Intake>, Failure> {
     let pull_deadline = deadline.checked_sub(CONFIRM_RESERVE).ok_or("deadline")?;
     let mut arguments = vec!["inbox", "--hook"];
-    if prompt.bell {
-        arguments.push("--bell");
+    if let Some(digest) = &prompt.digest {
+        arguments.extend(["--prompt-digest", digest]);
     }
     if let Some(session) = &prompt.session {
         arguments.extend(["--session", session]);
@@ -290,19 +310,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_a_complete_payload_whose_prompt_is_the_bell_is_the_bell() {
+    fn only_a_complete_payload_carries_its_prompt_digest_and_session() {
         let payload = |prompt: &str| {
             serde_json::to_vec(&serde_json::json!({"session_id":"s","prompt":prompt})).unwrap()
         };
-        let bell = |bytes: &[u8], truncated| read_prompt(bytes, truncated).bell;
-        assert!(bell(&payload(BELL_PROMPT), false));
-        assert!(bell(&payload(&format!("{BELL_PROMPT}\n")), false));
-        assert!(!bell(&payload(BELL_PROMPT), true));
-        assert!(!bell(&payload("please run the tests"), false));
-        assert!(!bell(&payload(&format!("{BELL_PROMPT} and more")), false));
-        assert!(!bell(b"{\"session_id\":\"s\"}", false));
-        assert!(!bell(b"not json", false));
-        assert!(!bell(b"", false));
+        let digest = |bytes: &[u8], truncated| read_prompt(bytes, truncated).digest;
+        // The SHA-256 of "abc", from FIPS 180-2's first example.
+        let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert_eq!(digest(&payload("abc"), false).as_deref(), Some(abc));
+        assert_eq!(digest(&payload(" abc\n"), false).as_deref(), Some(abc));
+        assert_eq!(digest(&payload("abc"), true), None);
+        assert_ne!(digest(&payload("abc d"), false).as_deref(), Some(abc));
+        assert_eq!(digest(b"{\"session_id\":\"s\"}", false), None);
+        assert_eq!(digest(b"not json", false), None);
+        assert_eq!(digest(b"", false), None);
+        assert!(valid_prompt_digest(abc));
+        assert!(!valid_prompt_digest(&abc.to_uppercase()));
+        assert!(!valid_prompt_digest(&abc[1..]));
         assert_eq!(
             read_prompt(&payload("x"), false).session.as_deref(),
             Some("s")

@@ -4,7 +4,7 @@ use herdr_core::delivery::{BODY_LIMIT, Command, HOOK_LETTERS};
 
 use crate::env::{self, Env};
 
-pub const USAGE: &str = "hide request send <target> --intent <key> --body <text> [--kind request|block|report]\nhide request reply <id> --intent <key> --body <text>\nhide request ack|cancel|show <id>\nhide inbox [--hook [--bell] [--session <id>]]\nhide watch start <target> [--observer <id>] [--actor <id>]\nhide watch assign <watch-or-target-id> --observer <id> [--actor <id>] [--expected-generation <n>] [--approval <text>]\nhide watch stop <id>\nhide watch list\nDelivery commands require a running daemon and a current agent pane; they do not require an open renderer.";
+pub const USAGE: &str = "hide request send <target> --intent <key> --body <text> [--kind request|block|report]\nhide request reply <id> --intent <key> --body <text>\nhide request ack|cancel|show <id>\nhide inbox [--hook [--prompt-digest <sha256>] [--session <id>]]\nhide watch start <target> [--observer <id>] [--actor <id>]\nhide watch assign <watch-or-target-id> --observer <id> [--actor <id>] [--expected-generation <n>] [--approval <text>]\nhide watch stop <id>\nhide watch list\nDelivery commands require a running daemon and a current agent pane; they do not require an open renderer.";
 
 pub fn parse<'a>(
     topic: &str,
@@ -15,11 +15,20 @@ pub fn parse<'a>(
         return match verb {
             None => Ok(Command::Inbox),
             Some("--hook") => {
-                let mut bell = false;
+                let mut prompt_digest = None;
                 let mut session = None;
                 while let Some(flag) = args.next() {
                     match flag.as_str() {
-                        "--bell" if !bell => bell = true,
+                        "--prompt-digest" if prompt_digest.is_none() => {
+                            prompt_digest = Some(
+                                args.next()
+                                    .filter(|digest| {
+                                        herdr_core::delivery::valid_prompt_digest(digest)
+                                    })
+                                    .ok_or(USAGE)?
+                                    .clone(),
+                            );
+                        }
                         "--session" if session.is_none() => {
                             session = Some(
                                 args.next()
@@ -31,7 +40,10 @@ pub fn parse<'a>(
                         _ => return Err(USAGE.into()),
                     }
                 }
-                Ok(Command::Pull { bell, session })
+                Ok(Command::Pull {
+                    prompt_digest,
+                    session,
+                })
             }
             Some("--confirm") => {
                 let ids: Vec<_> = args.cloned().collect();
@@ -190,31 +202,43 @@ mod tests {
     fn typed_cli_requires_intent_and_has_no_wait_or_dispatch_surface() {
         assert_eq!(parse_line(&["inbox"]).unwrap(), Command::Inbox);
         assert!(parse_line(&["inbox", "wait"]).is_err());
+        let digest = herdr_core::delivery::prompt_digest("prompt");
         assert_eq!(
             parse_line(&["inbox", "--hook"]).unwrap(),
             Command::Pull {
-                bell: false,
+                prompt_digest: None,
                 session: None
             }
         );
         assert_eq!(
-            parse_line(&["inbox", "--hook", "--bell"]).unwrap(),
+            parse_line(&["inbox", "--hook", "--prompt-digest", &digest]).unwrap(),
             Command::Pull {
-                bell: true,
+                prompt_digest: Some(digest.clone()),
                 session: None
             }
         );
         assert_eq!(
-            parse_line(&["inbox", "--hook", "--session", "abc", "--bell"]).unwrap(),
+            parse_line(&[
+                "inbox",
+                "--hook",
+                "--session",
+                "abc",
+                "--prompt-digest",
+                &digest
+            ])
+            .unwrap(),
             Command::Pull {
-                bell: true,
+                prompt_digest: Some(digest.clone()),
                 session: Some("abc".into())
             }
         );
-        assert!(parse_line(&["inbox", "--hook", "--bell", "extra"]).is_err());
+        assert!(parse_line(&["inbox", "--hook", "--prompt-digest", &digest, "extra"]).is_err());
+        assert!(parse_line(&["inbox", "--hook", "--prompt-digest", "prompt"]).is_err());
+        assert!(parse_line(&["inbox", "--hook", "--prompt-digest"]).is_err());
+        assert!(parse_line(&["inbox", "--hook", "--bell"]).is_err());
         assert!(parse_line(&["inbox", "--hook", "--session"]).is_err());
         assert!(parse_line(&["inbox", "--hook", "--session", "-x"]).is_err());
-        assert!(parse_line(&["inbox", "--bell"]).is_err());
+        assert!(parse_line(&["inbox", "--prompt-digest", &digest]).is_err());
         assert!(parse_line(&["request", "send", "target", "--body", "body"]).is_err());
         assert_eq!(
             parse_line(&[

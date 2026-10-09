@@ -36,18 +36,19 @@ fn agent_value(output: fixture::PaneOutput) -> Result<Value> {
     answer.get("value").cloned().context("agent command value")
 }
 
-/// The prompt hook of the turn Hide's own bell opened: only that turn receives
-/// the letter bodies, an operator's prompt receives a count.
-fn hook(binary: &std::path::Path, session: &str) -> String {
+/// The prompt hook of a turn whose submitted prompt is `prompt`: only the
+/// turn the line Hide's doorbell typed opened receives the letter bodies
+/// (`Fixture::rung`), any other prompt receives a count.
+fn hook(binary: &std::path::Path, session: &str, prompt: &str) -> String {
     format!(
         "printf '%s' {} | {} hook --runtime claude-code --event UserPromptSubmit",
-        quote(
-            serde_json::json!({"session_id":session,"prompt":hide_agent_hooks::delivery::BELL_PROMPT})
-                .to_string()
-        ),
+        quote(serde_json::json!({"session_id":session,"prompt":prompt}).to_string()),
         quote(binary)
     )
 }
+
+/// A prompt the operator typed.
+const OPERATOR_PROMPT: &str = "please run the tests";
 
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
@@ -87,9 +88,11 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
                 .any(|letter| letter.id == first_id && letter.state == State::Pending),
             "manual remote inbox changed delivery state"
         );
-        let delivered = fixture
-            .remote
-            .run_in_pane(&hook(&remote_hooks, "fixture-remote-session"))?;
+        let bell = fixture.rung(&first_id)?;
+        let delivered =
+            fixture
+                .remote
+                .run_in_pane(&hook(&remote_hooks, "fixture-remote-session", &bell))?;
         ensure!(
             delivered.status == 0 && delivered.elapsed < Duration::from_secs(2),
             "connected prompt hook did not complete within its budget"
@@ -107,9 +110,10 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
                 .any(|letter| letter.id == first_id && letter.state == State::Delivered)
                 .then_some(()))
         })?;
-        let again = fixture
-            .remote
-            .run_in_pane(&hook(&remote_hooks, "fixture-remote-session"))?;
+        let again =
+            fixture
+                .remote
+                .run_in_pane(&hook(&remote_hooks, "fixture-remote-session", &bell))?;
         ensure!(
             again.status == 0 && context(&again.stdout)?.is_empty(),
             "remote hook repeated a delivered letter"
@@ -143,9 +147,11 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
                 .any(|watch| watch.id == watch_id),
             "sending a remote report stopped its watch before intake"
         );
-        let parent = fixture
-            .local
-            .run_in_pane(&hook(&fixture.hooks, "fixture-local-session"))?;
+        let bell = fixture.rung(&report_id)?;
+        let parent =
+            fixture
+                .local
+                .run_in_pane(&hook(&fixture.hooks, "fixture-local-session", &bell))?;
         ensure!(
             context(&parent.stdout)?.contains(&report_id),
             "local parent did not receive the report sent over the node link"
@@ -183,9 +189,11 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
                 })
                 .then_some(()))
         })?;
-        let disconnected = fixture
-            .remote
-            .run_in_pane(&hook(&remote_hooks, "fixture-remote-session"))?;
+        let disconnected = fixture.remote.run_in_pane(&hook(
+            &remote_hooks,
+            "fixture-remote-session",
+            OPERATOR_PROMPT,
+        ))?;
         ensure!(
             disconnected.status == 0,
             "disconnected prompt hook failed the provider turn"
@@ -210,9 +218,11 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
         fixture.ssh.online(true)?;
         fixture.reconnect_device()?;
         fixture.wait_bridge(2)?;
-        let resumed = fixture
-            .remote
-            .run_in_pane(&hook(&remote_hooks, "fixture-remote-session"))?;
+        let bell = fixture.rung(&pending_id)?;
+        let resumed =
+            fixture
+                .remote
+                .run_in_pane(&hook(&remote_hooks, "fixture-remote-session", &bell))?;
         let intake = context(&resumed.stdout)?;
         ensure!(
             resumed.status == 0
@@ -250,9 +260,10 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
                 == 1,
             "reconnect duplicated a durable letter"
         );
-        let once = fixture
-            .remote
-            .run_in_pane(&hook(&remote_hooks, "fixture-remote-session"))?;
+        let once =
+            fixture
+                .remote
+                .run_in_pane(&hook(&remote_hooks, "fixture-remote-session", &bell))?;
         ensure!(
             once.status == 0 && context(&once.stdout)?.is_empty(),
             "reconnect caused duplicate prompt intake"
@@ -307,9 +318,11 @@ fn ending_the_recipients_registration_ends_the_senders_answer_wait_and_says_why(
             sent["waiting_answer"] == true,
             "a new request awaits its answer"
         );
-        let delivered = fixture
-            .local
-            .run_in_pane(&hook(&fixture.hooks, "fixture-local-session"))?;
+        let bell = fixture.rung(&id)?;
+        let delivered =
+            fixture
+                .local
+                .run_in_pane(&hook(&fixture.hooks, "fixture-local-session", &bell))?;
         ensure!(
             context(&delivered.stdout)?.contains(&id),
             "the recipient did not take the request in: status {} stdout {:?} stderr {:?}",
@@ -591,9 +604,11 @@ fn a_spawn_with_machine_starts_the_agent_on_the_device_under_its_caller() -> Res
         let letter_id = letter["id"].as_str().context("lead letter ID")?.to_owned();
         let (pane, _) = agent_pane(&fixture.remote.run(&["agent", "list"])?, "remote-worker")
             .context("spawned agent pane")?;
-        let delivered = fixture
-            .remote
-            .run_in(&pane, &hook(&remote_hooks, "fixture-spawned-session"))?;
+        let bell = fixture.rung(&letter_id)?;
+        let delivered = fixture.remote.run_in(
+            &pane,
+            &hook(&remote_hooks, "fixture-spawned-session", &bell),
+        )?;
         let intake = context(&delivered.stdout)?;
         ensure!(
             intake.contains(&letter_id) && intake.contains("DELIVERY_TO_SPAWNED"),
@@ -618,9 +633,11 @@ fn a_spawn_with_machine_starts_the_agent_on_the_device_under_its_caller() -> Res
             .as_str()
             .context("report letter ID")?
             .to_owned();
-        let received = fixture
-            .local
-            .run_in_pane(&hook(&fixture.hooks, "fixture-local-session"))?;
+        let bell = fixture.rung(&report_id)?;
+        let received =
+            fixture
+                .local
+                .run_in_pane(&hook(&fixture.hooks, "fixture-local-session", &bell))?;
         ensure!(
             context(&received.stdout)?.contains(&report_id),
             "the caller did not receive the spawned agent's report"

@@ -2,7 +2,8 @@
 //! their things live: the home folder, the folder an application keeps its
 //! state in, the socket the pinned Herdr listens on by default, the programs
 //! on the search path, the `PATH` the login shell sets up, the default
-//! shell, the Trash, the Tailscale CLI, and the machine's name and identity.
+//! shell, the Trash, the Tailscale CLI, the account's primary language, and
+//! the machine's name and identity.
 //!
 //! Every function answers for the machine this process runs on, from the
 //! variables and tables that system defines, and refuses (`NotFound`, or
@@ -25,6 +26,7 @@
 //! | `SHELL` | macOS, Linux | no default shell |
 //! | `ComSpec` | Windows | no default shell |
 //! | `ProgramFiles` | Windows | no Tailscale location |
+//! | `LC_ALL`, `LC_MESSAGES`, `LANG` | Linux, read in that order | no primary language |
 
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -46,6 +48,9 @@ pub const VARIABLES: &[&str] = &[
     "SHELL",
     "ComSpec",
     "ProgramFiles",
+    "LC_ALL",
+    "LC_MESSAGES",
+    "LANG",
 ];
 
 /// How a caller with its own record of the environment (a registry that
@@ -335,6 +340,40 @@ pub fn machine_id() -> io::Result<String> {
     Ok(id.to_lowercase())
 }
 
+/// The account's primary language as a BCP 47 tag (`en-US`, `ko-KR`,
+/// `zh-Hans-CN`): the first of the preferred languages on macOS
+/// (`AppleLanguages`), the user locale on Windows (`LocaleName`), and the
+/// messages locale on Linux. Only the first is answered; a caller does not
+/// search later preferences. `NotFound` when the system names none, as the
+/// `C` and `POSIX` locales name none.
+pub fn primary_language() -> io::Result<String> {
+    if cfg!(any(target_os = "macos", windows)) {
+        sys::primary_language()
+    } else {
+        primary_language_from(&process)
+    }
+}
+
+/// The messages locale a POSIX system's variables name (`ko_KR.UTF-8` reads
+/// as `ko-KR`), the form Linux answers with.
+pub fn primary_language_from(variables: Variables) -> io::Result<String> {
+    let value = ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .find_map(|name| nonempty_variable(variables, name))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no locale variable is set"))?;
+    let value = value.to_string_lossy();
+    // `language_TERRITORY.codeset@modifier`: the codeset and modifier say
+    // nothing about the language.
+    let name = value.split(['.', '@']).next().unwrap_or_default();
+    if name.is_empty() || name == "C" || name == "POSIX" {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "the locale names no language",
+        ));
+    }
+    Ok(name.replace('_', "-"))
+}
+
 fn nonempty_variable(variables: Variables, name: &str) -> Option<OsString> {
     variables(name).filter(|value| !value.is_empty())
 }
@@ -386,6 +425,42 @@ mod sys {
     }
 
     #[cfg(target_os = "macos")]
+    pub(super) fn primary_language() -> io::Result<String> {
+        let output = std::process::Command::new("/usr/bin/defaults")
+            .args(["read", "-g", "AppleLanguages"])
+            .output()?;
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "the account names no AppleLanguages",
+            ));
+        }
+        first_apple_language(&String::from_utf8_lossy(&output.stdout))
+    }
+
+    /// The first entry of `defaults`'s property-list array: `(\n "en-US",\n ko\n)`.
+    #[cfg(target_os = "macos")]
+    fn first_apple_language(output: &str) -> io::Result<String> {
+        let first = output
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && *line != "(" && *line != ")")
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "AppleLanguages is empty"))?;
+        let first = first.trim_end_matches(',');
+        let first = first
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .unwrap_or(first);
+        if first.is_empty() || !first.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "AppleLanguages names an invalid language",
+            ));
+        }
+        Ok(first.to_owned())
+    }
+
+    #[cfg(target_os = "macos")]
     fn machine_id_from_ioreg(output: &str) -> io::Result<String> {
         let value = output
             .lines()
@@ -412,6 +487,28 @@ mod sys {
     #[cfg(all(test, target_os = "macos"))]
     mod tests {
         use super::*;
+
+        #[test]
+        fn the_primary_language_is_the_first_entry_quoted_or_not() {
+            assert_eq!(
+                first_apple_language("(\n    \"en-US\",\n    \"ko-KR\"\n)\n").unwrap(),
+                "en-US"
+            );
+            assert_eq!(
+                first_apple_language("(\n    ko,\n    en\n)\n").unwrap(),
+                "ko"
+            );
+            assert_eq!(
+                first_apple_language("(\n)\n").unwrap_err().kind(),
+                io::ErrorKind::NotFound
+            );
+            assert_eq!(
+                first_apple_language("(\n    \"en US\"\n)\n")
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
 
         #[test]
         fn ioreg_machine_identity_is_the_quoted_property_value() {
@@ -460,6 +557,15 @@ mod sys {
     pub(super) fn machine_id() -> io::Result<String> {
         std::fs::read_to_string("/etc/machine-id")
     }
+
+    /// Linux reads its locale variables in `host::primary_language`.
+    #[cfg(not(target_os = "macos"))]
+    pub(super) fn primary_language() -> io::Result<String> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "the locale variables name the language",
+        ))
+    }
 }
 
 #[cfg(windows)]
@@ -471,7 +577,7 @@ mod sys {
 
     use windows_sys::Win32::Foundation::ERROR_SUCCESS;
     use windows_sys::Win32::System::Registry::{
-        HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6464KEY, RegGetValueW,
+        HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6464KEY, RegGetValueW,
     };
     use windows_sys::Win32::System::SystemInformation::{
         ComputerNameDnsHostname, GetComputerNameExW,
@@ -527,5 +633,43 @@ mod sys {
         Ok(OsString::from_wide(&buffer[..units])
             .to_string_lossy()
             .into_owned())
+    }
+
+    /// The user locale Windows keeps for the account (`LocaleName`, such as
+    /// `ko-KR`).
+    pub(super) fn primary_language() -> io::Result<String> {
+        let key = widestring::U16CString::from_str("Control Panel\\International")
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let value = widestring::U16CString::from_str("LocaleName")
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let mut buffer = vec![0u16; 86];
+        let mut size = (buffer.len() * 2) as u32;
+        // SAFETY: the names are NUL-terminated and `buffer` holds `size`
+        // writable bytes.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                value.as_ptr(),
+                RRF_RT_REG_SZ,
+                null_mut(),
+                buffer.as_mut_ptr().cast(),
+                &mut size,
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(status as i32));
+        }
+        let units = (size as usize / 2).saturating_sub(1);
+        let name = OsString::from_wide(&buffer[..units])
+            .to_string_lossy()
+            .into_owned();
+        if name.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "the account names no locale",
+            ));
+        }
+        Ok(name)
     }
 }
