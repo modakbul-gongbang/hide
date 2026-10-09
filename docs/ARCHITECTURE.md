@@ -95,7 +95,7 @@ SSH catalogs currently read Herdr and the device helper, not another hided core'
 
 `hide-project` is the single durable identity boundary for session discovery, Memory storage, core projection, and hook retrieval.
 It folds linked worktrees into their canonical main worktree, identifies plain folders in device scope, and returns a typed failure instead of falling back to another Project or a display name.
-`hide-session` owns provider-specific file discovery and parsing for local Claude Code and Codex sessions and the read-only OpenCode database, while `herdr-core` receives only provider-neutral catalog rows and archived ledger events.
+`hide-session` owns provider-specific file discovery and parsing for local Claude Code, Codex and Pi sessions and the read-only OpenCode database, while `herdr-core` receives only provider-neutral catalog rows and archived ledger events.
 Raw transcript bodies remain in the providers' files.
 
 `hide-memory` owns Hide-native extraction and relation planning, one app SQLite store, its schema and migrations, Project hard filters, session cursors, item and revision lifecycle, provenance, receipts, query-dependent retrieval, and the active FTS5 projection.
@@ -647,7 +647,7 @@ The leaf selects dialects but does not implement them.
 `hide-agent-hooks` still owns installed hook bytes and command arguments, input/output formats and the only writes to operator hook files.
 `hide-session` owns session location and parsing, including whether a format reports user turns; the delivery gate conservatively holds a letter when such a reader cannot establish the current turn.
 `hide-kit` projects the shared rows into pieces and owns installation policy, while core feature gates read the relevant independent capability.
-OpenCode's existing title reader remains distinct from the session-file features offered for Claude Code and Codex; its letters, Memory, spawn guard and subagent count come from Hide's plugin ([agent-hooks.md: OpenCode: Hide's plugin](agent-hooks.md#opencode-hides-plugin)), not from its sessions.
+OpenCode's letters, Memory, spawn guard and subagent count come from Hide's plugin ([agent-hooks.md: OpenCode: Hide's plugin](agent-hooks.md#opencode-hides-plugin)), not from its sessions.
 Pi's and omp's letters and spawn guard, and omp's subagent count and `ask` guard, come the same way from Hide's extension ([agent-hooks.md: Pi and omp: Hide's extension](agent-hooks.md#pi-and-omp-hides-extension)).
 Pi 1.0.4 extends the shared file reader through `hide-session::pi`: the first version3 session header proves its native ID and exact cwd under the default `.pi/agent/sessions` root.
 The native default cwd directory is additionally required because Pi's ID lookup outside it prompts to fork instead of resuming the same session; lossy folder encoding still never proves ownership.
@@ -669,6 +669,19 @@ Pi `session_info.name` is the native/manual title; an explicit empty name clears
 Only recorded message times and actual tool-result or bash-execution output supply PR sightings; thinking, custom extension context, compaction and branch summaries supply no human request.
 Pi has no structured native wait/content or subagent grant, and authenticated protocol24 facts never acquire its new reader.
 Its complete adapter enables conversation, title, exact resume/fork and the common durable distinct sleeping-session lifecycle; the other unfinished complete-reader slices stay disabled.
+OpenCode 1.18.30 is read from its own database through `hide-session::opencode`, with no session file: every read opens it read-only and proves, inside the read's one transaction, that the id names a root session (no `parent_id`) whose recorded `directory` is the exact checkout.
+OpenCode is referenced by id only; a path reference is refused feature-locally, and no path is ever turned into an id.
+A subagent's child session is never cataloged, searched, read into the root conversation or titled as it; the link graph alone reads it, as its own line under its parent (`Owner::Recorded`).
+`SessionFormat::requires_native_proof` (Pi and OpenCode) is the one predicate the core's lifecycle gates read: launch confirmation, durable sleep and wake, the proven-id sidebar rule, fork in its own tab, task resume scope and resume arguments; `proof_reference_kind` says whether that proof names a path (Pi) or an id (OpenCode).
+Resume is `opencode -s <id>` and fork `opencode -s <id> --fork`; an id that begins with `-` is refused before it reaches an argument list.
+OpenCode's activity is its newest write (the session row or any of its messages) and its message count, the same answer whose change wakes a sleeping OpenCode row's route proof.
+The project catalog lists root sessions by their own row's directory under the shared entry cap, with the locator `opencode/<id>`; search reads and stamps branch on that locator inside the existing calls, and a stamp is the session's creation, message count and newest write.
+Archive detail reads OpenCode through bounded label-transcript reads under the Conversation fact instead of `SessionText`; a session rewound or replaced between those reads refuses the detail.
+A message's offset is its index, and a checkpoint keeps the creation time and a digest of the last message read, so a session an OpenCode revert rewound and grew back is read again rather than continued.
+An OpenCode `question` tool part supplies the same structured question as Claude's: pending or running asks, completed or error answers, and an unknown state refuses the read.
+OpenCode keeps the asking assistant message unfinished while it waits, so that unfinished tail is folded without settling it (`TurnTracker::fold_unsettled`), and its completion folds again and clears the wait.
+The phone pages OpenCode by message index with the same page bounds, through the same proven reads.
+OpenCode records no Memory reader fact of its own: its receipts ride the label read.
 Hide AI retains its separate provider registry; its adapter id only associates a provider with an agent identity and logo.
 
 The web shell reads `contracts/agent-adapters.json`, generated by the leaf's `export_web_contract` example, for support order, aliases, names, Docs/Install links, logo ids, branded marks and start/resume eligibility.
