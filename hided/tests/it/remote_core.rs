@@ -14,7 +14,7 @@ use serde_json::json;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
-use crate::support::remote_core::{CORE_NODE, Fixture};
+use crate::support::remote_core::{CORE_NODE, Fixture, Herdr};
 use crate::support::remote_delivery::wait_for;
 
 const LINK_BOUND: Duration = Duration::from_secs(30);
@@ -2442,13 +2442,53 @@ fn relayed(rows: &[Value], way: &str) -> u64 {
         .sum()
 }
 
+/// Runs `hide <args>` in `herdr`'s `pane` with the state folder of the
+/// pane's machine, and answers what it printed: the command is the
+/// pane's own, proven as that pane.
+fn hide_in_pane(
+    (herdr, pane): (&Herdr, &str),
+    (state, hide): (&std::path::Path, &std::path::Path),
+    args: &str,
+    out: &std::path::Path,
+) -> Result<String> {
+    let done = out.with_extension("done");
+    let _ = std::fs::remove_file(&done);
+    let line = format!(
+        "HIDE_STATE_DIR='{}' '{}' {args} > '{}' 2>&1; touch '{}'",
+        state.display(),
+        hide.display(),
+        out.display(),
+        done.display()
+    );
+    tokio::task::block_in_place(|| {
+        herdr.write(&["pane", "run", pane, &line])?;
+        wait_for(&format!("`hide {args}` finished in {pane}"), || {
+            Ok(done.exists().then_some(()))
+        })?;
+        Ok(std::fs::read_to_string(out)?)
+    })
+}
+
+/// The core's browser relay streams through a node's link, as it opened
+/// them: each one is CDP of a caller crossing the link.
+fn relay_streams(fixture: &Fixture) -> Result<usize> {
+    Ok(fixture
+        .core_log("remote_host", "link_stream.opened")?
+        .iter()
+        .filter(|row| row["end"] == "browser_relay")
+        .count())
+}
+
 /// B4, B13, B15: a page shown only in the node's desktop window is driven
-/// from both machines. A caller on the node's machine is handed that
-/// machine's own capability and relay, so none of its CDP crosses the link
-/// (the core relays nothing through it); a caller on the core's machine is
-/// relayed through the link to the same window. Revocation follows the
-/// link: when it ends, the gateway is asked to drop what it handed out, and
-/// a caller is answered again once the link is back.
+/// from a pane on each machine. The node's pane is handed that machine's
+/// own capability and relay, so none of its CDP crosses the link: the core
+/// opens no browser relay stream, and every byte the gateway carried went
+/// through the node's own relay. The core's pane is relayed through the
+/// link to the same window. A page action the window asks for runs on the
+/// core as that window. Revocation follows the link: when it ends, the
+/// gateway is asked to drop what it handed out (the node pane's capability
+/// stops working) and the node's pane is turned away; once the link and
+/// the window are back the core's pane drives the page again.
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_core_through_it()
@@ -2474,37 +2514,44 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
         };
         let project = fixture.screen_home().join("project");
         let site = fixture.core_home().join("site");
-        git_init(&project)?;
+        std::fs::create_dir_all(&project)?;
         git_init(&site)?;
         let page = loopback_page("page".to_owned())?;
         let url = format!("http://localhost:{page}/");
         let hide = fixture.hided.with_file_name("hide");
-        // A command on the node's machine or the core's, from a checkout.
-        let on = |node_side: bool, cwd: &std::path::Path, args: &[&str]| -> Result<String> {
-            let mut command = if node_side {
-                fixture.screen_command(&hide)
-            } else {
-                fixture.core_command(&hide)
-            };
-            command.args(args).current_dir(cwd);
-            let output = command.output()?;
-            Ok(format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        };
+        let node_side = (fixture.node_state(), hide.clone());
+        let core_side = (fixture.core_state.clone(), hide.clone());
+        let out = fixture.root.join("pane-out");
         let seen = Seen::default();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
         runtime.block_on(async {
             node_link(port, "live", LINK_BOUND).await?;
+            let node_pane = fixture.screen.workspace_at(&project)?;
+            let core_pane = fixture.core.workspace_at(&site)?;
             let (endpoint, gateway_token) = desktop_gateway(std::sync::Arc::clone(&seen)).await?;
             let mut desktop = screen_socket_of(port, &token, "desktop").await?;
             first_snapshot(&mut desktop, Duration::from_secs(20)).await?;
-            fixture.create_workspace_on(&node, &project)?;
-            fixture.create_workspace_on(CORE_NODE, &site)?;
+            let drained = tokio::spawn(async move {
+                while let Some(Ok(_)) = desktop.next().await {}
+            });
+            // The screen the panes are typed into and read from.
+            let mut screen = screen_socket(port, &token).await?;
+            first_snapshot(&mut screen, Duration::from_secs(20)).await?;
+            send(
+                &mut screen,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "page", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(&fixture, &mut screen, &node, &project).await?;
+            send(
+                &mut screen,
+                "create_workspace",
+                json!({"path": site, "label": "site", "initialize_git": false}),
+            )
+            .await?;
             // The window registers its gateway with its own machine's daemon,
             // as it does with a core's; the registration stays there.
             let registration = json!({
@@ -2519,63 +2566,68 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
                     .header("Authorization", format!("Bearer {token}"))
                     .header("Content-Type", "application/json")
                     .send(registration.as_bytes())?;
-                ensure!(
-                    answer.status() == 204,
-                    "registration answered {}",
-                    answer.status()
-                );
+                ensure!(answer.status() == 204, "registration answered {}", answer.status());
                 Ok(())
             })?;
-            // A page opened from the node's machine is connected to its own
+            // A page opened from the node's pane is connected to its own
             // window: the capability is on that machine's loopback.
-            let opened = tokio::task::block_in_place(|| {
-                wait_for("the node caller's page connected", || {
-                    let answer =
-                        workspace_answer(&on(true, &project, &["browser", "open", &url])?)?;
-                    Ok(
-                        (answer["ok"] == true && answer["result"]["cdp_http_url"].is_string())
-                            .then_some(answer),
-                    )
-                })
-            })?;
+            let node_in = (node_side.0.as_path(), node_side.1.as_path());
+            let opened = loop {
+                let printed = hide_in_pane(
+                    (&fixture.screen, &node_pane),
+                    node_in,
+                    &format!("browser open {url}"),
+                    &out,
+                )?;
+                let answer = workspace_answer(&printed)?;
+                if answer["ok"] == true && answer["result"]["cdp_http_url"].is_string() {
+                    break answer;
+                }
+                ensure!(
+                    answer["reason"] == "browser_control_unavailable",
+                    "the node pane's page did not open: {answer}"
+                );
+                // The core has not heard of the window yet.
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            };
             ensure!(
                 opened["result"]["cdp_http_url"]
                     .as_str()
                     .is_some_and(|capability| capability.starts_with(&format!("{endpoint}/cdp/"))),
-                "the node caller was not handed its own window's capability: {opened}"
+                "the node pane was not handed its own window's capability: {opened}"
             );
-            let node_display = opened["result"]["view_id"]
+            let node_display = opened["result"]["view_id"].as_str().context("display")?.to_owned();
+            let area = opened["result"]["area_id"].as_str().context("area")?.to_owned();
+            let capability = opened["result"]["browser_ws_url"]
                 .as_str()
-                .context("display")?
+                .context("capability")?
                 .to_owned();
-            let snapshot = tokio::task::block_in_place(|| {
-                on(true, &project, &["browser", "snapshot", &node_display])
-            })?;
+            let snapshot = hide_in_pane(
+                (&fixture.screen, &node_pane),
+                node_in,
+                &format!("browser snapshot {node_display}"),
+                &out,
+            )?;
+            ensure!(snapshot.contains("@1 button \"Go\""), "the node pane's snapshot: {snapshot}");
+            let clicked = hide_in_pane(
+                (&fixture.screen, &node_pane),
+                node_in,
+                &format!("browser click {node_display} @1 --no-verify"),
+                &out,
+            )?;
+            ensure!(workspace_answer(&clicked)?["ok"] == true, "the node pane's click: {clicked}");
             ensure!(
-                snapshot.contains("@1 button \"Go\""),
-                "the node caller's snapshot: {snapshot}"
-            );
-            let clicked = tokio::task::block_in_place(|| {
-                on(
-                    true,
-                    &project,
-                    &["browser", "click", &node_display, "@1", "--no-verify"],
-                )
-            })?;
-            ensure!(
-                workspace_answer(&clicked)?["ok"] == true,
-                "the node caller's click: {clicked}"
-            );
-            ensure!(
-                seen.lock()
-                    .unwrap()
-                    .methods
-                    .iter()
-                    .any(|method| method == "Input.dispatchMouseEvent"),
+                seen.lock().unwrap().methods.iter().any(|method| method == "Input.dispatchMouseEvent"),
                 "the click never reached the window"
             );
-            // The count: the node relayed it on its own machine, and the core
-            // carried none of it through the link.
+            // The count: the core opened no browser relay stream through the
+            // link (it logs one as it opens it, before its caller hears
+            // back), and every CDP byte the gateway carried went through the
+            // node's own relay.
+            ensure!(
+                relay_streams(&fixture)? == 0,
+                "the node pane's CDP crossed the link"
+            );
             let node_rows = tokio::task::block_in_place(|| {
                 wait_for("the node's relays logged", || {
                     let rows = fixture.node_log("browser_relay", "relay.ended")?;
@@ -2584,69 +2636,96 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
             })?;
             let carried = seen.lock().unwrap().bytes as u64;
             ensure!(
-                relayed(&node_rows, "node") > 0 && carried > 0,
-                "the node relayed nothing: {node_rows:?}"
+                carried > 0 && relayed(&node_rows, "node") == carried,
+                "the node relayed {} bytes, the gateway carried {carried}: {node_rows:?}",
+                relayed(&node_rows, "node")
             );
-            let core_rows = fixture.core_log("browser_relay", "relay.ended")?;
-            let relay_streams: Vec<Value> = fixture
-                .core_log("remote_host", "link_stream.closed_by_node")?
-                .into_iter()
-                .filter(|row| row["end"] == "browser_relay")
-                .collect();
             ensure!(
-                core_rows.is_empty() && relay_streams.is_empty(),
-                "the node caller's CDP crossed the link: {core_rows:?} {relay_streams:?}"
+                fixture.core_log("browser_relay", "relay.ended")?.is_empty(),
+                "the core relayed the node pane's CDP"
             );
-            // A page of the core's checkout, driven from the core's machine:
-            // the only window is the node's, so the core relays through the
-            // link to it, and it hands out no capability URL of another
-            // machine.
-            let opened = tokio::task::block_in_place(|| {
-                workspace_answer(&on(false, &site, &["browser", "open", &url])?)
+            // A page action the window asks for runs on the core as the
+            // window: its own machine's daemon passes it on.
+            tokio::task::block_in_place(|| -> Result<()> {
+                let action = json!({
+                    "owner_pid": std::process::id(),
+                    "device_id": node,
+                    "checkout_path": project,
+                    "area_id": area,
+                    "action": "select",
+                    "display_id": node_display,
+                    "request_id": format!(
+                        "{}-{:032x}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_millis(),
+                        rand_id()
+                    ),
+                })
+                .to_string();
+                let mut answer = http_agent()
+                    .post(format!("http://127.0.0.1:{port}/browser-control/action"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .send(action.as_bytes())?;
+                let status = answer.status();
+                let body: Value = serde_json::from_str(&answer.body_mut().read_to_string()?)?;
+                ensure!(
+                    status == 200 && body["ok"] == true && body["result"]["view_id"] == node_display.as_str(),
+                    "the window's page action answered {status}: {body}"
+                );
+                Ok(())
             })?;
+            // A page of the core's checkout, driven from the core's pane: the
+            // only window is the node's, so the core relays through the link
+            // to it, and hands out no capability URL of another machine.
+            focus_checkout(&fixture, &mut screen, CORE_NODE, &site).await?;
+            let core_in = (core_side.0.as_path(), core_side.1.as_path());
+            let opened = workspace_answer(
+                &hide_in_pane((&fixture.core, &core_pane), core_in, &format!("browser open {url}"), &out)?,
+            )?;
             ensure!(
                 opened["ok"] == true
-                    && opened["result"]["browser_control"]["reason"] == "browser_control_elsewhere",
-                "the core caller's page: {opened}"
+                    && opened["result"]["browser_control"]["reason"] == "browser_control_elsewhere"
+                    && opened["result"]["browser_control"]["next_action"].is_string(),
+                "the core pane's page: {opened}"
             );
-            let display = opened["result"]["view_id"]
-                .as_str()
-                .context("display")?
-                .to_owned();
+            let core_display = opened["result"]["view_id"].as_str().context("display")?.to_owned();
             let methods_before = seen.lock().unwrap().methods.len();
-            let snapshot = tokio::task::block_in_place(|| {
-                on(false, &site, &["browser", "snapshot", &display])
-            })?;
-            ensure!(
-                snapshot.contains("@1 button \"Go\""),
-                "the core caller's snapshot: {snapshot}"
-            );
-            let clicked = tokio::task::block_in_place(|| {
-                on(
-                    false,
-                    &site,
-                    &["browser", "click", &display, "@1", "--no-verify"],
-                )
-            })?;
-            ensure!(
-                workspace_answer(&clicked)?["ok"] == true,
-                "the core caller's click: {clicked}"
-            );
+            let snapshot = hide_in_pane(
+                (&fixture.core, &core_pane),
+                core_in,
+                &format!("browser snapshot {core_display}"),
+                &out,
+            )?;
+            ensure!(snapshot.contains("@1 button \"Go\""), "the core pane's snapshot: {snapshot}");
+            let clicked = hide_in_pane(
+                (&fixture.core, &core_pane),
+                core_in,
+                &format!("browser click {core_display} @1 --no-verify"),
+                &out,
+            )?;
+            ensure!(workspace_answer(&clicked)?["ok"] == true, "the core pane's click: {clicked}");
             ensure!(
                 seen.lock().unwrap().methods[methods_before..]
                     .iter()
                     .any(|method| method == "Input.dispatchMouseEvent"),
-                "the core caller's click never reached the window"
+                "the core pane's click never reached the window"
+            );
+            ensure!(
+                relay_streams(&fixture)? >= 2,
+                "the core pane's commands opened no browser relay stream through the link"
             );
             let core_rows = tokio::task::block_in_place(|| {
                 fixture.core_log_until("browser_relay", "relay.ended", |rows| rows.len() >= 2)
             })?;
             ensure!(
                 relayed(&core_rows, "link") > 0,
-                "the core caller was not relayed through the link: {core_rows:?}"
+                "the core pane was not relayed through the link: {core_rows:?}"
             );
-            // The link ends: the window is asked to revoke what it handed out,
-            // and the node's caller is turned away until the link is back.
+            // The link ends: the window is asked to revoke what it handed
+            // out, so the capability the node pane holds stops working, and
+            // the node pane is turned away until the link is back.
             tokio::task::block_in_place(|| fixture.ssh.online(false))?;
             node_link(port, "waiting", LINK_BOUND).await?;
             tokio::task::block_in_place(|| {
@@ -2654,30 +2733,44 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
                     Ok((seen.lock().unwrap().revoked > 0).then_some(()))
                 })
             })?;
-            let refused = tokio::task::block_in_place(|| {
-                on(true, &project, &["browser", "snapshot", &node_display])
-            })?;
             ensure!(
-                workspace_answer(&refused)?["ok"] == false,
-                "answered without a link: {refused}"
+                tokio_tungstenite::connect_async(capability.as_str()).await.is_err(),
+                "the node pane's capability still works after the link ended"
             );
+            let refused = tokio::task::block_in_place(|| -> Result<Value> {
+                let mut command = fixture.screen_command(&hide);
+                command
+                    .args(["browser", "snapshot", &node_display])
+                    .current_dir(&project);
+                workspace_answer(&String::from_utf8_lossy(&command.output()?.stdout))
+            })?;
+            ensure!(refused["ok"] == false, "answered without a link: {refused}");
             tokio::task::block_in_place(|| fixture.ssh.online(true))?;
             node_link(port, "live", LINK_BOUND).await?;
             // The window reattaches, as it does after its screen closed with
             // the link; its gateway's registration stayed on its machine and
             // reaches the new link's core.
-            drop(desktop);
+            drained.abort();
+            drop(screen);
             let mut desktop = screen_socket_of(port, &token, "desktop").await?;
             first_snapshot(&mut desktop, Duration::from_secs(20)).await?;
+            let mut screen = screen_socket(port, &token).await?;
+            first_snapshot(&mut screen, Duration::from_secs(20)).await?;
+            focus_checkout(&fixture, &mut screen, CORE_NODE, &site).await?;
             let mut last = String::new();
-            tokio::task::block_in_place(|| {
-                wait_for("the core caller's page driven again", || {
-                    last = on(false, &site, &["browser", "snapshot", &display])?;
-                    Ok(last.contains("@1 button \"Go\"").then_some(()))
-                })
-            })
-            .with_context(|| format!("the last answer: {last}"))?;
-            drop(desktop);
+            let deadline = Instant::now() + LINK_BOUND;
+            while !last.contains("@1 button \"Go\"") {
+                ensure!(
+                    Instant::now() < deadline,
+                    "the core pane's page was not driven again: {last}"
+                );
+                last = hide_in_pane(
+                    (&fixture.core, &core_pane),
+                    core_in,
+                    &format!("browser snapshot {core_display}"),
+                    &out,
+                )?;
+            }
             Ok::<_, anyhow::Error>(())
         })
     })();
