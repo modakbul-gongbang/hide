@@ -357,7 +357,8 @@ Opened, its children follow most urgent first, joined to it by rails, and a chil
 Past five siblings the rest wait behind `N개 더`, which opens them in place.
 A tree row is one line with no branch line; a child on another device names that device on a second line, dimmed with `연결 안 됨` and not openable while it is not connected, and a child working in another worktree is not drawn again under that worktree.
 Each row with its own PRs carries one PR icon in the worst state's colour (failed red, pending amber, mergeable green, merged purple), dimmed while GitHub cannot be read; its hover shows the PR card for one PR, and for several lists each PR with its state and title, any of which opens, with the last read time while GitHub cannot be read.
-A request keeps its warning line until answered, dimmed after reading an AI question; an unread result line stays bright until read.
+A tree row that asks draws its verb and what on a second line until answered, and an AI question leaves that line once read.
+A raised row outside the tree keeps its request line until answered, dimmed after reading an AI question; an unread result line stays bright until read.
 Quiet detail lives in the tooltip, and no progress value is invented.
 Hover, focus, selection and the open popover change fill and ring without adding lines or moving adjacent rows.
 A row is at least 28 high, or 44 with its second line, and grows with text scale rather than spilling.
