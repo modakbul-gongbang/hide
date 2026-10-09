@@ -1158,6 +1158,52 @@ fn a_node_screen_reads_its_own_checkouts_files_without_the_core() -> Result<()> 
     }
 }
 
+/// Amendment 10: removing a node that dials in ends its link, and with it
+/// its screens and every authority the link carried; the node registers
+/// again on its next attach.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_removed_node_loses_its_link_and_registers_again_on_its_next_attach() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            tokio::task::block_in_place(|| {
+                fixture.event("remove_device", json!({"device_id": node}))
+            })?;
+            let (code, reason) = close_of(&mut socket, Duration::from_secs(15)).await?;
+            ensure!(
+                (code, reason.as_str()) == (1012, "core_link_lost"),
+                "the screen closed as {code} {reason}"
+            );
+            node_link(port, "live", LINK_BOUND)
+                .await
+                .context("the node did not attach again")?;
+            tokio::task::block_in_place(|| {
+                wait_for("the node's row again", || fixture.device(&node))
+            })?;
+            Ok::<_, anyhow::Error>(())
+        })
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
+
 /// B17: a screen that stops reading while its core sends it a large file
 /// holds up neither another screen nor a pane of the core's machine, and is
 /// drawn again from a fresh snapshot once it reads again.
