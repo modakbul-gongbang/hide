@@ -49,6 +49,7 @@ use hide_node_link::terminal::{
     KeyTarget, MAX_PANE_ID_BYTES, TerminalDown, TerminalLine, TerminalNode, TerminalUp,
     decode_base64, device_pane_prefix, encode_base64,
 };
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{Notify, mpsc, watch};
 use tokio_tungstenite::tungstenite;
@@ -357,7 +358,7 @@ impl NodeDaemon {
             Arc::new(move || {
                 role.upgrade().map_or_else(
                     || Phase::Waiting {
-                        reason: "stopping".to_owned(),
+                        reason: crate::node_role::LinkFailure::Stopping,
                     },
                     |role| role.phase(),
                 )
@@ -471,7 +472,7 @@ async fn health(State(state): State<NodeState>) -> impl IntoResponse {
     let (link, reason) = match &phase {
         Phase::Connecting => ("connecting", None),
         Phase::Live(_) => ("live", None),
-        Phase::Waiting { reason } => ("waiting", Some(reason.clone())),
+        Phase::Waiting { reason } => ("waiting", Some(reason.to_string())),
     };
     axum::Json(json!({
         "pid": std::process::id(),
@@ -1067,16 +1068,30 @@ enum FrameStart {
     Delta,
 }
 
+/// A core frame's `type`, wherever it stands among the frame's keys; the
+/// rest of the frame is skipped, not built.
+#[derive(Deserialize)]
+struct FrameHead {
+    #[serde(rename = "type")]
+    kind: FrameType,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FrameType {
+    Snapshot,
+    Delta,
+    #[serde(other)]
+    Other,
+}
+
 /// Whether a core frame is a whole snapshot or a delta, read from its
 /// `type` alone.
 fn frame_kind(text: &str) -> Option<FrameStart> {
-    let head = text.get(..text.len().min(32))?;
-    if head.starts_with(r#"{"type":"snapshot""#) {
-        Some(FrameStart::Snapshot)
-    } else if head.starts_with(r#"{"type":"delta""#) {
-        Some(FrameStart::Delta)
-    } else {
-        None
+    match serde_json::from_str::<FrameHead>(text).ok()?.kind {
+        FrameType::Snapshot => Some(FrameStart::Snapshot),
+        FrameType::Delta => Some(FrameStart::Delta),
+        FrameType::Other => None,
     }
 }
 
@@ -1348,6 +1363,23 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A frame is a snapshot or a delta by its `type`, wherever the core's
+    /// serializer put that key; any other frame starts nothing.
+    #[test]
+    fn a_frame_s_kind_is_its_type_wherever_the_key_stands() {
+        assert_eq!(
+            frame_kind(r#"{"type":"snapshot","revision":1}"#),
+            Some(FrameStart::Snapshot)
+        );
+        assert_eq!(
+            frame_kind(r#"{"revision":2,"changes":{"type":"x"},"type":"delta"}"#),
+            Some(FrameStart::Delta)
+        );
+        assert_eq!(frame_kind(r#"{"type":"error","message":"no"}"#), None);
+        assert_eq!(frame_kind(r#"{"revision":3}"#), None);
+        assert_eq!(frame_kind("not json"), None);
+    }
 
     #[test]
     fn a_screen_that_falls_behind_drops_its_backlog_past_the_cap() {
