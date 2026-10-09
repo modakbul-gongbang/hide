@@ -1186,6 +1186,7 @@ When the link ends, M drops its tickets, ends its relays as a lost gateway and a
 Terminals take another way.
 M's own panes' keys and output never leave M: keys go from M's screen to M's node terminals and output from them to M's hub, and C hears the input facts it always heard.
 Every other pane's output comes down one terminals relay per node (`/relay?mode=terminals`) into M's hub, at most 4 MiB unsent per node before a pane is drawn again whole, and their keys go up it.
+Each side writes its relay on a task of its own, so a send the other side is slow to take never stops it reading keys, output or the link's end; a key M took and did not send, or one for M's own pane while its link is down, reaches its screen as not sent.
 While that relay is away (C restarted it, or the forward blinked) the keys wait on M in order, 64 KiB and 3 s each with one line of any size always taken, as keys wait for a pane that does not exist yet; a key past the bound is refused to its screen, and one that waited too long is dropped and reported to it (`terminals.held_dropped`).
 When C forgets a pane it tells M on the same relay, so M's hub and the screens' pane sizes let it go.
 M's panes' output goes up the link only while C has a screen of its own looking (`TerminalControl::Mirror`).
@@ -1199,8 +1200,8 @@ M forwards its screens' views to C with their other events, and tells C at most 
 M waits for C rather than run without it (D-08).
 When the link ends M closes each screen once with 1012 `core_link_lost`; a screen that opens while the link is down is held, its frames dropped and counted and nothing sent to it, until the link is live and its relay's snapshot arrives, so the web shell's ordinary reconnect is the attempt that attaches and its keys typed meanwhile are never delivered later (B8).
 Dials back off from 2 s to 60 s, and the wait starts over after a link that lived 30 s.
-A watch thread on M looks every 2 s for a gap of more than 5 s between the wall clock and the monotonic one (the machine slept) or a change in its network address set (`hide_platform::host::network_addresses`): with the link down it wakes the dial at once, with the link up it pings C within 3 s and redials when no answer comes.
-While the last failure was `unreachable` and the port has not answered since, the watch also reads C's SSH banner within 1 s on each look, and dials as soon as it answers, so M is back within seconds of SSH answering again, whatever the backoff had reached (B9).
+A watch thread on M looks every 2 s for a gap of more than 5 s between the wall clock and the monotonic one (the machine slept) or a change in its network address set (`hide_platform::host::network_addresses`, link-local addresses left out, since macOS gives and takes them on its own): with the link up it pings C within 3 s and redials when no answer comes; with the link down it wakes the dial at once only when the last failure was one a move can change, a dial that never reached C's SSH server (`unreachable`) or a link that was lost, so a node C refused keeps its backoff.
+While the last failure was `unreachable` and the port has not answered since, the watch also resolves C's name and reads its SSH banner within 1 s on each look, the name resolved on a thread of its own so a resolver that hangs never holds the watch, and dials as soon as it answers, so M is back within seconds of SSH answering again, whatever the backoff had reached (B9).
 `hide connect` in the node role waits up to 20 s for the first link outcome and answers `other_build` for a build C refused, so the desktop host shows the failure it shows for any daemon of another build (B18).
 
 The label generator's lock and the human notice follow the machine.
