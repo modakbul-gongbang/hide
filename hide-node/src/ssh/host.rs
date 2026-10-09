@@ -2307,7 +2307,9 @@ fn deliver_line(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
     if line.starts_with(b"{\"event\":\"ping\"}") {
         return;
     }
-    if line.starts_with(b"{\"event\":\"link_") {
+    if line.starts_with(b"{\"event\":\"link_data\"")
+        || line.starts_with(b"{\"event\":\"link_closed\"")
+    {
         deliver_link(inner, line);
         return;
     }

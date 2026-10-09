@@ -1241,8 +1241,9 @@ pub fn handle_with_progress(
             "Only a device node's link carries its panes' credentials and commands",
         )),
         Call::LinkOpen { end, .. } => Err(crate::link_bridge::unreached(end)),
-        Call::LinkWrite { .. } | Call::LinkClose { .. } => Err(crate::link_bridge::unreached(
-            hide_node_link::protocol::LinkEnd::Herdr,
+        Call::LinkWrite { .. } | Call::LinkClose { .. } => Err(HostError::new(
+            ErrorCode::NotFound,
+            "This node holds no link streams",
         )),
         Call::BrowserGateway { .. } => Err(crate::link_bridge::unreached(
             hide_node_link::protocol::LinkEnd::BrowserRelay,

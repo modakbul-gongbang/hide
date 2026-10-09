@@ -76,10 +76,10 @@ pub enum NodeEvent {
     /// [`HEARTBEAT`], so the attach role on the core's machine ends a link
     /// whose node fell silent (PRD core-host-node-remote-core B20).
     Ping,
-    /// Base64 bytes the node read from its Herdr on a stream the core
-    /// opened with `link_open`.
+    /// Base64 bytes the node read from a stream's end (its Herdr or its
+    /// browser relay) on a stream the core opened with `link_open`.
     LinkData { stream: u64, data: String },
-    /// The node's Herdr ended a stream the core opened, or the node did at
+    /// A stream's end closed a stream the core opened, or the node did at
     /// one of its caps; `reason` says which, never what the stream carried.
     LinkClosed { stream: u64, reason: String },
     /// The node turned a caller away on its own, before the core was asked

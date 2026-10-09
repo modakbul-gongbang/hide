@@ -27,10 +27,36 @@ use serde_json::json;
 
 use super::{RemoteHost, lock_recover};
 
-/// Chunks one link stream holds for its reader; past it the stream ends.
+/// Chunks one Herdr stream holds for its reader; past it the stream ends.
 pub const MAX_HERDR_PENDING: usize = 64;
+/// Chunks one browser relay stream holds: more than the 4 MiB a CDP
+/// message may be, so a large answer to a caller that is slow to read is
+/// held whole rather than ending the relay.
+pub const MAX_BROWSER_PENDING: usize = 128;
 /// How long an open, a write or a close may take on the link.
-const HERDR_CALL_TIMEOUT: Duration = Duration::from_secs(5);
+const CALL_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn pending(end: LinkEnd) -> usize {
+    match end {
+        LinkEnd::Herdr => MAX_HERDR_PENDING,
+        LinkEnd::BrowserRelay => MAX_BROWSER_PENDING,
+    }
+}
+
+/// Writes at most one chunk of `buffer` to `stream`, waiting `timeout` for
+/// the node to take it.
+fn write_chunk(
+    link: &RemoteHost,
+    stream: u64,
+    buffer: &[u8],
+    timeout: Duration,
+) -> io::Result<usize> {
+    let taken = buffer.len().min(MAX_CHUNK);
+    let data = base64::engine::general_purpose::STANDARD.encode(&buffer[..taken]);
+    link.call(Call::LinkWrite { stream, data }, timeout)
+        .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))?;
+    Ok(taken)
+}
 
 enum Piece {
     Data(Vec<u8>),
@@ -56,7 +82,7 @@ struct Entry {
 
 impl LinkStreams {
     /// Bytes the node read from `stream`'s end. A reader that has fallen
-    /// [`MAX_HERDR_PENDING`] chunks behind loses its stream.
+    /// its end's pending chunks behind loses its stream.
     pub(super) fn data(&self, target: &str, stream: u64, data: &str) {
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else {
             self.give_up(stream, "the node sent a link chunk that is not base64");
@@ -82,7 +108,7 @@ impl LinkStreams {
                     "target": target,
                     "stream": stream,
                     "end": end,
-                    "cap": MAX_HERDR_PENDING,
+                    "cap": pending(end),
                 }));
             }
             Err(mpsc::TrySendError::Disconnected(_)) => {
@@ -204,7 +230,7 @@ impl RemoteHost {
             return Err(OpenError::Ended(reason));
         }
         let stream = streams.next.fetch_add(1, Ordering::Relaxed) + 1;
-        let (sender, receiver) = mpsc::sync_channel(MAX_HERDR_PENDING);
+        let (sender, receiver) = mpsc::sync_channel(pending(end));
         {
             let mut open = lock_recover(&streams.open);
             let cap = end.cap();
@@ -227,7 +253,7 @@ impl RemoteHost {
                 },
             );
         }
-        if let Err(error) = self.call(Call::LinkOpen { stream, end }, HERDR_CALL_TIMEOUT) {
+        if let Err(error) = self.call(Call::LinkOpen { stream, end }, CALL_TIMEOUT) {
             // An open whose answer never came may have opened the stream on
             // the node, so it is told to close; one refused or never sent
             // left nothing there.
@@ -237,6 +263,18 @@ impl RemoteHost {
                 lock_recover(&streams.open).remove(&stream);
             }
             return Err(OpenError::Refused(error));
+        }
+        // A browser relay stream carries a caller's CDP across the link: the
+        // count a check of where CDP runs reads (B4). Herdr's are too many to
+        // log one by one.
+        if end == LinkEnd::BrowserRelay {
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "link_stream.opened",
+                "target": self.target(),
+                "end": end,
+                "stream": stream,
+            }));
         }
         Ok(LinkStream {
             link: self.clone(),
@@ -327,19 +365,8 @@ impl Read for LinkStream {
 
 impl Write for LinkStream {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        let taken = buffer.len().min(MAX_CHUNK);
-        let data = base64::engine::general_purpose::STANDARD.encode(&buffer[..taken]);
-        let timeout = lock_recover(&self.write_timeout).unwrap_or(HERDR_CALL_TIMEOUT);
-        self.link
-            .call(
-                Call::LinkWrite {
-                    stream: self.stream,
-                    data,
-                },
-                timeout,
-            )
-            .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))?;
-        Ok(taken)
+        let timeout = lock_recover(&self.write_timeout).unwrap_or(CALL_TIMEOUT);
+        write_chunk(&self.link, self.stream, buffer, timeout)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -433,18 +460,7 @@ pub struct LinkWriter {
 
 impl Write for LinkWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        let taken = buffer.len().min(MAX_CHUNK);
-        let data = base64::engine::general_purpose::STANDARD.encode(&buffer[..taken]);
-        self.link
-            .call(
-                Call::LinkWrite {
-                    stream: self.stream,
-                    data,
-                },
-                HERDR_CALL_TIMEOUT,
-            )
-            .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))?;
-        Ok(taken)
+        write_chunk(&self.link, self.stream, buffer, CALL_TIMEOUT)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -487,7 +503,7 @@ fn close_stream(link: &RemoteHost, stream: u64) {
     }
     let link = link.clone();
     let tell = move || {
-        let _ = link.call(Call::LinkClose { stream }, HERDR_CALL_TIMEOUT);
+        let _ = link.call(Call::LinkClose { stream }, CALL_TIMEOUT);
     };
     if tokio::runtime::Handle::try_current().is_ok() {
         let _ = std::thread::Builder::new()
@@ -787,7 +803,7 @@ mod tests {
                     scope: scope.clone(),
                     relay: true,
                 },
-                HERDR_CALL_TIMEOUT,
+                CALL_TIMEOUT,
             )
             .expect("the gateway's answer");
         assert_eq!(answer_value(answer), json!({"scope": scope, "relay": true}));
@@ -797,7 +813,7 @@ mod tests {
                     scope: json!({"workspace": "refused"}),
                     relay: false,
                 },
-                HERDR_CALL_TIMEOUT,
+                CALL_TIMEOUT,
             )
             .expect_err("the gateway's refusal");
         assert!(
@@ -812,7 +828,7 @@ mod tests {
                     scope,
                     relay: false,
                 },
-                HERDR_CALL_TIMEOUT,
+                CALL_TIMEOUT,
             )
             .expect_err("no gateway");
         assert!(
