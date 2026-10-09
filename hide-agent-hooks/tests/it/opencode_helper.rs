@@ -278,6 +278,18 @@ fn receipt(context: &str) -> Option<(String, String, String)> {
     Some((field("event")?, field("items")?, field("auth")?))
 }
 
+/// The first of a few prompt answers from `agent` that carries a Memory
+/// receipt: a debug helper on a loaded machine can miss its 75 ms Memory
+/// budget and answer without one, as the Windows hook test notes, so one
+/// receipt in a few calls is the proof.
+fn answer_with_receipt(machine: &Machine, agent: &str, input: &Value) -> Value {
+    const ATTEMPTS: usize = 5;
+    (0..ATTEMPTS)
+        .map(|_| machine.run_as(agent, "prompt", input, true))
+        .find(|answer| receipt(answer["context"].as_str().unwrap_or_default()).is_some())
+        .unwrap_or_else(|| panic!("{agent}: no Memory receipt in {ATTEMPTS} prompts"))
+}
+
 /// Pi's and omp's extension names the session by its file for letters and by
 /// the host's own id for Memory: the receipt is signed for the id, which is
 /// what their session reader keys it by, never for the file; with no usable id
@@ -291,12 +303,11 @@ fn pi_and_omp_memory_receipts_are_signed_for_the_hosts_session_id_and_opencodes_
     for agent in ["pi", "omp"] {
         let file = format!("/sessions/-work-/2026-10-09T00-00-00-000Z_{agent}.jsonl");
         let id = format!("01a11d1d-{agent}");
-        let answer = machine.run_as(
+        let answer = answer_with_receipt(
+            &machine,
             agent,
-            "prompt",
             &json!({"session_id": file, "native_session": id, "prompt": "Fix it", "cwd": project,
                 "first": true, "memory_first": true, "version": version}),
-            true,
         );
         assert_eq!(answer["memory_start"], json!(true), "{agent}");
         assert_eq!(answer["letters"], json!(["letter-1"]), "{agent}");
@@ -349,10 +360,10 @@ fn pi_and_omp_memory_receipts_are_signed_for_the_hosts_session_id_and_opencodes_
     assert_eq!(answer["memory_start"], json!(false));
     store.set_enabled(&project_id, true, true).unwrap();
 
-    let answer = machine.run(
-        "prompt",
+    let answer = answer_with_receipt(
+        &machine,
+        "opencode",
         &json!({"session_id": "ses_root", "prompt": "Fix it", "cwd": project, "first": true}),
-        true,
     );
     let (event, items, auth) = receipt(answer["context"].as_str().unwrap()).unwrap();
     assert!(
