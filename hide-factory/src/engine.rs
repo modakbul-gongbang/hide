@@ -356,9 +356,12 @@ enum Purpose {
     Watch {
         read_at: UnixMs,
     },
-    /// The next step for one hold of the recovery schedule (D-44).
+    /// The next step for one hold of the recovery schedule (D-44), asked
+    /// while the schedule that started at `since` ran; a person's restart
+    /// starts another, which a late answer no longer steps.
     Recovery {
         key: HoldKey,
+        since: UnixMs,
     },
     /// The Observer sorting one decision request (D-14).
     Classify {
@@ -5647,8 +5650,8 @@ impl Engine {
                 (JudgmentOutcome::Answered { value }, Purpose::Watch { read_at }, _) => {
                     self.apply_watch(&factory, value, read_at)
                 }
-                (outcome, Purpose::Recovery { key }, _) => {
-                    self.apply_recovery(&factory, &key, outcome)
+                (outcome, Purpose::Recovery { key, since }, _) => {
+                    self.apply_recovery(&factory, &key, since, outcome)
                 }
                 (outcome, Purpose::Classify { question }, Some(task)) => {
                     self.apply_classification(&factory, &task, &question, outcome)

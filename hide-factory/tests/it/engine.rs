@@ -4225,6 +4225,54 @@ fn an_environment_recovery_is_a_line_of_the_factory_activity_not_a_question() {
 }
 
 #[test]
+fn a_diagnosis_asked_before_a_person_restarted_the_hold_takes_no_step_after() {
+    let mut h = Bench::new(false);
+    h.factory(true);
+    h.world().disk_free = Some(1 << 30);
+    h.ready("Held", &[]);
+    h.world().env_diagnosis = Some(json!({
+        "cause": "Free disk is about 1 GB, under the floor.",
+        "action": "remove_finished_worktrees"
+    }));
+    // The first step's diagnosis is still out when the schedule runs out.
+    h.world().hold_judgments = true;
+    h.advance(31 * MINUTE_MS);
+    h.engine.tick();
+    h.advance(150 * MINUTE_MS);
+    h.engine.tick();
+    let restarted = h.op(Command::Resolve {
+        project: None,
+        target: ResolveTarget::parse("hold:start-disk_floor").unwrap(),
+    });
+    assert_eq!(restarted["ok"], true, "{restarted}");
+    h.world().hold_judgments = false;
+    h.engine.tick();
+    let factory = h.engine.factories().next().unwrap().clone();
+    assert!(
+        !factory
+            .activity
+            .iter()
+            .any(|entry| matches!(entry.event, ActivityEvent::Recovery { .. })),
+        "the late answer belongs to the schedule the person ended: {:?}",
+        factory.activity
+    );
+    // The new schedule asks its own first step when it is due.
+    let asked = h.world().judged.len();
+    h.advance(31 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    assert!(h.world().judged.len() > asked);
+    let factory = h.engine.factories().next().unwrap().clone();
+    assert!(factory.activity.iter().any(|entry| matches!(
+        entry.event,
+        ActivityEvent::Recovery {
+            action: RecoveryAction::RemoveFinishedWorktrees,
+            ..
+        }
+    )));
+}
+
+#[test]
 fn a_watch_warning_is_a_line_of_the_activity_and_never_a_question() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

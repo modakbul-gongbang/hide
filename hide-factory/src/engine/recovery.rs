@@ -193,7 +193,7 @@ impl Engine {
         }
         let step = hold.attempts.len();
         if hold.phase != HoldPhase::Due
-            || self.diagnosing(factory, key)
+            || self.diagnosing(factory, key, hold.since)
             || step >= STEPS_MS.len()
             || elapsed < STEPS_MS[step]
         {
@@ -227,10 +227,11 @@ impl Engine {
         );
     }
 
-    /// A diagnosis for this hold's next step is out.
-    fn diagnosing(&self, factory: &str, key: &HoldKey) -> bool {
+    /// A diagnosis for the next step of this hold's current schedule is out.
+    fn diagnosing(&self, factory: &str, key: &HoldKey, since: UnixMs) -> bool {
         self.judgments.values().any(|(f, _, purpose)| {
-            f == factory && matches!(purpose, Purpose::Recovery { key: k } if k == key)
+            f == factory
+                && matches!(purpose, Purpose::Recovery { key: k, since: s } if k == key && *s == since)
         })
     }
 
@@ -317,7 +318,12 @@ impl Engine {
             "disk_free": self.ports.environment.disk_free(&f.project),
         });
         let judgment = Judgment {
-            id: format!("{factory}:recovery:{}:{}", key.name(), hold.attempts.len()),
+            id: format!(
+                "{factory}:recovery:{}:{}:{}",
+                key.name(),
+                hold.since,
+                hold.attempts.len()
+            ),
             factory: factory.to_owned(),
             task: hold_task(key).map(str::to_owned),
             priority: Priority::Factory,
@@ -337,7 +343,10 @@ impl Engine {
             (
                 factory.to_owned(),
                 None,
-                Purpose::Recovery { key: key.clone() },
+                Purpose::Recovery {
+                    key: key.clone(),
+                    since: hold.since,
+                },
             ),
         );
         true
@@ -350,6 +359,7 @@ impl Engine {
         &mut self,
         factory: &str,
         key: &HoldKey,
+        since: UnixMs,
         outcome: &JudgmentOutcome,
     ) {
         let Some(hold) = self
@@ -361,7 +371,9 @@ impl Engine {
             // The hold cleared while it was asked.
             return;
         };
-        if hold.phase != HoldPhase::Due {
+        // An escalated hold, or one a person restarted since, takes no step
+        // from it.
+        if hold.phase != HoldPhase::Due || hold.since != since {
             return;
         }
         let actions = self.available_actions(factory, key);
