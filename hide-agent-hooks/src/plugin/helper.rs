@@ -421,6 +421,19 @@ mod tests {
             };
             assert!(verifies(&id), "{name}: signed for the host's id");
             assert!(!verifies(&file), "{name}: never for the session file");
+
+            // Once the start capsule is written the script asks for the
+            // prompt capsule, even on the guidance's first prompt; with no
+            // session-start receipt projected yet there is none to give.
+            let later = input(
+                json!({"session_id": file, "native_session": id, "prompt": "Fix it",
+                "cwd": root, "first": true, "memory_first": false}),
+            );
+            assert_eq!(
+                prompt_memory(&home, &agent, &later, &file, deadline()),
+                (None, false),
+                "{name}"
+            );
         }
 
         let agent = Agent::parse("opencode").unwrap();
