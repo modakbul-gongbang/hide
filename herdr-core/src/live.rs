@@ -2288,14 +2288,7 @@ pub(crate) fn confirm_session_launch(
     };
     check()?;
     let source_reference = source_reference.ok_or("session_route_reference_unconfirmed")?;
-    // Pi and omp report their file; Grok reports the native id itself, which
-    // must be the id acted on. Either way the node proves the route below.
-    let reported = match source_reference.kind.as_str() {
-        "path" => true,
-        "id" => source_reference.value == id,
-        _ => false,
-    };
-    if !reported {
+    if source_reference.kind != "path" {
         return Err("session_route_reference_unconfirmed".into());
     }
     let _: hide_session::session_activity::SessionActivity = crate::node_access::call_as(
@@ -3770,10 +3763,11 @@ mod tests {
                     other => panic!("unexpected {other}"),
                 })
             });
+            // The label overlay hands a native-file agent its proven file.
             let request = ForkRequest {
                 source_reference: Some(crate::sidebar::SessionAgentSessionPayload {
-                    kind: "id".into(),
-                    value: id.into(),
+                    kind: "path".into(),
+                    value: source.display().to_string(),
                 }),
                 parent_state_change_seq: None,
                 connection_generation: 0,
