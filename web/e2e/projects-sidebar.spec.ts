@@ -156,11 +156,9 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     const lineOf = async (part: Locator) => Math.round((await part.boundingBox())!.y);
     expect(await lineOf(feature.locator("[data-checkout-age]"))).toBeGreaterThan(await lineOf(feature.getByText("feature/sidebar-rows", { exact: true })));
     expect(await lineOf(feature.locator("[data-checkout-age]"))).toBe(await lineOf(feature.locator("[data-purpose]")));
-    // PRD sidebar-typography B4: line two is the purpose, here the agent's
-    // title standing in for one, with the age ending it. Agents alone earn no
-    // line two (projects.test.ts); a checkout with neither is one line (below).
-    await expect(primary.locator("[data-purpose]")).toHaveText("메인 체크아웃 정리");
-    expect(await lineOf(primary.locator("[data-checkout-age]"))).toBe(await lineOf(primary.locator("[data-purpose]")));
+    // agent-hierarchy-screens B35: while its agents are open, the open
+    // checkout is one line; its purpose comes back when they fold (below).
+    await expect(primary.locator("[data-purpose]")).toHaveCount(0);
     await expect(project.locator('[data-project-status] [data-badge-part="idle"]')).toHaveText("2");
     await expect(project.locator("[data-project-row]")).toHaveAccessibleName("repo, 2 idle");
     await screenshot(page, "projects-sidebar-closed");
@@ -181,6 +179,11 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     // the click, and the rest geometry is measured on the closed row.
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "false");
     expect(sent.get("checkout_agents_toggle") ?? 0).toBe(togglesBefore + 1);
+    // PRD sidebar-typography B4: folded, line two is the purpose, here the
+    // agent's title standing in for one, with the age ending it. Agents alone
+    // earn no line two (projects.test.ts); a checkout with neither is one line.
+    await expect(primary.locator("[data-purpose]")).toHaveText("메인 체크아웃 정리");
+    expect(await lineOf(primary.locator("[data-checkout-age]"))).toBe(await lineOf(primary.locator("[data-purpose]")));
     const primaryMenu = page.getByRole("menu", { name: "main actions" });
     const beforeLooking = new Map(sent);
     await rest(page);
@@ -281,16 +284,17 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     expect(last.get("focus_checkout")?.expanded).toBeUndefined();
 
     // The chevron opens the agent rows below the row: their own marks stand
-    // for the checkout's badge, which goes, and the row keeps its purpose,
-    // its age and its height. The project's badge stays.
+    // for the checkout's badge, which goes, and the row becomes one line with
+    // its age, its purpose waiting for the fold (agent-hierarchy-screens B35).
+    // The project's badge stays.
     const featureButton = feature.locator("[data-checkout]");
-    const closedHeight = (await featureButton.boundingBox())!.height;
     await featureToggle.click();
     await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
     await expect(feature.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`)).toBeVisible();
     await expect(feature.locator("[data-checkout-status]")).toHaveCount(0);
-    await expect(feature.locator("[data-purpose]")).toBeVisible();
-    expect((await featureButton.boundingBox())!.height).toBe(closedHeight);
+    await expect(feature.locator("[data-purpose]")).toHaveCount(0);
+    await expect(feature.locator("[data-checkout-age]")).toBeVisible();
+    expect((await featureButton.boundingBox())!.height).toBe(await featureButton.evaluate((node) => parseFloat(getComputedStyle(node).getPropertyValue("--size-checkout-row"))));
     await expect(project.locator("[data-project-status]")).toBeVisible();
     await screenshot(page, "projects-sidebar-open");
 
@@ -328,22 +332,25 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await folderToggle.click();
     await expect(folder.locator("[data-checkout-agents-open]")).toHaveCount(0);
 
-    // Delegated children leave the checkout tree and stay reachable from
-    // the root's direct-child badge, without a second lineage disclosure.
+    // Delegated children leave the checkout tree they work in and open under
+    // their root, one line with no branch (agent-hierarchy-screens B10, B14).
     declareParent(herdr, rowsPane, mainPane);
     await primaryToggle.click();
     const parentRow = primary.locator(`[data-checkout-agents-open] [data-pane="${mainPane}"]`);
-    const badge = parentRow.locator("[data-descendant-badge]");
-    await expect(badge).toBeVisible({ timeout: 20_000 });
+    const chevron = parentRow.locator(`[data-tree-chevron="${mainPane}"]`);
+    await expect(chevron).toBeVisible({ timeout: 20_000 });
+    await expect(chevron).toHaveAttribute("aria-expanded", "false");
     await expect(page.locator(`nav[data-sidebar] [data-pane="${rowsPane}"]`)).toHaveCount(0);
-    await expect(page.locator("[data-agent-tree-toggle], [data-checkout-line]")).toHaveCount(0);
-    const beforeBadge = new Map(sent);
-    await badge.click();
-    await expect(page.locator(`[data-agent-child="${rowsPane}"] [data-branch-chip]`)).toHaveText("feature/sidebar-rows");
-    await screenshot(page, "projects-sidebar-child-popover");
-    await page.keyboard.press("Escape");
-    await expect(badge).toBeFocused();
-    expect([...sent].filter(([kind, count]) => count !== (beforeBadge.get(kind) ?? 0)).map(([kind]) => kind)).toEqual([]);
+    await expect(page.locator("[data-checkout-line]")).toHaveCount(0);
+    const beforeTree = new Map(sent);
+    await chevron.click();
+    const childRow = primary.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`);
+    await expect(childRow).toHaveAttribute("data-depth", "1");
+    await expect(childRow.locator("[data-branch-chip]")).toHaveCount(0);
+    await screenshot(page, "projects-sidebar-child-tree");
+    await chevron.click();
+    await expect(childRow).toHaveCount(0);
+    expect([...sent].filter(([kind, count]) => count !== (beforeTree.get(kind) ?? 0)).map(([kind]) => kind)).toEqual(["agent_tree_toggle"]);
     expect(await sidebarColumns(page)).toEqual({ times: [expect.any(Number)], chevrons: [expect.any(Number)] });
     const screenBefore = await page.locator("[data-workspace-screen]").count();
     const quiet = new Map(sent);
@@ -383,7 +390,7 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     // checkout identity but has no operator session rows to disclose.
     await expect(featureToggle).toHaveCount(0);
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
-    await expect(parentRow.locator("[data-descendant-badge]")).toBeVisible();
+    await expect(parentRow.locator(`[data-tree-chevron="${mainPane}"]`)).toBeVisible();
     await expect(page.locator(`nav[data-sidebar] [data-pane="${rowsPane}"]`)).toHaveCount(0);
     // B25: every level open, at the design width and the app's minimum, nothing runs sideways.
     for (const width of ["calc(240px + var(--size-rail))", "calc(var(--size-sidebar-min) + var(--size-rail))"]) expect(await sidebarOverflow(page, width)).toEqual([]);

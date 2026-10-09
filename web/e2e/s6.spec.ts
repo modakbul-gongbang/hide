@@ -369,13 +369,13 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect.poll(() => herdrHasFocus(herdr, parent), { timeout: 15_000 }).toBe(true);
 
-    // A declared child shows as a chip under its parent's header; the core
+    // A declared child shows in its parent's header tree; the core
     // moves the delegated pane to its own tab, so the chip crosses tabs with
     // one tracked focus, and the child's Return comes back the same way
     // (B14-B16).
     declareParent(herdr, child, parent);
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveCount(0, { timeout: 20_000 });
-    await page.locator(`[data-pane-view="${parent}"] [data-descendant-badge]`).click();
+    await page.locator(`[data-pane-view="${parent}"] [data-pane-tree="${parent}"]`).click();
     const chip = page.locator(`[data-agent-child="${child}"]`);
     await expect(chip).toBeVisible({ timeout: 20_000 });
     await expect(chip).toContainText("Agent two");

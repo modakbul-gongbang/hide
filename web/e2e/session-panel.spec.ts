@@ -89,34 +89,40 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     const row = (pane: string) => panel.locator(`[data-session-row="${pane}"]`);
     const group = (name: string) => panel.locator(`[data-session-group="${name}"]`);
     const head = (name: string) => group(name).locator('[data-session-focus="group"]');
-    const unfold = async (name: string) => { if (await head(name).getAttribute("aria-expanded") === "false") await head(name).click(); };
-    await expect(row(asking)).toContainText("Approve", { timeout: 30_000 });
-    await expect(row(question)).toContainText("Answer");
-    await expect(head("resting")).toHaveAttribute("aria-expanded", "false"); // An unfinished turn rests, folded, with its tag.
-    await unfold("resting");
-    await expect(group("resting").locator(`[data-session-row="${stopped}"]`)).toContainText("Stopped");
-    await expect(group("in_progress").locator(`[data-session-row="${parent}"]`)).toBeVisible();
+    // Needs You asks with the verb (agent-hierarchy-screens B26, B31).
+    await expect(group("needs_you").locator(`[data-session-row="${asking}"]`)).toContainText("Approve", { timeout: 30_000 });
+    await expect(group("needs_you").locator(`[data-session-row="${question}"]`)).toContainText("Answer", { timeout: 30_000 });
+    // An unfinished turn is Idle with ◐ and what is left, never folded (B29, B31).
+    await expect(group("idle").locator(`[data-session-row="${stopped}"] [data-session-unfinished]`)).toBeVisible({ timeout: 30_000 });
+    await expect(row(stopped)).toContainText("테스트 환경이 없어 멈췄어요");
+    await expect(group("working").locator(`[data-session-row="${parent}"]`)).toBeVisible();
+    await expect(panel.locator("[data-session-count]")).toHaveCount(0);
     await expect(row(child)).toHaveCount(0);
     await expect.poll(() => last.get("request_view")?.observing).toBe(true);
     expect(last.get("ui_state_update")?.right_panel_section).not.toBe("sessions");
-    await row(parent).locator("[data-descendant-badge]").click();
-    await expect(page.locator(`[data-agent-children="${parent}"] [data-agent-child="${child}"]`)).toContainText("하위 작업 검증");
-    await page.keyboard.press("Escape");
-    await expect(row(parent).locator("[data-descendant-badge]")).toBeFocused();
+    // A row's chevron opens one level of its children, apart from the sidebar's folds (B32).
+    const children = panel.locator(`[data-session-chevron="${parent}"]`);
+    await expect(row(parent).locator('[data-descendant-mark="working"]')).toContainText("1");
+    await children.click();
+    await expect(panel.locator(`[data-session-child="${child}"]`)).toContainText("하위 작업 검증");
+    await expect(row(parent).locator("[data-descendant-mark]")).toHaveCount(0);
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${child}"]`)).toHaveCount(0);
+    await children.click();
+    await expect(panel.locator(`[data-session-child="${child}"]`)).toHaveCount(0);
     await row(question).locator('[data-session-focus="row"]').focus();
     await page.keyboard.press("Enter");
     await expect(page.locator(`[data-pane-view="${question}"]`)).toHaveAttribute("data-focused", "true");
     await showSessions();
-    await expect(group("my_turn").locator(`[data-session-row="${question}"]`)).toHaveCount(0);
-    await unfold("resting");
-    await expect(group("resting").locator(`[data-session-row="${question}"]`)).toBeVisible();
+    // A read AI question leaves Needs You for Idle, behind 그 외 N with nothing left to do (B29).
+    await expect(group("needs_you").locator(`[data-session-row="${question}"]`)).toHaveCount(0);
+    await group("idle").locator("[data-session-more]").click();
+    await expect(group("idle").locator(`[data-session-row="${question}"]`)).toBeVisible();
     await expect(row(question)).not.toContainText("Answer");
     await row(asking).locator('[data-session-focus="row"]').click();
     await expect(page.locator(`[data-pane-view="${asking}"]`)).toHaveAttribute("data-focused", "true");
     await showSessions();
-    await expect(group("my_turn").locator(`[data-session-row="${asking}"]`)).toContainText("Approve");
+    await expect(group("needs_you").locator(`[data-session-row="${asking}"]`)).toContainText("Approve");
     // Keyboard arrows reach the next row; Resolve is a named keyboard action.
-    await unfold("resting");
     await row(stopped).locator('[data-session-focus="row"]').focus();
     await page.keyboard.press("Home");
     await expect(panel.locator('[data-session-focus]').first()).toBeFocused();
@@ -126,8 +132,10 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await page.keyboard.press("Enter");
     await expect(row(stopped)).toHaveCount(0);
     await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`)).toHaveCount(0);
-    await expect(panel.locator('[data-session-count="resolved_today"]')).toHaveText("1");
-    await head("resolved_today").click();
+    // Resolved holds it, folded (B26, B28).
+    await expect(head("resolved")).toHaveAttribute("aria-expanded", "false");
+    await expect(head("resolved")).toContainText("1");
+    await head("resolved").click();
     await expect(row(stopped)).toBeVisible();
     expect(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "core-state.json"), "utf8")).resolved_sessions[stopped]).toBeTruthy();
     // Closing/reopening the document retains both the chosen tool and resolution.
@@ -135,14 +143,14 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await page.goto("about:blank");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator('[data-tool-tab="agent_sessions"]')).toHaveAttribute("aria-selected", "true");
-    await expect(panel.locator('[data-session-count="resolved_today"]')).toHaveText("1");
+    await expect(head("resolved")).toContainText("1");
     await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`)).toHaveCount(0);
-    await head("resolved_today").click();
+    await head("resolved").click();
     await row(stopped).locator('[data-session-focus="row"]').click();
     await expect(page.locator(`[data-pane-view="${stopped}"]`)).toHaveAttribute("data-focused", "true");
     await showSessions();
     await page.locator(`[data-pane-view="${stopped}"] .xterm-helper-textarea`).pressSequentially("continue");
-    await expect(panel.locator('[data-session-count="resolved_today"]')).toHaveText("0");
+    await expect(group("resolved")).toHaveCount(0);
     await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`).first()).toBeVisible();
     for (const theme of ["light", "dark"] as const) {
       await chooseTheme(page, theme);

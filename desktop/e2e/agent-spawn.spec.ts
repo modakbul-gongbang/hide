@@ -65,16 +65,17 @@ test("a spawned child appears in the native delegation tree", async () => {
     await expect.poll(() => agents().find((agent) => agent.pane_id === child.pane)?.tokens?.parent_pane).toBe(parent);
     const parentRow = page.locator(`nav[data-sidebar] [data-pane="${parent}"]`);
     await expect(parentRow).toHaveAttribute("data-delegated", "false");
-    const badge = parentRow.locator("[data-descendant-badge]");
-    await expect(badge).toBeVisible();
+    // The root folds its children behind its chevron; the pane header's tree
+    // button lists them with a branch that differs (agent-hierarchy-screens B10, B18, B21).
+    await expect(parentRow.locator(`[data-tree-chevron="${parent}"]`)).toBeVisible();
     await expect(page.locator(`nav[data-sidebar] [data-pane="${child.pane}"]`)).toHaveCount(0);
-    await badge.click();
+    await parentRow.locator(`[data-agent-open="${parent}"]`).click();
+    const treeButton = page.locator(`[data-pane-view="${parent}"] [data-pane-tree="${parent}"]`);
+    await treeButton.click();
     const childRow = page.locator(`[data-agent-child="${child.pane}"]`);
     await expect(childRow.locator('[data-branch-chip="child-task"]')).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(badge).toBeFocused();
-    await parentRow.locator(`[data-agent-open="${parent}"]`).click();
-    await expect(page.locator(`[data-pane-view="${parent}"] [data-descendant-badge]`)).toBeVisible();
+    await expect(treeButton).toBeFocused();
     await screenshot(page, "agent-spawn-delegation");
     await captureNativeWindow(app, "agent-spawn-delegation-native", { parent, children, state: run.env.HIDE_STATE_DIR, home: run.env.HOME, socket: herdr.socket, head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: path.resolve(__dirname, "../.."), encoding: "utf8" }).trim(), provider: "synthetic native CLI" });
   } catch (error) {
