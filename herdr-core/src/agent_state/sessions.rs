@@ -105,13 +105,16 @@ pub(crate) fn row(agent: &SidebarAgentSnapshot, verb: RequestVerb) -> Row {
         };
     }
     let tag = tag(agent, verb);
+    // My turn holds only what stays stopped until the operator moves; a
+    // result, a failed check or an unfinished turn rests with its tag and
+    // the row's unread mark (docs/status-model.md, The Sessions tool).
     let group = match verb {
-        RequestVerb::Answer | RequestVerb::Fix | RequestVerb::Stopped | RequestVerb::Result => {
-            Group::MyTurn
-        }
+        RequestVerb::Answer => Group::MyTurn,
         RequestVerb::Review => Group::ReviewMerge,
         RequestVerb::Working | RequestVerb::Waiting => Group::InProgress,
-        RequestVerb::Idle => Group::Resting,
+        RequestVerb::Fix | RequestVerb::Stopped | RequestVerb::Result | RequestVerb::Idle => {
+            Group::Resting
+        }
     };
     Row {
         group,
