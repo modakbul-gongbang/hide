@@ -3815,3 +3815,136 @@ fn a_pinned_usage_hold_exposes_its_deadline_until_the_engine_resumes() {
     assert_eq!(card_json(&h, &id)["column"], "moving");
     assert_eq!(card_json(&h, &id)["resume_at"], serde_json::Value::Null);
 }
+
+// ------------------------------------------------------------- attempts
+
+fn attempts(h: &mut Bench, t: &str) -> Vec<(u64, String)> {
+    let shown = h.op(Command::Show { task: t.to_owned() });
+    shown["task"]["attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            (
+                a["number"].as_u64().unwrap(),
+                a["outcome"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_run_after_an_environment_failure_is_the_next_attempt() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Unlucky", &[]);
+    h.world().verify.insert(
+        t.clone(),
+        [
+            VerifyPoll::Environment {
+                signal: EnvSignal::Network,
+                check: "cargo test".into(),
+            },
+            VerifyPoll::Pending,
+        ]
+        .into(),
+    );
+    h.done(&f, &t);
+    h.engine.tick();
+    tick_until(&mut h, &f, &t, TaskState::Running);
+    h.done(&f, &t);
+    h.engine.tick();
+    assert_eq!(
+        attempts(&mut h, &t),
+        vec![(1, "environment".into()), (2, "running".into())]
+    );
+    assert_eq!(h.task(&f, &t).failures, 0, "n/3 still counts failures only");
+}
+
+#[test]
+fn a_run_sent_back_to_the_worker_closes_as_cancelled_and_the_next_takes_the_next_number() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Sent back", &[]);
+    h.world()
+        .verify
+        .insert(t.clone(), vec![VerifyPoll::Pending; 8].into());
+    h.world().drift.insert(
+        t.clone(),
+        json!({"pass": false, "questions": [
+            {"text": "Grok is outside the card. Keep it?", "suggestion": "keep", "default_action": "keep"}
+        ], "flags": []}),
+    );
+    h.done(&f, &t);
+    h.engine.tick();
+    h.engine.tick();
+    assert_eq!(h.state(&f, &t), TaskState::Verifying);
+    h.world().drift.remove(&t);
+    // The drift check asks; a person answers other than its default, which
+    // sends the Task back to its worker (the #857 path).
+    let question = h
+        .task(&f, &t)
+        .open_questions()
+        .find(|q| q.kind == QuestionKind::Default)
+        .map(|q| q.id.clone())
+        .expect("a question for a person");
+    let answered = h.op(Command::Answer {
+        task: t.clone(),
+        question: Some(question),
+        choice: None,
+        text: Some("drop it".into()),
+        change: false,
+    });
+    assert_eq!(answered["ok"], true, "{answered}");
+    assert_eq!(h.state(&f, &t), TaskState::Running);
+    h.done(&f, &t);
+    h.engine.tick();
+    assert_eq!(
+        attempts(&mut h, &t),
+        vec![(1, "cancelled".into()), (2, "running".into())]
+    );
+}
+
+#[test]
+fn a_store_written_with_repeated_numbers_and_an_open_earlier_run_reads_in_order() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Old store", &[]);
+    h.world()
+        .verify
+        .insert(t.clone(), [VerifyPoll::Pending].into());
+    h.done(&f, &t);
+    h.engine.tick();
+    let mut task = h.task(&f, &t);
+    let Bench {
+        dir,
+        shared,
+        engine,
+    } = h;
+    drop(engine);
+    // What a build that numbered by failures and left a sent-back run open
+    // stored for #857: two attempts, both 1, the first without an answer.
+    let first = task.attempts[0].clone();
+    task.attempts = vec![first.clone(), first];
+    let mut store = hide_factory::store::Store::open(
+        &dir.path().join("factory.sqlite3"),
+        &dir.path().join("factory-files"),
+    )
+    .unwrap();
+    store.put_task(&task).unwrap();
+    drop(store);
+    let mut h = Bench {
+        engine: hide_factory::Engine::open(
+            &dir.path().join("factory.sqlite3"),
+            &dir.path().join("factory-files"),
+            ports(&shared),
+        )
+        .unwrap(),
+        dir,
+        shared,
+    };
+    assert_eq!(
+        attempts(&mut h, &t),
+        vec![(1, "cancelled".into()), (2, "running".into())]
+    );
+}

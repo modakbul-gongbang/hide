@@ -815,10 +815,10 @@ Old Tasks use the fallback when read and are never rewritten just to add the fie
 
 | Field | Meaning |
 | --- | --- |
-| `number` | The attempt, one more than the Task's failures when it started. |
+| `number` | Its place in the Task's attempts, from 1, so a run after an environment failure or a cancelled run is the next number; `n/3` counts failures, not attempts. |
 | `stage` | `task` (after `done`) or `pre_merge`. |
 | `started_at` | When it started. |
-| `outcome` | `passed`, `failed`, `environment` or `running`. |
+| `outcome` | `passed`, `failed`, `environment`, `cancelled` (the run was ended before it answered: the Task went back to its worker, was cancelled or was taken outside) or `running`; only the last attempt can be running. |
 | `check` | The failing check or command. |
 | `link` | The CI link or the log path. |
 | `log_tail` | The last 4 KiB of a local log. |

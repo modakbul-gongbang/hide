@@ -3349,7 +3349,9 @@ impl Engine {
             AttemptStage::PreMerge => self.ports.verifier.start_premerge(&factory, &task),
         };
         let now = self.now();
-        let number = task.failures + 1;
+        // The attempt's place in the Task's list: a run after an environment
+        // failure or a cancelled run is a new attempt with its own number.
+        let number = task.attempts.len() as u32 + 1;
         match started {
             Ok(run) => {
                 self.with_task(factory_id, id, |task| {
@@ -3405,9 +3407,20 @@ impl Engine {
     }
 
     fn poll_verifications(&mut self) {
+    /// Ends the run in flight and closes its attempt as cancelled, so a later
+    /// run is never listed beside one still shown as running.
         let keys: Vec<(String, String)> = self.verifying.keys().cloned().collect();
         for (factory_id, id) in keys {
             let Some(factory) = self.factories.get(&factory_id).cloned() else {
+            self.with_task(factory, id, |task| {
+                if let Some(attempt) = task
+                    .attempts
+                    .last_mut()
+                    .filter(|attempt| attempt.outcome.is_none())
+                {
+                    attempt.outcome = Some(AttemptOutcome::Cancelled);
+                }
+            });
                 continue;
             };
             let Some(state) = self.verifying.get(&(factory_id.clone(), id.clone())) else {
@@ -3461,6 +3474,8 @@ impl Engine {
     /// One failure is a failure; nothing runs again (D-23, B37).
     fn verification_failed(&mut self, factory: &str, id: &str, check: &str, link: &str) {
         let limit = self
+                // A poll answers; only a cancelled run closes as cancelled.
+                AttemptOutcome::Cancelled => {}
             .factories
             .get(factory)
             .map_or(3, |f| f.config.verify_failure_limit);

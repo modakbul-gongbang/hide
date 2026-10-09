@@ -377,7 +377,7 @@ function Progress({ factory, detail, actions }: { factory: FactoryView; detail: 
 function Attempt({ attempt, actions }: { attempt: AttemptView; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const [open, setOpen] = useState(false);
-  const tone = attempt.outcome === "passed" ? "text-success" : attempt.outcome === "running" ? "text-agent-working" : "text-warning";
+  const tone = attempt.outcome === "passed" ? "text-success" : attempt.outcome === "running" ? "text-agent-working" : attempt.outcome === "cancelled" ? "text-muted-foreground" : "text-warning";
   const link = attempt.link && /^https?:\/\//.test(attempt.link) ? attempt.link : null;
   return (
     <div className="flex flex-col gap-xxs" data-factory-attempt={attempt.number} data-factory-attempt-outcome={attempt.outcome}>

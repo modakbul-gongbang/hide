@@ -5471,7 +5471,8 @@ mod wire_enum_tests {
             Some(
                 outcome @ (AttemptOutcome::Passed
                 | AttemptOutcome::Failed { .. }
-                | AttemptOutcome::Environment { .. }),
+                | AttemptOutcome::Environment { .. }
+                | AttemptOutcome::Cancelled),
             ) => serde_json::to_value(outcome).unwrap()["result"].clone(),
             None => serde_json::json!("running"),
         })
@@ -5520,3 +5521,4 @@ mod wire_enum_tests {
         );
     }
 }
+            Some(AttemptOutcome::Cancelled),

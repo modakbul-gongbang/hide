@@ -661,7 +661,7 @@ pub fn worker(factory: &str, task: &str) -> Role {
     }
 }
 
-fn ports(shared: &Shared) -> Ports {
+pub fn ports(shared: &Shared) -> Ports {
     Ports {
         clock: Box::new(shared.clone()),
         source: Box::new(shared.clone()),

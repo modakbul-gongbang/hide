@@ -77,6 +77,7 @@ export const OUTCOME_LABEL: Record<AttemptOutcome, MessageKey> = {
   passed: "factory.outcome.passed",
   failed: "factory.outcome.failed",
   environment: "factory.outcome.environment",
+  cancelled: "factory.outcome.cancelled",
   running: "factory.outcome.running",
 };
 

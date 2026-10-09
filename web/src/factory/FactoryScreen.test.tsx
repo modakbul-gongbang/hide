@@ -384,6 +384,16 @@ it("shows a done Task's criteria met, names what the verification count counts, 
   expect(decisions.querySelector("[data-factory-cut]")).not.toBeNull();
 });
 
+it("numbers attempts as the engine gives them and shows a cancelled run as cancelled, not running", async () => {
+  const { container } = await mount({ my_turn: 0, notices: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  const attempt = (number: number, outcome: string) => ({ number, stage: "task", started_at: NOW, outcome, check: null, link: null, log_tail: null });
+  const page = { ...detail("verifying", []), attempts: [attempt(1, "cancelled"), attempt(2, "running")] } as unknown as TaskDetail;
+  await act(async () => useShellStore.setState({ factoryTask: { factory: "f1", task: "T-1", detail: page } }));
+  const shown = [...container.querySelectorAll("[data-factory-attempt]")].map((row) => [row.getAttribute("data-factory-attempt"), row.getAttribute("data-factory-attempt-outcome")]);
+  expect(shown).toEqual([["1", "cancelled"], ["2", "running"]]);
+  expect(container.querySelector("[data-factory-attempt='1']")!.textContent).toContain(english["factory.outcome.cancelled"]);
+});
+
 it("keeps the graph in columns and logs why when the layout worker cannot start (D-08)", async () => {
   // jsdom has no Worker, so the layered layout refuses the way a failed worker does.
   const graphed = factory({
