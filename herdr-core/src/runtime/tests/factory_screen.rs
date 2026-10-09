@@ -68,7 +68,7 @@ fn an_invalid_request_is_refused_without_reaching_the_engine() {
 #[test]
 fn the_sections_are_sent_once_per_change_on_their_own_revisions() {
     let mut runtime = runtime();
-    let first = runtime.snapshot_delta_payload(0, 0);
+    let first = runtime.snapshot_delta_payload(0);
     assert!(
         first.factory.is_none(),
         "absent until the host hands one over"
@@ -82,10 +82,10 @@ fn the_sections_are_sent_once_per_change_on_their_own_revisions() {
         })),
         None,
     );
-    let changed = runtime.snapshot_delta_payload(first.revision, 0);
+    let changed = runtime.snapshot_delta_payload(first.revision);
     let section = changed.factory.as_ref().expect("the summary is sent");
     assert_eq!(section.summary.as_ref().unwrap().my_turn, 2);
-    let idle = runtime.snapshot_delta_payload(changed.revision, 0);
+    let idle = runtime.snapshot_delta_payload(changed.revision);
     assert!(
         idle.factory.is_none(),
         "an unchanged section is not sent again (B25)"
@@ -98,7 +98,7 @@ fn the_sections_are_sent_once_per_change_on_their_own_revisions() {
         detail: None,
     };
     runtime.set_factory_screen(None, Some(Some(page.clone())));
-    let opened = runtime.snapshot_delta_payload(idle.revision, 0);
+    let opened = runtime.snapshot_delta_payload(idle.revision);
     assert!(
         opened.factory.is_none(),
         "a page does not resend the summary"
@@ -106,13 +106,13 @@ fn the_sections_are_sent_once_per_change_on_their_own_revisions() {
     assert_eq!(opened.factory_task, Some(Some(page)));
 
     runtime.set_factory_screen(None, Some(None));
-    let closed = runtime.snapshot_delta_payload(opened.revision, 0);
+    let closed = runtime.snapshot_delta_payload(opened.revision);
     assert_eq!(
         closed.factory_task,
         Some(None),
         "a closed page is sent as closed"
     );
-    let fresh = runtime.snapshot_delta_payload(0, 0);
+    let fresh = runtime.snapshot_delta_payload(0);
     assert_eq!(
         fresh.factory_task,
         Some(None),

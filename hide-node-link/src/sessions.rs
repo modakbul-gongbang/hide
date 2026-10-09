@@ -285,7 +285,8 @@ mod reader_tests {
         );
         for malformed in ["null", "{}", "42"] {
             let wire = format!(
-                r#"{{"protocol":25,"version":"fixture","os":"linux","arch":"x86_64","home":null,"machine_identity":{{"state":"unavailable","reason":"fixture"}},"reader_features":{malformed}}}"#
+                r#"{{"protocol":{},"version":"fixture","os":"linux","arch":"x86_64","home":null,"machine_identity":{{"state":"unavailable","reason":"fixture"}},"reader_features":{malformed}}}"#,
+                crate::protocol::PROTOCOL_VERSION
             );
             let hello: crate::protocol::Hello = serde_json::from_str(&wire).unwrap();
             assert!(!hello.readers().supports("claude", ReaderFeature::Labels));

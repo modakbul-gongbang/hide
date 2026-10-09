@@ -80,7 +80,6 @@ fn shared_runtime() -> SharedRuntime {
         .into_owned();
     shared.lock().unwrap().live = Some(live::LiveContext {
         socket_path: socket_path.clone().into(),
-        herdr_bin: None,
         runtime: shared.weak(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),

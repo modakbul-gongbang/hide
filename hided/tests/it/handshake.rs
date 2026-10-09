@@ -346,17 +346,17 @@ async fn first_frame(
     }
 }
 
-/// The newest cursor a client holds: frames already waiting are applied, and
-/// the state frame at or past `at_least` is waited for.
+/// The newest revision a client holds: state frames already waiting are
+/// applied, and the one at or past `at_least` is waited for.
 async fn applied(
     socket: &mut tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
-    mut cursor: (u64, u64),
+    mut revision: u64,
     at_least: u64,
-) -> (u64, u64) {
+) -> u64 {
     loop {
-        let waiting = if cursor.0 < at_least {
+        let waiting = if revision < at_least {
             Some(first_frame(socket).await)
         } else {
             tokio::time::timeout(Duration::ZERO, first_frame(socket))
@@ -364,12 +364,11 @@ async fn applied(
                 .ok()
         };
         let Some(frame) = waiting else {
-            return cursor;
+            return revision;
         };
-        cursor = (
-            frame["payload"]["revision"].as_u64().unwrap(),
-            frame["payload"]["terminal_sequence"].as_u64().unwrap(),
-        );
+        if let Some(at) = frame["payload"]["revision"].as_u64() {
+            revision = at;
+        }
     }
 }
 
@@ -384,10 +383,22 @@ async fn a_reconnect_resumes_from_the_client_cursor() {
         full["payload"]["rest"].is_object(),
         "a snapshot carries rest"
     );
-    let mut cursor = (
-        full["payload"]["revision"].as_u64().unwrap(),
-        full["payload"]["terminal_sequence"].as_u64().unwrap(),
-    );
+    let mut cursor = full["payload"]["revision"].as_u64().unwrap();
+    // Terminal output and its cursor ride `terminal` frames of their own
+    // (PRD core-host-node-terminal D-15); a snapshot carries neither, and
+    // this client was sent none, so its terminal cursor is still 0.
+    for field in [
+        "terminal_sequence",
+        "chunks",
+        "chunks_dropped",
+        "input_generation",
+    ] {
+        assert!(
+            full["payload"].get(field).is_none(),
+            "{field} left the snapshot"
+        );
+    }
+    let sequence = 0;
 
     // Same cursor the first client applied: nothing changed, so a delta
     // without the rest section, not a second full snapshot. A starting
@@ -397,7 +408,7 @@ async fn a_reconnect_resumes_from_the_client_cursor() {
     let revision = loop {
         let mut resumed = connect(running.port, None).await;
         resumed
-            .send(handshake_from(&running.token, cursor.0, cursor.1))
+            .send(handshake_from(&running.token, cursor, sequence))
             .await
             .unwrap();
         let delta = first_frame(&mut resumed).await;
@@ -406,8 +417,8 @@ async fn a_reconnect_resumes_from_the_client_cursor() {
             "a known cursor resumes with a delta"
         );
         let current = delta["payload"]["revision"].as_u64().unwrap();
-        assert!(current >= cursor.0, "a delta never goes back");
-        if current == cursor.0 {
+        assert!(current >= cursor, "a delta never goes back");
+        if current == cursor {
             assert!(
                 delta["payload"]["rest"].is_null(),
                 "a delta at the current revision has no rest"
@@ -421,7 +432,7 @@ async fn a_reconnect_resumes_from_the_client_cursor() {
     // a delta applies to, so it gets a self-contained snapshot again.
     let mut ahead = connect(running.port, None).await;
     ahead
-        .send(handshake_from(&running.token, revision + 1000, cursor.1))
+        .send(handshake_from(&running.token, revision + 1000, sequence))
         .await
         .unwrap();
     let resync = first_frame(&mut ahead).await;
@@ -556,9 +567,10 @@ async fn send_event(
         .unwrap();
     loop {
         let frame = first_frame(socket).await;
-        // Snapshot deltas keep flowing on the same socket; the reply to a
-        // boundary event is the first frame that is not one of them.
-        if frame["type"] != "snapshot" && frame["type"] != "delta" {
+        // Snapshot deltas and terminal frames keep flowing on the same
+        // socket; the reply to a boundary event is the first frame that is
+        // not one of them.
+        if !["snapshot", "delta", "terminal"].contains(&frame["type"].as_str().unwrap_or("")) {
             return frame;
         }
     }

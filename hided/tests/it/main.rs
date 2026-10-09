@@ -21,3 +21,4 @@ mod real_herdr;
 mod remote_delivery;
 #[cfg(unix)]
 mod support;
+mod terminal_children;

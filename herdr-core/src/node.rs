@@ -115,6 +115,19 @@ pub(crate) fn test_devices() -> std::sync::Arc<dyn crate::remote::DeviceConnecto
     std::sync::Arc::new(hide_node::ssh::Connector::new(None))
 }
 
+/// Terminal routes for a test core: no node takes anything, and nothing
+/// reports.
+#[cfg(test)]
+pub(crate) fn test_terminals() -> (
+    std::sync::Arc<dyn hide_node_link::terminal::TerminalRoutes>,
+    crate::terminal_reports::TerminalReports,
+) {
+    (
+        std::sync::Arc::new(crate::runtime::NoTerminals),
+        crate::terminal_reports::terminal_reports().1,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

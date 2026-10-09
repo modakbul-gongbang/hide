@@ -408,6 +408,426 @@ fn a_device_session_is_grouped_when_its_helper_answers() {
     );
 }
 
+/// A device's helper that answers only the catalog's reads, from this
+/// machine's files, each once the test lets it; anything else is refused, so
+/// a kit step the new connection queues never runs here.
+struct CatalogDevice {
+    held: Mutex<bool>,
+    released: std::sync::Condvar,
+}
+
+impl CatalogDevice {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            held: Mutex::new(false),
+            released: std::sync::Condvar::new(),
+        })
+    }
+
+    fn hold(&self) {
+        *self.held.lock().unwrap() = true;
+    }
+
+    fn release(&self) {
+        *self.held.lock().unwrap() = false;
+        self.released.notify_all();
+    }
+}
+
+impl crate::node_access::NodeLink for CatalogDevice {
+    fn call(
+        &self,
+        call: hide_node_link::protocol::Call,
+        timeout: Duration,
+    ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+        use hide_node_link::protocol::Call;
+        if !matches!(call, Call::Project { .. } | Call::Worktrees { .. }) {
+            return Err(crate::node_access::LinkError::NotConnected(
+                "this device answers only the catalog".to_owned(),
+            ));
+        }
+        let mut held = self.held.lock().unwrap();
+        while *held {
+            held = self.released.wait(held).unwrap();
+        }
+        drop(held);
+        crate::node_access::NodeLink::call(&hide_node::Local::of_process(), call, timeout)
+    }
+}
+
+/// A reconnect does not move a device's panes: what the last connection's
+/// helper answered stays until the new one answers, so a pane's command
+/// bound to its checkout before that answer is not refused as moved after
+/// it, and the catalog does not fall back to folders meanwhile. The new
+/// connection does ask again: a folder that became a repository while none
+/// was connected is grouped as one once its helper answers.
+#[test]
+fn a_reconnected_device_keeps_its_panes_in_their_checkouts_until_its_helper_answers_again() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime
+        .snapshot
+        .status
+        .remote
+        .push(connected_status(TARGET));
+    let views = tempfile::tempdir().unwrap();
+    runtime.workspace_views =
+        Some(WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0);
+    let device = CatalogDevice::new();
+    runtime.device_hosts.insert(
+        TARGET.to_owned(),
+        hosts::DeviceHost {
+            phase: hosts::HostPhase::Ready {
+                host: device.clone(),
+                platform: "macos aarch64".to_owned(),
+                helper_path: "/fake/hided".to_owned(),
+            },
+            generation: 1,
+        },
+    );
+    let shared = SharedRuntime::new(runtime);
+    shared
+        .lock()
+        .unwrap()
+        .install_worker_context(shared.weak(), crate::handle::ChangeNotifier::noop());
+    shared.lock().unwrap().ingest_remote_session(
+        TARGET,
+        Ok(session(vec![
+            herdr_workspace(TARGET, "w2", &t.linked, &[("t3", &t.linked)]),
+            herdr_workspace(TARGET, "w3", &t.other, &[("t4", &t.other)]),
+        ])),
+    );
+    wait(&shared, "the first connection's facts", |runtime| {
+        runtime.snapshot.status.remote[0].catalog.state == "ready"
+    });
+    let worktree = format!("remote:{TARGET}:pane:t3");
+    let context = |runtime: &Runtime| {
+        runtime
+            .workspace_control_query(TARGET, &worktree, crate::workspace_control::Query::Info)
+            .map(|result| result.context)
+            .map_err(|refusal| refusal.reason)
+    };
+    let is_git = |runtime: &Runtime, path: &str| {
+        runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .and_then(|session| {
+                session
+                    .workspaces
+                    .iter()
+                    .find(|project| project.path == path)
+            })
+            .is_some_and(|project| project.is_git)
+    };
+    let bound = context(&shared.lock().unwrap()).unwrap();
+    assert_eq!(
+        bound.checkout_id,
+        device_catalog::checkout_id(TARGET, &t.linked)
+    );
+    assert!(!is_git(&shared.lock().unwrap(), &t.other));
+
+    // The link drops, and `other` becomes a repository meanwhile.
+    std::fs::create_dir_all(Path::new(&t.other).join(".git")).unwrap();
+    std::fs::write(
+        Path::new(&t.other).join(".git/HEAD"),
+        "ref: refs/heads/main\n",
+    )
+    .unwrap();
+    let mut runtime = shared.lock().unwrap();
+    runtime.ingest_host_closed(TARGET, 1, "the link dropped".to_owned());
+    let generation = runtime.advance_host_generation(TARGET);
+    device.hold();
+    runtime.ingest_host_established(
+        TARGET,
+        generation,
+        Ok(super::device_kit::established(device.clone(), None)),
+    );
+    // The new connection's helper has not answered: nothing moved.
+    assert_eq!(context(&runtime), Ok(bound.clone()));
+    assert_eq!(runtime.snapshot.status.remote[0].catalog.state, "ready");
+    drop(runtime);
+
+    device.release();
+    wait(&shared, "the new connection's facts", |runtime| {
+        is_git(runtime, &t.other)
+    });
+    assert_eq!(
+        context(&shared.lock().unwrap()),
+        Ok(bound),
+        "the checkout the new helper confirmed is the one the command was bound to"
+    );
+}
+
+/// Retry connects to the same device again, so its panes keep the checkouts
+/// its helper confirmed: the new connection's Herdr session, which arrives
+/// before its helper does, is grouped as before rather than by folder, and a
+/// pane's command bound to its checkout is not refused as moved.
+#[test]
+fn retrying_a_device_keeps_its_panes_in_their_checkouts() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: TARGET.to_owned(),
+            label: "Mini".to_owned(),
+            ssh_alias: Some(TARGET.to_owned()),
+            herdr_socket_path: None,
+            host_consent: None,
+        });
+    runtime
+        .snapshot
+        .status
+        .remote
+        .push(connected_status(TARGET));
+    let views = tempfile::tempdir().unwrap();
+    runtime.workspace_views =
+        Some(WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0);
+    runtime.device_hosts.insert(
+        TARGET.to_owned(),
+        hosts::DeviceHost {
+            phase: hosts::HostPhase::Ready {
+                host: CatalogDevice::new(),
+                platform: "macos aarch64".to_owned(),
+                helper_path: "/fake/hided".to_owned(),
+            },
+            generation: 1,
+        },
+    );
+    let raw = session(vec![herdr_workspace(
+        TARGET,
+        "w2",
+        &t.linked,
+        &[("t3", &t.linked)],
+    )]);
+    runtime.ingest_remote_session(TARGET, Ok(raw.clone()));
+    assert_eq!(runtime.snapshot.status.remote[0].catalog.state, "ready");
+    let pane = format!("remote:{TARGET}:pane:t3");
+    let context = |runtime: &Runtime| {
+        runtime
+            .workspace_control_query(TARGET, &pane, crate::workspace_control::Query::Info)
+            .map(|result| result.context)
+            .map_err(|refusal| refusal.reason)
+    };
+    let bound = context(&runtime).unwrap();
+    assert!(
+        bound.workspace_id.starts_with("remote:mini:project:"),
+        "{bound:?}"
+    );
+
+    // The link dropped and the operator retries; the new connection's
+    // Herdr session arrives before its helper is up.
+    runtime.snapshot.status.remote[0].state = "unavailable".to_owned();
+    assert!(runtime.retry_remote_device(TARGET));
+    runtime.ingest_remote_session(TARGET, Ok(raw));
+    assert_eq!(context(&runtime), Ok(bound));
+}
+
+/// A device registered and connected with the catalog's helper, its Herdr
+/// session showing `workspaces`; everything runs on the calling thread.
+fn catalog_device_runtime(workspaces: Vec<WorkspaceSnapshot>) -> (Runtime, tempfile::TempDir) {
+    let mut runtime = runtime();
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: TARGET.to_owned(),
+            label: "Mini".to_owned(),
+            ssh_alias: Some(TARGET.to_owned()),
+            herdr_socket_path: None,
+            host_consent: None,
+        });
+    runtime
+        .snapshot
+        .status
+        .remote
+        .push(connected_status(TARGET));
+    let views = tempfile::tempdir().unwrap();
+    runtime.workspace_views =
+        Some(WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0);
+    runtime.device_hosts.insert(
+        TARGET.to_owned(),
+        hosts::DeviceHost {
+            phase: hosts::HostPhase::Ready {
+                host: CatalogDevice::new(),
+                platform: "macos aarch64".to_owned(),
+                helper_path: "/fake/hided".to_owned(),
+            },
+            generation: 1,
+        },
+    );
+    runtime.ingest_remote_session(TARGET, Ok(session(workspaces)));
+    (runtime, views)
+}
+
+/// The branch a device checkout row's worktree is on, as its helper last
+/// listed the repository's worktrees.
+fn listed_branch(runtime: &Runtime, path: &str) -> Option<String> {
+    runtime
+        .snapshot
+        .status
+        .remote
+        .iter()
+        .find(|status| status.target_id == TARGET)?
+        .session
+        .as_ref()?
+        .workspaces
+        .iter()
+        .flat_map(|project| &project.checkouts)
+        .find(|row| row.path == path)?
+        .worktree
+        .as_ref()?
+        .branch
+        .clone()
+}
+
+/// A Retry whose helper is up before the device's Herdr session still reads
+/// every repository again once the session names them: a branch that moved
+/// while the device was away is shown as it is now.
+#[test]
+fn a_retried_device_rereads_its_worktrees_when_its_helper_is_up_before_its_session() {
+    let repo = super::device_worktrees::repo();
+    let workspaces = vec![herdr_workspace(
+        TARGET,
+        "w2",
+        &repo.linked,
+        &[("t3", &repo.linked)],
+    )];
+    let (mut runtime, _views) = catalog_device_runtime(workspaces.clone());
+    assert_eq!(
+        listed_branch(&runtime, &repo.linked).as_deref(),
+        Some("feature")
+    );
+
+    // The link drops and the linked worktree moves to another branch.
+    super::device_worktrees::git(&repo.linked, &["checkout", "-q", "-b", "renamed"]);
+    runtime.snapshot.status.remote[0].state = "unavailable".to_owned();
+    assert!(runtime.retry_remote_device(TARGET));
+    let generation = runtime.advance_host_generation(TARGET);
+    runtime.ingest_host_established(
+        TARGET,
+        generation,
+        Ok(super::device_kit::established(CatalogDevice::new(), None)),
+    );
+    runtime.ingest_remote_session(TARGET, Ok(session(workspaces)));
+    assert_eq!(
+        listed_branch(&runtime, &repo.linked).as_deref(),
+        Some("renamed")
+    );
+}
+
+/// Another machine answering the device's address is not the device: its
+/// panes are not grouped by what the last machine said about its folders.
+#[test]
+fn a_device_answering_as_another_machine_forgets_what_the_last_one_said_about_its_folders() {
+    let t = tree();
+    let (mut runtime, _views) = catalog_device_runtime(vec![herdr_workspace(
+        TARGET,
+        "w2",
+        &t.linked,
+        &[("t3", &t.linked)],
+    )]);
+    let pane = format!("remote:{TARGET}:pane:t3");
+    let workspace_of = |runtime: &Runtime| {
+        runtime
+            .workspace_control_query(TARGET, &pane, crate::workspace_control::Query::Info)
+            .map(|result| result.context.workspace_id)
+            .map_err(|refusal| refusal.reason)
+    };
+    assert!(
+        workspace_of(&runtime)
+            .unwrap()
+            .starts_with("remote:mini:project:")
+    );
+
+    let identity = |hostname: &str| {
+        Box::new(hide_node_link::device::HostIdentity {
+            user: "grab".to_owned(),
+            hostname: hostname.to_owned(),
+            port: 22,
+            host_key_sha256: format!("SHA256:{hostname}"),
+        })
+    };
+    let generation = runtime.advance_host_generation(TARGET);
+    runtime.ingest_host_established(
+        TARGET,
+        generation,
+        Err(crate::remote::EstablishError::IdentityChanged {
+            bound: identity("mini"),
+            observed: identity("elsewhere"),
+        }),
+    );
+    assert_eq!(
+        workspace_of(&runtime),
+        Ok(format!("remote:{TARGET}:workspace:w2"))
+    );
+    assert_eq!(
+        runtime.snapshot.status.remote[0].catalog.state,
+        "unavailable"
+    );
+}
+
+/// What a device's helper answered is kept while the device is, so a pane
+/// back in a folder it left is grouped at once; past the cap only the folders
+/// and repositories its session still shows are kept.
+#[test]
+fn a_device_past_its_cap_of_answers_keeps_only_the_folders_its_session_still_shows() {
+    let repo = super::device_worktrees::repo();
+    let plain = Path::new(&repo.root).with_file_name("plain");
+    std::fs::create_dir(&plain).unwrap();
+    let plain = plain.to_string_lossy().into_owned();
+    let (mut runtime, _views) = catalog_device_runtime(vec![herdr_workspace(
+        TARGET,
+        "w2",
+        &repo.linked,
+        &[("t3", &repo.linked)],
+    )]);
+    assert!(
+        runtime.device_facts[TARGET]
+            .facts
+            .contains_key(&repo.linked)
+    );
+    assert!(!runtime.device_worktrees[TARGET].projects.is_empty());
+    let cap = super::super::device_catalog::MAX_KNOWN_PATHS;
+    for index in 0..cap {
+        let gone = format!("/gone/{index}");
+        runtime
+            .device_facts
+            .get_mut(TARGET)
+            .unwrap()
+            .facts
+            .insert(gone.clone(), Fact::Refused("gone".to_owned()));
+        runtime
+            .device_worktrees
+            .get_mut(TARGET)
+            .unwrap()
+            .projects
+            .insert(gone, Default::default());
+    }
+
+    // The repository's panes close and a plain folder's open.
+    runtime.ingest_remote_session(
+        TARGET,
+        Ok(session(vec![herdr_workspace(
+            TARGET,
+            "w3",
+            &plain,
+            &[("t4", &plain)],
+        )])),
+    );
+    assert_eq!(
+        runtime.device_facts[TARGET]
+            .facts
+            .keys()
+            .collect::<Vec<_>>(),
+        [&plain]
+    );
+    assert!(runtime.device_worktrees[TARGET].projects.is_empty());
+}
+
 #[test]
 fn a_device_whose_helper_is_not_allowed_shows_its_workspaces_unconfirmed() {
     let t = tree();
@@ -976,6 +1396,12 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
         path: "/repo/p1/gone.txt".to_owned(),
         label: "gone.txt".to_owned(),
     });
+    runtime
+        .device_facts
+        .insert(TARGET.to_owned(), DeviceFacts::default());
+    runtime
+        .device_worktrees
+        .insert(TARGET.to_owned(), Default::default());
 
     dispatch(
         &mut runtime,
@@ -984,6 +1410,10 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
     );
 
     assert!(runtime.snapshot.ui_state.device_registrations.is_empty());
+    // What its helper answered about its directories goes with it; a Retry
+    // keeps it (`retrying_a_device_keeps_its_panes_in_their_checkouts`).
+    assert!(!runtime.device_facts.contains_key(TARGET));
+    assert!(!runtime.device_worktrees.contains_key(TARGET));
     assert_eq!(
         runtime
             .snapshot

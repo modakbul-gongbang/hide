@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 2;
@@ -85,7 +84,6 @@ pub struct Snapshot {
     pub find: PaneFindSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
-    pub input_generation: u64,
     pub status: StatusSnapshot,
     pub pet: PetSnapshot,
     pub recent_closed: RecentClosedSnapshot,
@@ -2165,8 +2163,6 @@ impl PaneLayoutNodeSnapshot {
 pub struct TerminalSnapshot {
     pub headers: BTreeMap<String, crate::agent_state::header::Header>,
     pub pane_id: Option<String>,
-    pub sequence: u64,
-    pub chunks: Vec<TerminalChunk>,
     pub closed: bool,
     pub exit_code: Option<i32>,
     pub panes: Vec<TerminalPaneSnapshot>,
@@ -2189,22 +2185,6 @@ pub enum InputRequestState {
     Pending,
     Ready,
     Discarded,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
-pub struct TerminalChunk {
-    pub pane_id: String,
-    pub sequence: u64,
-    pub bytes_base64: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub frame: Option<TerminalFrame>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
-pub struct TerminalFrame {
-    pub width: u16,
-    pub height: u16,
-    pub full: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -4404,8 +4384,6 @@ impl Snapshot {
             terminal: TerminalSnapshot {
                 headers: BTreeMap::new(),
                 pane_id: None,
-                sequence: 0,
-                chunks: Vec::new(),
                 closed: false,
                 exit_code: None,
                 panes: Vec::new(),
@@ -4440,7 +4418,6 @@ impl Snapshot {
                 },
                 replacement_range: None,
             },
-            input_generation: 0,
             status: StatusSnapshot {
                 tab_rename: None,
                 herdr: ProviderStatusSnapshot {
@@ -4629,8 +4606,7 @@ impl RestSections {
 /// Taking a payload is what runs under the runtime lock; serializing it is
 /// what must not. The three large sections ride the reference-counted copies
 /// the runtime already retains for revision stamping, so taking one copies no
-/// section body - it bumps three refcounts and clones the chunks that arrived
-/// since the caller's cursor.
+/// section body - it bumps three refcounts.
 pub struct SnapshotDeltaPayload {
     pub schema_version: u32,
     pub revision: u64,
@@ -4648,10 +4624,6 @@ pub struct SnapshotDeltaPayload {
     /// `Some(None)`: the open Task page closed since the reader's revision.
     pub factory_task: Option<Option<crate::factory::screen::FactoryTaskSection>>,
     pub find: PaneFindSnapshot,
-    pub input_generation: u64,
-    pub terminal_sequence: u64,
-    pub chunks: Vec<TerminalChunk>,
-    pub chunks_dropped: bool,
 }
 
 /// The documents the front Workspace's area-active displays show, in tree
@@ -4665,8 +4637,8 @@ pub struct DocumentsDelta {
 
 /// One delta response on the snapshot wire. `rest`, `editor`, and `changes`
 /// are present only when the caller's `have_revision` predates their last
-/// change; `chunks` carries only sequences past the caller's cursor. The
-/// changes view holds a whole file's diff text, so it is kept off `rest`,
+/// change; terminal output travels in frames of its own (PRD
+/// core-host-node-terminal D-15), never here. The changes view holds a whole file's diff text, so it is kept off `rest`,
 /// which restamps whenever any agent row changes.
 ///
 /// It borrows from a `SnapshotDeltaPayload`, never from the runtime, so
@@ -4706,10 +4678,6 @@ pub struct SnapshotDeltaWire<'a> {
     /// sections with it - the wire would be sized by total state instead of by
     /// what changed. Six scalars on every response cost far less.
     pub find: &'a PaneFindSnapshot,
-    pub input_generation: u64,
-    pub terminal_sequence: u64,
-    pub chunks: &'a [TerminalChunk],
-    pub chunks_dropped: bool,
 }
 
 impl<'a> SnapshotDeltaWire<'a> {
@@ -4735,10 +4703,6 @@ impl<'a> SnapshotDeltaWire<'a> {
             factory: payload.factory.as_ref(),
             factory_task: payload.factory_task.as_ref().map(Option::as_ref),
             find: &payload.find,
-            input_generation: payload.input_generation,
-            terminal_sequence: payload.terminal_sequence,
-            chunks: &payload.chunks,
-            chunks_dropped: payload.chunks_dropped,
         }
     }
 }
