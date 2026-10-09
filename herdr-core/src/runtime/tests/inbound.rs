@@ -54,18 +54,6 @@ fn shared_runtime() -> SharedRuntime {
     shared
 }
 
-#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
-fn wait(shared: &Arc<Mutex<Runtime>>, what: &str, ready: impl Fn(&Runtime) -> bool) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while !ready(&shared.lock().unwrap()) {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
 /// The first link of a node registers it as a device the core never
 /// dials: its row is a device row named by its host name, its registration
 /// says it dials in and is kept, and it takes no consent.
