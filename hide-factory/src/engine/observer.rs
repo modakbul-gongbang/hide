@@ -608,6 +608,12 @@ impl Engine {
                 "This question was answered already; only an answer Factory AI gave can be changed",
             ));
         }
+        if question.kind.closed() {
+            return Err(refuse(
+                "decision_not_changeable",
+                "Factory AI's choice on this question already ran; undo it its own way",
+            ));
+        }
         if matches!(
             task.state,
             TaskState::Done | TaskState::Landed | TaskState::Cancelled | TaskState::Outside
@@ -702,7 +708,7 @@ impl Engine {
                 "Name a decision as hide factory show lists it, R<n>",
             ));
         };
-        if !record.overridable() {
+        if !task.decision_changeable(record) {
             return Err(refuse(
                 "decision_not_changeable",
                 "Only an answer, an assumption or a send-back Factory AI made can be changed",

@@ -1468,7 +1468,7 @@ fn decision_views(task: &Task) -> Vec<DecisionView> {
             kind: record.kind,
             reason: record.reason.clone(),
             at: record.at,
-            overridable: record.overridable() && !finished,
+            overridable: task.decision_changeable(record) && !finished,
             changed: record.changed.clone(),
         })
         .collect()

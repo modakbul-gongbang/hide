@@ -1866,6 +1866,20 @@ pub enum ReviewResult {
 }
 
 impl Task {
+    /// Whether a person may still replace this decision of Factory AI's. An
+    /// answer to a closed question already ran its choice (a split made its
+    /// Tasks, a revert started), which a new record would not undo, so only
+    /// an answer to a question that takes words is changeable (B28, B29).
+    pub fn decision_changeable(&self, record: &DecisionRecord) -> bool {
+        record.overridable()
+            && (record.source != Some(DecisionSource::Answer)
+                || record.question.as_ref().is_some_and(|id| {
+                    self.questions
+                        .iter()
+                        .any(|q| &q.id == id && !q.kind.closed())
+                }))
+    }
+
     /// A new Task in drafting, before its review (D-05).
     pub fn draft(factory: &str, id: &str, seq: u32, card: Card, now: UnixMs) -> Self {
         Self {

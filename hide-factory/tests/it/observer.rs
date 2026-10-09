@@ -219,6 +219,39 @@ fn factory_ai_words_that_are_no_listed_choice_leave_a_closed_question_to_a_perso
 }
 
 #[test]
+fn factory_ai_s_choice_on_a_closed_question_already_ran_and_cannot_be_changed() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    mode(&mut h, "autonomous");
+    h.world().judgment_failure = Some("transient".into());
+    let id = h.add("Retried", &[])["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    h.engine.tick();
+    h.world().judgment_failure = None;
+    h.world().observer.push_back(classified("A", "start-as-is"));
+    h.engine.tick();
+    h.engine.tick();
+    let task = h.task(&f, &id);
+    let at = task
+        .decisions
+        .iter()
+        .position(|d| d.by == OBSERVER)
+        .expect("Factory AI chose");
+    assert!(!task.decision_changeable(&task.decisions[at]));
+    let changed = h.op(Command::Answer {
+        task: id.clone(),
+        question: None,
+        choice: None,
+        text: Some("cancel".into()),
+        change: false,
+        decision: Some(format!("R{}", at + 1)),
+    });
+    assert_eq!(changed["reason"], "decision_not_changeable", "{changed}");
+}
+
+#[test]
 fn a_person_answering_first_leaves_the_late_verdict_without_effect() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

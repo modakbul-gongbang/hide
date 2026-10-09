@@ -112,8 +112,13 @@ impl Engine {
             Ok(issue) => {
                 let (state, new_task) = if labelled {
                     // The label is the start (B18): the Task exists before
-                    // the outside read sees the label, so it is made once.
-                    let new_id = self.labeled_task(&factory_id, issue.clone(), &title, &body);
+                    // the outside read sees the label, so it is made once. A
+                    // press after one that made the issue but failed may find
+                    // the read already made it from the label.
+                    let new_id = match self.task_for_issue(&factory_id, &issue) {
+                        Some(task) => task.id,
+                        None => self.labeled_task(&factory_id, issue.clone(), &title, &body),
+                    };
                     (FollowUpState::Factory, Some(new_id))
                 } else {
                     (FollowUpState::Issue, None)

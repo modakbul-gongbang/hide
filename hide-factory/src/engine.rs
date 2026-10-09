@@ -2662,7 +2662,11 @@ impl Engine {
         );
         let decision = chosen.as_deref().unwrap_or(text.as_str()).to_owned();
         match &target.kind {
-            QuestionKind::ConfirmCard | QuestionKind::Intake if decision == "cancel" => {
+            // Only the listed choice cancels; an intake answer is words, and
+            // "cancel" typed as one is an answer, not a cancellation.
+            QuestionKind::ConfirmCard | QuestionKind::Intake
+                if chosen.as_deref() == Some("cancel") =>
+            {
                 self.cancel(factory, id)
             }
             QuestionKind::Intake | QuestionKind::ConfirmCard => self.maybe_ready(factory, id),
