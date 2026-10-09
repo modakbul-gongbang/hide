@@ -176,7 +176,8 @@ Control characters become spaces, characters that draw nothing or reorder text a
 
 The reservation that spends one of a letter's three bells saves the exact line on the letter (`bell_line`) before it is typed.
 A prompt hook's pull is the bell's exactly when its digest is that of the saved line of a `pending` letter whose recipient is the caller's own pane and native session (`mailbox::rang`).
-A person who types `🔔` and the same words, a bell line copied into another agent's pane, and a line whose letter was already taken in or cancelled are therefore ordinary prompts.
+A person who types `🔔` and the same words before the doorbell saved them, a bell line copied into another agent's pane, and a line whose letter was already taken in or cancelled are therefore ordinary prompts.
+Once the line is saved, submitting it in that pane takes the letter whoever pressed Enter: the prompt then names the letter it brings.
 A second bell for the same letter saves its own line, so a hook of the first one that arrives after it is an ordinary prompt too.
 The ledger refuses a saved line longer than 512 bytes or holding a control character.
 
