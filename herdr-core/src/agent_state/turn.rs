@@ -392,7 +392,7 @@ pub fn agent_group_for(
     if ownership == Ownership::Delegated {
         // The row keeps its own mark and status word; only its claim on the
         // operator's attention is withheld.
-        return if activity == AgentActivity::Working {
+        return if activity == AgentActivity::Working || waiting {
             AgentGroup::Working
         } else {
             AgentGroup::Seen

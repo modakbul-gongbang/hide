@@ -214,6 +214,8 @@ fn row_facts(facts: &SessionFacts) -> RowFacts {
         line: None,
         awaiting_operator: false,
         user_turn: None,
+        wake_devices: 0,
+        reply_wait: false,
     }
 }
 

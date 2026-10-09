@@ -278,7 +278,8 @@ pub fn apply_lineage(
         agent.direct_child_counts = direct_child_counts[index];
         agent.wait =
             (depth == 0 && quiet_itself(agent) && descendants_busy(&descendant_counts[index]))
-                .then_some(AgentWait::Children);
+                .then_some(AgentWait::Children)
+                .or_else(|| own_wait(agent));
         agent.descendant_signals = std::mem::take(&mut descendant_signals[index]);
     }
     // Ownership was unknown when the rows were first derived, because it is
@@ -321,6 +322,23 @@ fn close_order(children: &[Vec<usize>], parents: &[Option<usize>]) -> Vec<Vec<us
 fn quiet_itself(agent: &SidebarAgentSnapshot) -> bool {
     let (demand, activity, _) = axes_of(agent);
     demand == AgentDemand::None && activity == AgentActivity::Stopped && !agent.blocked
+}
+
+/// What a quiet row waits for on its own account, whatever its depth: a
+/// background task its session proves will wake it, else a reply it asked
+/// for. Waiting on its children outranks both and is decided by the lineage.
+pub(crate) fn own_wait(agent: &SidebarAgentSnapshot) -> Option<AgentWait> {
+    if !quiet_itself(agent) {
+        return None;
+    }
+    let facts = agent.row_facts.as_ref()?;
+    if facts.wake_devices > 0 {
+        Some(AgentWait::Background)
+    } else if facts.reply_wait {
+        Some(AgentWait::Reply)
+    } else {
+        None
+    }
 }
 
 /// Whether the label read this stopped turn as not finished and nothing is
@@ -386,6 +404,7 @@ fn descendant_state(agent: &SidebarAgentSnapshot) -> DescendantState {
         AgentDemand::Question => DescendantState::Question,
         AgentDemand::None => match activity {
             AgentActivity::Working => DescendantState::Working,
+            AgentActivity::Stopped if own_wait(agent).is_some() => DescendantState::Working,
             AgentActivity::Stopped if agent.completed => DescendantState::Done,
             AgentActivity::Stopped => DescendantState::Ready,
             AgentActivity::Unknown => DescendantState::Unknown,

@@ -2434,3 +2434,56 @@ fn codex_starts_follow_the_capability_the_machines_kit_read() {
     runtime.dispatch_json(&retired);
     assert_eq!(runtime.take_local_kit_job(std::time::Instant::now()), None);
 }
+
+/// B18, B19, D-25: a quiet row waits for its children first, then for a
+/// background task its session proves, then for a reply it asked for, and a
+/// delegated child that waits on its own counts as working for its parent.
+#[test]
+fn a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply() {
+    let mut rows = project_agents(
+        crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
+            {"pane_id":"parent","agent_status":"done","state_change_seq":1},
+            {"pane_id":"child","spawned_from_pane_id":"parent","agent_status":"done","state_change_seq":2},
+        ]}))
+        .unwrap(),
+    )
+    .agents;
+    let wait_of = |rows: &[SidebarAgentSnapshot], id: &str| {
+        rows.iter().find(|row| row.pane_id == id).unwrap().wait
+    };
+
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    assert_eq!(wait_of(&rows, "child"), None);
+    assert_eq!(wait_of(&rows, "parent"), None);
+
+    rows[1].row_facts = Some(crate::request_view::RowFacts {
+        reply_wait: true,
+        ..Default::default()
+    });
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    let child = rows.iter().find(|row| row.pane_id == "child").unwrap();
+    assert_eq!(child.wait, Some(crate::model::AgentWait::Reply));
+    assert_eq!(child.group, "working", "a delegated row that waits works");
+    assert_eq!(
+        wait_of(&rows, "parent"),
+        Some(crate::model::AgentWait::Children),
+        "the parent waits on a child that waits"
+    );
+
+    rows[1].row_facts = Some(crate::request_view::RowFacts {
+        reply_wait: true,
+        wake_devices: 2,
+        ..Default::default()
+    });
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    assert_eq!(
+        wait_of(&rows, "child"),
+        Some(crate::model::AgentWait::Background),
+        "a proven device outranks a reply"
+    );
+
+    rows[1].row_facts = None;
+    crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+    assert_eq!(wait_of(&rows, "child"), None);
+    assert_eq!(wait_of(&rows, "parent"), None);
+}
