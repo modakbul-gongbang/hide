@@ -7,7 +7,6 @@ use serde::Serialize;
 pub struct Header {
     pub band: Option<Band>,
     pub working: bool,
-    pub pull: Option<Action>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -80,7 +79,6 @@ pub(crate) fn of(
             .find(|pr| pr.url == pull.url)
             .map_or("pr", pr_tone),
     };
-    let pull = links.and_then(|links| links.iter().find(live)).map(action);
     let duty = links.and_then(|links| {
         links.iter().filter(live).find(|pull| {
             use crate::model::PullRequestChecks;
@@ -169,7 +167,6 @@ pub(crate) fn of(
     if unavailable.is_some() {
         return Header {
             band: unavailable,
-            pull,
             working: false,
         };
     }
@@ -179,7 +176,6 @@ pub(crate) fn of(
     let demand = matches!(tag, Some(Tag::Approval | Tag::Answer));
     if !demand && let Some(lead) = agent.raised.first() {
         return Header {
-            pull,
             working: false,
             band: band(
                 "raised",
@@ -217,12 +213,10 @@ pub(crate) fn of(
             return Header {
                 band: None,
                 working: agent.state.verb == super::RequestVerb::Working,
-                pull,
             };
         }
     };
     Header {
-        pull,
         working: false,
         band: band(
             kind,

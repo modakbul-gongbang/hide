@@ -253,10 +253,6 @@ fn pane_pr_band_targets_its_duty_instead_of_another_link_with_higher_sort_priori
     });
     agent.state = crate::agent_state::turn::row_state(agent);
     let projected = header::of(&pane, Some(agent), None, &project, None);
-    assert!(matches!(
-        projected.pull,
-        Some(header::Action::Pr { number: 1, .. })
-    ));
     let band = projected.band.unwrap();
     assert_eq!(band.kind, "merge");
     assert!(matches!(

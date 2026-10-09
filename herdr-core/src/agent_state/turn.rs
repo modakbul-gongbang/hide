@@ -85,7 +85,7 @@ pub struct RowState {
     /// its lead raised descendant; absent outside Needs You.
     pub ask: Option<Ask>,
     /// Where the row stands among its siblings in a tree (PRD B11): asking or
-    /// raised, working, finished unread, then the rest.
+    /// raised (itself or below it), working, finished unread, then the rest.
     pub tree_rank: u8,
     /// The row's own PRs (PRD D-18, D-39).
     pub pr: Option<super::sessions::PrSummary>,
@@ -326,7 +326,13 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
             agent.changed_at_unix_ms
         },
         ask: ask_of(agent, needs_you),
-        tree_rank: if asking || agent.escalation.is_some() || !agent.raised.is_empty() {
+        tree_rank: if asking
+            || agent.escalation.is_some()
+            || !agent.raised.is_empty()
+            || agent
+                .descendant_mark
+                .is_some_and(|mark| mark.kind == super::escalation::MarkKind::Raised)
+        {
             0
         } else if activity == "working" || agent.waiting_on_descendants {
             1

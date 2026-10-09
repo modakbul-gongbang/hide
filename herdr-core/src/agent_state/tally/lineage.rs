@@ -339,3 +339,85 @@ pub(super) fn folded(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::sidebar_tree;
+    use crate::model::SidebarAgentSnapshot;
+    use crate::sidebar::{SessionSnapshotPayload, project_agents};
+    use serde_json::json;
+
+    /// root opens to `asking` (rank 0) and `busy` (rank 1); `asking` opens to
+    /// `grand`, whose own child `deep` is the popover's, not the sidebar's.
+    fn lineage() -> Vec<SidebarAgentSnapshot> {
+        let ids = ["root", "busy", "asking", "grand", "deep"];
+        let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":
+            ids.map(|id| json!({"pane_id": id, "agent": "claude", "agent_status": "idle", "state_change_seq": 1}))
+        }))
+        .unwrap();
+        let mut rows = project_agents(payload).agents;
+        let parent = |id: &str| match id {
+            "busy" | "asking" => Some("root"),
+            "grand" => Some("asking"),
+            "deep" => Some("grand"),
+            _ => None,
+        };
+        for row in &mut rows {
+            row.lineage_parent_pane_id = parent(&row.pane_id).map(Into::into);
+            row.delegated = row.lineage_parent_pane_id.is_some();
+            row.lineage_child_pane_ids = ids
+                .iter()
+                .filter(|child| parent(child) == Some(row.pane_id.as_str()))
+                .map(|child| (*child).into())
+                .collect();
+            row.lineage_collapsed = false;
+            row.state.tree_rank = if row.pane_id == "asking" { 0 } else { 1 };
+        }
+        rows
+    }
+
+    fn drawn(rows: &[super::TreeRow]) -> Vec<(String, usize)> {
+        rows.iter()
+            .map(|row| (row.pane_id.clone(), row.depth))
+            .collect()
+    }
+
+    #[test]
+    fn an_opened_root_draws_two_levels_most_urgent_first_and_numbers_only_the_root() {
+        let rows = lineage();
+        let all: Vec<_> = rows.iter().collect();
+        let tree = sidebar_tree(&all, &all);
+        assert_eq!(drawn(&tree.rows), [("root".into(), 0)]);
+        assert_eq!(
+            drawn(&tree.visible_rows),
+            [
+                ("root".into(), 0),
+                ("asking".into(), 1),
+                ("grand".into(), 2),
+                ("busy".into(), 1),
+            ],
+            "a grandchild's own children open in its popover"
+        );
+    }
+
+    #[test]
+    fn a_folded_root_or_child_draws_nothing_below_it() {
+        let mut rows = lineage();
+        for row in &mut rows {
+            row.lineage_collapsed = row.pane_id == "asking";
+        }
+        let all: Vec<_> = rows.iter().collect();
+        assert_eq!(
+            drawn(&sidebar_tree(&all, &all).visible_rows),
+            [("root".into(), 0), ("asking".into(), 1), ("busy".into(), 1)]
+        );
+        for row in &mut rows {
+            row.lineage_collapsed = row.pane_id == "root";
+        }
+        let all: Vec<_> = rows.iter().collect();
+        assert_eq!(
+            drawn(&sidebar_tree(&all, &all).visible_rows),
+            [("root".into(), 0)]
+        );
+    }
+}
