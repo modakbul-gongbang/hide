@@ -941,6 +941,21 @@ fn the_accepted_stream_names_the_connecting_process() {
 }
 
 #[test]
+fn a_process_of_this_account_is_this_accounts_peer() {
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let (served, accepted) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let stream = listener.accept().unwrap();
+        let _ = served.send(stream.peer_is_this_account());
+    });
+    let _peer = spawn_role("connect", &path);
+    let same = accepted.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(same.expect("this system names the peer's account"));
+    server.join().unwrap();
+}
+
+#[test]
 fn the_connecting_side_names_the_listening_process() {
     let (_folder, path) = endpoint();
     let holder = spawn_role("listen", &path);

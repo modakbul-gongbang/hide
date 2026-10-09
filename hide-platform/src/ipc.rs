@@ -196,6 +196,13 @@ impl LocalStream {
     pub fn peer_pid(&self) -> io::Result<u32> {
         sys::peer_pid(&self.shared)
     }
+
+    /// Whether the process at the other end runs as this process's account.
+    /// On Unix the system names the peer's user; a pipe on Windows admits
+    /// only the account that owns it, so its peer always is.
+    pub fn peer_is_this_account(&self) -> io::Result<bool> {
+        sys::peer_is_this_account(&self.shared)
+    }
 }
 
 impl Read for LocalStream {
@@ -529,6 +536,43 @@ fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
         .ok_or_else(|| io::Error::from(io::ErrorKind::Unsupported))
 }
 
+/// The user id of the process at the other end of a connected Unix socket.
+#[cfg(target_os = "macos")]
+fn peer_uid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<libc::uid_t> {
+    use std::os::fd::AsRawFd;
+    let mut uid: libc::uid_t = 0;
+    let mut gid: libc::gid_t = 0;
+    // SAFETY: the output pointers refer to initialized stack values and the
+    // descriptor stays owned by `socket` for the whole call.
+    if unsafe { libc::getpeereid(socket.as_fd().as_raw_fd(), &mut uid, &mut gid) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(uid)
+}
+
+#[cfg(target_os = "linux")]
+fn peer_uid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<libc::uid_t> {
+    use std::os::fd::AsRawFd;
+    // SAFETY: an all-zero `ucred` is a valid value.
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut size = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: the output pointers are writable for their declared sizes and
+    // the descriptor stays owned by `socket` for the whole call.
+    let result = unsafe {
+        libc::getsockopt(
+            socket.as_fd().as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut credentials as *mut libc::ucred).cast(),
+            &mut size,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(credentials.uid)
+}
+
 fn already_answers(path: &Path) -> io::Error {
     io::Error::new(
         io::ErrorKind::AddrInUse,
@@ -649,6 +693,12 @@ mod sys {
     pub(super) fn peer_pid(shared: &Shared) -> io::Result<u32> {
         let RawStream::UdSocket(socket) = &shared.raw;
         peer_pid_of_fd(socket.inner())
+    }
+
+    pub(super) fn peer_is_this_account(shared: &Shared) -> io::Result<bool> {
+        let RawStream::UdSocket(socket) = &shared.raw;
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        Ok(peer_uid_of_fd(socket.inner())? == unsafe { libc::geteuid() })
     }
 
     pub(super) fn pair() -> io::Result<(LocalStream, LocalStream)> {
@@ -1126,6 +1176,12 @@ mod sys {
 
     pub(super) fn peer_pid(shared: &Shared) -> io::Result<u32> {
         shared.raw.peer_pid()
+    }
+
+    /// Every pipe is created with an access list that admits only the
+    /// account that owns it (`PRIVATE_SDDL`).
+    pub(super) fn peer_is_this_account(_shared: &Shared) -> io::Result<bool> {
+        Ok(true)
     }
 
     /// A pipe has no unnamed pair, so the two ends meet on a private name that

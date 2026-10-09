@@ -293,6 +293,16 @@ pub async fn serve(listener: LocalListener, service: Arc<AttachService>, shutdow
             }
             None => break,
         };
+        // The folder admits only this account already; a peer the system
+        // cannot name, or names as another account, is not taken either.
+        if !stream.peer_is_this_account().unwrap_or(false) {
+            herdr_core::diagnostic!(json!({
+                "component": "node_link",
+                "kind": "attach.refused",
+                "reason": "other_account",
+            }));
+            continue;
+        }
         let Ok(permit) = Arc::clone(&limit).try_acquire_owned() else {
             herdr_core::diagnostic!(json!({
                 "component": "node_link",
