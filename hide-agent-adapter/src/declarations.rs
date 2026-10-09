@@ -268,12 +268,12 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         // resumes another session (measured 2026-10-07). Letters reach it on
         // its next prompt instead.
         bell: false,
-        session: None,
-        sleep: None,
-        fork: None,
-        resume: None,
-        conversation: None,
-        titles: None,
+        session: Some(SessionFormat::Omp),
+        sleep: Some(LaunchDialect::Omp),
+        fork: Some(LaunchDialect::Omp),
+        resume: Some(LaunchDialect::Omp),
+        conversation: Some(SessionFormat::Omp),
+        titles: Some(SessionFormat::Omp),
         start: Some(LaunchDialect::Omp),
         find: None,
         usage: None,

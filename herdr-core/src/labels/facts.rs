@@ -181,8 +181,8 @@ impl SessionFacts {
         log: &LogTarget<'_>,
     ) -> bool {
         let before = self.shown();
-        if let Some(title) = read.title.filter(|title| !title.trim().is_empty()) {
-            self.title = Some(title.trim().to_owned());
+        if let Some(title) = read.title {
+            self.title = (!title.trim().is_empty()).then(|| title.trim().to_owned());
         }
         if let Some(title) = read.custom_title {
             self.custom_title = (!title.trim().is_empty()).then(|| title.trim().to_owned());

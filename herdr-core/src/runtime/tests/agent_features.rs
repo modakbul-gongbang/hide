@@ -113,7 +113,7 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
         doc_url: String::new(),
     };
     let report = hide_kit::KitReport {
-        agents: vec![row("claude-code"), row("grok")],
+        agents: vec![row("claude-code"), row("grok"), row("omp")],
         ..Default::default()
     };
     let kit = crate::model::KitSnapshot::from_report(&report);
@@ -143,6 +143,36 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
     );
     assert_eq!(
         grok.features
+            .iter()
+            .map(|feature| feature.id)
+            .collect::<Vec<_>>(),
+        Feature::ALL
+    );
+    // OMP reader B1/B2/B3/B14 and pi-omp-extension D-08/D-10 are
+    // independent contracts: the snapshot must expose their union.
+    let omp = &kit.agents[2];
+    assert!(!omp.partial, "OMP has the accepted collaboration extension");
+    assert_eq!(
+        omp.features
+            .iter()
+            .filter(|feature| feature.supported)
+            .map(|feature| feature.id)
+            .collect::<Vec<_>>(),
+        [
+            Feature::Skill,
+            Feature::Guidance,
+            Feature::Letters,
+            Feature::Subagents,
+            Feature::SpawnGuard,
+            Feature::HerdrIntegration,
+            Feature::Sleep,
+            Feature::Fork,
+            Feature::Start,
+            Feature::Titles,
+        ]
+    );
+    assert_eq!(
+        omp.features
             .iter()
             .map(|feature| feature.id)
             .collect::<Vec<_>>(),

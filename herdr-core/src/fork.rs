@@ -14,6 +14,7 @@ pub enum ForkableAgent {
     Claude,
     Codex,
     Pi,
+    Omp,
 }
 
 impl ForkableAgent {
@@ -22,9 +23,9 @@ impl ForkableAgent {
             hide_agent_adapter::LaunchDialect::Claude => Some(Self::Claude),
             hide_agent_adapter::LaunchDialect::Codex => Some(Self::Codex),
             hide_agent_adapter::LaunchDialect::Pi => Some(Self::Pi),
+            hide_agent_adapter::LaunchDialect::Omp => Some(Self::Omp),
             hide_agent_adapter::LaunchDialect::Grok
             | hide_agent_adapter::LaunchDialect::OpenCode
-            | hide_agent_adapter::LaunchDialect::Omp
             | hide_agent_adapter::LaunchDialect::Cursor => None,
         }
     }
@@ -44,6 +45,7 @@ impl ForkableAgent {
                     .name
             }
             Self::Pi => hide_agent_adapter::LaunchDialect::Pi.adapter().herdr.name,
+            Self::Omp => hide_agent_adapter::LaunchDialect::Omp.adapter().herdr.name,
         }
     }
 
@@ -58,7 +60,7 @@ impl ForkableAgent {
                 "--fork-session".to_owned(),
             ],
             Self::Codex => vec!["fork".to_owned(), session_id.to_owned()],
-            Self::Pi => vec!["--fork".to_owned(), session_id.to_owned()],
+            Self::Pi | Self::Omp => vec!["--fork".to_owned(), session_id.to_owned()],
         }
     }
 }
@@ -269,6 +271,17 @@ mod tests {
             ["--fork", "3f2b1c00-0000-4000-8000-000000000001"]
         );
         assert!(is_forkable(Some("pi"), Some("native-session")));
+    }
+
+    #[test]
+    fn an_omp_fork_uses_the_confirmed_native_id_and_the_installed_cli_dialect() {
+        let request = request(ForkableAgent::Omp);
+        assert_eq!(request.agent.kind(), "omp");
+        assert_eq!(
+            request.agent.resume_arguments(&request.session_id),
+            ["--fork", "3f2b1c00-0000-4000-8000-000000000001"]
+        );
+        assert!(is_forkable(Some("omp"), Some("native-session")));
     }
 
     #[test]

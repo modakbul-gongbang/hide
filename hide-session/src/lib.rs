@@ -31,8 +31,8 @@ mod envelope;
 mod label_owner;
 pub mod label_transcript;
 pub mod links;
+mod native_file;
 mod opencode;
-mod pi;
 pub mod search;
 pub mod search_read;
 pub mod session_activity;
@@ -124,6 +124,8 @@ pub const CLAUDE_SESSIONS: &str = ".claude/projects";
 pub const CODEX_SESSIONS: &str = ".codex/sessions";
 /// Pi's default native session root. Custom session directories grant no trust.
 pub const PI_SESSIONS: &str = ".pi/agent/sessions";
+/// omp's default native root; profiles and custom session roots grant no trust.
+pub const OMP_SESSIONS: &str = ".omp/agent/sessions";
 
 /// The folder in `home` that holds `agent`'s session files, `None` for an
 /// agent that keeps no file per session.
@@ -132,6 +134,7 @@ pub fn session_root(home: &Path, agent: Agent) -> Option<PathBuf> {
         Agent::Claude => Some(home.join(CLAUDE_SESSIONS)),
         Agent::Codex => Some(home.join(CODEX_SESSIONS)),
         Agent::Pi => Some(home.join(PI_SESSIONS)),
+        Agent::Omp => Some(home.join(OMP_SESSIONS)),
         Agent::OpenCode => None,
     }
 }
@@ -157,19 +160,31 @@ pub fn inside_session_root(
     agents: &[Agent],
     path: &Path,
 ) -> std::result::Result<PathBuf, RootRefusal> {
-    if agents.contains(&Agent::Pi) {
-        let pi = pi::inside_root(home, path);
-        if agents.len() == 1 || pi.is_ok() {
-            return pi;
+    for &agent in agents
+        .iter()
+        .filter(|agent| agent.requires_native_file_proof())
+    {
+        let checked = native_file::inside_root(home, agent, path);
+        if agents.len() == 1 || checked.is_ok() {
+            return checked;
         }
     }
     let roots = agents
         .iter()
-        .filter(|agent| **agent != Agent::Pi)
+        .filter(|agent| !agent.requires_native_file_proof())
         .filter_map(|agent| session_root(home, *agent))
         .collect::<Vec<_>>();
     if roots.is_empty() {
-        return Err(RootRefusal::Unsupported);
+        return Err(
+            if agents
+                .iter()
+                .any(|agent| agent.requires_native_file_proof())
+            {
+                RootRefusal::Outside
+            } else {
+                RootRefusal::Unsupported
+            },
+        );
     }
     let roots = roots
         .iter()
@@ -225,6 +240,7 @@ pub enum Agent {
     Codex,
     Claude,
     Pi,
+    Omp,
     #[serde(rename = "opencode")]
     OpenCode,
 }
@@ -243,6 +259,7 @@ impl Agent {
             Self::Claude => hide_agent_adapter::SessionFormat::Claude,
             Self::Codex => hide_agent_adapter::SessionFormat::Codex,
             Self::Pi => hide_agent_adapter::SessionFormat::Pi,
+            Self::Omp => hide_agent_adapter::SessionFormat::Omp,
             Self::OpenCode => hide_agent_adapter::SessionFormat::OpenCode,
         }
     }
@@ -252,6 +269,7 @@ impl Agent {
             hide_agent_adapter::SessionFormat::Claude => Self::Claude,
             hide_agent_adapter::SessionFormat::Codex => Self::Codex,
             hide_agent_adapter::SessionFormat::Pi => Self::Pi,
+            hide_agent_adapter::SessionFormat::Omp => Self::Omp,
             hide_agent_adapter::SessionFormat::OpenCode => Self::OpenCode,
         }
     }
@@ -271,6 +289,10 @@ impl Agent {
     }
     pub const fn has_session_file(self) -> bool {
         self.format().has_session_file()
+    }
+
+    pub const fn requires_native_file_proof(self) -> bool {
+        self.format().requires_native_file_proof()
     }
 }
 
@@ -743,8 +765,14 @@ impl SessionLocator {
         cwd: Option<&str>,
     ) -> Result<PathBuf> {
         // Pi's lossy folder and file names are never native ownership proof.
-        if agent == Agent::Pi {
-            return pi::locate(&self.home, identity, cwd, &mut DiscoveryBudget::default());
+        if agent.requires_native_file_proof() {
+            return native_file::locate(
+                &self.home,
+                agent,
+                identity,
+                cwd,
+                &mut DiscoveryBudget::default(),
+            );
         }
         // A session Herdr reported for this pane is that pane's session, full
         // stop, and a reported session whose file does not exist yet is a
@@ -799,7 +827,9 @@ impl SessionLocator {
             SessionIdentity::Id(id) => match agent {
                 Agent::Claude => self.claude_path_for_id(cwd, id, budget),
                 Agent::Codex => self.codex_path_for_id(id, budget),
-                Agent::Pi => pi::locate(&self.home, Some(identity), cwd, budget),
+                Agent::Pi | Agent::Omp => {
+                    native_file::locate(&self.home, agent, Some(identity), cwd, budget)
+                }
                 Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
             },
         }
@@ -862,7 +892,9 @@ impl SessionLocator {
                 budget,
             )?)),
             Agent::Codex => self.newest_codex_session(cwd, budget),
-            Agent::Pi => pi::locate(&self.home, None, Some(cwd), budget).map(Some),
+            Agent::Pi | Agent::Omp => {
+                native_file::locate(&self.home, agent, None, Some(cwd), budget).map(Some)
+            }
             Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
         }
     }
@@ -1164,6 +1196,12 @@ enum LineResult {
     Title(String),
     /// The title the operator gave the conversation.
     CustomTitle(String),
+    /// A physical current-title snapshot. Empty strings explicitly revoke
+    /// previously observed names rather than retaining stale manual state.
+    TitleSnapshot {
+        title: String,
+        custom_title: String,
+    },
     /// A tool's output, which is no turn, and the pull request addresses it
     /// printed.
     Sightings(Vec<PrSighting>),
@@ -1226,10 +1264,19 @@ pub(crate) fn parse_events_into(
         Agent::Pi => parse_lines_at(
             contents,
             base_offset,
-            pi::parse_line,
+            |item| native_file::parse_line(Agent::Pi, item),
             links::pi_line,
             None,
             false,
+            found,
+        ),
+        Agent::Omp => parse_lines_at(
+            contents,
+            base_offset,
+            |item| native_file::parse_line(Agent::Omp, item),
+            links::pi_line,
+            Some(turns::native::omp),
+            true,
             found,
         ),
         Agent::OpenCode => ParsedSession::default(),
@@ -1297,6 +1344,14 @@ fn parse_lines_at(
             }
             LineResult::Title(title) => parsed.title = Some(title),
             LineResult::CustomTitle(title) => parsed.custom_title = Some(title),
+            LineResult::TitleSnapshot {
+                title,
+                custom_title,
+            } if line_offset == 0 => {
+                parsed.title = Some(title);
+                parsed.custom_title = Some(custom_title);
+            }
+            LineResult::TitleSnapshot { .. } => {}
             LineResult::Sightings(sightings) => {
                 found.sightings(&sightings);
                 parsed.pr_sightings.extend(sightings);

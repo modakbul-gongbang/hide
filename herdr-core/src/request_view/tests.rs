@@ -168,6 +168,8 @@ fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder()
     let mut rows = rows(&[
         ("approval", "blocked"),
         ("question", "idle"),
+        ("native-question", "blocked"),
+        ("menu-with-question", "blocked"),
         ("read-question", "idle"),
         ("read-with-ci", "idle"),
         ("working-with-ci", "working"),
@@ -178,6 +180,15 @@ fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder()
             row.demand = "question".into();
         }
         row.unread = row.pane_id == "question";
+        if row.pane_id == "native-question" {
+            row.user_turn = Some(hide_session::turns::UserTurnFact {
+                kind: hide_session::turns::UserTurnKind::Question,
+                content: None,
+            });
+        }
+        if row.pane_id == "menu-with-question" {
+            row.unread = true;
+        }
     }
     run(
         &mut rows,
@@ -211,6 +222,9 @@ fn sessions_skip_a_read_ai_question_but_keep_menu_approval_and_the_verb_ladder()
         [
             ("approval", Group::MyTurn, Some(Tag::Approval)),
             ("question", Group::MyTurn, Some(Tag::Answer)),
+            // Native unanswered questions remain held after being read.
+            ("native-question", Group::MyTurn, Some(Tag::Answer)),
+            ("menu-with-question", Group::MyTurn, Some(Tag::Approval)),
             ("read-question", Group::Resting, Some(Tag::Idle)),
             // The question holder already owns PR 1, so another row cannot also fix it.
             ("read-with-ci", Group::Resting, Some(Tag::Idle)),
