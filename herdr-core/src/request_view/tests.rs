@@ -567,8 +567,8 @@ fn a_shared_pull_request_gives_its_duty_to_the_row_on_its_branch() {
 #[test]
 fn a_checkouts_pull_request_stays_with_its_row_nearest_the_root_whichever_works_last() {
     // A lead on main spawned an Observer, which spawned an implementor; both
-    // work on the pull request's checkout. Rows arrive in activity order, so
-    // either of the two may come first.
+    // work on the pull request's checkout, and the implementor's session
+    // printed it. Rows arrive in activity order, so either may come first.
     for implementor_first in [false, true] {
         let mut rows = rows(&[
             ("lead", "idle"),
@@ -577,6 +577,7 @@ fn a_checkouts_pull_request_stays_with_its_row_nearest_the_root_whichever_works_
         ]);
         rows[1].lineage_depth = 1;
         rows[2].lineage_depth = 2;
+        rows[2].row_facts.as_mut().unwrap().created_prs = vec![("acme/app".to_owned(), 5, 1)];
         if implementor_first {
             rows.swap(1, 2);
         }
@@ -602,12 +603,39 @@ fn a_checkouts_pull_request_stays_with_its_row_nearest_the_root_whichever_works_
             "implementor first: {implementor_first}"
         );
         assert_eq!(verb(row("implementor")), RequestVerb::Idle);
-        assert!(!pulls("implementor")[0].duty, "the link stays, the duty goes");
         assert!(
-            pulls("lead").is_empty(),
-            "the duty never climbs out of the checkout"
+            !pulls("implementor")[0].duty,
+            "the link stays, the duty goes"
         );
     }
+}
+
+#[test]
+fn rows_alike_on_the_checkout_keep_one_holder_whatever_their_order() {
+    let holder = |helper_first: bool| {
+        let mut rows = rows(&[("helper", "idle"), ("other", "idle")]);
+        if !helper_first {
+            rows.swap(0, 1);
+        }
+        run(
+            &mut rows,
+            &[("helper", "prd/x"), ("other", "prd/x")],
+            &github(vec![pull_request(
+                5,
+                "prd/x",
+                PullRequestBadge::Open,
+                PullRequestChecks::Failed,
+            )]),
+        );
+        let holders: Vec<String> = rows
+            .iter()
+            .filter(|row| row.request.as_ref().unwrap().pull_requests[0].duty)
+            .map(|row| row.pane_id.clone())
+            .collect();
+        assert_eq!(holders.len(), 1, "one row holds the duty");
+        holders.into_iter().next().unwrap()
+    };
+    assert_eq!(holder(true), holder(false));
 }
 
 #[test]

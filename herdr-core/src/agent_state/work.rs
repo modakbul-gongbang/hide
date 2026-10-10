@@ -78,13 +78,20 @@ pub(crate) fn linked_pull_requests<'a>(
 /// decides: it follows activity, and the duty would move between the agents
 /// of one checkout as they take turns working.
 pub(crate) fn assign_duty(rows: &[SidebarAgentSnapshot], linked: &mut [Vec<Linked<'_>>]) {
-    let mut holder: HashMap<&str, ((bool, usize, u64, &str), usize, usize)> = HashMap::new();
+    /// Off the checkout, lineage depth, when its session printed it, pane id:
+    /// the smallest holds the duty.
+    type Rank<'r> = (bool, usize, u64, &'r str);
+    let mut holder: HashMap<&str, (Rank<'_>, usize, usize)> = HashMap::new();
     for (row, links) in linked.iter().enumerate() {
         let agent = &rows[row];
         for (index, link) in links.iter().enumerate() {
             let rank = (
                 !link.on_branch,
-                if link.on_branch { agent.lineage_depth } else { 0 },
+                if link.on_branch {
+                    agent.lineage_depth
+                } else {
+                    0
+                },
                 link.sighted_at.unwrap_or(u64::MAX),
                 agent.pane_id.as_str(),
             );
