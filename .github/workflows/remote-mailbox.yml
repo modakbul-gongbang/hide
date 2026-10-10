@@ -88,6 +88,15 @@ jobs:
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
         run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test it -E 'test(/^remote_core::/)' --run-ignored only
+      - name: The core moves to another machine and back
+        # hided/tests/it/core_move.rs (PRD core-host-node-move): a core
+        # moved over this lane's loopback SSH to a second "machine" and back,
+        # each with its own pinned Herdr and state folder, and every failure
+        # row of the move rolled back without two cores.
+        timeout-minutes: 15
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test it -E 'test(/^core_move::/)' --run-ignored only
       - name: Terminal attach children end with what started them
         # hided/tests/it/terminal_children.rs (PRD core-host-node-terminal B20):
         # a SIGKILLed hided and a dropped device link each leave no
