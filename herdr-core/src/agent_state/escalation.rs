@@ -380,6 +380,52 @@ mod tests {
         row
     }
 
+    /// A delegated child of `kind` that Herdr reports as `status` and whose
+    /// session says it waits for the operator.
+    fn waiting_child(kind: &str, status: &str) -> SidebarAgentSnapshot {
+        let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+            {"pane_id":"child", "agent":kind, "agent_status":status, "state_change_seq":1}
+        ]}))
+        .unwrap();
+        payload.agents[0].facts = Some(crate::request_view::RowFacts {
+            awaiting_operator: true,
+            ..Default::default()
+        });
+        let mut row = project_agents(payload).agents.remove(0);
+        row.delegated = true;
+        row.lineage_parent_pane_id = Some("parent".into());
+        row
+    }
+
+    /// Herdr keeps Grok `working` while it waits for a plan approval or an
+    /// answer, and what Grok waits for is read from its current state, so a
+    /// delegated Grok child rises as blocked all the same.
+    #[test]
+    fn a_delegated_grok_child_waiting_for_the_operator_rises_while_herdr_reports_working() {
+        for status in ["working", "idle"] {
+            let row = waiting_child("grok", status);
+            assert!(row.blocked, "{status}");
+            let escalation = of(&row, None, &BTreeMap::new()).expect("raised");
+            assert_eq!(escalation.cause, Cause::ChildBlocked);
+        }
+    }
+
+    /// Codex's plan menu is read from how the last turn ended, which says
+    /// nothing once Herdr reports the next turn running: that child is not
+    /// held, and the same read holds it once it stops.
+    #[test]
+    fn a_codex_plan_menu_read_from_history_does_not_hold_a_working_child() {
+        let working = waiting_child("codex", "working");
+        assert!(!working.blocked);
+        assert!(of(&working, None, &BTreeMap::new()).is_none());
+        let stopped = waiting_child("codex", "idle");
+        assert!(stopped.blocked);
+        assert_eq!(
+            of(&stopped, None, &BTreeMap::new()).map(|raised| raised.cause),
+            Some(Cause::ChildBlocked)
+        );
+    }
+
     /// A root, its child and a grandchild the given cause raised, as `lift` reads them.
     fn raised_lineage(cause: Cause) -> Vec<SidebarAgentSnapshot> {
         let mut root = child();

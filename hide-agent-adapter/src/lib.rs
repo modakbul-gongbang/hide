@@ -146,6 +146,15 @@ impl SessionFormat {
             Self::Claude | Self::Codex | Self::Grok | Self::Omp | Self::OpenCode
         )
     }
+    /// Whether Herdr keeps reporting the agent `working` while it waits for
+    /// the operator's plan approval or answer, and the session records say
+    /// what it waits for as the session is now (Grok's `plan_mode.json`, a
+    /// question call with no result yet): such a wait outranks the status.
+    /// Codex's plan menu is read from how the last turn ended, which says
+    /// nothing once Herdr reports the next turn running, so it does not.
+    pub const fn waits_while_working(self) -> bool {
+        matches!(self, Self::Grok)
+    }
     /// Whether the session records prove which background tasks are still
     /// running and when a new process began. Claude Code's do; Codex writes no
     /// record when a session's command ends, and no other format keeps a
