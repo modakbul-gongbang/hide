@@ -144,18 +144,18 @@ test("the switches write Hide's Grok file and Cursor entries beside the others, 
     // B1: Grok's own file appears with the five events; Cursor's entries join the operator's and Orca's.
     await switchOf("grok", "off").click();
     await expect(switchOf("grok", "on")).toBeVisible();
-    await expect.poll(() => read(grokFile(home)), { timeout: 60_000 }).toContain("hide-guidance@2");
+    await expect.poll(() => read(grokFile(home)), { timeout: 60_000 }).toContain("hide-guidance@3");
     await switchOf("cursor", "off").click();
     await expect(switchOf("cursor", "on")).toBeVisible();
-    await expect.poll(() => read(cursorFile(home)), { timeout: 60_000 }).toContain("hide-guidance@2");
+    await expect.poll(() => read(cursorFile(home)), { timeout: 60_000 }).toContain("hide-guidance@3");
     expect(Object.keys(json<Grouped>(grokFile(home)).hooks)).toEqual(["SessionStart", "PreToolUse", "SubagentStart", "SubagentStop", "Stop"]);
     expect(json<Grouped>(grokFile(home)).hooks.PreToolUse![0]!.matcher).toBe("Bash|ask_user_question|exit_plan_mode");
-    expect(Object.keys(json<Flat>(cursorFile(home)).hooks).sort()).toEqual(["preToolUse", "sessionStart", "stop", "subagentStart", "subagentStop"]);
+    expect(Object.keys(json<Flat>(cursorFile(home)).hooks).sort()).toEqual(["preToolUse", "sessionStart", "stop"]);
     expect(json<Flat>(cursorFile(home)).hooks.preToolUse![0]!.matcher).toBe("Shell");
     // The third-party bytes: the Grok files beside Hide's are untouched; the shared Cursor file keeps their entries in place.
     expect(read(path.join(home, ".grok", "hooks", "herdr.json"))).toBe(HERDR_FILE);
     expect(read(path.join(home, ".grok", "hooks", "orca.json"))).toBe(ORCA_FILE);
-    expect(json<Flat>(cursorFile(home)).hooks.stop![0]).toEqual(CURSOR_FILE.hooks.stop[0]);
+    expect(json<Flat>(cursorFile(home)).hooks.stop).toEqual(CURSOR_FILE.hooks.stop);
     expect(json<Flat>(cursorFile(home)).hooks.sessionStart![0]).toEqual(CURSOR_FILE.hooks.sessionStart[0]);
     // The kit reads both hook pieces as installed, so no row shows a problem, and the popover names what the hook does.
     await expect.poll(() => [wire.hook("grok")?.state, wire.hook("cursor")?.state], { timeout: 60_000 }).toEqual(["installed", "installed"]);
@@ -189,7 +189,7 @@ test("a Grok file the operator removed or edited shows on its row until Reinstal
   const wire = watchWire(page);
   try {
     const list = await openAgents(page, daemon);
-    await expect.poll(() => read(grokFile(home)), { timeout: 60_000 }).toContain("hide-guidance@2");
+    await expect.poll(() => read(grokFile(home)), { timeout: 60_000 }).toContain("hide-guidance@3");
     // B8: the hook the operator took out is not put back; its row says so with Reinstall, on that row only.
     fs.rmSync(grokFile(home));
     await list.locator("[data-agents-check]").click();
@@ -198,7 +198,7 @@ test("a Grok file the operator removed or edited shows on its row until Reinstal
     await expect(list.locator("[data-agent-problem]")).toHaveCount(1);
     expect(fs.existsSync(grokFile(home))).toBe(false);
     await problem.locator("[data-hook-reinstall]").click();
-    await expect.poll(() => read(grokFile(home)), { timeout: 60_000 }).toContain("hide-guidance@2");
+    await expect.poll(() => read(grokFile(home)), { timeout: 60_000 }).toContain("hide-guidance@3");
     await expect(list.locator("[data-agent-problem]")).toHaveCount(0);
     expect(read(path.join(home, ".grok", "hooks", "herdr.json"))).toBe(HERDR_FILE);
 
@@ -343,13 +343,11 @@ test("subagent events of the installed Grok and Cursor hooks reach the core's co
     send("grok", grok, "SubagentStop", "subagent_stop", { sessionId: "child", subagentType: "general" });
     await expect.poll(() => wire.counts(grok), { timeout: 20_000 }).toEqual([0, 1]);
 
-    // B3, Cursor: each subagent start is answered with allow, and Hide counts nothing for Cursor: its CLI runs
-    // no subagent hook for a Task subagent (issue 911), so its adapter declares no count and the pane reports none.
-    const started = { conversation_id: "c1", hook_event_name: "subagentStart", subagent_id: "s1", subagent_type: "explore", task: "look", parent_conversation_id: "c1", tool_call_id: "t1", is_parallel_worker: false };
-    for (let count = 0; count < 2; count += 1) expect(JSON.parse(send("cursor", cursor, "SubagentStart", "", started))).toEqual({ permission: "allow" });
-    send("cursor", cursor, "SubagentStop", "", { conversation_id: "c1", subagent_type: "explore", status: "completed", loop_count: 0 });
-    send("cursor", cursor, "Stop", "", { conversation_id: "c1", status: "completed", loop_count: 0 });
-    // The pane is on the wire, with a count of nothing rather than a zero.
+    // B3, Cursor: Hide counts nothing for Cursor (its CLI runs no subagent hook for a Task subagent, issue 911), so
+    // its file carries no subagent entry and no `stop` entry of Hide's, and the pane reports no count rather than a zero.
+    expect(Object.keys(json<Flat>(cursorFile(home)).hooks).sort()).toEqual(["preToolUse", "sessionStart", "stop"]);
+    expect(json<Flat>(cursorFile(home)).hooks.stop).toEqual(CURSOR_FILE.hooks.stop);
+    send("cursor", cursor, "SessionStart", "", { conversation_id: "c1", hook_event_name: "sessionStart" });
     await expect.poll(() => wire.pane(cursor)?.subagents, { timeout: 20_000 }).toMatchObject({ working: null, done: null });
     // The other pane's count was never touched by these.
     expect(wire.counts(grok)).toEqual([0, 1]);
@@ -375,12 +373,12 @@ test("inside Grok, Hide's Claude Code hook, Cursor entry and Grok file count and
       cursor: { ...sample("cursor-pre-tool-use.json"), cwd, tool_input: { command: start, working_directory: cwd }, subagent_type: "explore" },
       grok: { ...sample("grok-pre-tool-use.json"), cwd, hook_event_name: event, ...(grokTool ? { toolInput: { command: start } } : {}), sessionId: "grok-session", ...grokFields },
     });
-    const everyHook = (event: string, nativeEvent: string, payload: ReturnType<typeof payloads>) =>
-      (["claude", "cursor", "grok"] as const).map((agent) => ({ agent, run: runHook(stack, grok, installed[agent](home, event), payload[agent], GROK_ENV(nativeEvent)) }));
+    const everyHook = (event: string, nativeEvent: string, payload: ReturnType<typeof payloads>, agents: readonly ("claude" | "cursor" | "grok")[] = ["claude", "cursor", "grok"]) =>
+      agents.map((agent) => ({ agent, run: runHook(stack, grok, installed[agent](home, event), payload[agent], GROK_ENV(nativeEvent)) }));
 
-    // B4: one subagent start reaches all three of Hide's hooks, as Grok runs them. One count results, in the
-    // hook's own record and in the core's snapshot, and none of them prints anything.
-    const started = everyHook("SubagentStart", "subagent_start", payloads("SubagentStart", { subagentType: "explore" }));
+    // B4: one subagent start reaches Hide's Claude Code hook and Grok file, as Grok runs them (Cursor's entry has no
+    // subagent event). One count results, in the hook's own record and in the core's snapshot, and none prints anything.
+    const started = everyHook("SubagentStart", "subagent_start", payloads("SubagentStart", { subagentType: "explore" }), ["claude", "grok"]);
     for (const { agent, run } of started) expect({ agent, status: run.status, stdout: run.stdout }).toEqual({ agent, status: 0, stdout: "" });
     // The pane's record is the only one: no hook counted under another pane.
     const records = path.join(home, ".hide", "agent-hooks", "panes");

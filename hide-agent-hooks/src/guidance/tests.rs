@@ -239,21 +239,22 @@ fn cursor_augment_and_junie_write_the_shapes_their_documentation_gives() {
         installed_helper_path(GuidanceAgent::Cursor, fixture.home()).as_deref(),
         Some(fixture.helper.to_str().unwrap())
     );
-    // PRD grok-cursor-hooks D-01: the guard on the shell tool and the subagent
-    // and turn events, each under Cursor's camelCase key.
-    for (key, event, matcher) in [
-        ("preToolUse", "PreToolUse", Some("Shell")),
-        ("subagentStart", "SubagentStart", None),
-        ("subagentStop", "SubagentStop", None),
-        ("stop", "Stop", None),
-    ] {
-        let entry = &cursor["hooks"][key][0];
-        let command = entry["command"].as_str().unwrap();
-        assert!(command.contains("--runtime cursor"), "{command}");
-        assert!(command.contains(&format!("--event {event} ")), "{command}");
-        assert_eq!(entry["matcher"].as_str(), matcher, "{key}");
-        assert_eq!(entry["timeout"], 8, "{key}");
-    }
+    // PRD grok-cursor-hooks D-01: the guard on the shell tool, under Cursor's
+    // camelCase key. The subagent and turn events fed a count Cursor no longer
+    // reports, so none is written (issue 940).
+    let keys: Vec<&str> = cursor["hooks"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, ["sessionStart", "preToolUse"]);
+    let entry = &cursor["hooks"]["preToolUse"][0];
+    let command = entry["command"].as_str().unwrap();
+    assert!(command.contains("--runtime cursor"), "{command}");
+    assert!(command.contains("--event PreToolUse "), "{command}");
+    assert_eq!(entry["matcher"].as_str(), Some("Shell"));
+    assert_eq!(entry["timeout"], 8);
 
     let fixture = Fixture::new(GuidanceAgent::Augment);
     install(GuidanceAgent::Augment, fixture.home(), &fixture.helper).unwrap();
@@ -595,8 +596,8 @@ fn a_cursor_file_without_a_version_gets_one_and_keeps_the_operators_hooks() {
     install(GuidanceAgent::Cursor, fixture.home(), &fixture.helper).unwrap();
     let document = fixture.read(GuidanceAgent::Cursor);
     assert_eq!(document["version"], 1, "Cursor requires it");
-    // Theirs, and one of Hide's for each of Cursor's five events.
-    assert_eq!(commands(&document).len(), 6);
+    // Theirs, and one of Hide's for each of the two events Cursor's hook uses.
+    assert_eq!(commands(&document).len(), 3);
 
     // A version the operator wrote is theirs.
     let fixture = Fixture::new(GuidanceAgent::Cursor);
@@ -693,7 +694,7 @@ fn every_byte_another_tool_wrote_in_cursors_shared_file_survives_install_and_rem
         HookStatus::Installed { .. }
     ));
     let removed = remove(GuidanceAgent::Cursor, fixture.home()).unwrap();
-    assert_eq!(removed.removed_entries, 5);
+    assert_eq!(removed.removed_entries, 2);
     assert_eq!(
         fs::read_to_string(GuidanceAgent::Cursor.config_path(fixture.home())).unwrap(),
         theirs,
@@ -744,7 +745,7 @@ fn a_missing_event_or_an_edited_entry_is_not_current() {
     document["hooks"]
         .as_object_mut()
         .unwrap()
-        .shift_remove("subagentStop");
+        .shift_remove("preToolUse");
     fs::write(&path, document.to_string()).unwrap();
     assert!(matches!(
         status(GuidanceAgent::Cursor, fixture.home()),
@@ -763,18 +764,88 @@ fn a_cursor_helper_path_a_shell_would_read_still_answers_allow_when_it_is_gone()
         &fs::read_to_string(GuidanceAgent::Cursor.config_path(home.path())).unwrap(),
     )
     .unwrap();
-    for key in ["preToolUse", "subagentStart"] {
-        let command = document["hooks"][key][0]["command"].as_str().unwrap();
-        let output = std::process::Command::new("/bin/sh")
-            .args(["-c", command])
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{key}");
-        let answer: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(answer, json!({ "permission": "allow" }), "{key}");
-    }
-    let stop = document["hooks"]["stop"][0]["command"].as_str().unwrap();
-    assert!(!stop.contains("permission"), "{stop}");
+    let command = document["hooks"]["preToolUse"][0]["command"]
+        .as_str()
+        .unwrap();
+    let output = std::process::Command::new("/bin/sh")
+        .args(["-c", command])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let answer: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(answer, json!({ "permission": "allow" }));
+}
+
+/// What version 2 wrote for Cursor: the session start, the guard, and the
+/// subagent and turn events a count Cursor no longer reports used to need,
+/// beside an entry of another tool under `stop`.
+#[cfg(unix)]
+fn cursor_version_two(fixture: &Fixture) -> String {
+    let hide = |key: &str, event: &str| {
+        format!(
+            r#""{key}":[{{"command":"{} hook --runtime cursor --event {event} --source hide-guidance@2","timeout":8}}]"#,
+            fixture.helper.display()
+        )
+    };
+    format!(
+        r#"{{"version":1,"hooks":{{{},{},{},{},"stop":[{{"command":"/orca/status.sh stop"}},{{"command":"{} hook --runtime cursor --event Stop --source hide-guidance@2","timeout":8}}]}}}}"#,
+        hide("sessionStart", "SessionStart"),
+        hide("preToolUse", "PreToolUse"),
+        hide("subagentStart", "SubagentStart"),
+        hide("subagentStop", "SubagentStop"),
+        fixture.helper.display()
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn installing_over_version_two_takes_out_the_subagent_and_turn_entries_and_only_those() {
+    let fixture = Fixture::new(GuidanceAgent::Cursor);
+    fixture.write(GuidanceAgent::Cursor, &cursor_version_two(&fixture));
+    assert!(matches!(
+        status(GuidanceAgent::Cursor, fixture.home()),
+        HookStatus::Outdated { version: 2 }
+    ));
+    install(GuidanceAgent::Cursor, fixture.home(), &fixture.helper).unwrap();
+    let document = fixture.read(GuidanceAgent::Cursor);
+    let keys: Vec<&str> = document["hooks"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    // Keys Hide alone used go; `stop` keeps the other tool's entry untouched.
+    assert_eq!(keys, ["sessionStart", "preToolUse", "stop"]);
+    assert_eq!(
+        document["hooks"]["stop"],
+        json!([{ "command": "/orca/status.sh stop" }])
+    );
+    assert!(matches!(
+        status(GuidanceAgent::Cursor, fixture.home()),
+        HookStatus::Installed {
+            version: GUIDANCE_VERSION
+        }
+    ));
+    assert!(matches_install(
+        GuidanceAgent::Cursor,
+        fixture.home(),
+        &fixture.helper
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn removing_version_twos_cursor_hook_takes_the_retired_entries_too() {
+    let fixture = Fixture::new(GuidanceAgent::Cursor);
+    fixture.write(GuidanceAgent::Cursor, &cursor_version_two(&fixture));
+    let removed = remove(GuidanceAgent::Cursor, fixture.home()).unwrap();
+    assert_eq!(removed.removed_entries, 5);
+    let document = fixture.read(GuidanceAgent::Cursor);
+    assert_eq!(
+        document["hooks"]["stop"],
+        json!([{ "command": "/orca/status.sh stop" }])
+    );
+    assert_eq!(document["hooks"].as_object().unwrap().len(), 1);
 }
 
 #[test]
