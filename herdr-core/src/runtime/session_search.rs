@@ -4,7 +4,8 @@ use crate::node_access::{LinkError, NodeLink, call_as};
 use hide_node_link::link::check_reader_support;
 use hide_node_link::protocol::Call;
 use hide_node_link::sessions::ReaderFeature;
-use hide_session::search::{FILE_LIMIT, IndexStep, SearchIndex, SearchPage};
+use hide_session::search::{FILE_LIMIT, INTERRUPTED, IndexStep, SearchIndex, SearchPage};
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Condvar;
 use std::time::Duration;
@@ -245,6 +246,8 @@ fn run(
     let mut index: Option<SearchIndex> = None;
     let mut current: Option<Request> = None;
     let mut queue = VecDeque::new();
+    // How often each queued row's read was stopped by the index's work budget.
+    let mut interrupted: HashMap<usize, u8> = HashMap::new();
     let mut state = SearchSnapshot::default();
     let mut refresh = Instant::now();
     let mut retention_at: Option<Instant> = None;
@@ -288,6 +291,7 @@ fn run(
             setup_failure = None;
             current = None;
             queue.clear();
+            interrupted.clear();
             state = SearchSnapshot::default();
         }
         let mut controlled_project = None;
@@ -336,6 +340,7 @@ fn run(
             // Retention/rebuild restarts this scope, even after query coalescing.
             if let Some(r) = current.as_ref() {
                 queue = (0..r.rows.len().min(FILE_LIMIT)).collect();
+                interrupted.clear();
                 state.indexed = 0;
                 if let Some(db) = index.as_ref() {
                     match db.days(&r.project) {
@@ -389,6 +394,7 @@ fn run(
                 }
                 if changed || controlled_project.as_ref() == Some(&request.project) {
                     queue = (0..request.rows.len().min(FILE_LIMIT)).collect();
+                    interrupted.clear();
                     state.indexed = 0;
                     state.total = request.rows.len().min(FILE_LIMIT);
                     indexing_failure = None;
@@ -443,12 +449,14 @@ fn run(
         let cutoff = now_ms().saturating_sub(u64::from(state.days) * 86_400_000);
         if state.policy_loaded && state.days == 0 {
             queue.clear();
+            interrupted.clear();
             state.indexed = 0;
         } else if state.policy_loaded
             && queue.is_empty()
             && refresh.elapsed() >= Duration::from_secs(30)
         {
             queue = (0..state.total).collect();
+            interrupted.clear();
             indexing_failure = None;
             state.indexed = 0;
             refresh = Instant::now();
@@ -513,15 +521,32 @@ fn run(
                             "Session files could not be read on their device: {reason}"
                         ));
                         queue.clear();
+                        interrupted.clear();
                         break;
+                    }
+                    Err(Failure::Index(error))
+                        if asks_again(&error, interrupted.get(&i).copied().unwrap_or(0)) =>
+                    {
+                        // The index's work budget stopped the step, which rolled
+                        // back whole: the next turn reads this session again from
+                        // the same cursor, and nothing reaches the screen.
+                        let tries = interrupted.entry(i).or_default();
+                        *tries += 1;
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "search",
+                            "kind": "index.interrupted",
+                            "project": request.project,
+                            "session": row.id,
+                            "attempt": *tries,
+                        }));
+                        queue.push_back(i);
                     }
                     Err(Failure::Index(error)) => {
                         // Failed or missing sources cannot keep searchable old rows.
                         if let Err(e) = db.remove(&request.project, Some(&row.id)) {
                             state.failure = Some(format!("Search index invalidation failed: {e}"));
                         } else {
-                            state.failure =
-                                Some(format!("Some sessions could not be indexed: {error}"));
+                            state.failure = Some(index_failure_text(&error));
                         }
                         state.indexed += 1;
                     }
@@ -629,6 +654,25 @@ fn run(
 }
 /// Why a session file was not indexed: its read or the index refused it
 /// (the file's rows go), or its node could not be reached (they stay).
+/// Times one session's read is asked again after the index's work budget stopped
+/// it, before the screen says so.
+const INTERRUPT_RETRIES: u8 = 3;
+
+/// Whether a step the index stopped is read again, given how many times it was.
+fn asks_again(error: &str, tries: u8) -> bool {
+    error == INTERRUPTED && tries < INTERRUPT_RETRIES
+}
+
+/// What the screen says of a session that could not be indexed. A step stopped
+/// every time it was asked names what the operator can do, not the sqlite word.
+fn index_failure_text(error: &str) -> String {
+    if error == INTERRUPTED {
+        "Some sessions could not be indexed: the search index was too busy to finish. Search again in a moment, or choose Rebuild index.".into()
+    } else {
+        format!("Some sessions could not be indexed: {error}")
+    }
+}
+
 enum Failure {
     Index(String),
     Node(String),
@@ -667,6 +711,18 @@ fn now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_interrupted_step_is_asked_again_a_bounded_number_of_times_and_then_says_what_to_do() {
+        assert!(asks_again(INTERRUPTED, 0));
+        assert!(asks_again(INTERRUPTED, INTERRUPT_RETRIES - 1));
+        assert!(!asks_again(INTERRUPTED, INTERRUPT_RETRIES));
+        assert!(!asks_again("disk image is malformed", 0));
+        let text = index_failure_text(INTERRUPTED);
+        assert!(!text.contains("interrupted"), "{text}");
+        assert!(text.contains("Rebuild index"), "{text}");
+        assert!(index_failure_text("disk image is malformed").ends_with("disk image is malformed"));
+    }
+
     use super::*;
     use crate::model::ProjectSessionsSnapshot;
     use std::fs;
