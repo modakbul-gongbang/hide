@@ -427,9 +427,11 @@ fn an_upload_cut_midway_resumes_by_digest() -> Result<()> {
         // cut comes as the fourth of them opens, three already whole.
         fixture.journal_until("stopping")?;
         fixture.ssh.cut_sftp_at_open(5);
+        // The connection's end ends the upload, well before an SFTP
+        // request's 30 s limit would.
         let journal = wait_within(
             "the cut move rolled back",
-            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(15),
             || {
                 Ok(fixture
                     .source

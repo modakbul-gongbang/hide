@@ -695,6 +695,8 @@ pub struct RusshRemoteClient {
 struct Connection {
     runtime: Arc<RemoteRuntime>,
     session: tokio::sync::Mutex<Option<Arc<Handle<KnownHostHandler>>>>,
+    /// Hears the session in `session` end, set with it under its lock.
+    ended: Mutex<Option<tokio::sync::watch::Receiver<bool>>>,
     /// The host key the last dial accepted, the identity consent binds.
     observed_key: Arc<Mutex<Option<String>>>,
     sessions: Arc<Semaphore>,
@@ -999,6 +1001,7 @@ impl RusshRemoteClient {
             connection: Arc::new(Connection {
                 runtime: Arc::clone(&runtime),
                 session: tokio::sync::Mutex::new(None),
+                ended: Mutex::new(None),
                 observed_key: Arc::new(Mutex::new(None)),
                 sessions: Arc::new(Semaphore::new(MAX_SESSION_CHANNELS)),
             }),
@@ -1011,15 +1014,34 @@ impl RusshRemoteClient {
     /// The device's connection, dialed when there is none or the last one
     /// closed.
     async fn shared_session(&self) -> RemoteResult<Arc<Handle<KnownHostHandler>>> {
+        self.shared_session_heard()
+            .await
+            .map(|(session, _ended)| session)
+    }
+
+    /// The device's connection, as [`Self::shared_session`], with what
+    /// hears that session end: work on one of its channels that the server
+    /// no longer answers ends on that notification, not on a timer.
+    async fn shared_session_heard(
+        &self,
+    ) -> RemoteResult<(
+        Arc<Handle<KnownHostHandler>>,
+        tokio::sync::watch::Receiver<bool>,
+    )> {
         let mut slot = self.connection.session.lock().await;
-        if let Some(session) = slot.as_ref().filter(|session| !session.is_closed()) {
-            return Ok(Arc::clone(session));
+        if let Some(session) = slot.as_ref().filter(|session| !session.is_closed())
+            && let Some(ended) = lock_recover(&self.connection.ended).clone()
+        {
+            return Ok((Arc::clone(session), ended));
         }
+        let (end, ended) = tokio::sync::watch::channel(false);
         let handler = KnownHostHandler::new(&self.host)
-            .with_observed_key(Arc::clone(&self.connection.observed_key));
+            .with_observed_key(Arc::clone(&self.connection.observed_key))
+            .with_end(end);
         let session = Arc::new(self.connect(handler).await?);
         *slot = Some(Arc::clone(&session));
-        Ok(session)
+        *lock_recover(&self.connection.ended) = Some(ended.clone());
+        Ok((session, ended))
     }
 
     /// Drops `session` as the device's connection when a channel could not
@@ -2069,6 +2091,17 @@ struct KnownHostHandler {
     presented: Arc<std::sync::atomic::AtomicBool>,
     /// Set when known_hosts refused the key the server presented.
     rejected: Arc<std::sync::atomic::AtomicBool>,
+    /// Told when the session ends: the session owns its handler and drops
+    /// it then, whether the server disconnected or the connection failed.
+    end: Option<tokio::sync::watch::Sender<bool>>,
+}
+
+impl Drop for KnownHostHandler {
+    fn drop(&mut self) {
+        if let Some(end) = &self.end {
+            end.send_replace(true);
+        }
+    }
 }
 
 impl KnownHostHandler {
@@ -2080,7 +2113,13 @@ impl KnownHostHandler {
             observed_key: None,
             presented: Arc::default(),
             rejected: Arc::default(),
+            end: None,
         }
+    }
+
+    fn with_end(mut self, end: tokio::sync::watch::Sender<bool>) -> Self {
+        self.end = Some(end);
+        self
     }
 
     fn with_observed_key(mut self, observed_key: Arc<Mutex<Option<String>>>) -> Self {

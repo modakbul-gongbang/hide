@@ -364,8 +364,8 @@ impl Upstream {
                 .session_channel(operation, RemoteStage::Sftp)
                 .await
                 .map_err(|error| remote(error.to_string()))?;
-            let session = client
-                .shared_session()
+            let (session, mut ended) = client
+                .shared_session_heard()
                 .await
                 .map_err(|error| remote(error.to_string()))?;
             let channel = super::bounded_ssh_operation(session.channel_open_session())
@@ -380,10 +380,22 @@ impl Upstream {
             let raw = std::sync::Arc::new(russh_sftp::client::RawSftpSession::new(
                 channel.into_stream(),
             ));
+            // The limit for a request on a connection that looks up but no
+            // longer answers; a connection that ends ends the copy at once,
+            // since the SFTP session keeps waiting on its requests after its
+            // stream closed.
             raw.set_timeout(30);
-            let copied = match raw.init().await {
-                Ok(_) => copy(std::sync::Arc::clone(&raw)).await,
-                Err(error) => Err(remote(format!("SFTP did not start: {error}"))),
+            let work = async {
+                match raw.init().await {
+                    Ok(_) => copy(std::sync::Arc::clone(&raw)).await,
+                    Err(error) => Err(remote(format!("SFTP did not start: {error}"))),
+                }
+            };
+            let copied = tokio::select! {
+                copied = work => copied,
+                _ = ended.wait_for(|ended| *ended) => {
+                    Err(remote("the connection closed during the copy".to_owned()))
+                }
             };
             let _ = raw.close_session();
             copied
