@@ -134,7 +134,7 @@ impl Runtime {
     }
 
     pub(super) fn memory_database_path(&self) -> PathBuf {
-        self.state_path.with_file_name("project-memory.sqlite3")
+        hide_memory::database_path(self.state_path.parent().unwrap_or(Path::new(".")))
     }
 
     fn focused_memory_context(&self) -> Option<(String, String, String)> {

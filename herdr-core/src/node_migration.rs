@@ -34,7 +34,7 @@ const CORE_STATE: &str = "core-state.json";
 const WORKSPACE_VIEWS: &str = "workspace-views.json";
 const LABELS: &str = "labels.json";
 const DELIVERY_LEDGER: &str = "delivery-ledger.json";
-const PROJECT_MEMORY: &str = "project-memory.sqlite3";
+const PROJECT_MEMORY: &str = hide_memory::DATABASE_FILE;
 const SESSION_SEARCH: &str = "session-search.sqlite3";
 const LINKS: &str = "links.sqlite3";
 
