@@ -1,4 +1,4 @@
-import { ChevronDownIcon, CircleAlertIcon, GitPullRequestIcon, MoonIcon } from "lucide-react";
+import { ChevronDownIcon, CircleAlertIcon, GitForkIcon, GitPullRequestIcon, MoonIcon } from "lucide-react";
 import type { TFunction } from "i18next";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
@@ -11,7 +11,7 @@ import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
 import { cn } from "./lib/utils";
-import type { PaneHeader, SnapshotRest, AgentRow } from "./snapshot";
+import type { PaneHeader, PaneRow, SnapshotRest, AgentRow } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { relationState } from "./lineage";
@@ -28,6 +28,26 @@ const LABELS: Record<string, MessageKey> = {
 };
 const TONES = { muted: "bg-secondary text-muted-foreground", warning: "bg-warning/10 text-warning", error: "bg-destructive/10 text-destructive", success: "bg-success/10 text-success", pr: "bg-pr-mergeable/10 text-pr-mergeable" };
 const ACTION_TONES = { muted: "bg-secondary text-secondary-foreground", warning: "bg-warning text-status-foreground", error: "bg-destructive text-destructive-foreground", success: "bg-success text-status-foreground", pr: "bg-pr-mergeable text-status-foreground" };
+
+/**
+ * Marks the pane Fork agent made (issue 916): a quiet icon after the title whose
+ * name says which pane it was forked from, or that the source is no longer on
+ * screen. Only the core's fork fact draws it, never a name's shape.
+ */
+export function PaneForkMark({ pane }: { pane: PaneRow }) {
+  const { t } = useInterfaceTranslation();
+  const source = pane.fork?.forked_from_pane_id;
+  if (!source) return null;
+  const name = pane.lineage_path?.find((step) => step.pane_id === source)?.label;
+  const label = name ? t("panes.fork.forkedFrom", { name }) : t("panes.fork.forked");
+  return (
+    <Hint label={label}>
+      <span className="flex shrink-0 items-center text-subtle-foreground" role="img" aria-label={label} data-pane-fork={source}>
+        <GitForkIcon className="size-(--size-icon-sm)" aria-hidden="true" />
+      </span>
+    </Hint>
+  );
+}
 
 export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; header: PaneHeader | undefined; actions: Actions }) {
   const { t } = useInterfaceTranslation();

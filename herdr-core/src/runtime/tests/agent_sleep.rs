@@ -1440,6 +1440,7 @@ impl SleepingChild {
                 project: None,
                 actor: runtime.delivery_observations[pane].actor.clone(),
                 ended: false,
+                forked: false,
             });
         }
         ledger.next_id = 3;

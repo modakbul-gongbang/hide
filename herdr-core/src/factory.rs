@@ -3468,6 +3468,7 @@ mod tests {
                 project: Some(owned.worktree.clone()),
                 actor,
                 ended: false,
+                forked: false,
             });
         }
         ledger.next_id = 3;

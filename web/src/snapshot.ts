@@ -197,6 +197,13 @@ export type AgentSleep = {
   progress?: string | null;
 };
 
+/**
+ * What the pane menu and header know about forking this pane (`PaneForkSnapshot`):
+ * `available` offers Fork agent, `reason` says why a forkable agent cannot fork yet,
+ * and `forked_from_pane_id` names the pane this one was forked from.
+ */
+export type PaneFork = { available: boolean; reason?: string | null; forked_from_pane_id?: string | null };
+
 /** The pane menu's Sleep agent item (`AgentSleepActionSnapshot`); absent where it does not apply. */
 export type AgentSleepAction = { available: boolean; reason?: string | null };
 
@@ -499,6 +506,7 @@ export type PaneRow = {
   lineage_path?: LineageStep[];
   sleep?: AgentSleep;
   sleep_action?: AgentSleepAction;
+  fork?: PaneFork;
 };
 
 export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "wait" | "status_code"> & { state: Pick<AgentState, "mark_tone"> };

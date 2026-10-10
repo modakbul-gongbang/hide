@@ -231,10 +231,24 @@ fn desired(
     } else {
         [Value::Null, Value::Null, Value::Null, Value::Null]
     };
-    KEYS.into_iter()
+    let mut tokens = KEYS
+        .into_iter()
         .zip(values)
         .map(|(key, value)| (key.into(), value))
-        .collect()
+        .collect::<BTreeMap<String, Value>>();
+    // A fork carries its mark on the pane that hosts its registration, for as
+    // long as the lineage holds; it is cleared with it (`wire::FORK_TOKEN`).
+    if record.forked {
+        tokens.insert(
+            crate::wire::FORK_TOKEN.into(),
+            if live.is_some() {
+                Value::String("1".into())
+            } else {
+                Value::Null
+            },
+        );
+    }
+    tokens
 }
 fn plan(ledger: &Ledger, device: &str, agents: &[ProjectedAgent]) -> Vec<Patch> {
     if ledger.agents.is_empty() {
@@ -350,6 +364,7 @@ mod tests {
                 session: crate::wire::session_digest(session),
             },
             ended: false,
+            forked: false,
         }
     }
     #[test]
@@ -377,6 +392,38 @@ mod tests {
                 .values()
                 .all(Value::is_null)
         );
+    }
+    #[test]
+    fn a_forks_registration_carries_the_mark_only_while_its_lineage_holds() {
+        let parent = record("agent-1", "w1:p1", "parent", None);
+        let mut child = record("agent-2", "w2:p1", "child", Some(&parent.id));
+        let delegated = desired(&child, Some(&parent), child.actor.session.as_deref());
+        assert!(!delegated.contains_key("fork"));
+        child.forked = true;
+        let live = desired(&child, Some(&parent), child.actor.session.as_deref());
+        assert_eq!(live["fork"], "1");
+        assert!(desired(&child, Some(&parent), Some("replacement"))["fork"].is_null());
+    }
+    #[test]
+    fn a_fork_that_is_woken_in_another_pane_wears_the_mark_there() {
+        let parent = record("agent-1", "w1:p1", "parent", None);
+        let mut child = record("agent-2", "w2:p1", "child", Some(&parent.id));
+        child.forked = true;
+        // The wake continues the registration in a pane Herdr just made, which
+        // carries none of the tokens the closed pane held.
+        child.pane = "w3:p1".into();
+        child.actor.pane_id = "w3:p1".into();
+        let woken = agent(&child, BTreeMap::new());
+        let ledger = Ledger {
+            next_id: 3,
+            agents: vec![parent, child],
+            ..Default::default()
+        };
+        let patches = plan(&ledger, crate::node::TEST_NODE, &[woken]);
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].pane, "w3:p1");
+        assert_eq!(patches[0].tokens["fork"], "1");
+        assert_eq!(patches[0].tokens["parent_pane"], "w1:p1");
     }
     #[test]
     fn an_ended_registration_keeps_lineage_and_same_server_omits_machine() {
