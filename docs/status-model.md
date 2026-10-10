@@ -446,6 +446,7 @@ Every projection carries the reason's stable code alongside its sentence, so no 
 The mark appears in three places, and only on panes where an agent was detected: the pane header's 28pt identity row, the sidebar row, and the Overview worktree row's agent line.
 That third position exists because an empty agent line has to distinguish "nobody is working here" from "Hide cannot see into this worktree".
 A count Hide cannot read is reported as unknown and never as zero, because a zero is a claim that the agent is working alone.
+An agent whose adapter declares no subagent count (`subagent_counts: None`: Pi and Cursor) has nothing to read, so it is not uninstrumented and wears no such mark; [UI_BEHAVIOR.md, Subagent count](UI_BEHAVIOR.md#subagent-count) owns the three answers a count can give.
 
 ### Not connected, and what fixes it
 

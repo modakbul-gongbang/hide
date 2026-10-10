@@ -378,6 +378,20 @@ While a close names a pane, its row retains closing feedback.
 ⌥1 to ⌥9 select the first nine visible root occurrences top to bottom, counting duplicate raised/tree rows only once; tree children carry no number.
 Web owners: `web/src/PaneView.tsx`, `web/src/PaneHeaderBand.tsx`, `web/src/PaneRelations.tsx`, `web/src/components/sidebar-agent-row.tsx`, `web/src/components/agent-tree.tsx` (the verb, ask line, descendant mark, rails and chevron the three surfaces share), `web/src/components/pr-mark.tsx` and `web/src/prMark.ts` (the PR mark every surface draws), `web/src/components/agent-tree-popover.tsx`, and `web/src/sidebarTree.ts`.
 
+### Subagent count
+
+A subagent runs inside one agent's session and has no pane of its own, so it is not a delegated child: it has no row to open, and the descendant mark and the tree button never count it.
+The count comes from the agent's own hook and from nothing the shell reads off the terminal: Hide's hook keeps a `working` and a `done` count per pane and reports them as the Herdr pane tokens `hide_sub_working` and `hide_sub_done`, which the core reads in `PaneHookTokens` and projects as `PaneChildren.subagents` beside `instrumented` and its reason code (docs/agent-hooks.md owns the hook; docs/status-model.md owns the pet's badge).
+`working` is how many subagents run now, and `done` is how many this session has finished; a new session in the pane starts both again from zero, so `done` is a running tally of the session and never an unread count.
+Each count is separately knowable, and a count the core cannot read is `None`, never zero.
+Three answers are told apart, and no surface draws one as another:
+
+- An agent that reports and has none running reports a zero: the agent is working alone, and a reported zero draws no count.
+- An agent that reports, in a pane Hide cannot hear (the hook is not installed, switched off, outdated or its file unreadable, or the session started before it was), has an unknown count: it is drawn as unknown, never as zero, because a zero would claim the agent works alone.
+- An agent whose adapter declares no count, today Pi (it runs no subagents) and Cursor (its hooks never fired for a Task subagent), has no count to be unknown: no surface draws a count or an unknown mark for it, and Settings lists its subagent count as `– Not available`.
+
+Claude Code, Codex, Grok, OpenCode and omp report a count; the declaration is `subagent_counts` in `hide-agent-adapter/src/declarations.rs`, and no agent reports a blocked subagent.
+
 ### Closing an agent that spawned others
 
 Closing a pane or a tab asks about the agents spawned from it only when one of them runs outside what closes (PRD close-agent-subtree).
