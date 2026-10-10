@@ -1,5 +1,10 @@
 //! Account-wide login agents. A moved HOME never changes the launchd domain.
 //! The command boundary is injectable so a fixture never reaches launchd.
+//!
+//! A login agent runs in the account's GUI session (`gui/<uid>`): launchd
+//! starts it when the session starts and when it is installed, restarts it
+//! when it fails or is killed, at most every ten seconds, and leaves it
+//! stopped after it exits successfully.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -42,6 +47,77 @@ impl UserAgents {
     pub fn plist(home: &Path, label: &str) -> PathBuf {
         home.join("Library/LaunchAgents")
             .join(format!("{label}.plist"))
+    }
+
+    /// Whether the account's GUI session runs, the only one a login agent
+    /// runs in.
+    pub fn session_present(&self, home: &Path, stop: &AtomicBool) -> io::Result<bool> {
+        let result = self.run(&["print", &self.domain], home, stop)?;
+        Ok(result.code == Some(0))
+    }
+
+    /// Writes `agent`'s property list under `home` and loads it into the
+    /// GUI session, which starts it; one loaded already is replaced.
+    pub fn install(
+        &self,
+        agent: &LoginAgent<'_>,
+        home: &Path,
+        stop: &AtomicBool,
+    ) -> io::Result<()> {
+        if self.command.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "this system has no login agents",
+            ));
+        }
+        self.unload(agent.label, home, stop)?;
+        let path = Self::plist(home, agent.label);
+        if let Some(folder) = path.parent() {
+            std::fs::create_dir_all(folder)?;
+        }
+        crate::fs::atomic::write_file(&path, agent.plist().as_bytes(), crate::fs::Access::Private)?;
+        let path = path.to_string_lossy().into_owned();
+        let result = self.run(&["bootstrap", &self.domain, &path], home, stop)?;
+        if result.code != Some(0) {
+            return Err(io::Error::other(format!(
+                "bootstrap failed (exit {:?}): {}",
+                result.code,
+                result.stderr.trim()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Starts the loaded agent `label` when it is not running.
+    pub fn kickstart(&self, label: &str, home: &Path, stop: &AtomicBool) -> io::Result<()> {
+        let name = format!("{}/{label}", self.domain);
+        let result = self.run(&["kickstart", &name], home, stop)?;
+        if result.code != Some(0) {
+            return Err(io::Error::other(format!(
+                "kickstart failed (exit {:?}): {}",
+                result.code,
+                result.stderr.trim()
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn is_loaded(&self, label: &str, home: &Path, stop: &AtomicBool) -> io::Result<bool> {
+        if self.command.is_none() {
+            return Ok(false);
+        }
+        self.loaded(&format!("{}/{label}", self.domain), home, stop)
+    }
+
+    /// Unloads the agent `label`, which ends its process, and removes its
+    /// property list.
+    pub fn remove(&self, label: &str, home: &Path, stop: &AtomicBool) -> io::Result<()> {
+        self.unload(label, home, stop)?;
+        match std::fs::remove_file(Self::plist(home, label)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     pub fn unload(&self, label: &str, home: &Path, stop: &AtomicBool) -> io::Result<()> {
@@ -96,6 +172,64 @@ impl UserAgents {
         crate::process::run_to_end(&mut command, Duration::from_secs(5), stop)
             .map_err(|error| io::Error::other(format!("login agent command failed: {error:?}")))
     }
+}
+
+/// One login agent: the program launchd keeps running in the account's GUI
+/// session.
+pub struct LoginAgent<'a> {
+    pub label: &'a str,
+    pub program: &'a Path,
+    pub arguments: &'a [&'a str],
+    pub environment: &'a [(&'a str, &'a str)],
+    /// Where its standard output and error go.
+    pub log: &'a Path,
+}
+
+impl LoginAgent<'_> {
+    /// Its property list: started at load and at each start of the GUI
+    /// session, restarted when it fails or is killed, never after a
+    /// successful exit, at most every ten seconds.
+    pub fn plist(&self) -> String {
+        let string = |value: &str| format!("<string>{}</string>", escape(value));
+        let mut arguments = string(&self.program.to_string_lossy());
+        for argument in self.arguments {
+            arguments.push_str(&string(argument));
+        }
+        let environment: String = self
+            .environment
+            .iter()
+            .map(|(key, value)| format!("<key>{}</key>{}", escape(key), string(value)))
+            .collect();
+        let log = string(&self.log.to_string_lossy());
+        format!(
+            concat!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+                "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n",
+                "<plist version=\"1.0\"><dict>",
+                "<key>Label</key>{label}",
+                "<key>ProgramArguments</key><array>{arguments}</array>",
+                "<key>EnvironmentVariables</key><dict>{environment}</dict>",
+                "<key>LimitLoadToSessionType</key><string>Aqua</string>",
+                "<key>RunAtLoad</key><true/>",
+                "<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>",
+                "<key>ThrottleInterval</key><integer>10</integer>",
+                "<key>StandardOutPath</key>{log}",
+                "<key>StandardErrorPath</key>{log}",
+                "</dict></plist>\n"
+            ),
+            label = string(self.label),
+            arguments = arguments,
+            environment = environment,
+            log = log,
+        )
+    }
+}
+
+fn escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// The account's home from the user database, independent of HOME overrides.

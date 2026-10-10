@@ -43,3 +43,165 @@ fn systems_without_login_agents_need_no_command() {
         .unwrap();
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }
+
+/// An install replaces what is loaded, then loads the written list; a
+/// removal unloads before it deletes the list.
+#[cfg(unix)]
+#[test]
+fn an_install_loads_the_written_list_and_a_removal_unloads_it_first() {
+    use hide_platform::user_agents::LoginAgent;
+    use std::sync::atomic::AtomicBool;
+    let directory = tempfile::tempdir().unwrap();
+    let command = directory.path().join("launchctl-fixture");
+    // `print` answers loaded once the list is bootstrapped and until a
+    // bootout.
+    crate::stand_ins::program(
+        &command,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/calls\"\ncase \"$1\" in\n  print) [ -f \"$HOME/loaded\" ] && exit 0; exit 113 ;;\n  bootstrap) touch \"$HOME/loaded\" ;;\n  bootout) rm -f \"$HOME/loaded\" ;;\nesac\nexit 0\n",
+    );
+    let boundary = UserAgents::fixture(command, "isolated-domain".into());
+    let home = directory.path();
+    let stop = AtomicBool::new(false);
+    let agent = LoginAgent {
+        label: "example.agent",
+        program: Path::new("/bin/sleep"),
+        arguments: &["600"],
+        environment: &[("HOME", "/private/tmp/a&b")],
+        log: &home.join("agent.log"),
+    };
+    boundary.install(&agent, home, &stop).unwrap();
+    let list = UserAgents::plist(home, "example.agent");
+    let written = std::fs::read_to_string(&list).unwrap();
+    assert!(
+        written.contains("<string>/private/tmp/a&amp;b</string>"),
+        "{written}"
+    );
+    #[cfg(target_os = "macos")]
+    {
+        let lint = std::process::Command::new("/usr/bin/plutil")
+            .arg("-lint")
+            .arg(&list)
+            .output()
+            .unwrap();
+        assert!(
+            lint.status.success(),
+            "{}",
+            String::from_utf8_lossy(&lint.stdout)
+        );
+    }
+    assert!(boundary.is_loaded("example.agent", home, &stop).unwrap());
+    boundary.install(&agent, home, &stop).unwrap();
+    boundary.remove("example.agent", home, &stop).unwrap();
+    assert!(!list.exists());
+    let calls = std::fs::read_to_string(home.join("calls")).unwrap();
+    let bootstrap = format!("bootstrap isolated-domain {}", list.display());
+    let changes: Vec<&str> = calls
+        .lines()
+        .filter(|call| !call.starts_with("print "))
+        .collect();
+    assert_eq!(
+        changes,
+        [
+            bootstrap.as_str(),
+            "bootout isolated-domain/example.agent",
+            bootstrap.as_str(),
+            "bootout isolated-domain/example.agent",
+        ]
+    );
+}
+
+/// The real launchd of a disposable macOS runner (PRD core-host-node-move
+/// D-16): a login agent installed with this list starts, comes back after it
+/// is killed, stays stopped after it exits successfully, and is gone with
+/// its process when removed. It refuses to run anywhere but a hosted CI
+/// runner, since `gui/<uid>` is the account's real session whatever HOME is.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "real launchd: only on a disposable macOS CI runner"]
+fn a_login_agent_restarts_after_a_kill_never_after_success_and_ends_when_removed() {
+    use hide_platform::user_agents::LoginAgent;
+    use std::sync::atomic::AtomicBool;
+    use std::time::{Duration, Instant};
+    assert!(
+        std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
+            && std::env::var("RUNNER_ENVIRONMENT").as_deref() == Ok("github-hosted"),
+        "this test reaches the account's real launchd; it runs only on a hosted CI runner"
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path();
+    let program = home.join("agent");
+    // Records each start; a TERM ends it successfully.
+    crate::stand_ins::program(
+        &program,
+        "#!/bin/sh\ntrap 'exit 0' TERM\necho $$ >> \"$HOME/starts\"\nwhile :; do sleep 1; done\n",
+    );
+    let label = format!("dev.withhide.contract.{}", std::process::id());
+    let home_value = home.to_string_lossy().into_owned();
+    let environment = [("HOME", home_value.as_str())];
+    let agent = LoginAgent {
+        label: &label,
+        program: &program,
+        arguments: &[],
+        environment: &environment,
+        log: &home.join("agent.log"),
+    };
+    let agents = UserAgents::current();
+    let stop = AtomicBool::new(false);
+    let starts = || -> Vec<u32> {
+        std::fs::read_to_string(home.join("starts"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .collect()
+    };
+    #[allow(clippy::disallowed_methods)] // a bounded poll of another process
+    let wait = |what: &str, within: Duration, done: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + within;
+        while !done() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    };
+    let alive = |pid: u32| hide_platform::process::is_alive(pid);
+    assert!(
+        agents.session_present(home, &stop).unwrap(),
+        "no GUI session"
+    );
+    agents.install(&agent, home, &stop).unwrap();
+    let removed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wait("the first start", Duration::from_secs(20), &|| {
+            starts().len() == 1
+        });
+        let first = starts()[0];
+        assert!(alive(first));
+        hide_platform::process::kill_tree(first).unwrap();
+        wait("the restart after a kill", Duration::from_secs(30), &|| {
+            starts().len() == 2
+        });
+        let second = starts()[1];
+        assert!(alive(second));
+        hide_platform::process::terminate(second).unwrap();
+        wait("the successful exit", Duration::from_secs(10), &|| {
+            !alive(second)
+        });
+        #[allow(clippy::disallowed_methods)] // past launchd's ten-second throttle
+        std::thread::sleep(Duration::from_secs(15));
+        assert_eq!(starts().len(), 2, "launchd restarted a successful exit");
+        agents.kickstart(&label, home, &stop).unwrap();
+        wait("the start asked for", Duration::from_secs(20), &|| {
+            starts().len() == 3
+        });
+        starts()[2]
+    }));
+    let removal = agents.remove(&label, home, &stop);
+    let running = removed.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    removal.unwrap();
+    assert!(
+        !agents.is_loaded(&label, home, &stop).unwrap(),
+        "still loaded"
+    );
+    wait("the removed agent's end", Duration::from_secs(10), &|| {
+        !alive(running)
+    });
+    assert!(!UserAgents::plist(home, &label).exists());
+}
