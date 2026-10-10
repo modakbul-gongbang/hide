@@ -36,6 +36,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {read as readTokenPlan, loadCanvas, CANVAS} from './pen-tokens.mjs';
 import {BUTTON_VARIANTS, BADGE_VARIANTS, frame, icon, num, text} from './pen-system.mjs';
+import {coreMoveRows} from './pen-screens-core-move.mjs';
 import {diskCleanupRows} from './pen-screens-disk.mjs';
 import {factoryRows} from './pen-screens-factory.mjs';
 import {sessionScreens} from './pen-screens-sessions.mjs';
@@ -4817,6 +4818,13 @@ function buildFactory(tokens) {
   return screenSheet('screen-factory', 'Screen / Factory', FACTORY_SPEC, build, build);
 }
 
+const CORE_MOVE_SPEC = 'web/src/settings/DevicesTab.tsx, DeviceRow.tsx, CoreMoveDialog.tsx, web/src/components/device-rail.tsx, web/src/badge.tsx, web/src/connection.ts, web/src/coreMove.ts (PRD core-host-node-move B2-B5, B10, B16, W1-W4, D-06; the design the operator chose in three review rounds): the core marker and the move\'s entry on today\'s Devices rows, the move as one dialog over Settings in five states (checks failed, confirm, moving, failed, done), the rail with the crown notched into the core machine\'s tile in both machines\' windows, and the window states outside Settings: the strip while the core moves, while this machine updates its core and while the core cannot be reached, the desktop host\'s status page for an app older than the core, and the strip after the operator ended the link here, which follows W3 and was not in the approved bundle. The copy is the approved bundle\'s; every name and number is invented example content.';
+
+function buildCoreMove(tokens) {
+  const build = suffix => coreMoveRows(tokens, {themedXref}, suffix);
+  return screenSheet('screen-core-move', 'Screen / Core move', CORE_MOVE_SPEC, build, build);
+}
+
 export function readLocalVariables(root) {
   const {expected} = readTokenPlan(root);
   const {document} = loadCanvas(root);
@@ -4956,5 +4964,6 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Disk Cleanup', build: () => buildDiskCleanup(tokens)},
     {name: 'Screen / Onboarding', build: () => buildOnboarding(tokens, root)},
     {name: 'Screen / Factory', build: () => buildFactory(tokens)},
+    {name: 'Screen / Core move', build: () => buildCoreMove(tokens)},
   ];
 }

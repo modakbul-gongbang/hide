@@ -254,6 +254,14 @@ The create sheet is drawn detecting, with the required checks, with verify comma
 The cards, rows, 결정 필요 items, track and sheet are drawn on local tokens and library refs in this sheet, not as `Component /` masters, because each is one screen's part (`web/src/factory/`) rather than a composite under `web/src/components`.
 Its builder is `scripts/pen-screens-factory.mjs`, and its web files are `web/src/factory/FactoryScreen.tsx`, `MyTurn.tsx`, `FactoryBoard.tsx`, `FactoryGraph.tsx`, `FactoryCard.tsx`, `TaskPage.tsx`, `CreateSheet.tsx` and `web/src/components/sidebar-header.tsx`.
 
+Core move is `Screen / Core move`, the design the operator approved for moving the core between machines (PRD core-host-node-move).
+Its first board draws the Devices rows with the crown `core` badge, the move entry in a connected device's ⋯ (dimmed with `연결 안 됨` on a device that is not connected), and this Mac's ⋯ after the move with the return and the disconnect.
+The second draws the move dialog over Settings in its five states: checks failed, confirm, moving, failed and done.
+The third draws the rail with the crown notched into the core machine's tile, in the MacBook's window and in the mini's.
+The fourth draws the window states outside Settings: moving, updating the core, cannot connect, and the host status page for an app older than the core.
+Beside them, the disconnected strip with its `다시 연결` link (B16) is drawn by analogy with the cannot-connect strip and is not part of the approved bundle.
+Its builder is `scripts/pen-screens-core-move.mjs`, and its web files are `web/src/settings/DevicesTab.tsx`, `DeviceRow.tsx`, `CoreMoveDialog.tsx`, `web/src/components/device-rail.tsx`, `web/src/badge.tsx`, `web/src/connection.ts` and `web/src/coreMove.ts`.
+
 ## How to add a token
 
 1. Add the entry to `design/tokens.json`, with both a Dark (`value`) and a Light (`light`) value for a color token, or use `type: "alias"` to point at another token.
