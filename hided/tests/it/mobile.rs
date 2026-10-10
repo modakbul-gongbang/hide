@@ -118,6 +118,10 @@ async fn event(socket: &mut Socket, kind: &str, payload: Value) {
 }
 
 fn pair_code(qr: &str) -> String {
+    pair_code_at(qr, DNS)
+}
+
+fn pair_code_at(qr: &str, dns: &str) -> String {
     use base64::Engine;
     let encoded = qr.split("#pair=").nth(1).unwrap();
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -125,7 +129,7 @@ fn pair_code(qr: &str) -> String {
         .unwrap();
     let value: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(value["v"], 1);
-    assert_eq!(value["endpoint"], format!("https://{DNS}"));
+    assert_eq!(value["endpoint"], format!("https://{dns}"));
     value["code"].as_str().unwrap().to_owned()
 }
 
@@ -144,7 +148,11 @@ async fn pair(port: u16, origin: &str, code: &str) -> (Socket, Value) {
 }
 
 async fn phone(port: u16, credential: &str) -> (Socket, Value) {
-    let mut socket = connect(port, &format!("https://{DNS}")).await;
+    phone_at(port, DNS, credential).await
+}
+
+async fn phone_at(port: u16, dns: &str, credential: &str) -> (Socket, Value) {
+    let mut socket = connect(port, &format!("https://{dns}")).await;
     socket
         .send(Message::Text(
             json!({"client_kind": "phone", "token": credential, "schema_version": 2})
@@ -409,6 +417,71 @@ async fn a_restart_on_a_new_port_replaces_hides_entry_and_phones_stay_paired() {
     // A graceful stop removes hide's entry (B8).
     running.mobile.shutdown().await;
     assert!(fake.proxy().is_none());
+    running.stop();
+}
+
+/// Pairs a phone with the core `running` exposes at `dns` and answers its
+/// credential.
+async fn pair_at(running: &hided::RunningDaemon, shell: &mut Socket, dns: &str) -> String {
+    event(shell, "mobile_show_code", json!({})).await;
+    let shown = mobile_frame(shell, |frame| frame["qr"].is_string()).await;
+    let code = pair_code_at(shown["qr"].as_str().unwrap(), dns);
+    let (_paired, answer) = pair(running.port, &loopback(running.port), &code).await;
+    answer["credential"].as_str().unwrap().to_owned()
+}
+
+/// The state folder moved to a machine with another tailnet name lets in
+/// only the phones paired there: one paired where the core ran before is
+/// told the core is unreachable and stays paired, the Settings list and the
+/// four-phone limit leave it out, and a move back lets it in again (PRD
+/// core-host-node-move B17).
+#[tokio::test]
+async fn a_moved_core_lets_in_only_the_phones_paired_at_its_address() {
+    const MINI: &str = "mini.tailnet-name.ts.net";
+    let dir = tempfile::tempdir().unwrap();
+    let mac = FakeTailscale::new(&dir.path().join("mac"));
+    let mini = FakeTailscale::named(&dir.path().join("mini"), MINI);
+    mac.ready();
+    mini.ready();
+    let start = |fake: &FakeTailscale| hided::start_daemon(env(dir.path(), &fake.bin));
+    let exposed = |frame: &Value| frame["exposure"] == "exposed";
+
+    let running = start(&mac).await.unwrap();
+    let mut shell = renderer(&running).await;
+    event(&mut shell, "mobile_observe", json!({"observing": true})).await;
+    event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
+    mobile_frame(&mut shell, exposed).await;
+    let at_mac = pair_at(&running, &mut shell, DNS).await;
+    running.mobile.shutdown().await;
+    running.stop();
+    drop((shell, running));
+
+    let running = start(&mini).await.unwrap();
+    let mut shell = renderer(&running).await;
+    event(&mut shell, "mobile_observe", json!({"observing": true})).await;
+    let frame = mobile_frame(&mut shell, exposed).await;
+    assert_eq!(frame["phones"], json!([]), "{frame}");
+    let (_socket, answer) = phone_at(running.port, MINI, &at_mac).await;
+    assert_eq!(answer, json!({"type": "refused", "reason": "mobile_off"}));
+    for _ in 0..4 {
+        pair_at(&running, &mut shell, MINI).await;
+    }
+    let frame = mobile_frame(&mut shell, |frame| {
+        frame["phones"]
+            .as_array()
+            .is_some_and(|phones| phones.len() == 4)
+    })
+    .await;
+    assert_eq!(frame["max_phones"], 4);
+    running.mobile.shutdown().await;
+    running.stop();
+    drop((shell, running));
+
+    let running = start(&mac).await.unwrap();
+    let mut shell = renderer(&running).await;
+    mobile_frame(&mut shell, exposed).await;
+    let (_socket, hello) = phone(running.port, &at_mac).await;
+    assert_eq!(hello["type"], "hello", "{hello}");
     running.stop();
 }
 

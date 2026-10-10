@@ -84,6 +84,21 @@ pub struct PushSubscription {
     pub auth: String,
 }
 
+/// The core address a phone was paired at: the tailnet name of the exposure
+/// whose code it scanned (PRD core-host-node-move B17, amendment 12). A phone
+/// keeps its credential in its home-screen app, which belongs to that address,
+/// so after the core moves to another machine it pairs again there, and its
+/// record here waits for a move back.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhoneOrigin {
+    /// Paired before phones kept their address; the first load with an
+    /// exposure on record, or the first exposure, gives it that one.
+    #[default]
+    Unrecorded,
+    Paired(String),
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PhoneRecord {
     pub id: String,
@@ -96,6 +111,8 @@ pub struct PhoneRecord {
     pub notifications: Notifications,
     #[serde(default)]
     pub push: Option<PushSubscription>,
+    #[serde(default)]
+    pub origin: PhoneOrigin,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -191,6 +208,7 @@ mod tests {
                 last_seen_ms: 2,
                 notifications: Notifications::On,
                 push: None,
+                origin: PhoneOrigin::Paired("mac.tailnet.ts.net".into()),
             }],
         };
         write(&path, &file).unwrap();

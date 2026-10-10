@@ -214,7 +214,10 @@ impl Mobile {
                 }
             },
         };
-        let phones = Phones::load(store::phones_path(&config.state_dir));
+        let phones = Phones::load(
+            store::phones_path(&config.state_dir),
+            settings.serve.as_ref().map(|serve| serve.dns_name.as_str()),
+        );
         let exposure = if settings.enabled {
             Exposure::Checking
         } else {
@@ -414,8 +417,7 @@ impl Mobile {
             .collect();
         let phones: Vec<Value> = inner
             .phones
-            .list()
-            .iter()
+            .current()
             .map(|phone| {
                 json!({
                     "id": phone.id,
@@ -450,6 +452,9 @@ impl Mobile {
     }
 
     fn set_origin(&self, dns_name: Option<&str>) {
+        if let Some(dns_name) = dns_name {
+            self.lock().phones.set_origin(dns_name);
+        }
         *self
             .origin
             .write()
@@ -941,8 +946,7 @@ impl Mobile {
             let inner = self.lock();
             let targets = inner
                 .phones
-                .list()
-                .iter()
+                .current()
                 .filter_map(|phone| {
                     phone
                         .push
@@ -1226,11 +1230,15 @@ impl Mobile {
     /// holds, which is what a revoked phone's credential is.
     pub fn authenticate(&self, credential: &str) -> Result<PhoneRecord, &'static str> {
         let mut inner = self.lock();
-        let phone = inner
-            .phones
-            .authenticate(credential)
-            .cloned()
-            .ok_or("revoked")?;
+        // A phone paired where the core ran before a move stays paired and
+        // reads the core as unreachable until it pairs here (B17).
+        let phone =
+            inner.phones.authenticate(credential).cloned().map_err(
+                |unadmitted| match unadmitted {
+                    phones::Unadmitted::Unknown => "revoked",
+                    phones::Unadmitted::Elsewhere => "mobile_off",
+                },
+            )?;
         // The seven-day rule holds at the door too, not only at the hourly
         // sweep, whose timer does not run while the Mac sleeps.
         if now_ms().saturating_sub(phone.last_seen_ms) >= phones::INACTIVE_REVOKE_MS {
@@ -1633,8 +1641,7 @@ impl Mobile {
             let mut inner = self.lock();
             let ids: Vec<String> = inner
                 .phones
-                .list()
-                .iter()
+                .current()
                 .map(|phone| phone.id.clone())
                 .collect();
             if !seen.is_empty() {
@@ -1648,8 +1655,7 @@ impl Mobile {
             }
             let targets: Vec<(String, PushSubscription)> = inner
                 .phones
-                .list()
-                .iter()
+                .current()
                 .filter_map(|phone| phone.push.clone().map(|push| (phone.id.clone(), push)))
                 .collect();
             let subject = inner

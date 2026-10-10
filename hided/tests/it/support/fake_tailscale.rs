@@ -18,10 +18,17 @@ pub const DNS: &str = "mac.tailnet-name.ts.net";
 pub struct FakeTailscale {
     pub state: PathBuf,
     pub bin: PathBuf,
+    /// The tailnet name this machine answers with.
+    pub dns: String,
 }
 
 impl FakeTailscale {
     pub fn new(root: &Path) -> Self {
+        Self::named(root, DNS)
+    }
+
+    /// One whose machine is `dns` on the tailnet, as another machine is.
+    pub fn named(root: &Path, dns: &str) -> Self {
         let state = root.join("tailscale-state");
         std::fs::create_dir_all(&state).unwrap();
         let bin = root.join("tailscale");
@@ -46,12 +53,15 @@ case "$1" in
 esac
 "#,
             state = state.display(),
-            dns = DNS,
         );
         std::fs::write(&bin, script).unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        Self { state, bin }
+        Self {
+            state,
+            bin,
+            dns: dns.to_owned(),
+        }
     }
 
     pub fn status(&self, value: Value) {
@@ -65,13 +75,13 @@ esac
     }
 
     pub fn https_off(&self) {
-        self.status(json!({"BackendState": "Running", "Self": {"DNSName": format!("{DNS}."), "HostName": "mac"},
+        self.status(json!({"BackendState": "Running", "Self": {"DNSName": format!("{}.", self.dns), "HostName": "mac"},
             "CurrentTailnet": {"MagicDNSEnabled": true}}));
     }
 
     pub fn ready(&self) {
-        self.status(json!({"BackendState": "Running", "Self": {"DNSName": format!("{DNS}."), "HostName": "mac"},
-            "CurrentTailnet": {"MagicDNSEnabled": true}, "CertDomains": [DNS]}));
+        self.status(json!({"BackendState": "Running", "Self": {"DNSName": format!("{}.", self.dns), "HostName": "mac"},
+            "CurrentTailnet": {"MagicDNSEnabled": true}, "CertDomains": [self.dns]}));
     }
 
     pub fn serve(&self) -> Value {
@@ -91,7 +101,7 @@ esac
 
     pub fn proxy(&self) -> Option<String> {
         self.serve()
-            .pointer(&format!("/Web/{DNS}:443/Handlers/~1/Proxy"))
+            .pointer(&format!("/Web/{}:443/Handlers/~1/Proxy", self.dns))
             .and_then(Value::as_str)
             .map(str::to_owned)
     }

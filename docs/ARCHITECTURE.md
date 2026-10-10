@@ -1490,9 +1490,12 @@ Every frame to a phone goes through `mobile::phone::encode`, the one place a rel
 
 A pairing code is sixteen random bytes, is accepted only while Mobile is on and exposed, lives only in memory for five minutes, is spent by the first phone that uses it, and is replaced only when `mobile_show_code` is sent again; opening Settings > Mobile issues none and voids none (B58).
 The QR is `https://<DNSName>/m/#pair=<base64url {v:1, endpoint, code}>`, so the code never reaches a request line or a log.
-A paired phone gets a 32-byte credential; `phones.json` (mode 0600) keeps only its SHA-256, compared in constant time, with the name, the last connection, the notification answer and the push subscription.
+A paired phone gets a 32-byte credential; `phones.json` (mode 0600) keeps only its SHA-256, compared in constant time, with the name, the last connection, the notification answer, the push subscription and the tailnet name it was paired at (`PhoneOrigin`).
 The phone keeps the credential in its storage and in its address fragment (`#k=`), because the manifest has no `start_url` and a Home Screen app starts from the address it was added from, whose storage iOS may keep apart from Safari's.
-At most four phones pair; the limit is checked before the code is spent.
+At most four phones pair at one tailnet name; the limit is checked before the code is spent.
+Only the phones paired at the name this core was last exposed at count (PRD core-host-node-move B17): they are listed in Settings > Mobile, receive pushes and are let in, and the limit counts them; a switch-off or a failed check leaves that name as it was.
+After a move the phone's Home Screen app still starts at the old machine's address, so each phone scans the new machine's code once; until then the phones paired where the core ran wait unlisted, a credential of theirs is answered `mobile_off` (the phone stays paired and shows the core as unreachable), and a move back lets them in again; the seven-day rule below ends them otherwise, so no more than four phones per address of the last seven days are kept.
+A record from before phones kept their address reads as `Unrecorded` and takes the exposure `mobile.json` names at the first load, or the first exposure.
 A phone keeps at most two connections, the oldest closed first, a connection that answers no ping for 45 seconds is closed and recorded as `phone.silent`, and one whose frame cannot leave within ten seconds is closed and recorded as `phone.stalled`.
 A phone away for seven days is revoked at start, by an hourly sweep and when it next connects, and a revoke, manual or automatic, drops the credential and the subscription in one write and closes that phone's connection.
 
