@@ -471,19 +471,12 @@ impl Mapper<'_> {
     }
 }
 
-/// The owner's path-keyed settings and the map beside each that keeps the
-/// same setting for every other machine, keyed by its id (PRD
-/// core-host-node-move Q19).
-pub const OWN_PATHS: &[(&str, &str)] = &[
-    ("expanded_paths", "device_expanded_paths"),
-    ("project_base_branches", "device_project_base_branches"),
-    ("project_issue_sources", "device_project_issue_sources"),
-    (
-        "expanded_inactive_checkout_project_paths",
-        "device_expanded_inactive_checkout_project_paths",
-    ),
-    ("selected_path", "device_selected_paths"),
-];
+/// The owner's settings that belong to its own machine and the map beside
+/// each that keeps the same setting for every other machine, keyed by its
+/// id (PRD core-host-node-move Q19): the Explorer's open folders, which the
+/// web reads per machine. Settings keyed by a project path are read the same
+/// whichever machine holds the project, so they stay (`Moves::Stays`).
+pub const OWN_PATHS: &[(&str, &str)] = &[("expanded_paths", "device_expanded_paths")];
 
 /// The old owner's `own` value moves under `devices[old_owner_as]`, and the
 /// new owner's entry in `devices` becomes `own`; the rest of `devices`
@@ -986,13 +979,9 @@ mod tests {
                 "expanded_paths": [M_ROOT],
                 "device_expanded_paths": {ALIAS: [C_ROOT], X: [X_ROOT]},
                 "selected_path": M_ROOT,
-                "device_selected_paths": {ALIAS: C_ROOT, X: X_ROOT},
-                "project_base_branches": {M_ROOT: "main"},
-                "device_project_base_branches": {ALIAS: {C_ROOT: "trunk"}, X: {X_ROOT: "dev"}},
-                "project_issue_sources": {M_ROOT: "github"},
-                "device_project_issue_sources": {ALIAS: {C_ROOT: "local"}, X: {X_ROOT: "github"}},
-                "expanded_inactive_checkout_project_paths": [M_ROOT],
-                "device_expanded_inactive_checkout_project_paths": {ALIAS: [C_ROOT], X: [X_ROOT]},
+                "project_base_branches": {M_ROOT: "main", C_ROOT: "trunk", X_ROOT: "dev"},
+                "project_issue_sources": {M_ROOT: "github", C_ROOT: "local", X_ROOT: "github"},
+                "expanded_inactive_checkout_project_paths": [M_ROOT, C_ROOT, X_ROOT],
                 "sessions_mode_by_project": {hide_project::project_id(M, Path::new(M_ROOT)): "memory"},
                 "selected_pane_id": panes[1],
                 "expanded_agent_pane_ids": panes,
@@ -1183,14 +1172,17 @@ mod tests {
             core["device_expanded_paths"],
             json!({M: [M_ROOT], X: [X_ROOT]})
         );
-        assert_eq!(core["selected_path"], json!(C_ROOT));
-        assert_eq!(core["device_selected_paths"], json!({M: M_ROOT, X: X_ROOT}));
-        assert_eq!(core["project_base_branches"], json!({C_ROOT: "trunk"}));
+        // Settings keyed by a project path are read the same on either
+        // core, whichever machine holds the project: they stay.
+        assert_eq!(core["selected_path"], json!(M_ROOT));
         assert_eq!(
-            core["device_project_base_branches"],
-            json!({M: {M_ROOT: "main"}, X: {X_ROOT: "dev"}})
+            core["project_base_branches"],
+            json!({M_ROOT: "main", C_ROOT: "trunk", X_ROOT: "dev"})
         );
-        assert_eq!(core["project_issue_sources"], json!({C_ROOT: "local"}));
+        assert_eq!(
+            core["project_issue_sources"],
+            json!({M_ROOT: "github", C_ROOT: "local", X_ROOT: "github"})
+        );
         // As the core reads them: the stored form spells absent fields as
         // null where the runtime writes them.
         let registrations = |value: Value| -> Vec<crate::model::DeviceRegistration> {

@@ -30,39 +30,20 @@ fn device<'a>(runtime: &'a Runtime, id: &str) -> &'a DeviceSnapshot {
         .expect("device row")
 }
 
-/// A removed device takes its path-keyed settings with it, so the maps a
-/// core move fills stay bounded by the registered machines.
+/// A removed device takes its Explorer expansion with it, so the map stays
+/// bounded by the registered machines.
 #[test]
-fn removing_a_device_forgets_its_path_settings() {
+fn removing_a_device_forgets_its_expanded_paths() {
     let mut runtime = runtime();
     assert!(register_device(&mut runtime, "studio", "studio-host"));
-    let ui = &mut runtime.snapshot.ui_state;
-    for map in [
-        &mut ui.device_project_base_branches,
-        &mut ui.device_project_issue_sources,
-    ] {
-        map.insert(
-            "studio".to_owned(),
-            std::collections::BTreeMap::from([("/srv/p".to_owned(), "x".to_owned())]),
-        );
-    }
-    ui.device_expanded_inactive_checkout_project_paths
-        .insert("studio".to_owned(), vec!["/srv/p".to_owned()]);
-    ui.device_selected_paths
-        .insert("studio".to_owned(), "/srv/p".to_owned());
-    ui.device_expanded_paths
+    runtime
+        .snapshot
+        .ui_state
+        .device_expanded_paths
         .insert("studio".to_owned(), vec!["/srv/p".to_owned()]);
 
     assert!(dispatch_device(&mut runtime, "remove_device", "studio"));
-    let ui = &runtime.snapshot.ui_state;
-    assert!(ui.device_project_base_branches.is_empty());
-    assert!(ui.device_project_issue_sources.is_empty());
-    assert!(
-        ui.device_expanded_inactive_checkout_project_paths
-            .is_empty()
-    );
-    assert!(ui.device_selected_paths.is_empty());
-    assert!(ui.device_expanded_paths.is_empty());
+    assert!(runtime.snapshot.ui_state.device_expanded_paths.is_empty());
 }
 
 /// A registered device has a remote status entry from the moment it is

@@ -111,7 +111,10 @@ pub enum Moves {
     Whole,
     /// Names its machine through a sibling machine id or a node id no owner
     /// change touches (a path beside its `device_id`, a `project:` digest,
-    /// a native machine id): it stays as it is.
+    /// a native machine id), or by a project path every core reads the same
+    /// whichever machine holds the project (an issue source, a base branch,
+    /// an opened Inactive group, the Explorer's selection): it stays as it
+    /// is.
     Stays,
 }
 
@@ -308,18 +311,7 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
         Mechanism::Owned,
         Moves::OwnPath("device_expanded_paths"),
     ),
-    (
-        CORE_STATE,
-        "/selected_path",
-        Mechanism::Owned,
-        Moves::OwnPath("device_selected_paths"),
-    ),
-    (
-        CORE_STATE,
-        "/device_selected_paths/{key}",
-        Mechanism::Rewritten,
-        Moves::OwnPath("selected_path"),
-    ),
+    (CORE_STATE, "/selected_path", Mechanism::Owned, Moves::Stays),
     (
         CORE_STATE,
         "/focused_checkout_id",
@@ -360,37 +352,19 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
         CORE_STATE,
         "/project_base_branches/{key}",
         Mechanism::Owned,
-        Moves::OwnPath("device_project_base_branches"),
-    ),
-    (
-        CORE_STATE,
-        "/device_project_base_branches/{key}",
-        Mechanism::Rewritten,
-        Moves::OwnPath("project_base_branches"),
+        Moves::Stays,
     ),
     (
         CORE_STATE,
         "/project_issue_sources/{key}",
         Mechanism::Owned,
-        Moves::OwnPath("device_project_issue_sources"),
-    ),
-    (
-        CORE_STATE,
-        "/device_project_issue_sources/{key}",
-        Mechanism::Rewritten,
-        Moves::OwnPath("project_issue_sources"),
+        Moves::Stays,
     ),
     (
         CORE_STATE,
         "/expanded_inactive_checkout_project_paths/*",
         Mechanism::Owned,
-        Moves::OwnPath("device_expanded_inactive_checkout_project_paths"),
-    ),
-    (
-        CORE_STATE,
-        "/device_expanded_inactive_checkout_project_paths/{key}",
-        Mechanism::Rewritten,
-        Moves::OwnPath("expanded_inactive_checkout_project_paths"),
+        Moves::Stays,
     ),
     (
         WORKSPACE_VIEWS,
@@ -1031,15 +1005,7 @@ fn convert_core_state(value: &mut Value, node: &str, projects: &BTreeMap<String,
     for row in each(value, "recent_checkouts") {
         changed |= rewrite(row.get_mut("device_id"), node);
     }
-    for map in [
-        "device_expanded_paths",
-        "device_selected_paths",
-        "device_project_base_branches",
-        "device_project_issue_sources",
-        "device_expanded_inactive_checkout_project_paths",
-    ] {
-        changed |= rename_key(value.get_mut(map), node);
-    }
+    changed |= rename_key(value.get_mut("device_expanded_paths"), node);
     for fold in each(value, "session_open_folds") {
         if fold.as_str() == Some(&format!("cleanup/{LEGACY}")) {
             *fold = Value::String(format!("cleanup/{node}"));
@@ -1281,10 +1247,6 @@ mod tests {
                 "recent_checkouts": [{"device_id": "local", "checkout_id": "workspace:a:checkout:1", "device_name": "This Mac", "path": root}],
                 "device_registrations": [{"id": "mini", "label": "Mac mini", "ssh_alias": "mini"}],
                 "device_expanded_paths": {"local": ["/x"], "mini": ["/srv/p"]},
-                "device_selected_paths": {"mini": "/srv/p/a"},
-                "device_project_base_branches": {"mini": {"/srv/p": "main"}},
-                "device_project_issue_sources": {"mini": {"/srv/p": "github"}},
-                "device_expanded_inactive_checkout_project_paths": {"mini": ["/srv/p"]},
                 "resolved_sessions": {"w1:p1": {"at_unix_ms": 1}},
                 "session_resolution_inputs": {"w1:p1": 1},
                 "session_collapsed_checkout_ids": ["workspace:a:checkout:1"],

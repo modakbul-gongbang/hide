@@ -2742,18 +2742,6 @@ pub struct UiStateSnapshot {
     pub expanded_inactive_project_device_ids: Vec<String>,
     #[serde(default)]
     pub project_base_branches: BTreeMap<String, String>,
-    /// Every other machine's base branches, issue sources, opened Inactive
-    /// groups and Explorer selection, by its id: a core move swaps a
-    /// machine's between these and the owner's fields above. Persisted,
-    /// never on the wire; the features publish what they read from them.
-    #[serde(skip)]
-    pub device_project_base_branches: BTreeMap<String, BTreeMap<String, String>>,
-    #[serde(skip)]
-    pub device_project_issue_sources: BTreeMap<String, BTreeMap<String, String>>,
-    #[serde(skip)]
-    pub device_expanded_inactive_checkout_project_paths: BTreeMap<String, Vec<String>>,
-    #[serde(skip)]
-    pub device_selected_paths: BTreeMap<String, String>,
     /// Agent panes whose descendants the operator opened in the sidebar tree.
     /// Absence is the default folded state, so a row with children starts
     /// folded and shows its descendant badge until the operator opens it.
@@ -3279,10 +3267,6 @@ impl Default for UiStateSnapshot {
             expanded_inactive_checkout_project_paths: Vec::new(),
             expanded_inactive_project_device_ids: Vec::new(),
             project_base_branches: BTreeMap::new(),
-            device_project_base_branches: BTreeMap::new(),
-            device_project_issue_sources: BTreeMap::new(),
-            device_expanded_inactive_checkout_project_paths: BTreeMap::new(),
-            device_selected_paths: BTreeMap::new(),
             expanded_agent_pane_ids: Vec::new(),
             sessions_expanded_agent_pane_ids: Vec::new(),
             selected_path: None,

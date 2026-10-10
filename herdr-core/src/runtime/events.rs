@@ -2512,11 +2512,6 @@ impl Runtime {
                     registrations - self.snapshot.ui_state.workspace_registrations.len();
                 let ui = &mut self.snapshot.ui_state;
                 ui.device_expanded_paths.remove(&payload.device_id);
-                ui.device_project_base_branches.remove(&payload.device_id);
-                ui.device_project_issue_sources.remove(&payload.device_id);
-                ui.device_expanded_inactive_checkout_project_paths
-                    .remove(&payload.device_id);
-                ui.device_selected_paths.remove(&payload.device_id);
                 let tabs = self
                     .snapshot
                     .editor
@@ -3555,11 +3550,6 @@ impl Runtime {
                     expanded_inactive_project_device_ids: current
                         .expanded_inactive_project_device_ids,
                     project_base_branches: current.project_base_branches,
-                    device_project_base_branches: current.device_project_base_branches,
-                    device_project_issue_sources: current.device_project_issue_sources,
-                    device_expanded_inactive_checkout_project_paths: current
-                        .device_expanded_inactive_checkout_project_paths,
-                    device_selected_paths: current.device_selected_paths,
                     expanded_agent_pane_ids: current.expanded_agent_pane_ids,
                     sessions_expanded_agent_pane_ids: current.sessions_expanded_agent_pane_ids,
                     selected_path: payload.selected_path,
