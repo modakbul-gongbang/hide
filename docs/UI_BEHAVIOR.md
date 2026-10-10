@@ -356,6 +356,9 @@ Folded, it wears its descendant mark, `! N` for raised descendants or else `● 
 Opened, its children follow most urgent first, joined to it by rails, and a child with children has its own chevron; grandchildren are one step further in, and a grandchild with children opens the tree popover from its chevron.
 Past five siblings the rest wait behind `N개 더`, which opens them in place.
 A tree row is one line with no branch line; a child on another device names that device on a second line, dimmed with `연결 안 됨` and not openable while it is not connected, and a child working in another worktree is not drawn again under that worktree.
+A worktree whose unresolved agents are all delegated children has no checkout line, no purpose line and no fold, because the children are reached from the root that owns them; the project badge still counts them.
+An agent counts as a root when the core marks it so (`agent.state.root`): an orphan whose parent ended is a root, and a Factory worker is one too, since its spawn parent is the Factory's own identity and no pane in the list, so its worktree keeps its line.
+The primary, the focused checkout, a dirty or unpushed worktree and an Inactive or Cleanup one keep the line or fold they had.
 Each row with its own PRs carries one PR icon in the worst state's colour (failed red, pending amber, mergeable green, merged purple), dimmed while GitHub cannot be read; its hover shows the PR card for one PR, and for several lists each PR with its state and title, any of which opens, with the last read time while GitHub cannot be read.
 A tree row that asks draws its verb and what on a second line until answered, and an AI question leaves that line once read; a blocked tree row draws its cause there instead, read or not.
 A raised row outside the tree keeps its request line until answered, dimmed after reading an AI question; an unread result line stays bright until read.
@@ -1007,7 +1010,7 @@ A raised group draws at most its five (Needs You) or three (Done) most recent ag
 The fold is the page's own and starts closed on a fresh load, so the list returns to its short form; an agent folded there keeps its ⌥n number on its checkout row.
 A device's Projects list is its `Needs You · N` group, its `Done · N` group, then the Home row, then Pinned and the projects, and no row there names the device, since the whole list is that device's (with the rail rework of quick device-rail-badges).
 An agent row's title is its identity label at both densities: the rolling task, or the provider's name when no task exists; a Herdr agent name and a Herdr workspace label never become display copy.
-No agents folds worktrees with no unresolved operator session, excluding primary, front, dirty, unpushed and already inactive checkouts; Cleanup gathers agent worktrees and missing folders at the bottom without assuming they have no live pane.
+No agents folds worktrees with no unresolved agent, excluding primary, front, dirty, unpushed and already inactive checkouts; a worktree whose unresolved agents are all delegated children is in no fold and has no line (`session_folds.child_only`, same exclusions), because No agents would be false for it; Cleanup gathers agent worktrees and missing folders at the bottom without assuming they have no live pane.
 
 ### Purpose, pinning, and PR chrome
 

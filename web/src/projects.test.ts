@@ -2,7 +2,7 @@ import { projectRows, checkoutPresentation, checkoutCard } from "../test/legacyA
 import { emptyScope, legacyProject } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { cardSingleValue, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, projectMarks as drawProjectMarks, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
+import { activeCheckouts, cardSingleValue, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, projectMarks as drawProjectMarks, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import type { AgentRow, Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
 
@@ -25,6 +25,18 @@ function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
 }
 
 const NO_MARKS = { error: 0, approval: 0, question: 0, working: 0, stopped: 0, done: 0, idle: 0 };
+
+describe("activeCheckouts", () => {
+  it("leaves out the checkouts the core folded, hid as child-only, or put in Cleanup", () => {
+    const rows = ["a", "b", "c", "d", "e"].map((id) => ({ id }) as Checkout);
+    const draw = workspace("p", {
+      checkouts: rows,
+      inactive_checkouts: { expanded: false, checkout_ids: ["b"] },
+      session_folds: { empty: ["c"], child_only: ["d"], cleanup: ["e"], empty_open: false, cleanup_open: false, open_prs: 0 },
+    });
+    expect(activeCheckouts(draw).map((row) => row.id)).toEqual(["a"]);
+  });
+});
 
 describe("projectRows", () => {
   it("draws pinned rows under their header, then the activity list with the device fold", () => {

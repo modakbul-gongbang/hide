@@ -246,7 +246,7 @@ The one sidebar raises Needs You and Done above its project tree, at most five a
 Those rows also remain under their checkouts, and a shortcut belongs to the first visible occurrence in physical sidebar order.
 A checkout starts open; `session_collapsed_checkout_ids` remembers only explicit collapses, independently of older disclosure records.
 A collapsed checkout still shows its Needs You rows.
-Core `session_folds` puts agentless worktrees behind No agents, excluding the primary, front, dirty, unpushed and already inactive checkouts, and collects agent worktrees and missing folders behind Cleanup at the bottom.
+Core `session_folds` puts agentless worktrees behind No agents, excluding the primary, front, dirty, unpushed and already inactive checkouts, lists in `child_only` the worktrees (same exclusions) whose unresolved agents are all delegated children, which the sidebar draws nowhere because the parent root's tree reaches them, and collects agent worktrees and missing folders behind Cleanup at the bottom.
 `session_open_folds` remembers explicit openings across startup and device reconnects, including an intermediate empty catalog.
 A confirmed project unregistration removes its project key; removing a device removes its project keys and Cleanup key.
 Resolving a session removes it from sidebar membership without changing its pane, tab or graph membership.
