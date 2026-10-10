@@ -34,6 +34,7 @@ mod pane_sizes;
 pub mod placement;
 pub mod relay;
 pub mod screen_event;
+pub mod seat;
 pub mod server;
 pub mod spawn;
 pub mod state_file;
@@ -100,8 +101,9 @@ fn find_ui_dir() -> Option<std::path::PathBuf> {
 pub struct RunningDaemon {
     pub port: u16,
     pub token: String,
-    pub _lock: std::fs::File,
     shutdown: Arc<Notify>,
+    /// Ends the daemon after its screens left; aborted with the role.
+    idle: tokio::task::JoinHandle<()>,
     pane_capabilities: Arc<pane_auth::Registry>,
     pane_bootstrap_socket: std::path::PathBuf,
     pane_bootstrap_record: std::path::PathBuf,
@@ -114,6 +116,23 @@ pub struct RunningDaemon {
     /// layout and state saves are on disk before another daemon can start,
     /// and before whoever owns the state folder can remove it.
     core: Arc<CoreHandle>,
+    /// The server and instance lock of a daemon started on its own
+    /// (`start_daemon`); a process's supervisor keeps them otherwise.
+    own: Option<OwnSeat>,
+}
+
+/// A seat and instance lock a role holds for itself, released after the
+/// role ends, in this order.
+struct OwnSeat {
+    _seat: seat::Seat,
+    state_dir: std::path::PathBuf,
+    _lock: std::fs::File,
+}
+
+impl Drop for OwnSeat {
+    fn drop(&mut self) {
+        forget_daemon(&self.state_dir, std::process::id());
+    }
 }
 
 impl RunningDaemon {
@@ -140,6 +159,7 @@ impl RunningDaemon {
 impl Drop for RunningDaemon {
     fn drop(&mut self) {
         self.shutdown.notify_waiters();
+        self.idle.abort();
         self.pane_capabilities.revoke_all();
         self.remove_bootstrap_socket();
         self.core.shutdown();
@@ -153,11 +173,12 @@ pub struct RunningNode {
     pub port: u16,
     pub token: String,
     shutdown: Arc<Notify>,
+    idle: tokio::task::JoinHandle<()>,
     /// Ended on drop, before the instance lock below is released (fields
     /// drop in this order): the terminals relay, the route reaper, and the
     /// link with its SSH connection and threads, which only this holds.
     pub node: node_daemon::NodeDaemon,
-    pub _lock: std::fs::File,
+    own: Option<OwnSeat>,
 }
 
 impl RunningNode {
@@ -169,32 +190,41 @@ impl RunningNode {
 impl Drop for RunningNode {
     fn drop(&mut self) {
         self.shutdown.notify_waiters();
+        self.idle.abort();
     }
 }
 
+/// The process's supervisor: it holds the seat (port, token, instance lock)
+/// for the process's life and runs the role the state folder names in it.
 pub async fn run_daemon(env: Env) -> Result<(), String> {
     let state_dir = env.state_dir.clone();
+    if let Some(error) = env::herdr_bin_error(&env) {
+        return Err(error);
+    }
+    let lock = acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
+    let seat = seat::Seat::serve(server::bind(env.bind).await?, new_token())?;
     // A machine whose core runs elsewhere starts no core of its own.
     let node = herdr_core::node::NodeId::of_this_machine()?;
     if placement::read(&env.state_dir, node.as_str())?.is_some() {
-        let running = start_node_daemon(env).await?;
+        let running = start_node_role(env, seat.parts()).await?;
         tokio::select! {
             _ = running.shutdown.notified() => {}
             () = stop_requested() => running.shutdown.notify_waiters(),
         }
         drop(running);
-        forget_daemon(&state_dir, std::process::id());
-        return Ok(());
+    } else {
+        let running = start_core_role(env, seat.parts()).await?;
+        wait_shutdown_or_signal(&running).await;
+        // A graceful stop takes hide's `tailscale serve` entry with it; a
+        // crash leaves it to the next start's reconcile (PRD D-07).
+        running.mobile.shutdown().await;
+        drop(running);
     }
-    let running = start_daemon(env).await?;
-    wait_shutdown_or_signal(&running).await;
-    // A graceful stop takes hide's `tailscale serve` entry with it; a crash
-    // leaves it to the next start's reconcile (PRD D-07).
-    running.mobile.shutdown().await;
-    drop(running);
-    // Its own state only: the instance lock is released above, so a daemon
-    // started since may already have written its own.
+    seat.close().await;
+    // Its own state only, before the instance lock is released: a daemon
+    // started after it writes its own.
     forget_daemon(&state_dir, std::process::id());
+    drop(lock);
     Ok(())
 }
 
@@ -241,6 +271,8 @@ async fn stop_requested() {
     }
 }
 
+/// A core daemon on a seat of its own, for a caller that is not a process's
+/// supervisor (the integration tests); the seat and lock end with it.
 pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     // Refused before anything is written: a daemon that came up on this
     // path would answer healthy and then fail every pane attach in turn.
@@ -248,6 +280,20 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         return Err(error);
     }
     let lock = acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
+    let seat = seat::Seat::serve(server::bind(env.bind).await?, new_token())?;
+    let state_dir = env.state_dir.clone();
+    let mut running = start_core_role(env, seat.parts()).await?;
+    seat.end_with(Arc::clone(&running.shutdown), state_dir.clone());
+    running.own = Some(OwnSeat {
+        _seat: seat,
+        state_dir,
+        _lock: lock,
+    });
+    Ok(running)
+}
+
+/// The core role on `seat`, which already holds the instance lock.
+pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningDaemon, String> {
     // This machine's name in every key that names it. A machine Hide cannot
     // name refuses to start rather than guess one (PRD core-host-node D-28).
     let node = herdr_core::node::NodeId::of_this_machine()?;
@@ -300,12 +346,8 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     }
     let host_id = state_file::host_id(&env.state_dir)
         .map_err(|error| format!("the daemon host id could not be read or written: {error}"))?;
-    let token = new_token();
-    let listener = server::bind(env.bind).await?;
-    let port = listener
-        .local_addr()
-        .map_err(|error| error.to_string())?
-        .port();
+    let token = seat.token.clone();
+    let port = seat.port;
     let started_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs().to_string())
@@ -463,6 +505,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             find_ui_dir()
         },
         version: VERSION,
+        seat: seat.clone(),
         demand: Arc::new(demand::ObservationDemand::default()),
         start_demand,
         request_view_demand: Arc::new(demand::ObservationDemand::default()),
@@ -486,7 +529,6 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         pane_sizes: core.outputs.pane_sizes(),
     };
     node_panes.serve(app.clone());
-    let env_state_dir = env.state_dir.clone();
     // Seeded before the server accepts a client with the registrations the
     // core loaded in `CoreHandle::spawn`. A checkout the core learns later,
     // from Herdr's first sync, reaches a client's snapshot and these roots on
@@ -519,19 +561,11 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         }),
         Arc::clone(&shutdown),
     ));
-    tokio::spawn(async move {
-        if let Err(error) = server::serve(listener, app).await {
-            eprintln!(
-                "{}",
-                serde_json::json!({"component":"hided","kind":"server.exit","message": error})
-            );
-        }
-        forget_daemon(&env_state_dir, std::process::id());
-    });
+    let idle = server::mount(&seat, app);
     Ok(RunningDaemon {
         port,
         token,
-        _lock: lock,
+        idle,
         shutdown,
         pane_capabilities,
         pane_bootstrap_socket,
@@ -540,16 +574,32 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         node_attach_record: attach::attach_record(&env.state_dir),
         mobile,
         core,
+        own: None,
     })
 }
 
 /// The daemon in the node role: the link to the core the state folder's
 /// placement record names, and this machine's screens, with no core here.
+/// A node daemon on a seat of its own; see `start_daemon`.
 pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
     if let Some(error) = env::herdr_bin_error(&env) {
         return Err(error);
     }
     let lock = acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
+    let seat = seat::Seat::serve(server::bind(env.bind).await?, new_token())?;
+    let state_dir = env.state_dir.clone();
+    let mut running = start_node_role(env, seat.parts()).await?;
+    seat.end_with(Arc::clone(&running.shutdown), state_dir.clone());
+    running.own = Some(OwnSeat {
+        _seat: seat,
+        state_dir,
+        _lock: lock,
+    });
+    Ok(running)
+}
+
+/// The node role on `seat`, which already holds the instance lock.
+pub async fn start_node_role(env: Env, seat: seat::SeatParts) -> Result<RunningNode, String> {
     let node = herdr_core::node::NodeId::of_this_machine()?;
     let placement = placement::read(&env.state_dir, node.as_str())?
         .ok_or("no core placement record: this state folder starts a core")?;
@@ -568,12 +618,8 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
         Some(build) => build,
         None => build_id::of_current_exe()?,
     };
-    let token = new_token();
-    let listener = server::bind(env.bind).await?;
-    let port = listener
-        .local_addr()
-        .map_err(|error| error.to_string())?
-        .port();
+    let token = seat.token.clone();
+    let port = seat.port;
     // The browser relay listens on its own loopback port, which answers
     // nothing else: a stream the core opens to it through the link reaches
     // only a relay ticket, never this daemon's other routes.
@@ -620,6 +666,7 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
             },
             version: VERSION,
             build: Some(Arc::from(build.as_str())),
+            seat: seat.clone(),
             shutdown: Arc::clone(&shutdown),
             state_dir: env.state_dir.clone(),
             browser_relay_port,
@@ -650,6 +697,7 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
         || false,
     );
     let app = node_daemon::router(daemon.state.clone());
+    seat.mount(app);
     let relay_app = node_daemon::relay_router(daemon.state.clone());
     let relay_stopping = Arc::clone(&shutdown);
     tokio::spawn(async move {
@@ -664,27 +712,13 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
             }));
         }
     });
-    let state_dir = env.state_dir.clone();
-    let stopping = Arc::clone(&shutdown);
-    tokio::spawn(async move {
-        let served = axum::serve(listener, app)
-            .with_graceful_shutdown(async move { stopping.notified().await })
-            .await;
-        idle.abort();
-        if let Err(error) = served {
-            eprintln!(
-                "{}",
-                serde_json::json!({"component":"node_daemon","kind":"server.exit","message": error.to_string()})
-            );
-        }
-        forget_daemon(&state_dir, std::process::id());
-    });
     Ok(RunningNode {
         port,
         token,
-        _lock: lock,
         shutdown,
+        idle,
         node: daemon,
+        own: None,
     })
 }
 

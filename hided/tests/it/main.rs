@@ -20,6 +20,7 @@ mod private_herdr;
 mod real_herdr;
 mod remote_core;
 mod remote_delivery;
+mod seat;
 #[cfg(unix)]
 mod support;
 mod terminal_children;

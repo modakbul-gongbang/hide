@@ -89,6 +89,8 @@ pub struct NodeState {
     pub ui_dir: Option<PathBuf>,
     pub version: &'static str,
     pub build: Option<Arc<str>>,
+    /// The seat this role is mounted on; `/health` names its instance.
+    pub seat: crate::seat::SeatParts,
     pub hub: Arc<TerminalHub>,
     pub terminals: Arc<ScreenTerminals>,
     pub live: watch::Receiver<Option<Arc<LiveLink>>>,
@@ -189,6 +191,7 @@ impl NodeDaemon {
                 ui_dir: server.ui_dir,
                 version: server.version,
                 build: server.build,
+                seat: server.seat,
                 hub,
                 terminals,
                 live,
@@ -232,6 +235,7 @@ pub struct ServerParts {
     pub ui_dir: Option<PathBuf>,
     pub version: &'static str,
     pub build: Option<Arc<str>>,
+    pub seat: crate::seat::SeatParts,
     pub shutdown: Arc<Notify>,
     /// This machine's state folder, where its screens' uploads are staged.
     pub state_dir: PathBuf,
@@ -292,6 +296,7 @@ async fn health(State(state): State<NodeState>) -> impl IntoResponse {
         "open_handlers_in_flight": 0,
         "idle_remaining_secs": Value::Null,
         "role": "node",
+        "instance": state.seat.instance(),
         "node": state.boundary.node().as_str(),
         "core_link": link,
         "core_link_reason": reason,

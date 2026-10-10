@@ -99,6 +99,9 @@ pub struct AppState {
     pub shutdown: Arc<Notify>,
     pub ui_dir: Option<PathBuf>,
     pub version: &'static str,
+    /// The seat this role is mounted on; `/health` names its instance, so a
+    /// client that registered with an earlier role registers again.
+    pub seat: crate::seat::SeatParts,
     /// Which connections are looking at the Settings agents tab; the daemon
     /// owns the core's one observation flag on their behalf.
     pub demand: Arc<crate::demand::ObservationDemand>,
@@ -436,6 +439,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         "clients": state.clients.load(Ordering::SeqCst),
         "open_handlers_in_flight": state.opener.in_flight(),
         "idle_remaining_secs": idle_remaining_secs(&state),
+        "instance": state.seat.instance(),
     }))
 }
 
@@ -3567,7 +3571,9 @@ fn log_refusal(reason: CloseReason, extra: Option<usize>) {
     );
 }
 
-pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result<(), String> {
+/// Mounts the core's routes on `seat` and starts the clock that ends the
+/// daemon once no screen is left; the role aborts the clock when it ends.
+pub fn mount(seat: &crate::seat::SeatParts, state: AppState) -> tokio::task::JoinHandle<()> {
     let shutdown = Arc::clone(&state.shutdown);
     let mobile = Arc::clone(&state.mobile);
     let idle_task = watch_idle(
@@ -3584,15 +3590,8 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
         // over when that ends.
         move || mobile.keep_alive(),
     );
-    let app = router(state);
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown.notified().await;
-        })
-        .await
-        .map_err(|error| format!("server: {error}"))?;
-    idle_task.abort();
-    Ok(())
+    seat.mount(router(state));
+    idle_task
 }
 
 /// What decides when a daemon with no screen ends.
