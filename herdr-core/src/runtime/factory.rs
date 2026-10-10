@@ -804,6 +804,7 @@ mod tests {
                 },
             },
             ended: false,
+            forked: false,
         }
     }
 

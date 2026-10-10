@@ -142,6 +142,7 @@ fn removing_devices_retires_only_their_pane_reads_and_rejects_late_publications(
             project: None,
             actor: child.clone(),
             ended: false,
+            forked: false,
         });
         ledger.next_id += 1;
         crate::delivery::watch::start(&mut ledger, &parent, &child, 1).unwrap();

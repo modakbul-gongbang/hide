@@ -225,6 +225,7 @@ fn spawner() -> Spawner {
                 project: None,
                 actor: actor.clone(),
                 ended: false,
+                forked: false,
             },
             check: false,
         },
