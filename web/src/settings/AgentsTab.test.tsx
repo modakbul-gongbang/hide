@@ -17,7 +17,9 @@ vi.hoisted(() => {
 
 const piece = (state: KitPiece["state"], reason: string | null = null): KitPiece => ({ state, reason, location: null });
 const LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok", opencode: "OpenCode", pi: "Pi", omp: "omp", cursor: "Cursor" };
+// What the core sends: every feature of the kit's table, `subagents` supported for a Partial agent. The popover draws all of them but `subagents`, since no screen draws a subagent count.
 const FEATURES: KitFeatureId[] = ["skill", "guidance", "letters", "bell", "memory", "subagents", "spawn_guard", "herdr_integration", "sleep", "fork", "start", "titles"];
+const DRAWN = FEATURES.filter((feature) => feature !== "subagents");
 
 const agent = (id: string, over: Partial<KitAgent> = {}): KitAgent => ({
   id,
@@ -275,18 +277,18 @@ it("keeps a recorded-on agent with no program under Installed with its switch, f
   await unmount();
 });
 
-it("opens the Partial popover from the chip and lists every feature with a mark and a word, and no screen-only line (B18, B8)", async () => {
+it("opens the Partial popover from the chip and lists every feature but the subagent count with a mark and a word, and no screen-only line (B18, B8)", async () => {
   const { q, click, unmount } = await mount(state([device("local")]));
   await click(q('[data-agent-partial="grok"]'));
   const popover = document.body.querySelector('[data-agent-partial-popover="grok"]')!;
   const lines = [...popover.querySelectorAll("[data-agent-feature]")].map((line) => line.getAttribute("data-agent-feature"));
-  expect([...lines].sort()).toEqual(FEATURES.map((feature) => `${feature}:${supports(feature) ? "yes" : "no"}`).sort());
+  expect([...lines].sort()).toEqual(DRAWN.map((feature) => `${feature}:${supports(feature) ? "yes" : "no"}`).sort());
   const groups = [...popover.querySelectorAll("[data-agent-feature-group]")];
   expect(groups.map((group) => group.getAttribute("data-agent-feature-group"))).toEqual(["herdr", "sessions", "collaboration"]);
   expect(groups.map((group) => [...group.querySelectorAll("[data-agent-feature]")].map((line) => line.getAttribute("data-agent-feature")?.split(":")[0]))).toEqual([
     ["skill", "guidance", "herdr_integration", "start"],
     ["titles", "sleep", "fork"],
-    ["letters", "bell", "memory", "subagents", "spawn_guard"],
+    ["letters", "bell", "memory", "spawn_guard"],
   ]);
   expect(popover.querySelector('[data-agent-feature="letters:no"]')?.textContent).toContain("–Not available: Letters and Observer warnings");
   expect(popover.querySelector('[data-agent-feature="skill:yes"]')?.textContent).toContain("✓Works: Hide skill");

@@ -380,17 +380,17 @@ Web owners: `web/src/PaneView.tsx`, `web/src/PaneHeaderBand.tsx`, `web/src/PaneR
 
 ### Subagent count
 
-A subagent runs inside one agent's session and has no pane of its own, so it is not a delegated child: it has no row to open, and the descendant mark and the tree button never count it.
-The count comes from the agent's own hook and from nothing the shell reads off the terminal: Hide's hook keeps a `working` and a `done` count per pane and reports them as the Herdr pane tokens `hide_sub_working` and `hide_sub_done`, which the core reads in `PaneHookTokens` and projects as `PaneChildren.subagents` beside `instrumented` and its reason code (docs/agent-hooks.md owns the hook; docs/status-model.md owns the pet's badge).
-`working` is how many subagents run now, and `done` is how many this session has finished; a new session in the pane starts both again from zero, so `done` is a running tally of the session and never an unread count.
-Each count is separately knowable, and a count the core cannot read is `None`, never zero.
-Three answers are told apart, and no surface draws one as another:
-
-- An agent that reports and has none running reports a zero: the agent is working alone, and a reported zero draws no count.
-- An agent that reports, in a pane Hide cannot hear (the hook is not installed, switched off, outdated or its file unreadable, or the session started before it was), has an unknown count: it is drawn as unknown, never as zero, because a zero would claim the agent works alone.
-- An agent whose adapter declares no count, today Pi (it runs no subagents) and Cursor (its hooks never fired for a Task subagent), has no count to be unknown: no surface draws a count or an unknown mark for it, and Settings lists its subagent count as `– Not available`.
-
-Claude Code, Codex, Grok, OpenCode and omp report a count; the declaration is `subagent_counts` in `hide-agent-adapter/src/declarations.rs`, and no agent reports a blocked subagent.
+Hide draws no count of the subagents an agent runs inside its own session, on any surface: not on a sidebar row, in a pane header, in Sessions, in an Overview line, in ⌘K and not in Settings (operator decision on issue #810).
+A subagent has no pane of its own, so it is not a delegated child: it has no row to open and the operator can neither enter it nor act on it, so the number is not a state they would act on (design principle 13).
+The child marks on screen mean only the agents Hide started, which have their own panes and tree rows: the descendant mark `● N` on a row, the tree button with its `자식 에이전트 N` tooltip, and the child popover.
+A subagent count beside them would give "child" two meanings on one row.
+The count reaches the core and is used off the screen.
+Hide's hook keeps a `working` and a `done` count per pane and reports them as the Herdr pane tokens `hide_sub_working` and `hide_sub_done`; the core reads them in `PaneHookTokens`, projects them as `PaneChildren.subagents` beside `instrumented`, which no web code reads, and sums `working` for the pet's badge (docs/status-model.md, The subagent badge; the desktop app draws no pet today).
+docs/agent-hooks.md owns the hook.
+`working` is how many subagents run now, and `done` is how many this session has finished; a new session in the pane starts both again from zero, so `done` is a running tally of the session.
+Each count is separately knowable, and a count the core cannot read is `None`, never zero, because a zero would claim the agent works alone; an agent whose adapter declares no count has none to read.
+Claude Code, Codex, Grok, OpenCode and omp report a count, and Pi (it runs no subagents) and Cursor (its hooks never fired for a Task subagent) declare none; the declaration is `subagent_counts` in `hide-agent-adapter/src/declarations.rs`, and no agent reports a blocked subagent.
+Settings > Agents lists no subagent count: the kit's feature table still carries `subagents` and the core still sends it, and the Basic popover leaves that one line out.
 
 ### Closing an agent that spawned others
 
@@ -1494,7 +1494,6 @@ The shell never infers success from an old layout, sends a rollback focus or att
 A root has no Return control; a child on another device carries that device's real name in the popover.
 Ordinary delegated rows stay subdued, while a child raised by the core receives operator attention under [status-model.md](status-model.md#delegated-escalation).
 A descendant change still turns its ancestors unread without changing their own group.
-An uninstrumented mark names the unreadable relationship and never implies zero children.
 A Claude Code or Codex pane whose session Hide does not hear wears a Not connected chip in its header (`web/src/PaneConnection.tsx`); a connected pane, a pane the core has nothing to judge for, a pane whose agent is asleep, and a plain shell draw none, and the chip is a chip, never a banner.
 The chip opens a popover by click, Enter or Space; Esc closes it and hands focus back to the chip.
 A Codex on the shared server reads "Hide can't follow this Codex" with its reason, Reopen on its own server, Not now, and a quiet link "Turn off Codex's shared server…" under the sentence that it changes Codex everywhere on this Mac (or on the device's name for a device pane) and stops its running shared server; a session that started before Hide's hook reads "Started before Hide was set up" with Reopen and Not now; a setup problem (the hook is missing or out of date) names the cause and offers no Reopen, since a Reopen would change nothing.
@@ -1511,7 +1510,7 @@ The confirmation closes by itself whenever the popover stops offering the link, 
 A failure before autostart went off leaves the setting unchanged; when autostart went off but the running server did not stop, the line says so and the link stays to try again, which then only stops it (B7, B8).
 A finished answer is shown only to the operator who asked in that popover.
 `PaneChildren.connection` carries the reason, whether Reopen is offered, and a Reopen's pending or refused state as a code, and `docs/status-model.md`, Not connected and what fixes it, owns what each one means; `web/src/paneConnectionRules.ts` names what each code asks of the operator.
-An Overview agent row reuses the same agent identity and state presentation as the sidebar and shared child popover; a missing row means the current live projection has no agent there, and an uninstrumented mark never means zero.
+An Overview agent row reuses the same agent identity and state presentation as the sidebar and shared child popover; a missing row means the current live projection has no agent there.
 The header wash marks the pane Hide is showing, while the neutral split-pane outline marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
 Keys typed right after New tab or a split go to the new pane once Herdr names it, in the order typed, and keys typed while a pane's terminal is still opening reach it once it opens; nothing typed is dropped unless more than 64 KiB waits, which discards what waited, the pane can take a key only more than 3 seconds after it was typed, which discards that key because it is no longer what the operator means to run, or the keys have no pane to go to: the creation is refused or makes no pane, the new pane opens in the background, or the pane closes, is released or its terminal fails before it opens (`docs/ARCHITECTURE.md` names every reason).
 Keyboard focus follows the core's answer, not the drawing, so a second ⌘D pressed before Herdr confirms the first splits the original pane again, as Herdr does.
@@ -1578,7 +1577,7 @@ A Claude Code, Codex, Grok, Pi or omp row that is on, whose sessions Hide counts
 The count is all the row says about sessions: it lists none and does not say whether Hide hears each one, because a session that runs without Hide is fixed from its own pane header (docs/status-model.md).
 Grok and Cursor wear a `Basic` chip (`기본`, `基础`, `基本`), on or off; Claude Code, Codex, OpenCode, Pi and omp have both prompt intake and spawn refusal and wear no chip.
 Every other agent's row shows no status, on or off.
-The chip opens a popover with every feature of the kit's feature table, grouped under Herdr basics, session reading and multi-agent collaboration, with a heading, `✓ Works` or `– Not available` rather than color alone.
+The chip opens a popover with every feature of the kit's feature table but the subagent count ([Subagent count](#subagent-count)), grouped under Herdr basics, session reading and multi-agent collaboration, with a heading, `✓ Works` or `– Not available` rather than color alone.
 The chip, headings and feature text wrap within the popover in every interface language.
 Every supported agent has Herdr's integration, so no row says its status is judged from the screen; a row whose id this build does not know is omitted and its id and device are diagnosed once.
 The support order, names, links, logo ids and start eligibility come from the shared adapter's generated contract rather than web-owned lists.
@@ -1591,7 +1590,7 @@ Its question keeps the existing Answer tag in the pane header even while the nat
 Grok has native titles, Sleep and Fork from its complete session reader beside the spawn guard and subagent count from its own hook; it has no letters, so its row keeps the Basic chip.
 Its `/rename` title wins over a generated goal, an unanswered `ask_user_question` enters the question state with bounded text and choices, and a plan awaiting approval enters the approval state with the plan text.
 Cursor has conversation, search, exact resume and Sleep from its ordinary native chat reader, with generated goal then provider as its title; it has no native title, Fork, Memory extraction, subagent count, structured question/plan wait or tool-output PR discovery.
-Its Basic chip and existing guidance and spawn-guard facts remain, and its Basic popover lists `– Not available` for subagents rather than a count of zero, and it offers no model or effort choice.
+Its Basic chip and existing guidance and spawn-guard facts remain, and it offers no model or effort choice.
 Archive resume sends the selected source path to the core, which decides whether the native reader requires that exact file proof before starting.
 OpenCode has native titles, Sleep and Fork from its database reader beside letters, Memory, subagents and the spawn guard from Hide's plugin; an unanswered native `question` enters the existing question state with its text and choices even with summaries off.
 Its question keeps the existing Answer tag in the pane header, as omp's does.
