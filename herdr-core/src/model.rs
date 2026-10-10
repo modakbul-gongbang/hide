@@ -5578,7 +5578,6 @@ mod wire_enum_tests {
                 | hide_kit::Feature::Letters
                 | hide_kit::Feature::Bell
                 | hide_kit::Feature::Memory
-                | hide_kit::Feature::Subagents
                 | hide_kit::Feature::SpawnGuard
                 | hide_kit::Feature::HerdrIntegration
                 | hide_kit::Feature::Sleep

@@ -530,7 +530,6 @@ pub enum Feature {
     Letters,
     Bell,
     Memory,
-    Subagents,
     SpawnGuard,
     HerdrIntegration,
     Sleep,
@@ -540,13 +539,12 @@ pub enum Feature {
 }
 
 impl Feature {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 11] = [
         Self::Skill,
         Self::Guidance,
         Self::Letters,
         Self::Bell,
         Self::Memory,
-        Self::Subagents,
         Self::SpawnGuard,
         Self::HerdrIntegration,
         Self::Sleep,
@@ -568,7 +566,6 @@ impl AgentAdapter {
             Feature::Letters => self.prompt_hook.is_some(),
             Feature::Bell => self.bell,
             Feature::Memory => self.memory.is_some(),
-            Feature::Subagents => self.subagent_counts.is_some(),
             Feature::SpawnGuard => self.spawn_guard.is_some(),
             Feature::Sleep => self.sleep.is_some(),
             Feature::Fork => self.fork.is_some(),

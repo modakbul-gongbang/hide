@@ -469,7 +469,7 @@ Every row gets the skill stub where the system column says so.
 
 Each row also carries what Hide can do for that agent as a list of features (`hide_agent_adapter::Feature`, re-exported by `hide_kit::agents`, and `KitAgentSnapshot.features`).
 An agent without both prompt intake and spawn refusal wears the Basic chip, regardless of other missing features.
-Its popover groups the feature table into Herdr basics, session reading and multi-agent collaboration, retaining a mark and a supported/unavailable word for every feature but `subagents`, which the core still sends and the popover leaves out because no screen draws a subagent count ([UI_BEHAVIOR.md, Subagent count](UI_BEHAVIOR.md#subagent-count)):
+Its popover groups the feature table into Herdr basics, session reading and multi-agent collaboration, retaining a mark and a supported/unavailable word for every feature:
 
 | Feature | Supported when | Claude Code, Codex | OpenCode | Pi | omp | Grok | Cursor |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -477,7 +477,6 @@ Its popover groups the feature table into Herdr basics, session reading and mult
 | `guidance` | Hide's hook, plugin or extension prints the session guidance | yes | yes | yes | yes | no | yes |
 | `letters` | its prompt dialect declaration | yes | yes | yes | yes | no | no |
 | `spawn_guard` | its refusal dialect declaration | yes | yes | yes | yes | yes | yes |
-| `subagents` | its counter dialect declaration | yes | yes | no | yes | yes | yes |
 | `memory` | its Memory dialect declaration | yes | yes | yes | yes | no | no |
 | `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no | no | no | no |
 | `herdr_integration` | always: every supported agent has a Herdr target | yes | yes | yes | yes | yes | yes |

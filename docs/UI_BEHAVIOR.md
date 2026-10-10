@@ -390,7 +390,7 @@ docs/agent-hooks.md owns the hook.
 `working` is how many subagents run now, and `done` is how many this session has finished; a new session in the pane starts both again from zero, so `done` is a running tally of the session.
 Each count is separately knowable, and a count the core cannot read is `None`, never zero, because a zero would claim the agent works alone; an agent whose adapter declares no count has none to read.
 Claude Code, Codex, Grok, OpenCode and omp report a count, and Pi (it runs no subagents) and Cursor (its hooks never fired for a Task subagent) declare none; the declaration is `subagent_counts` in `hide-agent-adapter/src/declarations.rs`, and no agent reports a blocked subagent.
-Settings > Agents lists no subagent count: the kit's feature table still carries `subagents` and the core still sends it, and the Basic popover leaves that one line out.
+Settings > Agents lists no subagent count either: the kit's feature table has no `subagents` entry.
 
 ### Closing an agent that spawned others
 
@@ -1577,7 +1577,7 @@ A Claude Code, Codex, Grok, Pi or omp row that is on, whose sessions Hide counts
 The count is all the row says about sessions: it lists none and does not say whether Hide hears each one, because a session that runs without Hide is fixed from its own pane header (docs/status-model.md).
 Grok and Cursor wear a `Basic` chip (`기본`, `基础`, `基本`), on or off; Claude Code, Codex, OpenCode, Pi and omp have both prompt intake and spawn refusal and wear no chip.
 Every other agent's row shows no status, on or off.
-The chip opens a popover with every feature of the kit's feature table but the subagent count ([Subagent count](#subagent-count)), grouped under Herdr basics, session reading and multi-agent collaboration, with a heading, `✓ Works` or `– Not available` rather than color alone.
+The chip opens a popover with every feature of the kit's feature table, grouped under Herdr basics, session reading and multi-agent collaboration, with a heading, `✓ Works` or `– Not available` rather than color alone.
 The chip, headings and feature text wrap within the popover in every interface language.
 Every supported agent has Herdr's integration, so no row says its status is judged from the screen; a row whose id this build does not know is omitted and its id and device are diagnosed once.
 The support order, names, links, logo ids and start eligibility come from the shared adapter's generated contract rather than web-owned lists.

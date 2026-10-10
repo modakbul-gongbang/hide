@@ -143,7 +143,6 @@ fn a_newer_helpers_unknown_row_is_omitted_while_known_rows_keep_their_features()
             .collect::<Vec<_>>(),
         [
             Feature::Skill,
-            Feature::Subagents,
             Feature::SpawnGuard,
             Feature::HerdrIntegration,
             Feature::Sleep,
@@ -167,7 +166,6 @@ fn a_newer_helpers_unknown_row_is_omitted_while_known_rows_keep_their_features()
             Feature::Guidance,
             Feature::Letters,
             Feature::Memory,
-            Feature::Subagents,
             Feature::SpawnGuard,
             Feature::HerdrIntegration,
             Feature::Sleep,

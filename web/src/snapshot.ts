@@ -1115,7 +1115,6 @@ export type KitFeatureId =
   | "letters"
   | "bell"
   | "memory"
-  | "subagents"
   | "spawn_guard"
   | "herdr_integration"
   | "sleep"

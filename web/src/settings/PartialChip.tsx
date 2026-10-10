@@ -10,10 +10,7 @@ import { docsUrl } from "./agentRows";
  * The Basic chip of an agent outside the collaboration tier, on or off:
  * a button that opens the three groups of what works,
  * one line per feature with a mark and a word, never a colour alone. The list
- * is the kit's feature table, so it is what this build does with the agent,
- * except `subagents`: the core still sends that feature, and no screen draws a
- * subagent count, so the operator is not offered a line for it
- * (docs/UI_BEHAVIOR.md, Subagent count).
+ * is the kit's feature table, so it is what this build does with the agent.
  * Radix owns the keyboard: Enter or Space opens it, Escape closes it and
  * focus returns to the chip.
  */
@@ -46,10 +43,7 @@ export function PartialChip({ agent }: { agent: KitAgent }) {
           <section key={group.id} aria-labelledby={`${headingId}-${group.id}`} data-agent-feature-group={group.id} className="mt-sm">
             <h3 id={`${headingId}-${group.id}`} className="mb-xs text-caption font-semibold text-foreground">{t(`agents.group.${group.id}`)}</h3>
             <ul className="space-y-xs">
-              {group.features.flatMap((id) => {
-                const feature = features.find((candidate) => candidate.id === id);
-                return feature ? [{ id, supported: feature.supported }] : [];
-              }).map((feature) => (
+              {group.features.map((id) => features.find((feature) => feature.id === id)).filter((feature) => feature !== undefined).map((feature) => (
                 <li key={feature.id} className="flex items-baseline gap-xs" data-agent-feature={`${feature.id}:${feature.supported ? "yes" : "no"}`}>
                   <span aria-hidden="true" className={`shrink-0 font-mono ${feature.supported ? "text-success" : "text-muted-foreground"}`}>
                     {feature.supported ? "✓" : "–"}

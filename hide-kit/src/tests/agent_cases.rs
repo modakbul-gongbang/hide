@@ -769,7 +769,6 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
         Guidance,
         Letters,
         Memory,
-        Subagents,
         SpawnGuard,
         HerdrIntegration,
         Sleep,
@@ -797,7 +796,6 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
         Guidance,
         Letters,
         Memory,
-        Subagents,
         SpawnGuard,
         HerdrIntegration,
         Sleep,
@@ -812,7 +810,6 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
             "grok",
             &[
                 Skill,
-                Subagents,
                 SpawnGuard,
                 HerdrIntegration,
                 Sleep,
@@ -895,16 +892,9 @@ fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
             "{}: memory",
             row.id
         );
-        // The subagent count and the spawn guard need any hook of Hide's,
-        // including Grok's and Cursor's own hook files, and each its own
-        // declaration (Pi runs no subagents).
+        // The spawn guard needs any hook of Hide's, including Grok's and
+        // Cursor's own hook files, and its own declaration.
         let hook = !matches!(row.hook, HookSupport::None);
-        assert_eq!(
-            row.supports(crate::agents::Feature::Subagents),
-            hook && declared.subagent_counts.is_some(),
-            "{}: subagents",
-            row.id
-        );
         assert_eq!(
             row.supports(crate::agents::Feature::SpawnGuard),
             hook && declared.spawn_guard.is_some(),

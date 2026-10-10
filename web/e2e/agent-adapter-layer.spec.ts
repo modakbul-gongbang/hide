@@ -52,9 +52,7 @@ test("Basic chips expose three accessible groups in all four languages and retur
         const popover = page.locator('[data-agent-partial-popover="cursor"]');
         await expect(popover).toBeVisible();
         await expect(popover.getByRole("heading")).toHaveText([...headings]);
-        // The core sends twelve features and the popover draws eleven: no screen draws a subagent count.
         await expect(popover.locator("[data-agent-feature]")).toHaveCount(11);
-        await expect(popover.locator('[data-agent-feature^="subagents:"]')).toHaveCount(0);
         await expect(popover.locator('[data-agent-feature="herdr_integration:yes"]')).toContainText("✓");
         await expect(popover.locator('[data-agent-feature="letters:no"]')).toContainText("–");
         await expect(popover.locator('[data-agent-feature="sleep:yes"]')).toContainText("✓");

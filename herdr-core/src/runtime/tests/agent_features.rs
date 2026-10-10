@@ -31,15 +31,6 @@ fn every_flag_of_the_table_is_what_the_cores_own_gates_do() {
             hook && declared.memory.is_some(),
             "{kind}: memory"
         );
-        // The pane header reads a count for the agents the leaf names a
-        // counting dialect for: the instrumented ones, and Grok's and
-        // Cursor's own hooks (PRD grok-cursor-hooks); Pi runs no subagents.
-        let counted = declared.subagent_counts.is_some();
-        assert_eq!(
-            adapter.supports(Feature::Subagents),
-            counted,
-            "{kind}: subagents"
-        );
         // Letters reach exactly the kinds the mailbox hands them to.
         assert_eq!(
             adapter.supports(Feature::Letters),
@@ -133,7 +124,6 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
             .collect::<Vec<_>>(),
         [
             Feature::Skill,
-            Feature::Subagents,
             Feature::SpawnGuard,
             Feature::HerdrIntegration,
             Feature::Sleep,
@@ -165,7 +155,6 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
             Feature::Guidance,
             Feature::Letters,
             Feature::Memory,
-            Feature::Subagents,
             Feature::SpawnGuard,
             Feature::HerdrIntegration,
             Feature::Sleep,
