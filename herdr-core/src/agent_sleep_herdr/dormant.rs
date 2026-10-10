@@ -320,8 +320,13 @@ fn start_dormant(
     if !crate::node_access::is_directory(node, &work.record.cwd) {
         return DormantStartOutcome::NotStarted;
     }
-    // No prior runtime registration or lineage token is copied into a wake.
-    let name = crate::fork::fork_name("sleep", work.id.as_str());
+    // A session that held a registration wakes under the name Herdr knew it
+    // by, so the registration the wake continues still names its agent; one
+    // that held none is a new execution of the conversation, named as a fork.
+    let name = work.record.registration.as_ref().map_or_else(
+        || crate::fork::fork_name("sleep", work.id.as_str()),
+        |registration| registration.actor.name.clone(),
+    );
     let params = match wire::agent_start_params(
         pane,
         &name,
@@ -332,23 +337,41 @@ fn start_dormant(
         Ok(params) => params,
         Err(_) => return DormantStartOutcome::NotStarted,
     };
-    match crate::agent_start::start_at_shell_checked(
-        connector,
-        Some(node),
-        &format!("hide:{}:resume", work.id.as_str()),
-        pane,
-        params,
-        Duration::from_millis(AGENT_START_TIMEOUT_MS + 5_000),
-        &|| {
-            crate::live::confirm_session_launch(
-                node,
-                &work.record.kind,
-                &work.record.native_session_id,
-                Some(&work.record.cwd),
-                work.record.source_reference.as_ref(),
-            )
-        },
-    ) {
+    let confirm = || {
+        crate::live::confirm_session_launch(
+            node,
+            &work.record.kind,
+            &work.record.native_session_id,
+            Some(&work.record.cwd),
+            work.record.source_reference.as_ref(),
+        )
+    };
+    let correlation = format!("hide:{}:resume", work.id.as_str());
+    let answer_timeout = Duration::from_millis(AGENT_START_TIMEOUT_MS + 5_000);
+    // The old pane closed a moment ago, and Herdr refuses its agent's name
+    // until it has forgotten that agent.
+    let started = if work.record.registration.is_some() {
+        crate::agent_start::start_at_shell_reusing_name(
+            connector,
+            Some(node),
+            &correlation,
+            pane,
+            params,
+            answer_timeout,
+            &confirm,
+        )
+    } else {
+        crate::agent_start::start_at_shell_checked(
+            connector,
+            Some(node),
+            &correlation,
+            pane,
+            params,
+            answer_timeout,
+            &confirm,
+        )
+    };
+    match started {
         Ok(_) => DormantStartOutcome::Started,
         Err(StartError::NotStarted(_)) | Err(StartError::Herdr(ApiError::Remote { .. })) => {
             DormantStartOutcome::NotStarted
@@ -360,5 +383,101 @@ fn start_dormant(
             }));
             DormantStartOutcome::Unknown
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_sleep::{DormantRegistration, fixture_record};
+    use crate::fake_herdr::FakeHerdr;
+    use serde_json::json;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Runs one dormant start against a Herdr that refuses the first
+    /// `refusals` starts with `agent_name_taken` and returns the outcome with
+    /// the name each `agent.start` carried.
+    fn wake(registered: bool, refusals: usize) -> (DormantStartOutcome, Vec<String>) {
+        let folder = tempfile::tempdir().unwrap();
+        let mut record = fixture_record("w1:p1");
+        record.cwd = folder.path().to_str().unwrap().into();
+        record.wake_pane_id = Some("w1:p1".into());
+        if registered {
+            let actor = crate::delivery::Actor {
+                pane_id: "w1:p1".into(),
+                name: "reviewer".into(),
+                kind: "claude".into(),
+                device_id: "test-node".into(),
+                session: Some("digest".into()),
+            };
+            record.registration = Some(DormantRegistration {
+                id: "agent-2".into(),
+                actor,
+            });
+        }
+        let names = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&names);
+        let starts = Arc::new(AtomicUsize::new(0));
+        let herdr =
+            FakeHerdr::start_with_errors("dormant-wake-name", move |method, params| match method {
+                "pane.process_info" => Ok(json!({"type":"pane_process_info","process_info":{
+                    "pane_id":"w1:p1","shell_pid":42,"foreground_process_group_id":42,
+                    "foreground_processes":[{"pid":42,"name":"zsh"}]
+                }})),
+                "agent.start" => {
+                    seen.lock()
+                        .unwrap()
+                        .push(params["name"].as_str().unwrap().to_owned());
+                    if starts.fetch_add(1, Ordering::SeqCst) < refusals {
+                        Err((
+                            "agent_name_taken".into(),
+                            "agent name reviewer is already used".into(),
+                        ))
+                    } else {
+                        Ok(json!({"type":"agent_started","argv":[],"agent":{
+                            "pane_id":"w1:p1","terminal_id":"term_1","workspace_id":"w1",
+                            "tab_id":"w1:t1","focused":false,"agent_status":"idle","revision":1
+                        }}))
+                    }
+                }
+                // A name Herdr still holds after it is read is its refusal.
+                "agent.get" => Ok(json!({"type":"agent_info","agent":{
+                    "pane_id":"w1:p2","terminal_id":"term_2","workspace_id":"w1",
+                    "tab_id":"w1:t2","name":"held","focused":false,
+                    "agent_status":"unknown","revision":0,"launch_pending":true
+                }})),
+                other => panic!("unexpected {other}"),
+            });
+        let work = DormantWork {
+            id: SleepId::new().unwrap(),
+            record,
+        };
+        let node = hide_node::Local::of_process();
+        let outcome = start_dormant(
+            &herdr.connector(),
+            &node,
+            &work,
+            vec!["--resume".into(), work.record.native_session_id.clone()],
+        );
+        let names = names.lock().unwrap().clone();
+        (outcome, names)
+    }
+
+    #[test]
+    fn a_session_that_held_a_registration_wakes_under_its_name_and_waits_for_herdr_to_release_it() {
+        let (outcome, names) = wake(true, 2);
+        assert!(matches!(outcome, DormantStartOutcome::Started));
+        assert_eq!(names, ["reviewer", "reviewer", "reviewer"]);
+    }
+
+    #[test]
+    fn a_session_that_held_none_wakes_as_a_fork_and_takes_a_refusal_as_the_answer() {
+        let (outcome, names) = wake(false, 0);
+        assert!(matches!(outcome, DormantStartOutcome::Started));
+        assert!(names[0].starts_with("fork-sleep-"), "{names:?}");
+        let (outcome, names) = wake(false, 1);
+        assert!(matches!(outcome, DormantStartOutcome::NotStarted));
+        assert_eq!(names.len(), 1);
     }
 }

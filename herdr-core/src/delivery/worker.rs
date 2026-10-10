@@ -718,8 +718,14 @@ fn run(
         let state = runtime
             .lock()
             .map_err(|_| "delivery_unavailable".to_owned())
-            .and_then(|guard| Ok((guard.delivery_state()?, guard.delivery_registrations_gone())));
-        let (state, gone) = match state {
+            .and_then(|guard| {
+                Ok((
+                    guard.delivery_state()?,
+                    guard.delivery_registrations_gone(),
+                    guard.delivery_registration_rebinds(),
+                ))
+            });
+        let (state, gone, rebinds) = match state {
             Ok(state) => state,
             Err(code) => {
                 for request in batch {
@@ -735,6 +741,7 @@ fn run(
             }
             maintenance_at = now;
             if gone.is_empty()
+                && rebinds.is_empty()
                 && !state.letters.iter().any(|letter| {
                     letter.intake_overdue(now)
                         || letter.answer_overdue(now)
@@ -750,9 +757,10 @@ fn run(
         let mut candidate = (*state).clone();
         candidate.expire(now);
         candidate.end_overdue_answer_waits(now);
+        let moved = crate::coordination::rebind(&mut candidate, &rebinds);
         let ended = crate::coordination::end_gone(&mut candidate, &gone, now);
         let mut results = Vec::with_capacity(batch.len());
-        let mut transitions = !ended.is_empty();
+        let mut transitions = !ended.is_empty() || !moved.is_empty();
         for request in &batch {
             let before = candidate.clone();
             let current = match &request.effect {
@@ -888,6 +896,10 @@ fn run(
                         "sender_pane":letter.sender.pane_id,"recipient":letter.recipient.name,
                         "recipient_pane":letter.recipient.pane_id,"reason":why.as_str()}));
                 }
+            }
+            for (id, from) in &moved {
+                crate::diagnostic!(json!({"component":"coordination","kind":"agent.continued",
+                    "agent_id":id,"from_pane_id":from.pane_id}));
             }
             for (record, reason) in &ended {
                 crate::diagnostic!(json!({"component":"coordination","kind":"agent.ended",

@@ -836,6 +836,79 @@ pub(crate) fn end_gone(
     ended
 }
 
+/// A sleeping session's registration continued by the pane that woke it.
+/// The core started the wake and saved which registration the sleep held,
+/// so the registration, its letters and its watch move to the new pane's
+/// execution rather than ending with the old pane and being made again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Rebind {
+    /// The execution the registration was held by when its pane closed.
+    pub(crate) from: Actor,
+    /// The woken pane's execution, as Herdr reports it now.
+    pub(crate) to: Actor,
+    /// Herdr's own id of the woken pane, which a local actor spells the same.
+    pub(crate) pane: String,
+}
+
+/// Points each registration at the pane that woke it, with the letters,
+/// watches and spawn receipt that address it. Only a live registration still
+/// held by `from` moves, and never onto a pane another registration holds.
+/// Returns the registrations it moved.
+pub(crate) fn rebind(
+    ledger: &mut Ledger,
+    rebinds: &std::collections::BTreeMap<String, Rebind>,
+) -> Vec<(String, Actor)> {
+    let mut moved = Vec::new();
+    for (id, rebind) in rebinds {
+        let held = ledger.agents.iter().any(|record| {
+            &record.id == id && !record.ended && record.actor.same_identity(&rebind.from)
+        });
+        let taken = ledger.agents.iter().any(|record| {
+            &record.id != id
+                && !record.ended
+                && (record.actor.same_identity(&rebind.to) || record.pane == rebind.pane)
+        });
+        if !held || taken {
+            continue;
+        }
+        let Some(record) = ledger.agents.iter_mut().find(|record| &record.id == id) else {
+            continue;
+        };
+        if record.instance == record.pane {
+            record.instance = rebind.pane.clone();
+        }
+        let old_pane = std::mem::replace(&mut record.pane, rebind.pane.clone());
+        record.actor = rebind.to.clone();
+        for letter in &mut ledger.letters {
+            for party in [&mut letter.sender, &mut letter.recipient] {
+                if party.same_identity(&rebind.from) {
+                    *party = rebind.to.clone();
+                }
+            }
+            if let Some(warning) = letter.watch_warning.as_mut()
+                && warning.target.same_identity(&rebind.from)
+            {
+                warning.target = rebind.to.clone();
+            }
+        }
+        for watch in &mut ledger.watches {
+            for party in [&mut watch.parent, &mut watch.target] {
+                if party.same_identity(&rebind.from) {
+                    *party = rebind.to.clone();
+                }
+            }
+        }
+        for spawn in &mut ledger.spawns {
+            if spawn.child.as_ref() == Some(id) && spawn.pane.as_deref() == Some(old_pane.as_str())
+            {
+                spawn.pane = Some(rebind.pane.clone());
+            }
+        }
+        moved.push((id.clone(), rebind.from.clone()));
+    }
+    moved
+}
+
 fn allocate(ledger: &mut Ledger, prefix: &str) -> Result<String, String> {
     let id = ledger.next_id;
     ledger.next_id = id.checked_add(1).ok_or("capacity")?;
@@ -1876,7 +1949,7 @@ mod tests {
                 3,
             )
             .unwrap();
-            let report = mailbox::send(
+            let report = crate::delivery::mailbox::send(
                 &mut ledger,
                 &child_actor,
                 &actor,
@@ -1939,7 +2012,7 @@ mod tests {
             3,
         )
         .unwrap();
-        let report = mailbox::send(
+        let report = crate::delivery::mailbox::send(
             &mut ledger,
             &child_actor,
             &actor,
@@ -1990,7 +2063,7 @@ mod tests {
                 3,
             )
             .unwrap();
-            let report = mailbox::send(
+            let report = crate::delivery::mailbox::send(
                 &mut ledger,
                 &child_actor,
                 &parent,
@@ -2042,5 +2115,138 @@ mod tests {
             assert_eq!(restored, before);
             assert_eq!(restored.watches[0].id, rearmed.id);
         }
+    }
+
+    fn woken(from: &Actor, pane: &str) -> Rebind {
+        Rebind {
+            from: from.clone(),
+            to: Actor {
+                pane_id: pane.into(),
+                ..from.clone()
+            },
+            pane: pane.into(),
+        }
+    }
+
+    #[test]
+    fn a_woken_pane_takes_over_the_registration_its_letters_watch_and_spawn_receipt() {
+        let (mut ledger, parent, _, spawn, child) = pending_spawn();
+        let from = child.actor.clone();
+        let bound = Mutation::BindChild {
+            id: spawn.clone(),
+            record: child,
+        };
+        apply(&mut ledger, &parent, &bound, 3).unwrap();
+        let watch = watch::start(&mut ledger, &parent, &from, 4).unwrap();
+        let ask = crate::delivery::mailbox::send(
+            &mut ledger,
+            &parent,
+            &from,
+            "ask",
+            "body",
+            "request",
+            None,
+            5,
+        )
+        .unwrap();
+        let report = crate::delivery::mailbox::send(
+            &mut ledger,
+            &from,
+            &parent,
+            "done",
+            "body",
+            "report",
+            None,
+            6,
+        )
+        .unwrap();
+        let record = ledger
+            .agents
+            .iter()
+            .find(|r| r.actor == from)
+            .unwrap()
+            .clone();
+        let before = ledger.clone();
+
+        let rebinds =
+            std::collections::BTreeMap::from([(record.id.clone(), woken(&from, "woken"))]);
+        assert_eq!(
+            rebind(&mut ledger, &rebinds),
+            [(record.id.clone(), from.clone())]
+        );
+
+        let moved = ledger.agents.iter().find(|r| r.id == record.id).unwrap();
+        assert_eq!(moved.pane, "woken");
+        assert_eq!(moved.actor.pane_id, "woken");
+        assert_eq!(moved.actor.session, from.session);
+        // Who it is and who is responsible for it do not move.
+        assert_eq!(
+            (&moved.id, &moved.name, &moved.parent, moved.ended),
+            (&record.id, &record.name, &record.parent, false)
+        );
+        let to = &moved.actor;
+        let ledger_watch = ledger.watches.iter().find(|w| w.id == watch.id).unwrap();
+        assert_eq!((&ledger_watch.target, &ledger_watch.parent), (to, &parent));
+        let letter = |id: &str| ledger.letters.iter().find(|l| l.id == id).unwrap();
+        assert_eq!(&letter(&ask.id).recipient, to);
+        assert_eq!(&letter(&report.id).sender, to);
+        assert_eq!(
+            ledger
+                .spawns
+                .iter()
+                .find(|s| s.id == spawn)
+                .unwrap()
+                .pane
+                .as_deref(),
+            Some("woken")
+        );
+        ledger.validate().unwrap();
+        assert_eq!(ledger.watches.len(), before.watches.len());
+        // Moving it again is no change: the registration is no longer held
+        // by the execution the move names.
+        let settled = ledger.clone();
+        assert!(rebind(&mut ledger, &rebinds).is_empty());
+        assert_eq!(ledger, settled);
+    }
+
+    #[test]
+    fn a_registration_ended_or_pane_taken_by_another_registration_does_not_move() {
+        let (mut ledger, parent, _, spawn, child) = pending_spawn();
+        let from = child.actor.clone();
+        let bound = Mutation::BindChild {
+            id: spawn,
+            record: child,
+        };
+        apply(&mut ledger, &parent, &bound, 3).unwrap();
+        let id = ledger
+            .agents
+            .iter()
+            .find(|r| r.actor == from)
+            .unwrap()
+            .id
+            .clone();
+        // Another live registration already sits on the woken pane.
+        let other = register(
+            &mut ledger,
+            record("woken", "other-session", None),
+            &Actor {
+                pane_id: "woken".into(),
+                name: "woken".into(),
+                kind: "codex".into(),
+                device_id: "local".into(),
+                session: crate::wire::session_digest("other-session"),
+            },
+        );
+        let before = ledger.clone();
+        let rebinds = std::collections::BTreeMap::from([(id.clone(), woken(&from, "woken"))]);
+        assert!(rebind(&mut ledger, &rebinds).is_empty());
+        assert_eq!(ledger, before);
+        assert!(!other.is_empty());
+        // An ended registration is not revived by a late move.
+        end_record(&mut ledger, &id, 9);
+        ledger.agents.retain(|r| r.pane != "woken");
+        let ended = ledger.clone();
+        assert!(rebind(&mut ledger, &rebinds).is_empty());
+        assert_eq!(ledger, ended);
     }
 }

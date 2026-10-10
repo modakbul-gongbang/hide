@@ -3,7 +3,7 @@ use super::*;
 use crate::agent_sleep::{AgentSleepStore, DormantPhase, DormantRecord, SleepId};
 
 impl Runtime {
-    pub(super) fn begin_dormant_sleep(&mut self, pane_id: &str, now: u64) -> bool {
+    pub(in crate::runtime) fn begin_dormant_sleep(&mut self, pane_id: &str, now: u64) -> bool {
         let Some(agent) = self
             .snapshot
             .navigator
@@ -119,6 +119,7 @@ impl Runtime {
             since_unix_ms: now,
             transition_started_unix_ms: now,
             reason: None,
+            registration: self.delivery_registration_of(pane_id),
         };
         if let Err(reason) = self.snapshot.ui_state.agent_sleep.admit_dormant(record) {
             self.set_error("agent_sleep.admission_refused", reason, false);
@@ -287,7 +288,9 @@ impl Runtime {
             .get(id)
             .is_some_and(|record| !record.closed)
         {
-            self.snapshot.ui_state.agent_sleep.dormant.remove(id);
+            if let Some(record) = self.snapshot.ui_state.agent_sleep.dormant.remove(id) {
+                self.release_dormant_registration(&record);
+            }
         } else if let Some(record) = self.snapshot.ui_state.agent_sleep.dormant.get_mut(id) {
             record.phase = DormantPhase::Failed;
             record.reason = Some(reason.into());
@@ -341,6 +344,20 @@ impl Runtime {
 
     pub(in crate::runtime) fn refresh_dormant_rows(&mut self) -> bool {
         let mut rows = self.snapshot.ui_state.agent_sleep.dormant_snapshots();
+        // A session whose wake the registration is moving to is awake: its
+        // row is the live one, not a sleeping row beside it.
+        rows.retain(|row| {
+            !self
+                .snapshot
+                .ui_state
+                .agent_sleep
+                .dormant
+                .get(&row.sleep_id)
+                .and_then(|record| record.registration.as_ref())
+                .is_some_and(|registration| {
+                    self.registration_rebinds.contains_key(&registration.id)
+                })
+        });
         for row in &mut rows {
             row.checking = self
                 .dormant_status_check
@@ -901,7 +918,10 @@ impl Runtime {
         true
     }
 
-    pub(super) fn confirm_dormant_wake(&mut self, agents: &[SidebarAgentSnapshot]) {
+    /// Confirms each wake whose pane shows the saved conversation and, for a
+    /// session that held a registration, keeps the record until the woken
+    /// pane has taken the registration over. Returns whether anything moved.
+    pub(super) fn confirm_dormant_wake(&mut self, agents: &[SidebarAgentSnapshot]) -> bool {
         let waiting = |record: &DormantRecord| {
             record.closed
                 && record.connection_generation == self.live_generation
@@ -919,7 +939,7 @@ impl Runtime {
             .values()
             .any(waiting)
         {
-            return;
+            return false;
         }
         // One current-pane index, only while a wake needs confirmation.
         // Archive size is bounded; never scan all agents once per record.
@@ -947,20 +967,164 @@ impl Runtime {
                                     == Some(record.native_session_id.as_str())
                         })
             })
-            .map(|(id, record)| (id.clone(), record.context.checkout_path.clone()))
+            .map(|(id, record)| (id.clone(), record.clone()))
             .collect::<Vec<_>>();
-        if confirmed.is_empty() {
-            return;
-        }
-        for (id, path) in confirmed {
+        let mut changed = false;
+        let mut rows_changed = false;
+        for (id, record) in confirmed {
+            if let (Some(registration), Some(pane)) =
+                (&record.registration, record.wake_pane_id.as_deref())
+                && !self.continue_dormant_registration(registration, pane)
+            {
+                // The woken pane has not taken the registration over yet;
+                // the record keeps holding it until the ledger shows it.
+                rows_changed |= self.refresh_dormant_rows();
+                continue;
+            }
             self.snapshot.ui_state.agent_sleep.dormant.remove(&id);
-            self.finish_agent_effect(&path, &format!("sleep:{}", id.as_str()));
+            self.finish_agent_effect(
+                &record.context.checkout_path,
+                &format!("sleep:{}", id.as_str()),
+            );
             crate::diagnostic!(
                 serde_json::json!({"component":"agent_sleep", "kind":"agent_sleep.wake_confirmed", "sleep_id":id.as_str()})
             );
+            changed = true;
         }
-        self.refresh_dormant_rows();
-        self.persist_ui_state();
+        if changed {
+            self.refresh_dormant_rows();
+            self.persist_ui_state();
+        }
+        changed || rows_changed
+    }
+
+    /// Settles the registrations of woken sessions against the delivery
+    /// ledger and the panes now observed, when the session projection is
+    /// not the one asking.
+    pub(crate) fn settle_dormant_registrations(&mut self) -> bool {
+        if !self
+            .snapshot
+            .ui_state
+            .agent_sleep
+            .dormant
+            .values()
+            .any(|record| record.registration.is_some() && record.wake_pane_id.is_some())
+        {
+            return false;
+        }
+        let agents = std::mem::take(&mut self.snapshot.navigator.agents);
+        let changed = self.confirm_dormant_wake(&agents);
+        self.snapshot.navigator.agents = agents;
+        changed
+    }
+
+    /// Whether the registration a woken pane continues is now the pane's
+    /// own, so the sleeping record can go. Otherwise it asks the delivery
+    /// store to move the registration, and says the record must stay.
+    /// A registration that cannot be continued is let go, so it ends with
+    /// the pane that held it as any other would.
+    fn continue_dormant_registration(
+        &mut self,
+        registration: &crate::agent_sleep::DormantRegistration,
+        pane: &str,
+    ) -> bool {
+        let Ok(ledger) = self.delivery_ledger.as_ref() else {
+            return false;
+        };
+        let Some(record) = ledger
+            .agents
+            .iter()
+            .find(|record| record.id == registration.id)
+            .filter(|record| !record.ended)
+        else {
+            // It was ended while the session slept: nothing to continue.
+            self.registration_rebinds.remove(&registration.id);
+            return true;
+        };
+        let Some(observed) = self.delivery_observations.get(pane) else {
+            return false;
+        };
+        if record.actor.same_identity(&observed.actor) {
+            self.registration_rebinds.remove(&registration.id);
+            crate::diagnostic!(serde_json::json!({
+                "component": "agent_sleep", "kind": "agent_sleep.registration_continued",
+                "agent_id": registration.id, "pane_id": pane,
+            }));
+            return true;
+        }
+        // The woken pane's own session is read after its agent shows; the
+        // registration is the same conversation only when the digests match.
+        let Some(session) = observed.actor.session.as_deref() else {
+            return false;
+        };
+        let refusal = if !record.actor.same_identity(&registration.actor) {
+            Some("registration_moved")
+        } else if observed.actor.device_id != registration.actor.device_id
+            || hide_agent_adapter::canonical_kind(&observed.actor.kind)
+                != hide_agent_adapter::canonical_kind(&registration.actor.kind)
+            || registration.actor.session.as_deref() != Some(session)
+        {
+            Some("identity_changed")
+        } else if ledger.agents.iter().any(|other| {
+            other.id != record.id
+                && !other.ended
+                && (other.actor.same_identity(&observed.actor)
+                    || other.pane == observed.raw_pane_id)
+        }) {
+            Some("pane_registered")
+        } else {
+            None
+        };
+        if let Some(reason) = refusal {
+            crate::diagnostic!(serde_json::json!({
+                "component": "agent_sleep", "kind": "agent_sleep.registration_refused",
+                "agent_id": registration.id, "pane_id": pane, "reason": reason,
+            }));
+            self.registration_rebinds.remove(&registration.id);
+            self.release_dormant_hold(&registration.id);
+            return true;
+        }
+        let rebind = crate::coordination::Rebind {
+            from: registration.actor.clone(),
+            to: observed.actor.clone(),
+            pane: observed.raw_pane_id.clone(),
+        };
+        self.registrations_gone.remove(&registration.id);
+        self.registration_rebinds
+            .insert(registration.id.clone(), rebind);
+        false
+    }
+
+    /// A sleeping session that is no longer woken lets its registration
+    /// end with the pane that held it, if that pane is gone.
+    fn release_dormant_registration(&mut self, record: &DormantRecord) {
+        if let Some(registration) = &record.registration {
+            self.release_dormant_hold(&registration.id);
+        }
+    }
+
+    fn release_dormant_hold(&mut self, id: &str) {
+        let gone = self
+            .delivery_ledger
+            .as_ref()
+            .ok()
+            .and_then(|ledger| {
+                ledger
+                    .agents
+                    .iter()
+                    .find(|record| record.id == id && !record.ended)
+            })
+            .is_some_and(|record| {
+                self.delivery_panes
+                    .get(&record.actor.device_id)
+                    .and_then(|read| read.panes.as_ref())
+                    .is_some_and(|panes| !panes.contains(&record.pane))
+            });
+        if gone {
+            self.registrations_gone
+                .entry(id.to_owned())
+                .or_insert(crate::coordination::PaneGone::Left);
+        }
     }
 
     pub(super) fn expire_dormant_confirmation(&mut self, now: u64) -> bool {

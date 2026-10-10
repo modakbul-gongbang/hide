@@ -142,6 +142,7 @@ fn dormant_intent(runtime: &mut Runtime) -> crate::agent_sleep::SleepId {
             since_unix_ms: 1,
             transition_started_unix_ms: 1,
             reason: None,
+            registration: None,
         })
         .unwrap()
 }
@@ -1366,4 +1367,336 @@ fn the_minute_decision_sleeps_only_an_off_screen_agent_past_the_chosen_hours() {
         row(&runtime).get("sleep").is_none(),
         "awake until the end lands"
     );
+}
+
+const WOKEN: &str = "w-order:t3:p";
+const CHILD_NATIVE: &str = "child-native";
+
+fn delivery_agent(id: &str, pane: &str, kind: &str, session: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id, "pane_id": pane, "agent": kind, "agent_status": "idle",
+        "state_change_seq": 4, "lineage_session": crate::wire::session_digest(session)
+    })
+}
+
+fn delivery_panes(agents: Vec<serde_json::Value>) -> SessionSnapshotPayload {
+    serde_json::from_value(serde_json::json!({ "agents": agents })).unwrap()
+}
+
+/// A lead that delegated a child and watches it, the child asleep with its
+/// pane closed, and the delivery store running over a ledger on disk.
+struct SleepingChild {
+    shared: Arc<std::sync::Mutex<Runtime>>,
+    client: crate::delivery::worker::Client,
+    _worker: crate::delivery::worker::Worker,
+    _root: tempfile::TempDir,
+    ledger_path: PathBuf,
+    node: String,
+    id: crate::agent_sleep::SleepId,
+    child: crate::delivery::Actor,
+    letter: String,
+}
+
+impl SleepingChild {
+    fn new() -> Self {
+        use crate::coordination::AgentRecord;
+        let root = tempfile::tempdir().unwrap();
+        let ledger_path = root.path().join("delivery-ledger.json");
+        let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+        let node = runtime.node.as_str().to_owned();
+        runtime.ingest_session(Ok(session(Some(4))));
+        runtime
+            .snapshot
+            .navigator
+            .agents
+            .iter_mut()
+            .find(|agent| agent.pane_id == SLEEPER)
+            .unwrap()
+            .row_facts
+            .get_or_insert_with(Default::default);
+        let awake = || {
+            delivery_panes(vec![
+                delivery_agent("lead", "lead", "codex", "lead-native"),
+                delivery_agent("reviewer", SLEEPER, "claude", CHILD_NATIVE),
+            ])
+        };
+        runtime.observe_delivery(&node, &awake(), Some("scope"), None);
+        let mut ledger = crate::delivery::ledger::Ledger::default();
+        for (id, pane, parent) in [
+            ("agent-1", "lead", None),
+            ("agent-2", SLEEPER, Some("agent-1")),
+        ] {
+            ledger.agents.push(AgentRecord {
+                id: id.into(),
+                name: (if pane == SLEEPER { "reviewer" } else { "lead" }).into(),
+                machine: node.clone(),
+                host_scope: "scope".into(),
+                native_machine: "fixture-machine".into(),
+                session: format!("{}-native", if pane == SLEEPER { "child" } else { "lead" }),
+                instance: pane.into(),
+                pane: pane.into(),
+                parent: parent.map(Into::into),
+                origin: None,
+                project: None,
+                actor: runtime.delivery_observations[pane].actor.clone(),
+                ended: false,
+            });
+        }
+        ledger.next_id = 3;
+        let lead = ledger.agents[0].actor.clone();
+        let child = ledger.agents[1].actor.clone();
+        let at = crate::delivery::worker::now();
+        crate::delivery::watch::start(&mut ledger, &lead, &child, at).unwrap();
+        let letter = crate::delivery::mailbox::send(
+            &mut ledger,
+            &lead,
+            &child,
+            "ask",
+            "review the parser",
+            "request",
+            None,
+            at,
+        )
+        .unwrap();
+        ledger.validate().unwrap();
+        runtime.delivery_ledger = Ok(Arc::new(ledger));
+        // Herdr's panes are read once the ledger can judge a pane that left.
+        runtime.observe_delivery(&node, &awake(), Some("scope"), None);
+
+        // The sleep saves the registration it closes the pane under.
+        assert!(runtime.begin_dormant_sleep(SLEEPER, 1));
+        assert!(runtime.snapshot.status.last_error.is_none());
+        let (id, saved) = {
+            let (id, record) = runtime
+                .snapshot
+                .ui_state
+                .agent_sleep
+                .dormant
+                .iter()
+                .next()
+                .unwrap();
+            (id.clone(), record.registration.clone().unwrap())
+        };
+        assert_eq!((saved.id.as_str(), &saved.actor), ("agent-2", &child));
+        let record = runtime
+            .snapshot
+            .ui_state
+            .agent_sleep
+            .dormant
+            .get_mut(&id)
+            .unwrap();
+        record.closed = true;
+        record.phase = crate::agent_sleep::DormantPhase::Sleeping;
+        runtime.refresh_dormant_rows();
+        assert_eq!(runtime.snapshot.navigator.sleeping_sessions.len(), 1);
+
+        let shared = Arc::new(std::sync::Mutex::new(runtime));
+        let (worker, client) = crate::delivery::worker::Worker::spawn(
+            Arc::downgrade(&shared),
+            crate::handle::ChangeNotifier::noop(),
+            ledger_path.clone(),
+        )
+        .unwrap();
+        Self {
+            shared,
+            client,
+            _worker: worker,
+            _root: root,
+            ledger_path,
+            node,
+            id,
+            child,
+            letter: letter.id,
+        }
+    }
+
+    /// A pass of the delivery store over what the runtime has asked of it.
+    fn pass(&self) {
+        self.client
+            .submit(
+                crate::delivery::worker::Effect::HumanClaim,
+                Duration::from_secs(5),
+            )
+            .unwrap();
+    }
+
+    /// Herdr no longer lists the closed pane.
+    fn pane_closed(&self) {
+        self.shared.lock().unwrap().observe_delivery(
+            &self.node,
+            &delivery_panes(vec![delivery_agent("lead", "lead", "codex", "lead-native")]),
+            Some("scope"),
+            None,
+        );
+    }
+
+    /// The core started the conversation again in a new pane, which Herdr
+    /// lists as an agent of `session` and the session read shows.
+    fn woken(&self, session: &str) {
+        let mut runtime = self.shared.lock().unwrap();
+        let record = runtime
+            .snapshot
+            .ui_state
+            .agent_sleep
+            .dormant
+            .get_mut(&self.id)
+            .unwrap();
+        record.phase = crate::agent_sleep::DormantPhase::Starting;
+        record.wake_pane_id = Some(WOKEN.into());
+        record.wake_tab_id = Some("w-order:t3".into());
+        runtime.observe_delivery(
+            &self.node,
+            &delivery_panes(vec![
+                delivery_agent("lead", "lead", "codex", "lead-native"),
+                delivery_agent("reviewer", WOKEN, "claude", session),
+            ]),
+            Some("scope"),
+            None,
+        );
+        let mut confirmed = tab_order_payload(
+            CHECKOUT,
+            &["w-order:t1", "w-order:t3"],
+            &["w-order:t1", "w-order:t3"],
+            "w-order:t1",
+        );
+        let mut agent = session_agent();
+        agent.pane_id = Some(WOKEN.into());
+        confirmed.agents.push(agent);
+        runtime.ingest_session(Ok(confirmed));
+    }
+}
+
+/// The woken pane's agent as the session read lists it: the saved
+/// conversation, with the facts that confirm it.
+fn session_agent() -> crate::sidebar::SessionAgentPayload {
+    let mut agent = session(Some(5)).agents.remove(0);
+    agent.facts = Some(crate::request_view::RowFacts {
+        native_session_id: Some("11111111-2222-3333-4444-555555555555".into()),
+        ..Default::default()
+    });
+    agent
+}
+
+/// A delegated child put to sleep closes its pane and wakes in another. The
+/// registration, the letters addressed to it and the watch on it belong to
+/// the conversation, so the pane that wakes it takes them over: nothing is
+/// guessed from a name, and nothing ends while it sleeps.
+#[test]
+fn a_sleeping_childs_registration_letters_and_watch_pass_to_the_pane_that_wakes_it() {
+    let sleeping = SleepingChild::new();
+
+    // While it sleeps, the registration and the watch on it stay, and
+    // nothing is queued to end them.
+    sleeping.pane_closed();
+    {
+        let mut runtime = sleeping.shared.lock().unwrap();
+        assert!(runtime.delivery_registrations_gone().is_empty());
+        assert!(runtime.delivery_watch_work().iter().all(|work| !work.gone));
+    }
+    sleeping.pass();
+    {
+        let runtime = sleeping.shared.lock().unwrap();
+        let ledger = runtime.delivery_state().unwrap();
+        assert!(ledger.agents.iter().all(|record| !record.ended));
+        assert_eq!(ledger.watches.len(), 1);
+        assert_eq!(
+            ledger.letters[0].state,
+            crate::delivery::ledger::State::Pending
+        );
+    }
+
+    sleeping.woken(CHILD_NATIVE);
+    {
+        // The record stays until the ledger shows the pane took the
+        // registration over, and it asks for exactly that move.
+        let runtime = sleeping.shared.lock().unwrap();
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .agent_sleep
+                .dormant
+                .contains_key(&sleeping.id)
+        );
+        assert!(runtime.snapshot.navigator.sleeping_sessions.is_empty());
+        let rebinds = runtime.delivery_registration_rebinds();
+        assert_eq!(rebinds.len(), 1);
+        assert_eq!(rebinds["agent-2"].from, sleeping.child);
+        assert_eq!(rebinds["agent-2"].to.pane_id, WOKEN);
+        assert_eq!(rebinds["agent-2"].to.name, "reviewer");
+        assert!(
+            !runtime
+                .delivery_registrations_gone()
+                .contains_key("agent-2")
+        );
+    }
+    sleeping.pass();
+    wait(
+        &sleeping.shared,
+        "the sleeping record to be settled",
+        |runtime| runtime.snapshot.ui_state.agent_sleep.dormant.is_empty(),
+    );
+
+    let runtime = sleeping.shared.lock().unwrap();
+    assert!(runtime.delivery_registration_rebinds().is_empty());
+    let ledger = runtime.delivery_state().unwrap();
+    let record = ledger
+        .agents
+        .iter()
+        .find(|record| record.id == "agent-2")
+        .unwrap();
+    assert!(!record.ended);
+    assert_eq!(record.pane, WOKEN);
+    assert_eq!(record.instance, WOKEN);
+    assert_eq!(record.parent.as_deref(), Some("agent-1"));
+    assert_eq!(record.actor.pane_id, WOKEN);
+    assert_eq!(record.actor.session, sleeping.child.session);
+    assert_eq!(ledger.watches.len(), 1);
+    assert_eq!(ledger.watches[0].target.pane_id, WOKEN);
+    let letter = ledger
+        .letters
+        .iter()
+        .find(|letter| letter.id == sleeping.letter)
+        .unwrap();
+    assert_eq!(letter.recipient.pane_id, WOKEN);
+    assert_eq!(letter.state, crate::delivery::ledger::State::Pending);
+    assert_eq!(
+        crate::delivery::ledger::load(&sleeping.ledger_path).unwrap(),
+        *ledger
+    );
+    // The old pane stays closed: only the woken one is a live address now.
+    assert!(crate::coordination::resolve_actor(&ledger, SLEEPER).is_none());
+    assert_eq!(
+        crate::coordination::resolve_actor(&ledger, "reviewer")
+            .unwrap()
+            .pane_id,
+        WOKEN
+    );
+}
+
+/// A pane that is not the same conversation never inherits the registration:
+/// it ends with the pane that held it, as any registration whose pane is gone.
+#[test]
+fn a_woken_pane_of_another_conversation_inherits_nothing_and_the_registration_ends() {
+    let sleeping = SleepingChild::new();
+    sleeping.pane_closed();
+    sleeping.woken("another-native");
+    sleeping.pass();
+    wait(
+        &sleeping.shared,
+        "the sleeping record to be released",
+        |runtime| runtime.snapshot.ui_state.agent_sleep.dormant.is_empty(),
+    );
+    sleeping.pass();
+    let runtime = sleeping.shared.lock().unwrap();
+    assert!(runtime.delivery_registration_rebinds().is_empty());
+    let ledger = runtime.delivery_state().unwrap();
+    let record = ledger
+        .agents
+        .iter()
+        .find(|record| record.id == "agent-2")
+        .unwrap();
+    assert!(record.ended);
+    assert_eq!(record.pane, SLEEPER);
+    assert!(ledger.watches.is_empty());
 }
