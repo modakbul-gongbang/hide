@@ -136,24 +136,47 @@ pub struct Refusal {
 }
 
 /// Reads one handshake line of at most [`MAX_HANDSHAKE_LINE`] bytes.
-pub fn read_line(reader: &mut impl BufRead) -> Result<Line, String> {
+pub fn read_line(reader: &mut impl BufRead) -> Result<Line, HandshakeError> {
     let mut bytes = Vec::new();
     reader
         .take(MAX_HANDSHAKE_LINE + 1)
         .read_until(b'\n', &mut bytes)
-        .map_err(|error| format!("the handshake could not be read: {error}"))?;
+        .map_err(|error| {
+            HandshakeError::Lost(format!("the handshake could not be read: {error}"))
+        })?;
     if bytes.is_empty() {
-        return Err("the other side closed before the handshake".to_owned());
+        return Err(HandshakeError::Lost(
+            "the other side closed before the handshake".to_owned(),
+        ));
     }
     if bytes.len() as u64 > MAX_HANDSHAKE_LINE || bytes.last() != Some(&b'\n') {
-        return Err("the handshake line is too long".to_owned());
+        return Err(HandshakeError::Unreadable(
+            "the handshake line is too long".to_owned(),
+        ));
     }
     serde_json::from_slice(&bytes).map_err(|error| {
-        format!(
+        HandshakeError::Unreadable(format!(
             "the handshake line is not one this build reads ({:?})",
             error.classify()
-        )
+        ))
     })
+}
+
+/// Why a handshake line was not read.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HandshakeError {
+    /// The connection ended, failed or went quiet past its deadline.
+    Lost(String),
+    /// A line arrived that this build does not read.
+    Unreadable(String),
+}
+
+impl std::fmt::Display for HandshakeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Lost(message) | Self::Unreadable(message) => formatter.write_str(message),
+        }
+    }
 }
 
 /// Writes one handshake line.
@@ -480,8 +503,8 @@ fn take_link(stream: LocalStream, service: &AttachService) {
             attach_failed("", "the node sent another line than its own");
             return;
         }
-        Err(message) => {
-            attach_failed("", &message);
+        Err(error) => {
+            attach_failed("", &error.to_string());
             return;
         }
     };

@@ -92,6 +92,10 @@ impl fmt::Display for RemoteDiagnostic {
 /// its own.
 pub const DIAL_OPERATION: &str = "remote-dial";
 
+/// The operation of a dial whose server presented a host key known_hosts
+/// refused (changed, unknown, or unreadable): the operator has to act.
+pub const HOST_KEY_OPERATION: &str = "remote-host-key";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemoteError {
     diagnostic: RemoteDiagnostic,
@@ -130,6 +134,17 @@ impl RemoteError {
     /// move of this machine or of the network may change the answer.
     pub fn never_reached_server(&self) -> bool {
         self.diagnostic.operation_id == DIAL_OPERATION
+    }
+
+    /// Whether a move of this machine or of the network may change the
+    /// answer: a dial that never reached the server, or a failure on the way
+    /// that may be retried and asks nothing of the operator (a reset or a
+    /// timeout in the key exchange, a channel that failed or would not
+    /// open). A host key, a sign-in or an alias the operator must fix answers
+    /// the same from any network.
+    pub fn a_move_can_change(&self) -> bool {
+        self.never_reached_server()
+            || (self.diagnostic.retryable && !self.diagnostic.action_required)
     }
 }
 

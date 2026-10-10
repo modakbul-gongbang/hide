@@ -106,7 +106,14 @@ pub enum LinkFailure {
     /// The core refused the node, with its reason (`other_build`,
     /// `own_node`, ...).
     Refused(String),
-    /// Anything else on the way to a link: its reason.
+    /// The connection to the core's machine failed after its SSH server
+    /// answered and before the core took the link: a reset or timeout in the
+    /// key exchange, a channel that failed, or the handshake cut off or left
+    /// unanswered. A move may change it.
+    Transport(String),
+    /// Anything else on the way to a link, which no move changes (an alias,
+    /// a host key or a sign-in to fix, an answer this build does not read):
+    /// its reason.
     Ended(String),
     /// A link the core had taken ended: its reason.
     Lost(String),
@@ -117,10 +124,14 @@ pub enum LinkFailure {
 impl LinkFailure {
     /// Whether a sleep or a network move may change this answer, so the
     /// wait is cut short when one is seen: a dial that never reached the
-    /// core's machine, and a link that was lost. A refusal, an attach
-    /// outcome or a wrong core answers the same from any network.
+    /// core's machine, a connection that failed on the way, and a link that
+    /// was lost. A refusal, an attach outcome, a wrong core, or what the
+    /// operator must fix answers the same from any network.
     fn a_move_can_change(&self) -> bool {
-        matches!(self, Self::Unreachable(_) | Self::Lost(_))
+        matches!(
+            self,
+            Self::Unreachable(_) | Self::Transport(_) | Self::Lost(_)
+        )
     }
 }
 
@@ -130,9 +141,10 @@ impl std::fmt::Display for LinkFailure {
             Self::Unreachable(error) => write!(formatter, "unreachable: {error}"),
             Self::Attach(outcome) => formatter.write_str(outcome.code()),
             Self::WrongCore(node) => write!(formatter, "wrong_core: the machine answers as {node}"),
-            Self::Refused(reason) | Self::Ended(reason) | Self::Lost(reason) => {
-                formatter.write_str(reason)
-            }
+            Self::Refused(reason)
+            | Self::Transport(reason)
+            | Self::Ended(reason)
+            | Self::Lost(reason) => formatter.write_str(reason),
             Self::Stopping => formatter.write_str("stopping"),
         }
     }
@@ -599,13 +611,25 @@ fn try_link(
 }
 
 /// Why a dial for the attach role failed. Only a dial that never reached
-/// the machine's SSH server is unreachable; a host key, a sign-in, an alias
-/// or a channel the server refused is not, and no port probe changes it.
+/// the machine's SSH server is unreachable, and only it is probed; one that
+/// failed on the way after the server answered is a transport failure a move
+/// may change; a host key, a sign-in or an alias is the operator's to fix.
 fn attach_failure(error: hide_node_link::device::RemoteError) -> LinkFailure {
     if error.never_reached_server() {
         LinkFailure::Unreachable(error.to_string())
+    } else if error.a_move_can_change() {
+        LinkFailure::Transport(format!("ssh: {error}"))
     } else {
         LinkFailure::Ended(format!("ssh: {error}"))
+    }
+}
+
+/// Why the handshake on the attach channel failed: cut off or unanswered is
+/// the connection's failure, an unreadable line is not.
+fn handshake_failure(error: attach::HandshakeError) -> LinkFailure {
+    match error {
+        attach::HandshakeError::Lost(message) => LinkFailure::Transport(message),
+        attach::HandshakeError::Unreadable(message) => LinkFailure::Ended(message),
     }
 }
 
@@ -625,13 +649,22 @@ fn serve_link(
         .get_ref()
         .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
         .map_err(|error| ended(error.to_string()))?;
-    let silent = |message: String| {
+    // What the attach role said on its standard error, beside why its
+    // channel gave no handshake.
+    let silent = |error: attach::HandshakeError| {
         let said = String::from_utf8_lossy(&lock(stderr)).trim().to_owned();
-        if said.is_empty() {
-            ended(message)
+        handshake_failure(if said.is_empty() {
+            error
         } else {
-            ended(format!("{message} ({said})"))
-        }
+            match error {
+                attach::HandshakeError::Lost(message) => {
+                    attach::HandshakeError::Lost(format!("{message} ({said})"))
+                }
+                attach::HandshakeError::Unreadable(message) => {
+                    attach::HandshakeError::Unreadable(format!("{message} ({said})"))
+                }
+            }
+        })
     };
     match attach::read_line(&mut reader).map_err(silent)? {
         Line::Attach(outcome) => return Err(LinkFailure::Attach(outcome)),
@@ -654,8 +687,8 @@ fn serve_link(
             herdr_socket: identity.herdr_socket.display().to_string(),
         }),
     )
-    .map_err(ended)?;
-    let accepted = match attach::read_line(&mut reader).map_err(ended)? {
+    .map_err(LinkFailure::Transport)?;
+    let accepted = match attach::read_line(&mut reader).map_err(handshake_failure)? {
         Line::Accepted(accepted) => accepted,
         Line::Refused(refusal) => return Err(LinkFailure::Refused(refusal.reason)),
         _ => {
@@ -678,7 +711,7 @@ fn serve_link(
     // with it.
     let forward = upstream
         .forward(accepted.port)
-        .map_err(|error| ended(format!("relay_forward: {error}")))?;
+        .map_err(|error| LinkFailure::Transport(format!("relay_forward: {error}")))?;
     let terminals = Arc::new(NodeTerminals::for_screen(
         Arc::clone(&shared.screen),
         identity.herdr_bin.clone(),
@@ -854,34 +887,152 @@ mod tests {
     }
 
     /// Only a connection that never reached the core machine's SSH server
-    /// is unreachable, so only it is probed and woken by a move.
+    /// is unreachable, so only it is probed.
     #[test]
     fn only_a_dial_that_never_reached_ssh_is_unreachable() {
-        use hide_node_link::device::{DIAL_OPERATION, RemoteError, RemoteStage};
-        let error = |operation: &str, stage, reason: &str| {
-            RemoteError::new(operation, "core", stage, reason, true, false)
+        for (error, _) in dial_outcomes() {
+            let failure = attach_failure(error.clone());
+            assert_eq!(
+                matches!(failure, LinkFailure::Unreachable(_)),
+                error.never_reached_server(),
+                "{error}"
+            );
+            if !error.never_reached_server() {
+                assert!(!failure.to_string().starts_with("unreachable"), "{failure}");
+            }
+        }
+    }
+
+    /// Dial failures as the SSH client writes them, and whether a move of
+    /// the network may change each.
+    fn dial_outcomes() -> Vec<(hide_node_link::device::RemoteError, bool)> {
+        use hide_node_link::device::{
+            DIAL_OPERATION, HOST_KEY_OPERATION, RemoteError, RemoteStage,
         };
-        assert!(matches!(
-            attach_failure(error(
-                DIAL_OPERATION,
-                RemoteStage::Ssh,
-                "Connection refused"
-            )),
-            LinkFailure::Unreachable(_)
-        ));
-        for refused in [
-            error("remote-connect", RemoteStage::Ssh, "host_key_changed"),
-            error(
-                "remote-auth",
-                RemoteStage::Auth,
-                "no identity authenticated",
+        let error = |operation: &str, stage, reason: &str, retryable, action_required| {
+            RemoteError::new(operation, "core", stage, reason, retryable, action_required)
+        };
+        vec![
+            (
+                error(
+                    DIAL_OPERATION,
+                    RemoteStage::Ssh,
+                    "Connection refused",
+                    true,
+                    false,
+                ),
+                true,
             ),
-            error("node-attach", RemoteStage::Ssh, "exec refused"),
-            error("ssh-alias", RemoteStage::Alias, "unknown alias"),
+            (
+                error(
+                    "remote-connect",
+                    RemoteStage::Ssh,
+                    "Connection reset by peer",
+                    true,
+                    false,
+                ),
+                true,
+            ),
+            (
+                error(
+                    "remote-connect",
+                    RemoteStage::Ssh,
+                    "SSH connection or authentication timed out",
+                    true,
+                    false,
+                ),
+                true,
+            ),
+            (
+                error(
+                    "node-attach",
+                    RemoteStage::Ssh,
+                    "channel open failure",
+                    true,
+                    false,
+                ),
+                true,
+            ),
+            (
+                error(
+                    HOST_KEY_OPERATION,
+                    RemoteStage::Ssh,
+                    "host key changed: ...",
+                    false,
+                    true,
+                ),
+                false,
+            ),
+            (
+                error(
+                    "remote-auth",
+                    RemoteStage::Auth,
+                    "no identity authenticated",
+                    false,
+                    true,
+                ),
+                false,
+            ),
+            (
+                error(
+                    "ssh-alias-import",
+                    RemoteStage::Alias,
+                    "unknown alias",
+                    false,
+                    true,
+                ),
+                false,
+            ),
+        ]
+    }
+
+    /// A move wakes a wait on what the network may have caused, and never
+    /// one on what the operator or the core must change (D-09).
+    #[test]
+    fn a_move_wakes_a_transport_failure_but_not_what_must_be_fixed() {
+        let waiting = |reason| Phase::Waiting { reason };
+        for (error, wakes) in dial_outcomes() {
+            assert_eq!(
+                wakes_on_move(&waiting(attach_failure(error.clone())), None),
+                wakes,
+                "{error}"
+            );
+        }
+        for (error, wakes) in [
+            (
+                attach::HandshakeError::Lost(
+                    "the other side closed before the handshake".to_owned(),
+                ),
+                true,
+            ),
+            (
+                attach::HandshakeError::Lost(
+                    "the handshake could not be read: timed out".to_owned(),
+                ),
+                true,
+            ),
+            (
+                attach::HandshakeError::Unreadable("the handshake line is too long".to_owned()),
+                false,
+            ),
         ] {
-            let failure = attach_failure(refused.clone());
-            assert!(matches!(failure, LinkFailure::Ended(_)), "{refused}");
-            assert!(!failure.to_string().starts_with("unreachable"), "{failure}");
+            assert_eq!(
+                wakes_on_move(&waiting(handshake_failure(error.clone())), None),
+                wakes,
+                "{error}"
+            );
+        }
+        for reason in [
+            "other_build",
+            "nodes_full",
+            "dialed_device",
+            "own_node",
+            "already_linked",
+        ] {
+            assert!(!wakes_on_move(
+                &waiting(LinkFailure::Refused(reason.to_owned())),
+                None
+            ));
         }
     }
 

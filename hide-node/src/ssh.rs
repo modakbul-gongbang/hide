@@ -1543,6 +1543,7 @@ impl RusshRemoteClient {
         // time) is a dial that never reached an SSH server, as the node's
         // port probe, which reads the greeting, also counts it.
         let presented = Arc::clone(&handler.presented);
+        let rejected = Arc::clone(&handler.rejected);
         let reached_operation = || {
             if presented.load(std::sync::atomic::Ordering::SeqCst) {
                 "remote-connect"
@@ -1609,14 +1610,25 @@ impl RusshRemoteClient {
             let mut session = client::connect_stream(Arc::new(config), socket, handler)
                 .await
                 .map_err(|error| {
-                    remote_error(
-                        reached_operation(),
-                        &self.host.host_id,
-                        RemoteStage::Ssh,
-                        error,
-                        true,
-                        false,
-                    )
+                    if rejected.load(std::sync::atomic::Ordering::SeqCst) {
+                        remote_error(
+                            hide_node_link::device::HOST_KEY_OPERATION,
+                            &self.host.host_id,
+                            RemoteStage::Ssh,
+                            error,
+                            false,
+                            true,
+                        )
+                    } else {
+                        remote_error(
+                            reached_operation(),
+                            &self.host.host_id,
+                            RemoteStage::Ssh,
+                            error,
+                            true,
+                            false,
+                        )
+                    }
                 })?;
             authenticate(&mut session, &self.host).await?;
             connecting.release();
@@ -2054,6 +2066,8 @@ struct KnownHostHandler {
     /// Set once the server presented its host key: the dial reached an SSH
     /// server, whatever is decided of the key.
     presented: Arc<std::sync::atomic::AtomicBool>,
+    /// Set when known_hosts refused the key the server presented.
+    rejected: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl KnownHostHandler {
@@ -2064,6 +2078,7 @@ impl KnownHostHandler {
             known_hosts_file: host.known_hosts_file.clone(),
             observed_key: None,
             presented: Arc::default(),
+            rejected: Arc::default(),
         }
     }
 
@@ -2082,6 +2097,20 @@ impl Handler for KnownHostHandler {
     ) -> Result<bool, Self::Error> {
         self.presented
             .store(true, std::sync::atomic::Ordering::SeqCst);
+        let checked = self.check_key(server_public_key);
+        if checked.is_err() {
+            self.rejected
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        checked
+    }
+}
+
+impl KnownHostHandler {
+    fn check_key(
+        &mut self,
+        server_public_key: &PublicKeyOrCertificate,
+    ) -> Result<bool, anyhow::Error> {
         let public_key = server_public_key.public_key();
         // A changed key and an unknown one need different actions from the
         // operator, so they are named differently (PRD S5.5 B38); neither is
