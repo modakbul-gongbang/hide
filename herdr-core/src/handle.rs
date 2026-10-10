@@ -596,6 +596,27 @@ impl Core {
         Ok((source, labels))
     }
 
+    /// What a move of the core back to the node that dialed it is made
+    /// from (PRD core-host-node-move B6), with that node's label records,
+    /// which only memory holds, in the form `labels.json` stores them.
+    pub fn release_source(
+        &self,
+        node: &str,
+    ) -> Result<(crate::ReleaseSource, serde_json::Value), crate::MoveSourceRefusal> {
+        if !check_owner_thread(self, "release_source") {
+            return Err(crate::MoveSourceRefusal::NotReady);
+        }
+        let source = lock_recover(&self.runtime).release_source(node)?;
+        let labels = match &self.labels {
+            Some(labels) => labels
+                .store
+                .export(&crate::labels::device_target(node))
+                .map_err(crate::MoveSourceRefusal::Unstorable)?,
+            None => serde_json::Value::Object(serde_json::Map::new()),
+        };
+        Ok((source, labels))
+    }
+
     /// The nodes that dialed this core and are connected now (PRD
     /// core-host-node-remote-core D-18).
     pub fn linked_nodes(&self) -> Vec<String> {

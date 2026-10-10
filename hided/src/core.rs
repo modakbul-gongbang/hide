@@ -24,6 +24,8 @@ pub struct SnapshotReply {
 
 type MoveSourceAnswer =
     Result<(herdr_core::MoveSource, serde_json::Value), herdr_core::MoveSourceRefusal>;
+type ReleaseSourceAnswer =
+    Result<(herdr_core::ReleaseSource, serde_json::Value), herdr_core::MoveSourceRefusal>;
 
 enum Command {
     FactoryQuestionGuard {
@@ -80,6 +82,10 @@ enum Command {
     },
     LinkedNodes {
         reply: Sender<Vec<String>>,
+    },
+    ReleaseSource {
+        node: String,
+        reply: Sender<ReleaseSourceAnswer>,
     },
     MoveSource {
         device: String,
@@ -373,6 +379,18 @@ impl CoreHandle {
 
     /// What a move of the core to `device` is made from, and the device's
     /// label records (PRD core-host-node-move B4).
+    pub fn release_source(&self, node: &str) -> Result<ReleaseSourceAnswer, String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::ReleaseSource {
+                node: node.to_owned(),
+                reply,
+            })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped the release source".to_owned())
+    }
+
     pub fn move_source(&self, device: &str) -> Result<MoveSourceAnswer, String> {
         let (reply, rx) = mpsc::channel();
         self.commands
@@ -767,6 +785,9 @@ fn owner_loop(
             }
             Command::MoveSource { device, reply } => {
                 let _ = reply.send(core.move_source(&device));
+            }
+            Command::ReleaseSource { node, reply } => {
+                let _ = reply.send(core.release_source(&node));
             }
             Command::InboundNode {
                 node,

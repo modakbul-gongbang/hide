@@ -75,8 +75,18 @@ pub enum Phase {
     AttachSent,
     /// The peer's core took the link: the move only goes forward.
     Committed,
+    /// A move back: the peer's core may have been asked to stop for it.
+    Releasing,
+    /// A move back: the peer's core stopped for it and its copy is staged
+    /// there; the peer starts no core of its own until it is resumed.
+    Released,
+    /// A move back: the copy is placed in this machine's folder.
+    PlacedHere,
+    /// A move back: the peer may be retiring its core, which is the commit;
+    /// from here only the peer's handover says whether it is.
+    Retiring,
     /// This machine's brain state is set aside and the peer's records are
-    /// cleared.
+    /// cleared; after a move back, this machine's core runs.
     Done,
     /// The move was undone; this machine's core runs on its folder again.
     RolledBack {
@@ -95,9 +105,9 @@ impl Phase {
     /// The step a move interrupted in this phase was at.
     pub fn step(&self) -> MoveStep {
         match self {
-            Self::Stopping => MoveStep::StopCore,
-            Self::Sent | Self::Placed => MoveStep::Copy,
-            Self::TargetStarted => MoveStep::StartTarget,
+            Self::Stopping | Self::Releasing => MoveStep::StopCore,
+            Self::Sent | Self::Placed | Self::Released | Self::PlacedHere => MoveStep::Copy,
+            Self::TargetStarted | Self::Retiring => MoveStep::StartTarget,
             Self::AttachSent | Self::Committed | Self::Done => MoveStep::Reattach,
             Self::RolledBack { failed, .. } => *failed,
         }

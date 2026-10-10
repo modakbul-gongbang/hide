@@ -191,7 +191,11 @@ pub fn check_loadable(dir: &Path) -> Result<(), Refusal> {
         if *name == super::CORE_STATE {
             let (_, _, disposition) = crate::persistence::load(&path);
             if disposition == crate::persistence::LoadDisposition::Corrupt {
-                return Err(refuse(&path, "is not a UI state this build reads"));
+                let why = crate::persistence::unreadable(&path).unwrap_or_default();
+                return Err(refuse(
+                    &path,
+                    format!("is not a UI state this build reads: {why}"),
+                ));
             }
         } else if name.ends_with(".json") {
             let bytes = std::fs::read(&path).map_err(|error| refuse(&path, error))?;

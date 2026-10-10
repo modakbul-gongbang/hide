@@ -340,6 +340,15 @@ impl Mapper<'_> {
                 for (own, devices) in OWN_PATHS {
                     swap_own(value, own, devices, self.change)?;
                 }
+                // A recent entry is its checkout: one whose checkout neither
+                // machine still has goes, as a fold's does (its id was
+                // counted as it was cleared).
+                if let Some(recent) = value
+                    .get_mut("recent_checkouts")
+                    .and_then(Value::as_array_mut)
+                {
+                    recent.retain(|row| row.get("checkout_id").is_some_and(Value::is_string));
+                }
                 self.device_registrations(value)
             }
             WORKSPACE_VIEWS => {
@@ -1359,12 +1368,18 @@ mod tests {
             .unwrap()
             .push(json!(gone));
         core["focused_checkout_id"] = json!(gone);
+        let recent = core["recent_checkouts"].as_array().unwrap().len();
+        core["recent_checkouts"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"device_id": M, "checkout_id": gone, "project_name": "gone", "branch": "main", "device_name": "MacBook"}));
         std::fs::write(state.join(CORE_STATE), serde_json::to_vec(&core).unwrap()).unwrap();
         let outcome = reown(state, &forward(), &forward_ids()).unwrap();
-        assert_eq!(outcome.pruned, 2);
+        assert_eq!(outcome.pruned, 3);
         let core = read(&state.join(CORE_STATE));
         assert!(!core["collapsed_checkout_ids"].to_string().contains(&gone));
         assert_eq!(core["focused_checkout_id"], Value::Null);
+        assert_eq!(core["recent_checkouts"].as_array().unwrap().len(), recent);
     }
 
     #[test]

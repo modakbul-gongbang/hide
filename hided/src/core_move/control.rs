@@ -20,14 +20,29 @@ pub enum MoveRequest {
     Check { device: String },
     /// Move the core to `device`, its checks run once more first.
     Start { device: String },
+    /// From a node's window: run the checks for moving the core back to
+    /// this machine; nothing changes.
+    CheckBack,
+    /// From a node's window: move the core back to this machine.
+    Back,
 }
 
-impl MoveRequest {
-    pub fn device(&self) -> &str {
-        match self {
-            Self::Check { device } | Self::Start { device } => device,
-        }
-    }
+/// The core's own machine asking its running core to stop for a move back
+/// (`attach`, from `hided core-move release`): the core answers once it
+/// has checked and recorded the stop, then stops.
+#[derive(Debug)]
+pub struct Release {
+    pub intent: String,
+    /// The node the core goes back to.
+    pub target: String,
+    pub reply: std::sync::mpsc::Sender<Result<(), String>>,
+}
+
+/// What the supervisor is asked.
+#[derive(Debug)]
+pub enum Asked {
+    Window(MoveRequest),
+    Release(Release),
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -80,11 +95,18 @@ pub enum CheckId {
     Herdr,
     /// The device answers as the machine this core knows.
     Identity,
+    /// For a move back: this machine's state folder holds no brain state
+    /// of its own.
+    OwnState,
+    /// For a move back: this machine's node is linked to the core.
+    Link,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MoveView {
     pub state: MoveState,
+    /// Toward the machine named by `device`, or back to this one.
+    pub direction: Option<super::journal::Direction>,
     pub device: Option<String>,
     pub intent: Option<String>,
     pub sent: u64,
@@ -101,8 +123,8 @@ pub struct MoveView {
 /// view every role sends.
 pub struct MoveControl {
     view: watch::Sender<MoveView>,
-    requests: mpsc::Sender<MoveRequest>,
-    receiver: Mutex<Option<mpsc::Receiver<MoveRequest>>>,
+    requests: mpsc::Sender<Asked>,
+    receiver: Mutex<Option<mpsc::Receiver<Asked>>>,
 }
 
 /// Why a request was not taken.
@@ -138,14 +160,6 @@ impl Default for MoveControl {
 impl MoveControl {
     /// Takes `request` when nothing else waits; a move running refuses any.
     pub fn request(&self, request: MoveRequest) -> Result<(), RequestRefusal> {
-        if self
-            .receiver
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some()
-        {
-            return Err(RequestRefusal::Unavailable);
-        }
         let busy = matches!(
             self.view.borrow().state,
             MoveState::Checking
@@ -159,16 +173,58 @@ impl MoveControl {
         if busy {
             return Err(RequestRefusal::Busy);
         }
-        self.requests
-            .try_send(request)
-            .map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => RequestRefusal::Busy,
-                mpsc::error::TrySendError::Closed(_) => RequestRefusal::Unavailable,
-            })
+        self.ask(Asked::Window(request))
+    }
+
+    /// Takes a window's `core_move` event; the refusal is its reason code.
+    pub fn request_event(&self, event: &serde_json::Value) -> Result<(), &'static str> {
+        let request: MoveRequest = serde_json::from_value(
+            event
+                .get("payload")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        )
+        .map_err(|_| "move_malformed")?;
+        self.request(request).map_err(RequestRefusal::code)
+    }
+
+    /// Asks the supervisor to stop its core for a move back and waits for
+    /// its answer, which comes before the core stops.
+    pub fn release(
+        &self,
+        intent: &str,
+        target: &str,
+        within: std::time::Duration,
+    ) -> Result<(), String> {
+        let (reply, answer) = std::sync::mpsc::channel();
+        self.ask(Asked::Release(Release {
+            intent: intent.to_owned(),
+            target: target.to_owned(),
+            reply,
+        }))
+        .map_err(|refusal| refusal.code().to_owned())?;
+        answer
+            .recv_timeout(within)
+            .map_err(|_| "the core did not answer the release".to_owned())?
+    }
+
+    fn ask(&self, asked: Asked) -> Result<(), RequestRefusal> {
+        if self
+            .receiver
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+        {
+            return Err(RequestRefusal::Unavailable);
+        }
+        self.requests.try_send(asked).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => RequestRefusal::Busy,
+            mpsc::error::TrySendError::Closed(_) => RequestRefusal::Unavailable,
+        })
     }
 
     /// The requests' receiver, once: the supervisor takes it at start.
-    pub fn take_requests(&self) -> Option<mpsc::Receiver<MoveRequest>> {
+    pub fn take_requests(&self) -> Option<mpsc::Receiver<Asked>> {
         self.receiver
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -203,4 +259,10 @@ impl MoveControl {
 /// The `core_move` frame of `view`.
 pub fn frame(view: &MoveView) -> String {
     serde_json::json!({"type": "core_move", "payload": view}).to_string()
+}
+
+/// The frame a window hears when its `core_move` event is not taken.
+pub fn refusal_frame(reason: &str) -> String {
+    serde_json::json!({"type": "error", "payload": {"kind": "core_move", "reason": reason}, "message": reason})
+        .to_string()
 }

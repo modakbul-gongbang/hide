@@ -3,7 +3,7 @@
 //! connection that only the source opens.
 #![cfg(unix)]
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
 use crate::support::core_move::{ALIAS, Fixture, SOURCE_NODE, TARGET_NODE};
@@ -283,6 +283,252 @@ fn a_lost_link_answer_after_the_target_took_the_move_goes_forward() -> Result<()
             Ok((projects.len() == 2).then_some(projects))
         })?;
         ensure!(projects == after, "{projects:?}");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// B6: from the node's window the core comes back to its machine; the
+/// window keeps its address and shows what it showed before the core left,
+/// and the other machine is a device again with no core of its own.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn the_core_moves_back_and_the_window_shows_what_it_showed_before() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = visible(&fixture)?;
+        let window = fixture.window();
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        let forward = fixture.journal_until("done")?;
+        wait_for("the projects through the new core", || {
+            Ok((fixture.projects()?.len() == 2).then_some(()))
+        })?;
+        ensure!(fixture.role()? == "node");
+
+        fixture.event("core_move", json!({"action": "back"}))?;
+        let journal = wait_for("the move back done", || {
+            let journal = fixture.source.record("core-move.json")?;
+            if let Some(journal) = &journal
+                && journal["direction"] == "back"
+                && journal["phase"]["phase"] == "rolled_back"
+            {
+                bail!("the move back rolled back: {journal}");
+            }
+            Ok(journal.filter(|journal| {
+                journal["direction"] == "back" && journal["phase"]["phase"] == "done"
+            }))
+        })?;
+        ensure!(journal["intent"] != forward["intent"], "{journal}");
+        let intent = journal["intent"].as_str().context("intent")?;
+        wait_for("this machine's core", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        let state = fixture.source.daemon()?.context("source state")?;
+        ensure!(
+            (state["port"].as_u64(), state["token"].as_str())
+                == (Some(u64::from(window.0)), Some(window.1.as_str())),
+            "the window's address changed: {state}"
+        );
+        ensure!(!fixture.source.state.join("core-placement.json").exists());
+        ensure!(fixture.source.state.join("core-state.json").is_file());
+
+        // The other machine runs no core and keeps its last state aside.
+        ensure!(
+            fixture.target_core()?.is_none(),
+            "the target still runs a core"
+        );
+        ensure!(!fixture.target.state.join("core-state.json").exists());
+        let moved_out = fixture.target.state.join("moved-out").join(intent);
+        ensure!(
+            moved_out.join("core-state.json").is_file(),
+            "nothing set aside there"
+        );
+        let handover = fixture
+            .target
+            .record("core-handover.json")?
+            .context("handover")?;
+        ensure!(handover["state"]["state"] == "retired", "{handover}");
+
+        fixture.device_ready()?;
+        let after = wait_for("the projects of both machines again", || {
+            let now = visible(&fixture)?;
+            Ok((now["projects"].as_array().map(Vec::len) == Some(2)).then_some(now))
+        })?;
+        ensure!(after == before, "before: {before}\nafter: {after}");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// Moves the core to the target and waits until the window shows both
+/// machines' projects through it.
+fn moved_forward(fixture: &Fixture) -> Result<Value> {
+    fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+    let journal = fixture.journal_until("done")?;
+    wait_for("the projects through the new core", || {
+        Ok((fixture.projects()?.len() == 2).then_some(()))
+    })?;
+    Ok(journal)
+}
+
+/// The source's move-back journal once it reaches `phase`.
+fn back_journal_until(fixture: &Fixture, phase: &str) -> Result<Value> {
+    wait_for(&format!("the move back at {phase}"), || {
+        Ok(fixture
+            .source
+            .record("core-move.json")?
+            .filter(|journal| journal["direction"] == "back" && journal["phase"]["phase"] == phase))
+    })
+}
+
+/// A move back whose check fails changes nothing: the window stays a node
+/// of the core, which keeps running.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_failing_move_back_check_changes_nothing() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        moved_forward(&fixture)?;
+        let core = fixture.target_core()?.context("the target's core")?;
+        // This machine holds brain state of its own again.
+        std::fs::write(fixture.source.state.join("labels.json"), b"{}")?;
+        let target_before = listing(&fixture.target.state)?;
+        fixture.event("core_move", json!({"action": "back"}))?;
+        let failed = wait_for("the move back's checks", || {
+            Ok(records(&fixture, "checks.failed")?
+                .into_iter()
+                .find(|record| record["direction"] == "back"))
+        })?;
+        ensure!(failed["checks"] == json!(["own_state"]), "{failed}");
+        ensure!(fixture.role()? == "node");
+        ensure!(
+            fixture.target_core()? == Some(core),
+            "the target's core changed"
+        );
+        ensure!(
+            listing(&fixture.target.state)? == target_before,
+            "the target changed"
+        );
+        let journal = fixture
+            .source
+            .record("core-move.json")?
+            .context("journal")?;
+        ensure!(journal["direction"] == "forward", "{journal}");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// The copy cannot be pulled after the core's machine stopped its core:
+/// that core starts again on its untouched folder and the window is its
+/// node again.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_failed_pull_restarts_the_source_unchanged() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        moved_forward(&fixture)?;
+        let before = fixture.projects()?;
+        let core = fixture.target_core()?.context("the target's core")?;
+        let state_before = std::fs::read(fixture.target.state.join("core-state.json"))?;
+        // This machine cannot make its staging folder.
+        let staging = fixture.source.state.join("move-staging");
+        if staging.exists() {
+            std::fs::remove_dir_all(&staging)?;
+        }
+        std::fs::write(&staging, b"")?;
+        fixture.event("core_move", json!({"action": "back"}))?;
+        let journal = back_journal_until(&fixture, "rolled_back")?;
+        ensure!(journal["phase"]["failed"] == "copy", "{journal}");
+        ensure!(fixture.role()? == "node");
+        let restarted = fixture.target_core()?.context("no core on the target")?;
+        ensure!(restarted != core, "the target's core never stopped");
+        ensure!(fixture.target.record("core-handover.json")?.is_none());
+        ensure!(
+            !fixture
+                .target
+                .state
+                .join("move-staging")
+                .join(journal["intent"].as_str().context("intent")?)
+                .exists()
+        );
+        ensure!(fixture.source.state.join("core-placement.json").is_file());
+        // The core started on the folder it stopped with.
+        let state_after = std::fs::read(fixture.target.state.join("core-state.json"))?;
+        let parsed = |bytes: &[u8]| -> Result<Value> {
+            let mut value: Value = serde_json::from_slice(bytes)?;
+            value["pane_terminal_sizes"] = Value::Null;
+            Ok(value["workspace_registrations"].take())
+        };
+        ensure!(
+            parsed(&state_after)? == parsed(&state_before)?,
+            "the target's projects changed"
+        );
+        let after = wait_for("the projects through the restarted core", || {
+            let projects = fixture.projects()?;
+            Ok((projects.len() == 2).then_some(projects))
+        })?;
+        ensure!(after == before, "{after:?}");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// The core's machine cannot be reached after it stopped its core: this
+/// machine starts no core of its own, waits, and when that machine answers
+/// again its core starts on its folder and the window is its node.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_source_unreachable_after_its_stop_is_waited_for() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        moved_forward(&fixture)?;
+        let released = fixture.target_core()?.context("the target's core")?;
+        fixture.event("core_move", json!({"action": "back"}))?;
+        wait_for("the target's core released", || {
+            let bytes =
+                std::fs::read(fixture.target.state.join("Logs/core.jsonl")).unwrap_or_default();
+            Ok(String::from_utf8_lossy(&bytes)
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .any(|record| record["kind"] == "release.checked" && record["refused"].is_null())
+                .then_some(()))
+        })?;
+        fixture.ssh.online(false)?;
+        fixture.kill_source()?;
+        let phase = fixture
+            .source
+            .record("core-move.json")?
+            .context("journal")?["phase"]["phase"]
+            .clone();
+        ensure!(
+            matches!(
+                phase.as_str(),
+                Some("releasing" | "released" | "placed_here")
+            ),
+            "the move back got past its commit before the cut: {phase}"
+        );
+        // The released core ends on its own, whatever reaches its machine.
+        wait_for("the released core ended", || {
+            Ok((!hide_platform::process::is_alive(released)).then_some(()))
+        })?;
+        fixture.start_source()?;
+        fixture.logged(&fixture.source, "resume.failed")?;
+        ensure!(fixture.role()? == "moving");
+        ensure!(
+            fixture.target_core()?.is_none(),
+            "the target started a core while cut off"
+        );
+        ensure!(!fixture.source.state.join("core-state.json").exists());
+        fixture.ssh.online(true)?;
+        back_journal_until(&fixture, "rolled_back")?;
+        wait_for("the window a node again", || {
+            Ok((fixture.role()? == "node").then_some(()))
+        })?;
+        ensure!(fixture.target_core()?.is_some(), "no core on the target");
+        wait_for("the projects through the restarted core", || {
+            Ok((fixture.projects()?.len() == 2).then_some(()))
+        })?;
         Ok(())
     })();
     finish(fixture, journey)

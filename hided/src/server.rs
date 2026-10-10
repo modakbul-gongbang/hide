@@ -1032,11 +1032,11 @@ async fn screen_loop(
                                 let answer = if relay.is_some() {
                                     Err("move_not_here")
                                 } else {
-                                    request_core_move(&state, &event)
+                                    state.seat.moves.request_event(&event)
                                 };
                                 if let Err(reason) = answer {
-                                    let frame = json!({"type": "error", "payload": {"kind": "core_move", "reason": reason}, "message": reason});
-                                    if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                                    let frame = crate::core_move::control::refusal_frame(reason);
+                                    if socket.send(Message::Text(frame.into())).await.is_err() {
                                         break;
                                     }
                                 }
@@ -1738,18 +1738,6 @@ const DEVICE_FILE_EVENTS: [&str; 10] = [
 fn event_device(boundary: &Boundary, event: &Value) -> Option<String> {
     let device = event.pointer("/payload/device_id").and_then(Value::as_str);
     (!boundary.names_this_node(device)).then(|| device.unwrap_or_default().to_owned())
-}
-
-/// Hands a window's `core_move` event to the supervisor.
-fn request_core_move(state: &AppState, event: &Value) -> Result<(), &'static str> {
-    let request: crate::core_move::control::MoveRequest =
-        serde_json::from_value(event.get("payload").cloned().unwrap_or(Value::Null))
-            .map_err(|_| "move_malformed")?;
-    state
-        .seat
-        .moves
-        .request(request)
-        .map_err(crate::core_move::control::RequestRefusal::code)
 }
 
 fn handle_client_text(

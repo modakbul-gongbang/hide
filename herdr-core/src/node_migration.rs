@@ -34,7 +34,7 @@ pub const MARKER_FILE: &str = "node.json";
 pub const BACKUP_DIR: &str = "node-migration-backup";
 pub(crate) const MARKER_VERSION: u32 = 1;
 
-const CORE_STATE: &str = "core-state.json";
+pub const CORE_STATE: &str = "core-state.json";
 const WORKSPACE_VIEWS: &str = "workspace-views.json";
 const LABELS: &str = "labels.json";
 const DELIVERY_LEDGER: &str = "delivery-ledger.json";

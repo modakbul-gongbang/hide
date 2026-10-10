@@ -12,15 +12,22 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use herdr_core::node_migration::{self, copy};
 use serde_json::json;
 
+use crate::core_move::back::{self, Released, Resumed};
 use crate::core_move::control::{
-    CheckId, FailedCheck, MoveControl, MoveRequest, MoveState, MoveView,
+    Asked, CheckId, FailedCheck, MoveControl, MoveRequest, MoveState, MoveView, Release,
 };
 use crate::core_move::driver::{self, Remote, TargetSays};
+use crate::core_move::handover::{self, Handover, HandoverState};
 use crate::core_move::journal::{self, Direction, Journal, MoveFailure, MoveStep, Phase};
 use crate::core_move::screen::MoveScreen;
 use crate::env::Env;
 use crate::placement::{self, Placement};
 use crate::{RunningDaemon, RunningNode, seat, server, state_file};
+
+mod move_back;
+use move_back::{
+    back, back_checks_failed, back_rollback, prepare_back, release_core, retire_and_commit,
+};
 
 /// How long a pending core waits for the link that carries its move.
 const PENDING_LEASE: Duration = Duration::from_secs(60);
@@ -56,19 +63,27 @@ pub async fn run(env: Env) -> Result<(), String> {
         .moves
         .take_requests()
         .ok_or("the move's requests were taken twice")?;
-    let mut role = Some(resume(&env, &seat).await?);
-    while let Some(current) = role.take() {
-        role = match current {
-            Role::Core(running) => core_turn(&env, &seat, running, &mut requests).await?,
-            Role::Node(running) => node_turn(&seat, running, &mut requests).await,
-        };
+    // Recorded once for the process, so a window finds it whichever role
+    // runs, the move screen included; a request before the first role
+    // waits for it (`seat`).
+    crate::record_daemon(&state_dir, &seat.parts(), env.herdr_socket_path.clone())?;
+    let ran = async {
+        let mut role = resume(&env, &seat).await?;
+        while let Some(current) = role.take() {
+            role = match current {
+                Role::Core(running) => core_turn(&env, &seat, running, &mut requests).await?,
+                Role::Node(running) => node_turn(&env, &seat, running, &mut requests).await?,
+            };
+        }
+        Ok::<(), String>(())
     }
+    .await;
     seat.close().await;
     // Its own state only, before the instance lock is released: a daemon
     // started after it writes its own.
     state_file::forget_daemon(&state_dir, std::process::id());
     drop(lock);
-    Ok(())
+    ran
 }
 
 /// Runs the core until it stops or a move takes it; answers the next role.
@@ -76,21 +91,53 @@ async fn core_turn(
     env: &Env,
     seat: &seat::Seat,
     running: RunningDaemon,
-    requests: &mut tokio::sync::mpsc::Receiver<MoveRequest>,
+    requests: &mut tokio::sync::mpsc::Receiver<Asked>,
 ) -> Result<Option<Role>, String> {
     enum Event {
         Stop,
         Request(MoveRequest),
+        Release(Release),
         LeaseEnded,
     }
     let gate = Arc::clone(&running.move_gate);
     let event = tokio::select! {
         _ = running.shutdown.notified() => Event::Stop,
         () = crate::stop_requested() => Event::Stop,
-        Some(request) = requests.recv() => Event::Request(request),
+        Some(asked) = requests.recv() => match asked {
+            Asked::Window(request) => Event::Request(request),
+            Asked::Release(release) => Event::Release(release),
+        },
         () = lease_end(&gate) => Event::LeaseEnded,
     };
     match event {
+        Event::Release(release) => {
+            let checked = release_core(env, &running, &release).await;
+            let refused = checked.as_ref().err().cloned();
+            log(
+                "release.checked",
+                json!({"intent": release.intent, "target": release.target, "refused": refused}),
+            );
+            let _ = release.reply.send(checked);
+            if refused.is_some() {
+                return Ok(Some(Role::Core(running)));
+            }
+            // The stop is recorded: this process runs no role after it, and
+            // its next start runs none until the move resumes it.
+            stop_core(running).await;
+            Ok(None)
+        }
+        Event::Request(MoveRequest::CheckBack | MoveRequest::Back) => {
+            seat.moves.set(MoveView {
+                state: MoveState::ChecksFailed,
+                direction: Some(Direction::Back),
+                failed: vec![FailedCheck {
+                    check: CheckId::Connection,
+                    detail: "the core runs on this machine".to_owned(),
+                }],
+                ..MoveView::default()
+            });
+            Ok(Some(Role::Core(running)))
+        }
         Event::Stop => {
             stop_core(running).await;
             Ok(None)
@@ -122,10 +169,11 @@ async fn core_turn(
 }
 
 async fn node_turn(
+    env: &Env,
     seat: &seat::Seat,
     running: RunningNode,
-    requests: &mut tokio::sync::mpsc::Receiver<MoveRequest>,
-) -> Option<Role> {
+    requests: &mut tokio::sync::mpsc::Receiver<Asked>,
+) -> Result<Option<Role>, String> {
     loop {
         tokio::select! {
             _ = running.shutdown.notified() => break,
@@ -133,26 +181,48 @@ async fn node_turn(
                 running.stop();
                 break;
             }
-            Some(request) = requests.recv() => {
-                // A move from a node is a move back, which this build does
-                // not drive yet; the window hears why.
-                seat.moves.set(MoveView {
-                    state: MoveState::ChecksFailed,
-                    device: Some(request.device().to_owned()),
-                    failed: vec![FailedCheck {
-                        check: CheckId::Connection,
-                        detail: "the core does not run on this machine".to_owned(),
-                    }],
-                    ..MoveView::default()
-                });
-            }
+            Some(asked) = requests.recv() => match asked {
+                Asked::Release(release) => {
+                    let _ = release.reply.send(Err("this machine runs no core".to_owned()));
+                }
+                Asked::Window(MoveRequest::CheckBack) => {
+                    match prepare_back(env, &running, &seat.moves).await {
+                        Ok(prepared) => seat.moves.set(MoveView {
+                            state: MoveState::Ready,
+                            direction: Some(Direction::Back),
+                            device: Some(prepared.journal.peer.device),
+                            ..MoveView::default()
+                        }),
+                        Err(failed) => back_checks_failed(&seat.moves, failed),
+                    }
+                }
+                Asked::Window(MoveRequest::Back) => {
+                    return back(env, seat, running).await.map(Some);
+                }
+                Asked::Window(MoveRequest::Check { device } | MoveRequest::Start { device }) => {
+                    seat.moves.set(MoveView {
+                        state: MoveState::ChecksFailed,
+                        direction: Some(Direction::Forward),
+                        device: Some(device),
+                        failed: vec![FailedCheck {
+                            check: CheckId::Connection,
+                            detail: "the core does not run on this machine".to_owned(),
+                        }],
+                        ..MoveView::default()
+                    });
+                }
+            },
         }
     }
+    stop_node(running).await;
+    Ok(None)
+}
+
+async fn stop_node(running: RunningNode) {
     let ended = tokio::task::spawn_blocking(move || drop(running)).await;
     if ended.is_err() {
         log("node.stop_failed", json!({}));
     }
-    None
 }
 
 /// Never answers while the gate is open; answers when a pending core's
@@ -224,7 +294,60 @@ fn now_unix_ms() -> u64 {
 
 /// The role a start runs: a move the journal left unresolved first, then
 /// the placement record's choice.
-async fn resume(env: &Env, seat: &seat::Seat) -> Result<Role, String> {
+async fn resume(env: &Env, seat: &seat::Seat) -> Result<Option<Role>, String> {
+    // A core this folder stopped or retired for a move back starts again
+    // only when that move resumes it; a start meanwhile (a login, launchd's
+    // keep-alive) ends at once and successfully, so it is not retried.
+    if let Some(record) = crate::core_move::handover::read(&env.state_dir)?
+        && matches!(
+            record.state,
+            HandoverState::StoppedFor | HandoverState::Retired
+        )
+    {
+        log(
+            "start.held",
+            json!({"intent": record.intent, "state": record.state}),
+        );
+        return Ok(None);
+    }
+    if let Some(journal) = journal::read(&env.state_dir)?
+        && journal.phase.holds_the_core()
+        && journal.direction == Direction::Back
+    {
+        log(
+            "move.resumed",
+            json!({"intent": journal.intent, "phase": journal.phase}),
+        );
+        let remote = Arc::new(remote_for(env, &journal).map_err(|failure| {
+            format!(
+                "the move {} cannot reach its peer: {failure:?}",
+                journal.intent
+            )
+        })?);
+        let screen = MoveScreen::mount(&seat.parts(), env.vite_origin.as_deref());
+        let step = journal.phase.step();
+        let role = if journal.phase == Phase::Retiring {
+            retire_and_commit(env, seat, journal, remote, screen).await?
+        } else {
+            back_rollback(
+                env,
+                seat,
+                journal,
+                &remote,
+                screen,
+                step,
+                MoveFailure::Local {
+                    reason: "the move was interrupted".to_owned(),
+                },
+            )
+            .await?
+        };
+        return Ok(Some(role));
+    }
+    resume_forward(env, seat).await.map(Some)
+}
+
+async fn resume_forward(env: &Env, seat: &seat::Seat) -> Result<Role, String> {
     if let Some(journal) = journal::read(&env.state_dir)?
         && journal.phase.holds_the_core()
     {
@@ -369,10 +492,12 @@ async fn prepare(
         .filter(|journal| {
             journal.peer.device == device && matches!(journal.phase, Phase::RolledBack { .. })
         });
+    // A core the device retired for a move back holds nothing there.
     let other_move = inspected.handover.as_ref().is_some_and(|handover| {
-        retry
-            .as_ref()
-            .is_none_or(|retry| retry.intent != handover.intent)
+        handover.state != HandoverState::Retired
+            && retry
+                .as_ref()
+                .is_none_or(|retry| retry.intent != handover.intent)
     });
     if !inspected.brain.is_empty() || other_move {
         failed.push(FailedCheck {

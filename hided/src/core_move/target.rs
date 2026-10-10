@@ -4,9 +4,11 @@
 //! refusal included; a usage error exits non-zero.
 //!
 //! On the machine taking the core: `inspect`, `verify`, `place`, `start`,
-//! `status`, `abort` and `finish`. Every step that changes the state folder
-//! runs under the handover record's lock (`handover`), and each can be run
-//! again with the same intent and reach the same state.
+//! `status`, `abort` and `finish`. On the machine giving the core back to
+//! the node that dialed it (`back`): `release`, `resume` and `retire`.
+//! Every step that changes the state folder runs under the handover
+//! record's lock (`handover`), and each can be run again with the same
+//! intent and reach the same state.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -25,7 +27,10 @@ struct Args {
     target: Option<String>,
 }
 
-const USAGE: &str = "usage: hided core-move <inspect|verify|place|start|status|abort|finish> [--state-dir <dir>] [--intent <id>] [--source <node>] [--target <node>]";
+const USAGE: &str = "usage: hided core-move <inspect|verify|place|start|status|abort|finish|release|resume|retire> [--state-dir <dir>] [--intent <id>] [--source <node>] [--target <node>]";
+
+/// How long a released core may take to end once it answered.
+const RELEASED_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
 
 fn parse(args: &[OsString]) -> Result<Args, String> {
     let mut args = args.iter();
@@ -89,6 +94,13 @@ pub fn run(args: &[OsString]) -> Result<(), String> {
                 "status" => status(&args.state_dir, intent),
                 "abort" => abort(&args.state_dir, intent),
                 "finish" => finish(&args.state_dir, intent),
+                "release" => release(
+                    &args.state_dir,
+                    intent,
+                    args.target.as_deref().ok_or(USAGE)?,
+                ),
+                "resume" => resume(&args.state_dir, intent),
+                "retire" => retire(&args.state_dir, intent),
                 _ => return Err(USAGE.to_owned()),
             }
         }
@@ -173,6 +185,8 @@ fn verify(state_dir: &Path, intent: &str) -> Result<Value, Value> {
 fn place(state_dir: &Path, intent: &str, source: &str, target: &str) -> Result<Value, Value> {
     let held = handover::hold(state_dir).map_err(plain)?;
     match held.read().map_err(plain)? {
+        // A core this machine retired for a move back holds nothing.
+        Some(record) if record.state == HandoverState::Retired => {}
         Some(record) if record.intent != intent => {
             return Err(plain(format!(
                 "another move ({}) holds this machine",
@@ -245,11 +259,7 @@ fn abort(state_dir: &Path, intent: &str) -> Result<Value, Value> {
     // A core still starting holds no record yet, but it holds the instance
     // lock; holding it here keeps one from starting on the copy while it is
     // taken back.
-    let _instance = crate::state_file::acquire_lock(state_dir).map_err(|error| {
-        plain(format!(
-            "a core of this folder is still starting or running: {error}"
-        ))
-    })?;
+    let _instance = acquire_instance(state_dir)?;
     copy::unplace(state_dir, &incoming(state_dir, intent)).map_err(refusal)?;
     held.remove().map_err(plain)?;
     Ok(json!({"state": "aborted"}))
@@ -284,4 +294,140 @@ fn finish(state_dir: &Path, intent: &str) -> Result<Value, Value> {
         }
     }
     Ok(json!({"state": "done"}))
+}
+
+/// Has this machine's core stop for the move back `intent` to `target` and
+/// stages its copy: the core checks the move, records the stop and its
+/// export, answers, and ends; the copy is made once it has ended, under the
+/// instance lock so no core starts on the folder meanwhile.
+fn release(state_dir: &Path, intent: &str, target: &str) -> Result<Value, Value> {
+    match handover::read(state_dir).map_err(plain)? {
+        Some(record) if record.intent == intent && record.state == HandoverState::Retired => {
+            return Ok(json!({"state": "retired"}));
+        }
+        // Stopped already, by an earlier run of this step.
+        Some(record) if record.intent == intent && record.state == HandoverState::StoppedFor => {}
+        Some(record) if record.state != HandoverState::Retired => {
+            return Err(plain(format!(
+                "another move ({}) holds this machine",
+                record.intent
+            )));
+        }
+        _ => {
+            let running = crate::state_file::read_state(state_dir)
+                .map_err(|error| plain(error.to_string()))?
+                .ok_or_else(|| plain("no core runs here"))?;
+            if let Err(reason) = crate::attach::release(state_dir, intent, target) {
+                // The answer can be lost as the core ends; its record says
+                // whether it stopped.
+                let stopped = handover::read(state_dir)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|record| {
+                        record.intent == intent && record.state == HandoverState::StoppedFor
+                    });
+                if !stopped {
+                    return Err(plain(reason));
+                }
+            }
+            wait_until_gone(running.pid)?;
+        }
+    }
+    let _instance = acquire_instance(state_dir)?;
+    let export = super::back::read_export(state_dir, intent).map_err(plain)?;
+    let staging = herdr_core::node_migration::staging_dir(state_dir, intent);
+    copy::stage(state_dir, &staging).map_err(refusal)?;
+    super::driver::carry_labels(&staging, target, &export.labels).map_err(plain)?;
+    let manifest = copy::digest(&staging).map_err(refusal)?;
+    let bytes = serde_json::to_vec(&manifest).map_err(|error| plain(error.to_string()))?;
+    let path = super::back::manifest_path(state_dir, intent);
+    hide_platform::fs::atomic::write_file_durable(
+        &path,
+        &bytes,
+        hide_platform::fs::Access::Private,
+    )
+    .map_err(|error| plain(format!("{}: {error}", path.display())))?;
+    Ok(json!({"state": "staged", "files": manifest.files.len()}))
+}
+
+/// Undoes a release: the staged copy goes and this machine's core starts on
+/// its folder again. A core retired for the move stays retired.
+fn resume(state_dir: &Path, intent: &str) -> Result<Value, Value> {
+    let held = handover::hold(state_dir).map_err(plain)?;
+    match held.read().map_err(plain)? {
+        Some(record) if record.intent == intent && record.state == HandoverState::Retired => {
+            return Ok(json!({"state": "retired"}));
+        }
+        Some(record) if record.intent == intent && record.state == HandoverState::StoppedFor => {
+            super::back::remove_staging(state_dir, intent).map_err(plain)?;
+            held.remove().map_err(plain)?;
+        }
+        Some(record) if record.state != HandoverState::Retired => {
+            return Err(plain(format!(
+                "another move ({}) holds this machine",
+                record.intent
+            )));
+        }
+        // The release never stopped the core, or an earlier resume ran.
+        _ => {}
+    }
+    drop(held);
+    if let Ok(Some(running)) = crate::state_file::read_state(state_dir)
+        && hide_platform::process::is_alive(running.pid)
+    {
+        return Ok(json!({"state": "running", "pid": running.pid}));
+    }
+    let home = hide_platform::host::home_dir().map_err(|error| plain(error.to_string()))?;
+    let pid = CoreStarter::for_account(&home)
+        .and_then(|starter| starter.start(state_dir))
+        .map_err(plain)?;
+    Ok(json!({"state": "running", "pid": pid}))
+}
+
+/// The commit of a move back: this machine's starter is removed, so no
+/// core of its starts again, and its brain state is set aside.
+fn retire(state_dir: &Path, intent: &str) -> Result<Value, Value> {
+    let held = handover::hold(state_dir).map_err(plain)?;
+    match held.read().map_err(plain)? {
+        Some(record) if record.intent == intent && record.state == HandoverState::Retired => {}
+        Some(mut record)
+            if record.intent == intent && record.state == HandoverState::StoppedFor =>
+        {
+            let home = hide_platform::host::home_dir().map_err(|error| plain(error.to_string()))?;
+            CoreStarter::for_account(&home)
+                .and_then(|starter| starter.stop(state_dir))
+                .map_err(plain)?;
+            let _instance = acquire_instance(state_dir)?;
+            record.state = HandoverState::Retired;
+            held.write(&record).map_err(plain)?;
+        }
+        _ => return Err(plain("this machine's core is not stopped for this move")),
+    }
+    copy::set_aside(state_dir, intent).map_err(refusal)?;
+    super::back::remove_staging(state_dir, intent).map_err(plain)?;
+    Ok(json!({"state": "retired"}))
+}
+
+/// Waits until `pid` has ended.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
+fn wait_until_gone(pid: u32) -> Result<(), Value> {
+    let deadline = std::time::Instant::now() + RELEASED_WITHIN;
+    while hide_platform::process::is_alive(pid) {
+        if std::time::Instant::now() >= deadline {
+            return Err(plain(format!(
+                "the core {pid} did not end after its release"
+            )));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Ok(())
+}
+
+/// The folder's instance lock, which no core holds once this has it.
+fn acquire_instance(state_dir: &Path) -> Result<std::fs::File, Value> {
+    crate::state_file::acquire_lock(state_dir).map_err(|error| {
+        plain(format!(
+            "a core of this folder is still starting or running: {error}"
+        ))
+    })
 }

@@ -259,7 +259,11 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let lock = acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
     let seat = seat::Seat::serve(server::bind(env.bind).await?, new_token())?;
     let state_dir = env.state_dir.clone();
+    let herdr_socket = env.herdr_socket_path.clone();
     let mut running = start_core_role(env, seat.parts()).await?;
+    // Recorded once the daemon runs, so a start that failed leaves no record
+    // naming a process that is gone.
+    record_daemon(&state_dir, &seat.parts(), herdr_socket)?;
     seat.end_with(Arc::clone(&running.shutdown), state_dir.clone());
     running.own = Some(OwnSeat {
         _seat: seat,
@@ -267,6 +271,31 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         _lock: lock,
     });
     Ok(running)
+}
+
+/// Records the process holding `seat` in `state_dir` (`hided.json`), which
+/// `hide connect` and the desktop host find it by, whichever role it runs.
+pub(crate) fn record_daemon(
+    state_dir: &std::path::Path,
+    seat: &seat::SeatParts,
+    herdr_socket: Option<String>,
+) -> Result<(), String> {
+    let started_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_else(|_| "0".into());
+    let pid = std::process::id();
+    let state = DaemonState {
+        pid,
+        port: seat.port,
+        token: seat.token.clone(),
+        socket: herdr_socket,
+        started_at,
+        pid_started: hide_platform::process::start_time(pid).ok(),
+    };
+    write_state(state_dir, &state)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// The core role on `seat`, which already holds the instance lock.
@@ -328,20 +357,6 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         .map_err(|error| format!("the daemon host id could not be read or written: {error}"))?;
     let token = seat.token.clone();
     let port = seat.port;
-    let started_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs().to_string())
-        .unwrap_or_else(|_| "0".into());
-    let pid = std::process::id();
-    let state = DaemonState {
-        pid,
-        port,
-        token: token.clone(),
-        socket: env.herdr_socket_path.clone(),
-        started_at,
-        pid_started: hide_platform::process::start_time(pid).ok(),
-    };
-    write_state(&env.state_dir, &state).map_err(|error| error.to_string())?;
     match env.herdr_bin_path.as_ref() {
         Some(path) => eprintln!(
             "{}",
@@ -495,7 +510,10 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
             "host_id": host_id,
             "host_name": host_name(),
             "pid": std::process::id(),
-            "started_at_unix": state.started_at.clone(),
+            "started_at_unix": SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_else(|_| "0".into()),
             "state_dir": env.state_dir.display().to_string(),
             "core_state_path": env.state_dir.join("core-state.json").display().to_string(),
             "herdr_bin_path": env.herdr_bin_path.as_ref().map(|path| path.display().to_string()),
@@ -540,6 +558,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
             grants: Arc::clone(&relay_grants),
             attaching: attach::Attaching::default(),
             move_gate: Arc::clone(&move_gate),
+            moves: Arc::clone(&seat.moves),
         }),
         Arc::clone(&shutdown),
     ));
@@ -571,7 +590,9 @@ pub async fn start_node_daemon(env: Env) -> Result<RunningNode, String> {
     let lock = acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
     let seat = seat::Seat::serve(server::bind(env.bind).await?, new_token())?;
     let state_dir = env.state_dir.clone();
+    let herdr_socket = env.herdr_socket_path.clone();
     let mut running = start_node_role(env, seat.parts()).await?;
+    record_daemon(&state_dir, &seat.parts(), herdr_socket)?;
     seat.end_with(Arc::clone(&running.shutdown), state_dir.clone());
     running.own = Some(OwnSeat {
         _seat: seat,
@@ -613,18 +634,6 @@ pub async fn start_node_role(env: Env, seat: seat::SeatParts) -> Result<RunningN
         .local_addr()
         .map_err(|error| error.to_string())?
         .port();
-    let pid = std::process::id();
-    let state = DaemonState {
-        pid,
-        port,
-        token: token.clone(),
-        socket: Some(herdr_socket.clone()),
-        started_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs().to_string())
-            .unwrap_or_else(|_| "0".into()),
-        pid_started: hide_platform::process::start_time(pid).ok(),
-    };
     let shutdown = Arc::new(Notify::new());
     let daemon = node_daemon::NodeDaemon::start(
         &env.home,
@@ -655,9 +664,6 @@ pub async fn start_node_role(env: Env, seat: seat::SeatParts) -> Result<RunningN
             browser_relay_port,
         },
     )?;
-    // Recorded once the daemon runs, so a start that failed leaves no record
-    // naming a process that is gone.
-    write_state(&env.state_dir, &state).map_err(|error| error.to_string())?;
     herdr_core::diagnostic!(serde_json::json!({
         "component": "node_daemon",
         "kind": "started",

@@ -17,6 +17,7 @@ pub enum Kind {
     AttachmentCommit,
     TerminalInput,
     TerminalAttachment,
+    CoreMove,
     #[serde(other)]
     Other,
 }

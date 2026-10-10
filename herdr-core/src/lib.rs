@@ -73,5 +73,5 @@ pub use model::{
     CoreOptions, DeviceRegistration, LinkOrigin, SCHEMA_VERSION, Snapshot, SnapshotDeltaPayload,
 };
 pub use runtime::WorkspaceRemoteRoute;
-pub use runtime::core_move::{MoveProject, MoveSource, MoveSourceRefusal};
+pub use runtime::core_move::{MoveProject, MoveSource, MoveSourceRefusal, ReleaseSource};
 pub use runtime::serialize_snapshot_delta;

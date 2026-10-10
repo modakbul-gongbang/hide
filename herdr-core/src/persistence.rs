@@ -289,6 +289,23 @@ pub fn load(path: &Path) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition
     }
 }
 
+/// Why `load` would read the file at `path` as corrupt, or `None` when it
+/// reads it; for a refusal that names what this build cannot read.
+pub(crate) fn unreadable(path: &Path) -> Option<String> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => return Some(error.to_string()),
+    };
+    match serde_json::from_slice::<StoredUiState>(&bytes) {
+        Err(error) => Some(error.to_string()),
+        Ok(stored) if stored.schema_version != UI_STATE_SCHEMA_VERSION => Some(format!(
+            "schema version {}, not {UI_STATE_SCHEMA_VERSION}",
+            stored.schema_version
+        )),
+        Ok(_) => None,
+    }
+}
+
 fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition) {
     let Ok(stored) = serde_json::from_slice::<StoredUiState>(bytes) else {
         return (

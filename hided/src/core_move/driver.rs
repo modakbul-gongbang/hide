@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use herdr_core::node_migration::{self, IdTable, KnownProject, OwnerChange, copy};
-use hide_node::ssh::transfer::FileUpload;
+use hide_node::ssh::transfer::FileCopy;
 use hide_node::ssh::upstream::Upstream;
 use hide_node::ssh::{SshAlias, shell_quote};
 use serde_json::{Value, json};
@@ -102,11 +102,23 @@ impl Remote {
 
     pub fn upload(
         &self,
-        files: &[FileUpload],
+        files: &[FileCopy],
         sent: &(dyn Fn(u64) + Sync),
     ) -> Result<(), MoveFailure> {
         self.upstream
             .upload(files, sent)
+            .map_err(|error| MoveFailure::Copy {
+                reason: error.to_string(),
+            })
+    }
+
+    pub fn download(
+        &self,
+        files: &[FileCopy],
+        received: &(dyn Fn(u64) + Sync),
+    ) -> Result<(), MoveFailure> {
+        self.upstream
+            .download(files, received)
             .map_err(|error| MoveFailure::Copy {
                 reason: error.to_string(),
             })
@@ -186,30 +198,7 @@ pub fn forward_change(
         old_owner_herdr_socket: own_herdr_socket,
         new_owner_herdr_socket: target_herdr_socket,
     };
-    let roots: Vec<PathBuf> = source
-        .projects
-        .iter()
-        .map(|project| {
-            if project.device_id == source.node {
-                match hide_host::register::check(Path::new(&project.path), home) {
-                    Ok(registrable) => PathBuf::from(registrable.root),
-                    // A folder that is gone is grouped by its own path, as
-                    // this machine's node answers for it.
-                    Err(error) => {
-                        herdr_core::diagnostic!(json!({
-                            "component": "core_move",
-                            "kind": "staging.root_unresolved",
-                            "project": project.id,
-                            "reason": error.to_string(),
-                        }));
-                        PathBuf::from(&project.path)
-                    }
-                }
-            } else {
-                PathBuf::from(&project.path)
-            }
-        })
-        .collect();
+    let roots = project_roots(&source.projects, &source.node, home);
     let projects = source
         .projects
         .iter()
@@ -227,6 +216,38 @@ pub fn forward_change(
         });
     let ids = node_migration::id_table(&change, projects);
     Ok((change, ids))
+}
+
+/// The repository root each project's id digests: this machine's own
+/// projects resolved on its disk, another machine's by the path it
+/// reported as its root.
+pub fn project_roots(
+    projects: &[herdr_core::MoveProject],
+    own_node: &str,
+    home: &Path,
+) -> Vec<PathBuf> {
+    projects
+        .iter()
+        .map(|project| {
+            if project.device_id != own_node {
+                return PathBuf::from(&project.path);
+            }
+            match hide_host::register::check(Path::new(&project.path), home) {
+                Ok(registrable) => PathBuf::from(registrable.root),
+                // A folder that is gone is grouped by its own path, as this
+                // machine's node answers for it.
+                Err(error) => {
+                    herdr_core::diagnostic!(json!({
+                        "component": "core_move",
+                        "kind": "staging.root_unresolved",
+                        "project": project.id,
+                        "reason": error.to_string(),
+                    }));
+                    PathBuf::from(&project.path)
+                }
+            }
+        })
+        .collect()
 }
 
 /// Copies this machine's brain state into its staging folder with the
@@ -261,7 +282,7 @@ pub fn stage(
 
 /// Writes the device's in-memory label records into the copy's
 /// `labels.json` as the section `reown` makes the new owner's own.
-fn carry_labels(staging: &Path, device: &str, records: &Value) -> Result<(), String> {
+pub(crate) fn carry_labels(staging: &Path, device: &str, records: &Value) -> Result<(), String> {
     let empty = records.as_object().is_none_or(serde_json::Map::is_empty);
     let path = staging.join("labels.json");
     let mut labels: Value = match std::fs::read(&path) {
@@ -321,7 +342,7 @@ pub fn send(
     .map_err(|error| MoveFailure::Local {
         reason: error.to_string(),
     })?;
-    let manifest_upload = FileUpload {
+    let manifest_upload = FileCopy {
         local: manifest_file.clone(),
         remote: format!("{incoming}.manifest.json"),
     };
@@ -344,9 +365,9 @@ pub fn send(
             return Ok(());
         }
         uploaded.extend(wanted.iter().cloned());
-        let files: Vec<FileUpload> = wanted
+        let files: Vec<FileCopy> = wanted
             .iter()
-            .map(|path| FileUpload {
+            .map(|path| FileCopy {
                 local: staging.join(path),
                 remote: format!("{incoming}/{path}"),
             })

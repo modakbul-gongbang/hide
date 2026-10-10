@@ -152,9 +152,25 @@ async fn attached(
         state.boundary.node().as_str(),
         &state.terminals.own_prefix,
     );
+    // A move of the core is this machine's hided's, beside the core's
+    // traffic.
+    let mut move_frames = state.seat.moves.subscribe();
+    let frame = crate::core_move::control::frame(&move_frames.borrow_and_update());
+    if socket.send(Message::Text(frame.into())).await.is_err() {
+        return ScreenEnd::Left;
+    }
     loop {
         let shared = Arc::clone(&relay.shared);
         tokio::select! {
+            changed = move_frames.changed() => {
+                if changed.is_err() {
+                    return ScreenEnd::Left;
+                }
+                let frame = crate::core_move::control::frame(&move_frames.borrow_and_update());
+                if socket.send(Message::Text(frame.into())).await.is_err() {
+                    return ScreenEnd::Left;
+                }
+            }
             changed = live.changed() => {
                 let same = changed.is_ok()
                     && live
@@ -237,6 +253,15 @@ async fn attached(
                     Message::Text(text) => {
                         let routed = screen_event::read(&text, TAKEN_HERE);
                         let routed = routed.as_ref().map(|routed| (routed.kind, &routed.event));
+                        if let Some((Kind::CoreMove, event)) = routed {
+                            if let Err(reason) = state.seat.moves.request_event(event) {
+                                let frame = crate::core_move::control::refusal_frame(reason);
+                                if socket.send(Message::Text(frame.into())).await.is_err() {
+                                    return ScreenEnd::Left;
+                                }
+                            }
+                            continue;
+                        }
                         if let Some((Kind::FileBytes, event)) = routed
                             && let Some(opened) = own_file(state, event)
                         {
@@ -573,13 +598,15 @@ fn resume(first: FrameStart, handshake: &Handshake) -> Resume {
 }
 
 /// The kinds of a screen's events this daemon takes before the core: a read
-/// of a file here, an upload, and a key.
+/// of a file here, an upload, a key, and a move of the core, which this
+/// machine's own hided drives (PRD core-host-node-move amendment 2).
 const TAKEN_HERE: &[Kind] = &[
     Kind::FileBytes,
     Kind::AttachmentStage,
     Kind::AttachmentCancel,
     Kind::AttachmentCommit,
     Kind::Key,
+    Kind::CoreMove,
 ];
 
 #[cfg(test)]

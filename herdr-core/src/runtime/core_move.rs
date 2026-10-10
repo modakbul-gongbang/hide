@@ -1,8 +1,10 @@
 //! What a core move reads from the running core before it stops it (PRD
-//! core-host-node-move B4): the device the core goes to, how this machine
-//! reaches it, and every project of the two machines with its checkouts,
-//! from which the move makes the id table (`node_migration::id_table`).
-//! Taken under the lock as owned data; nothing here waits.
+//! core-host-node-move B4, B6): the machine the core goes to, how this
+//! machine reaches it, and every project of the two machines with its
+//! checkouts, from which the move makes the id table
+//! (`node_migration::id_table`). A forward move goes to a device this core
+//! dials; a move back goes to a node that dialed in. Taken under the lock
+//! as owned data; nothing here waits.
 
 use super::*;
 use crate::model::DeviceRegistration;
@@ -46,6 +48,9 @@ pub enum MoveSourceRefusal {
     /// The device's node dials this core; only a device this core dials
     /// over SSH can take it.
     NotDialed,
+    /// The machine is one this core dials; only a node that dialed in can
+    /// take the core back.
+    NotInbound,
     /// The device's link is not up.
     NotConnected,
     /// The device has not reported its machine id or its helper.
@@ -59,6 +64,7 @@ impl MoveSourceRefusal {
         match self {
             Self::UnknownDevice => "unknown_device",
             Self::NotDialed => "not_dialed",
+            Self::NotInbound => "not_inbound",
             Self::NotConnected => "not_connected",
             Self::NotReady => "not_ready",
             Self::Unstorable(_) => "unstorable",
@@ -66,7 +72,67 @@ impl MoveSourceRefusal {
     }
 }
 
+/// The core's facts a move back to the node that dialed it is made from.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReleaseSource {
+    /// This core's node.
+    pub node: String,
+    /// The projects of this machine and of the node.
+    pub projects: Vec<MoveProject>,
+    /// Nodes other than this one that dialed in and are linked now.
+    pub other_linked_nodes: Vec<String>,
+}
+
 impl Runtime {
+    pub(crate) fn release_source(&self, node: &str) -> Result<ReleaseSource, MoveSourceRefusal> {
+        let registration: &DeviceRegistration = self
+            .device_registration(node)
+            .ok_or(MoveSourceRefusal::UnknownDevice)?;
+        if registration.origin != LinkOrigin::Inbound {
+            return Err(MoveSourceRefusal::NotInbound);
+        }
+        // The node ends its own link before it asks, so no window of it is
+        // held on a link that will not come back; it checked the link was
+        // live before.
+        let own = self.node.as_str().to_owned();
+        Ok(ReleaseSource {
+            projects: self.move_projects(&own, node),
+            node: own,
+            other_linked_nodes: self
+                .linked_nodes()
+                .into_iter()
+                .filter(|linked| linked != node)
+                .collect(),
+        })
+    }
+
+    /// The registered projects of `own` and `other`, each with its
+    /// checkouts.
+    fn move_projects(&self, own: &str, other: &str) -> Vec<MoveProject> {
+        let checkouts = |id: &str| -> Vec<(String, String)> {
+            self.snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .filter(|row| row.id == id)
+                .flat_map(|row| row.checkouts.iter())
+                .map(|checkout| (checkout.id.clone(), checkout.path.clone()))
+                .collect()
+        };
+        self.snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .filter(|project| project.device_id == own || project.device_id == other)
+            .map(|project| MoveProject {
+                id: project.id.clone(),
+                device_id: project.device_id.clone(),
+                path: project.path.clone(),
+                checkouts: checkouts(&project.id),
+            })
+            .collect()
+    }
+
     pub(crate) fn move_source(&self, device: &str) -> Result<MoveSource, MoveSourceRefusal> {
         let registration: &DeviceRegistration = self
             .device_registration(device)
@@ -100,29 +166,7 @@ impl Runtime {
             .cloned()
             .ok_or(MoveSourceRefusal::NotReady)?;
         let node = self.node.as_str().to_owned();
-        let checkouts = |id: &str| -> Vec<(String, String)> {
-            self.snapshot
-                .navigator
-                .workspaces
-                .iter()
-                .filter(|row| row.id == id)
-                .flat_map(|row| row.checkouts.iter())
-                .map(|checkout| (checkout.id.clone(), checkout.path.clone()))
-                .collect()
-        };
-        let projects = self
-            .snapshot
-            .ui_state
-            .workspace_registrations
-            .iter()
-            .filter(|project| project.device_id == node || project.device_id == device)
-            .map(|project| MoveProject {
-                id: project.id.clone(),
-                device_id: project.device_id.clone(),
-                path: project.path.clone(),
-                checkouts: checkouts(&project.id),
-            })
-            .collect();
+        let projects = self.move_projects(&node, device);
         Ok(MoveSource {
             node,
             device: device.to_owned(),

@@ -6,8 +6,10 @@
 //! verify, place and start it (`target`); its own hided then links to that
 //! core as a node, and the first link that carries the move's intent is
 //! the commit point (`handover`). Every step before it is undone by
-//! restarting the old core from its untouched folder.
+//! restarting the old core from its untouched folder. A move back is its
+//! own sequence, driven by the node (`back`).
 
+pub mod back;
 pub mod control;
 pub mod driver;
 pub mod gate;
