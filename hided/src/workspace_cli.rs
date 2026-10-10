@@ -430,6 +430,67 @@ pub fn request_factory_question_guard(
     })
 }
 
+/// How long `hide workspace memory` waits for the core's answer: the hook
+/// that runs it waits 1,250 ms in all, process start included.
+const MEMORY_WITHIN: Duration = Duration::from_millis(1_200);
+/// The largest request the daemon reads from a pane credential.
+const SCOPED_REQUEST_LIMIT: usize = 16 * 1024;
+
+/// The prompt a hook piped in: at most
+/// `herdr_core::memory_hook::PROMPT_LIMIT_BYTES`, its valid UTF-8 start.
+pub fn read_memory_prompt(input: impl std::io::Read) -> Result<String, String> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    input
+        .take(herdr_core::memory_hook::PROMPT_LIMIT_BYTES as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "prompt_unreadable".to_owned())?;
+    Ok(match String::from_utf8(bytes) {
+        Ok(prompt) => prompt,
+        Err(error) => {
+            let valid = error.utf8_error().valid_up_to();
+            let mut bytes = error.into_bytes();
+            bytes.truncate(valid);
+            String::from_utf8(bytes).map_err(|_| "prompt_unreadable".to_owned())?
+        }
+    })
+}
+
+/// A hook's Project Memory from the core (`hide workspace memory`). A prompt
+/// whose escaping would carry the request past what the daemon reads is cut
+/// until it fits.
+pub fn request_memory(credential: &Credential, mut ask: Value) -> Result<Value, String> {
+    let path = &credential.path;
+    let reference = read_reference(path)?;
+    let request_id = fresh_request_id()?;
+    ask["type"] = json!("memory");
+    ask["request_id"] = json!(request_id);
+    while ask.to_string().len() > SCOPED_REQUEST_LIMIT {
+        let Some(prompt) = ask["prompt"].as_str().filter(|prompt| !prompt.is_empty()) else {
+            return Err("memory_request_too_large".to_owned());
+        };
+        let cut = herdr_core::memory_hook::prefix(prompt, prompt.len() / 2).to_owned();
+        ask["prompt"] = json!(cut);
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| "request_unavailable".to_owned())?;
+    runtime.block_on(async {
+        let deadline = tokio::time::Instant::now() + MEMORY_WITHIN;
+        let (value, mut socket) = tokio::time::timeout_at(
+            deadline,
+            exchange_response_with_limit(&reference, ask, &request_id, Some(64 * 1024)),
+        )
+        .await
+        .map_err(|_| "memory_deadline".to_owned())??;
+        tokio::time::timeout_at(deadline, claim(&mut socket, path))
+            .await
+            .map_err(|_| "memory_deadline".to_owned())??;
+        Ok(value)
+    })
+}
+
 /// The relay socket for one `hide browser` page command: the same scoped
 /// handshake and claim as every Workspace request, after which the socket
 /// carries CDP frames to the caller's display. A refusal keeps the daemon's

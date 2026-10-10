@@ -1112,6 +1112,186 @@ fn a_node_pane_calls_its_core_through_the_link() -> Result<()> {
     }
 }
 
+/// The core's Memory store with one enabled Project, `checkout`'s on `node`,
+/// holding `rule`.
+fn seed_memory(
+    fixture: &Fixture,
+    node: &str,
+    checkout: &std::path::Path,
+    rule: &str,
+) -> Result<()> {
+    let project = hide_project::resolve(checkout, node)?;
+    let mut store =
+        hide_memory::MemoryStore::open(&hide_memory::database_path(&fixture.core_state))?;
+    store.ensure_project(&project.id, &project.root, node)?;
+    store.set_enabled(&project.id, true, true)?;
+    store.apply_candidates(
+        &hide_memory::AnalysisBatch {
+            id: format!("{node}-batch"),
+            project_id: project.id.clone(),
+            provider: "codex".into(),
+            analysis_provider: "codex".into(),
+            session_id: "source-session".into(),
+            content_hash: format!("{node}-hash"),
+            created_at_unix_ms: 1,
+        },
+        &[hide_memory::Candidate {
+            text: rule.into(),
+            kind: hide_memory::CandidateKind::Rule,
+            confidence: 0.9,
+            salience: 0.9,
+            source_offsets: vec![1],
+            direct_human_source: true,
+            relation: hide_memory::CandidateRelation::New,
+        }],
+    )?;
+    Ok(())
+}
+
+/// `hide workspace memory` for a session start in `cwd`, as `command` runs
+/// it, and how long the answer took.
+fn ask_memory(
+    mut command: std::process::Command,
+    cwd: &std::path::Path,
+) -> Result<(Value, Duration)> {
+    command
+        .args([
+            "workspace",
+            "memory",
+            "--event",
+            "SessionStart",
+            "--runtime",
+            "codex",
+            "--session",
+            "memory-session",
+            "--cwd",
+        ])
+        .arg(cwd)
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null());
+    let asked = Instant::now();
+    let output = command.output()?;
+    let took = asked.elapsed();
+    let answer = workspace_answer(&String::from_utf8_lossy(&output.stdout))
+        .with_context(|| format!("stderr: {}", String::from_utf8_lossy(&output.stderr)))?;
+    Ok((answer, took))
+}
+
+/// PRD core-host-node-move B14: an agent on either machine gets Project
+/// Memory from the one store the core owns, for the Project of its own
+/// checkout, read by that checkout's node; with the link down the node's
+/// agent is refused at once and its turn goes on without Memory.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn an_agent_on_either_machine_reads_the_one_memory_the_core_owns() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let node_project = fixture.screen_home().join("project");
+        let core_project = fixture.core_home().join("core-project");
+        // Each its own repository: a run folder sits inside this checkout,
+        // whose Project a folder in it would otherwise read as.
+        for folder in [&node_project, &core_project] {
+            std::fs::create_dir_all(folder)?;
+            let status = std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(folder)
+                .status()?;
+            ensure!(status.success(), "git init {}", folder.display());
+        }
+        fixture.screen.workspace_at(&node_project)?;
+        let hide = fixture.hided.with_file_name("hide");
+        seed_memory(
+            &fixture,
+            &node,
+            &node_project,
+            "The node's checkout keeps its rule",
+        )?;
+        seed_memory(
+            &fixture,
+            CORE_NODE,
+            &core_project,
+            "The core's checkout keeps its rule",
+        )?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            for (device, path) in [(node.as_str(), &node_project), (CORE_NODE, &core_project)] {
+                send(
+                    &mut socket,
+                    "create_workspace",
+                    json!({"device_id": device, "path": path, "label": device, "initialize_git": false}),
+                )
+                .await?;
+                focus_checkout(&fixture, &mut socket, device, path).await?;
+            }
+            // A caller outside every pane bootstraps on its first call, which
+            // the node answers once the core has bound the checkout; only
+            // what follows is Memory's own time.
+            let mut info = fixture.screen_command(&hide);
+            info.args(["workspace", "info"]).current_dir(&node_project);
+            tokio::task::block_in_place(|| info.output())?;
+            let (answer, took) = tokio::task::block_in_place(|| {
+                ask_memory(fixture.screen_command(&hide), &node_project)
+            })?;
+            ensure!(
+                answer["ok"] == true
+                    && answer["result"]["outcome"] == "provided"
+                    && answer["result"]["context"]
+                        .as_str()
+                        .is_some_and(|context| context.contains("The node's checkout keeps its rule")
+                            && context.contains("<hide-memory-receipt event=\"SessionStart\"")
+                            && !context.contains("The core's checkout")),
+                "the node's agent did not get its Project's Memory: {answer}"
+            );
+            eprintln!("memory answer for the node's agent took {took:?}");
+            let (answer, took) = tokio::task::block_in_place(|| {
+                ask_memory(fixture.core_command(&hide), &core_project)
+            })?;
+            ensure!(
+                answer["ok"] == true
+                    && answer["result"]["context"]
+                        .as_str()
+                        .is_some_and(|context| context.contains("The core's checkout keeps its rule")
+                            && !context.contains("The node's checkout")),
+                "the core's agent did not get its Project's Memory: {answer}"
+            );
+            eprintln!("memory answer for the core's agent took {took:?}");
+            // B19: the read is not logged with its text.
+            let log = std::fs::read_to_string(fixture.core_state.join("Logs/core.jsonl"))?;
+            ensure!(!log.contains("keeps its rule"), "Memory text reached the core's log");
+
+            tokio::task::block_in_place(|| fixture.ssh.online(false))?;
+            node_link(port, "waiting", LINK_BOUND).await?;
+            let (answer, took) = tokio::task::block_in_place(|| {
+                ask_memory(fixture.screen_command(&hide), &node_project)
+            })?;
+            ensure!(
+                answer["ok"] == false && answer["reason"] == "hide_unavailable",
+                "the node's agent was answered while the link was down: {answer}"
+            );
+            ensure!(took < Duration::from_secs(2), "the refusal took {took:?}");
+            tokio::task::block_in_place(|| fixture.ssh.online(true))?;
+            Ok::<_, anyhow::Error>(())
+        })
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
+
 /// The one JSON answer a `hide workspace` command printed among `text`.
 fn workspace_answer(text: &str) -> Result<Value> {
     let start = text.find('{').context("no answer was printed")?;

@@ -1196,6 +1196,8 @@ enum ScopedRequest {
     },
     /// `hide links`: a read of the link record, which needs no shell.
     Links(herdr_core::links::query::LinksQuery),
+    /// `hide memory --hook`: a hook's Project Memory, which needs no shell.
+    Memory(herdr_core::memory_hook::Ask),
 }
 
 impl ScopedRequest {
@@ -1208,6 +1210,7 @@ impl ScopedRequest {
                 | Self::Factory(..)
                 | Self::FactoryQuestionGuard { .. }
                 | Self::Links(..)
+                | Self::Memory(..)
         )
     }
 }
@@ -1304,6 +1307,8 @@ async fn scoped_client_loop(
                             )
                         }),
                         Some("factory_question_guard") => factory_question_guard(&value),
+                        Some("memory") => herdr_core::memory_hook::Ask::from_wire(&value)
+                            .map(ScopedRequest::Memory),
                         _ => None,
                     };
                     if command.is_none()
@@ -1435,6 +1440,16 @@ async fn scoped_client_loop(
                                             };
                                             (code, next)
                                         })?
+                                }
+                                ScopedRequest::Memory(ask) => {
+                                    let deadline = std::time::Instant::now() + herdr_core::memory_hook::WITHIN;
+                                    let scope = core.memory_scope(&cap.context).map_err(|reason| {
+                                        herdr_core::diagnostic!(json!({"component":"memory","kind":"hook.unavailable","pane":cap.pane_id,"device":cap.context.device_id,"reason":reason}));
+                                        ("memory_unavailable".to_owned(), "Continue without Project Memory")
+                                    })?;
+                                    serde_json::to_value(herdr_core::memory_hook::answer(&scope, &ask, deadline)).map_err(|_| {
+                                        ("result_encoding_failed".to_owned(), "Continue without Project Memory")
+                                    })?
                                 }
                                 ScopedRequest::Links(query) => {
                                     let scope = core.links_scope(&cap.context).ok_or((

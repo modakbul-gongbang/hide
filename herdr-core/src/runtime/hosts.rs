@@ -866,6 +866,43 @@ impl Runtime {
             .unwrap_or_else(|| "The device helper is not ready".to_owned()))
     }
 
+    /// What a hook's Memory read for a pane in `context` is answered from
+    /// (`crate::memory_hook`): the core's own node or a node that dials in
+    /// while its link is up, never a device the core dials (PRD
+    /// core-host-node-move Q20); asking starts no helper.
+    pub(crate) fn memory_scope(
+        &self,
+        context: &crate::workspace_control::Context,
+    ) -> Result<crate::memory_hook::Scope, &'static str> {
+        let device = context.device_id.as_str();
+        let link = if device == self.node.as_str() {
+            self.own_node()
+        } else {
+            let registration = self
+                .snapshot
+                .ui_state
+                .device_registrations
+                .iter()
+                .find(|registration| registration.id == device)
+                .ok_or("unregistered")?;
+            if registration.origin != crate::model::LinkOrigin::Inbound {
+                return Err("dialed_device");
+            }
+            match self.device_hosts.get(device).map(|host| &host.phase) {
+                Some(HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {
+                    Arc::clone(host)
+                }
+                _ => return Err("link_down"),
+            }
+        };
+        Ok(crate::memory_hook::Scope {
+            store: self.memory_database_path(),
+            node: crate::node::NodeId::parse(device).map_err(|_| "unregistered")?,
+            checkout_path: context.checkout_path.clone(),
+            link,
+        })
+    }
+
     /// The devices whose helper is connected now, each with its channel;
     /// asking starts no helper (PRD link-graph D-21).
     pub(crate) fn ready_device_channels(&self) -> Vec<(String, Arc<dyn NodeLink>)> {

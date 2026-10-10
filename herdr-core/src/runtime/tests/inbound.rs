@@ -382,3 +382,57 @@ fn a_connection_test_of_a_node_that_dials_in_is_refused_with_where_to_test_it() 
     drop(runtime);
     drop(release);
 }
+
+/// A hook's Memory is answered for this machine's panes and a linked node's,
+/// never for a device the core dials, which keeps none, and not while a
+/// node's link is down (PRD core-host-node-move B14, Q20).
+#[test]
+fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
+    let shared = shared_runtime();
+    let own = shared.lock().unwrap().node.as_str().to_owned();
+    let scope = |device: &str| {
+        shared
+            .lock()
+            .unwrap()
+            .memory_scope(&crate::workspace_control::Context {
+                device_id: device.to_owned(),
+                workspace_id: "workspace".to_owned(),
+                checkout_id: "checkout".to_owned(),
+                checkout_path: "/work/project".to_owned(),
+            })
+            .map(|scope| (scope.node.as_str().to_owned(), scope.checkout_path))
+    };
+    assert_eq!(scope(&own), Ok((own.clone(), "/work/project".to_owned())));
+    assert_eq!(scope(NODE), Err("unregistered"));
+
+    let event = serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "register_device",
+        "payload": {"id": "studio", "label": "studio", "ssh_alias": "studio-host"},
+    });
+    shared
+        .lock()
+        .unwrap()
+        .dispatch_json(&serde_json::to_vec(&event).unwrap());
+    assert_eq!(scope("studio"), Err("dialed_device"));
+
+    let (link, release) = held_link();
+    shared
+        .lock()
+        .unwrap()
+        .accept_inbound_node(NODE, "MacBook", link)
+        .expect("the link is taken");
+    wait(&shared, "the link ready", |runtime| {
+        runtime.host_snapshot(NODE).state == "ready"
+    });
+    assert_eq!(
+        scope(NODE),
+        Ok((NODE.to_owned(), "/work/project".to_owned()))
+    );
+
+    drop(release);
+    wait(&shared, "the link ended", |runtime| {
+        runtime.host_snapshot(NODE).state != "ready"
+    });
+    assert_eq!(scope(NODE), Err("link_down"));
+}

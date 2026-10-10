@@ -49,8 +49,8 @@ fn blocked_stdin_cannot_hold_the_agent_hook_past_its_hard_deadline() {
         payload["hookSpecificOutput"]["additionalContext"],
         hide_agent_hooks::runtime::PURPOSE_CONTEXT
     );
-    // Keep the original debug-binary boundary. Native acceptance separately
-    // measures the signed release helper's 100ms Memory boundary.
+    // A payload that never closes costs the hook its 500 ms payload wait and
+    // no Memory request; the bound leaves a debug binary room above that.
     assert!(started.elapsed() < Duration::from_millis(1_500));
 }
 

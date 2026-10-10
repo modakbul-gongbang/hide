@@ -55,6 +55,14 @@ pub enum CommandKind {
         session: String,
         runtime: String,
     },
+    /// `hide workspace memory`: a hook's Project Memory from the core, with
+    /// the prompt on stdin (PRD core-host-node-move B14).
+    WorkspaceMemory {
+        event: String,
+        runtime: String,
+        session: String,
+        cwd: Option<String>,
+    },
     WorkspaceInfo,
     ViewList,
     ViewStatus {
@@ -148,6 +156,10 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
                         Ok(CommandKind::FactoryQuestionGuard { session: (*session).to_owned(), runtime: (*runtime).to_owned() }),
                     _ => Err("usage: hide workspace factory-question-guard --session <id> --runtime <claude-code|codex|opencode|omp>".into()),
                 }
+            }
+            Some("memory") => {
+                let words: Vec<&str> = iter.map(String::as_str).collect();
+                parse_workspace_memory(&words)
             }
             Some("bootstrap") if iter.next().is_none() => Ok(CommandKind::WorkspaceBootstrap),
             Some("info") if iter.next().is_none() => Ok(CommandKind::WorkspaceInfo),
@@ -434,6 +446,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                 &kind,
                 CommandKind::WorkspaceBootstrap
                     | CommandKind::FactoryQuestionGuard { .. }
+                    | CommandKind::WorkspaceMemory { .. }
                     | CommandKind::Delivery(_)
                     | CommandKind::Factory(_)
                     | CommandKind::WorkspaceInfo
@@ -509,6 +522,32 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             println!("{answer}");
             Ok(())
         }
+        CommandKind::WorkspaceMemory {
+            event,
+            runtime,
+            session,
+            cwd,
+        } => {
+            const NEXT: &str = "Continue without Project Memory";
+            let prompt = crate::workspace_cli::read_memory_prompt(std::io::stdin().lock())
+                .or_else(|reason| workspace_refusal(&reason, NEXT))?;
+            let credential = crate::workspace_cli::Credential::acquire(&env)
+                .or_else(|reason| workspace_refusal(&reason, NEXT))?;
+            let answer = crate::workspace_cli::request_memory(
+                &credential,
+                json_memory_ask(&event, &runtime, &session, &prompt, cwd.as_deref()),
+            )
+            .or_else(|reason| workspace_refusal(&reason, NEXT))?;
+            println!("{answer}");
+            if answer["ok"] == true {
+                Ok(())
+            } else {
+                Err(answer["reason"]
+                    .as_str()
+                    .unwrap_or("memory_unavailable")
+                    .to_owned())
+            }
+        }
         CommandKind::ViewList => workspace_query(&env, "view_list"),
         CommandKind::ViewStatus { view_id } => view_status(&env, &view_id),
         CommandKind::WorkspaceAction { action, request_id } => {
@@ -516,6 +555,59 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         }
         CommandKind::Links(query) => links(&env, &query),
     }
+}
+
+const MEMORY_USAGE: &str = "usage: hide workspace memory --event <SessionStart|UserPromptSubmit> --runtime <runtime> --session <id> [--cwd <path>] < prompt";
+
+fn parse_workspace_memory(words: &[&str]) -> Result<CommandKind, String> {
+    let (event, runtime, session, cwd) = match words {
+        ["--event", event, "--runtime", runtime, "--session", session] => {
+            (event, runtime, session, None)
+        }
+        [
+            "--event",
+            event,
+            "--runtime",
+            runtime,
+            "--session",
+            session,
+            "--cwd",
+            cwd,
+        ] => (event, runtime, session, Some(*cwd)),
+        _ => return Err(MEMORY_USAGE.to_owned()),
+    };
+    let plain = |text: &str| !text.is_empty() && !text.chars().any(char::is_control);
+    if !matches!(*event, "SessionStart" | "UserPromptSubmit")
+        || !plain(runtime)
+        || !herdr_core::delivery::valid_session(session)
+        || cwd.is_some_and(|cwd| !plain(cwd))
+    {
+        return Err(MEMORY_USAGE.to_owned());
+    }
+    Ok(CommandKind::WorkspaceMemory {
+        event: (*event).to_owned(),
+        runtime: (*runtime).to_owned(),
+        session: (*session).to_owned(),
+        cwd: cwd.map(str::to_owned),
+    })
+}
+
+/// The `memory` request's own fields; the prompt goes only when there is one.
+fn json_memory_ask(
+    event: &str,
+    runtime: &str,
+    session: &str,
+    prompt: &str,
+    cwd: Option<&str>,
+) -> serde_json::Value {
+    let mut ask = serde_json::json!({"event": event, "runtime": runtime, "session": session});
+    if !prompt.is_empty() {
+        ask["prompt"] = serde_json::json!(prompt);
+    }
+    if let Some(cwd) = cwd {
+        ask["cwd"] = serde_json::json!(cwd);
+    }
+    ask
 }
 
 /// Prints the record's answer as one line; a refusal prints its reason and
@@ -2060,6 +2152,113 @@ mod tests {
         assert_eq!(
             parse_args(&args).unwrap(),
             CommandKind::Serve { keep_alive: true }
+        );
+    }
+
+    #[test]
+    fn workspace_memory_takes_an_event_runtime_and_session_and_an_optional_cwd() {
+        let parse = |args: &[&str]| {
+            let mut words = vec!["hide", "workspace", "memory"];
+            words.extend(args);
+            parse_args(
+                &words
+                    .iter()
+                    .map(|word| (*word).to_owned())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            parse(&[
+                "--event",
+                "SessionStart",
+                "--runtime",
+                "codex",
+                "--session",
+                "s-1"
+            ])
+            .unwrap(),
+            CommandKind::WorkspaceMemory {
+                event: "SessionStart".into(),
+                runtime: "codex".into(),
+                session: "s-1".into(),
+                cwd: None,
+            }
+        );
+        assert_eq!(
+            parse(&[
+                "--event",
+                "UserPromptSubmit",
+                "--runtime",
+                "pi",
+                "--session",
+                "/sessions/a.jsonl",
+                "--cwd",
+                "/work/project",
+            ])
+            .unwrap(),
+            CommandKind::WorkspaceMemory {
+                event: "UserPromptSubmit".into(),
+                runtime: "pi".into(),
+                session: "/sessions/a.jsonl".into(),
+                cwd: Some("/work/project".into()),
+            }
+        );
+        for args in [
+            vec![],
+            vec!["--event", "Stop", "--runtime", "codex", "--session", "s-1"],
+            vec![
+                "--event",
+                "SessionStart",
+                "--runtime",
+                "codex",
+                "--session",
+                "-x",
+            ],
+            vec![
+                "--event",
+                "SessionStart",
+                "--runtime",
+                "",
+                "--session",
+                "s-1",
+            ],
+            vec![
+                "--runtime",
+                "codex",
+                "--event",
+                "SessionStart",
+                "--session",
+                "s-1",
+            ],
+            vec![
+                "--event",
+                "SessionStart",
+                "--runtime",
+                "codex",
+                "--session",
+                "s-1",
+                "--cwd",
+                "",
+            ],
+        ] {
+            assert!(parse(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn workspace_memory_reads_at_most_the_prompt_limit_and_keeps_whole_characters() {
+        let limit = herdr_core::memory_hook::PROMPT_LIMIT_BYTES;
+        let long = "가".repeat(limit);
+        let read = crate::workspace_cli::read_memory_prompt(long.as_bytes()).unwrap();
+        assert!(
+            read.len() <= limit && long.starts_with(&read),
+            "{}",
+            read.len()
+        );
+        assert!(read.len() > limit - 3);
+        assert_eq!(
+            crate::workspace_cli::read_memory_prompt("keep going".as_bytes()).unwrap(),
+            "keep going"
         );
     }
 

@@ -83,28 +83,13 @@ fn run(runtime: AgentRuntime, hook: &Value, shell: &str, home: &Path, cwd: &Path
     child.wait_with_output().unwrap()
 }
 
-/// A Project with Memory on and nothing in it: its SessionStart context
-/// carries a receipt only when the helper read the session and the cwd from
-/// stdin, which is how the test sees stdin cross the shell.
-fn enable_memory(home: &Path, project_root: &Path) {
-    // The hook keys this machine's Projects by its node id.
-    let node = hide_platform::host::machine_id().unwrap();
-    let project = hide_project::resolve(project_root, &node).unwrap();
-    let path = hide_agent_hooks::memory::database_path(home);
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let store = hide_memory::MemoryStore::open(&path).unwrap();
-    store
-        .ensure_project(&project.id, &project.root, &node)
-        .unwrap();
-    store.set_enabled(&project.id, true, true).unwrap();
+/// Where the helper records a failure it may not show the agent; with no
+/// `hide` beside it, a session start whose payload it read asks the core
+/// for Memory and records that it could not, which is how the test sees
+/// stdin cross the shell.
+fn diagnostics(home: &Path) -> std::path::PathBuf {
+    home.join(".hide/agent-hooks/delivery-diagnostics.json")
 }
-
-const RECEIPT: &str = "<hide-memory-receipt event=\"SessionStart\"";
-
-/// A debug helper on a shared runner can miss its 75 ms Memory budget and
-/// answer without the receipt; without stdin it never carries one, so one
-/// receipt in a few runs is the proof.
-const ATTEMPTS: usize = 5;
 
 #[test]
 fn the_windows_entries_run_the_helper_through_powershell_only_while_it_is_there() {
@@ -148,40 +133,36 @@ fn the_windows_entries_run_the_helper_through_powershell_only_while_it_is_there(
 
     std::fs::create_dir_all(helper.parent().unwrap()).unwrap();
     std::fs::copy(env!("CARGO_BIN_EXE_hide-agent-hooks"), &helper).unwrap();
-    enable_memory(&home, &project);
     for runtime in AgentRuntime::ALL {
         let hook = session_start_hook(&home, runtime);
         for how in ways(runtime) {
-            let mut receipt = false;
-            for _ in 0..ATTEMPTS {
-                let output = run(runtime, &hook, how, &home, &project);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                assert!(
-                    output.status.success(),
-                    "{runtime:?} under {how}: {output:?}"
-                );
-                assert!(stdout.is_ascii(), "{runtime:?} under {how}: {stdout}");
-                let envelope: Value = serde_json::from_str(&stdout)
-                    .unwrap_or_else(|error| panic!("{runtime:?} under {how}: {error}: {stdout}"));
-                assert_eq!(
-                    envelope["hookSpecificOutput"]["hookEventName"], "SessionStart",
-                    "{runtime:?} under {how}"
-                );
-                let context = envelope["hookSpecificOutput"]["additionalContext"]
-                    .as_str()
-                    .unwrap();
-                assert!(
-                    context.starts_with(PURPOSE_CONTEXT),
-                    "{runtime:?} under {how}: the context's `…` crossed PowerShell intact: {context}"
-                );
-                if context.contains(RECEIPT) {
-                    receipt = true;
-                    break;
-                }
-            }
+            let _ = std::fs::remove_file(diagnostics(&home));
+            let output = run(runtime, &hook, how, &home, &project);
+            let stdout = String::from_utf8_lossy(&output.stdout);
             assert!(
-                receipt,
-                "{runtime:?} under {how}: no run read the session from stdin"
+                output.status.success(),
+                "{runtime:?} under {how}: {output:?}"
+            );
+            assert!(stdout.is_ascii(), "{runtime:?} under {how}: {stdout}");
+            let envelope: Value = serde_json::from_str(&stdout)
+                .unwrap_or_else(|error| panic!("{runtime:?} under {how}: {error}: {stdout}"));
+            assert_eq!(
+                envelope["hookSpecificOutput"]["hookEventName"], "SessionStart",
+                "{runtime:?} under {how}"
+            );
+            let context = envelope["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap();
+            assert!(
+                context.starts_with(PURPOSE_CONTEXT),
+                "{runtime:?} under {how}: the context's `…` crossed PowerShell intact: {context}"
+            );
+            let recorded: Value =
+                serde_json::from_slice(&std::fs::read(diagnostics(&home)).unwrap_or_default())
+                    .unwrap_or_default();
+            assert!(
+                recorded["last"]["memory_unavailable"].is_u64(),
+                "{runtime:?} under {how}: the helper read the session from stdin: {recorded}"
             );
         }
     }

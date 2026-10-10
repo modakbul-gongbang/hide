@@ -534,16 +534,17 @@ Neither read schedules Memory work or touches the due-work poll.
 Regression owners are `runtime::tests::project_sessions`, `web/src/sessions.test.ts` and `web/e2e/s8.spec.ts`.
 
 `UserPromptSubmit` is a separate high-frequency boundary.
-It accepts at most 256 KiB of hook input, opens the app database read-only, checks schema and active-projection integrity, requests at most sixty local FTS candidates, and returns at most three whole items and 600 estimated tokens.
-It has a 100 ms hard deadline and starts no model, embedding, transcript scan, child process, network request, or database write.
-Missing, locked, corrupt, stale, unresolved, or over-deadline inputs exit successfully with empty context so prompt submission continues.
-`SessionStart` reads the precomputed Project capsule under the same read-only and fail-open ownership, with at most five whole items and 600 tokens.
-If the first prompt arrives before that durable receipt is projected, the hook omits Memory for that prompt and retries on the next prompt; it never guesses the delivered set or creates a receipt sidecar or other second store.
+The hook accepts at most 256 KiB of input and asks the core with one `hide workspace memory` beside its letter pull, carrying the prompt's first 8 KiB; the core asks the checkout's node for its Project, opens its store read-only, checks schema and active-projection integrity, requests at most sixty local FTS candidates, and returns at most three whole items and 600 estimated tokens, off the runtime lock and within 1 s.
+The hook waits until 1,250 ms after its start, where the letter pull ends, so a turn's worst case is the pull's; the core's side starts no model, embedding, transcript scan, child process, or database write.
+Missing, locked, corrupt, stale, unresolved, unreachable or over-deadline inputs exit successfully with empty context so prompt submission continues.
+`SessionStart` gets the precomputed Project capsule under the same read-only and fail-open ownership and the same 1,250 ms wait, with at most five whole items and 600 tokens.
+If the first prompt arrives before that durable receipt is projected, the core omits Memory for that prompt and the next prompt retries; it never guesses the delivered set or creates a receipt sidecar or other second store.
 
 Regression owners are the `hide-project` identity tests, `hide-session` provider-neutral catalog and cursor tests, `hide-memory` Project-isolation, lifecycle, convergence, FTS transaction, redaction, ranking and budget tests, `hide-agent-hooks` fixture/config/fail-open tests, and core atomic-event and editor-preview tests.
 Manual acceptance in the desktop app uses one exact worktree-local `hided` PID and window against a private Herdr server and private app state.
 Record hook idle and driven timing separately, including sample count and failures, and record provider request count, queue/inflight bounds, child descendants, and RSS separately from the prompt path.
-An automated deadline test proves bounded return under its fixture conditions; it does not prove every storage device or interaction remains below 100 ms.
+An automated deadline test proves bounded return under its fixture conditions; it does not prove every storage device, link or interaction answers inside the wait.
+Report the hook's Memory time separately for a pane on the core's machine and one on a node, and the prompt hook's worst case beside it.
 
 ### Project Home projection and issue reads
 

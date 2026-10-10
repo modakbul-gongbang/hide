@@ -317,8 +317,8 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
     // Stored state from before node ids is converted once, before the core
     // reads it; a store that cannot be converted stops the start and names
     // the file (PRD core-host-node B2).
-    let converted = herdr_core::node_migration::convert(&env.state_dir, &env.home, &node).map_err(
-        |refusal| {
+    let converted =
+        herdr_core::node_migration::convert(&env.state_dir, &node).map_err(|refusal| {
             let record = serde_json::json!({
                 "component": "hided",
                 "kind": "node_migration.refused",
@@ -337,8 +337,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
                 eprintln!("the start refusal could not be logged: {error}");
             }
             refusal.to_string()
-        },
-    )?;
+        })?;
     if !converted.files.is_empty() {
         let record = serde_json::json!({
             "component": "hided",

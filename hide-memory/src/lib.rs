@@ -6,6 +6,7 @@
 //! Mem0 package or service executes at runtime.
 
 mod engine;
+pub mod hook;
 mod redaction;
 mod store;
 
@@ -25,8 +26,8 @@ pub use store::{
 /// The Memory store's file name inside a state folder.
 pub const DATABASE_FILE: &str = "project-memory.sqlite3";
 
-/// The one place the store's location is spelled: the core writes it and the
-/// hooks read it, each from the state folder it resolves.
+/// The one place the store's location is spelled, in the core's state
+/// folder; the core alone opens it, and a hook asks the core ([`hook`]).
 pub fn database_path(state_dir: &std::path::Path) -> std::path::PathBuf {
     state_dir.join(DATABASE_FILE)
 }
@@ -39,9 +40,5 @@ pub const HOOK_CANDIDATE_LIMIT: usize = 60;
 pub const SESSION_START_ITEM_LIMIT: usize = 5;
 pub const PROMPT_ITEM_LIMIT: usize = 3;
 pub const INJECTION_TOKEN_LIMIT: usize = 600;
+/// The most one retrieval spends in the store, inside the hook's wait.
 pub const HOOK_DEADLINE_MS: u64 = 100;
-/// Budget available after the helper reaches Rust code.
-///
-/// The public hook contract measures from process launch, so production keeps
-/// startup, scheduling, stdout flush, and teardown inside the remaining 25 ms.
-pub const HOOK_PROCESS_BUDGET_MS: u64 = 75;

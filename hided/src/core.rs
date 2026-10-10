@@ -117,6 +117,10 @@ enum Command {
         context: Context,
         reply: Sender<Option<herdr_core::links::query::Scope>>,
     },
+    MemoryScope {
+        context: Context,
+        reply: Sender<Result<herdr_core::memory_hook::Scope, &'static str>>,
+    },
     WorkspaceAction {
         device_id: String,
         pane_id: String,
@@ -480,6 +484,20 @@ impl CoreHandle {
 
     /// The Projects a `hide links` read may answer from, as the core knows
     /// them now; the read itself runs on the caller's blocking task.
+    pub fn memory_scope(
+        &self,
+        context: &Context,
+    ) -> Result<herdr_core::memory_hook::Scope, &'static str> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::MemoryScope {
+                context: context.clone(),
+                reply,
+            })
+            .map_err(|_| "core_unavailable")?;
+        rx.recv().map_err(|_| "core_unavailable")?
+    }
+
     pub fn links_scope(&self, context: &Context) -> Option<herdr_core::links::query::Scope> {
         let (reply, rx) = mpsc::channel();
         self.commands
@@ -840,6 +858,9 @@ fn owner_loop(
             }
             Command::LinksScope { context, reply } => {
                 let _ = reply.send(core.links_scope(&context));
+            }
+            Command::MemoryScope { context, reply } => {
+                let _ = reply.send(core.memory_scope(&context));
             }
             Command::WorkspaceAction {
                 device_id,

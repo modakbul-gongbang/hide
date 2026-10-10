@@ -11,6 +11,7 @@ export type HidedWebSocketContract =
   | FactoryQuestionGuard
   | WorkspaceAction
   | LinksQuery
+  | MemoryAsk
   | WorkspaceResult;
 export type WorkspaceRequestId = string;
 export type WorkspaceCommand =
@@ -155,6 +156,18 @@ export interface LinksQuery {
           id: string;
         };
   };
+}
+/**
+ * `hide workspace memory`: an agent hook's Project Memory, answered by the core from the one store it owns whichever machine the agent runs on, as a workspace_result without a shell. The Project is the one holding the caller pane's attested checkout, read by that checkout's own node; the request never names it. Only the core's own node and a node that dials in have Memory; a device the core dials is refused with memory_unavailable, and the node of a machine whose link to the core is down refuses its callers at once with hide_unavailable. result is {context, outcome, count?}: context is the Memory text with its signed receipt or null, and outcome one of provided (with count), empty, disabled, unavailable, deadline, project_unresolved. The prompt is at most its first 8 KiB, and the core spends at most 1 s on the answer.
+ */
+export interface MemoryAsk {
+  type: "memory";
+  request_id: WorkspaceRequestId;
+  event: "SessionStart" | "UserPromptSubmit";
+  runtime: "claude" | "codex" | "opencode" | "pi" | "omp";
+  session: string;
+  prompt?: string;
+  cwd?: string;
 }
 /**
  * A pane-scoped request outcome. A successful action result includes context, request_id, changed, view_id, and optionally area_id; a refusal names reason and next_action.

@@ -671,18 +671,12 @@ pub struct Outcome {
     pub search_rows_dropped: usize,
 }
 
-/// Converts the state folder at `state_dir` for `node`, with the two Project
-/// Memory databases: the one beside the state the core writes, and the one
-/// under `home` the agent hooks read.
-pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, Refusal> {
-    // Each with the name its original is kept under.
-    let memory_paths = [
-        (state_dir.join(PROJECT_MEMORY), PROJECT_MEMORY),
-        (
-            hide_agent_hooks::memory::database_path(home),
-            "hooks-project-memory.sqlite3",
-        ),
-    ];
+/// Converts the state folder at `state_dir` for `node`, with its Project
+/// Memory database, the one store the core reads and writes and the agent
+/// hooks ask the core for.
+pub fn convert(state_dir: &Path, node: &NodeId) -> Result<Outcome, Refusal> {
+    // With the name its original is kept under.
+    let memory_paths = [(state_dir.join(PROJECT_MEMORY), PROJECT_MEMORY)];
     let marker_path = state_dir.join(MARKER_FILE);
     let refuse = |file: &Path, reason: String| Refusal {
         file: file.to_path_buf(),
@@ -1228,7 +1222,6 @@ mod tests {
     struct Legacy {
         _dir: tempfile::TempDir,
         state: PathBuf,
-        home: PathBuf,
         project: PathBuf,
         old_project: String,
     }
@@ -1236,9 +1229,8 @@ mod tests {
     fn legacy() -> Legacy {
         let dir = tempfile::tempdir().unwrap();
         let state = dir.path().join("state");
-        let home = dir.path().join("home");
         let project = dir.path().join("projects/alpha");
-        for path in [&state, &home, &project] {
+        for path in [&state, &project] {
             std::fs::create_dir_all(path).unwrap();
         }
         let project = hide_platform::fs::identity::canonical(&project).unwrap();
@@ -1377,7 +1369,6 @@ mod tests {
         Legacy {
             _dir: dir,
             state,
-            home,
             project,
             old_project,
         }
@@ -1442,7 +1433,7 @@ mod tests {
             );
         }
 
-        let outcome = convert(&legacy.state, &legacy.home, &node()).unwrap();
+        let outcome = convert(&legacy.state, &node()).unwrap();
         assert!(outcome.files.len() >= 6, "{outcome:?}");
 
         for (file, pattern, mechanism, _) in
@@ -1571,7 +1562,7 @@ mod tests {
     #[test]
     fn every_file_a_state_folder_holds_is_listed_with_how_its_machine_keys_are_kept() {
         let legacy = legacy();
-        convert(&legacy.state, &legacy.home, &node()).unwrap();
+        convert(&legacy.state, &node()).unwrap();
         let listed: Vec<&str> = KEYS
             .iter()
             .map(|(file, ..)| *file)
@@ -1593,7 +1584,7 @@ mod tests {
     fn the_originals_are_kept_and_a_second_start_writes_nothing() {
         let legacy = legacy();
         let before = snapshot(&legacy.state);
-        convert(&legacy.state, &legacy.home, &node()).unwrap();
+        convert(&legacy.state, &node()).unwrap();
         let backups: Vec<PathBuf> = std::fs::read_dir(legacy.state.join(BACKUP_DIR))
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -1621,7 +1612,7 @@ mod tests {
         );
 
         let converted = snapshot(&legacy.state);
-        let again = convert(&legacy.state, &legacy.home, &node()).unwrap();
+        let again = convert(&legacy.state, &node()).unwrap();
         assert_eq!(again, Outcome::default());
         let after = snapshot(&legacy.state);
         assert_eq!(
@@ -1649,7 +1640,7 @@ mod tests {
         drop(memory);
         let before = snapshot(&legacy.state);
 
-        let refusal = convert(&legacy.state, &legacy.home, &node()).unwrap_err();
+        let refusal = convert(&legacy.state, &node()).unwrap_err();
         assert_eq!(refusal.file, legacy.state.join(PROJECT_MEMORY));
         assert!(
             refusal.to_string().contains("project-memory.sqlite3"),
@@ -1694,14 +1685,14 @@ mod tests {
         // The search index fails after Memory has moved its Projects.
         let index = std::fs::read(&search_path).unwrap();
         std::fs::write(&search_path, b"not a database").unwrap();
-        let refusal = convert(&legacy.state, &legacy.home, &node()).unwrap_err();
+        let refusal = convert(&legacy.state, &node()).unwrap_err();
         assert_eq!(refusal.file, search_path);
         let memory = hide_memory::MemoryStore::open(&legacy.state.join(PROJECT_MEMORY)).unwrap();
         assert!(!memory.has_device(LEGACY).unwrap(), "Memory moved first");
         drop(memory);
 
         std::fs::write(&search_path, index).unwrap();
-        convert(&legacy.state, &legacy.home, &node()).unwrap();
+        convert(&legacy.state, &node()).unwrap();
         let search = rusqlite::Connection::open(&search_path).unwrap();
         let beta_policy: String = search
             .query_row("SELECT project FROM policy WHERE days=7", [], |row| {
@@ -1714,13 +1705,10 @@ mod tests {
     #[test]
     fn a_converted_folder_starts_while_another_writer_holds_the_search_index() {
         let legacy = legacy();
-        convert(&legacy.state, &legacy.home, &node()).unwrap();
+        convert(&legacy.state, &node()).unwrap();
         let writer = rusqlite::Connection::open(legacy.state.join(SESSION_SEARCH)).unwrap();
         writer.execute_batch("BEGIN IMMEDIATE").unwrap();
-        assert_eq!(
-            convert(&legacy.state, &legacy.home, &node()).unwrap(),
-            Outcome::default()
-        );
+        assert_eq!(convert(&legacy.state, &node()).unwrap(), Outcome::default());
         writer.execute_batch("ROLLBACK").unwrap();
     }
 
@@ -1735,7 +1723,7 @@ mod tests {
             )
             .unwrap();
         drop(links);
-        let refusal = convert(&legacy.state, &legacy.home, &node()).unwrap_err();
+        let refusal = convert(&legacy.state, &node()).unwrap_err();
         assert_eq!(refusal.file, legacy.state.join(LINKS));
         assert!(refusal.reason.contains("sessions"), "{refusal}");
         let links = rusqlite::Connection::open(legacy.state.join(LINKS)).unwrap();
@@ -1751,7 +1739,7 @@ mod tests {
         drop(links);
 
         // Retried, it fails the same way and adds no copies.
-        convert(&legacy.state, &legacy.home, &node()).unwrap_err();
+        convert(&legacy.state, &node()).unwrap_err();
         let backups: Vec<PathBuf> = std::fs::read_dir(legacy.state.join(BACKUP_DIR))
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -1787,7 +1775,7 @@ mod tests {
         )
         .unwrap();
         let before = snapshot(&legacy.state);
-        let refusal = convert(&legacy.state, &legacy.home, &node()).unwrap_err();
+        let refusal = convert(&legacy.state, &node()).unwrap_err();
         assert_eq!(refusal.file, legacy.state.join(MARKER_FILE));
         assert!(refusal.reason.contains("other-node"), "{refusal}");
         assert_eq!(snapshot(&legacy.state), before);
@@ -1798,7 +1786,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let unknown = br#"{"schema_version": 3, "workspaces": [{"device_id": "local"}]}"#;
         std::fs::write(dir.path().join(WORKSPACE_VIEWS), unknown).unwrap();
-        let outcome = convert(dir.path(), dir.path(), &node()).unwrap();
+        let outcome = convert(dir.path(), &node()).unwrap();
         assert!(outcome.files.is_empty(), "{outcome:?}");
         assert_eq!(
             std::fs::read(dir.path().join(WORKSPACE_VIEWS)).unwrap(),
@@ -1816,7 +1804,7 @@ mod tests {
             "expanded_inactive_project_device_ids": ["local", NODE, "mini"],
         });
         std::fs::write(dir.path().join(CORE_STATE), core_state.to_string()).unwrap();
-        convert(dir.path(), dir.path(), &node()).unwrap();
+        convert(dir.path(), &node()).unwrap();
         assert_eq!(
             read(&dir.path().join(CORE_STATE))["device_expanded_paths"],
             json!({NODE: ["/b", "/c", "/a"]})
@@ -1848,7 +1836,7 @@ mod tests {
         std::fs::write(dir.path().join(CORE_STATE), &core_state).unwrap();
         let before = snapshot(dir.path());
 
-        let refusal = convert(dir.path(), dir.path(), &node()).unwrap_err();
+        let refusal = convert(dir.path(), &node()).unwrap_err();
         assert_eq!(refusal.file, dir.path().join(DELIVERY_LEDGER));
         assert!(
             refusal.to_string().contains("move the file aside"),
@@ -1872,7 +1860,7 @@ mod tests {
         );
         std::fs::write(dir.path().join(DELIVERY_LEDGER), &bytes).unwrap();
 
-        let outcome = convert(dir.path(), dir.path(), &node()).unwrap();
+        let outcome = convert(dir.path(), &node()).unwrap();
         assert!(outcome.files.is_empty(), "{outcome:?}");
         assert_eq!(
             std::fs::read(dir.path().join(DELIVERY_LEDGER)).unwrap(),
@@ -1887,7 +1875,7 @@ mod tests {
     #[test]
     fn an_empty_folder_gets_only_its_owner() {
         let dir = tempfile::tempdir().unwrap();
-        let outcome = convert(dir.path(), dir.path(), &node()).unwrap();
+        let outcome = convert(dir.path(), &node()).unwrap();
         assert_eq!(outcome, Outcome::default());
         assert_eq!(
             read(&dir.path().join(MARKER_FILE)),

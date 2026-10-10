@@ -714,6 +714,19 @@ impl Core {
         lock_recover(&self.runtime).links_scope(context)
     }
 
+    /// What a hook's Memory read for a pane in `context` is answered from,
+    /// which the daemon then answers off this thread
+    /// (`crate::memory_hook::answer`), or why there is none.
+    pub fn memory_scope(
+        &self,
+        context: &crate::workspace_control::Context,
+    ) -> Result<crate::memory_hook::Scope, &'static str> {
+        if !check_owner_thread(self, "memory_scope") {
+            return Err("core_unavailable");
+        }
+        lock_recover(&self.runtime).memory_scope(context)
+    }
+
     pub fn workspace_control_query(
         &self,
         device_id: &str,

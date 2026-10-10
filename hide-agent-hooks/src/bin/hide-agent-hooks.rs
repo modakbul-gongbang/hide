@@ -381,7 +381,10 @@ fn run_hook(arguments: &[String], started: Instant) {
     let runtime =
         argument_value("--runtime", arguments).and_then(|value| AgentRuntime::parse(&value));
     let Some(home) = home_directory() else { return };
-    let deadline = Instant::now() + Duration::from_millis(hide_memory::HOOK_PROCESS_BUDGET_MS);
+    // Memory and the letters are asked of the core at once, each by its own
+    // `hide`, and both answers are in before the one write; Memory ends where
+    // the letter pull does, so it never makes the turn wait longer.
+    let memory_deadline = started + hide_agent_hooks::memory::MEMORY_BUDGET;
     let delivery_deadline = started + INTAKE_BUDGET;
     let memory_injection = arguments
         .iter()
@@ -390,11 +393,10 @@ fn run_hook(arguments: &[String], started: Instant) {
     let prompt_hook =
         runtime.is_some_and(|runtime| runtime.dialect().adapter().prompt_hook.is_some());
     // The prompt event reads its payload for the prompt digest even without
-    // Memory; a Memory read that follows works from the same bytes.
-    let payload = if event == HookEvent::UserPromptSubmit && runtime.is_some() {
+    // Memory; a Memory read works from the same bytes.
+    let payload = if (event == HookEvent::UserPromptSubmit && runtime.is_some()) || memory_injection
+    {
         read_stdin_before_deadline(started + PROMPT_PAYLOAD_BUDGET)
-    } else if memory_injection {
-        read_stdin_before_deadline(deadline)
     } else {
         None
     };
@@ -404,11 +406,44 @@ fn run_hook(arguments: &[String], started: Instant) {
         }
         _ => hide_agent_hooks::delivery::Prompt::default(),
     };
-    let mut output = if let Some(runtime) = runtime.filter(|_| memory_injection) {
-        memory_output_before_deadline(runtime, event, home.clone(), deadline, payload)
-    } else {
-        runtime.and_then(|runtime| hook_stdout(runtime, event))
+    // Claude Code's hook inside Grok leaves the letters where they are: the
+    // session that runs it is not the pane's Claude Code.
+    let takes_letters = runtime != Some(AgentRuntime::ClaudeCode)
+        || hide_agent_hooks::runtime::takes_letters(|name| std::env::var_os(name));
+    let pulls = event == HookEvent::UserPromptSubmit && prompt_hook && takes_letters;
+    let memory_runtime = runtime.filter(|_| memory_injection);
+    let memory = |runtime| {
+        memory_output_before_deadline(runtime, event, &home, memory_deadline, payload.as_ref())
     };
+    let (memory_output, intake) = std::thread::scope(|scope| {
+        let asking = memory_runtime.map(|runtime| {
+            std::thread::Builder::new()
+                .name("hide-hook-memory".to_owned())
+                .spawn_scoped(scope, move || memory(runtime))
+                .map_err(|_| runtime)
+        });
+        let intake = if pulls {
+            match hide_agent_hooks::delivery::pull(delivery_deadline, &prompt) {
+                Ok(intake) => intake,
+                Err(failure) => {
+                    hide_agent_hooks::delivery::diagnose_failure(&home, &failure);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let memory_output = match asking {
+            Some(Ok(asked)) => asked.join().ok().flatten(),
+            // No thread to ask on: the pull has had its turn, and Memory's
+            // deadline still bounds this one.
+            Some(Err(runtime)) => memory(runtime),
+            None => None,
+        };
+        (memory_output, intake)
+    });
+    let mut output =
+        memory_output.or_else(|| runtime.and_then(|runtime| hook_stdout(runtime, event)));
     // The probe is not gated on a pane id: hided binds a caller outside any
     // pane (a Codex shared daemon, a plain terminal) to the registered
     // checkout holding its cwd, and refuses everything else itself.
@@ -419,21 +454,6 @@ fn run_hook(arguments: &[String], started: Instant) {
             hide_agent_hooks::runtime::append_session_context(&value, &context).unwrap_or(value)
         });
     }
-    // Claude Code's hook inside Grok leaves the letters where they are: the
-    // session that runs it is not the pane's Claude Code.
-    let takes_letters = runtime != Some(AgentRuntime::ClaudeCode)
-        || hide_agent_hooks::runtime::takes_letters(|name| std::env::var_os(name));
-    let intake = if event == HookEvent::UserPromptSubmit && prompt_hook && takes_letters {
-        match hide_agent_hooks::delivery::pull(delivery_deadline, &prompt) {
-            Ok(intake) => intake,
-            Err(failure) => {
-                hide_agent_hooks::delivery::diagnose_failure(&home, &failure);
-                None
-            }
-        }
-    } else {
-        None
-    };
     if let Some(intake) = &intake {
         output = match output {
             Some(existing) => {
@@ -531,15 +551,15 @@ fn report_latest(
 fn memory_output_before_deadline(
     runtime: AgentRuntime,
     event: HookEvent,
-    home: PathBuf,
+    home: &std::path::Path,
     deadline: Instant,
-    payload: Option<(Vec<u8>, bool)>,
+    payload: Option<&(Vec<u8>, bool)>,
 ) -> Option<String> {
     let Some((payload, exceeded)) = payload else {
         return hook_stdout(runtime, event);
     };
     hide_agent_hooks::memory::project_memory_output_until(
-        runtime, event, &payload, exceeded, &home, deadline,
+        runtime, event, payload, *exceeded, home, deadline,
     )
     .stdout
     .or_else(|| hook_stdout(runtime, event))

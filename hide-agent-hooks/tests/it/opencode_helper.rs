@@ -25,6 +25,13 @@ case "$1 $2" in
   "inbox --confirm") echo '{"ok":true,"result":{"confirmed":["letter-1"]}}' ;;
   "workspace bootstrap") echo '{"ok":true}' ;;
   "workspace factory-question-guard") echo '{"type":"workspace_result","ok":true,"result":{"deny":true}}' ;;
+  "workspace memory")
+    cat > "${HOME%/*}/memory-prompt"
+    if [ -f "${HOME%/*}/memory-off" ]; then
+      echo '{"type":"workspace_result","ok":true,"result":{"context":null,"outcome":"disabled"}}'
+    else
+      printf '%s\n' '{"type":"workspace_result","ok":true,"result":{"context":"MEMORY-FOR-THIS-SESSION\n","outcome":"provided","count":1}}'
+    fi ;;
   *) exit 1 ;;
 esac
 "#;
@@ -116,13 +123,23 @@ fn a_prompt_takes_the_panes_letters_for_this_session_and_confirms_nothing() {
         true,
     );
     assert_eq!(answer["letters"], json!(["letter-1"]));
-    assert!(
-        answer["context"]
-            .as_str()
-            .unwrap()
-            .contains("LETTER-FOR-THIS-PANE")
+    assert_eq!(
+        answer["context"],
+        json!("MEMORY-FOR-THIS-SESSION\nLETTER-FOR-THIS-PANE")
     );
-    assert_eq!(machine.calls(), ["inbox --hook --session ses_root"]);
+    // Memory and the letters are asked at once.
+    let mut calls = machine.calls();
+    calls.sort();
+    assert_eq!(
+        calls,
+        [
+            "inbox --hook --session ses_root".to_owned(),
+            format!(
+                "workspace memory --event SessionStart --runtime opencode --session ses_root --cwd {}",
+                machine.home.display()
+            ),
+        ]
+    );
 }
 
 #[test]
@@ -249,57 +266,72 @@ fn start_answers_hides_session_guidance() {
     );
 }
 
-/// A Memory-enabled Project beside the machine's HOME, in the store the
-/// helper reads.
-fn memory_project(machine: &Machine) -> (PathBuf, String, hide_memory::MemoryStore) {
-    let root = machine.home.parent().unwrap().join("project");
-    std::fs::create_dir_all(&root).unwrap();
-    let node = hide_platform::host::machine_id().unwrap();
-    let project = hide_project::resolve(&root, &node).unwrap();
-    let database = hide_agent_hooks::memory::database_path(&machine.home);
-    std::fs::create_dir_all(database.parent().unwrap()).unwrap();
-    let store = hide_memory::MemoryStore::open(&database).unwrap();
-    store
-        .ensure_project(&project.id, &project.root, &node)
-        .unwrap();
-    store.set_enabled(&project.id, true, true).unwrap();
-    (root, project.id, store)
-}
-
-/// Whether `context` carries a Memory receipt line.
-fn has_receipt(context: &str) -> bool {
-    context
-        .lines()
-        .any(|line| line.starts_with("<hide-memory-receipt "))
-}
-
-/// Through the helper binary, the outcomes that do not hang on its 75 ms
-/// Memory budget: a prompt past the session start, one with no usable host
-/// id, and one in a Project with Memory off are no session start, and the
-/// letters ride regardless. Which session a receipt is signed for is the
-/// helper's unit test, which can wait for Memory.
+/// Pi's and omp's extension asks the core for Memory through `hide`: the
+/// session-start capsule while the extension still wants one, the prompt
+/// capsule with the prompt on stdin after it, for the host's own session id,
+/// and nothing for an id that would read as an option; the letters ride
+/// either way, and only a capsule actually given is the session start.
 #[test]
-fn pi_and_omp_prompts_without_a_session_start_capsule_say_so_and_still_carry_letters() {
+fn pi_and_omp_prompts_ask_the_core_for_memory_and_still_carry_letters() {
     let machine = Machine::new();
-    let (project, project_id, store) = memory_project(&machine);
+    let project = machine.home.parent().unwrap().join("project");
+    std::fs::create_dir_all(&project).unwrap();
     let version = hide_agent_hooks::pi_extension::VERSION;
+    let memory_calls = || {
+        machine
+            .calls()
+            .into_iter()
+            .filter(|call| call.starts_with("workspace memory "))
+            .collect::<Vec<_>>()
+    };
     for agent in ["pi", "omp"] {
         let file = format!("/sessions/-work-/2026-10-09T00-00-00-000Z_{agent}.jsonl");
         let id = format!("01a11d1d-{agent}");
+        let asked = |memory_first: bool| {
+            machine.run_as(
+                agent,
+                "prompt",
+                &json!({"session_id": file, "native_session": id, "prompt": "Fix it",
+                    "cwd": project, "first": true, "memory_first": memory_first,
+                    "version": version}),
+                true,
+            )
+        };
 
-        // Once the start capsule is written, the prompt asks for the prompt
-        // capsule, which is no session start.
-        let answer = machine.run_as(
-            agent,
-            "prompt",
-            &json!({"session_id": file, "native_session": id, "prompt": "Fix it", "cwd": project,
-                "first": true, "memory_first": false, "version": version}),
-            true,
-        );
-        assert_eq!(answer["memory_start"], json!(false), "{agent}");
+        let answer = asked(true);
+        assert_eq!(answer["memory_start"], json!(true), "{agent}");
         assert_eq!(answer["letters"], json!(["letter-1"]), "{agent}");
+        let context = answer["context"].as_str().unwrap();
+        assert!(
+            context.starts_with("MEMORY-FOR-THIS-SESSION\n"),
+            "{context}"
+        );
+        assert!(context.contains("LETTER-FOR-THIS-PANE"), "{context}");
+        assert_eq!(
+            memory_calls().last().unwrap(),
+            &format!(
+                "workspace memory --event SessionStart --runtime {agent} --session {id} --cwd {}",
+                project.display()
+            )
+        );
 
-        // An id that would read as an option is no session: no Memory, the letters still ride.
+        let answer = asked(false);
+        assert_eq!(answer["memory_start"], json!(false), "{agent}");
+        assert_eq!(
+            memory_calls().last().unwrap(),
+            &format!(
+                "workspace memory --event UserPromptSubmit --runtime {agent} --session {id} --cwd {}",
+                project.display()
+            )
+        );
+        assert_eq!(
+            std::fs::read_to_string(machine.home.parent().unwrap().join("memory-prompt")).unwrap(),
+            "Fix it"
+        );
+
+        // An id that would read as an option is no session: no Memory, the
+        // letters still ride.
+        let before = memory_calls().len();
         let answer = machine.run_as(
             agent,
             "prompt",
@@ -309,11 +341,11 @@ fn pi_and_omp_prompts_without_a_session_start_capsule_say_so_and_still_carry_let
         );
         assert_eq!(answer["memory_start"], json!(false), "{agent}");
         assert_eq!(answer["letters"], json!(["letter-1"]), "{agent}");
-        assert!(!has_receipt(answer["context"].as_str().unwrap()), "{agent}");
+        assert_eq!(memory_calls().len(), before, "{agent}");
     }
 
     // With Memory off no capsule is given, so the extension asks again.
-    store.set_enabled(&project_id, false, true).unwrap();
+    std::fs::write(machine.home.parent().unwrap().join("memory-off"), "").unwrap();
     let answer = machine.run_as(
         "pi",
         "prompt",
@@ -322,5 +354,5 @@ fn pi_and_omp_prompts_without_a_session_start_capsule_say_so_and_still_carry_let
         true,
     );
     assert_eq!(answer["memory_start"], json!(false));
-    assert!(!has_receipt(answer["context"].as_str().unwrap()));
+    assert_eq!(answer["context"], json!("LETTER-FOR-THIS-PANE"));
 }

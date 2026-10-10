@@ -161,6 +161,16 @@ pub fn confirm(intake: &Intake, deadline: Instant) -> Result<(), Failure> {
 }
 
 fn run_cli(arguments: &[&str], deadline: Instant) -> Result<serde_json::Value, Failure> {
+    run_cli_with_input(arguments, &[], deadline)
+}
+
+/// The `result` of one `hide` command run with `input` on its stdin, which
+/// must fit a pipe's buffer: it is written whole before the answer is read.
+pub(crate) fn run_cli_with_input(
+    arguments: &[&str],
+    input: &[u8],
+    deadline: Instant,
+) -> Result<serde_json::Value, Failure> {
     if Instant::now() >= deadline {
         return Err("deadline".into());
     }
@@ -174,10 +184,18 @@ fn run_cli(arguments: &[&str], deadline: Instant) -> Result<serde_json::Value, F
     let mut command = Command::new(sibling);
     command
         .args(arguments)
-        .stdin(Stdio::null())
+        .stdin(if input.is_empty() {
+            Stdio::null()
+        } else {
+            Stdio::piped()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let mut child = OwnedChild::spawn(&mut command).map_err(|_| "cli")?;
+    if let Some(mut stdin) = child.take_stdin() {
+        use std::io::Write as _;
+        stdin.write_all(input).map_err(|_| "cli")?;
+    }
     let output = child
         .capture_until(deadline, OUTPUT_LIMIT)
         .map_err(|failure| Failure {
@@ -209,11 +227,23 @@ struct Diagnostics {
 }
 
 /// The fixed causes a hook may record: the delivery intake's eight, the
-/// spawn guard's one (`guard`: the daemon could not be asked) and OpenCode's
-/// plugin's one (`plugin`: it skipped or gave up on a helper call).
-const CAUSES: [&str; 10] = [
-    "cli", "deadline", "format", "confirm", "ledger", "capacity", "identity", "stdout", "guard",
+/// spawn guard's one (`guard`: the daemon could not be asked), OpenCode's
+/// plugin's one (`plugin`: it skipped or gave up on a helper call) and
+/// Memory's two (`crate::memory`: the core could not be asked, or did not
+/// answer in time).
+const CAUSES: [&str; 12] = [
+    "cli",
+    "deadline",
+    "format",
+    "confirm",
+    "ledger",
+    "capacity",
+    "identity",
+    "stdout",
+    "guard",
     "plugin",
+    "memory_unavailable",
+    "memory_deadline",
 ];
 
 /// Fixed causes ([`CAUSES`]), private storage and a nonblocking cross-process lock.

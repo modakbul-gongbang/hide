@@ -5,7 +5,7 @@ use crate::model::{
     SessionsProviderFilter, SessionsSnapshot,
 };
 use crate::node::NodeId;
-use crate::node_access::{NodeLink, call_as};
+use crate::node_access::NodeLink;
 use hide_agent_hooks::{HookEvent, HookStatus};
 use hide_ai::{AiError, CancelToken};
 use hide_memory::{
@@ -908,10 +908,8 @@ mod scope_tests {
     }
 
     use crate::model::MemoryAnalysisSnapshot;
-    use hide_agent_hooks::{
-        memory::{HookMemoryOutcome, HookMemoryResult, database_path, project_memory_output_until},
-        runtime::{AgentRuntime, HookEvent},
-    };
+    use hide_agent_hooks::runtime::{AgentRuntime, HookEvent};
+    use hide_memory::hook::{HookContext, HookOutcome};
     use hide_memory::{AnalysisBatch, Candidate, CandidateKind, CandidateRelation, MemoryStore};
     use hide_session::{
         Agent, ProjectSession, SessionAvailability, parse_claude_events, parse_codex_events,
@@ -957,20 +955,37 @@ mod scope_tests {
         );
     }
 
-    fn functional_hook_output(
-        runtime: AgentRuntime,
-        event: HookEvent,
-        payload: &[u8],
+    /// The core's store in a state folder under `root`.
+    fn store_path(root: &Path) -> std::path::PathBuf {
+        let state = root.join("state");
+        fs::create_dir_all(&state).unwrap();
+        hide_memory::database_path(&state)
+    }
+
+    /// What the core answers a hook of `runtime` in `checkout` from
+    /// `database`, with this machine's node under `home` reading the
+    /// checkout's Project.
+    fn hook_answer(
+        database: &Path,
         home: &Path,
-    ) -> HookMemoryResult {
-        project_memory_output_until(
-            runtime,
-            event,
-            payload,
-            false,
-            home,
-            Instant::now() + FUNCTIONAL_HOOK_TEST_TIMEOUT,
-        )
+        checkout: &Path,
+        runtime: &str,
+        event: HookEvent,
+        session: &str,
+        prompt: Option<&str>,
+    ) -> HookContext {
+        let scope = crate::memory_hook::Scope {
+            store: database.to_path_buf(),
+            node: crate::node::NodeId::parse(&hook_node()).unwrap(),
+            checkout_path: checkout.to_string_lossy().into_owned(),
+            link: std::sync::Arc::new(hide_node::Local::new(Some(home.to_path_buf()))),
+        };
+        let ask = crate::memory_hook::Ask::from_wire(&json!({
+            "event": event.name(), "runtime": runtime, "session": session,
+            "prompt": prompt, "cwd": checkout,
+        }))
+        .unwrap();
+        crate::memory_hook::answer(&scope, &ask, Instant::now() + FUNCTIONAL_HOOK_TEST_TIMEOUT)
     }
 
     #[cfg(windows)]
@@ -1424,15 +1439,13 @@ mod scope_tests {
     /// receipt records nothing.
     #[test]
     fn an_opencode_session_start_receipt_from_the_label_read_unblocks_its_prompt_memory() {
-        use hide_agent_hooks::memory::{MemoryRequest, memory_context_until};
         let temp = tempdir().unwrap();
         let home = temp.path().join("home");
         let project_root = temp.path().join("project");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&project_root).unwrap();
         let project = hide_project::resolve(&project_root, &hook_node()).unwrap();
-        let database = database_path(&home);
-        fs::create_dir_all(database.parent().unwrap()).unwrap();
+        let database = store_path(temp.path());
         let store = MemoryStore::open(&database).unwrap();
         store
             .ensure_project(&project.id, &project.root, &hook_node())
@@ -1440,16 +1453,14 @@ mod scope_tests {
         store.set_enabled(&project.id, true, true).unwrap();
         drop(store);
         let ask = |event, session: &str| {
-            memory_context_until(
-                MemoryRequest {
-                    runtime_id: "opencode",
-                    event,
-                    cwd: Some(project_root.clone()),
-                    prompt: Some("keep going".to_owned()),
-                    session_id: Some(session.to_owned()),
-                },
+            hook_answer(
+                &database,
                 &home,
-                Instant::now() + FUNCTIONAL_HOOK_TEST_TIMEOUT,
+                &project_root,
+                "opencode",
+                event,
+                session,
+                Some("keep going"),
             )
         };
         let start = ask(HookEvent::SessionStart, "ses_root").context.unwrap();
@@ -1460,7 +1471,7 @@ mod scope_tests {
             .to_owned();
         assert_eq!(
             ask(HookEvent::UserPromptSubmit, "ses_root").outcome,
-            HookMemoryOutcome::Unavailable,
+            HookOutcome::Unavailable,
             "no session start receipt yet"
         );
         let sighted =
@@ -1502,7 +1513,7 @@ mod scope_tests {
         }
         assert_ne!(
             ask(HookEvent::UserPromptSubmit, "ses_root").outcome,
-            HookMemoryOutcome::Unavailable
+            HookOutcome::Unavailable
         );
     }
 
@@ -1513,7 +1524,6 @@ mod scope_tests {
     /// D-09).
     #[test]
     fn a_pi_or_omp_session_start_receipt_in_its_session_file_unblocks_its_prompt_memory() {
-        use hide_agent_hooks::memory::{MemoryRequest, memory_context_until};
         let temp = tempdir().unwrap();
         let home = temp.path().join("home");
         let project_root = temp.path().join("project");
@@ -1521,8 +1531,7 @@ mod scope_tests {
         fs::create_dir_all(&project_root).unwrap();
         let checkout = project_root.canonicalize().unwrap();
         let project = hide_project::resolve(&project_root, &hook_node()).unwrap();
-        let database = database_path(&home);
-        fs::create_dir_all(database.parent().unwrap()).unwrap();
+        let database = store_path(temp.path());
         let store = MemoryStore::open(&database).unwrap();
         store
             .ensure_project(&project.id, &project.root, &hook_node())
@@ -1533,24 +1542,22 @@ mod scope_tests {
         for (agent, kind) in [(Agent::Pi, "pi"), (Agent::Omp, "omp")] {
             let session_id = format!("01a11d1d-24ec-71fa-b8b3-{kind}");
             let ask = |event, session: &str| {
-                memory_context_until(
-                    MemoryRequest {
-                        runtime_id: kind,
-                        event,
-                        cwd: Some(project_root.clone()),
-                        prompt: Some("keep going".to_owned()),
-                        session_id: Some(session.to_owned()),
-                    },
+                hook_answer(
+                    &database,
                     &home,
-                    Instant::now() + FUNCTIONAL_HOOK_TEST_TIMEOUT,
+                    &project_root,
+                    kind,
+                    event,
+                    session,
+                    Some("keep going"),
                 )
             };
             let start = ask(HookEvent::SessionStart, &session_id);
-            assert_eq!(start.outcome, HookMemoryOutcome::Empty, "{kind}");
+            assert_eq!(start.outcome, HookOutcome::Empty, "{kind}");
             let start = start.context.unwrap();
             assert_eq!(
                 ask(HookEvent::UserPromptSubmit, &session_id).outcome,
-                HookMemoryOutcome::Unavailable,
+                HookOutcome::Unavailable,
                 "{kind}: no session start receipt yet"
             );
 
@@ -1609,12 +1616,12 @@ mod scope_tests {
             drop(store);
             assert_eq!(
                 ask(HookEvent::UserPromptSubmit, &session_id).outcome,
-                HookMemoryOutcome::Empty,
+                HookOutcome::Empty,
                 "{kind}"
             );
             assert_eq!(
                 ask(HookEvent::UserPromptSubmit, &fork_id).outcome,
-                HookMemoryOutcome::Unavailable,
+                HookOutcome::Unavailable,
                 "{kind}"
             );
         }
@@ -1674,8 +1681,7 @@ mod scope_tests {
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&project_root).unwrap();
         let project = hide_project::resolve(&project_root, &hook_node()).unwrap();
-        let database = database_path(&home);
-        fs::create_dir_all(database.parent().unwrap()).unwrap();
+        let database = store_path(temp.path());
         let store = MemoryStore::open(&database).unwrap();
         store
             .ensure_project(&project.id, &project.root, &hook_node())
@@ -1692,15 +1698,25 @@ mod scope_tests {
             ),
             (AgentRuntime::Codex, Agent::Codex, "codex", "codex-empty"),
         ] {
-            let start_payload = serde_json::to_vec(&json!({
-                "cwd": project_root,
-                "session_id": session_id,
-            }))
+            let start = hook_answer(
+                &database,
+                &home,
+                &project_root,
+                provider,
+                HookEvent::SessionStart,
+                session_id,
+                None,
+            );
+            assert_eq!(start.outcome, HookOutcome::Empty);
+            // The session start as the agent received it, after the hook's
+            // base context.
+            let delivered = hide_agent_hooks::runtime::hook_stdout_with_context(
+                runtime,
+                HookEvent::SessionStart,
+                start.context.as_deref(),
+            )
             .unwrap();
-            let start =
-                functional_hook_output(runtime, HookEvent::SessionStart, &start_payload, &home);
-            assert_eq!(start.outcome, HookMemoryOutcome::Empty);
-            let envelope: serde_json::Value = serde_json::from_str(&start.stdout.unwrap()).unwrap();
+            let envelope: serde_json::Value = serde_json::from_str(&delivered).unwrap();
             let context = envelope["hookSpecificOutput"]["additionalContext"]
                 .as_str()
                 .unwrap();
@@ -1785,26 +1801,20 @@ mod scope_tests {
             .unwrap();
         drop(store);
 
-        for (runtime, session_id) in [
-            (AgentRuntime::ClaudeCode, "claude-empty"),
-            (AgentRuntime::Codex, "codex-empty"),
-        ] {
-            let prompt_payload = serde_json::to_vec(&json!({
-                "cwd": project_root,
-                "session_id": session_id,
-                "prompt": "durable hook memory",
-            }))
-            .unwrap();
-            let prompt = functional_hook_output(
-                runtime,
-                HookEvent::UserPromptSubmit,
-                &prompt_payload,
+        for (provider, session_id) in [("claude", "claude-empty"), ("codex", "codex-empty")] {
+            let prompt = hook_answer(
+                &database,
                 &home,
+                &project_root,
+                provider,
+                HookEvent::UserPromptSubmit,
+                session_id,
+                Some("durable hook memory"),
             );
-            assert_eq!(prompt.outcome, HookMemoryOutcome::Provided { count: 1 });
+            assert_eq!(prompt.outcome, HookOutcome::Provided { count: 1 });
             assert!(
                 prompt
-                    .stdout
+                    .context
                     .unwrap()
                     .contains("빈 시작 영수증 뒤에도 durable hook memory를 제공한다.")
             );
@@ -2092,28 +2102,12 @@ fn session_is_quiescent(stat: &SessionStat, now_unix_ms: u64) -> bool {
         .is_some_and(|modified| now_unix_ms.saturating_sub(modified) >= MEMORY_QUIESCENCE_MS)
 }
 
-/// The Project that holds `checkout_path`, as the node that holds it reads
-/// it; the id names the node.
 fn project_identity(
     sessions_node: &dyn NodeLink,
     node: &NodeId,
     checkout_path: &str,
 ) -> Result<hide_project::ProjectIdentity, String> {
-    let facts: hide_project::ProjectFacts = call_as(
-        sessions_node,
-        Call::Project {
-            path: checkout_path.to_owned(),
-        },
-        SESSION_CALL_TIMEOUT,
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(hide_project::ProjectIdentity {
-        id: hide_project::project_id(node.as_str(), &facts.root),
-        root: facts.root,
-        checkout_root: facts.checkout_root,
-        device_id: node.as_str().to_owned(),
-        kind: facts.kind,
-    })
+    crate::memory_hook::project_identity(sessions_node, node, checkout_path, SESSION_CALL_TIMEOUT)
 }
 
 fn project_sessions(
