@@ -766,7 +766,12 @@ mod tests {
         let folds = &navigator.workspaces[0].session_folds;
         assert_eq!(folds.child_only, ["kids"]);
         assert!(!folds.empty.contains(&"kids".to_owned()));
-        assert!(navigator.workspaces[0].inactive_checkouts.checkout_ids.is_empty());
+        assert!(
+            navigator.workspaces[0]
+                .inactive_checkouts
+                .checkout_ids
+                .is_empty()
+        );
     }
 
     /// B11, B12, B16. A primary can make its whole project inactive even
