@@ -568,6 +568,40 @@ fn a_turn_that_ran_between_two_looks_ends_the_question() {
     assert_eq!(label.task.as_deref(), Some("배포 방식 결정 작업"));
 }
 
+/// #901. Herdr drops a finished pane from `done` to `idle` at the same
+/// sequence when it marks the pane's tab seen. No turn ran, so the question
+/// or the block the turn ended on is still the turn's answer.
+#[test]
+fn herdr_marking_a_turn_seen_keeps_its_question_and_its_block() {
+    for (end, line) in [("question", "A/B 선택"), ("blocked", "디스크가 가득 참")] {
+        let harness = Harness::new();
+        let (mut worker, woken, _) = harness.worker(harness.store());
+        let path = harness.session(
+            "a",
+            "native-a",
+            &[("user", "배포할까?"), ("assistant", "답을 기다립니다")],
+        );
+        harness.backend.answer("배포 방식 결정 작업", end, line);
+        let finished = agent(&path, "done", 3);
+        observe(&mut worker, &finished);
+        settle(&mut worker, &woken);
+        let held = shown(&worker, &finished).unwrap();
+        assert!(
+            held.question || held.blocked,
+            "{end} is shown before the seen"
+        );
+
+        let seen = agent(&path, "idle", 3);
+        observe(&mut worker, &seen);
+        settle(&mut worker, &woken);
+        let after = shown(&worker, &seen).unwrap();
+        assert_eq!(after.question, held.question, "{end}: the question stays");
+        assert_eq!(after.blocked, held.blocked, "{end}: the block stays");
+        assert_eq!(after.expected_reply, held.expected_reply);
+        assert_eq!(after.progress, held.progress);
+    }
+}
+
 #[test]
 fn another_session_shows_nothing_of_the_last_one_until_it_is_proven() {
     let harness = Harness::new();

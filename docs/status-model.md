@@ -67,6 +67,13 @@ An `idle` lifecycle reports a ready stopped pane and does not put it in Done, ev
 The completion fact is part of the pane read fingerprint, so a ready-to-completed transition becomes unread even when Herdr's process-local sequence does not move.
 Herdr's done/idle distinction supplies completion evidence only; Hide's own pane record remains the sole read authority.
 
+A completion is news only when it appears.
+Herdr drops a finished pane from `done` to `idle` at the same sequence when it marks the pane's tab seen, and that can land after the operator's focus has left the pane.
+A record that holds a completion the row no longer shows still covers the row, so a demand the operator read stays read through Herdr's own bookkeeping, and the next projection trims the record to no completion.
+The trim is what makes a completion that appears again at the same sequence news again, as a descendant's signal is after it went away.
+Any other change to the fingerprint (the agent working again, a state change between two looks, another session in the pane) still turns the row unread.
+Regression owners: `a_read_demand_stays_read_when_herdr_marks_its_tab_seen_after_focus_left` and `a_read_demand_turns_unread_again_only_for_news` in `sidebar.rs`, and `web/e2e/blocked-state.spec.ts`, which holds Herdr's focus at the socket so its seen lands after the operator moved on.
+
 ## A descendant's change turns its ancestors unread
 
 The fingerprint carries one more element: the outstanding demands and reported completions of the row's live descendants, each keyed by the descendant's pane (`PaneReadRecord::descendant_signals`).
