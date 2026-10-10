@@ -262,7 +262,11 @@ pub fn pull(
             remote: format!("{remote_staging}.export.json"),
         },
     ];
-    remote.download(&records, &|_| {})?;
+    remote.download(
+        &state_dir.join(node_migration::MOVE_STAGING),
+        &records,
+        &|_| {},
+    )?;
     let bytes = std::fs::read(&records[0].local).map_err(|error| local(error.to_string()))?;
     let manifest: copy::Manifest =
         serde_json::from_slice(&bytes).map_err(|error| MoveFailure::Refused {
@@ -274,7 +278,7 @@ pub fn pull(
     let mut wanted: Vec<String> = manifest.files.keys().cloned().collect();
     for _ in 0..2 {
         let files = super::driver::copies(&wanted, &staging, &remote_staging)?;
-        remote.download(&files, &|bytes| {
+        remote.download(&staging, &files, &|bytes| {
             let now = received.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed) + bytes;
             progress(now.min(total), total);
         })?;

@@ -100,7 +100,11 @@ pub fn run(args: &[OsString]) -> Result<(), String> {
         step => {
             let intent = args.intent.as_deref().ok_or(USAGE)?;
             match step {
-                "verify" => verify(&args.state_dir, intent),
+                "verify" => verify(
+                    &args.state_dir,
+                    intent,
+                    args.target.as_deref().ok_or(USAGE)?,
+                ),
                 "place" => place(
                     &args.state_dir,
                     intent,
@@ -214,9 +218,23 @@ fn check(ai: Option<&str>, answer: &Path) -> Result<Value, Value> {
     Ok(line)
 }
 
+/// Answers this machine's node when it is `target`, the node the move's
+/// copy was made for.
+fn this_node_is(target: &str) -> Result<(), Value> {
+    let node = herdr_core::node::NodeId::of_this_machine().map_err(plain)?;
+    if node.as_str() != target {
+        return Err(plain(format!(
+            "the move is for node {target}, and this machine is node {node}"
+        )));
+    }
+    Ok(())
+}
+
 /// Compares the received copy with the manifest sent beside it; a copy
-/// that matches is loaded with this build's readers.
-fn verify(state_dir: &Path, intent: &str) -> Result<Value, Value> {
+/// that matches, made for this machine, is loaded with this build's
+/// readers.
+fn verify(state_dir: &Path, intent: &str, target: &str) -> Result<Value, Value> {
+    this_node_is(target)?;
     let path = manifest_path(state_dir, intent);
     let bytes =
         std::fs::read(&path).map_err(|error| plain(format!("{}: {error}", path.display())))?;
@@ -237,12 +255,15 @@ fn verify(state_dir: &Path, intent: &str) -> Result<Value, Value> {
     if !differs.is_empty() || !extra.is_empty() {
         return Ok(json!({"differs": differs, "extra": extra}));
     }
+    copy::owned_by(&dir, target).map_err(refusal)?;
     copy::check_loadable(&dir).map_err(refusal)?;
     Ok(json!({"loadable": true}))
 }
 
 /// Places the received copy, under a pending handover for `intent`.
 fn place(state_dir: &Path, intent: &str, source: &str, target: &str) -> Result<Value, Value> {
+    this_node_is(target)?;
+    copy::owned_by(&incoming(state_dir, intent), target).map_err(refusal)?;
     let held = handover::hold(state_dir).map_err(plain)?;
     match held.read().map_err(plain)? {
         // A core this machine retired for a move back holds nothing.

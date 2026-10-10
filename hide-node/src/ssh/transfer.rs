@@ -184,10 +184,12 @@ pub(super) async fn read_range(
 /// Streams `file.remote` into `<local>.part` beside its final name, at most
 /// [`TRANSFERS_IN_FLIGHT`] reads ahead and written in order, and renames it
 /// into place once it holds the whole size the other machine stated, so
-/// the final name only ever holds a whole copy. `received` hears each
-/// chunk's size as it is written.
+/// the final name only ever holds a whole copy. Only a file below `into`
+/// is written ([`folders_below`]). `received` hears each chunk's size as
+/// it is written.
 pub(super) async fn download_file(
     raw: &RawSftpSession,
+    into: &Path,
     file: &FileCopy,
     received: &(dyn Fn(u64) + Sync),
 ) -> Result<(), TransferError> {
@@ -197,6 +199,7 @@ pub(super) async fn download_file(
     };
     let local_failed =
         |error: std::io::Error| TransferError::Local(format!("{}: {error}", file.local.display()));
+    folders_below(into, &file.local)?;
     let size = raw
         .stat(&file.remote)
         .await
@@ -209,9 +212,6 @@ pub(super) async fn download_file(
         .await
         .map_err(|error| remote("could not be opened", error))?
         .handle;
-    if let Some(folder) = file.local.parent() {
-        hide_platform::fs::private::create_dir_all(folder).map_err(local_failed)?;
-    }
     let part = file.local.with_extension(match file.local.extension() {
         Some(extension) => format!("{}.part", extension.to_string_lossy()),
         None => "part".to_owned(),
@@ -261,6 +261,58 @@ pub(super) async fn download_file(
     std::fs::rename(&part, &file.local).map_err(local_failed)
 }
 
+/// Makes each missing folder between `into` and the file `local`, private.
+/// A `local` that is not below `into` by plain names, or a folder on the
+/// way that is a link or a file, is refused: what the other machine names
+/// is written below the folder it was given and nowhere else.
+fn folders_below(into: &Path, local: &Path) -> Result<(), TransferError> {
+    use std::path::Component;
+    let outside = || {
+        TransferError::Local(format!(
+            "{} is not below {}",
+            local.display(),
+            into.display()
+        ))
+    };
+    let mut names = Vec::new();
+    for component in local
+        .strip_prefix(into)
+        .map_err(|_| outside())?
+        .components()
+    {
+        match component {
+            Component::Normal(name) => names.push(name),
+            _ => return Err(outside()),
+        }
+    }
+    if names.pop().is_none() {
+        return Err(outside());
+    }
+    let failed = |path: &Path, error: std::io::Error| {
+        TransferError::Local(format!("{}: {error}", path.display()))
+    };
+    hide_platform::fs::private::create_dir_all(into).map_err(|error| failed(into, error))?;
+    let mut folder = into.to_path_buf();
+    for name in names {
+        folder.push(name);
+        match std::fs::symlink_metadata(&folder) {
+            Ok(found) if found.is_dir() => {}
+            Ok(_) => {
+                return Err(TransferError::Local(format!(
+                    "{} is not a folder",
+                    folder.display()
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                hide_platform::fs::private::create_dir(&folder)
+                    .map_err(|error| failed(&folder, error))?;
+            }
+            Err(error) => return Err(failed(&folder, error)),
+        }
+    }
+    Ok(())
+}
+
 /// Makes each missing folder of `folder` private, parents first.
 async fn make_folders(raw: &RawSftpSession, folder: &str) -> Result<(), TransferError> {
     let mut path = String::new();
@@ -293,4 +345,30 @@ pub fn local_size(path: &Path) -> Result<u64, TransferError> {
     std::fs::metadata(path)
         .map(|metadata| metadata.len())
         .map_err(|error| TransferError::Local(format!("{}: {error}", path.display())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_download_writes_only_below_the_folder_it_was_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let into = dir.path().join("move-staging/i1");
+        folders_below(&into, &into.join("factory-files/a/b.prd")).unwrap();
+        assert!(into.join("factory-files/a").is_dir());
+        for local in [
+            dir.path().join("outside"),
+            into.join("../outside"),
+            into.clone(),
+        ] {
+            assert!(folders_below(&into, &local).is_err(), "{}", local.display());
+        }
+        // A link on the way would lead the file outside.
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        hide_platform::fs::link::create_link(&elsewhere, &into.join("linked")).unwrap();
+        assert!(folders_below(&into, &into.join("linked/x")).is_err());
+        assert!(!elsewhere.join("x").exists());
+    }
 }

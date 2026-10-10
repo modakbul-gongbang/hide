@@ -237,6 +237,21 @@ fn file_digest(path: &Path) -> Result<FileDigest, Refusal> {
     })
 }
 
+/// Whether the copy at `dir` belongs to `node`: its `node.json` names it,
+/// as the move's change of owner made it. A copy for another node is
+/// refused here, not when the core it would start refuses the folder.
+pub fn owned_by(dir: &Path, node: &str) -> Result<(), Refusal> {
+    let marker = dir.join(MARKER_FILE);
+    match super::read_marker(&marker).map_err(|reason| refuse(&marker, reason))? {
+        Some(owner) if owner == node => Ok(()),
+        Some(owner) => Err(refuse(
+            &marker,
+            format!("the copy belongs to node {owner}, not to {node}"),
+        )),
+        None => Err(refuse(&marker, "the copy names no owner")),
+    }
+}
+
 /// Whether this build can load the copy at `dir`: the UI state reads as a
 /// state this build keeps, every other JSON store is a JSON object, and every
 /// SQLite store passes its integrity check. The first store that does not
@@ -663,6 +678,20 @@ mod tests {
                 "{path}: {refused}"
             );
         }
+    }
+
+    #[test]
+    fn a_copy_belongs_only_to_the_node_its_marker_names() {
+        let copy = folder();
+        owned_by(copy.path(), "n").unwrap();
+        assert!(
+            owned_by(copy.path(), "other")
+                .unwrap_err()
+                .reason
+                .contains("node n")
+        );
+        std::fs::remove_file(copy.path().join(MARKER_FILE)).unwrap();
+        assert!(owned_by(copy.path(), "n").is_err());
     }
 
     #[test]

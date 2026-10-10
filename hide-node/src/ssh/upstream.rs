@@ -330,17 +330,18 @@ impl Upstream {
 
     /// Copies `files` from the machine over one SFTP channel of the same
     /// connection, one after another, each streamed and renamed into place
-    /// here whole (`transfer::download_file`); `received` hears the bytes as
-    /// each chunk is written. The first failure stops the copy; the files
-    /// already placed stay.
+    /// here whole (`transfer::download_file`), and each below the folder
+    /// `into`; `received` hears the bytes as each chunk is written. The
+    /// first failure stops the copy; the files already placed stay.
     pub fn download(
         &self,
+        into: &std::path::Path,
         files: &[super::transfer::FileCopy],
         received: &(dyn Fn(u64) + Sync),
     ) -> Result<(), super::transfer::TransferError> {
         self.sftp("core-move-download", |raw| async move {
             for file in files {
-                super::transfer::download_file(&raw, file, received).await?;
+                super::transfer::download_file(&raw, into, file, received).await?;
             }
             Ok(())
         })

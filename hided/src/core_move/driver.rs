@@ -112,13 +112,15 @@ impl Remote {
             })
     }
 
+    /// Downloads `files`, each of which must be below `into`.
     pub fn download(
         &self,
+        into: &Path,
         files: &[FileCopy],
         received: &(dyn Fn(u64) + Sync),
     ) -> Result<(), MoveFailure> {
         self.upstream
-            .download(files, received)
+            .download(into, files, received)
             .map_err(|error| MoveFailure::Copy {
                 reason: error.to_string(),
             })
@@ -449,7 +451,13 @@ fn differing(
     journal: &Journal,
     manifest: &copy::Manifest,
 ) -> Result<Vec<String>, MoveFailure> {
-    let answer = remote.step("verify", &[("intent", &journal.intent)])?;
+    let answer = remote.step(
+        "verify",
+        &[
+            ("intent", &journal.intent),
+            ("target", &journal.change.new_owner),
+        ],
+    )?;
     differs_of(&answer, manifest)
 }
 
