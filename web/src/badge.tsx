@@ -1,10 +1,12 @@
+import type { Actions } from "./actions";
+import { Button } from "./components/ui/button";
 import { windowStrip } from "./connection";
 import { useInterfaceTranslation } from "./i18n/client";
 import { coreMachineName, moveMachines } from "./screenMachine";
 import { useShellStore } from "./store";
 import { cn } from "./lib/utils";
 
-export function ConnectionBadge() {
+export function ConnectionBadge({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const connection = useShellStore((s) => s.connection);
   const refused = useShellStore((s) => s.refused);
@@ -25,6 +27,11 @@ export function ConnectionBadge() {
         </span>
       ) : null}
       <span className="min-w-0 truncate">{strip.text}</span>
+      {strip.action === "reconnect" ? (
+        <Button variant="link" size="sm" className="h-auto shrink-0 p-0 text-caption" data-core-reconnect="true" onClick={() => actions.coreLink("reconnect")}>
+          {t("coreMove.reconnect")}
+        </Button>
+      ) : null}
     </div>
   );
 }

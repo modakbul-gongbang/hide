@@ -18,6 +18,7 @@ pub enum Kind {
     TerminalInput,
     TerminalAttachment,
     CoreMove,
+    CoreLink,
     #[serde(other)]
     Other,
 }

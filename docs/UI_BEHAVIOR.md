@@ -1348,7 +1348,18 @@ A device's Workspace in front wears the device color, `--device-remote`: a band 
 
 A machine whose core runs on another machine (ARCHITECTURE.md, A core on another machine) is a device on that core's rail like any other, named by its host name.
 Its `다시 연결` is answered that the machine reconnects by itself, and removing it ends its connection until it attaches again; neither adds a state or a line of its own.
-A window on that machine shows its core's state; while the core cannot be reached it shows the shell's own connecting state, in the place and size it takes when hided is gone, takes no input, and sends none of what was typed meanwhile once the core is back.
+The window's own machine is always the first tile and the one named This Mac (`이 Mac`), the laptop glyph (`web/src/screenMachine.ts`, `windowFirst`); on a window of a machine whose core runs elsewhere, the core's machine follows it, named by the name its machine gives itself.
+The tile of the machine that runs the core wears a crown notched into its bottom-left corner (`--size-rail-crown` in a `--size-rail-badge` notch, the corner the `×` and the marks leave free), and its hint adds `core 실행 중`; the crown shows only once a machine dials in to a core, that is on a node's window or while any device dials in, since with one core and its devices nothing needs telling apart (PRD core-host-node-move B2).
+
+A window on a machine whose core runs elsewhere shows its core's state and takes its strip, in the place and size of the connection badge, when the core cannot draw it (W1 to W3, B16):
+
+- while a move holds the window, `core를 Mac mini로 옮기는 중 · 3/5 프로젝트와 기록 복사 · 다시 연결될 때까지 입력을 받지 않아요`, the move's step of five, with `…`, and the window sends nothing (a rollback says `옮기지 못해 이 Mac의 core로 되돌리는 중`);
+- while this machine updates its core to this app's build, `Mac mini의 core를 이 앱의 빌드로 바꾸는 중 · 에이전트는 계속 돌아요`, with `…`;
+- while the core cannot be reached, `! Mac mini의 core에 연결할 수 없어요 · 다시 연결하는 중`;
+- after the operator ended the link here, `! Mac mini core와 연결을 끊었어요` with `다시 연결` at its end, which links it again and is the only thing the window sends while it waits;
+- otherwise the shell's own connecting state.
+
+The window takes no input while its strip shows, and sends none of what was typed meanwhile once the core is back; the strip goes when the core's snapshot arrives, and a move that ends on another machine rewrites the window's address to it without a reload (`addressAfterMove`).
 
 ## Start panel
 
@@ -1539,6 +1550,25 @@ The add form has one Add button and lists, once, what the kit puts on the device
 Removing a device asks once, names in one line what comes off that device (with its helper folder, `~/.hide/host-helper` by default) and that the records in `~/.hide` stay, or, when its helper is not connected, that the kit stays there; no button is focused when the confirmation opens (B22).
 When another registered device reaches the same account on that machine, such as a second Herdr server there, the line says the kit stays for it instead.
 The page has no per-device agents line, no coordination retirement row and no Codex per pane row: the kit no longer turns Codex's shared daemon off, and a machine's agents are on the Agents tab.
+
+The rows put the window's own machine first, named This Mac, and name the core's machine by the name it gives itself on a window of another machine (PRD core-host-node-move B2, `web/src/screenMachine.ts`).
+The row of the machine that runs the core wears a `core` badge with the hint `core 실행 중`, under the same rule as the rail's crown.
+Test and Retry are offered for a device this core dials, never for a machine that dials in, which has no SSH alias here.
+A connected device this core dials offers `core를 이 기기로 옮기기…` in its ⋯ menu, dimmed with `연결 안 됨` while it is not connected; a window of a machine whose core runs elsewhere offers it on no row.
+That window's own row offers instead `core를 이 Mac으로 되돌리기…` and `Mac mini core와 연결 끊기…`, and its menu has no Remove…, since a machine does not remove itself.
+`연결 끊기…` asks once, saying that the core refuses this Mac's pane input, file reads and browser actions at once and that reconnecting allows them again, and the window's strip then offers `다시 연결` (B16).
+
+A move is one dialog over Settings whose body turns with the move, and every form names the reason first, `Mac mini는 늘 켜져 있어서 이 Mac을 덮어도 에이전트와 폰 연결이 계속돼요.` (B3 to B5):
+
+- checking: `점검하는 중…` while both machines are checked and nothing is changed;
+- checks failed: `고칠 것 2개 · 통과 9` (the passed count only when every check ran) and one line per failing check, naming the machine and either the one command that fixes it, with Copy (`gh auth login`, `sudo pmset -c sleep 0`), or what to do in words; `다시 점검` checks again;
+- confirm: what happens (`몇 초 동안 창이 입력을 받지 않고, 폰은 QR을 한 번 다시 스캔해요.`), that it can be undone, and `Mac mini로 옮기기`;
+- moving: the five steps with ✓, `…` and `-`, and, while the other machine cannot be reached, `Mac mini에 연결할 수 없어요 · 다시 연결되면 이어서 해요`;
+- failed: the step that failed with ×, `이 Mac의 core는 그대로예요.` with ✓, and Retry;
+- done: `폰은 Mac mini의 QR을 한 번 다시 스캔하세요.` and `되돌리기`, which opens the same dialog for the move back.
+
+The dialog only asks; the supervisor's `core_move` frame says where the move is, so a window that closed it and opens Settings again finds the same form, and a request another move holds is answered `다른 이동이 진행 중이에요`.
+In Korean the particle after the machine's name follows its last sound, as Korean reads the name (`Mac mini로` but `집으로`, `web/src/i18n/koParticle.ts`).
 
 Settings > Agents shows the seven agents Hide supports, Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, in that order, for one machine at a time (PRD settings-cleanup B8 to B20, B67).
 With a device registered, a switch at the top chooses This Mac or a device and the list below is that machine's; with none there is no switch.

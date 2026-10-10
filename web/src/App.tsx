@@ -234,7 +234,7 @@ export function App() {
     <TooltipProvider>
       <InterfaceLanguageBoundary />
       <div className="relative flex h-full flex-col bg-background text-foreground">
-        <ConnectionBadge />
+        <ConnectionBadge actions={actions} />
         <NoticeBar actions={actions} />
         <AgentCloseNotice actions={actions} />
         <DraftRecoveryLine actions={actions} />

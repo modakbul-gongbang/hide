@@ -30,13 +30,14 @@ export function badgeText(state: ConnectionState, refused: boolean, t: TFunction
   }
 }
 
-/** The strip above the window, in the place and size the connection badge always had (D-08). */
-export type WindowStrip = { kind: ConnectionState | "updating" | "unreachable"; text: string; mark: "pending" | "warn" | null };
+/** The strip above the window, in the place and size the connection badge always had (D-08); `reconnect` offers the operator's way back after they ended the link (B16). */
+export type WindowStrip = { kind: ConnectionState | "updating" | "unreachable" | "disconnected"; text: string; mark: "pending" | "warn" | null; action?: "reconnect" };
 
 /**
- * What the strip says (PRD core-host-node-move W1 to W3): the move's step
- * while it holds the window, the node's update of its core or its failed
- * link while its screen waits for the core, else the connection badge.
+ * What the strip says (PRD core-host-node-move W1 to W3, B16): the move's
+ * step while it holds the window, the node's update of its core, its failed
+ * link or the link the operator ended while its screen waits for the core,
+ * else the connection badge.
  * `coreMachine` is the core's machine as the window last knew it, for a
  * node whose link has not named it yet.
  */
@@ -48,9 +49,14 @@ export function windowStrip(
   if (connection === "moving" && move && input.machines) return { kind: "moving", text: movingStripText(move, input.machines, t), mark: "pending" };
   if (connection !== "live" && link && link.phase !== "connecting") {
     const machine = link.machine ?? input.coreMachine;
-    return link.phase === "updating"
-      ? { kind: "updating", text: t("coreMove.strip.updating", { machine }), mark: "pending" }
-      : { kind: "unreachable", text: t("coreMove.strip.unreachable", { machine }), mark: "warn" };
+    switch (link.phase) {
+      case "updating":
+        return { kind: "updating", text: t("coreMove.strip.updating", { machine }), mark: "pending" };
+      case "disconnected":
+        return { kind: "disconnected", text: t("coreMove.strip.disconnected", { machine }), mark: "warn", action: "reconnect" };
+      case "waiting":
+        return { kind: "unreachable", text: t("coreMove.strip.unreachable", { machine }), mark: "warn" };
+    }
   }
   const text = badgeText(connection, input.refused, t);
   return text ? { kind: connection, text, mark: null } : null;

@@ -1138,9 +1138,11 @@ const CORE_LINK_WITHIN: Duration = Duration::from_secs(20);
 /// A daemon in the node role (PRD core-host-node-remote-core D-08, D-23)
 /// attaches the host once its first attempt to link to its core ended: a
 /// live link, a core it is updating to this build (PRD core-host-node-move
-/// B10), or a core that is not running or cannot be reached, which the
-/// window shows as its reconnecting state. This connection first gives a
-/// core update that failed on the last one its attempt (B20). A core of
+/// B10), a core that is not running or cannot be reached, which the
+/// window shows as its reconnecting state, or a link the operator ended
+/// from this machine's window, which the window offers to restore (B16).
+/// This connection first gives a core update that failed on the last one
+/// its attempt (B20). A core of
 /// another build refuses the node, and the host shows the failure it shows
 /// for a local daemon of another build; a newer core or a failed update is
 /// named with both builds. Past [`CORE_LINK_WITHIN`] the host attaches and

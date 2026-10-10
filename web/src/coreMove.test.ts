@@ -51,6 +51,8 @@ describe("the strip above the window (W1 to W3)", () => {
     expect(windowStrip({ ...base, connection: "connecting", link: { phase: "updating", machine: null } }, t)?.text).toBe("Mac mini의 core를 이 앱의 빌드로 바꾸는 중 · 에이전트는 계속 돌아요");
     expect(windowStrip({ ...base, connection: "reconnecting", link: { phase: "waiting", machine: "Mac mini" } }, t)).toEqual({ kind: "unreachable", mark: "warn", text: "Mac mini의 core에 연결할 수 없어요 · 다시 연결하는 중" });
     expect(windowStrip({ ...base, connection: "live", link: { phase: "waiting", machine: "Mac mini" } }, t)).toBeNull();
+    // The operator ended the link (B16): the strip offers it back.
+    expect(windowStrip({ ...base, connection: "connecting", link: { phase: "disconnected", machine: null } }, t)).toEqual({ kind: "disconnected", mark: "warn", text: "Mac mini core와 연결을 끊었어요", action: "reconnect" });
     expect(windowStrip({ ...base, connection: "reconnecting", link: { phase: "connecting", machine: null } }, t)?.kind).toBe("reconnecting");
   });
 });

@@ -579,6 +579,20 @@ fn a_screen_on_the_node_draws_the_cores_state_and_its_own_pane() -> Result<()> {
     }
 }
 
+/// What a held screen receives until `deadline`: where the node's link
+/// stands, each phase it was told, and nothing else.
+async fn held_for(socket: &mut Socket, deadline: Instant) -> Result<Vec<Value>> {
+    let mut told = Vec::new();
+    while let Some(frame) = next_frame(socket, deadline).await? {
+        ensure!(
+            frame["type"] == "core_link",
+            "a held screen received {frame}"
+        );
+        told.push(frame["payload"]["phase"].clone());
+    }
+    Ok(told)
+}
+
 /// What a screen shows of the operator's layout: the focus, the tab and
 /// the panes' places, as one snapshot frame carries them.
 fn layout(snapshot: &Value) -> Value {
@@ -646,13 +660,17 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
                 );
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            // A screen opened meanwhile is held: nothing reaches it, and the
-            // keys it sends are dropped rather than kept for later.
+            // A screen opened meanwhile is held: nothing but where the link
+            // stands reaches it, and the keys it sends are dropped rather
+            // than kept for later.
             let mut held = screen_socket(port, &token).await?;
             let keys = base64::engine::general_purpose::STANDARD.encode("echo held-\"leak\"\r");
             send(&mut held, "key", json!({"pane_id": pane, "bytes_base64": keys})).await?;
-            let quiet = next_frame(&mut held, Instant::now() + Duration::from_secs(5)).await?;
-            ensure!(quiet.is_none(), "a held screen received {quiet:?}");
+            let told = held_for(&mut held, Instant::now() + Duration::from_secs(5)).await?;
+            ensure!(
+                told.first().is_some_and(|phase| phase == "waiting" || phase == "connecting"),
+                "the held screen was told {told:?}"
+            );
             // The outage lasts until the node's next try is further away than
             // the return is allowed to take: only the node noticing SSH
             // answer again brings it back in time.
@@ -665,8 +683,7 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
                         .then_some(()))
                 })
             })?;
-            let quiet = next_frame(&mut held, Instant::now()).await?;
-            ensure!(quiet.is_none(), "a held screen received {quiet:?}");
+            held_for(&mut held, Instant::now()).await?;
 
             // SSH answers again: the held screen attaches within ten seconds
             // and draws the layout it left.
@@ -702,6 +719,184 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
             "the node's link records: {ended:?}"
         );
         for typed in ["before-", "after-", "held-"] {
+            ensure!(!fixture.logs_mention(typed)?, "{typed} reached a log");
+        }
+        Ok(())
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
+
+/// The node's placement record, as the node left it.
+fn node_record(fixture: &Fixture) -> Result<Value> {
+    let record = hided::placement::record_path(&fixture.node_state());
+    Ok(serde_json::from_slice(&std::fs::read(record)?)?)
+}
+
+/// The answer `socket` gets to a `file_list` of `project` on `node`: a
+/// listing or why there is none.
+async fn listing_of(socket: &mut Socket, node: &str, project: &std::path::Path) -> Result<Value> {
+    send(
+        socket,
+        "file_list",
+        json!({"root": project, "path": project, "device_id": node}),
+    )
+    .await?;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let frame = next_frame(socket, deadline)
+            .await?
+            .context("the file_list was never answered")?;
+        if ["directory_list", "directory_unavailable", "path_refused"]
+            .contains(&frame["type"].as_str().unwrap_or_default())
+        {
+            return Ok(frame);
+        }
+    }
+}
+
+/// B16: the operator ends the link from the node's window. At once the
+/// core reaches nothing on the node: a key its own window types into the
+/// node's pane never arrives and a listing there is refused, and its row
+/// for the node is no longer ready. The node dials nothing until the
+/// operator reconnects, a restart included, and its held screens are told
+/// so; Reconnect links it again and the core reaches the node as before.
+/// The node's pages are refused through the same end of the link that
+/// `a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_core_through_it`
+/// drives with SSH gone.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_node_the_operator_disconnects_is_refused_by_its_core_until_they_reconnect() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let (port, token) = fixture.start_node()?;
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let project = fixture.screen_home().join("project");
+        let herdr_pane = fixture.screen.workspace_at(&project)?;
+        let pane = format!("remote:{node}:pane:{herdr_pane}");
+        let (core_port, core_token) = fixture.core_screen();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        let mut window = runtime.block_on(async {
+            node_link(port, "live", LINK_BOUND).await?;
+            let mut socket = screen_socket(port, &token).await?;
+            first_snapshot(&mut socket, Duration::from_secs(20)).await?;
+            send(
+                &mut socket,
+                "create_workspace",
+                json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
+            )
+            .await?;
+            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            type_and_read(&mut socket, &pane, "echo before-\"ok\"", "before-ok").await?;
+            // The core's own window reaches the node's checkout.
+            let mut window = screen_socket(core_port, &core_token).await?;
+            first_snapshot(&mut window, Duration::from_secs(20)).await?;
+            focus_checkout(&fixture, &mut window, &node, &project).await?;
+            let listed = listing_of(&mut window, &node, &project).await?;
+            ensure!(listed["type"] == "directory_list", "the core listed {listed}");
+
+            // Disconnect, from the node's own window.
+            send(&mut socket, "core_link", json!({"action": "disconnect"})).await?;
+            let (code, reason) = close_of(&mut socket, Duration::from_secs(15)).await?;
+            ensure!(
+                (code, reason.as_str()) == (1012, "core_link_lost"),
+                "the screen closed as {code} {reason}"
+            );
+            node_link(port, "disconnected", LINK_BOUND).await?;
+            let keys = base64::engine::general_purpose::STANDARD.encode("echo core-\"leak\"\r");
+            send(&mut window, "key", json!({"pane_id": pane, "bytes_base64": keys})).await?;
+            let refused = listing_of(&mut window, &node, &project).await?;
+            ensure!(
+                refused["type"] != "directory_list",
+                "the core listed the node's checkout after the disconnect: {refused}"
+            );
+            Ok::<_, anyhow::Error>(window)
+        })?;
+        ensure!(
+            node_record(&fixture)?["disconnected"] == true,
+            "the record kept no disconnect"
+        );
+        wait_for("the node's row not ready on the core", || {
+            Ok(fixture.device(&node)?.filter(|row| {
+                row.pointer("/host/state")
+                    .is_some_and(|state| state != "ready")
+            }))
+        })?;
+        let linked = fixture.core_log("node_link", "attach.linked")?.len();
+
+        // A restart keeps the disconnect: nothing dials, and a held screen
+        // is told so and drops what it sends.
+        fixture.signal_node(libc::SIGTERM)?;
+        let (port, token) = fixture.restart_node()?;
+        runtime.block_on(async {
+            node_link(port, "disconnected", LINK_BOUND).await?;
+            let mut held = screen_socket(port, &token).await?;
+            let keys = base64::engine::general_purpose::STANDARD.encode("echo held-\"leak\"\r");
+            send(
+                &mut held,
+                "key",
+                json!({"pane_id": pane, "bytes_base64": keys}),
+            )
+            .await?;
+            let told = held_for(&mut held, Instant::now() + Duration::from_secs(5)).await?;
+            ensure!(
+                told == [json!("disconnected")],
+                "the held screen was told {told:?}"
+            );
+            ensure!(
+                tokio::task::block_in_place(|| fixture.attach_processes())?.is_empty(),
+                "the disconnected node runs an attach role"
+            );
+            ensure!(
+                tokio::task::block_in_place(|| fixture.core_log("node_link", "attach.linked"))?
+                    .len()
+                    == linked,
+                "the disconnected node linked to its core"
+            );
+
+            // Reconnect: the held screen attaches and draws the pane, which
+            // nothing typed meanwhile reached.
+            send(&mut held, "core_link", json!({"action": "reconnect"})).await?;
+            first_snapshot(&mut held, Duration::from_secs(20))
+                .await
+                .context("the held screen did not attach after Reconnect")?;
+            type_and_read(&mut held, &pane, "echo after-\"ok\"", "after-ok").await?;
+            let text = pane_text(&mut held, &pane, "after-ok", Duration::from_secs(20)).await?;
+            ensure!(
+                !text.contains("held-") && !text.contains("core-"),
+                "the pane after the disconnect reads {text:?}"
+            );
+            tokio::task::block_in_place(|| {
+                wait_for("the node's ready row on the core again", || {
+                    Ok(fixture.device(&node)?.filter(|row| {
+                        row.pointer("/host/state")
+                            .is_some_and(|state| state == "ready")
+                    }))
+                })
+            })?;
+            focus_checkout(&fixture, &mut window, &node, &project).await?;
+            let listed = listing_of(&mut window, &node, &project).await?;
+            ensure!(
+                listed["type"] == "directory_list",
+                "the core listed {listed}"
+            );
+            Ok::<_, anyhow::Error>(())
+        })?;
+        ensure!(
+            node_record(&fixture)?.get("disconnected").is_none(),
+            "the record kept the disconnect after Reconnect"
+        );
+        for typed in ["held-", "core-\"leak"] {
             ensure!(!fixture.logs_mention(typed)?, "{typed} reached a log");
         }
         Ok(())

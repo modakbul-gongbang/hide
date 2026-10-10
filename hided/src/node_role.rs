@@ -94,10 +94,18 @@ pub enum Phase {
     /// The core took the link.
     Live(Accepted),
     /// The core runs an older build, and this node is updating it to its
-    /// own (B10).
-    Updating { core: crate::build_order::Release },
+    /// own (B10); `machine` is the core machine's name as its hello gave
+    /// it.
+    Updating {
+        machine: String,
+        core: crate::build_order::Release,
+    },
     /// The last attempt failed or the link ended; the next one waits.
     Waiting { reason: LinkFailure },
+    /// The operator ended the link from this machine's window (PRD
+    /// core-host-node-move B16): nothing dials until they reconnect, and the
+    /// placement record keeps the choice across restarts.
+    Disconnected,
 }
 
 /// Why the node's last attempt failed or its link ended. Its text is the
@@ -169,6 +177,30 @@ impl LinkFailure {
     }
 }
 
+impl Phase {
+    /// The phase as a held screen is told it (`core_link` frame), with the
+    /// core machine's name when its hello gave it; `None` while live, when
+    /// the core draws the screen itself.
+    pub fn link_frame(&self) -> Option<serde_json::Value> {
+        let (phase, machine) = match self {
+            Self::Live(_) => return None,
+            Self::Connecting => ("connecting", None),
+            Self::Updating { machine, .. } => ("updating", Some(machine)),
+            Self::Disconnected => ("disconnected", None),
+            Self::Waiting { reason } => (
+                "waiting",
+                match reason {
+                    LinkFailure::CoreNewer { machine, .. }
+                    | LinkFailure::CoreOlder { machine, .. }
+                    | LinkFailure::UpdateFailed { machine, .. } => Some(machine),
+                    _ => None,
+                },
+            ),
+        };
+        Some(json!({"type": "core_link", "payload": {"phase": phase, "machine": machine}}))
+    }
+}
+
 impl std::fmt::Display for LinkFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -198,6 +230,8 @@ struct State {
     /// Why this connection's one update of the core failed, once it did
     /// (B20).
     update_failed: Option<String>,
+    /// The operator ended the link (B16); the link thread parks.
+    disconnected: bool,
 }
 
 struct Shared {
@@ -205,6 +239,9 @@ struct Shared {
     changed: Condvar,
     upstream: Mutex<Option<Arc<Upstream>>>,
     live: watch::Sender<Option<Arc<LiveLink>>>,
+    /// The phase as it changes, for the screens the node holds while the
+    /// core cannot draw them.
+    phases: watch::Sender<Phase>,
     /// Where the node's own panes' output goes besides the link.
     screen: Arc<dyn OutputSink>,
     /// This machine's desktop windows' browser gateways, which the core
@@ -265,17 +302,25 @@ impl NodeRole {
         roots_changed: Option<RootsChanged>,
         updates: Option<Updates>,
     ) -> Result<Self, String> {
+        // A node the operator disconnected stays so from its first look.
+        let first = if placement.disconnected {
+            Phase::Disconnected
+        } else {
+            Phase::Connecting
+        };
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
-                phase: Phase::Connecting,
+                phase: first.clone(),
                 stopping: false,
                 woken: false,
                 link: None,
                 update_failed: None,
+                disconnected: placement.disconnected,
             }),
             changed: Condvar::new(),
             upstream: Mutex::new(None),
             live: watch::Sender::new(None),
+            phases: watch::Sender::new(first),
             screen,
             browser,
             roots_changed,
@@ -314,6 +359,43 @@ impl NodeRole {
         self.shared.live.subscribe()
     }
 
+    /// The phase, as it changes.
+    pub fn phases(&self) -> watch::Receiver<Phase> {
+        self.shared.phases.subscribe()
+    }
+
+    /// The operator ends the link from this machine's window (B16): the
+    /// live link closes now and nothing dials until [`NodeRole::reconnect`].
+    /// The core refuses this machine's panes, files and pages from then on
+    /// as it does for any node whose link ended.
+    pub fn disconnect(&self) {
+        let mut state = lock(&self.shared.state);
+        state.disconnected = true;
+        if let Some(link) = state.link.take() {
+            link.shutdown();
+        }
+        drop(state);
+        let upstream = lock(&self.shared.upstream).clone();
+        if let Some(upstream) = upstream {
+            upstream.close();
+        }
+        self.shared.changed.notify_all();
+    }
+
+    /// The operator links this machine to its core again: the next attempt
+    /// goes at once.
+    pub fn reconnect(&self) {
+        let mut state = lock(&self.shared.state);
+        if !std::mem::take(&mut state.disconnected) {
+            return;
+        }
+        // A new connection: a core update that failed gets its attempt.
+        state.update_failed = None;
+        state.woken = true;
+        drop(state);
+        self.shared.changed.notify_all();
+    }
+
     /// Waits up to `timeout` for the phase to satisfy `done`, and answers
     /// the phase it ended on.
     pub fn wait_for(&self, timeout: Duration, done: impl Fn(&Phase) -> bool) -> Phase {
@@ -345,10 +427,12 @@ impl NodeRole {
     /// which starts at once (B10, B20). Anything else is left as it is.
     pub fn connect_again(&self) {
         let mut state = lock(&self.shared.state);
-        if state.update_failed.take().is_none() {
+        // The operator ended the link; only their reconnect dials again.
+        if state.disconnected || state.update_failed.take().is_none() {
             return;
         }
         state.phase = Phase::Connecting;
+        self.shared.phases.send_replace(Phase::Connecting);
         drop(state);
         wake(&self.shared);
     }
@@ -398,6 +482,9 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
     let mut backoff = Backoff::default();
     let mut generation = 0;
     loop {
+        if parked(shared) {
+            return;
+        }
         generation += 1;
         if set_phase(shared, Phase::Connecting) {
             return;
@@ -407,6 +494,11 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
         // The core now runs this build: the next dial reaches it at once.
         if let LinkFailure::CoreUpdated { program } = reason {
             placement.program = program;
+            backoff.reset();
+            continue;
+        }
+        // The operator ended the link: the role parks at the loop's top.
+        if lock(&shared.state).disconnected {
             backoff.reset();
             continue;
         }
@@ -428,7 +520,7 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
         }
         let deadline = Instant::now() + wait;
         let mut state = lock(&shared.state);
-        while !state.stopping && !state.woken {
+        while !state.stopping && !state.woken && !state.disconnected {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 break;
@@ -504,7 +596,7 @@ fn watch(shared: &Shared) {
 /// failure a move may change. A refused node keeps its backoff.
 fn wakes_on_move(phase: &Phase, answered: Option<bool>) -> bool {
     match phase {
-        Phase::Connecting | Phase::Updating { .. } => false,
+        Phase::Connecting | Phase::Updating { .. } | Phase::Disconnected => false,
         Phase::Live(_) => answered != Some(true),
         Phase::Waiting { reason } => reason.a_move_can_change(),
     }
@@ -648,9 +740,35 @@ impl PortWatch {
 fn set_phase(shared: &Shared, phase: Phase) -> bool {
     let mut state = lock(&shared.state);
     if state.phase != phase {
-        state.phase = phase;
+        state.phase = phase.clone();
+        shared.phases.send_replace(phase);
         shared.changed.notify_all();
     }
+    state.stopping
+}
+
+/// Waits while the operator keeps the link ended (B16); `true` when the
+/// role is stopping.
+fn parked(shared: &Shared) -> bool {
+    {
+        let state = lock(&shared.state);
+        if !state.disconnected {
+            return state.stopping;
+        }
+    }
+    shared.live.send_replace(None);
+    if set_phase(shared, Phase::Disconnected) {
+        return true;
+    }
+    herdr_core::diagnostic!(json!({"component": "node_role", "kind": "link.disconnected"}));
+    let mut state = lock(&shared.state);
+    while state.disconnected && !state.stopping {
+        state = shared
+            .changed
+            .wait(state)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    }
+    state.woken = false;
     state.stopping
 }
 
@@ -707,6 +825,10 @@ fn try_link(
         if state.stopping {
             return Err(LinkFailure::Stopping);
         }
+        // Ended by the operator while it was dialled: it is never served.
+        if state.disconnected {
+            return Err(LinkFailure::Ended("disconnected".to_owned()));
+        }
         state.link = Some(stream.shutdown_handle());
     }
     let ended = serve_link(
@@ -721,9 +843,9 @@ fn try_link(
     lock(&shared.state).link = None;
     stream.shutdown_handle().shutdown();
     match ended {
-        Err(LinkFailure::CoreOlder { machine, release }) => {
-            Err(update_core(shared, &upstream, placement, machine, release))
-        }
+        Err(LinkFailure::CoreOlder { machine, release }) => Err(update_core(
+            shared, &upstream, placement, identity, machine, release,
+        )),
         ended => ended,
     }
 }
@@ -738,6 +860,7 @@ fn update_core(
     shared: &Shared,
     upstream: &Upstream,
     placement: &Placement,
+    identity: &NodeIdentity,
     machine: String,
     core: crate::build_order::Release,
 ) -> LinkFailure {
@@ -752,7 +875,11 @@ fn update_core(
             core,
         };
     }
-    if set_phase(shared, Phase::Updating { core: core.clone() }) {
+    let updating = Phase::Updating {
+        machine: machine.clone(),
+        core: core.clone(),
+    };
+    if set_phase(shared, updating) {
         return LinkFailure::Stopping;
     }
     let intent = crate::core_update::new_intent();
@@ -817,11 +944,15 @@ fn update_core(
         return failed(reason);
     }
     // The node's record names the program its next dials run there.
-    let updated = Placement {
-        program: program.clone(),
-        ..placement.clone()
+    let recorded = crate::placement::update(&updates.state_dir, &identity.node, |record| {
+        record.program = program.clone();
+    });
+    let unrecorded = match recorded {
+        Ok(true) => None,
+        Ok(false) => Some("the placement record is gone".to_owned()),
+        Err(reason) => Some(reason),
     };
-    if let Err(reason) = crate::placement::write(&updates.state_dir, &updated) {
+    if let Some(reason) = unrecorded {
         // The core runs this build; the record keeps naming the previous
         // build's program, which the update kept.
         log("update.record_failed", json!({"reason": reason}));

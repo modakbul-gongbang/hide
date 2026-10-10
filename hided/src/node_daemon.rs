@@ -95,9 +95,14 @@ pub struct NodeState {
     pub terminals: Arc<ScreenTerminals>,
     pub live: watch::Receiver<Option<Arc<LiveLink>>>,
     pub phase: Arc<dyn Fn() -> Phase + Send + Sync>,
+    /// The phase as it changes, which a held screen is told.
+    pub phases: watch::Receiver<Phase>,
     /// Gives a failed core update this connection's attempt
     /// (`NodeRole::connect_again`).
     pub connect_again: Arc<dyn Fn() + Send + Sync>,
+    /// Ends or restores the link at the operator's word from this
+    /// machine's window (B16), recorded in the placement first.
+    pub link_control: Arc<dyn Fn(LinkAction) -> Result<(), String> + Send + Sync>,
     pub clients: Arc<AtomicUsize>,
     pub connections: Arc<AtomicU64>,
     pub last_client_gone: Arc<Mutex<Instant>>,
@@ -117,6 +122,15 @@ pub struct NodeState {
     pub attachments: Arc<Attachments>,
     /// This machine's desktop windows' browser gateways (`node_browser`).
     pub browser: Arc<NodeBrowser>,
+}
+
+/// What the operator asks of the link from this machine's window (PRD
+/// core-host-node-move B16): a `core_link` event {action}.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkAction {
+    Disconnect,
+    Reconnect,
 }
 
 /// The node role, running: its link and its screen server.
@@ -188,6 +202,29 @@ impl NodeDaemon {
                 }
             }) as Arc<dyn Fn() + Send + Sync>
         };
+        let link_control = {
+            let role = Arc::downgrade(&role);
+            let state_dir = server.state_dir.clone();
+            let own_node = screen_node.clone();
+            Arc::new(move |action: LinkAction| {
+                let role = role.upgrade().ok_or("the node is stopping")?;
+                let disconnected = action == LinkAction::Disconnect;
+                // Recorded first, so a restart keeps what the operator chose.
+                let recorded = crate::placement::update(&state_dir, &own_node, |placement| {
+                    placement.disconnected = disconnected;
+                })?;
+                if !recorded {
+                    return Err("the placement record is gone".to_owned());
+                }
+                if disconnected {
+                    role.disconnect();
+                } else {
+                    role.reconnect();
+                }
+                Ok(())
+            }) as Arc<dyn Fn(LinkAction) -> Result<(), String> + Send + Sync>
+        };
+        let phases = role.phases();
         let browser_routes = BrowserRoutes::new(Arc::new(NodePages::new(
             screen_node,
             core_node,
@@ -209,7 +246,9 @@ impl NodeDaemon {
                 terminals,
                 live,
                 phase,
+                phases,
                 connect_again,
+                link_control,
                 clients: Arc::new(AtomicUsize::new(0)),
                 connections: Arc::new(AtomicU64::new(0)),
                 last_client_gone: Arc::new(Mutex::new(Instant::now())),
@@ -307,6 +346,7 @@ async fn health(State(state): State<NodeState>) -> impl IntoResponse {
         Phase::Live(_) => ("live", None),
         Phase::Updating { .. } => ("updating", None),
         Phase::Waiting { reason } => ("waiting", Some(reason.to_string())),
+        Phase::Disconnected => ("disconnected", None),
     };
     // The core's machine and both builds, which the window names when this
     // app is the one to update (B11) or its update of the core failed (B10).

@@ -91,6 +91,8 @@ export const coreMoveEnglish = {
   "coreMove.strip.line": "{{title}} · {{index}}/{{total}} {{step}} · no input until the window reconnects",
   "coreMove.strip.updating": "Updating the core on {{machine}} to this app's build · agents keep running",
   "coreMove.strip.unreachable": "Cannot reach the core on {{machine}} · reconnecting",
+  "coreMove.strip.disconnected": "Disconnected from the core on {{machine}}",
+  "coreMove.reconnect": "Reconnect",
 } as const;
 
 const ko = {
@@ -180,6 +182,8 @@ const ko = {
   "coreMove.strip.line": "{{title}} · {{index}}/{{total}} {{step}} · 다시 연결될 때까지 입력을 받지 않아요",
   "coreMove.strip.updating": "{{machine}}의 core를 이 앱의 빌드로 바꾸는 중 · 에이전트는 계속 돌아요",
   "coreMove.strip.unreachable": "{{machine}}의 core에 연결할 수 없어요 · 다시 연결하는 중",
+  "coreMove.strip.disconnected": "{{machine}} core와 연결을 끊었어요",
+  "coreMove.reconnect": "다시 연결",
 } satisfies Catalog<typeof coreMoveEnglish>;
 
 const zhCN = {
@@ -269,6 +273,8 @@ const zhCN = {
   "coreMove.strip.line": "{{title}} · {{index}}/{{total}} {{step}} · 重新连接前不接受输入",
   "coreMove.strip.updating": "正在将 {{machine}} 上的 core 更新为此应用的构建 · 智能体继续运行",
   "coreMove.strip.unreachable": "无法连接 {{machine}} 上的 core · 正在重新连接",
+  "coreMove.strip.disconnected": "已断开与 {{machine}} 上 core 的连接",
+  "coreMove.reconnect": "重新连接",
 } satisfies Catalog<typeof coreMoveEnglish>;
 
 const ja = {
@@ -358,6 +364,8 @@ const ja = {
   "coreMove.strip.line": "{{title}} · {{index}}/{{total}} {{step}} · 再接続まで入力を受け付けません",
   "coreMove.strip.updating": "{{machine}} の core をこのアプリのビルドに更新中 · エージェントは動き続けます",
   "coreMove.strip.unreachable": "{{machine}} の core に接続できません · 再接続中",
+  "coreMove.strip.disconnected": "{{machine}} の core との接続を切りました",
+  "coreMove.reconnect": "再接続",
 } satisfies Catalog<typeof coreMoveEnglish>;
 
 export const coreMoveCatalogs = { en: coreMoveEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof coreMoveEnglish>;

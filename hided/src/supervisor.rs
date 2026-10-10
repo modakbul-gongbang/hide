@@ -764,6 +764,7 @@ async fn link(
             program: journal.peer.program.clone(),
             state_dir: Some(journal.peer.state_dir.clone()),
             move_intent: Some(journal.intent.clone()),
+            disconnected: false,
         },
     );
     if let Err(reason) = written {
@@ -928,10 +929,9 @@ async fn commit(env: &Env, moves: &MoveControl, mut journal: Journal, remote: &A
             }
             driver::finish_target(&remote, &journal).map_err(|failure| format!("{failure:?}"))?;
             let node = herdr_core::node::NodeId::of_this_machine()?;
-            if let Some(mut placement) = placement::read(&state_dir, node.as_str())? {
+            placement::update(&state_dir, node.as_str(), |placement| {
                 placement.move_intent = None;
-                placement::write(&state_dir, &placement)?;
-            }
+            })?;
             Ok(())
         })
         .await

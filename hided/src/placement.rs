@@ -4,12 +4,14 @@
 //! the core's machine and this daemon runs in the node role: it starts no
 //! core and dials that machine instead.
 //!
-//! Only the move (layer 5) and test fixtures write the record. It is the
+//! Only the move (layer 5), the node's disconnect and reconnect (B16) and
+//! test fixtures write the record. It is the
 //! account's own private file; one that is anything else is refused rather
 //! than read, and so is one that names this machine as its own core.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use hide_platform::fs::private;
 use serde::{Deserialize, Serialize};
@@ -38,6 +40,38 @@ pub struct Placement {
     /// (PRD core-host-node-move amendment 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub move_intent: Option<String>,
+    /// The operator ended the link from this machine's window (PRD
+    /// core-host-node-move B16): the node dials nothing until they
+    /// reconnect, across restarts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disconnected: bool,
+}
+
+/// Every change this process makes to a record already there: the node's
+/// update of its core rewrites the program, the move's commit clears its
+/// intent, and the operator's disconnect sets its flag, each reading the
+/// record as the others left it.
+static CHANGES: Mutex<()> = Mutex::new(());
+
+/// Changes the record `state_dir` holds with `change`, after any change
+/// this process made before it; `false` when there is no record.
+pub fn update(
+    state_dir: &Path,
+    own_node: &str,
+    change: impl FnOnce(&mut Placement),
+) -> Result<bool, String> {
+    let _changing = CHANGES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(mut placement) = read(state_dir, own_node)? else {
+        return Ok(false);
+    };
+    let before = placement.clone();
+    change(&mut placement);
+    if placement != before {
+        write(state_dir, &placement)?;
+    }
+    Ok(true)
 }
 
 /// Records `placement` for `state_dir`, replacing any record there.
@@ -158,6 +192,7 @@ mod tests {
                 program: "/opt/hided".to_owned(),
                 state_dir: Some("/tmp/c".to_owned()),
                 move_intent: None,
+                disconnected: false,
             }))
         );
     }

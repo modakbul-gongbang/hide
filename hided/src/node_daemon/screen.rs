@@ -87,13 +87,30 @@ pub(super) async fn screen(
     }
 }
 
-/// Waits for a live link, holding the screen: what it sends meanwhile is
-/// dropped and counted. `None` when the screen left first.
+/// Waits for a live link, holding the screen: it is told where the link
+/// stands each time that changes (`core_link` frame), and what it sends
+/// meanwhile is dropped and counted, but for the operator's reconnect
+/// (B16). `None` when the screen left first.
 async fn hold(socket: &mut WebSocket, state: &NodeState) -> Option<Arc<LiveLink>> {
     let mut live = state.live.clone();
+    let mut phases = state.phases.clone();
+    let mut told: Option<Value> = None;
     loop {
         if let Some(link) = live.borrow_and_update().clone() {
             return Some(link);
+        }
+        let frame = phases.borrow_and_update().link_frame();
+        if let Some(frame) = frame
+            && told.as_ref() != Some(&frame)
+        {
+            if socket
+                .send(Message::Text(frame.to_string().into()))
+                .await
+                .is_err()
+            {
+                return None;
+            }
+            told = Some(frame);
         }
         tokio::select! {
             changed = live.changed() => {
@@ -101,14 +118,71 @@ async fn hold(socket: &mut WebSocket, state: &NodeState) -> Option<Arc<LiveLink>
                     return None;
                 }
             }
+            changed = phases.changed() => {
+                if changed.is_err() {
+                    return None;
+                }
+            }
             incoming = socket.recv() => match incoming {
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return None,
+                Some(Ok(Message::Text(text))) => {
+                    match screen_event::read(&text, &[Kind::CoreLink]) {
+                        Some(routed) => {
+                            if control_link(socket, state, &routed.event).await.is_err() {
+                                return None;
+                            }
+                        }
+                        None => {
+                            state.held_frames.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                }
                 Some(Ok(_)) => {
                     state.held_frames.fetch_add(1, Ordering::Relaxed);
                 }
             },
         }
     }
+}
+
+/// A screen's `core_link` event: the operator ends the link from this
+/// machine's window or restores it (B16). The record and the link change
+/// off this task, since the record is written durably and a dial in
+/// progress is waited for. A change that did not happen is told to the
+/// screen; why goes to the log. `Err` when the screen left.
+async fn control_link(socket: &mut WebSocket, state: &NodeState, event: &Value) -> Result<(), ()> {
+    let action = event
+        .pointer("/payload/action")
+        .cloned()
+        .and_then(|action| serde_json::from_value::<LinkAction>(action).ok());
+    let outcome = match action {
+        Some(action) => {
+            let control = Arc::clone(&state.link_control);
+            tokio::task::spawn_blocking(move || control(action))
+                .await
+                .unwrap_or_else(|error| Err(error.to_string()))
+        }
+        None => Err("a core_link event names disconnect or reconnect".to_owned()),
+    };
+    herdr_core::diagnostic!(json!({
+        "component": "node_daemon",
+        "kind": "core_link.control",
+        "action": action.map(|action| format!("{action:?}").to_lowercase()),
+        "ok": outcome.is_ok(),
+        "reason": outcome.as_ref().err(),
+    }));
+    if outcome.is_ok() {
+        return Ok(());
+    }
+    let frame = json!({
+        "type": "error",
+        "payload": {"kind": "core_link", "reason": "not_changed"},
+        "message": "the link to the core could not be changed",
+    });
+    socket
+        .send(Message::Text(frame.to_string().into()))
+        .await
+        .map_err(|_| ())
 }
 
 /// One screen while the link stands: its core traffic through its relay,
@@ -253,6 +327,12 @@ async fn attached(
                     Message::Text(text) => {
                         let routed = screen_event::read(&text, TAKEN_HERE);
                         let routed = routed.as_ref().map(|routed| (routed.kind, &routed.event));
+                        if let Some((Kind::CoreLink, event)) = routed {
+                            if control_link(socket, state, event).await.is_err() {
+                                return ScreenEnd::Left;
+                            }
+                            continue;
+                        }
                         if let Some((Kind::CoreMove, event)) = routed {
                             if let Err(reason) = state.seat.moves.request_event(event) {
                                 let frame = crate::core_move::control::refusal_frame(reason);
@@ -598,8 +678,9 @@ fn resume(first: FrameStart, handshake: &Handshake) -> Resume {
 }
 
 /// The kinds of a screen's events this daemon takes before the core: a read
-/// of a file here, an upload, a key, and a move of the core, which this
-/// machine's own hided drives (PRD core-host-node-move amendment 2).
+/// of a file here, an upload, a key, a move of the core, which this
+/// machine's own hided drives (PRD core-host-node-move amendment 2), and
+/// the operator ending or restoring the link (B16).
 const TAKEN_HERE: &[Kind] = &[
     Kind::FileBytes,
     Kind::AttachmentStage,
@@ -607,6 +688,7 @@ const TAKEN_HERE: &[Kind] = &[
     Kind::AttachmentCommit,
     Kind::Key,
     Kind::CoreMove,
+    Kind::CoreLink,
 ];
 
 #[cfg(test)]

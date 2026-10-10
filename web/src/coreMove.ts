@@ -53,8 +53,8 @@ export type MoveView = {
   node: string | null;
 };
 
-/** Where a node's link to its core stands while its screens wait (`core_link` frame). */
-export type CoreLink = { phase: "connecting" | "updating" | "waiting"; machine: string | null };
+/** Where a node's link to its core stands while its screens wait (`core_link` frame); `disconnected` is the operator's own end of it (B16). */
+export type CoreLink = { phase: "connecting" | "updating" | "waiting" | "disconnected"; machine: string | null };
 
 /** The five steps the dialog and the strip name, in order. */
 export const MOVE_STEPS: readonly MoveStep[] = ["check", "stop_core", "copy", "start_target", "reattach"];
