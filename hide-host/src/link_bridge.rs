@@ -204,6 +204,7 @@ impl<'a> LinkBridge<'a> {
         {
             let mut streams = lock(&self.streams);
             if let Err(error) = admitted(&streams) {
+                drop(streams);
                 open.closer.close();
                 return Err(error);
             }
@@ -295,16 +296,21 @@ impl<'a> LinkBridge<'a> {
         Ok(Value::Null)
     }
 
-    /// Ends `stream` from the core's side.
+    /// Ends `stream` from the core's side. A close runs outside the
+    /// streams' lock: on Windows it cancels the end's pending I/O and may
+    /// wait on it, and no other stream's write or the link's control lane
+    /// waits behind that.
     pub fn close(&self, stream: u64) {
-        if let Some(open) = lock(&self.streams).remove(&stream) {
+        let open = lock(&self.streams).remove(&stream);
+        if let Some(open) = open {
             open.closer.close();
         }
     }
 
     /// The link is gone: every stream ends, and its reader with it.
     pub fn stop(&self) {
-        for (_, open) in lock(&self.streams).drain() {
+        let open: Vec<_> = lock(&self.streams).drain().map(|(_, open)| open).collect();
+        for open in open {
             open.closer.close();
         }
     }
