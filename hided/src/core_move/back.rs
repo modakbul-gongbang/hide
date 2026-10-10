@@ -273,13 +273,7 @@ pub fn pull(
     let received = std::sync::atomic::AtomicU64::new(0);
     let mut wanted: Vec<String> = manifest.files.keys().cloned().collect();
     for _ in 0..2 {
-        let files: Vec<FileCopy> = wanted
-            .iter()
-            .map(|path| FileCopy {
-                local: staging.join(path),
-                remote: format!("{remote_staging}/{path}"),
-            })
-            .collect();
+        let files = super::driver::copies(&wanted, &staging, &remote_staging)?;
         remote.download(&files, &|bytes| {
             let now = received.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed) + bytes;
             progress(now.min(total), total);

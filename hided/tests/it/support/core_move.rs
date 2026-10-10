@@ -348,6 +348,33 @@ impl Fixture {
         })
     }
 
+    /// The target's device helper: the `hided` the source runs a move's
+    /// steps with there.
+    pub fn helper_program(&self) -> Result<PathBuf> {
+        let snapshot = self.snapshot()?;
+        let program = snapshot
+            .pointer("/navigator/devices")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.iter().find(|row| row["id"] == ALIAS))
+            .and_then(|row| row.pointer("/host/helper_path"))
+            .and_then(Value::as_str)
+            .context("the target's helper path")?;
+        Ok(PathBuf::from(program))
+    }
+
+    /// Puts `script` in front of `program` on the target: it runs first,
+    /// with the program itself at `$0.real`, and whatever it does not
+    /// answer goes on to that program unchanged. A process already running
+    /// keeps the file it started from.
+    pub fn stand_in_peer(&self, program: &Path, script: &str) -> Result<()> {
+        let real = PathBuf::from(format!("{}.real", program.display()));
+        fs::copy(program, &real)?;
+        let next = PathBuf::from(format!("{}.stand-in", program.display()));
+        stand_in(&next, &format!("{script}\nexec \"$0.real\" \"$@\""))?;
+        fs::rename(&next, program)?;
+        Ok(())
+    }
+
     /// Starts the source machine's hided, which runs its core.
     pub fn start_source(&mut self) -> Result<()> {
         self.start_source_with(&self.cli.clone(), &[])

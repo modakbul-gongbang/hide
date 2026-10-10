@@ -379,7 +379,7 @@ pub fn send(
     let _ = std::fs::remove_file(&manifest_file);
     let total = manifest.total_bytes();
     let sent = std::sync::atomic::AtomicU64::new(0);
-    let mut wanted = differing(remote, journal)?;
+    let mut wanted = differing(remote, journal, manifest)?;
     let held = manifest.files.len() - wanted.len();
     let mut uploaded: Vec<String> = Vec::new();
     for attempt in 0..2 {
@@ -394,13 +394,7 @@ pub fn send(
             return Ok(());
         }
         uploaded.extend(wanted.iter().cloned());
-        let files: Vec<FileCopy> = wanted
-            .iter()
-            .map(|path| FileCopy {
-                local: staging.join(path),
-                remote: format!("{incoming}/{path}"),
-            })
-            .collect();
+        let files = copies(&wanted, &staging, &incoming)?;
         if attempt == 0 {
             // Files the peer already holds count as sent.
             let held: u64 = manifest
@@ -416,7 +410,7 @@ pub fn send(
             let now = sent.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed) + bytes;
             progress(now.min(total), total);
         })?;
-        wanted = differing(remote, journal)?;
+        wanted = differing(remote, journal, manifest)?;
     }
     if wanted.is_empty() {
         Ok(())
@@ -425,10 +419,44 @@ pub fn send(
     }
 }
 
+/// Each of `paths` below the copy at `local` here and at `remote` there.
+/// A path a copy does not carry is refused, never joined: it would name a
+/// file outside the copy on one machine or the other.
+pub(super) fn copies(
+    paths: &[String],
+    local: &Path,
+    remote: &str,
+) -> Result<Vec<FileCopy>, MoveFailure> {
+    paths
+        .iter()
+        .map(|path| {
+            let relative = copy::carried(path).map_err(|reason| MoveFailure::Local { reason })?;
+            let native = relative.to_native().map_err(|error| MoveFailure::Local {
+                reason: format!("{path:?}: {error}"),
+            })?;
+            Ok(FileCopy {
+                local: local.join(native),
+                remote: hide_platform::path::wire_join(remote, &relative),
+            })
+        })
+        .collect()
+}
+
 /// The files the peer's copy lacks or holds differently; none means the
 /// peer loaded the copy with its build.
-fn differing(remote: &Remote, journal: &Journal) -> Result<Vec<String>, MoveFailure> {
+fn differing(
+    remote: &Remote,
+    journal: &Journal,
+    manifest: &copy::Manifest,
+) -> Result<Vec<String>, MoveFailure> {
     let answer = remote.step("verify", &[("intent", &journal.intent)])?;
+    differs_of(&answer, manifest)
+}
+
+/// The files a peer's verify answer says it lacks or holds differently.
+/// Only files `manifest` names can be sent: an answer that names another
+/// is refused, never read as a file of this machine's to send.
+fn differs_of(answer: &Value, manifest: &copy::Manifest) -> Result<Vec<String>, MoveFailure> {
     if answer["loadable"] == true {
         return Ok(Vec::new());
     }
@@ -437,6 +465,16 @@ fn differing(remote: &Remote, journal: &Journal) -> Result<Vec<String>, MoveFail
             step: "verify".to_owned(),
             reason: "an unreadable answer".to_owned(),
         })?;
+    let unsent: Vec<&String> = differs
+        .iter()
+        .filter(|path| !manifest.files.contains_key(*path))
+        .collect();
+    if !unsent.is_empty() {
+        return Err(MoveFailure::Refused {
+            step: "verify".to_owned(),
+            reason: format!("the answer names files the copy does not hold: {unsent:?}"),
+        });
+    }
     if differs.is_empty() {
         // Only files the manifest does not name differ: they are not sent,
         // and the peer would place them.
@@ -522,5 +560,71 @@ pub fn peer(source: &herdr_core::MoveSource, inspected: &Inspected) -> Peer {
         node: inspected.node.clone(),
         program: source.helper_path.clone(),
         state_dir: inspected.state_dir.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(paths: &[&str]) -> copy::Manifest {
+        let mut manifest = copy::Manifest::default();
+        for path in paths {
+            manifest.files.insert(
+                (*path).to_owned(),
+                copy::FileDigest {
+                    size: 1,
+                    sha256: "00".to_owned(),
+                },
+            );
+        }
+        manifest
+    }
+
+    /// The peer names the files it wants sent; only files the copy holds
+    /// are read from this machine, and an answer that names another is
+    /// refused with it named.
+    #[test]
+    fn a_verify_answer_naming_a_file_the_copy_does_not_hold_is_refused() {
+        let manifest = manifest(&["labels.json", "factory-files/a.prd"]);
+        assert_eq!(
+            differs_of(&json!({"differs": ["labels.json"], "extra": []}), &manifest).unwrap(),
+            vec!["labels.json".to_owned()]
+        );
+        for path in [
+            "/Users/someone/.ssh/id_ed25519",
+            "../labels.json",
+            "mobile.json",
+        ] {
+            match differs_of(&json!({"differs": ["labels.json", path]}), &manifest) {
+                Err(MoveFailure::Refused { step, reason }) => {
+                    assert_eq!(step, "verify");
+                    assert!(reason.contains(path), "{reason}");
+                }
+                other => panic!("{path}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_copied_file_is_named_below_the_copy_on_both_machines() {
+        let staging = Path::new("/state/move-staging/i1");
+        let files = copies(
+            &["factory-files/a.prd".to_owned()],
+            staging,
+            "/core/move-incoming/i1/",
+        )
+        .unwrap();
+        assert_eq!(files[0].local, staging.join("factory-files").join("a.prd"));
+        assert_eq!(
+            files[0].remote,
+            "/core/move-incoming/i1/factory-files/a.prd"
+        );
+        for path in ["/Users/someone/.zshrc", "factory-files/../../.zshrc"] {
+            assert!(
+                copies(&[path.to_owned()], staging, "/core/move-incoming/i1").is_err(),
+                "{path}"
+            );
+        }
     }
 }

@@ -1053,6 +1053,51 @@ fn a_place_failure_leaves_no_brain_state_on_the_target() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// The target's answer names a file the copy does not hold, here one of
+/// this machine's own by its absolute path: the move refuses the answer and
+/// rolls back, and no file of this machine's beyond the copy reaches the
+/// target.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_target_that_asks_for_a_file_outside_the_copy_is_refused() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = visible(&fixture)?;
+        let own = fixture.source.home().join("outside-the-copy");
+        std::fs::write(&own, b"this machine's own")?;
+        let own_path = own.to_str().context("path")?;
+        fixture.stand_in_peer(
+            &fixture.helper_program()?,
+            &format!(
+                r#"if [ "$1 $2" = "core-move verify" ]; then
+  printf '{{"differs":["%s"],"extra":[]}}\n' '{own_path}'
+  exit 0
+fi"#
+            ),
+        )?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        let journal = fixture.journal_until("rolled_back")?;
+        let cause = &journal["phase"]["cause"];
+        ensure!(
+            journal["phase"]["failed"] == "copy"
+                && cause["kind"] == "refused"
+                && cause["step"] == "verify"
+                && cause["reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains(own_path)),
+            "{journal}"
+        );
+        wait_for("the source's core again", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        ensure!(visible(&fixture)? == before, "the window changed");
+        let reached = files_named(&fixture.root.join("c"), "outside-the-copy")?;
+        ensure!(reached.is_empty(), "it reached the target: {reached:?}");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The target's core cannot be confirmed stopped when the move is undone
 /// (here its record cannot be read; a login item that cannot be removed
 /// fails the same step): this machine waits and runs no core, and rolls
@@ -1337,6 +1382,73 @@ fn a_failed_pull_restarts_the_source_unchanged() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// The core's machine releases a copy whose manifest names a file outside
+/// it, here one in this machine's home by its absolute path: the move back
+/// refuses the manifest before it pulls a file, that core starts again,
+/// and nothing is written outside this machine's staging folder.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_copy_whose_manifest_names_a_file_outside_it_is_refused() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        moved_forward(&fixture)?;
+        let before = fixture.projects()?;
+        let planted = fixture.source.home().join("planted-by-the-core");
+        let planted_path = planted.to_str().context("path")?;
+        let hostile = fixture.root.join("hostile.manifest.json");
+        std::fs::write(
+            &hostile,
+            serde_json::to_vec(&json!({"files": {planted_path: {"size": 7, "sha256": "00"}}}))?,
+        )?;
+        // The manifest the release wrote is replaced, and the file it names
+        // is there to be pulled.
+        fixture.stand_in_peer(
+            std::path::Path::new(&placed_program(&fixture)?),
+            &format!(
+                r#"if [ "$1 $2" = "core-move release" ]; then
+  "$0.real" "$@" > "$0.out"
+  status=$?
+  for manifest in '{staging}'/*.manifest.json; do
+    copy="${{manifest%.manifest.json}}"
+    cp '{hostile}' "$manifest"
+    mkdir -p "$copy{parent}"
+    printf planted > "$copy{planted_path}"
+  done
+  cat "$0.out"
+  exit $status
+fi"#,
+                staging = fixture.target.state.join("move-staging").display(),
+                hostile = hostile.display(),
+                parent = planted.parent().context("parent")?.display(),
+            ),
+        )?;
+        fixture.event("core_move", json!({"action": "back"}))?;
+        let journal = back_journal_until(&fixture, "rolled_back")?;
+        let cause = &journal["phase"]["cause"];
+        ensure!(
+            journal["phase"]["failed"] == "copy"
+                && cause["kind"] == "refused"
+                && cause["step"] == "release"
+                && cause["reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains(planted_path)),
+            "{journal}"
+        );
+        ensure!(
+            !planted.exists(),
+            "the core's machine wrote outside the copy"
+        );
+        ensure!(fixture.role()? == "node");
+        let after = wait_for("the projects through the restarted core", || {
+            let projects = fixture.projects()?;
+            Ok((projects.len() == 2).then_some(projects))
+        })?;
+        ensure!(after == before, "{after:?}");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The core's machine cannot be reached after it stopped its core: this
 /// machine starts no core of its own, waits, and when that machine answers
 /// again its core starts on its folder and the window is its node.
@@ -1461,6 +1573,23 @@ fn listing(dir: &std::path::Path) -> Result<Vec<String>> {
     names.retain(|name| name != "Logs");
     names.sort();
     Ok(names)
+}
+
+/// Every file named `name` below `dir`, links not followed.
+fn files_named(dir: &std::path::Path, name: &str) -> Result<Vec<std::path::PathBuf>> {
+    let mut found = Vec::new();
+    let mut folders = vec![dir.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                folders.push(entry.path());
+            } else if entry.file_name() == name {
+                found.push(entry.path());
+            }
+        }
+    }
+    Ok(found)
 }
 
 fn records(fixture: &Fixture, kind: &str) -> Result<Vec<Value>> {

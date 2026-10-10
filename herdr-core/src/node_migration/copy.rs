@@ -19,6 +19,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use hide_platform::path::RelPath;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -28,10 +29,49 @@ use super::{AI_SETTINGS, MARKER_FILE, MOVES_WITH_CORE, Refusal};
 /// one that grows with use); a folder past it is refused, not truncated.
 const MAX_FILES: usize = 100_000;
 
-/// Every file of a copy, by its `/`-separated path under the copy.
+/// Every file of a copy, by its `/`-separated path under the copy. One
+/// read from the other machine names only paths a copy carries
+/// ([`carried`]), since each becomes a path on this machine.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "Listed")]
 pub struct Manifest {
     pub files: BTreeMap<String, FileDigest>,
+}
+
+/// A manifest as the other machine wrote it, before its paths are checked.
+#[derive(Deserialize)]
+struct Listed {
+    files: BTreeMap<String, FileDigest>,
+}
+
+impl TryFrom<Listed> for Manifest {
+    type Error = String;
+
+    fn try_from(listed: Listed) -> Result<Self, String> {
+        if listed.files.len() > MAX_FILES {
+            return Err(format!("names more than {MAX_FILES} files"));
+        }
+        for path in listed.files.keys() {
+            carried(path)?;
+        }
+        Ok(Self {
+            files: listed.files,
+        })
+    }
+}
+
+/// `path` as a path below a copy, when it is one a copy carries: names
+/// only, none of them empty, `.` or `..`, each one this system can hold,
+/// and under a store [`MOVES_WITH_CORE`] names or Hide AI's settings.
+pub fn carried(path: &str) -> Result<RelPath, String> {
+    let refused = |reason: &dyn std::fmt::Display| format!("{path:?}: {reason}");
+    let relative = RelPath::parse(path).map_err(|error| refused(&error))?;
+    relative.to_native().map_err(|error| refused(&error))?;
+    let store = relative.names().next();
+    if !store.is_some_and(|name| name == AI_SETTINGS || MOVES_WITH_CORE.contains(&name)) {
+        return Err(refused(&"is not a file a copy carries"));
+    }
+    Ok(relative)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -535,6 +575,7 @@ pub fn set_aside(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     const SETTINGS: &str = r#"{"provider":"claude"}"#;
 
@@ -590,6 +631,38 @@ mod tests {
         );
         assert!(state.path().join("mobile.json/kept").is_file());
         assert!(!settings(state.path()).exists());
+    }
+
+    /// A manifest's paths become paths on the machine that reads it, so one
+    /// that names anything but a carried file below the copy is unreadable,
+    /// and the refusal names the path.
+    #[test]
+    fn a_manifest_read_from_the_other_machine_names_only_files_a_copy_carries() {
+        let source = folder();
+        let staging = source.path().join("move-staging/i1");
+        let manifest = stage(source.path(), &staging, &settings(source.path())).unwrap();
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Manifest>(&bytes).unwrap(),
+            manifest
+        );
+        for path in [
+            "/Users/someone/.zshrc",
+            "..",
+            "factory-files/../../outside",
+            "factory-files//a.prd",
+            "factory-files/./a.prd",
+            "factory-files\\..\\..\\outside",
+            "notes.txt",
+            "",
+        ] {
+            let listed = json!({"files": {path: {"size": 1, "sha256": "00"}}});
+            let refused = serde_json::from_value::<Manifest>(listed).unwrap_err();
+            assert!(
+                refused.to_string().contains(&format!("{path:?}")),
+                "{path}: {refused}"
+            );
+        }
     }
 
     #[test]
