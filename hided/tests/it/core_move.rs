@@ -9,6 +9,8 @@ use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
 use crate::support::core_move::{ALIAS, Fixture, SOURCE_NODE, TARGET_NODE};
+use crate::support::fake_tailscale::FakeTailscale;
+use crate::support::remote_delivery::renderer::Renderer;
 use crate::support::remote_delivery::{wait_for, wait_within};
 
 /// B4: the move stops the source's core, places its brain state on the
@@ -962,6 +964,114 @@ fn records(fixture: &Fixture, kind: &str) -> Result<Vec<Value>> {
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .filter(|record| record["kind"] == kind)
         .collect())
+}
+
+/// Amendment 3: a core started on a move's copy acts on nothing outside its
+/// machine until the move's own link commits it, and then does at once.
+/// This watches what such a core reaches from this process: the device its
+/// copy registers (a listener its SSH config names) and Mobile's
+/// `tailscale`. The bell, watch warnings, human notices, provider calls,
+/// GitHub reads and the Factory are held inside the core, each tested there.
+#[test]
+fn a_pending_core_does_nothing_outside_until_its_link_commits() -> Result<()> {
+    const INTENT: &str = "move-fixture";
+    let dir = tempfile::tempdir()?;
+    let home = hide_platform::fs::identity::canonical(dir.path())?;
+    let state = home.join("state");
+    hide_platform::fs::private::create_dir_all(&state)?;
+    write_record(
+        &state.join("core-handover.json"),
+        &json!({"version": 1, "intent": INTENT, "source": SOURCE_NODE, "target": TARGET_NODE, "state": {"state": "pending"}}),
+    )?;
+    write_record(&state.join("mobile.json"), &json!({"enabled": true}))?;
+    let tailscale = FakeTailscale::new(&home);
+    tailscale.ready();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let running = runtime
+        .block_on(hided::start_daemon(hided::env::Env {
+            home: home.clone(),
+            herdr_socket_path: None,
+            herdr_bin_path: None,
+            state_dir: state.clone(),
+            legacy_state_dir: None,
+            keep_alive: true,
+            vite_origin: None,
+            bind: "127.0.0.1:0".parse()?,
+            idle_secs: 600,
+            build: None,
+            open_command: None,
+            host_helper_root: None,
+            host_cli_dir: None,
+            pane_id: None,
+            tailscale_bin: Some(tailscale.bin.clone()),
+            search_path: None,
+        }))
+        .map_err(anyhow::Error::msg)?;
+    // Bound after the daemon, so it closes first: a redial waiting in its
+    // backlog for an SSH greeting would hold the core's stop until the
+    // dial's own timeout.
+    let device = std::net::TcpListener::bind("127.0.0.1:0")?;
+    device.set_nonblocking(true)?;
+    std::fs::create_dir_all(home.join(".ssh"))?;
+    std::fs::write(
+        home.join(".ssh/config"),
+        format!(
+            "Host probe\n  HostName 127.0.0.1\n  Port {}\n  User fixture\n  IdentityAgent none\n",
+            device.local_addr()?.port()
+        ),
+    )?;
+    let snapshot = || -> Result<Value> {
+        Ok(Renderer::connect(running.port, &running.token)?
+            .snapshot()
+            .clone())
+    };
+    let attempted = |snapshot: &Value| {
+        snapshot
+            .pointer("/status/remote")
+            .and_then(Value::as_array)
+            .is_some_and(|rows| rows.iter().any(|row| row["target_id"] == "probe"))
+    };
+
+    Renderer::connect(running.port, &running.token)?.event(
+        "register_device",
+        json!({"id": "probe", "label": "Probe", "ssh_alias": "probe"}),
+    )?;
+    let pending = snapshot()?;
+    ensure!(
+        pending["ui_state"]["device_registrations"][0]["id"] == "probe",
+        "the registration is kept: {}",
+        pending["ui_state"]["device_registrations"]
+    );
+    ensure!(!attempted(&pending), "a pending core dialed the device");
+    runtime.block_on(running.mobile.reconcile());
+    ensure!(
+        tailscale.calls().is_empty(),
+        "a pending core ran tailscale: {}",
+        tailscale.calls()
+    );
+
+    running
+        .move_gate
+        .admit(SOURCE_NODE, Some(INTENT))
+        .map_err(anyhow::Error::msg)?;
+    wait_for("the device dialed after the commit", || {
+        match device.accept() {
+            Ok(_) => Ok(Some(())),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    })?;
+    ensure!(
+        attempted(&snapshot()?),
+        "no connection row after the commit"
+    );
+    wait_for("Mobile's first check after the commit", || {
+        Ok(tailscale.calls().contains("status").then_some(()))
+    })?;
+    running.stop();
+    Ok(())
 }
 
 /// Writes a record as the product does: owner-only, replaced whole.

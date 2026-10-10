@@ -47,6 +47,11 @@ pub struct CoreOptions {
     /// Absent keeps them in memory for the session only, as a test core does.
     #[serde(default)]
     pub local_issues_path: Option<String>,
+    /// The core starts on a move's copy whose link has not committed it:
+    /// it acts on nothing outside the machine until the embedder calls
+    /// `Core::release_effects` (`effects.rs`).
+    #[serde(default)]
+    pub effects_held: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]

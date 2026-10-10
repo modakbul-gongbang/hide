@@ -58,6 +58,7 @@ fn restart(path: &str) -> Runtime {
             workspace_views_path: None,
             shortcut_import_path: None,
             local_issues_path: None,
+            effects_held: false,
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),

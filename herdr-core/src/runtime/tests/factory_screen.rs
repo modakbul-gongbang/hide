@@ -125,6 +125,37 @@ fn the_sections_are_sent_once_per_change_on_their_own_revisions() {
     assert!(wire["factory_task"].is_null() && wire.get("factory_task").is_some());
 }
 
+/// PRD core-host-node-move amendment 3: the engine of a core waiting for its
+/// move's link runs once the hold is released (`EffectHold` proves that
+/// nothing runs before).
+#[test]
+fn a_held_host_runs_its_engine_once_the_hold_is_released() {
+    let state = scratch_dir("herdr-core-factory-held-");
+    let shared = Arc::new(Mutex::new(runtime()));
+    let hold = crate::effects::EffectHold::new(true);
+    let mut host = crate::factory::FactoryHost::start(
+        state.path(),
+        None,
+        Arc::downgrade(&shared),
+        ChangeNotifier::noop(),
+        Arc::clone(&hold),
+    )
+    .expect("the Factory host starts");
+    shared
+        .lock()
+        .unwrap()
+        .set_factory_screen_port(host.screen_port());
+    assert!(hold.release());
+    wait(&shared, "the empty summary", |runtime| {
+        runtime
+            .snapshot
+            .factory
+            .as_deref()
+            .is_some_and(|section| section.summary.is_some())
+    });
+    host.shutdown();
+}
+
 /// A real host on a state folder with no store: the screen sees an empty
 /// summary (B1), and a verb a screen does not send comes back refused on its
 /// request id rather than run.
@@ -137,6 +168,7 @@ fn the_host_answers_a_screen_and_publishes_an_empty_machine() {
         None,
         Arc::downgrade(&shared),
         ChangeNotifier::noop(),
+        crate::effects::EffectHold::new(false),
     )
     .expect("the Factory host starts");
     shared
@@ -191,6 +223,7 @@ fn a_closed_worker_pane_reads_closing_until_the_factory_takes_the_close() {
         None,
         Arc::downgrade(&shared),
         ChangeNotifier::noop(),
+        crate::effects::EffectHold::new(false),
     )
     .expect("the Factory host starts");
     {

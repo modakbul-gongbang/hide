@@ -147,6 +147,10 @@ pub struct Config {
     pub renderers: Arc<AtomicUsize>,
     /// Which connections show a start surface; a phone's open start sheet is one.
     pub start_demand: Arc<crate::demand::ObservationDemand>,
+    /// Whether the core may act outside this machine: a core on a move's
+    /// copy serves no phone and pushes nothing until the move's link
+    /// commits it (PRD core-host-node-move amendment 3).
+    pub open: watch::Receiver<bool>,
 }
 
 pub struct Mobile {
@@ -249,10 +253,20 @@ impl Mobile {
         mobile.sweep();
         mobile.publish();
         let startup = Arc::clone(&mobile);
-        tokio::spawn(async move { startup.reconcile().await });
-        tokio::spawn(Arc::clone(&mobile).observe_loop());
+        tokio::spawn(async move {
+            let mut open = startup.config.open.clone();
+            let mut stopping = startup.stopping.subscribe();
+            tokio::select! {
+                opened = open.wait_for(|open| *open) => if opened.is_err() {
+                    return;
+                },
+                _ = stopping.wait_for(|stopping| *stopping) => return,
+            }
+            tokio::spawn(Arc::clone(&startup).observe_loop());
+            tokio::spawn(Arc::clone(&startup).follow());
+            startup.reconcile().await;
+        });
         tokio::spawn(Arc::clone(&mobile).sweep_loop());
-        tokio::spawn(Arc::clone(&mobile).follow());
         mobile
     }
 
@@ -448,8 +462,9 @@ impl Mobile {
     /// for this port; off, hide's recorded entry is gone. Runs one at a time.
     pub async fn reconcile(&self) {
         let _running = self.reconcile_lock.lock().await;
-        // Once the daemon is stopping, shutdown owns the serve entry.
-        if *self.stopping.borrow() {
+        // Once the daemon is stopping, shutdown owns the serve entry; a
+        // pending core touches none.
+        if *self.stopping.borrow() || !*self.config.open.borrow() {
             return;
         }
         let (enabled, record) = {
@@ -778,6 +793,11 @@ impl Mobile {
         // After any reconcile in flight: an add it finishes is recorded, so
         // the record read here is the entry actually there.
         let _running = self.reconcile_lock.lock().await;
+        // A core that never left pending added no entry; the one recorded
+        // is the previous core's.
+        if !*self.config.open.borrow() {
+            return;
+        }
         let record = self.lock().settings.serve.clone();
         let (Some(record), Some(program)) = (record, self.config.cli.resolve()) else {
             return;

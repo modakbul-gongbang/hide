@@ -17,6 +17,7 @@ pub mod diagnostics;
 mod disk;
 mod display_text;
 pub mod domain;
+mod effects;
 mod environment;
 pub mod factory;
 #[cfg(test)]

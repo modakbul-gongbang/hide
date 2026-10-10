@@ -76,6 +76,9 @@ pub(crate) enum Hold {
     Letter,
     /// Three reservations consumed and this pane is eligible for another bell.
     Exhausted,
+    /// The core waits for its move's link before it types into any pane
+    /// (`effects.rs`).
+    CorePending,
 }
 
 impl Hold {
@@ -98,6 +101,7 @@ impl Hold {
             Self::Input => "input_after_verdict",
             Self::Letter => "letter_changed",
             Self::Exhausted => "attempts_exhausted",
+            Self::CorePending => "core_pending",
         }
     }
 }
@@ -940,6 +944,23 @@ mod tests {
         bell.pass(&mut doorbell, now());
         assert_eq!(bell.typed().len(), 1);
         assert!(bell.line().is_some());
+    }
+
+    /// PRD core-host-node-move amendment 3: a core waiting for its move's
+    /// link types into no pane; the letter keeps its attempts and is belled
+    /// once the hold is released.
+    #[test]
+    fn a_pending_core_rings_no_bell_until_its_link_commits() {
+        let bell = Bell::start(json!({}));
+        bell.runtime.lock().unwrap().hold_effects();
+        let mut doorbell = Doorbell::default();
+        assert_eq!(held(&bell.pass(&mut doorbell, now())), ["core_pending"]);
+        assert!(bell.typed().is_empty());
+        assert_eq!(bell.attempts(), 0);
+        assert!(bell.runtime.lock().unwrap().release_effects());
+        bell.pass(&mut doorbell, now());
+        assert_eq!(bell.typed().len(), 1);
+        assert_eq!(bell.attempts(), 1);
     }
 
     fn held(records: &[Value]) -> Vec<&str> {

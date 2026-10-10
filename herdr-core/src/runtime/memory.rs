@@ -153,6 +153,7 @@ impl Runtime {
             || self.memory_poll_in_flight
             || self.memory_operation_in_flight
             || !self.ai_active()
+            || self.effects_held()
             || self.snapshot.sessions.analysis.failed > 0
             || matches!(
                 self.snapshot.sessions.analysis.state.as_str(),

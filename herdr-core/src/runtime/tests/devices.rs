@@ -251,6 +251,7 @@ pub(super) fn runtime_with_home() -> Runtime {
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
+        effects_held: false,
     };
     let mut runtime = Runtime::new(
         options,
@@ -264,6 +265,27 @@ pub(super) fn runtime_with_home() -> Runtime {
     );
     runtime.test_dirs.push(folder);
     runtime
+}
+
+/// PRD core-host-node-move amendment 3: a core waiting for its move's link
+/// keeps the registration it is given but dials nobody; releasing the hold
+/// dials every registration.
+#[test]
+fn a_pending_core_dials_no_device_until_its_link_commits() {
+    let mut runtime = runtime_with_home();
+    runtime.hold_effects();
+    assert!(register_device(&mut runtime, "studio", "studio-host"));
+    assert_eq!(runtime.snapshot().ui_state.device_registrations.len(), 1);
+    assert!(
+        runtime.snapshot().status.remote.is_empty(),
+        "no connection is attempted"
+    );
+    assert!(runtime.release_effects());
+    let attempt = device(&runtime, "studio").message.clone().expect("reason");
+    assert!(
+        attempt.starts_with("SSH alias studio-host could not be read"),
+        "{attempt}"
+    );
 }
 
 /// Retry is a new attempt, not a repaint of the last answer: fixing the SSH

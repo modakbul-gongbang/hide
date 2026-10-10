@@ -575,6 +575,11 @@ impl Runtime {
     }
 
     pub(crate) fn prepare_delivery_human(&self) -> Result<PreparedHuman, String> {
+        // A notice claimed by a core that may still be rolled back would be
+        // lost with its copy; the core that keeps the ledger claims it.
+        if self.effects_held() {
+            return Err("core_pending".into());
+        }
         self.delivery_state()?;
         Ok(PreparedHuman::new(
             self.delivery_client.clone().ok_or("delivery_unavailable")?,
@@ -768,6 +773,9 @@ impl Runtime {
         now: u64,
     ) -> Result<Observation, crate::delivery::doorbell::Hold> {
         use crate::delivery::doorbell::Hold;
+        if self.effects_held() {
+            return Err(Hold::CorePending);
+        }
         let current = self
             .delivery_observations
             .get(&recipient.pane_id)
@@ -824,6 +832,10 @@ impl Runtime {
     }
 
     pub(crate) fn delivery_watch_work(&mut self) -> Vec<crate::delivery::worker::WatchWork> {
+        // No reading, so no warning, until the move's link commits this core.
+        if self.effects_held() {
+            return Vec::new();
+        }
         let Ok(ledger) = self.delivery_state() else {
             return Vec::new();
         };

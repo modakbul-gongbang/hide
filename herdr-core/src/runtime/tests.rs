@@ -457,6 +457,7 @@ pub(super) fn runtime() -> Runtime {
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
+        effects_held: false,
     };
     let mut runtime = Runtime::new(
         options,

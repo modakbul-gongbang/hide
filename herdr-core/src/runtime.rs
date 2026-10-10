@@ -1508,6 +1508,8 @@ pub struct Runtime {
     local_issues: Result<crate::local_issues::LocalIssueStore, String>,
     /// Absent keeps Local issues in memory only (`CoreOptions::local_issues_path`).
     local_issues_path: Option<PathBuf>,
+    /// Whether this core may act outside its machine yet (`effects.rs`).
+    effects: Arc<crate::effects::EffectHold>,
     /// The save thread's flags, as `state_save_pending`/`state_save_active`.
     local_issues_save_pending: bool,
     local_issues_save_active: bool,
@@ -2076,6 +2078,7 @@ impl Runtime {
                 None => Ok(crate::local_issues::LocalIssueStore::default()),
             },
             local_issues_path,
+            effects: crate::effects::EffectHold::new(options.effects_held),
             local_issues_save_pending: false,
             local_issues_save_active: false,
             local_issue_links: BTreeMap::new(),
@@ -2159,6 +2162,37 @@ impl Runtime {
         terminals: Arc<dyn hide_node_link::terminal::TerminalRoutes>,
     ) {
         self.terminals = terminals;
+    }
+
+    /// The hold on this core's outside effects, for a worker that waits on
+    /// it from a thread of its own.
+    pub(crate) fn effects(&self) -> Arc<crate::effects::EffectHold> {
+        Arc::clone(&self.effects)
+    }
+
+    /// Whether this core still waits for its move's link before it acts
+    /// outside its machine (`effects.rs`).
+    pub(crate) fn effects_held(&self) -> bool {
+        self.effects.held()
+    }
+
+    /// Holds this core's outside effects, as `CoreOptions::effects_held`
+    /// starts a core on a move's copy.
+    #[cfg(test)]
+    pub(crate) fn hold_effects(&mut self) {
+        self.effects = crate::effects::EffectHold::new(true);
+    }
+
+    /// Lets the held effects run, once the move's link committed this core;
+    /// the devices it dials are dialed now. Returns whether this released
+    /// the hold.
+    pub(crate) fn release_effects(&mut self) -> bool {
+        if !self.effects.release() {
+            return false;
+        }
+        crate::diagnostic!(serde_json::json!({"component": "core", "kind": "effects.released"}));
+        self.connect_registered_devices();
+        true
     }
 
     pub fn install_worker_context(

@@ -486,7 +486,8 @@ fn run_coordinator(
                     stop_subscription(&mut subscription);
                     return;
                 };
-                if let Some(github) = reader.read_if_due(request)
+                if let Some(request) = request
+                    && let Some(github) = reader.read_if_due(request)
                     && !publish_github(&context, github)
                 {
                     stop_subscription(&mut subscription);
@@ -1594,7 +1595,7 @@ fn take_label_switch(context: &SessionSyncContext, worker: &mut LabelWorker) -> 
     let on = context
         .runtime
         .upgrade()
-        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.agent_summary()));
+        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.labels_asked()));
     on.is_some_and(|on| worker.set_summaries(on, Instant::now()))
 }
 
@@ -1762,10 +1763,17 @@ fn read_worktrees_request(
     Some(request)
 }
 
-fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::GithubRequest> {
+/// The GitHub read due now; `Some(None)` while the core waits for its move's
+/// link, which reads nothing from GitHub until then.
+fn read_github_request(
+    context: &SessionSyncContext,
+) -> Option<Option<crate::github::GithubRequest>> {
     let runtime = context.runtime.upgrade()?;
     let request = {
         let mut guard = runtime.lock().ok()?;
+        if guard.effects_held() {
+            return Some(None);
+        }
         let now = Instant::now();
         match &context.target {
             SessionSyncTarget::Local { .. } => {
@@ -1779,7 +1787,7 @@ fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::Gi
         }
     };
     drop(runtime);
-    Some(request)
+    Some(Some(request))
 }
 
 fn read_disk_request(context: &SessionSyncContext) -> Option<crate::disk::DiskRequest> {
@@ -2966,6 +2974,35 @@ mod cwd_stand_in_tests {
             &HashSet::from(["w1:t2".to_owned()])
         ));
         assert_eq!(cwd(&payload, "w1:p3").as_deref(), Some("/tmp"));
+    }
+}
+
+#[cfg(test)]
+mod pending_core_tests {
+    use super::*;
+    use crate::fake_herdr::FakeHerdr;
+
+    /// PRD core-host-node-move amendment 3: a core waiting for its move's
+    /// link asks GitHub nothing; the read is asked once the hold is released.
+    #[test]
+    fn a_pending_core_reads_nothing_from_github_until_its_link_commits() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, ..) = crate::runtime::delivery::tests::fixture(root.path());
+        let herdr = FakeHerdr::start("pending-github", |method, _| panic!("unexpected {method}"));
+        let context = SessionSyncContext::local(
+            &LiveContext {
+                socket_path: herdr.socket_path().to_path_buf(),
+                runtime: Arc::downgrade(&runtime),
+                notifier: ChangeNotifier::noop(),
+                api_connector: Arc::new(herdr.connector()),
+                node: Arc::new(hide_node::Local::of_process()),
+            },
+            Arc::new(hide_node::Local::of_process()),
+        );
+        runtime.lock().unwrap().hold_effects();
+        assert!(matches!(read_github_request(&context), Some(None)));
+        assert!(runtime.lock().unwrap().release_effects());
+        assert!(matches!(read_github_request(&context), Some(Some(_))));
     }
 }
 

@@ -416,7 +416,12 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
                 .display()
                 .to_string(),
         ),
+        // A core on a move's copy acts on nothing outside this machine
+        // until the move's link commits it (PRD core-host-node-move
+        // amendment 3).
+        effects_held: !move_gate.is_open(),
     };
+    let effects_held = options.effects_held;
     let boundary = Arc::new(boundary::Boundary::for_node(&env.home, node)?);
     // Each device link's pane traffic goes here from the start; answered
     // once the server's state exists, below.
@@ -424,6 +429,22 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
     let pane_events: hide_node::ssh::PaneEventsSlot = Default::default();
     let _ = pane_events.set(Arc::new(node_panes::Events(Arc::clone(&node_panes))));
     let core = Arc::new(CoreHandle::spawn(options, Arc::clone(&pane_events))?);
+    if effects_held {
+        let mut open = move_gate.subscribe();
+        let core = Arc::clone(&core);
+        tokio::spawn(async move {
+            if open.wait_for(|open| *open).await.is_ok()
+                && let Ok(Err(message)) =
+                    tokio::task::spawn_blocking(move || core.release_effects()).await
+            {
+                herdr_core::diagnostic!(serde_json::json!({
+                    "component": "core_move",
+                    "kind": "effects.release_failed",
+                    "message": message,
+                }));
+            }
+        });
+    }
     // After the core installed the diagnostic log beside its state.
     #[cfg(unix)]
     state_move::log_left_behind(env.legacy_state_dir.as_deref(), &env.state_dir);
@@ -469,6 +490,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         herdr_socket: env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
         renderers: Arc::clone(&renderers),
         start_demand: Arc::clone(&start_demand),
+        open: move_gate.subscribe(),
     });
     let app = AppState {
         core: Arc::clone(&core),

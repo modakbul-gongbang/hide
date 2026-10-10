@@ -253,11 +253,15 @@ impl PreparedFactory {
 }
 
 impl FactoryHost {
+    /// Starts the engine's thread; while `effects` holds, the engine opens
+    /// nothing, ticks nothing and starts no worker, and the requests sent to
+    /// it wait in its bounded queue.
     pub(crate) fn start(
         state_dir: &Path,
         home: Option<PathBuf>,
         runtime: Weak<Mutex<Runtime>>,
         notifier: ChangeNotifier,
+        effects: Arc<crate::effects::EffectHold>,
     ) -> Result<Self, String> {
         let (requests, receiver) = mpsc::sync_channel(QUEUE_LIMIT);
         let stop = Arc::new(AtomicBool::new(false));
@@ -268,7 +272,11 @@ impl FactoryHost {
         let thread_stop = Arc::clone(&stop);
         let thread = thread::Builder::new()
             .name("herdr-core-factory".into())
-            .spawn(move || run(paths, home, runtime, notifier, receiver, thread_stop))
+            .spawn(move || {
+                if effects.wait_released(&thread_stop) {
+                    run(paths, home, runtime, notifier, receiver, thread_stop);
+                }
+            })
             .map_err(|error| format!("factory engine thread could not start: {error}"))?;
         Ok(Self {
             requests,
@@ -2629,6 +2637,7 @@ mod tests {
             Some(root.path().into()),
             Weak::new(),
             ChangeNotifier::noop(),
+            crate::effects::EffectHold::new(false),
         )
         .unwrap();
         let answer = host

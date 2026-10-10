@@ -357,6 +357,7 @@ impl Core {
                     environment_home.clone(),
                     Arc::downgrade(&runtime),
                     notifier.clone(),
+                    lock_recover(&runtime).effects(),
                 )
                 .map_err(|message| {
                     crate::diagnostic!(
@@ -533,6 +534,19 @@ impl Core {
             return Err("delivery_unavailable".into());
         }
         lock_recover(&self.runtime).prepare_delivery_human()
+    }
+
+    /// The move's link committed this core: what it held while pending
+    /// runs now (`effects.rs`). Returns whether this released the hold.
+    pub fn release_effects(&self) -> bool {
+        if !check_owner_thread(self, "effects.release") {
+            return false;
+        }
+        let released = lock_recover(&self.runtime).release_effects();
+        if released {
+            notify_change(self);
+        }
+        released
     }
 
     /// The checkout roots the daemon verified, by the identity each was

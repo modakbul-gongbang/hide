@@ -41,6 +41,9 @@ enum Command {
     DeliveryHuman {
         reply: Sender<Result<herdr_core::delivery::worker::PreparedHuman, String>>,
     },
+    ReleaseEffects {
+        reply: Sender<bool>,
+    },
     DeliveryPrepare {
         device_id: String,
         pane_id: String,
@@ -169,6 +172,19 @@ impl CoreHandle {
             .map_err(|_| "delivery_unavailable")?;
         result.recv().map_err(|_| "delivery_unavailable")?
     }
+
+    /// The move's link committed this core: what it held while pending
+    /// runs now. Returns whether this released the hold.
+    pub fn release_effects(&self) -> Result<bool, String> {
+        let (reply, result) = mpsc::channel();
+        self.commands
+            .send(Command::ReleaseEffects { reply })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        result
+            .recv()
+            .map_err(|_| "core owner thread dropped the release reply".to_owned())
+    }
+
     pub fn prepare_delivery(
         &self,
         device: &str,
@@ -724,6 +740,9 @@ fn owner_loop(
             Command::DeliveryHuman { reply } => {
                 let _ = reply.send(core.prepare_delivery_human());
             }
+            Command::ReleaseEffects { reply } => {
+                let _ = reply.send(core.release_effects());
+            }
             Command::FactoryPrepare {
                 device_id,
                 pane_id,
@@ -886,6 +905,7 @@ impl CoreHandle {
                 workspace_views_path: None,
                 shortcut_import_path: None,
                 local_issues_path: None,
+                effects_held: false,
             },
             Default::default(),
         )

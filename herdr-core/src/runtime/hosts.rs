@@ -339,7 +339,7 @@ impl Runtime {
         let Some(registration) = self.device_registration(device_id).cloned() else {
             return false;
         };
-        if !registration.origin.core_redials() {
+        if !registration.origin.core_redials() || self.effects_held() {
             return false;
         }
         if matches!(
