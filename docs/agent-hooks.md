@@ -349,7 +349,7 @@ The helper (`src/bin/hide-agent-hooks.rs`, `run_basic_hook`; the payload and ans
 | | Grok | Cursor |
 | --- | --- | --- |
 | Shell call | `toolName` `run_terminal_command`, `toolInput.command`, `cwd` | `tool_name` `Shell`, `tool_input.command`, `tool_input.working_directory` (else `cwd`) |
-| Refusal | Claude Code's envelope, `hookSpecificOutput.permissionDecision = "deny"`, which Grok takes | `{"permission": "deny", "agent_message": <reason>}` |
+| Refusal | Claude Code's envelope, `hookSpecificOutput.permissionDecision = "deny"`, which Grok takes | `{"permission": "deny", "user_message": <reason>, "agent_message": <reason>, "additional_context": <reason>}` |
 | Nothing to refuse | no output | `{"permission": "allow"}` |
 | Turn end | `Stop`: `subagentType` marks a subagent's own stop, `backgroundTasks` lists what still runs | `stop` |
 
@@ -357,6 +357,7 @@ The refusal's reason and every rule of what is refused are the spawn guard's abo
 Cursor reads output that is not a valid answer from `preToolUse` and `subagentStart` as a refusal even when the hook exits 0, and only the CLI's own code, not its documentation, says empty output proceeds, so for those two events every path that does not refuse prints `{"permission":"allow"}`: outside a pane or a registered checkout, an unreadable payload, a daemon that is down or slow, a panic, and a failed owner handshake before anything else runs (D-04).
 Grok fails open on everything but a refusal, so its hook prints nothing on those paths, as Claude Code's does.
 A failure goes to the guard's log, never to the agent (B5).
+Cursor CLI 2026.10.01 reads a refusal on two paths: its local tool path (every shell call) shows the agent `user_message`, or "<tool> blocked by preToolUse hook" when there is none, and gives it `additional_context`, while only a `preToolUse` step the agent server asks for passes `agent_message` on; the reason is written to all three so it reaches the agent whichever path ran (issue 910, read from the installed CLI bundle).
 
 The count is the same per-pane record and the same `pane.report_metadata` report as Claude Code's (above), changed under an exclusive lock on `~/.hide/agent-hooks/panes.lock` (private to the account), so subagents started in parallel are all counted; a report that finds the record changed by another event while it was sent sends the record again, so Herdr ends on the latest count, and a lock not taken within one second is written down as the pane's last report failure.
 A subagent start adds one working, a subagent stop moves one from working to done.
