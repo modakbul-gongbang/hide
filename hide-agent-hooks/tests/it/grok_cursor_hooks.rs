@@ -252,20 +252,21 @@ fn a_grok_question_tool_stays_native_until_its_tools_are_confirmed_to_reach_the_
 struct Herdr {
     socket: PathBuf,
     reports: Arc<Mutex<Vec<Value>>>,
+    /// The folder the socket binds in, removed with the stand-in.
+    _folder: tempfile::TempDir,
 }
 
 impl Herdr {
     fn start() -> Self {
-        // A Unix socket path is capped at SUN_LEN, so it binds under /tmp.
-        let dir = PathBuf::from("/tmp").join(format!(
-            "hah-gc-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        // A Unix socket path is capped at SUN_LEN, so it binds under /tmp. The
+        // folder is the test's own: a name made from the pid and the clock was
+        // shared by two tests of this binary that started in the same
+        // microsecond (issue 932).
+        let folder = tempfile::Builder::new()
+            .prefix("hah-gc-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let dir = folder.path().to_path_buf();
         let socket = dir.join("herdr.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let reports = Arc::new(Mutex::new(Vec::new()));
@@ -290,7 +291,11 @@ impl Herdr {
                 );
             }
         });
-        Self { socket, reports }
+        Self {
+            socket,
+            reports,
+            _folder: folder,
+        }
     }
 
     /// `(working, done)` of every report so far.

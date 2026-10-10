@@ -54,8 +54,10 @@ use crate::runtime::{HookEvent, PURPOSE_CONTEXT, marker_version_of};
 pub const GUIDANCE_SOURCE_NAME: &str = "hide-guidance";
 
 /// Raise it when the command or entry Hide writes changes shape. Version 2
-/// added the guard and subagent events beside Cursor's session start.
-pub const GUIDANCE_VERSION: u32 = 2;
+/// added the guard and subagent events beside Cursor's session start;
+/// version 3 stopped writing Cursor's `subagentStart`, `subagentStop` and
+/// `stop`, which only fed a count Cursor no longer reports (issue 940).
+pub const GUIDANCE_VERSION: u32 = 3;
 
 /// The one line every guidance hook adds after the shared instruction, so an
 /// agent that Hide cannot place in a Workspace still learns where the usage
@@ -147,9 +149,6 @@ impl GuidanceAgent {
         const CURSOR: &[Slot] = &[
             Slot::new(HookEvent::SessionStart, "sessionStart", None),
             Slot::new(HookEvent::PreToolUse, "preToolUse", Some("Shell")),
-            Slot::new(HookEvent::SubagentStart, "subagentStart", None),
-            Slot::new(HookEvent::SubagentStop, "subagentStop", None),
-            Slot::new(HookEvent::Stop, "stop", None),
         ];
         const GROK: &[Slot] = &[
             Slot::new(HookEvent::SessionStart, "SessionStart", None),
@@ -173,6 +172,18 @@ impl GuidanceAgent {
             Self::Gemini | Self::Qwen | Self::Droid | Self::Kiro | Self::Augment | Self::Junie => {
                 SESSION_START
             }
+        }
+    }
+
+    /// The event keys an earlier build wrote an entry under for this agent and
+    /// this one no longer does. An install takes Hide's entries out of them,
+    /// beside the operator's and other tools' entries, which stay.
+    fn retired_keys(self) -> &'static [&'static str] {
+        match self {
+            // The count Cursor's hooks fed is not reported any more
+            // (`subagent_counts` is none), so these ran for nothing.
+            Self::Cursor => &["subagentStart", "subagentStop", "stop"],
+            _ => &[],
         }
     }
 
@@ -800,6 +811,17 @@ fn install_any(
         preserved += list.len();
         list.push(entry(agent, helper, slot));
     }
+    for key in agent.retired_keys() {
+        if let Some(list) = entries(&mut document, &layout, key, false)?
+            && strip_owned(list) != 0
+        {
+            let left = list.len();
+            if left == 0 {
+                drop_empty(&mut document, &layout, key);
+            }
+            preserved += left;
+        }
+    }
     let after = serde_json::to_string(&document).unwrap_or_default();
     if before == after {
         return Ok(InstallOutcome {
@@ -866,15 +888,20 @@ fn remove_in(agent: GuidanceAgent, layout: &Layout) -> Result<RemoveOutcome, Ins
     };
     let mut removed = 0;
     let mut preserved = 0;
-    for slot in agent.slots() {
-        let Some(list) = entries(&mut document, layout, slot.key, false)? else {
+    let keys = agent
+        .slots()
+        .iter()
+        .map(|slot| slot.key)
+        .chain(agent.retired_keys().iter().copied());
+    for key in keys {
+        let Some(list) = entries(&mut document, layout, key, false)? else {
             continue;
         };
         let taken = strip_owned(list);
         removed += taken;
         preserved += list.len();
         if taken != 0 && list.is_empty() {
-            drop_empty(&mut document, layout, slot.key);
+            drop_empty(&mut document, layout, key);
         }
     }
     if removed == 0 {
