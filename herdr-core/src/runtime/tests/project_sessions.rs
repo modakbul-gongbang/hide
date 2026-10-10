@@ -1023,28 +1023,43 @@ fn a_full_search_index_makes_room_for_the_named_projects_newest_session() {
     settled(&shared);
     let worker = SearchWorker::spawn(shared.weak(), ChangeNotifier::noop()).unwrap();
     worker.install(&mut shared.lock().unwrap());
-    shared
-        .lock()
-        .unwrap()
-        .request_session_search(SearchPayload {
-            workspace_id: workspace_id(&fixture.alpha),
-            device_id: crate::node::TEST_NODE.into(),
-            query: "fresh-marker".into(),
-            provider: "all".into(),
-            clear: false,
-            days: None,
+    // A step past its half-second work budget is interrupted and the next
+    // search reads again, which finds the room already made; a loaded machine
+    // can cross the budget, so the test asks again as the screen would.
+    let mut search = None;
+    for _ in 0..4 {
+        shared
+            .lock()
+            .unwrap()
+            .request_session_search(SearchPayload {
+                workspace_id: workspace_id(&fixture.alpha),
+                device_id: crate::node::TEST_NODE.into(),
+                query: "fresh-marker".into(),
+                provider: "all".into(),
+                clear: false,
+                days: None,
+            });
+        wait(&shared, "the fresh session to be searched", |runtime| {
+            let search = runtime.snapshot.session_search.as_ref().unwrap();
+            !search.loading && (!search.page.hits.is_empty() || search.failure.is_some())
         });
-    wait(&shared, "the fresh session to be searched", |runtime| {
-        let search = runtime.snapshot.session_search.as_ref().unwrap();
-        !search.loading && (!search.page.hits.is_empty() || search.failure.is_some())
-    });
-    let search = shared
-        .lock()
-        .unwrap()
-        .snapshot
-        .session_search
-        .clone()
-        .unwrap();
+        let answered = shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .session_search
+            .clone()
+            .unwrap();
+        let interrupted = answered
+            .failure
+            .as_deref()
+            .is_some_and(|failure| failure.ends_with(": interrupted"));
+        search = Some(answered);
+        if !interrupted {
+            break;
+        }
+    }
+    let search = search.unwrap();
     assert_eq!(search.failure, None);
     assert_eq!(search.page.hits.len(), 1);
     assert_eq!(search.page.hits[0].session_id, "claude-fresh");

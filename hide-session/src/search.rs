@@ -478,16 +478,20 @@ fn limit_work(db: &Connection) {
     );
 }
 /// Frees `needed` messages for a read of `project`'s `session` whose newest
-/// message is at `newest`, by dropping whole sessions, each with its saved
-/// cursor so it is read again from the start when its Project is next
-/// indexed, never half-copied. Other Projects' sessions go first, least
-/// recently active first, so the Project being searched wins the room; then
-/// this Project's own sessions that are older than the incoming read, so a
-/// session never displaces newer content. Nothing is dropped unless the room
-/// can be made in full. Each session goes in a transaction of its own with
-/// its own work budget, so a read interrupted part way keeps the room it made
-/// and the retry needs less, instead of repeating the same work and
-/// interrupting at the same place.
+/// message is at `newest`, by dropping whole sessions so none is half-copied
+/// in a search. Other Projects' sessions go first, least recently active
+/// first, so the Project being searched wins the room; then this Project's
+/// own sessions that are older than the incoming read, so a session never
+/// displaces newer content. Nothing is dropped unless the room can be made in
+/// full.
+///
+/// A session goes in steps that each commit on their own work budget, so a
+/// read interrupted part way keeps what was freed and its retry needs less,
+/// however large the session. The first step removes the session's saved
+/// cursor, which takes it out of every search and makes its Project read it
+/// again from the start; the rest remove its messages `ERASE_STEP` at a time.
+/// A session left with no cursor but some messages is the remains of an
+/// interrupted drop, and is dropped first, whoever is reading.
 impl SearchIndex {
     fn make_room(
         &mut self,
@@ -502,9 +506,13 @@ impl SearchIndex {
             let mut stmt = self
                 .db
                 .prepare(
-                    "SELECT project,session,count(*) FROM messages WHERE NOT (project=?1 AND session=?2)
-                     GROUP BY project,session HAVING project<>?1 OR max(at)<?3
-                     ORDER BY project=?1,max(at),project,session",
+                    "SELECT m.project,m.session,count(*) FROM messages m
+                     WHERE NOT (m.project=?1 AND m.session=?2)
+                     GROUP BY m.project,m.session
+                     HAVING NOT EXISTS(SELECT 1 FROM files f WHERE f.project=m.project AND f.session=m.session)
+                        OR m.project<>?1 OR max(m.at)<?3
+                     ORDER BY EXISTS(SELECT 1 FROM files f WHERE f.project=m.project AND f.session=m.session),
+                        m.project=?1,max(m.at),m.project,m.session",
                 )
                 .map_err(|e| e.to_string())?;
             let mut rows = stmt
@@ -530,17 +538,55 @@ impl SearchIndex {
         }
         for (victim_project, victim_session) in victims {
             limit_work(&self.db);
-            let tx = self.db.transaction().map_err(|e| e.to_string())?;
-            erase(&tx, &victim_project, Some(&victim_session), None)?;
-            tx.execute(
-                "DELETE FROM files WHERE project=?1 AND session=?2",
-                params![victim_project, victim_session],
-            )
-            .map_err(|e| e.to_string())?;
-            tx.commit().map_err(|e| e.to_string())?;
+            self.db
+                .execute(
+                    "DELETE FROM files WHERE project=?1 AND session=?2",
+                    params![victim_project, victim_session],
+                )
+                .map_err(|e| e.to_string())?;
+            loop {
+                limit_work(&self.db);
+                let tx = self.db.transaction().map_err(|e| e.to_string())?;
+                let erased = erase_step(&tx, &victim_project, &victim_session)?;
+                tx.commit().map_err(|e| e.to_string())?;
+                if erased < ERASE_STEP {
+                    break;
+                }
+            }
         }
         Ok(())
     }
+}
+/// Messages one step of dropping a session removes.
+const ERASE_STEP: usize = 2_000;
+/// Removes up to `ERASE_STEP` messages of one session, from the index and the
+/// search terms alike; returns how many went.
+fn erase_step(
+    tx: &rusqlite::Transaction<'_>,
+    project: &str,
+    session: &str,
+) -> Result<usize, String> {
+    let entries = {
+        let mut stmt = tx
+            .prepare("SELECT id,folded FROM messages WHERE project=?1 AND session=?2 LIMIT ?3")
+            .map_err(|e| e.to_string())?;
+        stmt.query_map(params![project, session, ERASE_STEP], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?
+    };
+    for (id, body) in &entries {
+        tx.execute(
+            "INSERT INTO grams(grams,rowid,terms) VALUES('delete',?1,?2)",
+            params![id, grams(body)],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM messages WHERE id=?1", [id])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(entries.len())
 }
 fn erase(
     tx: &rusqlite::Transaction<'_>,

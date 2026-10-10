@@ -844,4 +844,55 @@ mod capacity {
         assert_eq!(stored(&database), CAP - 5);
         assert_eq!(found(&index, "viewed"), ["s"]);
     }
+
+    #[test]
+    fn a_session_larger_than_one_step_goes_whole() {
+        let tmp = tempdir().unwrap();
+        let database = tmp.path().join("index.db");
+        let mut index = SearchIndex::open(&database).unwrap();
+        index_session(&mut index, "other", "big", 5_000, 100_000).unwrap();
+        for k in 0..20 {
+            index_session(
+                &mut index,
+                "other",
+                &format!("o{k}"),
+                1_000,
+                200_000 + k * 10_000,
+            )
+            .unwrap();
+        }
+        assert_eq!(stored(&database), CAP);
+
+        index_session(&mut index, "viewed", "fresh", 3, 900_000).unwrap();
+
+        assert_eq!(stored(&database), CAP - 5_000 + 3);
+        assert!(index.saved("other", "big").unwrap().is_none());
+        assert_eq!(found(&index, "other"), names("o", 0..20));
+    }
+
+    #[test]
+    fn what_an_interrupted_drop_left_is_out_of_the_search_and_goes_first() {
+        let tmp = tempdir().unwrap();
+        let database = tmp.path().join("index.db");
+        let mut index = SearchIndex::open(&database).unwrap();
+        full_of_another_project(&mut index);
+        // A drop is interrupted after it took the newest session's cursor and
+        // before it removed the messages.
+        rusqlite::Connection::open(&database)
+            .unwrap()
+            .execute(
+                "DELETE FROM files WHERE project='other' AND session='o24'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(found(&index, "other"), names("o", 0..24));
+        assert_eq!(stored(&database), CAP);
+
+        index_session(&mut index, "viewed", "fresh", 3, 900_000).unwrap();
+
+        // The remains made the room, not the least recently active session.
+        assert_eq!(stored(&database), CAP - 1_000 + 3);
+        assert_eq!(found(&index, "other"), names("o", 0..24));
+        assert!(index.saved("other", "o0").unwrap().is_some());
+    }
 }
