@@ -112,7 +112,7 @@ const ko: Messages = {
   "agentSessions.pr.pending": "CI 도는 중이나 리뷰 대기",
   "agentSessions.pr.mergeable": "머지 가능",
   "agentSessions.pr.merged": "머지됨",
-  "agentSessions.pr.draft": "draft",
+  "agentSessions.pr.draft": "초안",
   "agentSessions.pr.closed": "닫힘",
   "agentSessions.pr.stale": "GitHub 마지막 읽음 {{time}} · 지금 못 읽음",
   "agentSessions.pr.list": "{{name}}의 PR",
