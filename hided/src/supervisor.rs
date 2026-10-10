@@ -29,10 +29,10 @@ use move_back::{
     back, back_checks_failed, back_rollback, prepare_back, release_core, retire_and_commit,
 };
 
-/// How long a pending core waits for the link that carries its move.
-const PENDING_LEASE: Duration = Duration::from_secs(60);
 /// How long past the target's lease a driver that cannot reach it waits
-/// before it takes the lease as ended: clocks of two machines differ.
+/// before it takes the lease as ended: the answer that told it the lease
+/// took time to arrive, and two machines' clocks run at slightly different
+/// rates.
 const LEASE_MARGIN: Duration = Duration::from_secs(30);
 /// How long the node's first link has to be taken.
 const LINK_WITHIN: Duration = Duration::from_secs(30);
@@ -167,9 +167,13 @@ async fn core_turn(
             forward(env, seat, running, &device).await.map(Some)
         }
         Event::LeaseEnded => {
-            let intent = gate.pending_intent();
+            // The link and the lease's end are decided under one lock: a
+            // link taken first leaves nothing to end.
+            let Some(intent) = gate.expire(now_unix_ms()) else {
+                return Ok(Some(Role::Core(running)));
+            };
             stop_core(&env.state_dir, running).await;
-            give_back_pending(&env.state_dir, &env.home, intent.as_deref());
+            give_back_pending(&env.state_dir, &env.home, &intent);
             Ok(None)
         }
     }
@@ -232,30 +236,27 @@ async fn stop_node(running: RunningNode) {
     }
 }
 
-/// Never answers while the gate is open; answers when a pending core's
-/// lease ran out before its move's link came.
+/// Never answers while the gate is open; answers at the pending lease's
+/// recorded deadline, which no request in between moves.
 async fn lease_end(gate: &crate::core_move::gate::MoveGate) {
-    if gate.is_open() {
+    let Some(until) = gate.lease_until_unix_ms() else {
         return std::future::pending().await;
-    }
+    };
     let mut open = gate.subscribe();
     tokio::select! {
         _ = open.wait_for(|open| *open) => std::future::pending().await,
-        () = tokio::time::sleep(PENDING_LEASE) => {}
+        () = tokio::time::sleep(Duration::from_millis(until.saturating_sub(now_unix_ms()))) => {}
     }
 }
 
 /// A pending core whose move never linked gives its copy back to
 /// `move-incoming`, where the driver's retry finds it, and leaves the
 /// folder with no brain state.
-fn give_back_pending(state_dir: &Path, home: &Path, intent: Option<&str>) {
-    let Some(intent) = intent else { return };
+fn give_back_pending(state_dir: &Path, home: &Path, intent: &str) {
     let given = (|| -> Result<(), String> {
         let held = crate::core_move::handover::hold(state_dir)?;
         match held.read()? {
-            Some(record)
-                if record.intent == intent
-                    && record.state == crate::core_move::handover::HandoverState::Pending => {}
+            Some(record) if record.intent == intent && record.state.is_pending() => {}
             _ => return Ok(()),
         }
         copy::unplace(
@@ -632,7 +633,7 @@ async fn prepare(
         // device unreachable as it rolled back) is taken back first.
         let inspected = match (&stranded, &inspected.handover) {
             (Some(retry), Some(handover))
-                if handover.intent == retry.intent && handover.state == HandoverState::Pending =>
+                if handover.intent == retry.intent && handover.state.is_pending() =>
             {
                 let aborted = driver::abort_target(&remote, retry)?;
                 log(
@@ -857,11 +858,24 @@ fn copy_and_start(
         return Err((Box::new(journal), MoveStep::Copy, cause));
     }
     moves.update(|view| view.state = MoveState::Starting);
-    journal.target_started_unix_ms = Some(now_unix_ms());
-    if let Err(cause) = record(&mut journal, Phase::TargetStarted)
+    // Should the answer be lost, the start may have run as late as the
+    // step's bound, and its lease runs a full lease from there.
+    let unanswered = driver::STEP_TIMEOUT + handover::PENDING_LEASE + LEASE_MARGIN;
+    journal.target_lease_until_unix_ms = Some(now_unix_ms() + unanswered.as_millis() as u64);
+    let lease_left = match record(&mut journal, Phase::TargetStarted)
         .and_then(|()| driver::start_target(remote, &journal))
     {
-        return Err((Box::new(journal), MoveStep::StartTarget, cause));
+        Ok(lease_left) => lease_left,
+        Err(cause) => return Err((Box::new(journal), MoveStep::StartTarget, cause)),
+    };
+    journal.target_lease_until_unix_ms =
+        Some(now_unix_ms() + (lease_left + LEASE_MARGIN).as_millis() as u64);
+    if let Err(cause) = journal::write(state_dir, &journal) {
+        return Err((
+            Box::new(journal),
+            MoveStep::StartTarget,
+            MoveFailure::Local { reason: cause },
+        ));
     }
     Ok(journal)
 }
@@ -1119,9 +1133,7 @@ async fn rollback(
         let attach_sent = journal.phase == Phase::AttachSent;
         // Only a core that started holds a lease; a copy placed with no core
         // on it is given back by the next try's checks.
-        let lease_until = journal
-            .target_started_unix_ms
-            .map(|started| started + (PENDING_LEASE + LEASE_MARGIN).as_millis() as u64);
+        let lease_until = journal.target_lease_until_unix_ms;
         let aborted = wait_on_peer(
             &seat.moves,
             "abort.failed",
@@ -1203,6 +1215,33 @@ async fn rollback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pending lease ends at the deadline its record holds, however
+    /// often the core's loop asked again meanwhile; before, each request
+    /// started a fresh lease.
+    #[tokio::test]
+    async fn the_pending_lease_ends_at_its_recorded_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        handover::hold(dir.path())
+            .unwrap()
+            .write(&Handover::new(
+                "i1",
+                "m",
+                "c",
+                HandoverState::Pending {
+                    lease_until_unix_ms: now_unix_ms() + 300,
+                },
+            ))
+            .unwrap();
+        let gate = crate::core_move::gate::MoveGate::for_start(dir.path()).unwrap();
+        for _ in 0..3 {
+            let _ = tokio::time::timeout(Duration::from_millis(20), lease_end(&gate)).await;
+        }
+        tokio::time::timeout(Duration::from_secs(5), lease_end(&gate))
+            .await
+            .expect("the lease did not end at its deadline");
+        assert_eq!(gate.expire(now_unix_ms()), Some("i1".to_owned()));
+    }
 
     /// A failure asking again cannot change ends a wait before the link
     /// that carries the intent was sent, rather than holding the core down

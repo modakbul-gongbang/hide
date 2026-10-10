@@ -20,7 +20,7 @@ use super::journal::{Journal, MoveFailure, Peer};
 const STEP_OUTPUT_CAP: usize = 64 * 1024;
 /// How long one step on the other machine may take; starting its core
 /// waits up to 30 s for it to take links.
-const STEP_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The other machine, reached over one SSH connection for the move.
 pub struct Remote {
@@ -493,9 +493,11 @@ pub fn place(remote: &Remote, journal: &Journal) -> Result<(), MoveFailure> {
     }
 }
 
-pub fn start_target(remote: &Remote, journal: &Journal) -> Result<(), MoveFailure> {
+/// Starts the peer's pending core; answers how long its lease has left as
+/// the peer counts it, a span no clock difference changes.
+pub fn start_target(remote: &Remote, journal: &Journal) -> Result<Duration, MoveFailure> {
     match remote.step("start", &[("intent", &journal.intent)]) {
-        Ok(StepAnswer::Started { .. }) => Ok(()),
+        Ok(StepAnswer::Started { lease_left_ms, .. }) => Ok(Duration::from_millis(lease_left_ms)),
         Ok(other) => Err(unexpected("start", &other)),
         Err(MoveFailure::Refused { reason, .. }) => Err(MoveFailure::NotStarted { reason }),
         Err(other) => Err(other),
@@ -532,7 +534,7 @@ fn status_of(answer: StepAnswer) -> Result<TargetSays, MoveFailure> {
             handover:
                 None
                 | Some(Handover {
-                    state: HandoverState::Pending,
+                    state: HandoverState::Pending { .. },
                     ..
                 }),
         }
@@ -713,7 +715,7 @@ mod tests {
         );
         for answer in [
             StepAnswer::Status {
-                handover: handover(HandoverState::Pending),
+                handover: handover(HandoverState::pending_from_now()),
             },
             StepAnswer::Status { handover: None },
             StepAnswer::OtherMove {

@@ -501,7 +501,7 @@ fn a_core_update_waits_for_a_move_on_the_core_machine() -> Result<()> {
         let core = fixture.target_core()?.context("no core on the target")?;
         write_record(
             &fixture.target.state.join("core-handover.json"),
-            &json!({"version": 1, "intent": "move-0123456789abcdef", "source": SOURCE_NODE, "target": TARGET_NODE, "state": {"state": "pending"}}),
+            &json!({"version": 1, "intent": "move-0123456789abcdef", "source": SOURCE_NODE, "target": TARGET_NODE, "state": {"state": "pending", "lease_until_unix_ms": lease_ahead()}}),
         )?;
         let newer = fixture.other_build("newer")?;
         fixture.kill_source()?;
@@ -1714,6 +1714,14 @@ fn files_named(dir: &std::path::Path, name: &str) -> Result<Vec<std::path::PathB
     Ok(found)
 }
 
+/// A pending lease's deadline that no journey outlasts.
+fn lease_ahead() -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is past 1970");
+    (now + std::time::Duration::from_secs(3600)).as_millis() as u64
+}
+
 fn records(fixture: &Fixture, kind: &str) -> Result<Vec<Value>> {
     let bytes = std::fs::read(fixture.source.state.join("Logs/core.jsonl"))?;
     Ok(String::from_utf8_lossy(&bytes)
@@ -1738,7 +1746,7 @@ fn a_pending_core_does_nothing_outside_until_its_link_commits() -> Result<()> {
     hide_platform::fs::private::create_dir_all(&state)?;
     write_record(
         &state.join("core-handover.json"),
-        &json!({"version": 1, "intent": INTENT, "source": SOURCE_NODE, "target": TARGET_NODE, "state": {"state": "pending"}}),
+        &json!({"version": 1, "intent": INTENT, "source": SOURCE_NODE, "target": TARGET_NODE, "state": {"state": "pending", "lease_until_unix_ms": lease_ahead()}}),
     )?;
     write_record(&state.join("mobile.json"), &json!({"enabled": true}))?;
     let tailscale = FakeTailscale::new(&home);

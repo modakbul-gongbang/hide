@@ -27,11 +27,14 @@ pub struct Journal {
     pub change: OwnerChange,
     pub ids: IdTable,
     pub phase: Phase,
-    /// When the other machine's core was started, on this machine's wall
-    /// clock: a pending core that never got its link gives its copy back
-    /// after its lease, which a driver that cannot reach it waits out.
+    /// By when, on this machine's clock, the other machine's pending core
+    /// has surely given its copy back if no link took the move: the lease
+    /// that machine answered from its start, or, with its answer lost, the
+    /// longest that start could have been sent before plus a full lease. A
+    /// driver that cannot reach it waits this out; none while no core was
+    /// started there.
     #[serde(default)]
-    pub target_started_unix_ms: Option<u64>,
+    pub target_lease_until_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -216,7 +219,7 @@ impl Journal {
             change,
             ids,
             phase: Phase::Stopping,
-            target_started_unix_ms: None,
+            target_lease_until_unix_ms: None,
         }
     }
 }

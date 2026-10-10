@@ -307,7 +307,7 @@ fn place(state_dir: &Path, intent: &str, source: &str, target: &str) -> Answered
         }
         None => {}
     }
-    let record = Handover::new(intent, source, target, HandoverState::Pending);
+    let record = Handover::new(intent, source, target, HandoverState::pending_from_now());
     held.write(&record).map_err(plain)?;
     let placed = copy::place(&incoming(state_dir, intent), state_dir, &ai_settings()?);
     match placed {
@@ -327,16 +327,27 @@ fn place(state_dir: &Path, intent: &str, source: &str, target: &str) -> Answered
     }
 }
 
+/// Starts the pending core on the placed copy; its lease runs from the
+/// place, which the driver sends just before.
 fn start(state_dir: &Path, intent: &str) -> Answered {
-    match handover::read(state_dir).map_err(plain)? {
-        Some(record) if record.intent == intent => {}
+    let lease_until_unix_ms = match handover::read(state_dir).map_err(plain)? {
+        Some(Handover {
+            intent: placed,
+            state: HandoverState::Pending {
+                lease_until_unix_ms,
+            },
+            ..
+        }) if placed == intent => lease_until_unix_ms,
         _ => return Err(plain("no copy of this move is placed here")),
-    }
+    };
     let home = hide_platform::host::home_dir().map_err(|error| plain(error.to_string()))?;
     let starter = CoreStarter::for_account(&home).map_err(plain)?;
     let program = super::starter::this_program().map_err(plain)?;
     let pid = starter.start(state_dir, &program).map_err(plain)?;
-    Ok(StepAnswer::Started { pid })
+    Ok(StepAnswer::Started {
+        pid,
+        lease_left_ms: lease_until_unix_ms.saturating_sub(handover::now_unix_ms()),
+    })
 }
 
 fn status(state_dir: &Path, intent: &str) -> Answered {

@@ -22,6 +22,9 @@ const VERSION: u32 = 1;
 const RECORD_CAP: u64 = 16 * 1024;
 /// How long a change waits for the record's lock.
 const LOCK_WAIT: Duration = Duration::from_secs(5);
+/// How long a pending core waits for the link that carries its move, from
+/// the place its core starts on right after.
+pub const PENDING_LEASE: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Handover {
@@ -39,8 +42,9 @@ pub struct Handover {
 pub enum HandoverState {
     /// The copy is placed; the core started on it holds every effect until
     /// the link carrying the intent arrives, and gives the copy back when
-    /// none has within its lease.
-    Pending,
+    /// none has by `lease_until_unix_ms` on this machine's clock, a
+    /// deadline no request moves.
+    Pending { lease_until_unix_ms: u64 },
     /// The link carrying the intent was taken: the move is committed.
     Active,
     /// The core here stopped for a move back and holds its state for the
@@ -49,6 +53,26 @@ pub enum HandoverState {
     /// The core left this machine in a move back: its starter and brain
     /// state are gone.
     Retired,
+}
+
+impl HandoverState {
+    /// A pending handover whose lease runs [`PENDING_LEASE`] from now.
+    pub fn pending_from_now() -> Self {
+        Self::Pending {
+            lease_until_unix_ms: now_unix_ms() + PENDING_LEASE.as_millis() as u64,
+        }
+    }
+
+    pub fn is_pending(self) -> bool {
+        matches!(self, Self::Pending { .. })
+    }
+}
+
+pub fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 impl Handover {
@@ -175,18 +199,19 @@ pub enum Activation {
     NotThisMove,
 }
 
-/// Activates the pending core of `state_dir` for `intent`, under the
-/// record's lock.
-pub fn activate(state_dir: &Path, intent: &str) -> Result<Activation, String> {
+/// Activates the pending core of `state_dir` for `intent`, linked by
+/// `node`, under the record's lock: only the node the move came from
+/// commits it.
+pub fn activate(state_dir: &Path, intent: &str, node: &str) -> Result<Activation, String> {
     let held = hold(state_dir)?;
     let Some(mut record) = held.read()? else {
         return Ok(Activation::NotThisMove);
     };
-    if record.intent != intent {
+    if record.intent != intent || record.source != node {
         return Ok(Activation::NotThisMove);
     }
     match record.state {
-        HandoverState::Pending => {
+        HandoverState::Pending { .. } => {
             record.state = HandoverState::Active;
             held.write(&record)?;
             Ok(Activation::Activated)
@@ -203,15 +228,34 @@ mod tests {
     #[test]
     fn only_the_move_s_own_link_activates_a_pending_core_and_only_once() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(activate(dir.path(), "i1").unwrap(), Activation::NotThisMove);
+        assert_eq!(
+            activate(dir.path(), "i1", "m").unwrap(),
+            Activation::NotThisMove
+        );
         hold(dir.path())
             .unwrap()
-            .write(&Handover::new("i1", "m", "c", HandoverState::Pending))
+            .write(&Handover::new(
+                "i1",
+                "m",
+                "c",
+                HandoverState::pending_from_now(),
+            ))
             .unwrap();
-        assert_eq!(activate(dir.path(), "i2").unwrap(), Activation::NotThisMove);
-        assert_eq!(activate(dir.path(), "i1").unwrap(), Activation::Activated);
         assert_eq!(
-            activate(dir.path(), "i1").unwrap(),
+            activate(dir.path(), "i2", "m").unwrap(),
+            Activation::NotThisMove
+        );
+        // Another node naming the move's intent does not commit it.
+        assert_eq!(
+            activate(dir.path(), "i1", "other").unwrap(),
+            Activation::NotThisMove
+        );
+        assert_eq!(
+            activate(dir.path(), "i1", "m").unwrap(),
+            Activation::Activated
+        );
+        assert_eq!(
+            activate(dir.path(), "i1", "m").unwrap(),
             Activation::AlreadyActive
         );
         assert_eq!(

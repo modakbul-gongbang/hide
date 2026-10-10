@@ -40,8 +40,9 @@ pub enum StepAnswer {
         placed: Vec<String>,
         handover: Handover,
     },
-    /// `start`: the pending core started.
-    Started { pid: u32 },
+    /// `start`: the pending core started, and its lease ends `lease_left_ms`
+    /// from the answer, as this machine counts it.
+    Started { pid: u32, lease_left_ms: u64 },
     /// `status`: this move's handover there, none when it holds none.
     Status { handover: Option<Handover> },
     /// `status`, `abort`: another move's record holds the machine, so this
@@ -114,7 +115,7 @@ mod tests {
             "move-1",
             "a",
             "b",
-            super::super::handover::HandoverState::Pending,
+            super::super::handover::HandoverState::pending_from_now(),
         );
         for answer in [
             StepAnswer::Loadable,
