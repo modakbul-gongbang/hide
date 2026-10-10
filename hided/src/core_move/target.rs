@@ -4,7 +4,8 @@
 //! refusal included; a usage error exits non-zero.
 //!
 //! On the machine taking the core: `inspect`, `verify`, `place`, `start`,
-//! `status`, `abort` and `finish`. On the machine giving the core back to
+//! `status`, `abort` and `finish`, and `check`, which `inspect` runs in the
+//! account's GUI session (`preflight`). On the machine giving the core back to
 //! the node that dialed it (`back`): `release`, `resume` and `retire`.
 //! Every step that changes the state folder runs under the handover
 //! record's lock (`handover`), and each can be run again with the same
@@ -25,11 +26,14 @@ struct Args {
     intent: Option<String>,
     source: Option<String>,
     target: Option<String>,
-    /// For `inspect`: the agents Hide AI asks, as `[[provider, model]]`.
+    /// For `inspect` and `check`: the agents Hide AI asks, as
+    /// `[[provider, model]]`.
     ai: Option<String>,
+    /// For `check`: the file it answers in.
+    answer: Option<PathBuf>,
 }
 
-const USAGE: &str = "usage: hided core-move <inspect|verify|place|start|status|abort|finish|release|resume|retire> [--state-dir <dir>] [--intent <id>] [--source <node>] [--target <node>] [--ai <json>]";
+const USAGE: &str = "usage: hided core-move <inspect|check|verify|place|start|status|abort|finish|release|resume|retire> [--state-dir <dir>] [--intent <id>] [--source <node>] [--target <node>] [--ai <json>] [--answer <file>]";
 
 /// How long a released core may take to end once it answered.
 const RELEASED_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
@@ -41,8 +45,8 @@ fn parse(args: &[OsString]) -> Result<Args, String> {
         .and_then(|step| step.to_str())
         .ok_or(USAGE)?
         .to_owned();
-    let (mut state_dir, mut intent, mut source, mut target, mut ai) =
-        (None, None, None, None, None);
+    let (mut state_dir, mut intent, mut source, mut target, mut ai, mut answer) =
+        (None, None, None, None, None, None);
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -60,6 +64,12 @@ fn parse(args: &[OsString]) -> Result<Args, String> {
             Some("--source") => source = Some(value),
             Some("--target") => target = Some(value),
             Some("--ai") => ai = Some(value),
+            Some("--answer") => {
+                if !Path::new(&value).is_absolute() {
+                    return Err("--answer must be an absolute path".to_owned());
+                }
+                answer = Some(PathBuf::from(value));
+            }
             _ => return Err(USAGE.to_owned()),
         }
     }
@@ -78,6 +88,7 @@ fn parse(args: &[OsString]) -> Result<Args, String> {
         source,
         target,
         ai,
+        answer,
     })
 }
 
@@ -85,6 +96,7 @@ pub fn run(args: &[OsString]) -> Result<(), String> {
     let args = parse(args)?;
     let answer = match args.step.as_str() {
         "inspect" => inspect(&args.state_dir, args.ai.as_deref()),
+        "check" => check(args.ai.as_deref(), args.answer.as_deref().ok_or(USAGE)?),
         step => {
             let intent = args.intent.as_deref().ok_or(USAGE)?;
             match step {
@@ -158,24 +170,16 @@ fn inspect(state_dir: &Path, ai: Option<&str>) -> Result<Value, Value> {
     // The Herdr this machine's core would own, as its daemon resolves it.
     let env = crate::env::load()
         .map_err(|errors| plain(format!("{} environment errors", errors.len())))?;
-    let mut failed = super::preflight::failing(
+    let failed = super::preflight::failing(
         &env.home,
+        state_dir,
         &super::preflight::Herdr {
             bin: env.herdr_bin_path.as_deref(),
             socket: env.herdr_socket_path.as_deref(),
         },
+        ai,
         &super::preflight::Programs::for_this_machine(),
     );
-    if let Some(asks) = ai {
-        let asks: Vec<(String, String)> = serde_json::from_str(asks)
-            .map_err(|error| plain(format!("--ai is not a list of agents: {error}")))?;
-        if let Err(detail) = herdr_core::hide_ai_ready_here(&asks) {
-            failed.push(super::control::FailedCheck {
-                check: super::control::CheckId::Ai,
-                detail,
-            });
-        }
-    }
     let ai = match herdr_core::stored_hide_ai_settings(&env.home) {
         Ok(settings) => json!({"settings": settings}),
         Err(error) => json!({"unreadable": error}),
@@ -190,6 +194,24 @@ fn inspect(state_dir: &Path, ai: Option<&str>) -> Result<Value, Value> {
         "ai": ai,
         "failed": failed,
     }))
+}
+
+/// The checks of this account's logins, run where the core will run, and
+/// answered in `answer` as well as on standard output, since a job's output
+/// goes to its log.
+fn check(ai: Option<&str>, answer: &Path) -> Result<Value, Value> {
+    let env = crate::env::load()
+        .map_err(|errors| plain(format!("{} environment errors", errors.len())))?;
+    let failed = super::preflight::logins_failing(
+        &env.home,
+        ai,
+        &super::preflight::Programs::for_this_machine(),
+    );
+    let line = json!({"failed": failed});
+    let bytes = serde_json::to_vec(&line).map_err(|error| plain(error.to_string()))?;
+    hide_platform::fs::atomic::write_file(answer, &bytes, hide_platform::fs::Access::Private)
+        .map_err(|error| plain(format!("{}: {error}", answer.display())))?;
+    Ok(line)
 }
 
 /// Compares the received copy with the manifest sent beside it; a copy

@@ -1,9 +1,15 @@
 //! What the machine taking the core says about itself before a move (PRD
 //! core-host-node-move B3, D-04, D-25, D-26), answered by `hided core-move
-//! inspect` there: its Herdr server runs, `gh` is signed in, the account's
-//! GUI session runs (the only one its login item runs in), and the machine
-//! does not sleep by itself on power. A failing check says what it found;
-//! hide changes none of it.
+//! inspect` there: its Herdr server runs, the account's GUI session runs
+//! (the only one its login item runs in), the machine does not sleep by
+//! itself on power, `gh` is signed in and every agent Hide AI asks answers.
+//! A failing check says what it found; hide changes none of it.
+//!
+//! The checks of the account's logins (`gh`, Hide AI's agents) run the way
+//! the moved core will: in a one-shot job of the GUI session with the core
+//! login item's environment (`hided core-move check`), because a login kept
+//! in the login keychain can answer otherwise to the SSH session `inspect`
+//! runs in. The others read no login and run in `inspect` itself.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,6 +20,9 @@ use super::control::{CheckId, FailedCheck};
 
 /// How long one check's program may take.
 const PROGRAM_WITHIN: Duration = Duration::from_secs(5);
+/// How long the job of the logins' checks may take to answer: `gh` and
+/// each agent's login probe.
+const LOGINS_ANSWER_WITHIN: Duration = Duration::from_secs(30);
 
 /// The programs the `gh`, session and power checks run: the system's, or a
 /// fixture's stand-ins (`env::fixture_preflight_programs`).
@@ -22,6 +31,16 @@ pub struct Programs {
     gh: Option<PathBuf>,
     session: Option<hide_platform::user_agents::UserAgents>,
     pmset: Option<PathBuf>,
+    logins: Logins,
+}
+
+/// Where the logins' checks run.
+enum Logins {
+    /// A one-shot job of the account's GUI session, where the core runs.
+    InTheCoreSession(hide_platform::user_agents::UserAgents),
+    /// A child of `inspect`: a fixture's, or a system with no login agents,
+    /// whose GUI session check fails anyway.
+    Here,
 }
 
 impl Programs {
@@ -34,13 +53,19 @@ impl Programs {
                     "gui/fixture".to_owned(),
                 )),
                 pmset: Some(folder.join("pmset")),
+                logins: Logins::Here,
             };
         }
+        let macos = cfg!(target_os = "macos");
         Self {
             gh: None,
-            session: cfg!(target_os = "macos")
-                .then(hide_platform::user_agents::UserAgents::current),
-            pmset: cfg!(target_os = "macos").then(|| "/usr/bin/pmset".into()),
+            session: macos.then(hide_platform::user_agents::UserAgents::current),
+            pmset: macos.then(|| "/usr/bin/pmset".into()),
+            logins: if macos {
+                Logins::InTheCoreSession(hide_platform::user_agents::UserAgents::current())
+            } else {
+                Logins::Here
+            },
         }
     }
 }
@@ -51,18 +76,188 @@ pub struct Herdr<'a> {
     pub socket: Option<&'a str>,
 }
 
-/// Every check that fails on this machine, in the dialog's order.
-pub fn failing(home: &Path, herdr: &Herdr<'_>, programs: &Programs) -> Vec<FailedCheck> {
+/// Every check that fails on this machine, in the dialog's order; `ai` is
+/// the agents Hide AI asks, as `[[provider, model]]`, for the Ai check.
+pub fn failing(
+    home: &Path,
+    state_dir: &Path,
+    herdr: &Herdr<'_>,
+    ai: Option<&str>,
+    programs: &Programs,
+) -> Vec<FailedCheck> {
     let stop = AtomicBool::new(false);
-    [
+    let mut failed: Vec<FailedCheck> = [
         (CheckId::Herdr, herdr_running(home, herdr, &stop)),
-        (CheckId::Gh, gh_signed_in(home, programs, &stop)),
         (CheckId::GuiSession, gui_session(home, programs, &stop)),
         (CheckId::Sleep, sleep_off(home, programs, &stop)),
     ]
     .into_iter()
     .filter_map(|(check, result)| result.err().map(|detail| FailedCheck { check, detail }))
-    .collect()
+    .collect();
+    // With no GUI session no job runs there; the logins are checked once
+    // the operator logs in, which that failing check asks for.
+    let no_session = failed
+        .iter()
+        .any(|check| check.check == CheckId::GuiSession);
+    if !(no_session && matches!(programs.logins, Logins::InTheCoreSession(_))) {
+        match logins_in_the_core_session(home, state_dir, ai, programs) {
+            Ok(logins) => failed.extend(logins),
+            Err(detail) => failed.push(FailedCheck {
+                check: CheckId::GuiSession,
+                detail: format!("the checks of this account's logins did not run there: {detail}"),
+            }),
+        }
+    }
+    failed
+}
+
+/// The logins' checks, run by `hided core-move check` in the job: each that
+/// fails.
+pub fn logins_failing(home: &Path, ai: Option<&str>, programs: &Programs) -> Vec<FailedCheck> {
+    let stop = AtomicBool::new(false);
+    let mut failed = Vec::new();
+    if let Err(detail) = gh_signed_in(home, programs, &stop) {
+        failed.push(FailedCheck {
+            check: CheckId::Gh,
+            detail,
+        });
+    }
+    let asks = ai.map(serde_json::from_str::<Vec<(String, String)>>);
+    let ready = match asks {
+        None => Ok(()),
+        Some(Ok(asks)) => herdr_core::hide_ai_ready_here(&asks),
+        Some(Err(error)) => Err(format!("--ai is not a list of agents: {error}")),
+    };
+    if let Err(detail) = ready {
+        failed.push(FailedCheck {
+            check: CheckId::Ai,
+            detail,
+        });
+    }
+    failed
+}
+
+/// Runs `hided core-move check` where [`Programs`] says and reads its
+/// answer. The folder it answers in is removed on every path.
+fn logins_in_the_core_session(
+    home: &Path,
+    state_dir: &Path,
+    ai: Option<&str>,
+    programs: &Programs,
+) -> Result<Vec<FailedCheck>, String> {
+    let incoming = hide_kit::layout::move_incoming(state_dir);
+    // A check changes nothing in the folder: a parent it made goes with it.
+    let made = !incoming.exists();
+    let folder = incoming.join(format!("checks-{}", std::process::id()));
+    match std::fs::remove_dir_all(&folder) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(format!("{}: {error}", folder.display()));
+        }
+        _ => {}
+    }
+    hide_platform::fs::private::create_dir_all(&folder)
+        .map_err(|error| format!("{}: {error}", folder.display()))?;
+    let answered = run_logins_check(home, state_dir, &folder, ai, programs);
+    let removed = std::fs::remove_dir_all(&folder).and_then(|()| {
+        if made {
+            std::fs::remove_dir(&incoming)
+        } else {
+            Ok(())
+        }
+    });
+    let failed = answered?;
+    removed.map_err(|error| format!("{}: {error}", folder.display()))?;
+    Ok(failed)
+}
+
+fn run_logins_check(
+    home: &Path,
+    state_dir: &Path,
+    folder: &Path,
+    ai: Option<&str>,
+    programs: &Programs,
+) -> Result<Vec<FailedCheck>, String> {
+    let answer = folder.join("answer.json");
+    let program =
+        std::env::current_exe().map_err(|error| format!("this hided has no path: {error}"))?;
+    let mut arguments = vec![
+        "core-move".to_owned(),
+        "check".to_owned(),
+        "--state-dir".to_owned(),
+        state_dir.to_string_lossy().into_owned(),
+        "--answer".to_owned(),
+        answer.to_string_lossy().into_owned(),
+    ];
+    if let Some(ai) = ai {
+        arguments.extend(["--ai".to_owned(), ai.to_owned()]);
+    }
+    let stop = AtomicBool::new(false);
+    match &programs.logins {
+        Logins::Here => {
+            let mut command = Command::new(&program);
+            command.args(&arguments);
+            let finished =
+                hide_platform::process::run_to_end(&mut command, LOGINS_ANSWER_WITHIN, &stop)
+                    .map_err(|failure| format!("the check did not answer: {failure:?}"))?;
+            if !finished.succeeded() {
+                return Err(format!(
+                    "the check exited {:?}: {}",
+                    finished.code,
+                    finished.last_error_line()
+                ));
+            }
+        }
+        Logins::InTheCoreSession(agents) => {
+            let label = format!(
+                "{}.checks",
+                hide_kit::layout::core_login_item(home, state_dir)
+            );
+            let environment = crate::login_item::core_environment(home, state_dir)?;
+            let environment: Vec<(&str, &str)> = environment
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str()))
+                .collect();
+            let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+            let log = folder.join("check.log");
+            let agent = hide_platform::user_agents::LoginAgent {
+                label: &label,
+                program: &program,
+                arguments: &arguments,
+                environment: &environment,
+                log: &log,
+            };
+            agents
+                .start_once(&agent, &folder.join("check.plist"), home, &stop)
+                .map_err(|error| format!("the job {label}: {error}"))?;
+            let waited = wait_for_answer(&answer);
+            let unloaded = agents.unload(&label, home, &stop);
+            waited?;
+            unloaded.map_err(|error| format!("the job {label}: {error}"))?;
+        }
+    }
+    let bytes =
+        std::fs::read(&answer).map_err(|error| format!("the check left no answer: {error}"))?;
+    let answer: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("the check's answer is unreadable: {error}"))?;
+    serde_json::from_value(answer["failed"].clone())
+        .map_err(|error| format!("the check's answer is unreadable: {error}"))
+}
+
+/// Waits for the job's answer, which it writes once and whole.
+// The job is another process that announces nothing to this one.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
+fn wait_for_answer(answer: &Path) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + LOGINS_ANSWER_WITHIN;
+    while !answer.exists() {
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "no answer within {}s",
+                LOGINS_ANSWER_WITHIN.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Ok(())
 }
 
 fn run(
@@ -264,6 +459,7 @@ mod tests {
             gh: None,
             session: None,
             pmset: Some(stand_in(dir.path(), "pmset", &format!("printf '{pmset}'"))),
+            logins: Logins::Here,
         };
         assert_eq!(
             sleep_off(dir.path(), &programs("AC Power:\\n sleep 0\\n"), &stop),
@@ -277,6 +473,7 @@ mod tests {
             gh: None,
             session: None,
             pmset: None,
+            logins: Logins::Here,
         };
         assert!(sleep_off(dir.path(), &none, &stop).is_err());
         assert!(gui_session(dir.path(), &none, &stop).is_err());
@@ -288,6 +485,7 @@ mod tests {
                 "gui/fixture".to_owned(),
             )),
             pmset: None,
+            logins: Logins::Here,
         };
         assert_eq!(gh_signed_in(dir.path(), &gh("exit 0"), &stop), Ok(()));
         assert_eq!(gui_session(dir.path(), &gh("exit 0"), &stop), Ok(()));

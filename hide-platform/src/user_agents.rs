@@ -88,6 +88,39 @@ impl UserAgents {
         Ok(())
     }
 
+    /// Loads `agent` into the GUI session from a property list written at
+    /// `list`, outside the login agents folder, so no later login loads it
+    /// again: launchd starts it once and never restarts it, and [`unload`]
+    /// ends it. One loaded already under its label is replaced.
+    ///
+    /// [`unload`]: Self::unload
+    pub fn start_once(
+        &self,
+        agent: &LoginAgent<'_>,
+        list: &Path,
+        home: &Path,
+        stop: &AtomicBool,
+    ) -> io::Result<()> {
+        if self.command.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "this system has no login agents",
+            ));
+        }
+        self.unload(agent.label, home, stop)?;
+        crate::fs::atomic::write_file(list, agent.once().as_bytes(), crate::fs::Access::Private)?;
+        let list = list.to_string_lossy().into_owned();
+        let result = self.run(&["bootstrap", &self.domain, &list], home, stop)?;
+        if result.code != Some(0) {
+            return Err(io::Error::other(format!(
+                "bootstrap failed (exit {:?}): {}",
+                result.code,
+                result.stderr.trim()
+            )));
+        }
+        Ok(())
+    }
+
     /// Starts the loaded agent `label` when it is not running.
     pub fn kickstart(&self, label: &str, home: &Path, stop: &AtomicBool) -> io::Result<()> {
         let name = format!("{}/{label}", self.domain);
@@ -190,6 +223,19 @@ impl LoginAgent<'_> {
     /// session, restarted when it fails or is killed, never after a
     /// successful exit, at most every ten seconds.
     pub fn plist(&self) -> String {
+        self.property_list(concat!(
+            "<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>",
+            "<key>ThrottleInterval</key><integer>10</integer>",
+        ))
+    }
+
+    /// Its property list as a job launchd runs once at load and never
+    /// restarts ([`UserAgents::start_once`]).
+    fn once(&self) -> String {
+        self.property_list("<key>KeepAlive</key><false/>")
+    }
+
+    fn property_list(&self, restarts: &str) -> String {
         let string = |value: &str| format!("<string>{}</string>", escape(value));
         let mut arguments = string(&self.program.to_string_lossy());
         for argument in self.arguments {
@@ -211,8 +257,7 @@ impl LoginAgent<'_> {
                 "<key>EnvironmentVariables</key><dict>{environment}</dict>",
                 "<key>LimitLoadToSessionType</key><string>Aqua</string>",
                 "<key>RunAtLoad</key><true/>",
-                "<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>",
-                "<key>ThrottleInterval</key><integer>10</integer>",
+                "{restarts}",
                 "<key>StandardOutPath</key>{log}",
                 "<key>StandardErrorPath</key>{log}",
                 "</dict></plist>\n"
@@ -220,6 +265,7 @@ impl LoginAgent<'_> {
             label = string(self.label),
             arguments = arguments,
             environment = environment,
+            restarts = restarts,
             log = log,
         )
     }

@@ -174,7 +174,7 @@ fn each_step_missing_on_the_target_is_named_and_nothing_changes() -> Result<()> 
         fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
         let failed = fixture.logged(&fixture.source, "checks.failed")?;
         ensure!(
-            failed["checks"] == json!(["gh", "gui_session", "sleep", "ai"]),
+            failed["checks"] == json!(["gui_session", "sleep", "gh", "ai"]),
             "{failed}"
         );
         ensure!(fixture.role()? == "core");

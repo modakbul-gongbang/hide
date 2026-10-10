@@ -27,34 +27,17 @@ pub fn start(agents: &UserAgents, home: &Path, state_dir: &Path) -> Result<(), S
                 .to_owned(),
         );
     }
-    let env =
-        crate::env::load().map_err(|errors| format!("{} environment errors", errors.len()))?;
     let program =
         std::env::current_exe().map_err(|error| format!("this hided has no path: {error}"))?;
     let label = hide_kit::layout::core_login_item(home, state_dir);
-    let (home_value, state_value) = (
-        home.to_string_lossy().into_owned(),
-        state_dir.to_string_lossy().into_owned(),
-    );
-    let mut environment = vec![
-        ("HOME", home_value.as_str()),
-        ("HIDE_STATE_DIR", state_value.as_str()),
-        // The core stays up with no window: its nodes and phones are its
-        // clients.
-        ("HIDE_KEEP_ALIVE", "1"),
-    ];
-    let socket = env
-        .herdr_socket_path
-        .clone()
-        .ok_or("this machine has no Herdr socket for its core (HERDR_SOCKET_PATH)")?;
-    environment.push(("HERDR_SOCKET_PATH", socket.as_str()));
-    let bin = env
-        .herdr_bin_path
-        .as_ref()
-        .map(|path| path.to_string_lossy().into_owned());
-    if let Some(bin) = &bin {
-        environment.push(("HERDR_BIN_PATH", bin.as_str()));
-    }
+    let mut environment = core_environment(home, state_dir)?;
+    // The core stays up with no window: its nodes and phones are its
+    // clients.
+    environment.push(("HIDE_KEEP_ALIVE".to_owned(), "1".to_owned()));
+    let environment: Vec<(&str, &str)> = environment
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
     let log = state_dir.join("Logs").join("core.log");
     hide_platform::fs::private::create_dir_all(&state_dir.join("Logs"))
         .map_err(|error| error.to_string())?;
@@ -69,6 +52,33 @@ pub fn start(agents: &UserAgents, home: &Path, state_dir: &Path) -> Result<(), S
         .install(&agent, home, &stop)
         .and_then(|()| agents.kickstart(&label, home, &stop))
         .map_err(|error| format!("the login item {label}: {error}"))
+}
+
+/// What the core's login item runs it with: the account's home, the state
+/// folder, and the Herdr binary and socket this machine's hided resolved.
+/// A move's checks of the account's logins run with it too
+/// (`core_move::preflight`).
+pub fn core_environment(home: &Path, state_dir: &Path) -> Result<Vec<(String, String)>, String> {
+    let env =
+        crate::env::load().map_err(|errors| format!("{} environment errors", errors.len()))?;
+    let mut environment = vec![
+        ("HOME".to_owned(), home.to_string_lossy().into_owned()),
+        (
+            "HIDE_STATE_DIR".to_owned(),
+            state_dir.to_string_lossy().into_owned(),
+        ),
+    ];
+    let socket = env
+        .herdr_socket_path
+        .ok_or("this machine has no Herdr socket for its core (HERDR_SOCKET_PATH)")?;
+    environment.push(("HERDR_SOCKET_PATH".to_owned(), socket));
+    if let Some(bin) = env.herdr_bin_path {
+        environment.push((
+            "HERDR_BIN_PATH".to_owned(),
+            bin.to_string_lossy().into_owned(),
+        ));
+    }
+    Ok(environment)
 }
 
 /// Removes the login item of the core on `state_dir`, which ends its core.

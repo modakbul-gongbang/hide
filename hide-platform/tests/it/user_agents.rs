@@ -205,3 +205,123 @@ fn a_login_agent_restarts_after_a_kill_never_after_success_and_ends_when_removed
     });
     assert!(!UserAgents::plist(home, &label).exists());
 }
+
+/// A one-shot job is loaded from a list outside the login agents folder,
+/// so no later login loads it, and launchd never restarts it.
+#[cfg(unix)]
+#[test]
+fn a_one_shot_job_is_loaded_from_its_own_list_and_never_restarted() {
+    use hide_platform::user_agents::LoginAgent;
+    use std::sync::atomic::AtomicBool;
+    let directory = tempfile::tempdir().unwrap();
+    let command = directory.path().join("launchctl-fixture");
+    crate::stand_ins::program(
+        &command,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/calls\"\ncase \"$1\" in\n  print) [ -f \"$HOME/loaded\" ] && exit 0; exit 113 ;;\n  bootstrap) touch \"$HOME/loaded\" ;;\n  bootout) rm -f \"$HOME/loaded\" ;;\nesac\nexit 0\n",
+    );
+    let boundary = UserAgents::fixture(command, "isolated-domain".into());
+    let home = directory.path();
+    let stop = AtomicBool::new(false);
+    let list = home.join("job.plist");
+    let agent = LoginAgent {
+        label: "example.job",
+        program: Path::new("/usr/bin/true"),
+        arguments: &[],
+        environment: &[],
+        log: &home.join("job.log"),
+    };
+    boundary.start_once(&agent, &list, home, &stop).unwrap();
+    let written = std::fs::read_to_string(&list).unwrap();
+    assert!(
+        written.contains("<key>KeepAlive</key><false/>"),
+        "{written}"
+    );
+    assert!(!written.contains("ThrottleInterval"), "{written}");
+    #[cfg(target_os = "macos")]
+    {
+        let lint = std::process::Command::new("/usr/bin/plutil")
+            .arg("-lint")
+            .arg(&list)
+            .output()
+            .unwrap();
+        assert!(
+            lint.status.success(),
+            "{}",
+            String::from_utf8_lossy(&lint.stdout)
+        );
+    }
+    assert!(!UserAgents::plist(home, "example.job").exists());
+    boundary.unload("example.job", home, &stop).unwrap();
+    let calls = std::fs::read_to_string(home.join("calls")).unwrap();
+    let changes: Vec<&str> = calls
+        .lines()
+        .filter(|call| !call.starts_with("print "))
+        .collect();
+    assert_eq!(
+        changes,
+        [
+            format!("bootstrap isolated-domain {}", list.display()).as_str(),
+            "bootout isolated-domain/example.job",
+        ]
+    );
+}
+
+/// The real launchd of a disposable macOS runner (PRD core-host-node-move
+/// B3): a one-shot job runs once in the GUI session, is not started again
+/// after it fails, and is gone when unloaded. It refuses to run anywhere
+/// but a hosted CI runner, like the login agent's test.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "real launchd: only on a disposable macOS CI runner"]
+fn a_one_shot_job_runs_once_in_the_gui_session_even_when_it_fails() {
+    use hide_platform::user_agents::LoginAgent;
+    use std::sync::atomic::AtomicBool;
+    use std::time::{Duration, Instant};
+    assert!(
+        std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
+            && std::env::var("RUNNER_ENVIRONMENT").as_deref() == Ok("github-hosted"),
+        "this test reaches the account's real launchd; it runs only on a hosted CI runner"
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path();
+    let program = home.join("job");
+    // Records each start and fails, which a login agent would restart.
+    crate::stand_ins::program(&program, "#!/bin/sh\necho $$ >> \"$HOME/starts\"\nexit 3\n");
+    let label = format!("dev.withhide.contract.once.{}", std::process::id());
+    let home_value = home.to_string_lossy().into_owned();
+    let environment = [("HOME", home_value.as_str())];
+    let agent = LoginAgent {
+        label: &label,
+        program: &program,
+        arguments: &[],
+        environment: &environment,
+        log: &home.join("job.log"),
+    };
+    let agents = UserAgents::current();
+    let stop = AtomicBool::new(false);
+    let starts = || {
+        std::fs::read_to_string(home.join("starts"))
+            .unwrap_or_default()
+            .lines()
+            .count()
+    };
+    agents
+        .start_once(&agent, &home.join("job.plist"), home, &stop)
+        .unwrap();
+    let ran = std::panic::catch_unwind(|| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while starts() == 0 {
+            assert!(Instant::now() < deadline, "the job never ran");
+            #[allow(clippy::disallowed_methods)] // a bounded poll of another process
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        #[allow(clippy::disallowed_methods)] // past launchd's ten-second throttle
+        std::thread::sleep(Duration::from_secs(15));
+        assert_eq!(starts(), 1, "launchd started a one-shot job again");
+    });
+    let unloaded = agents.unload(&label, home, &stop);
+    ran.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    unloaded.unwrap();
+    assert!(!agents.is_loaded(&label, home, &stop).unwrap());
+    assert!(!UserAgents::plist(home, &label).exists());
+}
