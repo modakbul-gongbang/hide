@@ -1143,8 +1143,14 @@ fn open(env: &Env) -> Result<(), String> {
 }
 
 fn connect_json(env: &Env) -> Result<(), String> {
-    let (line, result) = match connect(env) {
-        Ok(state) => (attached_json(&state, "ok"), Ok(())),
+    let (line, result) = match connect(env).map(|state| attached_json(&state, "ok")) {
+        Ok(Ok(line)) => (line, Ok(())),
+        // The daemon is up and its health did not answer, so which machine
+        // its screens run on is unknown: no address is handed out.
+        Ok(Err(detail)) => (
+            serde_json::json!({"ok": false, "reason": "no_response", "detail": detail}),
+            Err(format!("no_response: {detail}")),
+        ),
         Err(error) => (
             match &error {
                 ConnectError::StateRefused { file, .. } => serde_json::json!({
@@ -1182,7 +1188,7 @@ fn needed_keys(kind: &CommandKind) -> Option<&'static [&'static str]> {
 
 fn status_json(state_dir: &Path) -> Result<(), String> {
     let line = match healthy_daemon_in(state_dir).map(|(state, _)| state) {
-        Some(state) => attached_json(&state, "running"),
+        Some(state) => attached_json(&state, "running")?,
         None => serde_json::json!({ "running": false }),
     };
     println!("{line}");
@@ -1191,31 +1197,34 @@ fn status_json(state_dir: &Path) -> Result<(), String> {
 
 /// A live daemon as a host loads it. The URL carries the token in its hash,
 /// exactly as `open` hands it to a browser.
-fn attached_json(state: &DaemonState, flag: &str) -> serde_json::Value {
-    serde_json::json!({
+fn attached_json(state: &DaemonState, flag: &str) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({
         flag: true,
-        "url": daemon_url(state),
+        "url": daemon_url(state)?,
         "port": state.port,
         "pid": state.pid,
-    })
+    }))
 }
 
-fn daemon_url(state: &DaemonState) -> String {
+fn daemon_url(state: &DaemonState) -> Result<String, String> {
     let url = format!("http://127.0.0.1:{}/#token={}", state.port, state.token);
-    match screen_node(state) {
+    Ok(match screen_node(state)? {
         Some(node) => format!("{url}&node={node}"),
         None => url,
-    }
+    })
 }
 
 /// The machine a node-role daemon's screens run on, which the page reads
 /// from its hash to tell this machine's panes and checkouts from the
 /// core's (PRD core-host-node-remote-core B13); `None` for a daemon that is
-/// its own core, whose screens' machine is the core's.
-fn screen_node(state: &DaemonState) -> Option<String> {
-    let health = health_json(state.port, HEALTH_REQUEST).ok()?;
+/// its own core, whose screens' machine is the core's. A health that does
+/// not answer, or a node id this build does not take, is an error: a node's
+/// screen opened as the core's would draw the node's panes as the core's.
+fn screen_node(state: &DaemonState) -> Result<Option<String>, String> {
+    let health = health_json(state.port, HEALTH_REQUEST)
+        .map_err(|error| format!("the daemon's health did not answer: {error}"))?;
     if health["role"] != "node" {
-        return None;
+        return Ok(None);
     }
     health["node"]
         .as_str()
@@ -1226,7 +1235,8 @@ fn screen_node(state: &DaemonState) -> Option<String> {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         })
-        .map(str::to_owned)
+        .map(|node| Some(node.to_owned()))
+        .ok_or_else(|| "the node daemon names a machine this build does not take".to_owned())
 }
 
 fn status(state_dir: &Path, idle_secs: u64) -> Result<(), String> {
@@ -1571,7 +1581,7 @@ fn health_json(port: u16, timeout: Duration) -> Result<serde_json::Value, String
 }
 
 fn open_browser(state: &DaemonState) -> Result<(), String> {
-    let url = daemon_url(state);
+    let url = daemon_url(state)?;
     Command::new("/usr/bin/open")
         .arg(&url)
         .status()
@@ -1583,6 +1593,27 @@ fn open_browser(state: &DaemonState) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A daemon whose health does not answer is not read as its own core:
+    /// its address is not handed out without the machine its screens run on.
+    #[test]
+    fn a_daemon_whose_health_does_not_answer_gets_no_address() {
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let state = DaemonState {
+            pid: 1,
+            port,
+            token: "t".to_owned(),
+            socket: None,
+            started_at: String::new(),
+            pid_started: None,
+        };
+        let refused = daemon_url(&state).expect_err("a probe that failed reads as a core");
+        assert!(refused.contains("did not answer"), "{refused}");
+    }
 
     #[test]
     fn a_refusal_is_read_only_from_the_daemon_this_start_spawned() {
@@ -1861,24 +1892,55 @@ mod tests {
         }
     }
 
+    /// A loopback daemon whose `/health` answers `body` once per request.
+    fn answering_health(body: &'static str, requests: usize) -> u16 {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = server.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for _ in 0..requests {
+                let (mut stream, _) = server.accept().unwrap();
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        port
+    }
+
     #[test]
-    fn attached_json_carries_the_token_url() {
-        let state = DaemonState {
+    fn attached_json_carries_the_token_url_and_a_node_s_machine() {
+        let state = |port| DaemonState {
             pid: 42,
-            port: 7001,
+            port,
             token: "abc".into(),
             socket: None,
             started_at: "now".into(),
             pid_started: None,
         };
+        let core = answering_health(r#"{"role":"core"}"#, 1);
         assert_eq!(
-            attached_json(&state, "ok"),
+            attached_json(&state(core), "ok").unwrap(),
             serde_json::json!({
                 "ok": true,
-                "url": "http://127.0.0.1:7001/#token=abc",
-                "port": 7001,
+                "url": format!("http://127.0.0.1:{core}/#token=abc"),
+                "port": core,
                 "pid": 42,
             })
+        );
+        let node = answering_health(r#"{"role":"node","node":"mac-1"}"#, 1);
+        assert_eq!(
+            daemon_url(&state(node)).unwrap(),
+            format!("http://127.0.0.1:{node}/#token=abc&node=mac-1")
+        );
+        let odd = answering_health(r#"{"role":"node","node":"mac 1&x=y"}"#, 1);
+        assert!(
+            daemon_url(&state(odd)).is_err(),
+            "a node id the filter refuses"
         );
     }
 
