@@ -780,7 +780,9 @@ impl Runtime {
             views_calls: store.views_calls,
             resumed: Some(key) == store.resumable.as_ref(),
             layout: self.view_layout_snapshot(key, &view.layout),
-            agent_layout: self.agent_layout_snapshot(key, &view.agent_layout),
+            agent_layout: self
+                .arranges_agent_areas(&key.0)
+                .then(|| self.agent_layout_snapshot(key, &view.agent_layout)),
         });
         self.snapshot.workspace_view = published;
         // The one global panel every existing reader gates on (the Changes

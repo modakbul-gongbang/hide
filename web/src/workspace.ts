@@ -36,7 +36,8 @@ export type WorkspaceView = {
   resumed?: boolean;
   /** The View areas (S7); absent only from a core that predates them. */
   layout?: ViewLayoutSnapshot;
-  agent_layout?: import("./agentLayout").AgentLayout;
+  /** Null on a device this core dials, whose Herdr shows one tab. */
+  agent_layout?: import("./agentLayout").AgentLayout | null;
 };
 
 /** The two columns beside Agent Views, left to right. */

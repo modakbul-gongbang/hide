@@ -244,7 +244,10 @@ pub struct WorkspaceViewSnapshot {
     /// (D-11).
     pub resumed: bool,
     pub layout: ViewLayoutSnapshot,
-    pub agent_layout: AgentLayoutSnapshot,
+    /// The Agent areas, for a Workspace whose tabs the core arranges (this
+    /// machine's and a node's that dialed in); `None` on a device this core
+    /// dials, whose Herdr shows one tab.
+    pub agent_layout: Option<AgentLayoutSnapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

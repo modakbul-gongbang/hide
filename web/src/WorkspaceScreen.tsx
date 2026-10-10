@@ -5,7 +5,7 @@ import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { RemotePaneCanvas } from "./PaneGrid";
-import { remoteView } from "./remote";
+import { remoteTabView, remoteView } from "./remote";
 import { holdShellDrag } from "./shellDrag";
 import { canRetryDevice, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type Checkout } from "./snapshot";
@@ -516,7 +516,7 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
           ) : null}
         </div>
       )}
-      <AgentAreas checkout={view.checkout} deviceId={device.id} actions={actions} remoteBody={<RemotePaneCanvas view={view} connected={connected} actions={actions} />} />
+      <AgentAreas checkout={view.checkout} deviceId={device.id} actions={actions} remoteBody={(tabId) => <RemotePaneCanvas view={session ? remoteTabView(session, view, tabId) : view} connected={connected} actions={actions} />} />
     </>
   );
 }

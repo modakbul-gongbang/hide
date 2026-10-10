@@ -55,6 +55,8 @@ mod lineage;
 mod links;
 #[path = "tests/memory.rs"]
 mod memory;
+#[path = "tests/node_agent_areas.rs"]
+mod node_agent_areas;
 #[path = "tests/operator_focus.rs"]
 mod operator_focus;
 mod pane_geometry;

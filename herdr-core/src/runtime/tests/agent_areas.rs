@@ -289,6 +289,8 @@ fn authoritative_overflow_waits_without_hidden_focus_and_admits_when_a_slot_open
             .as_ref()
             .unwrap()
             .agent_layout
+            .as_ref()
+            .expect("this machine's Agent areas")
             .waiting,
         1
     );
@@ -960,6 +962,8 @@ fn drawn(runtime: &mut Runtime) -> Vec<(Option<String>, Vec<String>)> {
             .as_ref()
             .expect("the front Workspace's view")
             .agent_layout
+            .as_ref()
+            .expect("this machine's Agent areas")
             .root,
         &mut areas,
     );

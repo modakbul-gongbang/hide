@@ -13,15 +13,15 @@ use crate::device_catalog::{self, DeviceFacts, Fact};
 
 const TARGET: &str = "mini";
 
-struct Tree {
+pub(super) struct Tree {
     _dir: tempfile::TempDir,
-    main: String,
+    pub(super) main: String,
     linked: String,
     other: String,
 }
 
 /// A repository with a linked worktree, and a plain folder beside it.
-fn tree() -> Tree {
+pub(super) fn tree() -> Tree {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let main = root.join("main");
@@ -58,7 +58,7 @@ fn tree() -> Tree {
 
 /// One Herdr workspace as the session projection reports it: one row, one
 /// checkout, a tab per (id, directory).
-fn herdr_workspace(
+pub(super) fn herdr_workspace(
     target: &str,
     wid: &str,
     path: &str,
@@ -90,7 +90,7 @@ fn herdr_workspace(
     workspace
 }
 
-fn session(workspaces: Vec<WorkspaceSnapshot>) -> RemoteSessionSnapshot {
+pub(super) fn session(workspaces: Vec<WorkspaceSnapshot>) -> RemoteSessionSnapshot {
     RemoteSessionSnapshot {
         active_tab_ids: workspaces
             .iter()
@@ -907,7 +907,7 @@ fn a_helper_attempt_from_before_a_removal_cannot_settle_the_new_connection() {
     );
 }
 
-fn dispatch(runtime: &mut Runtime, kind: &str, payload: serde_json::Value) {
+pub(super) fn dispatch(runtime: &mut Runtime, kind: &str, payload: serde_json::Value) {
     let event =
         serde_json::json!({"schema_version": SCHEMA_VERSION, "kind": kind, "payload": payload});
     runtime.dispatch_json(&serde_json::to_vec(&event).unwrap());
@@ -1177,8 +1177,8 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
 
 /// A Herdr socket that records each request and answers none, so a test sees
 /// exactly what a device's Herdr was asked.
-struct RecordingHerdr {
-    requests: Arc<Mutex<Vec<serde_json::Value>>>,
+pub(super) struct RecordingHerdr {
+    pub(super) requests: Arc<Mutex<Vec<serde_json::Value>>>,
 }
 
 impl hide_herdr_client::ApiConnector for RecordingHerdr {
@@ -1992,7 +1992,10 @@ fn recording_device(runtime: &mut Runtime) -> Arc<Mutex<Vec<serde_json::Value>>>
 }
 
 #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
-fn next_request(requests: &Mutex<Vec<serde_json::Value>>, seen: usize) -> serde_json::Value {
+pub(super) fn next_request(
+    requests: &Mutex<Vec<serde_json::Value>>,
+    seen: usize,
+) -> serde_json::Value {
     let deadline = Instant::now() + Duration::from_secs(5);
     while requests.lock().unwrap().len() <= seen {
         assert!(
@@ -2329,7 +2332,7 @@ fn a_device_tab_hide_created_stays_in_its_folder_while_its_pane_reports_the_birt
     assert!(runtime.created_device_tabs.is_empty());
 }
 
-fn connected_status(target: &str) -> RemoteStatusSnapshot {
+pub(super) fn connected_status(target: &str) -> RemoteStatusSnapshot {
     RemoteStatusSnapshot {
         target_id: target.to_owned(),
         state: "connected".to_owned(),

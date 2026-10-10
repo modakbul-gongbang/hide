@@ -1849,10 +1849,12 @@ impl Runtime {
                 }
             }
         }
+        let shown_tabs = self.node_shown_agent_tabs(target_id);
         let pane_sets = fetched.as_ref().ok().map(|session| {
             remote_terminal_pane_sets(
                 session,
                 self.snapshot.navigator.focused_device_id.as_deref() == Some(target_id),
+                &shown_tabs,
             )
         });
         // The session is kept as Herdr sent it except for the cwds of tabs Hide
@@ -1988,6 +1990,9 @@ impl Runtime {
             changed = true;
         }
         changed |= self.refresh_device_snapshots();
+        if observed_session.is_some() {
+            self.reconcile_node_agent_topology(target_id);
+        }
         if let Some((live_pane_ids, active_pane_ids)) = pane_sets {
             changed |=
                 self.reconcile_remote_terminal_panes(target_id, &live_pane_ids, &active_pane_ids);

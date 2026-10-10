@@ -157,7 +157,8 @@ Choosing a normal tab elsewhere activates its owning area.
 The tree, ratios, ordered membership and active selections return after restart.
 Missing tabs are removed, previously unplaced tabs append, and Reopen closed tab uses the former area when it survives, otherwise the active area.
 An older build may discard Agent layout state; returning starts with all current tabs in one area and keeps the View layout.
-SSH device Workspaces use the same component with one area, retain device Herdr reorder, and disable splitting with a local-Workspaces-only reason.
+A Workspace of an SSH device the core dials uses the same component with one area, retains device Herdr reorder, and disables splitting with the reason that SSH devices have no Agent groups.
+A machine that dials in to the core, which is what the machine the core moved off becomes, keeps its Agent areas as this machine does: its tree, splits and active area are the same before a move, after it and after the move back, its Herdr shows the tab of the area in use, and the panes of every area's tab are live.
 
 Closing a primary Herdr workspace's last tab or last pane while a linked worktree remains first creates a shell at the checkout root in the same area and position.
 That tab stays in its area, marked closing, until Herdr confirms the close, so the area is never empty while the shell is made.
@@ -201,7 +202,7 @@ When the front of a View area changes, the active tab remembers the new front.
 The View that went behind when another tab came forward stays in the strip, one click away, and choosing it is that tab's new bookmark.
 A bookmark points at a View, not at a file, so a preview View that another tab retargeted shows the new document when it returns; a pinned View is unaffected, and there is no preview View per tab.
 Bookmarks are saved with the Workspace and survive a restart, and a tab that closed or vanished loses its bookmark.
-Connected device Workspaces follow the same rules; they have one Agent area, so the visible tab changes when its Herdr's answer lands.
+Connected device Workspaces follow the same rules; the visible tab of a device changes when its Herdr's answer lands, and an SSH device has one Agent area.
 The phone never shows or changes a bookmark, and no badge, mark, notice or setting shows one.
 Web owner: none, the shell draws each area's front as the snapshot names it.
 Core owner: `herdr-core/src/runtime/view_bookmarks.rs` (`track_view_bookmarks`, `parked_caller`), `herdr-core/src/view_bookmarks.rs`, tests in `herdr-core/src/runtime/tests/view_bookmarks.rs` and `web/e2e/view-bookmarks.spec.ts`.

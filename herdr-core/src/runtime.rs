@@ -950,9 +950,13 @@ fn remote_pane_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&
         .filter(|pane_id| !pane_id.trim().is_empty())
 }
 
+/// Every pane `session` lists, and the panes on screen: while its machine
+/// is in front, the tab its Herdr has in front and `shown_tabs`, the tabs the
+/// Workspace's other Agent areas show.
 fn remote_terminal_pane_sets(
     session: &RemoteSessionSnapshot,
     target_is_active: bool,
+    shown_tabs: &[String],
 ) -> (HashSet<String>, HashSet<String>) {
     let live_pane_ids = session
         .workspaces
@@ -972,16 +976,16 @@ fn remote_terminal_pane_sets(
             .and_then(|checkout_id| session.active_tab_ids.get(checkout_id))
             .map(String::as_str)
     });
-    let active_tab = active_tab_id.and_then(|tab_id| {
-        session
-            .workspaces
-            .iter()
-            .flat_map(|workspace| workspace.checkouts.iter())
-            .flat_map(|checkout| checkout.tabs.iter())
-            .find(|tab| tab.id.as_deref() == Some(tab_id))
-    });
-    let active_pane_ids = active_tab
-        .into_iter()
+    let active_pane_ids = session
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.checkouts.iter())
+        .flat_map(|checkout| checkout.tabs.iter())
+        .filter(|tab| {
+            tab.id.as_deref().is_some_and(|id| {
+                Some(id) == active_tab_id || shown_tabs.iter().any(|shown| shown == id)
+            })
+        })
         .flat_map(|tab| tab.panes.iter())
         .map(|pane| pane.id.clone())
         .collect();

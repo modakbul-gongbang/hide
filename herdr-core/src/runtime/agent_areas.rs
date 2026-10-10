@@ -47,7 +47,12 @@ impl Runtime {
         key: &WorkspaceKey,
         topology: &[(String, bool)],
     ) -> Result<bool, LayoutError> {
-        let reserved = self.pending_agent_admissions(&key.1);
+        // Only this machine's tabs are created with a claim on their place.
+        let reserved = if key.0 == self.node.as_str() {
+            self.pending_agent_admissions(&key.1)
+        } else {
+            0
+        };
         let Some(store) = self.workspace_views.as_mut() else {
             return Ok(false);
         };
@@ -316,10 +321,10 @@ impl Runtime {
         if !self.area_workspace_is_current(&key, "agent") {
             return true;
         }
-        if key.0 != self.node.as_str() || self.workspace_views.is_none() {
+        if !self.arranges_agent_areas(&key.0) || self.workspace_views.is_none() {
             self.set_error(
                 "agent_layout.unsupported",
-                "Agent groups are available in local Workspaces",
+                "Agent groups are not available on SSH devices",
                 false,
             );
             return true;
@@ -400,6 +405,15 @@ impl Runtime {
         if changed {
             self.persist_workspace_views();
         }
+        if key.0 != self.node.as_str() {
+            // A node's Herdr shows the tab its keyboard is on, so the active
+            // area's tab is asked of it; the areas beside it attach now.
+            if !resize && let Some(tab_id) = tab {
+                self.focus_node_tab(&key.0, tab_id, stamp);
+            }
+            self.reconcile_remote_terminal_selection();
+            return changed;
+        }
         if !resize
             && let Some(tab_id) = tab
             && let Some((workspace_id, checkout_id)) = self
@@ -418,16 +432,159 @@ impl Runtime {
         changed
     }
 
+    /// Whether `device`'s Workspaces arrange their tabs in Agent areas: this
+    /// machine's, and a node that dialed in, whose Workspaces the core
+    /// arranged as its own before the core moved off that machine (PRD
+    /// core-host-node-move D-29). A device this core dials shows the one tab
+    /// its Herdr has in front.
+    pub(super) fn arranges_agent_areas(&self, device: &str) -> bool {
+        device == self.node.as_str() || self.link_origin(device) == Some(&LinkOrigin::Inbound)
+    }
+
+    /// Asks a node's Herdr to bring `tab_id` forward, unless it already has.
+    fn focus_node_tab(&mut self, device: &str, tab_id: String, stamp: u64) {
+        let in_front = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == device)
+            .and_then(|status| status.session.as_ref())
+            .and_then(|session| session.focused_tab_id.as_deref())
+            == Some(tab_id.as_str());
+        if in_front {
+            return;
+        }
+        self.request_remote_control(RemoteControlPayload {
+            target_id: device.to_owned(),
+            request_id: format!("agent-area:{stamp}:{tab_id}"),
+            report_pane_focus_outcome: false,
+            focus_device: false,
+            request: RemoteControlRequest::FocusTab { tab_id },
+        });
+    }
+
+    /// The tab the front Workspace shows and whether it is delegated: Hide's
+    /// choice on this machine, the node Herdr's own on a node.
+    fn front_visible_tab(&self, key: &WorkspaceKey) -> Option<(String, bool)> {
+        if key.0 == self.node.as_str() {
+            let tab_id = self.focused_visible_tab_id()?;
+            let delegated = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .flat_map(|w| &w.checkouts)
+                .filter(|c| c.path == key.1)
+                .flat_map(|c| &c.tabs)
+                .find(|tab| tab.id.as_deref() == Some(&tab_id))?
+                .delegated;
+            return Some((tab_id, delegated));
+        }
+        let session = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == key.0)?
+            .session
+            .as_ref()?;
+        let checkout = session
+            .workspaces
+            .iter()
+            .flat_map(|w| &w.checkouts)
+            .find(|c| c.path == key.1)?;
+        let tab_id = session
+            .focused_tab_id
+            .as_ref()
+            .or_else(|| session.active_tab_ids.get(&checkout.id))?;
+        let delegated = checkout
+            .tabs
+            .iter()
+            .find(|tab| tab.id.as_ref() == Some(tab_id))?
+            .delegated;
+        Some((tab_id.clone(), delegated))
+    }
+
+    /// The tabs a node's front Workspace shows in its Agent areas, whose
+    /// panes attach as the tab its Herdr has in front does; none while
+    /// another machine is in front.
+    pub(super) fn node_shown_agent_tabs(&self, device: &str) -> Vec<String> {
+        if device == self.node.as_str() || !self.arranges_agent_areas(device) {
+            return Vec::new();
+        }
+        self.front_workspace_key()
+            .filter(|key| key.0 == device)
+            .and_then(|key| {
+                self.agent_layout_of(&key)
+                    .map(|layout| self.shown_agent_layout(&key, layout).shown())
+            })
+            .unwrap_or_default()
+    }
+
+    /// Takes a node's tabs as they stand into its Workspaces' Agent areas,
+    /// as a local session does for this machine's (`reconcile_agent_topology`).
+    /// A checkout the node lists with no tab is left alone, like an answer
+    /// that has not arrived, so a startup placeholder cannot erase the saved
+    /// tree.
+    pub(super) fn reconcile_node_agent_topology(&mut self, device: &str) {
+        if device == self.node.as_str()
+            || !self.arranges_agent_areas(device)
+            || self.workspace_views.is_none()
+        {
+            return;
+        }
+        let Some(session) = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == device)
+            .and_then(|status| status.session.as_ref())
+        else {
+            return;
+        };
+        let topologies = session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .filter(|checkout| !checkout.tabs.is_empty())
+            .map(|checkout| {
+                (
+                    (device.to_owned(), checkout.path.clone()),
+                    checkout
+                        .tabs
+                        .iter()
+                        .filter_map(|tab| Some((tab.id.clone()?, tab.delegated)))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut changed = false;
+        for (key, topology) in topologies {
+            match self.reconcile_agent_topology(&key, &topology) {
+                Ok(updated) => changed |= updated,
+                Err(error) => self.push_diagnostic(
+                    "agent_layout.reconcile_refused",
+                    format!("Node {device} placement for {}: {error:?}", key.1),
+                ),
+            }
+        }
+        if changed {
+            self.persist_workspace_views();
+        }
+    }
+
     /// A committed pane/tab selection finds its owning area; merely drawing
     /// another live canvas never enters this path or marks its agents read.
     pub(super) fn sync_agent_selection(&mut self) {
         let Some(key) = self
             .front_workspace_key()
-            .filter(|key| key.0 == self.node.as_str())
+            .filter(|key| self.arranges_agent_areas(&key.0))
         else {
             return;
         };
-        let Some(tab_id) = self.focused_visible_tab_id() else {
+        let Some((tab_id, delegated)) = self.front_visible_tab(&key) else {
             return;
         };
         let Some(layout) = self.agent_layout_of(&key) else {
@@ -436,19 +593,6 @@ impl Runtime {
         if layout.active() == Some(&tab_id) {
             return;
         }
-        let delegated = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .flat_map(|w| &w.checkouts)
-            .filter(|c| c.path == key.1)
-            .flat_map(|c| &c.tabs)
-            .find(|tab| tab.id.as_deref() == Some(&tab_id))
-            .map(|tab| tab.delegated);
-        let Some(delegated) = delegated else {
-            return;
-        };
         let layout = &mut self
             .workspace_views
             .as_mut()
@@ -467,6 +611,9 @@ impl Runtime {
             );
         } else {
             self.persist_workspace_views();
+            if key.0 != self.node.as_str() {
+                self.reconcile_remote_terminal_selection();
+            }
         }
     }
 

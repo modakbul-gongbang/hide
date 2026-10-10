@@ -111,7 +111,8 @@ export function numberedTarget(family: NumberedFamily, number: Digit, state: { r
   if (family === "tabs") {
     const checkout = stripCheckout(state.rest);
     const view = workspaceViewOf(state.rest);
-    const layout = !remoteContext(state.rest) && view?.device_id === localDeviceId(state.rest) && view.path === checkout?.path ? view.agent_layout : null;
+    const deviceId = remoteContext(state.rest)?.device.id ?? localDeviceId(state.rest);
+    const layout = view?.device_id === deviceId && view.path === checkout?.path ? (view.agent_layout ?? null) : null;
     return checkout ? (numberedTabs(checkout, layout).get(number) ?? null) : null;
   }
   return numberedAgents(agentListOrder(state, useUiStore.getState().raisedOpen)).get(number) ?? null;

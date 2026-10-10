@@ -158,6 +158,7 @@ impl Runtime {
         }
         if changed {
             self.refresh_agent_sessions();
+            self.reconcile_node_agent_topology(target);
             self.prune_device_view_bookmarks(target);
             self.repoint_device_editor_tabs(target);
             // A device Workspace in front waited for its catalog to bring

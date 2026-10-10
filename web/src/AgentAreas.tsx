@@ -20,7 +20,8 @@ import { useKeyboardOwner } from "./viewFocus";
 import { useInterfaceTranslation } from "./i18n/client";
 
 const SharedAgentTree = createAreaTree<AgentItem>("agent");
-export function AgentAreas({ checkout, actions, deviceId, remoteBody }: { checkout: Checkout; actions: Actions; deviceId?: string; remoteBody?: React.ReactNode }) {
+/** `remoteBody` draws a device tab's panes: the tab an area shows, or `null` for the one its Herdr has in front. */
+export function AgentAreas({ checkout, actions, deviceId, remoteBody }: { checkout: Checkout; actions: Actions; deviceId?: string; remoteBody?: (tabId: string | null) => React.ReactNode }) {
   const { t } = useInterfaceTranslation();
   const [renaming, setRenaming] = useState<string | null>(null);
   const saved = useShellStore((s) => workspaceViewOf(s.rest)?.agent_layout);
@@ -36,7 +37,11 @@ export function AgentAreas({ checkout, actions, deviceId, remoteBody }: { checko
     root: { area: { id: "a1", active: checkout.active_tab_id, displays: agentEntries(checkout).map((entry) => ({ id: entry.source_id })) } },
     active_area: "a1", canvases: {}, limits: { areas: 1, depth: 0, displays: 64 }, display_count: agentEntries(checkout).length,
   }), [checkout]);
-  const layout = remote ? remoteLayout : saved;
+  // A device this core dials shows the one tab its Herdr has in front; a
+  // node that dialed in arranges its tabs as this machine does, and the core
+  // publishes its Agent areas only then.
+  const single = remote && !saved;
+  const layout = single ? remoteLayout : saved;
   if (!layout) return <AreaEmpty state="agent-layout-missing" text={t("panes.agent.waiting")} />;
   const visiblePaneIds = areasOf(layout.root).flatMap(area => {
     const tabId = layout.canvases[area.id] ?? area.active;
@@ -60,7 +65,7 @@ export function AgentAreas({ checkout, actions, deviceId, remoteBody }: { checko
         })?.id ?? null : null
       : null,
     barAttributes: { "data-tab-bar": checkout.id, ...(remote ? { "data-remote-tab-bar": "true" } : {}) },
-    splitUnavailable: remote ? remoteGroupReason() : undefined,
+    splitUnavailable: single ? remoteGroupReason() : undefined,
     label: (item) => label(item.id),
     sameContent: (a, b) => a.id === b.id,
     shown: (area) => {
@@ -73,17 +78,17 @@ export function AgentAreas({ checkout, actions, deviceId, remoteBody }: { checko
     },
     body: (item, area) => <>
       {area.id === layout.active_area ? <><RelationStatus actions={actions} visiblePaneIds={visiblePaneIds} /><FindBar actions={actions} /></> : null}
-      {remote ? remoteBody : <PaneCanvas key={item.id} tab={checkout.tabs.find((tab) => tab.id === item.id) ?? null} actions={actions} />}
+      {remote ? remoteBody?.(single ? null : item.id) : <PaneCanvas key={item.id} tab={checkout.tabs.find((tab) => tab.id === item.id) ?? null} actions={actions} />}
     </>,
     empty: (area) => <AreaEmpty state="no-agent-tab" text={t("panes.agent.noTab")}><Button variant="secondary" onClick={() => actions.createTab(area.id)} data-empty-new-tab="true">{t("panes.area.newTab")}</Button></AreaEmpty>,
     floating: (item) => <span className="truncate">{label(item.id)}</span>,
-    menu: (id, geometry, sizes) => agentMenu({ workspace, remote, layout, geometry, sizes }, id),
+    menu: (id, geometry, sizes) => agentMenu({ workspace, remote: single, layout, geometry, sizes }, id),
     runMenu: (command, id) => command === "rename_tab" ? setRenaming(id) : actions.runAgentCommand(command as AgentCommand, id),
     onMenuCloseAutoFocus: (event) => { if (renaming) event.preventDefault(); },
-    focus: (id) => remote ? actions.focusTab(id) : actions.agentLayout({ action: "focus", tab_id: id }),
-    focusArea: (id) => { if (!remote) actions.agentLayout({ action: "focus_area", area_id: id }); },
+    focus: (id) => single ? actions.focusTab(id) : actions.agentLayout({ action: "focus", tab_id: id }),
+    focusArea: (id) => { if (!single) actions.agentLayout({ action: "focus_area", area_id: id }); },
     move: (id, areaId, index) => {
-      if (remote) {
+      if (single) {
         const entry = entries.find((row) => row.source_id === id);
         const other = entries.filter((row) => row.source_id !== id);
         const before = other[index];
@@ -98,7 +103,7 @@ export function AgentAreas({ checkout, actions, deviceId, remoteBody }: { checko
     newTabLabel: t("panes.agent.newTabNamed", { label: checkout.next_tab_label }),
     tabListLabel: t("panes.agent.tabList"), actionsLabel: t("panes.agent.tabActions"),
     newTabShortcut: commandLabel("new_tab"),
-    onDraw: (frame) => noteAreaFrame("agent", frame ? { ...frame, layout, workspace, remote } : null),
+    onDraw: (frame) => noteAreaFrame("agent", frame ? { ...frame, layout, workspace, remote: single } : null),
   };
   return <SharedAgentTree key={`${deviceId}\0${checkout.path}`} layout={layout} adapter={adapter} />;
 }
