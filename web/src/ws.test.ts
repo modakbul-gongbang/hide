@@ -117,3 +117,39 @@ it("a screen closed as fallen behind fails its read and reattaches at the first 
   stop();
   shell.close();
 });
+
+// Q12 H1: a revision counts only on the core that numbered it. A page names
+// the core of the daemon frame before the snapshot it applied, never one
+// announced on a socket that died before its snapshot came.
+it("a reconnect names the core its revision came from", async () => {
+  const shell = connectShell({ onChunks: () => {} });
+  const first = made(0);
+  first.open();
+  first.frame({ type: "daemon", payload: { core_instance: "aaaaaaaaaaaaaaaa" } });
+  first.frame({ type: "snapshot", payload: { revision: 5, rest: {} } });
+  first.closeWith(1012, "");
+  await Promise.resolve();
+  await vi.runOnlyPendingTimersAsync();
+
+  const second = made(1);
+  second.open();
+  expect(JSON.parse(second.sent[0] ?? "{}")).toMatchObject({ have_revision: 5, have_core: "aaaaaaaaaaaaaaaa" });
+  second.frame({ type: "daemon", payload: { core_instance: "bbbbbbbbbbbbbbbb" } });
+  second.closeWith(1012, "");
+  await Promise.resolve();
+  await vi.runOnlyPendingTimersAsync();
+
+  const third = made(2);
+  third.open();
+  expect(JSON.parse(third.sent[0] ?? "{}")).toMatchObject({ have_revision: 5, have_core: "aaaaaaaaaaaaaaaa" });
+  third.frame({ type: "daemon", payload: { core_instance: "bbbbbbbbbbbbbbbb" } });
+  third.frame({ type: "snapshot", payload: { revision: 2, rest: {} } });
+  third.closeWith(1012, "");
+  await Promise.resolve();
+  await vi.runOnlyPendingTimersAsync();
+
+  const fourth = made(3);
+  fourth.open();
+  expect(JSON.parse(fourth.sent[0] ?? "{}")).toMatchObject({ have_revision: 2, have_core: "bbbbbbbbbbbbbbbb" });
+  shell.close();
+});

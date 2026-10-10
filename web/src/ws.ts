@@ -36,6 +36,11 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
   let backoff = 500;
   let healthFails = 0;
   let revision = 0;
+  // The core that numbered `revision`, and the one the last daemon frame
+  // named: a revision counts only on the core that gave it, so the second
+  // becomes the first only when a snapshot or delta from it is applied.
+  let revisionCore: string | null = null;
+  let announcedCore: string | null = null;
   let terminalSequence: number | null = null;
   let terminalEpoch: string | null = null;
   let operatorFocusSequence = 0;
@@ -95,6 +100,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
           schema_version: 2,
           client_kind: hostKind() === "electron" ? "desktop" : "web",
           have_revision: revision,
+          have_core: revisionCore ?? undefined,
           // A client with no cursor names none and has its kept terminals
           // drawn again; a cursor resumes only on the hub its epoch names.
           have_terminal_sequence: terminalSequence ?? undefined,
@@ -116,6 +122,9 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       // state: the connection turns live only with the snapshot, because
       // everything keyed to "live" (buffer reconciliation, terminal views)
       // reads the snapshot that has not arrived yet.
+      if (frame.type === "daemon") {
+        announcedCore = (frame.payload as { core_instance?: string } | undefined)?.core_instance ?? null;
+      }
       if (frame.type === "daemon" || frame.type === "mobile") {
         useShellStore.getState().applyFrame(frame);
         return;
@@ -137,6 +146,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       }
       const chunks = useShellStore.getState().applyFrame(frame);
       revision = useShellStore.getState().revision;
+      if (frame.type === "snapshot" || frame.type === "delta") revisionCore = announcedCore;
       terminalSequence = useShellStore.getState().terminalSequence;
       terminalEpoch = useShellStore.getState().terminalEpoch;
       handlers.onChunks(chunks, frame.type === "snapshot");

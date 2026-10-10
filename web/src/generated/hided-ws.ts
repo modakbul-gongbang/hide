@@ -59,6 +59,10 @@ export interface Handshake {
   client_kind?: "web" | "desktop";
   have_revision?: number;
   /**
+   * The `core_instance` of the daemon frame that came before the snapshot `have_revision` was read from. A core started since (a move, a rollback or an update) answers a whole snapshot whatever `have_revision` says, since each core numbers its own revisions.
+   */
+  have_core?: string;
+  /**
    * The `terminal_sequence` of the last terminal frame a reconnecting client applied. With a delta and the `have_terminal_epoch` of the hub that gave it, it resumes every pane from there (a pane the hub's ring no longer reaches is drawn again from a full frame); a client that kept its terminals and names none, or names it without this hub's epoch, has every pane drawn again; a client given a whole snapshot ignores it.
    */
   have_terminal_sequence?: number;

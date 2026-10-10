@@ -70,6 +70,15 @@ fn host_name() -> Option<String> {
     hide_platform::host::name().ok()
 }
 
+/// A name for this start of the core role, drawn fresh each time, so a page
+/// that outlived it (a move, a rollback, an update) never applies a delta
+/// over state another core numbered.
+fn core_instance() -> String {
+    let mut instance = [0_u8; 8];
+    getrandom::getrandom(&mut instance).expect("getrandom");
+    hex::encode(instance)
+}
+
 fn find_ui_dir() -> Option<std::path::PathBuf> {
     if let Ok(dir) = std::env::var("HIDED_UI_DIR") {
         let path = std::path::PathBuf::from(dir);
@@ -522,6 +531,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
             "herdr_socket_path": env.herdr_socket_path.clone(),
             "keep_alive": env.keep_alive,
             "idle_secs": env.idle_secs,
+            "core_instance": core_instance(),
         })),
         mobile: Arc::clone(&mobile),
         relay_grants: Arc::clone(&relay_grants),

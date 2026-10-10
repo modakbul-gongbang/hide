@@ -23,6 +23,11 @@
         "schema_version": { "type": "integer", "const": 2 },
         "client_kind": { "type": "string", "enum": ["web", "desktop"] },
         "have_revision": { "type": "integer", "minimum": 0 },
+        "have_core": {
+          "description": "The `core_instance` of the daemon frame that came before the snapshot `have_revision` was read from. A core started since (a move, a rollback or an update) answers a whole snapshot whatever `have_revision` says, since each core numbers its own revisions.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
         "have_terminal_sequence": { "description": "The `terminal_sequence` of the last terminal frame a reconnecting client applied. With a delta and the `have_terminal_epoch` of the hub that gave it, it resumes every pane from there (a pane the hub's ring no longer reaches is drawn again from a full frame); a client that kept its terminals and names none, or names it without this hub's epoch, has every pane drawn again; a client given a whole snapshot ignores it.", "type": "integer", "minimum": 0 },
         "have_terminal_epoch": { "description": "The `terminal_epoch` of the terminal frame `have_terminal_sequence` came from. Each daemon's hub draws its own, so a page that outlived its daemon names an epoch the new hub does not have and is drawn again whole.", "type": "string", "pattern": "^[0-9a-f]{16}$" }
       }
@@ -154,7 +159,7 @@
       "description": "Payload of the daemon frame, sent once after a valid handshake and before the first snapshot: what the Settings General tab shows about the daemon. It never carries the token or environment values other than the paths named here; herdr_bin_path and herdr_socket_path are null when the daemon has none. host_id names this daemon host across restarts (`host-` and 32 hex digits, kept in the state directory's `host-id` file); the web shell files unsaved drafts under it, so a draft written against one Hide host is never opened by another that serves the same browser origin. host_name is the name of the machine the daemon runs on, which Settings names as the owner of every value the daemon stores; null when the system does not report one. The daemon also owns the core's one Settings observation flag: a client's `ai_settings` event with `observing` records only that connection's demand, the flag follows the first observer in and the last one out, and a connection that closes releases its demand.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["version", "schema_version", "pid", "host_id", "host_name", "started_at_unix", "state_dir", "core_state_path", "herdr_bin_path", "herdr_socket_path", "keep_alive", "idle_secs"],
+      "required": ["version", "schema_version", "pid", "host_id", "host_name", "started_at_unix", "state_dir", "core_state_path", "herdr_bin_path", "herdr_socket_path", "keep_alive", "idle_secs", "core_instance"],
       "properties": {
         "version": { "type": "string" },
         "schema_version": { "type": "integer", "const": 2 },
@@ -167,7 +172,12 @@
         "herdr_bin_path": { "type": ["string", "null"] },
         "herdr_socket_path": { "type": ["string", "null"] },
         "keep_alive": { "type": "boolean" },
-        "idle_secs": { "type": "integer" }
+        "idle_secs": { "type": "integer" },
+        "core_instance": {
+          "description": "Drawn fresh each time the core role starts; a client names it as `have_core` when it reconnects.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        }
       }
     },
     "directoryChanged": {

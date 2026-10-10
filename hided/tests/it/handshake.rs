@@ -446,6 +446,51 @@ async fn a_reconnect_resumes_from_the_client_cursor() {
     running.stop();
 }
 
+/// A revision counts only on the core that numbered it (PRD
+/// core-host-node-move Q12): a page that names another core, which a move,
+/// a rollback or an update replaced, is drawn whole even when its revision
+/// is one this core has.
+#[tokio::test]
+async fn a_revision_from_another_core_is_answered_with_a_whole_snapshot() {
+    let (_dir, running) = start().await;
+    let mut fresh = connect(running.port, None).await;
+    fresh.send(handshake(&running.token, 2)).await.unwrap();
+    let Some(Ok(Message::Text(daemon))) = fresh.next().await else {
+        panic!("expected the daemon frame");
+    };
+    let daemon: Value = serde_json::from_str(&daemon).unwrap();
+    let own = daemon["payload"]["core_instance"].as_str().unwrap().to_owned();
+    assert_eq!(own.len(), 16);
+    let mut cursor = first_frame(&mut fresh).await["payload"]["revision"]
+        .as_u64()
+        .unwrap();
+    let mut resume = async |core: &str, cursor: u64| {
+        let mut socket = connect(running.port, None).await;
+        let mut handshake = json!({"token": running.token, "schema_version": 2, "have_revision": cursor});
+        handshake["have_core"] = json!(core);
+        socket
+            .send(Message::Text(handshake.to_string().into()))
+            .await
+            .unwrap();
+        first_frame(&mut socket).await
+    };
+    // A starting daemon still publishes what its workers find, so the
+    // positive control waits for a quiet cursor first.
+    loop {
+        let delta = resume(&own, cursor).await;
+        assert_eq!(delta["type"], "delta", "this core's own cursor resumes");
+        let current = delta["payload"]["revision"].as_u64().unwrap();
+        if current == cursor {
+            break;
+        }
+        cursor = applied(&mut fresh, cursor, current).await;
+    }
+    let other = resume("0123456789abcdef", cursor).await;
+    assert_eq!(other["type"], "snapshot");
+    assert!(other["payload"]["rest"].is_object());
+    running.stop();
+}
+
 #[tokio::test]
 async fn the_daemon_exits_after_its_last_client_leaves() {
     let (dir, mut env) = test_env(false);

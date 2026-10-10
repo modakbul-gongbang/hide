@@ -133,6 +133,10 @@ pub(crate) struct Handshake {
     pub(crate) schema_version: u32,
     pub(crate) client_kind: Option<String>,
     pub(crate) have_revision: Option<u64>,
+    /// The `core_instance` of the daemon frame before the snapshot the
+    /// client's revision came from. A revision counts only on the core that
+    /// numbered it: a core moved, rolled back or updated numbers its own.
+    pub(crate) have_core: Option<String>,
     /// The last `terminal` frame's cursor the client applied, which resumes
     /// every pane's output from the terminal hub that gave it.
     pub(crate) have_terminal_sequence: Option<u64>,
@@ -793,7 +797,11 @@ async fn screen_loop(
     // A reconnecting client resumes from the cursor it last applied, so the
     // first frame carries only what changed while it was away; a fresh client
     // (cursor 0) gets the whole state.
-    let mut have_revision = handshake.have_revision.unwrap_or(0);
+    let own_core = state.daemon_info.get("core_instance").and_then(Value::as_str);
+    let mut have_revision = match handshake.have_core.as_deref() {
+        Some(core) if Some(core) != own_core => 0,
+        _ => handshake.have_revision.unwrap_or(0),
+    };
     let mut notify = state.core.notify.subscribe();
     // A change in a watched folder is announced on this socket beside the
     // snapshot stream; the client re-reads the one folder it names (B2).
