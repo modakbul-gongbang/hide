@@ -1248,9 +1248,6 @@ mod tests {
         );
     }
 
-    /// The port is probed for a dial that could not reach the core's
-    /// machine, whatever its text, and never for another failure whose text
-    /// happens to read the same.
     /// A screen opened while the link is down has drawn no core: the frame
     /// gives it the alias the node dials, and no machine name the core's
     /// hello has not given.
@@ -1269,6 +1266,9 @@ mod tests {
         assert_eq!(frame["payload"]["alias"], "mini");
     }
 
+    /// The port is probed for a dial that could not reach the core's
+    /// machine, whatever its text, and never for another failure whose text
+    /// happens to read the same.
     #[test]
     fn only_an_unreachable_dial_probes_the_core_machine_s_port() {
         let waiting = |reason| Phase::Waiting { reason };
