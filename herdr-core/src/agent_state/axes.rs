@@ -780,10 +780,21 @@ pub(crate) fn agent_blocked(agent: &SessionAgentPayload) -> bool {
 }
 
 /// The activity axis. A state Herdr does not name is reported as unknown
-/// rather than folded into idle (engineering rule 4).
+/// rather than folded into idle (engineering rule 4). A turn that just ended
+/// whose session read has not landed is not a stop yet: whether a background
+/// task will wake the agent is not known, and a row announced as finished
+/// there is taken back when the read lands (#902). It goes on as it was.
 pub(crate) fn agent_activity(agent: &SessionAgentPayload) -> AgentActivity {
     match agent.agent_status.as_deref() {
         Some("working") => AgentActivity::Working,
+        Some("idle") | Some("done")
+            if agent
+                .facts
+                .as_ref()
+                .is_some_and(|facts| facts.turn_end_unread) =>
+        {
+            AgentActivity::Working
+        }
         Some("idle") | Some("done") => AgentActivity::Stopped,
         _ => AgentActivity::Unknown,
     }
