@@ -21,7 +21,6 @@
       "max"
     ],
     "can_pick_model": true,
-    "sidebar_mark": "claude",
     "hook_kind": "hook"
   },
   {
@@ -43,7 +42,6 @@
       "xhigh"
     ],
     "can_pick_model": true,
-    "sidebar_mark": "codex",
     "hook_kind": "hook"
   },
   {
@@ -59,7 +57,6 @@
     "can_resume": true,
     "efforts": [],
     "can_pick_model": false,
-    "sidebar_mark": null,
     "hook_kind": "hook"
   },
   {
@@ -75,7 +72,6 @@
     "can_resume": true,
     "efforts": [],
     "can_pick_model": false,
-    "sidebar_mark": null,
     "hook_kind": "plugin"
   },
   {
@@ -91,7 +87,6 @@
     "can_resume": true,
     "efforts": [],
     "can_pick_model": false,
-    "sidebar_mark": null,
     "hook_kind": "extension"
   },
   {
@@ -107,7 +102,6 @@
     "can_resume": true,
     "efforts": [],
     "can_pick_model": false,
-    "sidebar_mark": null,
     "hook_kind": "extension"
   },
   {
@@ -123,7 +117,6 @@
     "can_resume": true,
     "efforts": [],
     "can_pick_model": false,
-    "sidebar_mark": null,
     "hook_kind": "hook"
   }
 ]

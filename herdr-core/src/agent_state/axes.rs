@@ -554,9 +554,20 @@ fn read_fingerprint(agent: &SidebarAgentSnapshot) -> PaneReadRecord {
     }
 }
 
+/// Whether a completion the row shows is one the operator has not seen.
+///
+/// A completion is news only when it appears. Herdr drops a finished pane
+/// from `done` to `idle` without moving its sequence when it marks the pane's
+/// tab seen, which can land after the operator's focus has left the pane; that
+/// is Herdr's bookkeeping, not an event the operator missed (#901).
+fn completion_is_news(record_completed: bool, current_completed: bool) -> bool {
+    current_completed && !record_completed
+}
+
 /// Whether a record still covers what the row shows now.
 ///
-/// The row's own fields have to match exactly. A descendant signal is news
+/// The row's own fields have to match exactly, except that a completion
+/// going away is not news (`completion_is_news`). A descendant signal is news
 /// only when it is missing from the record: a signal the record holds and
 /// the row no longer shows is a question answered or a finished child back
 /// at work, neither of which calls the operator (PRD B5, B6).
@@ -565,7 +576,7 @@ fn record_covers(record: &PaneReadRecord, current: &PaneReadRecord) -> bool {
         && record.session_id == current.session_id
         && record.demand == current.demand
         && record.activity == current.activity
-        && record.completed == current.completed
+        && !completion_is_news(record.completed, current.completed)
         && current
             .descendant_signals
             .is_subset(&record.descendant_signals)
@@ -601,7 +612,7 @@ pub fn reconcile_read_records(
             || !session_matches
             || record.demand != agent.demand
             || record.activity != agent.activity
-            || record.completed != agent.completed
+            || completion_is_news(record.completed, agent.completed)
         {
             continue;
         }
@@ -678,7 +689,9 @@ pub fn apply_read_state(
         }
         // A descendant signal that has gone away is dropped from the record
         // so the same descendant can be news again later; dropping never
-        // changes the read axis, because a subset stays a subset.
+        // changes the read axis, because a subset stays a subset. A completion
+        // that has gone away is dropped the same way, so a pane that reports
+        // done again at the same sequence is news again (#901).
         let Some(record) = records.get_mut(&agent.pane_id) else {
             continue;
         };
@@ -686,7 +699,11 @@ pub fn apply_read_state(
         record
             .descendant_signals
             .retain(|signal| agent.descendant_signals.contains(signal));
-        if record.descendant_signals.len() != before {
+        let completion_left = record.completed && !agent.completed;
+        if completion_left {
+            record.completed = false;
+        }
+        if completion_left || record.descendant_signals.len() != before {
             changes.push(ReadRecordChange {
                 pane_id: agent.pane_id.clone(),
                 record: record.clone(),
@@ -763,10 +780,21 @@ pub(crate) fn agent_blocked(agent: &SessionAgentPayload) -> bool {
 }
 
 /// The activity axis. A state Herdr does not name is reported as unknown
-/// rather than folded into idle (engineering rule 4).
+/// rather than folded into idle (engineering rule 4). A turn that just ended
+/// whose session read has not landed is not a stop yet: whether a background
+/// task will wake the agent is not known, and a row announced as finished
+/// there is taken back when the read lands (#902). It goes on as it was.
 pub(crate) fn agent_activity(agent: &SessionAgentPayload) -> AgentActivity {
     match agent.agent_status.as_deref() {
         Some("working") => AgentActivity::Working,
+        Some("idle") | Some("done")
+            if agent
+                .facts
+                .as_ref()
+                .is_some_and(|facts| facts.turn_end_unread) =>
+        {
+            AgentActivity::Working
+        }
         Some("idle") | Some("done") => AgentActivity::Stopped,
         _ => AgentActivity::Unknown,
     }

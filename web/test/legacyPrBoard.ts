@@ -1,8 +1,7 @@
 // Frozen PR board fixture rules from main 9f144877.
-import type { AgentRow, Workspace, Checkout, Task, PullRequest } from "../src/snapshot";
-import type { BoardRow, BoardProject, PrTone, ReadFailure } from "../src/projectBoard";
+import type { AgentRow, Workspace, Checkout, Task, PrState, PullRequest } from "../src/snapshot";
+import type { BoardRow, BoardProject, ReadFailure } from "../src/projectBoard";
 import type { MessageKey } from "../src/i18n/catalogs";
-import { prChip } from "../src/projectBoard";
 import { checkoutAgentRows } from "./legacyAgentTree";
 // --- pull requests (PRD overview-lenses-prs) -------------------------------------
 
@@ -34,7 +33,7 @@ export type PrRow = {
   number: number;
   title: string;
   url: string;
-  tone: PrTone;
+  state: PrState;
   group: PrGroup;
   pr: PullRequest;
   branch: string;
@@ -47,7 +46,6 @@ export type PrRow = {
   lineage: BoardRow[];
   /** An agent there finished and was not looked at yet: the yellow `Review` (D-48). */
   needsLook: boolean;
-  checks: "passing" | "failed" | "pending" | null;
   review: "review_required" | "changes_requested" | "approved" | null;
   /** When it last changed, or merged, for the time column. */
   at: number | null;
@@ -139,9 +137,8 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
     const agentsHere = agents.filter((agent) => panes.has(agent.pane_id) || made(agent)).sort((a, b) => PR_ATTENTION(a) - PR_ATTENTION(b));
     // Whose move it is stays the branch's: the maker may be at other work by now.
     const onBranch = agentsHere.filter((agent) => panes.has(agent.pane_id));
-    const chip = prChip(pr);
     const merged = pr.badge === "merged";
-    const checks = chip.checks;
+    const checks = pr.checks;
     const review = merged ? null : pr.review;
     const group: PrGroup = merged
       ? "merged"
@@ -157,7 +154,7 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
       number: pr.number,
       title: pr.title,
       url: pr.url,
-      tone: chip.tone,
+      state: pr.state,
       group,
       pr,
       branch,
@@ -166,7 +163,6 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
       agents: agentsHere,
       lineage: checkout ? prLineage(boardRows, agents) : [],
       needsLook: onBranch.some((agent) => agent.group === "done"),
-      checks,
       review,
       at: merged ? (pr.merged_at_unix_ms ?? null) : (pr.updated_at_unix_ms ?? null),
       delegate: group === "blocked",

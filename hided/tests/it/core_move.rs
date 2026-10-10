@@ -1591,16 +1591,15 @@ fn write_record(path: &std::path::Path, value: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Ends `fixture` by how `journey` went (`support::run::finish`), with each
+/// machine's core log on a failure.
 fn finish(mut fixture: Fixture, journey: Result<()>) -> Result<()> {
-    if let Err(error) = journey {
+    let journey = journey.map_err(|error| {
         let source = fixture.log_tail(&fixture.source);
         let target = fixture.log_tail(&fixture.target);
-        return Err(error.context(format!(
-            "source log:\n{source}\ntarget log:\n{target}\nrun kept at {}",
-            fixture.root.display()
-        )));
-    }
-    fixture.remove_run_dir()
+        error.context(format!("source log:\n{source}\ntarget log:\n{target}"))
+    });
+    crate::support::run::finish(&mut fixture, journey)
 }
 
 /// D-15(3) and D-29: what the operator arranged on each machine is the same

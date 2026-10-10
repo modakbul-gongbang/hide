@@ -155,7 +155,7 @@ export function prsTile(board: PrBoard, t: TFunction<"translation">): Tile {
   const counts = board.counts;
   const parts = [
     { key: "review", label: t("board.stage.review"), count: counts.review },
-    { key: "draft", label: t("overview.draft"), count: counts.draft },
+    { key: "draft", label: t("agentSessions.pr.draft"), count: counts.draft },
     { key: "look", label: t("overview.reviewFinishedAgent"), count: counts.look },
   ].filter((part) => part.count > 0);
   return {

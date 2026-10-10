@@ -129,6 +129,8 @@ test("the sidebar draws every project's pull request with no screen asking, and 
 
     const row = (branch: string) => page.locator(`[data-checkout][aria-label^="${branch}"]`);
     const glyph = (number: number) => page.locator(`[data-checkout-pr-glyph="${number}"]`);
+    /** The pull request's mark inside a checkout's glyph: its state, and `data-stale` once GitHub could not be read again. */
+    const mark = (number: number) => glyph(number).locator("[data-pr-mark]");
     /** A fresh page on the daemon: on the Workspace, the sidebar's Projects tab, and nothing else opened. */
     const attach = async (next: Daemon) => {
       const sent = countSent(page);
@@ -153,7 +155,7 @@ test("the sidebar draws every project's pull request with no screen asking, and 
       expect(sent.get("overview_refresh") ?? 0).toBe(0);
     };
 
-    // Start 1: GitHub answers. Both rows draw their lifecycle, fresh.
+    // Start 1: GitHub answers. Both rows draw their pull request's mark, fresh.
     daemon = await daemon.restart((stateDir) => {
       const file = path.join(stateDir, "core-state.json");
       const state = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
@@ -169,32 +171,36 @@ test("the sidebar draws every project's pull request with no screen asking, and 
       await fold.click();
       await expect(fold).toHaveAttribute("aria-expanded", "true");
     }
-    await expect(row("feature/alpha")).toHaveAttribute("data-checkout-kind", "pr_open", { timeout: 30_000 });
-    await expect(row("feature/bravo")).toHaveAttribute("data-checkout-kind", "pr_draft", { timeout: 30_000 });
-    await expect(glyph(41)).not.toHaveClass(/text-muted-foreground/);
+    await expect(row("feature/alpha")).toHaveAttribute("data-checkout-kind", "pull_request", { timeout: 30_000 });
+    await expect(mark(41)).toHaveAttribute("data-pr-mark", "mergeable");
+    await expect(mark(42)).toHaveAttribute("data-pr-mark", "draft");
+    await expect(mark(41)).not.toHaveAttribute("data-stale");
     await expect(await mergedGlyph()).toHaveAttribute("aria-label", "Open pull request #43");
-    await expect(glyph(43)).not.toHaveClass(/text-muted-foreground/);
+    await expect(mark(43)).toHaveAttribute("data-pr-mark", "merged");
+    await expect(mark(43)).not.toHaveAttribute("data-stale");
     nothingAsked(sent);
 
-    // Start 2: GitHub is unreachable. The previous run's answer is drawn and kept, muted.
+    // Start 2: GitHub is unreachable. The previous run's answer is drawn and kept, dimmed.
     fs.writeFileSync(gh.down, "");
     daemon = await daemon.restart();
     sent = await attach(daemon);
-    await expect(row("feature/alpha")).toHaveAttribute("data-checkout-kind", "pr_open", { timeout: 30_000 });
-    await expect(row("feature/bravo")).toHaveAttribute("data-checkout-kind", "pr_draft", { timeout: 30_000 });
-    await expect(glyph(41)).toHaveClass(/text-muted-foreground/);
-    await expect(glyph(42)).toHaveClass(/text-muted-foreground/);
+    await expect(mark(41)).toHaveAttribute("data-pr-mark", "mergeable", { timeout: 30_000 });
+    await expect(mark(42)).toHaveAttribute("data-pr-mark", "draft");
+    await expect(mark(41)).toHaveAttribute("data-stale", "true");
+    await expect(mark(42)).toHaveAttribute("data-stale", "true");
     // The merged one is drawn from the saved answer too: the checkout's head comes from Git's files, not from the slow worktree catalog.
-    await expect(await mergedGlyph()).toHaveClass(/text-muted-foreground/);
+    await mergedGlyph();
+    await expect(mark(43)).toHaveAttribute("data-stale", "true");
     nothingAsked(sent);
 
     // Start 3: GitHub is back. The core's own read replaces the stale answer.
     fs.rmSync(gh.down);
     daemon = await daemon.restart();
     sent = await attach(daemon);
-    await expect(glyph(41)).not.toHaveClass(/text-muted-foreground/, { timeout: 30_000 });
-    await expect(glyph(42)).not.toHaveClass(/text-muted-foreground/);
-    await expect(await mergedGlyph()).not.toHaveClass(/text-muted-foreground/);
+    await expect(mark(41)).not.toHaveAttribute("data-stale", "true", { timeout: 30_000 });
+    await expect(mark(42)).not.toHaveAttribute("data-stale");
+    await mergedGlyph();
+    await expect(mark(43)).not.toHaveAttribute("data-stale");
     nothingAsked(sent);
   } finally {
     daemon?.stop();

@@ -34,7 +34,7 @@
   "kit_check_failure": ["read_failed"],
   "kit_component_id": ["cli", "claude_code_hook", "codex_hook", "coordination_retirement"],
   "kit_component_state": ["installed", "outdated", "not_installed", "removed", "failed", "absent", "off"],
-  "kit_feature": ["skill", "guidance", "letters", "bell", "memory", "subagents", "spawn_guard", "herdr_integration", "sleep", "fork", "start", "titles"],
+  "kit_feature": ["skill", "guidance", "letters", "bell", "memory", "spawn_guard", "herdr_integration", "sleep", "fork", "start", "titles"],
   "link_file_state": ["present", "missing", "unknown"],
   "link_issue_source": ["closes", "hide"],
   "link_session_role": ["created", "worked"],
@@ -51,7 +51,7 @@
   "review_decision": ["review_required", "changes_requested", "approved"],
   "session_group": ["needs_you", "working", "done", "idle", "resolved"],
   "raise_verb": ["approval", "answer", "confirm", "draft"],
-  "pr_state": ["failed", "pending", "mergeable", "merged"],
+  "pr_state": ["failed", "pending", "mergeable", "draft", "merged", "closed"],
   "descendant_mark": ["raised", "working"],
   "right_panel_section": ["overview", "explorer", "changes", "agent_sessions", "sessions"],
   "strip_tab_kind": ["herdr", "file", "diff", "session", "memory"]

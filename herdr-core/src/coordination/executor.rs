@@ -161,6 +161,7 @@ fn record(
         project,
         actor: actor_for(agent, host.machine, host.on_node)?,
         ended: false,
+        forked: false,
     })
 }
 
@@ -336,6 +337,7 @@ pub(crate) fn register_code_owned(
         project: None,
         actor: actor.clone(),
         ended: false,
+        forked: false,
     };
     let registered = mutate(
         client,
@@ -996,7 +998,7 @@ pub(crate) fn link_fork(
         None,
         native_parent.agent.as_deref().ok_or("parent_unavailable")?,
     )?;
-    let child_record = record(
+    let mut child_record = record(
         &native_child,
         HostIdentity {
             machine: &actor.device_id,
@@ -1009,6 +1011,7 @@ pub(crate) fn link_fork(
         Some(parent_id),
         native_child.cwd.clone(),
     )?;
+    child_record.forked = true;
     let value = mutate(
         &client,
         &authority,
@@ -1141,6 +1144,7 @@ mod tests {
                         origin: None,
                         project: None,
                         ended: false,
+                        forked: false,
                         actor: actor.clone(),
                     },
                     check: false,
@@ -1365,6 +1369,7 @@ mod tests {
                 origin: None,
                 project: None,
                 ended: false,
+                forked: false,
                 actor: Actor {
                     pane_id: "sender".into(),
                     name: "sender".into(),
@@ -1461,6 +1466,7 @@ mod tests {
                 project: Some("/fixture/topic".into()),
                 actor: child_actor.clone(),
                 ended: false,
+                forked: false,
             };
             let child_id = super::super::apply(
                 &mut state,

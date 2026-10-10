@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 use super::remote_core::Herdr;
 use super::remote_delivery::renderer::Renderer;
 use super::remote_delivery::{Environment, Ssh, read, successful, wait_for};
+use super::run::Run;
 
 pub const SOURCE_NODE: &str = "fixture-move-source";
 pub const TARGET_NODE: &str = "fixture-move-target";
@@ -608,8 +609,14 @@ impl Fixture {
         let text = text.unwrap_or_else(|error| format!("no log at {}: {error}", path.display()));
         text.lines().rev().take(40).collect::<Vec<_>>().join("\n")
     }
+}
 
-    pub fn stop(&mut self) -> Result<()> {
+impl Run for Fixture {
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
+    fn stop(&mut self) -> Result<()> {
         if let Some(mut daemon) = self.daemon.take() {
             daemon.kill_tree()?;
             wait_for("the source's hided confirmed exit", || {
@@ -629,17 +636,14 @@ impl Fixture {
         Ok(())
     }
 
-    pub fn remove_run_dir(&mut self) -> Result<()> {
-        self.stop()?;
-        fs::remove_dir_all(&self.root)
-            .with_context(|| format!("remove {}", self.root.display()))?;
+    fn removed(&mut self) {
         self.removed = true;
-        Ok(())
     }
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        // `finish` confirmed every exit before it removed the folder.
         if self.removed {
             return;
         }

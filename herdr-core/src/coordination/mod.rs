@@ -2,6 +2,7 @@
 //! store is the sole writer; native I/O is performed by request workers.
 
 mod executor;
+pub(crate) mod hook_tokens;
 pub(crate) mod lineage;
 
 use crate::delivery::answer::{AgentView, Connection, RegisterCheck, Runtime};
@@ -89,6 +90,11 @@ pub struct AgentRecord {
     pub project: Option<String>,
     pub actor: Actor,
     pub ended: bool,
+    /// Made by Fork agent: the conversation is another execution's, resumed
+    /// as a new session. The registration owns the fact, so it follows the
+    /// registration to the pane that wakes it.
+    #[serde(default)]
+    pub forked: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -943,6 +949,7 @@ mod tests {
                 session: crate::wire::session_digest(session),
             },
             ended: false,
+            forked: false,
         }
     }
     fn register(ledger: &mut Ledger, record: AgentRecord, caller: &Actor) -> String {

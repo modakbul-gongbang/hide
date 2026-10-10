@@ -607,6 +607,7 @@ fn pr_board_keeps_branch_turn_separate_from_its_maker_and_tracks_issue_changes()
             badge: pr.badge,
             checks: pr.checks,
             review: pr.review,
+            is_draft: pr.is_draft,
             head_branch: pr.head_branch.clone(),
             closing_issues: pr.closing_issues.clone(),
             live: true,

@@ -40,6 +40,7 @@ import {coreMoveRows} from './pen-screens-core-move.mjs';
 import {diskCleanupRows} from './pen-screens-disk.mjs';
 import {factoryRows} from './pen-screens-factory.mjs';
 import {sessionScreens} from './pen-screens-sessions.mjs';
+import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
 
 const LOCAL_TOKEN = /^\$--[A-Za-z0-9_-]+$/;
 const THEMED_PROPS = ['fill', 'stroke'];
@@ -384,10 +385,16 @@ function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-wor
 // agent-tree's tree row (PRD agent-hierarchy-screens D-38), from the library's
 // Agent tree parts row master: the rails of each level above, the elbow from
 // the parent's chevron lane, the chevron (open, closed, or none), the marks,
-// the title, the own PR icon, a folded parent's descendant mark and the age;
+// the title, the own PR mark, a folded parent's descendant mark and the age;
 // a child on another machine adds its device line. `rails` says, per level
 // above the elbow, whether an ancestor's later sibling keeps a rail running.
-const PR_TREE = {failed: ['git-pull-request', '$--destructive'], pending: ['git-pull-request', '$--pr-pending'], mergeable: ['git-pull-request', '$--success'], merged: ['git-merge', '$--pr-merged']};
+const PR_TREE = Object.fromEntries(PR_STATES.map(([state, glyph, fill]) => [state, [glyph, fill]]));
+// The one PR mark (web/src/components/pr-mark.tsx), a ref of the library's
+// Agent tree parts master: the state's icon and colour, the number unless compact.
+function screenPrMark(id, {state, number, compact = false}) {
+  const [glyph, fill] = PR_TREE[state];
+  return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': compact ? {enabled: false} : {content: `#${number}`}});
+}
 function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', provider = 'claude', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, inset = 0, width = 268}) {
   const descendants = {
     ...markOverrides({dot: 'ath-row-dot', ring: 'ath-row-ring', glyph: 'ath-row-glyph'}, symbol, color),
@@ -400,7 +407,7 @@ function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground'
     'ath-row-elbow-v': {height: last ? 13 : 28},
     'ath-row-chev': chevron ? {enabled: true, icon: chevron === 'open' ? 'chevron-down' : 'chevron-right'} : {enabled: false},
     'ath-row-pr': pr ? {enabled: true} : {enabled: false},
-    ...(pr ? {'ath-row-pr/ath-pr-g': {icon: PR_TREE[pr][0], fill: PR_TREE[pr][1]}} : {}),
+    ...(pr ? {'ath-row-pr/ath-pr-g': {icon: PR_TREE[pr.state][0], fill: PR_TREE[pr.state][1]}, 'ath-row-pr/ath-pr-n': {content: `#${pr.number}`}} : {}),
     'ath-row-desc': mark ? {enabled: true} : {enabled: false},
     ...(mark ? {
       'ath-row-desc/ath-mark-bang': {enabled: mark.kind === 'raised'},
@@ -641,8 +648,8 @@ const HERDR_FACTS = [
 
 // -- the issue-first boards (TaskBoards.tsx) -------------------------------------
 
-const PR_TONE = {open: '$--pr-open', draft: '$--pr-draft', merged: '$--pr-merged', closed: '$--pr-closed'};
-const REVIEW_WORD = {review_required: ['리뷰 필요', '$--muted-foreground'], changes_requested: ['변경 요청', '$--warning'], approved: ['승인됨', '$--success']};
+// A change request is red as failed checks are (web/src/prMark.ts reviewWord).
+const REVIEW_WORD = {review_required: ['리뷰 필요', '$--muted-foreground'], changes_requested: ['변경 요청', '$--pr-failed'], approved: ['승인됨', '$--pr-mergeable']};
 const AGENT_MARK = {ask: ['?', '$--warning'], work: ['●', '$--agent-working'], done: ['✓', '$--success'], seen: ['○', '$--muted-foreground'], error: ['×', '$--destructive']};
 // A row the operator has to look at: its title in foreground, medium weight on the web.
 const ATTENTION = new Set(['ask', 'done', 'error']);
@@ -652,12 +659,15 @@ const ATTENTION = new Set(['ask', 'done', 'error']);
 // no library master draws a task card; a card's agent row is the library's
 // Sidebar agent row, as agent-row.tsx is on the web, and every chip, button,
 // keycap and toggle is a library ref.
-// A pull request's CI mark once read: passing, failed or still running
-// (web/src/TaskBoards.tsx ChecksMark); nothing before GitHub answers.
-function ciMark(tokens, id, checks) {
-  if (checks === 'passing') return icon(id, 'check', {size: 12, fill: '$--success'});
-  if (checks === 'failed') return icon(id, 'x', {size: 12, fill: '$--destructive'});
-  return checks === 'pending' ? screenStatusMark(tokens, id, '●', '$--muted-foreground') : null;
+// A pull request's mark with, while a reviewer asks for changes on an open
+// one, that one word in red (web/src/components/pr-mark.tsx PrChipMark); the
+// mark's colour says the rest, so no CI mark stands beside it.
+function prChipMark(id, {number, state, review}, caption) {
+  const changes = review === 'changes_requested' && state !== 'merged' && state !== 'closed';
+  return frame(id, `PR #${number}`, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+    screenPrMark(`${id}-b`, {state, number}),
+    ...(changes ? [caption(`${id}-rv`, REVIEW_WORD.changes_requested[0], REVIEW_WORD.changes_requested[1])] : []),
+  ]);
 }
 
 function issueBoardParts(tokens) {
@@ -686,17 +696,8 @@ function issueBoardParts(tokens) {
     ]);
   }
 
-  // The result (PrChipView): #n on an outline Badge in its lifecycle colour,
-  // the CI mark once read, and on a card the review GitHub asks for.
-  function prChip(id, {number, tone = 'open', checks, review}) {
-    const fill = PR_TONE[tone];
-    const ci = ciMark(tokens, `${id}-ci`, checks);
-    return frame(id, `PR #${number}`, {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-      themedXref(`${id}-b`, 'eHAjc', `#${number}`, BADGE_VARIANTS.outline.overrides, {xXuNa: {enabled: true, icon: 'git-pull-request', fill}, n8L5dm: {content: `#${number}`, fill}}),
-      ...(ci ? [ci] : []),
-      ...(review ? [caption(`${id}-rv`, REVIEW_WORD[review][0], REVIEW_WORD[review][1])] : []),
-    ]);
-  }
+  // The result (PrChipMark): the PR mark, and a change request's word.
+  const prChip = (id, pr) => prChipMark(id, pr, caption);
 
   // A card's agent row: the Sidebar agent row, spanning the card, with no fold
   // column (agent-row.tsx with onToggleTree null). A request keeps its warning
@@ -1107,29 +1108,15 @@ function graphParts(tokens) {
     ]);
   }
 
-  // The PR chip (B13, PullRequestChip): the outline badge in the PR's state
-  // colour with its number, then CI as ✓ / ✗ / ●, then `변경 요청` in warning.
-  function prChip(id, {number, tone = 'open', checks, review}) {
-    const fill = PR_TONE[tone];
-    const ci = ciMark(tokens, `${id}-ci`, checks);
-    return frame(id, 'PR chip', {
-      layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs'], height: g.headLine, cornerRadius: '$--radius-sm',
-      stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
-    }, [
-      icon(`${id}-g`, tone === 'merged' ? 'git-merge' : 'git-pull-request', {size: iconSmall, fill}),
-      caption(`${id}-n`, `#${number}`, fill, true),
-      ...(ci ? [ci] : []),
-      ...(review === 'changes_requested' ? [caption(`${id}-rv`, '변경 요청', '$--warning')] : []),
-    ]);
-  }
+  // The PR chip (B13, PullRequestChip): the PR mark, no border, and `변경 요청` in red.
+  const prChip = (id, pr) => prChipMark(id, pr, caption);
 
   // The head (B12, B15, B16): the glyph in the PR's colour and the mono
   // branch, the purpose, then the chips line; main's head the house and
   // `에이전트 N`. A merged box is dimmed and offers `정리`, always visible.
   function head(id, box) {
     const inner = g.boxWidth - 2 * sm;
-    const glyph = box.primary ? 'house' : box.cleanup ? 'git-merge' : box.pr ? 'git-pull-request' : 'git-branch';
-    const tone = box.cleanup ? '$--pr-merged' : box.pr ? PR_TONE[box.pr.tone ?? 'open'] : '$--muted-foreground';
+    const [glyph, tone] = box.primary ? ['house', '$--muted-foreground'] : box.cleanup ? PR_TREE.merged : box.pr ? PR_TREE[box.pr.state] : ['git-branch', '$--muted-foreground'];
     const glyphSize = num(tokens, '--size-checkout-icon');
     const chips = box.primary ? [caption(`${id}-agents`, `에이전트 ${box.agents}`, '$--muted-foreground', true)] : [
       ...(box.task ? [issueChip(`${id}-task`, box.task)] : []),
@@ -1270,7 +1257,7 @@ const ISSUE_192 = {task: gh(192), labels: [BUG], title: 'hided has no SIGTERM ha
   {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m'},
   {mark: 'work', title: '종료 경로 테스트 작성', age: '2m'},
 ]};
-const ISSUE_186 = {task: gh(186), title: 'Set the Projects sidebar’s type ladder, row heights and width', branch: '186-sidebar-typography', pr: {number: 208, checks: 'passing', review: 'review_required'}, needsYou: true, agents: [
+const ISSUE_186 = {task: gh(186), title: 'Set the Projects sidebar’s type ladder, row heights and width', branch: '186-sidebar-typography', pr: {number: 208, state: 'pending', checks: 'passing', review: 'review_required'}, needsYou: true, agents: [
   {mark: 'done', title: 'observer-sidebar-typography', line: 'Implementor가 PR #208 준비 완료', tone: 'news', age: '1m'},
   {mark: 'seen', title: '사이드바 타이포그래피 구현', age: '26m'},
 ]};
@@ -1349,7 +1336,7 @@ function buildMain(tokens) {
         ], {foot: [foldLine(`main-loose-${suffix}`, '이슈 없는 워크트리 5')]}),
         stageColumn(`main-review-${suffix}`, '리뷰', 2, [
           card('r1', {...ISSUE_186, project: 'herdr-ide'}),
-          card('r2', {task: gh(9), project: 'sasu', title: 'mailbox-decouple: move lineage tokens into the plugin', branch: '9-mailbox-decouple', pr: {number: 12, checks: 'pending', review: 'review_required'}}),
+          card('r2', {task: gh(9), project: 'sasu', title: 'mailbox-decouple: move lineage tokens into the plugin', branch: '9-mailbox-decouple', pr: {number: 12, state: 'pending', checks: 'pending', review: 'review_required'}}),
         ]),
         doneColumn(`main-done-${suffix}`, 19, [{name: 'herdr-ide', count: 12}, {name: 'sasu', count: 6}, {name: 'creator', count: 1}]),
       ]),
@@ -1389,7 +1376,6 @@ function prParts(tokens) {
   const numberWidth = num(tokens, '--size-pr-number');
   const branchMax = num(tokens, '--size-pr-branch-max');
   const indent = num(tokens, '--size-pr-indent');
-  const glyph = {open: 'git-pull-request', draft: 'git-pull-request-draft', merged: 'git-merge'};
 
   function prGroup(id, label, count, tone, rows, {folded = false} = {}) {
     return frame(id, label, {layout: 'vertical', gap: 0, width: 'fill_container'}, [
@@ -1403,12 +1389,10 @@ function prParts(tokens) {
   }
 
   function prRow(id, pr) {
-    const tone = pr.tone ?? 'open';
     const issue = pr.issue ? taskId(`${id}-issue`, pr.issue)
       : pr.hover && pr.linkable ? icon(`${id}-issue`, 'link-2', {size: 12, fill: '$--foreground'})
         : icon(`${id}-issue`, 'circle-dashed', {size: 12, fill: '$--muted-foreground'});
     const marks = (pr.agents ?? []).slice(0, 3).map((agent, index) => screenStatusMark(tokens, `${id}-m${index}`, AGENT_MARK[agent.mark][0], AGENT_MARK[agent.mark][1]));
-    const ci = ciMark(tokens, `${id}-ci`, pr.checks);
     const act = pr.hover === 'delegate' ? [screenButton(`${id}-take`, '맡기기', {variant: 'secondary', height: small, icon: 'play'})]
       : pr.hover === 'default' ? [screenIconButton(`${id}-gh`, 'external-link', {size: small}), screenIconButton(`${id}-more`, 'ellipsis', {size: small})]
         : [caption(`${id}-age`, pr.age, '$--muted-foreground', true)];
@@ -1418,8 +1402,7 @@ function prParts(tokens) {
       ...(pr.hover ? {fill: '$--accent'} : pr.open ? {fill: '$--secondary'} : {}),
     }, [
       icon(`${id}-fold`, pr.open ? 'chevron-down' : 'chevron-right', {size: 12, fill: '$--muted-foreground'}),
-      icon(`${id}-g`, glyph[tone], {size: num(tokens, '--size-pr-icon'), fill: PR_TONE[tone]}),
-      frame(`${id}-n`, 'Number', {layout: 'horizontal', width: numberWidth}, [caption(`${id}-nt`, `#${pr.number}`, '$--muted-foreground', true)]),
+      frame(`${id}-n`, 'PR mark', {layout: 'horizontal', width: numberWidth}, [screenPrMark(`${id}-mark`, pr)]),
       text(`${id}-t`, pr.title, {size: '$--text-subhead'}),
       issue,
       // The yellow `확인` (D-48): the outline Badge in the warning tone, as the web draws it.
@@ -1427,7 +1410,6 @@ function prParts(tokens) {
       spacer(`${id}-sp`),
       ...(marks.length ? [frame(`${id}-marks`, 'Agents', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, marks)] : []),
       caption(`${id}-br`, fitText(pr.branch, branchMax, 11, true), '$--muted-foreground', true),
-      frame(`${id}-cib`, 'Checks', {layout: 'horizontal', width: num(tokens, '--size-icon-sm')}, ci ? [ci] : []),
       frame(`${id}-rvb`, 'Review', {layout: 'horizontal', width: review, justifyContent: 'end'}, pr.review ? [caption(`${id}-rv`, REVIEW_WORD[pr.review][0], REVIEW_WORD[pr.review][1])] : []),
       frame(`${id}-slot`, 'Time or buttons', {layout: 'horizontal', gap: '$--spacing-xxs', width: slot, justifyContent: 'end', alignItems: 'center'}, act),
     ]);
@@ -1482,10 +1464,10 @@ function buildProjectOverview(tokens) {
       {mark: 'seen', title: 'agent-tab-groups', age: '8m', tray: 'tab', tucked: [{symbol: '✓', color: '$--success', count: 2}]},
       {mark: 'work', title: 'Overview 진입 흐름', age: '1m', tray: 'tab'},
     ]};
-    const askBox = {task: '#192', branch: '192-hided-sigterm-handler', purpose: '#192 SIGTERM 정리', pr: {number: 221, tone: 'draft', checks: 'failed', review: 'changes_requested'}, distance: '↑3', files: 4, selected: true, rows: [
+    const askBox = {task: '#192', branch: '192-hided-sigterm-handler', purpose: '#192 SIGTERM 정리', pr: {number: 221, state: 'draft', checks: 'failed', review: 'changes_requested'}, distance: '↑3', files: 4, selected: true, rows: [
       SIGTERM_ASK, {...SIGTERM_REVIEW, depth: 1},
     ]};
-    const workBox = {branch: 'prd/agent-tab-groups', purpose: 'Agent tab groups', pr: {number: 217, tone: 'open', checks: 'passing'}, distance: '↑39 ↓17', rows: [TAB_GROUPS_IMPL]};
+    const workBox = {branch: 'prd/agent-tab-groups', purpose: 'Agent tab groups', pr: {number: 217, state: 'mergeable', checks: 'passing'}, distance: '↑39 ↓17', rows: [TAB_GROUPS_IMPL]};
     const reviewBox = {branch: 'review/agent-tab-groups', purpose: '탭 그룹 회귀 리뷰', distance: '↑2', files: 2, rows: [
       {mark: 'work', title: '리뷰: 탭 그룹 회귀', age: '3m'},
     ]};
@@ -1529,10 +1511,10 @@ function buildProjectOverview(tokens) {
         stateCell('primary', '기본 박스 · main', box('primary', {primary: true, branch: 'main', purpose: 'Observer · 계획과 위임', agents: 2, rows: [
           {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', age: '20m'}, {mark: 'work', title: 'Overview 진입 흐름', age: '1m'},
         ]})),
-        stateCell('pr', '워크트리 · 이슈 칩 + PR 칩', box('pr', {task: '#184', branch: '184-mailbox-plugin', purpose: 'Bundle mailbox as a Herdr plugin', pr: {number: 207, tone: 'open', checks: 'passing', review: 'changes_requested'}, distance: '↑5', files: 3, rows: [
+        stateCell('pr', '워크트리 · 이슈 칩 + PR 칩', box('pr', {task: '#184', branch: '184-mailbox-plugin', purpose: 'Bundle mailbox as a Herdr plugin', pr: {number: 207, state: 'failed', checks: 'passing', review: 'changes_requested'}, distance: '↑5', files: 3, rows: [
           {mark: 'work', provider: 'codex', title: '리뷰 반영', age: '3m'},
         ]})),
-        stateCell('merged', '머지됨 · 흐리게 + 정리', box('merged', {branch: 'fix/checkout-capability-follow-up', purpose: '체크아웃 권한 후속', cleanup: true, resting: true, pr: {number: 216, tone: 'merged'}, rows: [CODEX_REST]})),
+        stateCell('merged', '머지됨 · 흐리게 + 정리', box('merged', {branch: 'fix/checkout-capability-follow-up', purpose: '체크아웃 권한 후속', cleanup: true, resting: true, pr: {number: 216, state: 'merged'}, rows: [CODEX_REST]})),
       ]),
       frame(`ov-gstates-r2-${suffix}`, 'Rows', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [
         stateCell('ask', '묻는 행 · 질문 줄', box('ask', {task: '#192', branch: '192-hided-sigterm-handler', purpose: '#192 SIGTERM 정리', rows: [SIGTERM_ASK]})),
@@ -1565,7 +1547,7 @@ function buildProjectOverview(tokens) {
         ], {foot: [foldLine(`ov-loose-${suffix}`, '이슈 없는 워크트리 3')]}),
         stageColumn(`ov-review-${suffix}`, '리뷰', 2, [
           card('r1', ISSUE_186),
-          card('r2', {task: gh(184), title: 'Bundle mailbox as a Herdr plugin with checkout lineage', branch: '184-mailbox-plugin', pr: {number: 207, checks: 'pending', review: 'changes_requested'}, agents: [
+          card('r2', {task: gh(184), title: 'Bundle mailbox as a Herdr plugin with checkout lineage', branch: '184-mailbox-plugin', pr: {number: 207, state: 'failed', checks: 'pending', review: 'changes_requested'}, agents: [
             {mark: 'work', provider: 'codex', title: '리뷰 반영', age: '3m'},
           ]}),
         ], {foot: [foldLine(`ov-loosepr-${suffix}`, '이슈 없는 PR 1')]}),
@@ -1584,7 +1566,7 @@ function buildProjectOverview(tokens) {
       frame(`ov-states-r1-${suffix}`, 'Under the pointer', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         card('s1', {task: gh(201), labels: [ENHANCEMENT], title: 'Add Workspace design reference and visual review coverage', hover: 'start'}),
         card('s2', {...LOCAL_3, hover: 'workspace'}),
-        card('s3', {task: gh(184), title: 'Bundle mailbox as a Herdr plugin with checkout lineage', branch: '184-mailbox-plugin', pr: {number: 207, checks: 'pending', review: 'changes_requested'}, hover: 'pr'}),
+        card('s3', {task: gh(184), title: 'Bundle mailbox as a Herdr plugin with checkout lineage', branch: '184-mailbox-plugin', pr: {number: 207, state: 'failed', checks: 'pending', review: 'changes_requested'}, hover: 'pr'}),
         card('s4', {task: local(3), title: 'Overview 진입 흐름', hover: 'start', edit: true}),
       ]),
       frame(`ov-states-r2-${suffix}`, 'States', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
@@ -1619,7 +1601,7 @@ function buildProjectOverview(tokens) {
       work: {branch: ISSUE_192.branch, ahead: 3, files: 4, agents: [
         {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', age: '20m'},
         {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m', depth: 1},
-      ], pr: {number: 221, tone: 'draft', title: 'hided: stop AI children on SIGTERM before exit', review: 'changes_requested'}},
+      ], pr: {number: 221, state: 'draft', title: 'hided: stop AI children on SIGTERM before exit', review: 'changes_requested'}},
       body: [['h', '배경'], ['p', 'Found during the Swift removal (#188): hided installs no SIGTERM handler, so a background AI child is ended by the OS closing its stdin pipe.'], ['p', 'Add a graceful stop path: signal handler, owner-thread shutdown, child teardown with a bounded wait.']],
       comments: [['example · 9월 27일', '데스크톱 호스트 종료도 같은 경로로 가야 함']],
     }});
@@ -1674,22 +1656,22 @@ function buildProjectOverview(tokens) {
     const prsView = frame(`ov-prs-${suffix}`, 'Project Overview · PRs', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
       overviewHeader(tokens, 'ov-prhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'prs', width: boardWidth}),
       prGroup(`ov-prg1-${suffix}`, '내 차례', 4, '$--warning', [
-        ...prRow(`ov-pr222-${suffix}`, {number: 222, title: 'Start the bundled Herdr server when none answers on the socket', issue: gh(191), branch: '191-desktop-starts-herdr', checks: 'passing', review: 'review_required', age: '12m', agents: [{mark: 'done', title: 'Herdr 서버 시작 구현', line: 'PR 올림 · CI 통과', age: '12m'}], look: true, open: true}),
-        ...prRow(`ov-pr218-${suffix}`, {number: 218, title: 'Overview lenses: tiles and checkout lanes', branch: 'feat/overview-lenses', checks: 'passing', review: 'review_required', age: '1h', linkable: true}),
-        ...prRow(`ov-pr189-${suffix}`, {number: 189, title: 'Bump actions/upload-artifact from 4 to 7', branch: 'dependabot/github_actions/upload-artifact-7', checks: 'passing', review: 'approved', age: '1d'}),
+        ...prRow(`ov-pr222-${suffix}`, {number: 222, state: 'pending', title: 'Start the bundled Herdr server when none answers on the socket', issue: gh(191), branch: '191-desktop-starts-herdr', checks: 'passing', review: 'review_required', age: '12m', agents: [{mark: 'done', title: 'Herdr 서버 시작 구현', line: 'PR 올림 · CI 통과', age: '12m'}], look: true, open: true}),
+        ...prRow(`ov-pr218-${suffix}`, {number: 218, state: 'pending', title: 'Overview lenses: tiles and checkout lanes', branch: 'feat/overview-lenses', checks: 'passing', review: 'review_required', age: '1h', linkable: true}),
+        ...prRow(`ov-pr189-${suffix}`, {number: 189, state: 'mergeable', title: 'Bump actions/upload-artifact from 4 to 7', branch: 'dependabot/github_actions/upload-artifact-7', checks: 'passing', review: 'approved', age: '1d'}),
       ]),
       prGroup(`ov-prg2-${suffix}`, '에이전트가 고치는 중', 1, null, [
-        ...prRow(`ov-pr221-${suffix}`, {number: 221, tone: 'draft', title: 'hided: stop AI children on SIGTERM before exit', issue: gh(192), branch: '192-hided-sigterm-handler', checks: 'failed', review: 'changes_requested', age: '4m', agents: [{mark: 'work'}, {mark: 'ask'}, {mark: 'seen'}]}),
+        ...prRow(`ov-pr221-${suffix}`, {number: 221, state: 'draft', title: 'hided: stop AI children on SIGTERM before exit', issue: gh(192), branch: '192-hided-sigterm-handler', checks: 'failed', review: 'changes_requested', age: '4m', agents: [{mark: 'work'}, {mark: 'ask'}, {mark: 'seen'}]}),
       ]),
       prGroup(`ov-prg3-${suffix}`, 'CI 실패 · 맡은 에이전트 없음', 2, null, [
-        ...prRow(`ov-pr190-${suffix}`, {number: 190, title: 'Bump tokio-tungstenite from 0.26.2 to 0.29.0', branch: 'dependabot/cargo/tokio-tungstenite-0.29.0', checks: 'failed', age: '1d', hover: 'delegate'}),
-        ...prRow(`ov-pr138-${suffix}`, {number: 138, title: 'Bump sha2 from 0.10.9 to 0.11.0', branch: 'dependabot/cargo/sha2-0.11.0', checks: 'failed', age: '2d'}),
+        ...prRow(`ov-pr190-${suffix}`, {number: 190, state: 'failed', title: 'Bump tokio-tungstenite from 0.26.2 to 0.29.0', branch: 'dependabot/cargo/tokio-tungstenite-0.29.0', checks: 'failed', age: '1d', hover: 'delegate'}),
+        ...prRow(`ov-pr138-${suffix}`, {number: 138, state: 'failed', title: 'Bump sha2 from 0.10.9 to 0.11.0', branch: 'dependabot/cargo/sha2-0.11.0', checks: 'failed', age: '2d'}),
       ]),
       prGroup(`ov-prg4-${suffix}`, '최근 머지', 12, null, [], {folded: true}),
     ]);
     const prsConfirm = frame(`ov-prconfirm-${suffix}`, 'Project Overview · PRs › 이슈 잇기 확인', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
       prGroup(`ov-prcg-${suffix}`, '내 차례', 4, '$--warning', [
-        ...prRow(`ov-prc218-${suffix}`, {number: 218, title: 'Overview lenses: tiles and checkout lanes', branch: 'feat/overview-lenses', checks: 'passing', review: 'review_required', age: '1h', linkable: true, hover: 'default'}),
+        ...prRow(`ov-prc218-${suffix}`, {number: 218, state: 'pending', title: 'Overview lenses: tiles and checkout lanes', branch: 'feat/overview-lenses', checks: 'passing', review: 'review_required', age: '1h', linkable: true, hover: 'default'}),
       ]),
       screenDialogSurface(`ov-prcd-${suffix}`, {
         width: num(tokens, '--size-add-device-sheet-w'), title: 'PR #218을 #212에 잇기', prose: true,
@@ -3861,8 +3843,8 @@ function buildProjectsSidebar(tokens) {
     primary: {icon: 'house', fill: '$--subtle-foreground'},
     branch: {icon: 'git-branch', fill: '$--subtle-foreground'},
     folder: {icon: 'folder', fill: '$--subtle-foreground'},
-    open: {icon: 'git-pull-request', fill: '$--pr-open'},
-    draft: {icon: 'git-pull-request-draft', fill: '$--pr-draft'},
+    mergeable: {icon: PR_TREE.mergeable[0], fill: PR_TREE.mergeable[1]},
+    draft: {icon: PR_TREE.draft[0], fill: PR_TREE.draft[1]},
     missing: {icon: 'git-branch', fill: '$--destructive'},
   };
 
@@ -4151,11 +4133,11 @@ function buildProjectsSidebar(tokens) {
         // main opened (PRD agent-hierarchy-screens D-12, D-38, B35): one line, its agents as a tree.
         group(`psb-g-main-${s}`, [
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, expanded: true}),
-          tree(`psb-t0-${s}`, {title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: 'mergeable', bright: true}),
-          tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', provider: 'codex', age: '19h', depth: 1, chevron: 'open', pr: 'failed'}),
+          tree(`psb-t0-${s}`, {title: '사이드바 가독성 개선', status: 'approval', age: '12m', chevron: 'open', pr: {state: 'mergeable', number: 180}, bright: true}),
+          tree(`psb-t1-${s}`, {title: 'P8 읽기 전용 준비', status: 'waiting', provider: 'codex', age: '19h', depth: 1, chevron: 'open', pr: {state: 'failed', number: 214}}),
           tree(`psb-t2-${s}`, {title: '테스트 작성', status: 'approval', provider: 'codex', age: '12m', depth: 2, rail: true}),
           tree(`psb-t3-${s}`, {title: '문서 정리', status: 'done', provider: 'codex', age: '40m', depth: 2, rail: true, last: true}),
-          tree(`psb-t4-${s}`, {title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: 'pending'}),
+          tree(`psb-t4-${s}`, {title: 'P7 Pi·omp 재우기', status: 'asking', age: '1h', depth: 1, pr: {state: 'pending', number: 838}}),
           tree(`psb-t5-${s}`, {title: '미전달 편지 승격 해제', status: 'seen', age: '5h', depth: 1, device: 'Mac mini'}),
           tree(`psb-t6-${s}`, {title: '3개 더', status: null, age: '', depth: 1, last: true, chevron: 'closed', more: true}),
           tree(`psb-t7-${s}`, {title: 'Mac mini 연동 5단계', status: 'waiting', age: '2m', chevron: 'closed', mark: {kind: 'working', count: 1}}),
@@ -4163,7 +4145,7 @@ function buildProjectsSidebar(tokens) {
         ]),
         checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, raisedFrom: 'main', purpose: '#155 browser display (WebCon…'}),
         checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, raisedFrom: 'main', purpose: '#154 ⌘K search palette UI'}),
-        checkoutRow(`psb-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…'}),
+        checkoutRow(`psb-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'mergeable', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…'}),
         checkoutRow(`psb-c5-${s}`, {name: 'design/workspace-ux-prop…', age: '5h', purpose: 'Workspace UX 제안과 상태 소유…'}),
         fold(`psb-no-agents-${s}`, 'No agents 1', 'checkout'),
         fold(`psb-cleanup-${s}`, 'Cleanup 1', 'checkout'),
@@ -4194,7 +4176,7 @@ function buildProjectsSidebar(tokens) {
         section(`psb-rm-sp-${s}`, 'Projects · Recent activity · 2'),
         projectRow(`psb-rm-p0-${s}`, {name: 'hide', marks: {working: 1}, expanded: true}),
         checkoutRow(`psb-rm-p0m-${s}`, {name: 'main', kind: 'primary', age: '1m', purpose: '릴리스 빌드 확인', marks: {working: 1}, selected: true}),
-        checkoutRow(`psb-rm-p0w-${s}`, {name: 'quick/246-frontmost', kind: 'open', age: '3h', purpose: '#246 frontmost 창 고정'}),
+        checkoutRow(`psb-rm-p0w-${s}`, {name: 'quick/246-frontmost', kind: 'mergeable', age: '3h', purpose: '#246 frontmost 창 고정'}),
         projectRow(`psb-rm-p1-${s}`, {name: 'sasu'}),
       ],
     });
@@ -4217,7 +4199,7 @@ function buildProjectsSidebar(tokens) {
         section(`psb-one-sp-${s}`, 'Projects · Recent activity · 4'),
         projectRow(`psb-one-p0-${s}`, {name: 'herdr-ide', marks: mark, expanded: true}),
         checkoutRow(`psb-one-p0m-${s}`, {name: 'main', kind: 'primary', age: 'now', purpose: '사이드바 가독성 개선', marks: {question: 1, working: 1}, selected: true}),
-        checkoutRow(`psb-one-p0w-${s}`, {name: 'feat/home-device-rail', kind: 'open', age: '12m', purpose: 'Home · 기기 레일', marks: {working: 1}}),
+        checkoutRow(`psb-one-p0w-${s}`, {name: 'feat/home-device-rail', kind: 'mergeable', age: '12m', purpose: 'Home · 기기 레일', marks: {working: 1}}),
         projectRow(`psb-one-p1-${s}`, {name: 'oh-my-principle', marks: {working: 1}}),
         projectRow(`psb-one-p2-${s}`, {name: 'sasu', marks: {idle: 1}}),
       ],
@@ -4286,7 +4268,7 @@ function buildProjectsSidebar(tokens) {
         I('psb-m-proj-6', 'Remove project…'),
       ]),
       opened('co', 'Checkout row menu', [
-        checkoutRow(`psb-m-co-row-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…', hovered: true}),
+        checkoutRow(`psb-m-co-row-${s}`, {name: 'electron-shortcut-bindings', kind: 'mergeable', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…', hovered: true}),
       ], 240, [
         I('psb-m-co-0', 'Open'),
         I('psb-m-co-1', 'New tab here', {shortcut: '⌘T'}),
@@ -4328,7 +4310,7 @@ function buildProjectsSidebar(tokens) {
       projectRow(`psb-h-p-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
       checkoutRow(`psb-h-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, purpose: '#155 browser display (WebCon…'}),
       checkoutRow(`psb-h-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, purpose: '#154 ⌘K search palette UI'}),
-      checkoutRow(`psb-h-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…', hovered: true}),
+      checkoutRow(`psb-h-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'mergeable', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…', hovered: true}),
       checkoutRow(`psb-h-c5-${s}`, {name: 'design/workspace-ux-prop…', age: '5h', purpose: 'Workspace UX 제안과 상태 소유…'}),
     ];
     // The hovered row's top: the project row, the Overview row and two detailed rows above it.
@@ -4336,11 +4318,11 @@ function buildProjectsSidebar(tokens) {
     const listH = 2 * xs + projectH + plainH + 4 * rowH;
     const list = frame(`psb-h-list-${s}`, 'Projects list, cut', {width, layout: 'vertical', padding: [xs, xs], fill: '$--sidebar', cornerRadius: '$--radius-sm', clip: true}, rows);
     const card = themedXref(`psb-h-card-${s}`, 'pr-card', 'PR hover card', {x: width + gap, y: xs + rowTop}, {
-      'pr-card-badge-label': {content: 'Open', fill: '$--pr-open'},
+      'pr-card-badge-label': {content: 'Open'},
       'pr-card-number': {content: '#149'},
       'pr-card-title': {content: 'Electron desktop host for the web shell'},
       'pr-card-row-review': {enabled: false},
-      'pr-card-checks': {content: 'Passing', fill: '$--success'},
+      'pr-card-checks': {content: 'Passing'},
       'pr-card-branch': {content: 'electron-shortcut-bindings'},
       'pr-card-agents-question': {enabled: false},
       'pr-card-agents-idle': {enabled: false},

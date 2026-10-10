@@ -2039,6 +2039,18 @@ impl PrRow {
     pub fn end(&self) -> Option<u64> {
         self.merged_at.or(self.closed_at)
     }
+
+    /// Its lifecycle as the record knows it: merged, closed, else open.
+    pub fn badge(&self) -> crate::model::PullRequestBadge {
+        use crate::model::PullRequestBadge;
+        if self.merged_at.is_some() {
+            PullRequestBadge::Merged
+        } else if self.closed_at.is_some() {
+            PullRequestBadge::Closed
+        } else {
+            PullRequestBadge::Open
+        }
+    }
 }
 
 const PR_COLUMNS: &str = "repo, number, branch, title, url, created_at, closed_at, merged_at";

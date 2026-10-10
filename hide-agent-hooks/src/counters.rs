@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::HookEvent;
+use crate::runtime::{HOOK_VERSION, HookEvent};
 
 /// What one pane's session has spawned.
 ///
@@ -27,6 +27,86 @@ pub struct PaneCounters {
     pub working: u32,
     #[serde(default)]
     pub done: u32,
+}
+
+/// What the file of one pane holds: the counts, and who reported them.
+///
+/// Herdr keeps the tokens a report sets only as long as the server that took
+/// it, so a handoff or a restart empties them while this file stays and the
+/// pane ids stay. Which pane the file is for is therefore known, and what
+/// else a restore must know is whether the agent running there now is the
+/// one that reported: `version` is the hook version of the helper that wrote
+/// the file, `agent` the adapter id of the runtime that reported, and
+/// `session` the agent's own id of the session that did, when the hook's
+/// input named it. A file an older helper wrote has none of them and is not
+/// restored from.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+struct Record {
+    #[serde(default)]
+    working: u32,
+    #[serde(default)]
+    done: u32,
+    #[serde(default)]
+    version: Option<u32>,
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    session: Option<String>,
+}
+
+impl Record {
+    fn counters(&self) -> PaneCounters {
+        PaneCounters {
+            working: self.working,
+            done: self.done,
+        }
+    }
+
+    /// Whether this file already says what an event of `who` would write.
+    /// An event that names no session says nothing against the file's.
+    fn names(&self, who: Reporter<'_>) -> bool {
+        self.version == Some(HOOK_VERSION)
+            && self.agent.as_deref() == who.agent
+            && who
+                .session
+                .is_none_or(|session| self.session.as_deref() == Some(session))
+    }
+}
+
+/// Who is reporting a pane's counts: the runtime's adapter id, and the
+/// session the hook's input named, when it did.
+///
+/// A session the hook could not read stays unknown rather than carried over
+/// from an earlier event of the pane, except by an event that changes no
+/// count ([`Change::None`]), which is not evidence of a different session.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Reporter<'a> {
+    pub agent: Option<&'a str>,
+    pub session: Option<&'a str>,
+}
+
+/// What the pane's file said last, as a restore reads it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Restorable {
+    pub counters: PaneCounters,
+    pub version: u32,
+    /// The adapter id of the runtime that reported.
+    pub agent: String,
+    /// The session that reported, when its hook's input named one.
+    pub session: Option<String>,
+}
+
+/// What a restore can do with a pane's file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Restore {
+    /// No event ever counted this pane here.
+    NoRecord,
+    /// An older helper wrote the file, or a hook that did not know its own
+    /// runtime: which agent reported is unknown, so nothing is guessed and the
+    /// pane waits for its next event.
+    Unpairable,
+    /// What the pane's last report said.
+    Report(Restorable),
 }
 
 /// Where the counts live. Under Hide's own directory, never the runtime's.
@@ -95,6 +175,28 @@ impl Change {
 /// shared side of the lock, so a change being written is never read half
 /// way; a record that cannot be read fails rather than answering zeros.
 pub fn read_settled(home: &Path, pane_id: &str) -> io::Result<PaneCounters> {
+    read_record(home, pane_id).map(|record| record.counters())
+}
+
+/// What a pane's last report said, read under the shared side of the lock
+/// like [`read_settled`], for putting it back on a Herdr that lost it.
+pub fn restore_of(home: &Path, pane_id: &str) -> io::Result<Restore> {
+    match read_record(home, pane_id) {
+        Ok(record) => Ok(match (&record.version, &record.agent) {
+            (Some(version), Some(agent)) => Restore::Report(Restorable {
+                counters: record.counters(),
+                version: *version,
+                agent: agent.clone(),
+                session: record.session.clone(),
+            }),
+            _ => Restore::Unpairable,
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Restore::NoRecord),
+        Err(error) => Err(error),
+    }
+}
+
+fn read_record(home: &Path, pane_id: &str) -> io::Result<Record> {
     let _held = hold(home, hide_platform::fs::lock::Mode::Shared)?;
     let raw = fs::read(record_path(home, pane_id))?;
     serde_json::from_slice(&raw).map_err(io::Error::from)
@@ -114,20 +216,32 @@ pub fn read(home: &Path, pane_id: &str) -> PaneCounters {
 /// not synced: a count describes running sessions and is rebuilt by their
 /// next events, so it does not have to survive a crash, and a sync inside
 /// the lock would make parallel subagent starts wait out the lock.
-pub fn change(home: &Path, pane_id: &str, change: Change) -> io::Result<PaneCounters> {
+pub fn change(
+    home: &Path,
+    pane_id: &str,
+    change: Change,
+    who: Reporter<'_>,
+) -> io::Result<PaneCounters> {
     let path = record_path(home, pane_id);
     if let Some(parent) = path.parent() {
         hide_platform::fs::private::create_dir_all(parent)?;
     }
     if change == Change::None {
-        // A pane no event has counted yet has nothing running.
-        return match read_settled(home, pane_id) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(PaneCounters::default()),
-            settled => settled,
-        };
+        // An event that changes nothing leaves a file that already names this
+        // reporter alone, so the common event stays a shared read. A pane with
+        // no file yet, or one that names another version, agent or session,
+        // gets one below: every pane that has reported has a file that says
+        // who reported, which is what a restore reads.
+        match read_record(home, pane_id) {
+            Ok(record) if record.names(who) => return Ok(record.counters()),
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
     }
     let held = hold(home, hide_platform::fs::lock::Mode::Exclusive)?;
-    let mut counters = read(home, pane_id);
+    let before = read_lenient(&path);
+    let mut counters = before.counters();
     match change {
         Change::Reset => counters = PaneCounters::default(),
         Change::Started => counters.working = counters.working.saturating_add(1),
@@ -138,7 +252,18 @@ pub fn change(home: &Path, pane_id: &str, change: Change) -> io::Result<PaneCoun
         Change::Settled { running } => counters.working = running,
         Change::None => {}
     }
-    write_record(&path, counters)?;
+    let session = match change {
+        // Not evidence of another session, so the one the file names stays
+        // unless this event names its own, and only for the same agent.
+        Change::None => who.session.map(str::to_owned).or_else(|| {
+            before
+                .session
+                .clone()
+                .filter(|_| before.agent.as_deref() == who.agent)
+        }),
+        _ => who.session.map(str::to_owned),
+    };
+    write_record(&path, counters, who, session)?;
     drop(held);
     Ok(counters)
 }
@@ -147,22 +272,47 @@ pub fn change(home: &Path, pane_id: &str, change: Change) -> io::Result<PaneCoun
 /// plugin follows its child sessions and sends the totals, not events. It
 /// holds the same lock as [`change`], so a total and an event never
 /// interleave.
-pub fn store(home: &Path, pane_id: &str, counters: PaneCounters) -> io::Result<()> {
+pub fn store(
+    home: &Path,
+    pane_id: &str,
+    counters: PaneCounters,
+    who: Reporter<'_>,
+) -> io::Result<()> {
     let path = record_path(home, pane_id);
     if let Some(parent) = path.parent() {
         hide_platform::fs::private::create_dir_all(parent)?;
     }
     let held = hold(home, hide_platform::fs::lock::Mode::Exclusive)?;
-    write_record(&path, counters)?;
+    write_record(&path, counters, who, who.session.map(str::to_owned))?;
     drop(held);
     Ok(())
 }
 
+/// The file as it is, or an empty record for one that is missing or cannot be
+/// read: the next write replaces it whole, under the lock the caller holds.
+fn read_lenient(path: &Path) -> Record {
+    fs::read(path)
+        .ok()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default()
+}
+
 /// Writes a record in place, private to the account, under a held lock.
-fn write_record(path: &Path, counters: PaneCounters) -> io::Result<()> {
+fn write_record(
+    path: &Path,
+    counters: PaneCounters,
+    who: Reporter<'_>,
+    session: Option<String>,
+) -> io::Result<()> {
     let mut record = hide_platform::fs::private::open_or_create_file(path)?;
     record.set_len(0)?;
-    record.write_all(&serde_json::to_vec(&counters)?)
+    record.write_all(&serde_json::to_vec(&Record {
+        working: counters.working,
+        done: counters.done,
+        version: Some(HOOK_VERSION),
+        agent: who.agent.map(str::to_owned),
+        session,
+    })?)
 }
 
 /// One lock file beside the records, not the record itself: Windows locks a
@@ -238,6 +388,11 @@ pub fn retain<'a>(
 mod tests {
     use super::*;
 
+    const WHO: Reporter<'static> = Reporter {
+        agent: Some("claude-code"),
+        session: Some("session-a"),
+    };
+
     fn home(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "hide-agent-hooks-counters-{name}-{}",
@@ -253,11 +408,11 @@ mod tests {
         let root = home("lifecycle");
         let pane = "w7B:pM";
         assert_eq!(
-            change(&root, pane, Change::of(HookEvent::SessionStart)).unwrap(),
+            change(&root, pane, Change::of(HookEvent::SessionStart), WHO).unwrap(),
             PaneCounters::default()
         );
-        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
-        let two = change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        let two = change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
         assert_eq!(
             two,
             PaneCounters {
@@ -265,7 +420,7 @@ mod tests {
                 done: 0
             }
         );
-        let one = change(&root, pane, Change::of(HookEvent::SubagentStop)).unwrap();
+        let one = change(&root, pane, Change::of(HookEvent::SubagentStop), WHO).unwrap();
         assert_eq!(
             one,
             PaneCounters {
@@ -276,14 +431,152 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
+    fn restorable(working: u32, done: u32, session: Option<&str>) -> Restore {
+        Restore::Report(Restorable {
+            counters: PaneCounters { working, done },
+            version: HOOK_VERSION,
+            agent: "claude-code".into(),
+            session: session.map(str::to_owned),
+        })
+    }
+
+    #[test]
+    fn a_pane_that_reported_has_a_file_that_says_who_reported_what() {
+        let root = home("restore");
+        let pane = "w7B:pM";
+        assert_eq!(restore_of(&root, pane).unwrap(), Restore::NoRecord);
+        change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStop), WHO).unwrap();
+        assert_eq!(
+            restore_of(&root, pane).unwrap(),
+            restorable(1, 1, Some("session-a"))
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_event_that_names_another_session_replaces_the_one_the_file_names() {
+        let root = home("restore-session");
+        let pane = "w7B:pM";
+        change(&root, pane, Change::Started, WHO).unwrap();
+        let other = Reporter {
+            session: Some("session-b"),
+            ..WHO
+        };
+        change(&root, pane, Change::Started, other).unwrap();
+        assert_eq!(
+            restore_of(&root, pane).unwrap(),
+            restorable(2, 0, Some("session-b"))
+        );
+        // A hook that could not read its input names no session, and the
+        // count it changed is not the earlier session's to claim.
+        let unknown = Reporter {
+            session: None,
+            ..WHO
+        };
+        change(&root, pane, Change::Started, unknown).unwrap();
+        assert_eq!(restore_of(&root, pane).unwrap(), restorable(3, 0, None));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_event_that_changes_nothing_keeps_the_session_for_the_same_agent_only() {
+        let root = home("restore-none");
+        let pane = "w7B:pM";
+        change(&root, pane, Change::of(HookEvent::SessionStart), WHO).unwrap();
+        let blind = Reporter {
+            session: None,
+            ..WHO
+        };
+        change(&root, pane, Change::of(HookEvent::PreToolUse), blind).unwrap();
+        assert_eq!(
+            restore_of(&root, pane).unwrap(),
+            restorable(0, 0, Some("session-a"))
+        );
+        // Another runtime in the pane: the earlier session is not its own.
+        let codex = Reporter {
+            agent: Some("codex"),
+            session: None,
+        };
+        change(&root, pane, Change::of(HookEvent::PreToolUse), codex).unwrap();
+        assert_eq!(
+            restore_of(&root, pane).unwrap(),
+            Restore::Report(Restorable {
+                counters: PaneCounters::default(),
+                version: HOOK_VERSION,
+                agent: "codex".into(),
+                session: None,
+            })
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_event_that_changes_nothing_still_leaves_a_file_for_a_pane_with_none() {
+        let root = home("restore-first");
+        let pane = "w7B:pM";
+        assert_eq!(
+            change(&root, pane, Change::of(HookEvent::PreToolUse), WHO).unwrap(),
+            PaneCounters::default()
+        );
+        assert_eq!(
+            restore_of(&root, pane).unwrap(),
+            restorable(0, 0, Some("session-a"))
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_file_an_older_helper_wrote_is_unpairable_and_the_next_event_rewrites_it() {
+        let root = home("restore-old");
+        let pane = "w7B:pM";
+        fs::create_dir_all(state_directory(&root)).unwrap();
+        // Counts and nothing else, or a version without who reported.
+        for old in [
+            br#"{"working":2,"done":4}"#.as_slice(),
+            br#"{"working":2,"done":4,"version":6}"#.as_slice(),
+        ] {
+            fs::write(record_path(&root, pane), old).unwrap();
+            assert_eq!(restore_of(&root, pane).unwrap(), Restore::Unpairable);
+            // The counts are still read the way they always were.
+            assert_eq!(
+                read_settled(&root, pane).unwrap(),
+                PaneCounters {
+                    working: 2,
+                    done: 4
+                }
+            );
+        }
+        change(&root, pane, Change::of(HookEvent::PreToolUse), WHO).unwrap();
+        assert_eq!(
+            restore_of(&root, pane).unwrap(),
+            restorable(2, 4, Some("session-a"))
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_is_an_error_and_not_an_empty_restore() {
+        let root = home("restore-corrupt");
+        let pane = "w7B:pM";
+        fs::create_dir_all(state_directory(&root)).unwrap();
+        fs::write(record_path(&root, pane), b"not a record").unwrap();
+        assert_eq!(
+            restore_of(&root, pane).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn a_turn_that_ends_sweeps_a_count_a_missing_stop_left_behind() {
         let root = home("sweep");
         let pane = "w7B:pM";
-        change(&root, pane, Change::of(HookEvent::SessionStart)).unwrap();
-        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
-        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
-        let swept = change(&root, pane, Change::of(HookEvent::Stop)).unwrap();
+        change(&root, pane, Change::of(HookEvent::SessionStart), WHO).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        let swept = change(&root, pane, Change::of(HookEvent::Stop), WHO).unwrap();
         assert_eq!(swept.working, 0, "no subagent outlives its turn");
         assert_eq!(swept.done, 0, "the sweep does not invent completions");
         fs::remove_dir_all(&root).unwrap();
@@ -293,8 +586,8 @@ mod tests {
     fn a_new_session_in_the_same_pane_does_not_inherit_the_last_ones_numbers() {
         let root = home("reset");
         let pane = "w7B:pM";
-        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
-        change(&root, pane, Change::of(HookEvent::SubagentStop)).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStop), WHO).unwrap();
         assert_eq!(
             read(&root, pane),
             PaneCounters {
@@ -303,7 +596,7 @@ mod tests {
             }
         );
         assert_eq!(
-            change(&root, pane, Change::of(HookEvent::SessionStart)).unwrap(),
+            change(&root, pane, Change::of(HookEvent::SessionStart), WHO).unwrap(),
             PaneCounters::default()
         );
         fs::remove_dir_all(&root).unwrap();
@@ -312,9 +605,9 @@ mod tests {
     #[test]
     fn a_sweep_drops_the_records_of_panes_that_are_gone_and_keeps_the_rest() {
         let root = home("retain");
-        change(&root, "w1:pA", Change::of(HookEvent::SubagentStart)).unwrap();
-        change(&root, "w1:pB", Change::of(HookEvent::SubagentStart)).unwrap();
-        change(&root, "w2:pC", Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, "w1:pA", Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        change(&root, "w1:pB", Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        change(&root, "w2:pC", Change::of(HookEvent::SubagentStart), WHO).unwrap();
         // A file the sweep did not write is not its business.
         fs::write(state_directory(&root).join("notes.txt"), b"kept").unwrap();
 
@@ -347,7 +640,7 @@ mod tests {
         let threads: Vec<_> = (0..8)
             .map(|_| {
                 let root = root.clone();
-                std::thread::spawn(move || change(&root, pane, Change::Started).unwrap())
+                std::thread::spawn(move || change(&root, pane, Change::Started, WHO).unwrap())
             })
             .collect();
         for thread in threads {
@@ -362,11 +655,11 @@ mod tests {
         let root = home("settled");
         let pane = "w7B:pM";
         for _ in 0..3 {
-            change(&root, pane, Change::Started).unwrap();
+            change(&root, pane, Change::Started, WHO).unwrap();
         }
-        let settled = change(&root, pane, Change::Settled { running: 2 }).unwrap();
+        let settled = change(&root, pane, Change::Settled { running: 2 }, WHO).unwrap();
         assert_eq!(settled.working, 2);
-        let one = change(&root, pane, Change::Stopped).unwrap();
+        let one = change(&root, pane, Change::Stopped, WHO).unwrap();
         assert_eq!((one.working, one.done), (1, 1));
         fs::remove_dir_all(&root).unwrap();
     }
@@ -374,9 +667,9 @@ mod tests {
     #[test]
     fn two_panes_keep_separate_counts() {
         let root = home("panes");
-        change(&root, "w1:pA", Change::of(HookEvent::SubagentStart)).unwrap();
-        change(&root, "w2:pB", Change::of(HookEvent::SubagentStart)).unwrap();
-        change(&root, "w2:pB", Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, "w1:pA", Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        change(&root, "w2:pB", Change::of(HookEvent::SubagentStart), WHO).unwrap();
+        change(&root, "w2:pB", Change::of(HookEvent::SubagentStart), WHO).unwrap();
         assert_eq!(read(&root, "w1:pA").working, 1);
         assert_eq!(read(&root, "w2:pB").working, 2);
         fs::remove_dir_all(&root).unwrap();

@@ -96,6 +96,13 @@ pub(crate) struct PaneRecord {
     /// (PRD codex-plan-approval-hold D-06); `None` while a read is partial.
     #[serde(default)]
     pub(crate) turns_seq: Option<u64>,
+    /// The Herdr state of a turn that just ended whose session read has not
+    /// landed, for an agent whose read reports background tasks: until it
+    /// does, nothing says whether a task will wake the agent, so the row is
+    /// not a stop (#902). Not saved: a daemon that restarts reads each
+    /// session again and shows its rows as Herdr reports them meanwhile.
+    #[serde(skip)]
+    pub(crate) turn_end_owed: Option<u64>,
     /// Herdr's per-pane state counter and when the core saw it move, which
     /// is the pane's elapsed time and recency whichever session it runs.
     #[serde(default)]

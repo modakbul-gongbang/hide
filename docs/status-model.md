@@ -67,6 +67,13 @@ An `idle` lifecycle reports a ready stopped pane and does not put it in Done, ev
 The completion fact is part of the pane read fingerprint, so a ready-to-completed transition becomes unread even when Herdr's process-local sequence does not move.
 Herdr's done/idle distinction supplies completion evidence only; Hide's own pane record remains the sole read authority.
 
+A completion is news only when it appears.
+Herdr drops a finished pane from `done` to `idle` at the same sequence when it marks the pane's tab seen, and that can land after the operator's focus has left the pane.
+A record that holds a completion the row no longer shows still covers the row, so a demand the operator read stays read through Herdr's own bookkeeping, and the next projection trims the record to no completion.
+The trim is what makes a completion that appears again at the same sequence news again, as a descendant's signal is after it went away.
+Any other change to the fingerprint (the agent working again, a state change between two looks, another session in the pane) still turns the row unread.
+Regression owners: `a_read_demand_stays_read_when_herdr_marks_its_tab_seen_after_focus_left` and `a_read_demand_turns_unread_again_only_for_news` in `sidebar.rs`, and `web/e2e/blocked-state.spec.ts`, which holds Herdr's focus at the socket so its seen lands after the operator moved on.
+
 ## A descendant's change turns its ancestors unread
 
 The fingerprint carries one more element: the outstanding demands and reported completions of the row's live descendants, each keyed by the descendant's pane (`PaneReadRecord::descendant_signals`).
@@ -107,19 +114,37 @@ Mark precedence on a row is: blocked, then a question, then an approval, then it
 The `wait` value is only ever set on a row with no demand of its own that is not working, so the precedence is the order of the checks in `agent_group_for` and `RowMark::of`, not a second rule.
 
 **Background work is proven only by the session's own records, and only Claude Code's can do it.**
-`hide-session/src/turns/wake.rs` reads, from each Claude Code record: the start text a tool returned, only when the tool's message opens with it (`Command running in background with ID: X`, `Command did not complete within its Ns timeout and was moved to the background (ID: X)`, `Monitor started (task X, expires in Nm ...)`, `Async agent launched successfully ... agentId: X`); the end (a `<task-notification>` naming the task with status `completed`, `failed`, `killed` or `stopped`, in the `queue-operation` enqueue record and in the `queued_command` attachment, or a `TaskStop` call); and the process boundary (the `SessionStart:startup` or `SessionStart:resume` hook record; `clear` and `compact` keep the process).
+`hide-session/src/turns/wake.rs` reads, from each Claude Code record: the start text a tool returned, only when the tool's message opens with it (`Command running in background with ID: X`, `Command did not complete within its Ns timeout and was moved to the background (ID: X)`, `Monitor started (task X, expires in Nm ...)`, `Async agent launched successfully ... agentId: X`); the end (a `<task-notification>` naming the task with status `completed`, `failed`, `killed` or `stopped`, in the `queue-operation` enqueue record and in the `queued_command` attachment, or a `TaskStop` call whose result succeeded); and the process boundary (the `SessionStart:startup` or `SessionStart:resume` hook record; `clear` and `compact` keep the process).
 `TurnTracker` folds them under their own offset, so a record is never folded twice, and keeps at most 32 devices (`WAKE_DEVICE_LIMIT`).
 A device never outlives the process that started it, so a new process start clears them, and a session whose file shows no process start proves none (fail closed).
 A monitor that announced its expiry stops counting at it.
-More than 32 devices at once, or a record this reader cannot follow, proves none until the next process start; it never fails the read the turn and label depend on.
+A `TaskStop` call stops nothing by itself: the tracker keeps the call by its `tool_use_id` and ends the device only when the result of that call arrives without `is_error`.
+The tracker keeps, in the same table, the calls to the tools that can start work (`Bash`, `Monitor`, `Agent`, and `Task`, the name an older Claude Code gave `Agent`) until their result arrives, at most 32 open calls and devices together; the table is what tells a result too large to read apart from a screenshot (below).
+A refused stop (`Task … is not running`, `No task found`), a call with no result yet and a result of another process leave the device running until its notification or a successful stop.
+A device is lost for one of two causes, and the first one since the process started is kept (`WakeLoss`): `capacity` when more than 32 devices, or calls waiting for their result, were open at once, and `lost` when a record that may have started, ended or stopped a device could not be followed.
+Either proves none until the next process start, and neither fails the read the turn and label depend on.
+The record the reader could not follow is one with more marks than the bound or an id too long to keep, or one over the 256 KiB line cap that is discarded without its text.
+A discarded record is told by its structure and never by its words, because a text that is matched is wrong the day it is spelled differently: the bounded scan of the discarded record (`conversation_cursor.rs::LargeRecord`) keeps the record's `type`, the `name` and `id` of its `tool_use` blocks and the `tool_use_id` of its `tool_result` blocks, and `wake::Record` names the four kinds `wake.rs` takes marks from, so the large-record reader must decide each of them.
+A kind that carries no mark changes nothing.
+An `attachment` or `queue-operation` (a notification, a hook) is `lost`, and so is any record whose scan cannot certify its structure (a truncated line, an id that is not plain, no `type`).
+An assistant record leaves the `Call` mark of each call it makes to a tool that can start work, so its result is still paired, and is `lost` when it holds a `TaskStop` (its task is in a field the scan does not keep) or such a call with no id it can keep.
+A user record answers each call its tool results name without saying how (`Answered` with `Unreadable`), and the tracker reads that by the call: the answer to an open call to one of those tools, whose output may have been a task's start, is `lost`, the answer to a stop whose result was discarded is `lost` rather than taken as stopped, and the answer to any other call (a screenshot a file read returned, nearly every record that large in real sessions) changes nothing.
+A result with no id the scan can keep is `lost`, because nothing says which call it answers.
+The worker writes one diagnostic when a session first loses its devices, `wake_devices.capacity` (with the limit) or `wake_devices.lost`, so the log says whether to raise the limit or look at the record.
 The count is laid as `RowFacts.wake_devices` by `LabelOverlay::apply`, only for the `state_change_seq` the read was made under, so a row never waits on a task a stale read proved.
 When a process start finds devices that were proven alive, the tracker keeps `wake_vanished` until a turn or a device begins; a stopped row with a label then draws Stopped `◐` and its second line says, in the operator's language, that the work it waited for is gone (`line.mode: vanished`, text empty in the core; the web draws it, and only the sidebar row draws it).
 Hide or the daemon restarting is not a process boundary: the tracker is stored with the label record and continues.
 The declaration is `SessionFormat::reports_wake_devices` in `hide-agent-adapter`, true for Claude Code alone.
 Codex writes no record when a session's command ends, and Grok, Pi, omp, Cursor and OpenCode keep no process boundary, so for them nothing proves a task is running and a label `waiting` with no device is a stop (below).
-Known limit: the wake read is bound to the Herdr state it was asked under, so the moment a Claude turn stops with a background task, the row can be announced Done (a phone notice) for one read before the read lands and the row becomes the waiting ring.
+A turn that just ended is not a stop until its session read lands.
+The wake read is bound to the Herdr state it was asked under, so from the moment Herdr reports the stop until that read lands nothing says whether a task will wake the agent.
+The label worker owes that read (`PaneRecord::turn_end_owed`, not saved) and the overlay lays it as `RowFacts.turn_end_unread` for that state; the activity axis (`agent_activity`) keeps such a row Working, so no group, mark or phone notification is decided from a stop that may be taken back.
+It is owed only to an agent whose read reports background tasks, when its status goes from working to idle or done (or changes between them while still owed), and only while the read can run: Herdr marking a finished row seen, a daemon that restarts and finds its record read, and every other agent owe nothing.
+The hold ends on every path of the read and has no timer of its own: the read landing releases it, a read that fails (`ReadFailure`, itself bounded by `DEVICE_READ_TIMEOUT`) releases it with a `turn_end.unread` diagnostic, and the agent working again or a state with no session to read ends it.
+A session no read has proved yet carries no facts, so its first turn end is not held.
+The wait before the label's own verdict (`stopped_unfinished`) is not this gap: that verdict comes from an AI request that takes seconds, and holding the row for it would delay every Done.
 
-Regression owners: `a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply`, `a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet`, `a_proven_background_task_keeps_a_stopped_claude_row_waiting`, `a_reply_is_awaited_until_answered_overdue_or_from_another_session`, the adapter contract `adapters::wake_devices` in `hide-session/tests/it`, and the web `agentRow.test.ts`.
+Regression owners: `a_turn_end_is_not_a_stop_until_its_session_read_lands`, `a_read_that_finds_no_task_releases_the_turn_end_and_publishes_it`, `a_read_that_fails_releases_the_turn_end_and_says_so`, `a_stop_that_is_not_a_turn_just_ended_is_not_held` and `a_turn_ending_with_a_background_task_is_never_announced_done`, then `a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply`, `a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet`, `a_proven_background_task_keeps_a_stopped_claude_row_waiting`, `a_reply_is_awaited_until_answered_overdue_or_from_another_session`, the adapter contract `adapters::wake_devices` in `hide-session/tests/it` (the stop pairing, the discarded record that may carry a device, the one that cannot and the call too large to keep), the two `wake_devices.*` diagnostics in `herdr-core/src/labels/tests.rs`, and the web `agentRow.test.ts`.
 
 ## Where each axis comes from
 
@@ -198,6 +223,7 @@ The CLI's required `origin` field records the spawner in both modes (null for or
 PR and issue panels still find the independent session through its own branch records without a delegated-by line.
 Herdr records no lineage, so hided writes the four pane tokens through `pane.report_metadata`: `parent_pane` names the parent's pane id, `parent_machine` names its machine when the parent is remote, and `child_session` and `parent_session` are the original session digests.
 The value and lifetime contract is unchanged.
+A pane Hide's Fork agent made carries a fifth token, `fork` set to `1`, which the lineage writer writes with the other four from the registration's `forked` fact (`AgentRecord::forked`), so a wake that continues the registration in another pane writes it there too, and which is read only while the row still declares its parent, so a pane that hosts another agent later is not a fork and a delegated child never is (`SidebarAgentSnapshot.started_as_fork`, `PaneForkSnapshot.forked_from_pane_id`).
 The session tokens are lowercase hexadecimal SHA-256 digests of each original `agent_session.value`; this keeps even a path-valued session inside Herdr's 80-character token limit.
 A same-server relationship omits `parent_machine`.
 A changed child session clears all four tokens, while an absent session proves neither a valid relationship nor a session change.
@@ -300,6 +326,7 @@ Its core-owned group is Seen, and it contributes no active pane, lineage, unread
 Saving and closing do not duplicate the existing live row; confirmed closure publishes the separate sleeping row, and an uncertain operation publishes its explicit status action.
 Wake resumes the saved native conversation in its own intent-marked tab, and current reader identity must confirm that conversation before the archived row is removed.
 A delegated child that held a registration wakes into the same registration, so its row returns under its parent and its parent's watch and letters still reach it ([delivery.md](delivery.md#agent-registration-and-spawning)); the sleeping row itself never carries lineage.
+A Cursor wake needs no session hook from Cursor: the core reports the resumed session to Herdr itself, so the row returns under its parent like any other kind's ([ARCHITECTURE.md: Agent sleep](ARCHITECTURE.md#agent-sleep)).
 The Wake action is available only when this build declares the provider's resume capability.
 A retained unsupported sleeping record stays visible without a Wake action or a loading spinner; only an active transition or status check spins.
 Unknown work survives restart without replaying external effects; an intent saved before close admission can be released without touching a pane.
@@ -399,7 +426,8 @@ The pet dashboard's count tiles read the same four groups, plus the rows whose s
 
 ## The subagent badge
 
-The badge row carries one more count after the three groups: the in-process subagents Hide's hook reports as working, in purple.
+The pet's badge row carries one more count after the three groups: the in-process subagents Hide's hook reports as working, in purple.
+The pet is its only reader: the desktop app draws no pet today, and the web shell draws no subagent count on any surface ([UI_BEHAVIOR.md, Subagent count](UI_BEHAVIOR.md#subagent-count)).
 `agent_state/tally.rs::subagents_active` sums the `working` hook token over the agents on an answering server, with saturation, and returns zero while disconnected; a pane whose agent has gone is not counted even if its token lingers, and an instrumented pane whose count is unknown adds nothing rather than a zero.
 It is the one count the hook can vouch for; Herdr's own wire carries no ambient counts, and nothing here scans transcripts or output.
 
@@ -407,22 +435,23 @@ Regression owner: `subagent_counts_sum_the_hook_tokens_of_listed_agents_and_go_q
 
 ## Uninstrumented is not an unknown activity
 
-A pane whose agent Hide cannot see into is a different answer from a pane whose activity Herdr reports as `unknown`, and the two are drawn differently on purpose.
+A pane whose agent Hide cannot see into is a different answer from a pane whose activity Herdr reports as `unknown`, and the two are kept apart on purpose.
 
 - Activity `unknown` is Herdr saying it does not know what the process is doing. It is one of the three activity values and it groups like any other.
-- Uninstrumented is Hide saying it cannot tell what that session has spawned. It is not an activity, it never changes a group, and it is drawn as its own mark beside the agent.
+- Uninstrumented is Hide saying it cannot tell what that session has spawned. It is not an activity, it never changes a group, and it is projected as its own field beside the agent.
 
 The reason is resolved once, by `hide_agent_hooks::diagnosis::instrumentation`, in a fixed order: config unreadable, remote host, hooks not installed, session predates install, hook outdated, unknown.
 The first match wins and nothing falls through to an empty value or an invented cause.
 Every projection carries the reason's stable code alongside its sentence, so no surface has to recognise its own operator-facing text.
 
-The mark appears in three places, and only on panes where an agent was detected: the pane header's 28pt identity row, the sidebar row, and the Overview worktree row's agent line.
-That third position exists because an empty agent line has to distinguish "nobody is working here" from "Hide cannot see into this worktree".
+The projection is made only for panes where an agent was detected, and no screen draws it as a mark: it would say Hide cannot tell how many subagents the session runs, which the operator can do nothing about, so the pane header, the sidebar row and the Overview line carry nothing for it (operator decision on issue #810, design principle 13; [UI_BEHAVIOR.md, Subagent count](UI_BEHAVIOR.md#subagent-count)).
+The core still projects it (`PaneChildren.instrumented`, the reason and its code), because the connection below is judged from the code.
 A count Hide cannot read is reported as unknown and never as zero, because a zero is a claim that the agent is working alone.
+An agent whose adapter declares no subagent count (`subagent_counts: None`: Pi and Cursor) has nothing to read, and the core projects it with the reason `unknown` and no count.
 
 ### Not connected, and what fixes it
 
-A Claude Code or Codex pane whose session Hide does not hear also carries a connection (`PaneChildrenSnapshot.connection`), read from the same observation as the mark above (PRD settings-cleanup D-09, D-11, B26 to B31).
+A Claude Code or Codex pane whose session Hide does not hear also carries a connection (`PaneChildrenSnapshot.connection`), read from the same observation as the projection above (PRD settings-cleanup D-09, D-11, B26 to B31).
 It is judged by `sidebar::pane_connection` from `uninstrumented_code`, and by nothing else, for an agent that is awake: a sleeping agent has ended its process, so no hook can speak from its pane, and it carries no connection until it wakes.
 Settings counts sessions and never these connections, so a pane that needs a Reopen says so only in its own header.
 
@@ -434,6 +463,8 @@ Settings counts sessions and never these connections, so a pane that needs a Reo
 | `hooks_not_installed`, `config_unreadable`, `hook_outdated` | `setup_needed` (fix it in the agent's row in Settings; Reopen would change nothing) |
 | `hooks_switched_off`, `unknown`, an agent with no hook, or an agent asleep | no connection, so no chip |
 
+A Herdr live handoff or restart does not move a connected pane to `started_before_hide`: the tokens the instrumented judgement reads go with the old server, and hided puts them back from the pane's record within a few agent reads, without a hook event ([agent-hooks.md](agent-hooks.md#after-herdr-hands-off-or-restarts)).
+Until then, and for a pane on a device, a handed-off pane reads as a session that predates the install.
 `can_reopen` is false for `setup_needed` and for a pane on another device, because a Reopen restarts the session through this Mac's Herdr.
 The shared server is the machine's last kit read (`KitSnapshot::shares_codex_server`): a read that says the setting is on, or that a daemon still answers with the setting off, is what turns a Codex pane's reason into the shared server, and a later read that says neither turns it back into `started_before_hide` at once (PRD codex-daemon-apply D-07, B9).
 After a turn-off that answered `stop_failed`, only a read that says no daemon answers ends the shared server, so a daemon answer Hide could not read keeps the retry on offer (B7).
@@ -494,7 +525,7 @@ Asking for the checks of every merged and closed pull request made one read take
 Either call failing fails the project's read, which keeps the last answer and states the failure, so half an answer is never a repository with no pull requests; `pull_requests.ok`, `pull_requests.empty` and `pull_requests.failed` carry the read's `duration_ms`.
 Which pull request belongs to a checkout is one rule (`github::belongs_to_checkout`, chosen by `pull_request_for_checkout`), because a branch name is used again for new work: a pull request from a fork never belongs to a local branch of the same name, an open one belongs to the checkout on its head branch, and a merged or closed one only while the checkout's commit (the worktree reader's `head_sha`, or, before that reader has answered, the commit `Repository::head_oid` read from the repository's own files with no process) is exactly the pull request's head commit on that branch; a checkout that was amended, rebased or left behind after the last push therefore loses its merged pull request.
 Several candidates resolve open, then merged, then closed, the most recently updated first among equals, and a checkout whose commit is not read yet takes no settled pull request.
-The sidebar row, the worktree catalog, the agent rows' pull request chip and the link and hand-off actions all ask that rule, and a catalog read that moves a HEAD decides the connection again.
+The sidebar row, the worktree catalog, the agent rows' PR mark and the link and hand-off actions all ask that rule, and a catalog read that moves a HEAD decides the connection again.
 The PRs view and a worktree's base still list one pull request per head branch (`preferred_per_branch`).
 The same generation also reads open issues, their Project Status, and PR closing references for Project Home.
 The issue list uses `sort:updated-desc` and reads one sentinel beyond the 200-issue display cap so overflow is based on evidence.
@@ -521,11 +552,15 @@ This is linear in the visited project panes and agent projection per recomputati
 
 ### Pull request visual states
 
-PR lifecycle uses the GitHub convention: Open is green, Merged purple, Closed red, and Draft gray.
-The sidebar and popover share one color mapping and the matching Octicon; the State text and accessibility label preserve meaning without relying on color.
-A merged or closed result takes precedence over an old draft flag.
-Glyphs match the 14pt branch icon inside the existing 24pt trailing control, aligned with Workspace disclosure.
-CI colors remain separate from PR lifecycle, so Merged does not imply Passing.
+A pull request has one state, decided in the core by one rule (`model::PrState::of`, from its lifecycle, draft flag, checks and review decision) and sent on the wire as `state` on every checkout pull request, as `pr_state` on a GitHub search result and as `state` on a link panel's pull request (`contracts/snapshot-wire-enums.json`: `pr_state`).
+The rule reads in this order: merged, closed, draft, failed (failed checks or a change request), mergeable (passing checks with an approved or absent review decision), and pending for the rest (checks running, none or unknown, or a review still required).
+A draft is draft even with failing checks, and absent or unknown checks never imply a pass.
+Each state has one token and one icon, drawn the same on every surface (operator approval, 2026-10-10): failed red (`--pr-failed`), pending amber (`--pr-pending`), mergeable green (`--pr-mergeable`), draft grey (`--pr-draft`), merged purple with the merge icon (`--pr-merged`), and closed dim (`--pr-closed`).
+A change request is red wherever its word is drawn, as failed checks are.
+The pane header's Review and Merge bands read the same state (`agent_state/header.rs`): Merge for a mergeable duty, Review for a pending one, the band's colour the state's.
+The web turns a state into its icon, colour and word in one module (`web/src/prMark.ts`) and draws it with one component (`web/src/components/pr-mark.tsx`); no screen keeps a colour table or a classifier of its own, and the checks and review words and the stale reading live in the same module.
+The state word and the accessibility label keep the meaning without relying on colour.
+A mark dims while GitHub cannot be read again, and its tooltip says when it was last read.
 
 ### Project Overview summary
 
@@ -614,13 +649,12 @@ Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull
 A Needs You row draws its `row.state.ask` (verb and what to do) in place of a line, and a blocked one, which has no ask, its cause; a Working row its label line, or while it waits on its children the line of its most recently changed working descendant; a Done row its label line.
 An Idle row carries a line only for a stopped turn (`◐`, the same rule as the sidebar's Stopped mark), marked `unfinished`.
 Needs You is ordered by when the ask began, Working puts a failed PR first and then the most recent, Done is most recent first, and Resolved is most recently resolved first.
-Idle puts unfinished work first, then a failed, mergeable, pending and merged PR, then the rest, and publishes those with neither a PR nor unfinished work as `more`, which the panel folds behind `그 외 N`.
+Idle puts unfinished work first, then a failed, mergeable, pending, draft and merged PR, then the rest, and publishes those with neither a PR nor unfinished work as `more`, which the panel folds behind `그 외 N`.
 A blocked menu takes Approval before an unread AI question's Answer.
 A current native `user_turn.kind = question` instead takes Answer while its session holds for a reply, including after it is read and when its content is absent.
 Native plan approval keeps Approval; the typed native wait, rather than a provider name or an AI question label, distinguishes these cases.
 Reading an AI question skips its demand rung and leaves a dimmed question; menu and plan approval stay in Needs You until answered.
-`row.state.pr` is the row's own PR summary (PRD D-18, D-39): the live PRs it holds the duty of, never a descendant's, with the count, the worst state (failed, pending, mergeable, merged) and each PR worst first; a closed PR is not counted.
-Mergeable requires passing checks and an approved or absent review decision; absent or unknown checks never imply a pass.
+`row.state.pr` is the row's own PR summary (PRD D-18, D-39): the live PRs it holds the duty of, never a descendant's, with the count, the worst state and each PR worst first, each state the one rule of Pull request visual states decides; a closed PR is not counted.
 Without a label line the row keeps its outline but carries no invented line.
 `agent_scope.sessions` publishes the ordered member indices and the nonempty groups for checkout, project, device and overall scopes, with no counts.
 Delegated children are never Sessions members of their own: they are drawn under their root through every row the operator expands, at any depth (`sessions_expanded_agent_pane_ids` in core UI state holds each expanded pane), and Factory workers retain their dedicated surface.
@@ -666,7 +700,7 @@ PR reason facts carry checks and review separately from label progress.
 The existing input does not supply an approval command or failed check names; the band explicitly says those details are unavailable rather than treating a generated sentence as that evidence.
 A failed exit is red with its real exit code, a normal termination is gray, and connection and sleep actions remain in their existing body surfaces.
 The band overlays the terminal so state changes never resize its PTY grid.
-The identity row reads the ancestor path, provider, title, the pane's own PR chip from `row.state.pr`, the tree button with the direct child count, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
+The identity row reads the ancestor path, provider, title, the pane's own PR mark from `row.state.pr`, the tree button with the direct child count, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
 Pending or failed relationship navigation stays visible at its popover, ancestor step or band with retry where available, and in the retained Agent-area status when the source pane is no longer on screen.
 Regression owners: `runtime::tests::session_state`, `web/src/PaneHeaderBand.test.tsx`, `web/e2e/sidebar-status.spec.ts`, and the pane/lineage desktop checks.
 

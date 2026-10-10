@@ -669,7 +669,9 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(issueCard(2).locator("[data-card-title]")).toHaveText("태스크 출처 어댑터");
     await expect(issueCard(2).locator("[data-card-checkout]")).toContainText("2-task-source");
     await expect(issueCard(4).locator("[data-lens-pr-chip]")).toHaveAttribute("data-lens-pr-chip", "11");
-    await expect(issueCard(4)).toContainText("Review required");
+    // The mark's colour says the state; only a change request keeps a word beside it.
+    await expect(issueCard(4).locator("[data-lens-pr-chip] [data-pr-mark]")).toHaveAttribute("data-pr-mark", "pending");
+    await expect(issueCard(4)).not.toContainText("Review required");
     await expect(issueCard(3).locator("[data-card-chips]")).toHaveCount(0);
     // GitHub's sub-issue progress on the card, and none on an issue without sub-issues.
     await expect(issueCard(2).locator("[data-sub-issues]")).toHaveAttribute("data-sub-issues", "1/2");

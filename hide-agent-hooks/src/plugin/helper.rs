@@ -145,7 +145,9 @@ pub fn run(agent: &str, operation: Option<&str>, started: Instant) {
         Some("prompt") => prompt(&home, &agent, input, started + PROMPT_BUDGET),
         Some("confirm") => confirm(&home, input, started + CONFIRM_BUDGET),
         Some("tool") => tool(&home, &agent, input, started + TOOL_BUDGET),
-        Some("subagents") if agent.adapter.subagent_counts.is_some() => subagents(&home, input),
+        Some("subagents") if agent.adapter.subagent_counts.is_some() => {
+            subagents(&home, &agent, input)
+        }
         _ => json!({}),
     };
     answer(&output);
@@ -338,7 +340,7 @@ fn tool(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value {
 
 /// The pane's subagent counts as the script keeps them, stored and reported to
 /// Herdr the way the Claude Code and Codex hooks report theirs.
-fn subagents(home: &Path, input: Input) -> Value {
+fn subagents(home: &Path, agent: &Agent, input: Input) -> Value {
     let Some(pane) = pane() else {
         return json!({});
     };
@@ -346,7 +348,14 @@ fn subagents(home: &Path, input: Input) -> Value {
         working: input.working,
         done: input.done,
     };
-    if counters::store(home, &pane, counts).is_err() {
+    let who = counters::Reporter {
+        agent: Some(agent.runtime()),
+        session: input
+            .session_id
+            .as_deref()
+            .filter(|id| delivery::valid_session(id)),
+    };
+    if counters::store(home, &pane, counts, who).is_err() {
         return json!({});
     }
     let socket_path = report::socket_path(home);

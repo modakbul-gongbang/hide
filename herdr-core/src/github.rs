@@ -1050,9 +1050,16 @@ fn parse_search(
             repository,
             number: hit.number,
             title: hit.title,
-            state,
             url: hit.url,
-            is_draft: matches!(kind, SearchKind::Pr) && hit.is_draft,
+            pr_state: matches!(kind, SearchKind::Pr).then(|| {
+                crate::model::PrState::of(
+                    badge(&state, hit.is_draft, None),
+                    hit.is_draft,
+                    crate::model::PullRequestChecks::Unknown,
+                    None,
+                )
+            }),
+            state,
         });
     }
     Ok(results)
@@ -2698,6 +2705,7 @@ mod tests {
 
     #[test]
     fn search_hits_read_as_gh_prints_them_and_stay_inside_the_repository_asked() {
+        use crate::model::PrState;
         let prs = parse_search(SEARCH_PRS_OUTPUT, SearchKind::Pr, &["cli/cli".to_owned()]).unwrap();
         assert_eq!(
             prs.iter()
@@ -2705,13 +2713,13 @@ mod tests {
                     hit.kind.as_str(),
                     hit.number,
                     hit.state.as_str(),
-                    hit.is_draft
+                    hit.pr_state
                 ))
                 .collect::<Vec<_>>(),
             vec![
-                ("pr", 10253, "open", true),
-                ("pr", 14054, "closed", false),
-                ("pr", 13949, "merged", false),
+                ("pr", 10253, "open", Some(PrState::Draft)),
+                ("pr", 14054, "closed", Some(PrState::Closed)),
+                ("pr", 13949, "merged", Some(PrState::Merged)),
             ],
             "the go-gh hit is another repository's"
         );
@@ -2727,10 +2735,10 @@ mod tests {
         assert_eq!(
             (
                 issues[0].kind.as_str(),
-                issues[0].is_draft,
+                issues[0].pr_state,
                 issues[0].number
             ),
-            ("issue", false, 14046)
+            ("issue", None, 14046)
         );
         assert_eq!(
             parse_search("[]", SearchKind::Pr, &["cli/cli".to_owned()]).unwrap(),

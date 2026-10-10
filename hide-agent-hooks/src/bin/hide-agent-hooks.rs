@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use hide_agent_adapter::HookDialect;
 use hide_agent_hooks::basic;
-use hide_agent_hooks::counters::{self, Change};
+use hide_agent_hooks::counters::{self, Change, Reporter};
 use hide_agent_hooks::diagnosis::Diagnosis;
 use hide_agent_hooks::guidance::{self, GuidanceAgent};
 use hide_agent_hooks::report;
@@ -252,7 +252,13 @@ fn count_basic(dialect: HookDialect, event: HookEvent, started: Instant) {
         (_, HookEvent::UserPromptSubmit | HookEvent::PreToolUse) => return,
     };
     let Some(home) = home_directory() else { return };
-    report_count(&home, event, change);
+    // Neither agent's hook input is read for its session here, so the file
+    // names the agent and no session, and a restore withholds the counts.
+    let who = Reporter {
+        agent: Some(dialect.adapter().id),
+        session: None,
+    };
+    report_count(&home, event, change, who);
 }
 
 fn print_line(text: &str) {
@@ -406,6 +412,11 @@ fn run_hook(arguments: &[String], started: Instant) {
         }
         _ => hide_agent_hooks::delivery::Prompt::default(),
     };
+    // The session the event came from, when its input was read whole: what
+    // lets a restore tell this session's counts from another one's.
+    let session = payload
+        .as_ref()
+        .and_then(|(bytes, truncated)| hide_agent_hooks::delivery::read_session(bytes, *truncated));
     // Claude Code's hook inside Grok leaves the letters where they are: the
     // session that runs it is not the pane's Claude Code.
     let takes_letters = runtime != Some(AgentRuntime::ClaudeCode)
@@ -499,12 +510,16 @@ fn run_hook(arguments: &[String], started: Instant) {
     if runtime.is_some_and(|runtime| runtime.dialect().adapter().subagent_counts.is_none()) {
         return;
     }
-    report_count(&home, event, Change::of(event));
+    let who = Reporter {
+        agent: runtime.map(AgentRuntime::id),
+        session: session.as_deref(),
+    };
+    report_count(&home, event, Change::of(event), who);
 }
 
 /// Applies `change` to this pane's count and reports the pane's totals to
 /// Herdr. Outside a Herdr pane there is no pane to describe.
-fn report_count(home: &std::path::Path, event: HookEvent, change: Change) {
+fn report_count(home: &std::path::Path, event: HookEvent, change: Change, who: Reporter<'_>) {
     let Some(pane_id) = std::env::var("HERDR_PANE_ID")
         .ok()
         .filter(|value| !value.is_empty())
@@ -515,7 +530,7 @@ fn report_count(home: &std::path::Path, event: HookEvent, change: Change) {
     // reads out of the hook file; the report's own source is fixed in
     // `report::metadata_source`, because Herdr refuses the marker's `@`.
     let socket_path = report::socket_path(home);
-    let outcome = match (counters::change(home, &pane_id, change), &socket_path) {
+    let outcome = match (counters::change(home, &pane_id, change, who), &socket_path) {
         (Ok(counters), Ok(path)) => report_latest(home, path, &pane_id, counters),
         (Err(error), _) => Err(hide_herdr_client::ApiError::Transport(format!(
             "the pane's count could not be changed: {error}"

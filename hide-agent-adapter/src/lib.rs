@@ -277,6 +277,15 @@ impl LaunchDialect {
         !matches!(self, Self::Claude | Self::Codex)
     }
 
+    /// Whether the agent, resumed with its `resume_flag`, tells Herdr which
+    /// session it runs. Cursor's `sessionStart` hook is Herdr's only source
+    /// for that, and Cursor CLI 2026.10.01 does not run it on `--resume`
+    /// (issue 938), so the pane that resumed it has no session in Herdr
+    /// until whoever started the resume says which one it resumed.
+    pub const fn resume_reports_session(self) -> bool {
+        !matches!(self, Self::Cursor)
+    }
+
     /// The native selector prefix, independent of whether this build has
     /// implemented and declared the reader needed to resume that agent.
     pub const fn resume_flag(self) -> &'static str {
@@ -369,14 +378,6 @@ pub enum SkillLocation {
     Claude,
 }
 
-/// Artwork shipped by the shell, independent of labels and launch support.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SidebarMark {
-    Claude,
-    Codex,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Os {
     Macos,
@@ -434,7 +435,6 @@ pub struct AgentAdapter {
     pub label: &'static str,
     pub picker_label: &'static str,
     pub sidebar_label: Option<&'static str>,
-    pub sidebar_mark: Option<SidebarMark>,
     pub aliases: &'static [&'static str],
     pub executables: &'static [&'static str],
     pub skill_location: SkillLocation,
@@ -530,7 +530,6 @@ pub enum Feature {
     Letters,
     Bell,
     Memory,
-    Subagents,
     SpawnGuard,
     HerdrIntegration,
     Sleep,
@@ -540,13 +539,12 @@ pub enum Feature {
 }
 
 impl Feature {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 11] = [
         Self::Skill,
         Self::Guidance,
         Self::Letters,
         Self::Bell,
         Self::Memory,
-        Self::Subagents,
         Self::SpawnGuard,
         Self::HerdrIntegration,
         Self::Sleep,
@@ -568,7 +566,6 @@ impl AgentAdapter {
             Feature::Letters => self.prompt_hook.is_some(),
             Feature::Bell => self.bell,
             Feature::Memory => self.memory.is_some(),
-            Feature::Subagents => self.subagent_counts.is_some(),
             Feature::SpawnGuard => self.spawn_guard.is_some(),
             Feature::Sleep => self.sleep.is_some(),
             Feature::Fork => self.fork.is_some(),

@@ -54,8 +54,7 @@ const OPERATOR_PROMPT: &str = "please run the tests";
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pending() -> Result<()>
 {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let remote_hide = fixture.remote.environment.home.join("bin/hide");
         let remote_hooks = std::fs::canonicalize(&remote_hide)?
             .parent()
@@ -278,12 +277,7 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
             "remote account gained a mailbox spool"
         );
         Ok(())
-    })();
-    // Teardown is an assertion, and it never hides the first journey failure.
-    let cleanup = fixture.stop();
-    journey?;
-    cleanup?;
-    fixture.remove_run_dir()
+    })
 }
 
 /// A request the recipient took in and never answered stops being awaited when
@@ -293,8 +287,7 @@ fn connected_remote_panes_receive_once_and_disconnect_keeps_the_same_letter_pend
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn ending_the_recipients_registration_ends_the_senders_answer_wait_and_says_why() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let remote_hide = fixture.remote.environment.home.join("bin/hide");
         let hide = quote(&fixture.hide);
         let recipient = agent_value(fixture.local.run_in_pane(&format!(
@@ -382,10 +375,7 @@ fn ending_the_recipients_registration_ends_the_senders_answer_wait_and_says_why(
             }))
         })?;
         Ok(())
-    })();
-    let cleanup = fixture.stop();
-    journey?;
-    cleanup
+    })
 }
 
 /// The pane of the named agent in a Herdr answer, wherever the answer nests it.
@@ -442,8 +432,7 @@ fn strings_under(value: &Value, key: &str, found: &mut Vec<String>) {
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_spawn_with_machine_starts_the_agent_on_the_device_under_its_caller() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let project = fixture.commit_remote_project()?;
         let remote_hide = fixture.remote.environment.home.join("bin/hide");
         let spawn = format!(
@@ -643,8 +632,5 @@ fn a_spawn_with_machine_starts_the_agent_on_the_device_under_its_caller() -> Res
             "the caller did not receive the spawned agent's report"
         );
         Ok(())
-    })();
-    let cleanup = fixture.stop();
-    journey?;
-    cleanup
+    })
 }

@@ -91,14 +91,58 @@ pub enum WakeMark {
     Ended {
         id: String,
     },
+    /// A call to a tool that can start background work. Its result may carry
+    /// the start; one this reader cannot read (`StopOutcome::Unreadable`) may
+    /// have started a device it cannot name.
+    Call {
+        call: String,
+    },
+    /// A call asked to stop the task `id`. It ends the device only if the
+    /// result of the call `call` says it stopped it.
+    Stop {
+        call: String,
+        id: String,
+    },
+    /// The result of the tool call `call`.
+    Answered {
+        call: String,
+        outcome: StopOutcome,
+    },
     /// A record about devices this reader could not follow: none is proven
     /// until the next process starts.
     Lost,
 }
 
-/// A tracked device. More than [`WAKE_DEVICE_LIMIT`] at once means the
-/// session is being read wrongly or abused: none is proven until the next
-/// process starts.
+/// What a tool result says about the call it answers, as far as background
+/// work is concerned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StopOutcome {
+    Succeeded,
+    /// The tool reported an error: a stop did not stop its task, and a call
+    /// started nothing.
+    Failed,
+    /// The result is a record this reader could not keep, so whether the
+    /// call started or stopped anything is not known.
+    Unreadable,
+}
+
+/// Why no device is proven, until the next process starts. The two causes
+/// call for different action by whoever reads the log: one raises
+/// [`WAKE_DEVICE_LIMIT`], the other fixes a reader.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeLoss {
+    /// More devices, or calls waiting for their result, were open at once than
+    /// are tracked: the session is being read wrongly or abused.
+    Capacity,
+    /// A record that may have started or ended a device could not be
+    /// followed (too large to keep, an id too long to keep, more marks than
+    /// the bound, or a form this reader does not know).
+    Lost,
+}
+
+/// A tracked device or pending call. More than this many at once is a
+/// [`WakeLoss::Capacity`].
 pub const WAKE_DEVICE_LIMIT: usize = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,6 +151,21 @@ struct WakeDevice {
     id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_at_unix_ms: Option<u64>,
+}
+
+/// A call whose result has not been read: one to a tool that can start
+/// background work, or a `TaskStop`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct WakeCall {
+    #[serde(deserialize_with = "content::deserialize_id")]
+    call: String,
+    /// The task a `TaskStop` asked to stop; none for a call that starts work.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "content::deserialize_optional_id"
+    )]
+    stop: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -212,8 +271,14 @@ pub struct TurnTracker {
     booted: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     wake: Vec<WakeDevice>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    wake_overflow: bool,
+    /// Calls whose result has not been read: a device ends when its stop
+    /// succeeded, not when it was asked for, and a result this reader could
+    /// not keep (`StopOutcome::Unreadable`) of a call that can start work
+    /// loses the devices.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    wake_calls: Vec<WakeCall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wake_loss: Option<WakeLoss>,
     /// A new process started while devices were proven alive, so the work the
     /// agent was waiting for is gone. It holds until a turn or a device
     /// begins.
@@ -318,7 +383,7 @@ impl TurnTracker {
     /// that does not); empty when none is proven. Counting the ones left at a
     /// time is the caller's, because the answer changes with the clock alone.
     pub fn wake_expiries(&self) -> Vec<Option<u64>> {
-        if !self.booted || self.wake_overflow {
+        if !self.booted || self.wake_loss.is_some() {
             return Vec::new();
         }
         self.wake
@@ -333,9 +398,41 @@ impl TurnTracker {
         self.wake_vanished
     }
 
-    /// More devices were running at once than are tracked.
-    pub fn wake_overflowed(&self) -> bool {
-        self.wake_overflow
+    /// Why no device is proven until the next process starts, if none is
+    /// for that reason: the first cause since the process started.
+    pub fn wake_loss(&self) -> Option<WakeLoss> {
+        self.wake_loss
+    }
+
+    fn lose_wake(&mut self, cause: WakeLoss) {
+        self.wake_loss.get_or_insert(cause);
+        self.wake.clear();
+        self.wake_calls.clear();
+    }
+
+    /// What is tracked now: the devices and the calls waiting for a result
+    /// share [`WAKE_DEVICE_LIMIT`].
+    fn tracked(&self) -> usize {
+        self.wake.len() + self.wake_calls.len()
+    }
+
+    /// A call to wait for the result of. Nothing is waited for before the
+    /// process began or after devices were lost: there is none to lose.
+    fn open_call(&mut self, call: &str, stop: Option<&String>) {
+        if !self.booted
+            || self.wake_loss.is_some()
+            || self.wake_calls.iter().any(|open| open.call == call)
+        {
+            return;
+        }
+        if self.tracked() >= WAKE_DEVICE_LIMIT {
+            self.lose_wake(WakeLoss::Capacity);
+        } else {
+            self.wake_calls.push(WakeCall {
+                call: call.to_owned(),
+                stop: stop.cloned(),
+            });
+        }
     }
 
     fn fold_wake(&mut self, offset: u64, marks: &[WakeMark]) {
@@ -351,21 +448,22 @@ impl TurnTracker {
                     // Boots in a row; the later ones find nothing left to lose.
                     self.wake_vanished |= !self.wake.is_empty();
                     self.wake.clear();
-                    self.wake_overflow = false;
+                    // A call of the process before is never answered for this one.
+                    self.wake_calls.clear();
+                    self.wake_loss = None;
                 }
                 WakeMark::Started {
                     id,
                     expires_at_unix_ms,
                 } => {
-                    if !self.booted || self.wake_overflow {
+                    if !self.booted || self.wake_loss.is_some() {
                         continue;
                     }
                     self.wake_vanished = false;
                     if let Some(known) = self.wake.iter_mut().find(|device| device.id == *id) {
                         known.expires_at_unix_ms = *expires_at_unix_ms;
-                    } else if self.wake.len() >= WAKE_DEVICE_LIMIT {
-                        self.wake_overflow = true;
-                        self.wake.clear();
+                    } else if self.tracked() >= WAKE_DEVICE_LIMIT {
+                        self.lose_wake(WakeLoss::Capacity);
                     } else {
                         self.wake.push(WakeDevice {
                             id: id.clone(),
@@ -374,10 +472,23 @@ impl TurnTracker {
                     }
                 }
                 WakeMark::Ended { id } => self.wake.retain(|device| device.id != *id),
-                WakeMark::Lost => {
-                    self.wake_overflow = true;
-                    self.wake.clear();
+                WakeMark::Call { call } => self.open_call(call, None),
+                WakeMark::Stop { call, id } => self.open_call(call, Some(id)),
+                WakeMark::Answered { call, outcome } => {
+                    let Some(at) = self.wake_calls.iter().position(|open| open.call == *call)
+                    else {
+                        continue;
+                    };
+                    let open = self.wake_calls.remove(at);
+                    match (outcome, open.stop) {
+                        (StopOutcome::Succeeded, Some(id)) => {
+                            self.wake.retain(|device| device.id != id)
+                        }
+                        (StopOutcome::Unreadable, _) => self.lose_wake(WakeLoss::Lost),
+                        (StopOutcome::Succeeded | StopOutcome::Failed, _) => {}
+                    }
                 }
+                WakeMark::Lost => self.lose_wake(WakeLoss::Lost),
             }
         }
     }
@@ -755,5 +866,140 @@ mod tests {
             tracker.fold(100, &stray);
             assert_eq!(tracker.waiting(), None, "{stray:?}");
         }
+    }
+    fn wake(marks: &[WakeMark]) -> TurnTracker {
+        let mut tracker = TurnTracker::default();
+        tracker.fold(0, &TurnMark::Wake(marks.to_vec()));
+        tracker
+    }
+
+    fn started(id: &str) -> WakeMark {
+        WakeMark::Started {
+            id: id.into(),
+            expires_at_unix_ms: None,
+        }
+    }
+
+    fn answered(call: &str, outcome: StopOutcome) -> WakeMark {
+        WakeMark::Answered {
+            call: call.into(),
+            outcome,
+        }
+    }
+
+    #[test]
+    fn a_result_nobody_can_read_loses_the_devices_only_of_a_call_that_can_start_work() {
+        let call = |call: &str| WakeMark::Call { call: call.into() };
+        let lost = |marks: &[WakeMark]| {
+            let mut all = vec![WakeMark::Boot, started("bg1")];
+            all.extend_from_slice(marks);
+            wake(&all).wake_loss()
+        };
+        let unreadable = |call: &str| answered(call, StopOutcome::Unreadable);
+        assert_eq!(lost(&[call("c1"), unreadable("c1")]), Some(WakeLoss::Lost));
+        // A result of a call this reader never marked answers nothing it
+        // tracks, and a readable result of one that did loses nothing.
+        assert_eq!(lost(&[unreadable("c2")]), None);
+        assert_eq!(
+            lost(&[call("c1"), answered("c1", StopOutcome::Succeeded)]),
+            None
+        );
+        assert_eq!(
+            lost(&[call("c1"), answered("c1", StopOutcome::Failed)]),
+            None
+        );
+        // Answered once: the same call is not open for a second result.
+        assert_eq!(
+            lost(&[call("c1"), unreadable("c1"), unreadable("c1")]),
+            Some(WakeLoss::Lost)
+        );
+        // A call before the process began, or after devices were lost, is not
+        // waited for: there is none to lose.
+        let mut early = vec![call("c0")];
+        early.extend([WakeMark::Boot, unreadable("c0")]);
+        assert_eq!(wake(&early).wake_loss(), None);
+    }
+
+    #[test]
+    fn open_calls_are_kept_across_a_save_and_bounded() {
+        let mut tracker = wake(&[
+            WakeMark::Boot,
+            started("bg1"),
+            WakeMark::Call { call: "c1".into() },
+            WakeMark::Stop {
+                call: "c2".into(),
+                id: "bg1".into(),
+            },
+        ]);
+        let saved = serde_json::to_string(&tracker).unwrap();
+        let mut restored: TurnTracker = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored, tracker);
+        restored.fold(
+            10,
+            &TurnMark::Wake(vec![answered("c2", StopOutcome::Succeeded)]),
+        );
+        assert!(restored.wake_expiries().is_empty(), "the stop it saved");
+        restored.fold(
+            20,
+            &TurnMark::Wake(vec![answered("c1", StopOutcome::Unreadable)]),
+        );
+        assert_eq!(restored.wake_loss(), Some(WakeLoss::Lost));
+
+        let calls: Vec<_> = (0..=WAKE_DEVICE_LIMIT)
+            .map(|index| WakeMark::Call {
+                call: format!("c{index}"),
+            })
+            .collect();
+        tracker.fold(10, &TurnMark::Wake(calls));
+        assert_eq!(tracker.wake_loss(), Some(WakeLoss::Capacity));
+    }
+
+    /// Devices and the calls waiting for a result share one limit, so what is
+    /// kept stays under it whichever of the two fills it.
+    #[test]
+    fn devices_and_open_calls_share_one_limit() {
+        let calls = |count: usize| {
+            (0..count).map(|index| WakeMark::Call {
+                call: format!("c{index}"),
+            })
+        };
+        let devices = |count: usize| (0..count).map(|index| started(&format!("bg{index}")));
+        let loss = |marks: Vec<WakeMark>| {
+            let mut all = vec![WakeMark::Boot];
+            all.extend(marks);
+            wake(&all).wake_loss()
+        };
+        let half = WAKE_DEVICE_LIMIT / 2;
+        // Exactly the limit between them is kept, one more is not, in either order.
+        assert_eq!(
+            loss(
+                calls(half)
+                    .chain(devices(WAKE_DEVICE_LIMIT - half))
+                    .collect()
+            ),
+            None
+        );
+        assert_eq!(
+            loss(
+                devices(WAKE_DEVICE_LIMIT - half)
+                    .chain(calls(half))
+                    .collect()
+            ),
+            None
+        );
+        assert_eq!(
+            loss(calls(20).chain(devices(13)).collect()),
+            Some(WakeLoss::Capacity)
+        );
+        assert_eq!(
+            loss(devices(13).chain(calls(20)).collect()),
+            Some(WakeLoss::Capacity)
+        );
+        // A result frees its call's place before the start it carries takes one.
+        let mut all: Vec<_> = devices(WAKE_DEVICE_LIMIT - 1).collect();
+        all.push(WakeMark::Call { call: "c".into() });
+        all.push(answered("c", StopOutcome::Succeeded));
+        all.push(started("last"));
+        assert_eq!(loss(all), None);
     }
 }

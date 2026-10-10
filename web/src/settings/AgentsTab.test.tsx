@@ -17,7 +17,7 @@ vi.hoisted(() => {
 
 const piece = (state: KitPiece["state"], reason: string | null = null): KitPiece => ({ state, reason, location: null });
 const LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", grok: "Grok", opencode: "OpenCode", pi: "Pi", omp: "omp", cursor: "Cursor" };
-const FEATURES: KitFeatureId[] = ["skill", "guidance", "letters", "bell", "memory", "subagents", "spawn_guard", "herdr_integration", "sleep", "fork", "start", "titles"];
+const FEATURES: KitFeatureId[] = ["skill", "guidance", "letters", "bell", "memory", "spawn_guard", "herdr_integration", "sleep", "fork", "start", "titles"];
 
 const agent = (id: string, over: Partial<KitAgent> = {}): KitAgent => ({
   id,
@@ -31,8 +31,8 @@ const agent = (id: string, over: Partial<KitAgent> = {}): KitAgent => ({
   doc_url: `https://docs.example.test/${id}`,
   ...over,
 });
-// What a Partial agent does in the fixture: the skill, the subagent count and Herdr's own status.
-const supports = (feature: KitFeatureId) => ["skill", "subagents", "herdr_integration"].includes(feature);
+// What a Partial agent does in the fixture: the skill and Herdr's own status.
+const supports = (feature: KitFeatureId) => ["skill", "herdr_integration"].includes(feature);
 const partial = (id: string, over: Partial<KitAgent> = {}): KitAgent =>
   agent(id, {
     enabled: false,
@@ -286,7 +286,7 @@ it("opens the Partial popover from the chip and lists every feature with a mark 
   expect(groups.map((group) => [...group.querySelectorAll("[data-agent-feature]")].map((line) => line.getAttribute("data-agent-feature")?.split(":")[0]))).toEqual([
     ["skill", "guidance", "herdr_integration", "start"],
     ["titles", "sleep", "fork"],
-    ["letters", "bell", "memory", "subagents", "spawn_guard"],
+    ["letters", "bell", "memory", "spawn_guard"],
   ]);
   expect(popover.querySelector('[data-agent-feature="letters:no"]')?.textContent).toContain("–Not available: Letters and Observer warnings");
   expect(popover.querySelector('[data-agent-feature="skill:yes"]')?.textContent).toContain("✓Works: Hide skill");

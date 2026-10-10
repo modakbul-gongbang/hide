@@ -271,16 +271,10 @@ describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
     expect(numberQuery("sandbox")).toBeNull();
   });
 
-  it("carries the pull request's CI rollup only when it has one", () => {
+  it("carries the state the core decided for each pull request, and names it as the row's status", () => {
     const [open, merged] = searchEntries(RICH, t).filter((entry) => entry.kind === "pr");
-    expect(open?.ci).toEqual({ tone: "pending", label: "CI running" });
-    expect(merged?.ci).toEqual({ tone: "done", label: "CI passed" });
-    const koEntries = searchEntries(RICH, ko).filter((entry) => entry.kind === "pr");
-    expect(koEntries[0]?.ci).toEqual({ tone: "pending", label: "CI 진행 중" });
-    expect(koEntries[1]?.ci).toEqual({ tone: "done", label: "CI 통과" });
-    const unknown = structuredClone(RICH) as typeof RICH;
-    unknown.navigator!.workspaces![0]!.pull_requests![0]!.checks = "unknown";
-    expect(searchEntries(unknown, t).find((entry) => entry.id === "pr:w1:275")?.ci).toBeUndefined();
+    expect([open?.prState, open?.status]).toEqual(["pending", { tone: "muted", label: "CI running or review pending" }]);
+    expect([merged?.prState, merged?.status]).toEqual(["merged", { tone: "muted", label: "Merged" }]);
   });
 
   it("keeps the 80 row cap", () => {

@@ -883,8 +883,8 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "fnd-pal-light-pr-pr-open",
-                          "name": "PR open",
+                          "id": "fnd-pal-light-pr-pr-failed",
+                          "name": "PR failed",
                           "layout": "vertical",
                           "gap": "$--spacing-md",
                           "width": "fill_container",
@@ -897,16 +897,16 @@
                           "children": [
                             {
                               "type": "rectangle",
-                              "id": "fnd-pal-light-pr-pr-open-dot",
+                              "id": "fnd-pal-light-pr-pr-failed-dot",
                               "name": "Colour",
                               "width": 24,
                               "height": 24,
-                              "fill": "$--pr-open",
+                              "fill": "$--pr-failed",
                               "cornerRadius": "$--radius-sm"
                             },
                             {
                               "type": "frame",
-                              "id": "fnd-pal-light-pr-pr-open-text",
+                              "id": "fnd-pal-light-pr-pr-failed-text",
                               "name": "Text",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs",
@@ -914,20 +914,20 @@
                               "children": [
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-light-pr-pr-open-label",
-                                  "name": "PR open",
+                                  "id": "fnd-pal-light-pr-pr-failed-label",
+                                  "name": "PR failed",
                                   "fill": "$--foreground",
-                                  "content": "PR open",
+                                  "content": "PR failed",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
                                   "fontWeight": "normal"
                                 },
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-light-pr-pr-open-value",
-                                  "name": "#1A7F37",
+                                  "id": "fnd-pal-light-pr-pr-failed-value",
+                                  "name": "#D62323",
                                   "fill": "$--muted-foreground",
-                                  "content": "#1A7F37",
+                                  "content": "#D62323",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-micro",
                                   "fontWeight": "normal"
@@ -938,8 +938,8 @@
                         },
                         {
                           "type": "frame",
-                          "id": "fnd-pal-light-pr-pr-merged",
-                          "name": "PR merged",
+                          "id": "fnd-pal-light-pr-pr-pending",
+                          "name": "PR pending",
                           "layout": "vertical",
                           "gap": "$--spacing-md",
                           "width": "fill_container",
@@ -952,16 +952,16 @@
                           "children": [
                             {
                               "type": "rectangle",
-                              "id": "fnd-pal-light-pr-pr-merged-dot",
+                              "id": "fnd-pal-light-pr-pr-pending-dot",
                               "name": "Colour",
                               "width": 24,
                               "height": 24,
-                              "fill": "$--pr-merged",
+                              "fill": "$--pr-pending",
                               "cornerRadius": "$--radius-sm"
                             },
                             {
                               "type": "frame",
-                              "id": "fnd-pal-light-pr-pr-merged-text",
+                              "id": "fnd-pal-light-pr-pr-pending-text",
                               "name": "Text",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs",
@@ -969,20 +969,20 @@
                               "children": [
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-light-pr-pr-merged-label",
-                                  "name": "PR merged",
+                                  "id": "fnd-pal-light-pr-pr-pending-label",
+                                  "name": "PR pending",
                                   "fill": "$--foreground",
-                                  "content": "PR merged",
+                                  "content": "PR pending",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
                                   "fontWeight": "normal"
                                 },
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-light-pr-pr-merged-value",
-                                  "name": "#8250DF",
+                                  "id": "fnd-pal-light-pr-pr-pending-value",
+                                  "name": "#BF8700",
                                   "fill": "$--muted-foreground",
-                                  "content": "#8250DF",
+                                  "content": "#BF8700",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-micro",
                                   "fontWeight": "normal"
@@ -993,8 +993,8 @@
                         },
                         {
                           "type": "frame",
-                          "id": "fnd-pal-light-pr-pr-closed",
-                          "name": "PR closed",
+                          "id": "fnd-pal-light-pr-pr-mergeable",
+                          "name": "PR mergeable",
                           "layout": "vertical",
                           "gap": "$--spacing-md",
                           "width": "fill_container",
@@ -1007,16 +1007,16 @@
                           "children": [
                             {
                               "type": "rectangle",
-                              "id": "fnd-pal-light-pr-pr-closed-dot",
+                              "id": "fnd-pal-light-pr-pr-mergeable-dot",
                               "name": "Colour",
                               "width": 24,
                               "height": 24,
-                              "fill": "$--pr-closed",
+                              "fill": "$--pr-mergeable",
                               "cornerRadius": "$--radius-sm"
                             },
                             {
                               "type": "frame",
-                              "id": "fnd-pal-light-pr-pr-closed-text",
+                              "id": "fnd-pal-light-pr-pr-mergeable-text",
                               "name": "Text",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs",
@@ -1024,20 +1024,20 @@
                               "children": [
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-light-pr-pr-closed-label",
-                                  "name": "PR closed",
+                                  "id": "fnd-pal-light-pr-pr-mergeable-label",
+                                  "name": "PR mergeable",
                                   "fill": "$--foreground",
-                                  "content": "PR closed",
+                                  "content": "PR mergeable",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
                                   "fontWeight": "normal"
                                 },
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-light-pr-pr-closed-value",
-                                  "name": "#CF222E",
+                                  "id": "fnd-pal-light-pr-pr-mergeable-value",
+                                  "name": "#15803D",
                                   "fill": "$--muted-foreground",
-                                  "content": "#CF222E",
+                                  "content": "#15803D",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-micro",
                                   "fontWeight": "normal"
@@ -1045,10 +1045,21 @@
                               ]
                             }
                           ]
-                        },
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fnd-pal-light-pr-settled",
+                      "name": "Chips",
+                      "layout": "horizontal",
+                      "gap": "$--spacing-md",
+                      "alignItems": "start",
+                      "width": "fill_container",
+                      "children": [
                         {
                           "type": "frame",
-                          "id": "fnd-pal-light-pr-pr-draft",
+                          "id": "fnd-pal-light-pr-settled-pr-draft",
                           "name": "PR draft",
                           "layout": "vertical",
                           "gap": "$--spacing-md",
@@ -1062,7 +1073,7 @@
                           "children": [
                             {
                               "type": "rectangle",
-                              "id": "fnd-pal-light-pr-pr-draft-dot",
+                              "id": "fnd-pal-light-pr-settled-pr-draft-dot",
                               "name": "Colour",
                               "width": 24,
                               "height": 24,
@@ -1071,7 +1082,7 @@
                             },
                             {
                               "type": "frame",
-                              "id": "fnd-pal-light-pr-pr-draft-text",
+                              "id": "fnd-pal-light-pr-settled-pr-draft-text",
                               "name": "Text",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs",
@@ -1079,7 +1090,7 @@
                               "children": [
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-light-pr-pr-draft-label",
+                                  "id": "fnd-pal-light-pr-settled-pr-draft-label",
                                   "name": "PR draft",
                                   "fill": "$--foreground",
                                   "content": "PR draft",
@@ -1089,10 +1100,120 @@
                                 },
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-light-pr-pr-draft-value",
+                                  "id": "fnd-pal-light-pr-settled-pr-draft-value",
                                   "name": "#6E7781",
                                   "fill": "$--muted-foreground",
                                   "content": "#6E7781",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fnd-pal-light-pr-settled-pr-merged",
+                          "name": "PR merged",
+                          "layout": "vertical",
+                          "gap": "$--spacing-md",
+                          "width": "fill_container",
+                          "padding": "$--spacing-lg",
+                          "fill": "$--card",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner",
+                          "cornerRadius": "$--radius-lg",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "fnd-pal-light-pr-settled-pr-merged-dot",
+                              "name": "Colour",
+                              "width": 24,
+                              "height": 24,
+                              "fill": "$--pr-merged",
+                              "cornerRadius": "$--radius-sm"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "fnd-pal-light-pr-settled-pr-merged-text",
+                              "name": "Text",
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "width": "fill_container",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "fnd-pal-light-pr-settled-pr-merged-label",
+                                  "name": "PR merged",
+                                  "fill": "$--foreground",
+                                  "content": "PR merged",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "fnd-pal-light-pr-settled-pr-merged-value",
+                                  "name": "#8250DF",
+                                  "fill": "$--muted-foreground",
+                                  "content": "#8250DF",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fnd-pal-light-pr-settled-pr-closed",
+                          "name": "PR closed",
+                          "layout": "vertical",
+                          "gap": "$--spacing-md",
+                          "width": "fill_container",
+                          "padding": "$--spacing-lg",
+                          "fill": "$--card",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner",
+                          "cornerRadius": "$--radius-lg",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "fnd-pal-light-pr-settled-pr-closed-dot",
+                              "name": "Colour",
+                              "width": 24,
+                              "height": 24,
+                              "fill": "$--pr-closed",
+                              "cornerRadius": "$--radius-sm"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "fnd-pal-light-pr-settled-pr-closed-text",
+                              "name": "Text",
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "width": "fill_container",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "fnd-pal-light-pr-settled-pr-closed-label",
+                                  "name": "PR closed",
+                                  "fill": "$--foreground",
+                                  "content": "PR closed",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "fnd-pal-light-pr-settled-pr-closed-value",
+                                  "name": "#6D6D76",
+                                  "fill": "$--muted-foreground",
+                                  "content": "#6D6D76",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-micro",
                                   "fontWeight": "normal"
@@ -2126,8 +2247,8 @@
                       "children": [
                         {
                           "type": "frame",
-                          "id": "fnd-pal-dark-pr-pr-open",
-                          "name": "PR open",
+                          "id": "fnd-pal-dark-pr-pr-failed",
+                          "name": "PR failed",
                           "layout": "vertical",
                           "gap": "$--spacing-md",
                           "width": "fill_container",
@@ -2140,16 +2261,16 @@
                           "children": [
                             {
                               "type": "rectangle",
-                              "id": "fnd-pal-dark-pr-pr-open-dot",
+                              "id": "fnd-pal-dark-pr-pr-failed-dot",
                               "name": "Colour",
                               "width": 24,
                               "height": 24,
-                              "fill": "$--pr-open",
+                              "fill": "$--pr-failed",
                               "cornerRadius": "$--radius-sm"
                             },
                             {
                               "type": "frame",
-                              "id": "fnd-pal-dark-pr-pr-open-text",
+                              "id": "fnd-pal-dark-pr-pr-failed-text",
                               "name": "Text",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs",
@@ -2157,20 +2278,20 @@
                               "children": [
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-dark-pr-pr-open-label",
-                                  "name": "PR open",
+                                  "id": "fnd-pal-dark-pr-pr-failed-label",
+                                  "name": "PR failed",
                                   "fill": "$--foreground",
-                                  "content": "PR open",
+                                  "content": "PR failed",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
                                   "fontWeight": "normal"
                                 },
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-dark-pr-pr-open-value",
-                                  "name": "#3FB950",
+                                  "id": "fnd-pal-dark-pr-pr-failed-value",
+                                  "name": "#FF595C",
                                   "fill": "$--muted-foreground",
-                                  "content": "#3FB950",
+                                  "content": "#FF595C",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-micro",
                                   "fontWeight": "normal"
@@ -2181,8 +2302,8 @@
                         },
                         {
                           "type": "frame",
-                          "id": "fnd-pal-dark-pr-pr-merged",
-                          "name": "PR merged",
+                          "id": "fnd-pal-dark-pr-pr-pending",
+                          "name": "PR pending",
                           "layout": "vertical",
                           "gap": "$--spacing-md",
                           "width": "fill_container",
@@ -2195,16 +2316,16 @@
                           "children": [
                             {
                               "type": "rectangle",
-                              "id": "fnd-pal-dark-pr-pr-merged-dot",
+                              "id": "fnd-pal-dark-pr-pr-pending-dot",
                               "name": "Colour",
                               "width": 24,
                               "height": 24,
-                              "fill": "$--pr-merged",
+                              "fill": "$--pr-pending",
                               "cornerRadius": "$--radius-sm"
                             },
                             {
                               "type": "frame",
-                              "id": "fnd-pal-dark-pr-pr-merged-text",
+                              "id": "fnd-pal-dark-pr-pr-pending-text",
                               "name": "Text",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs",
@@ -2212,20 +2333,20 @@
                               "children": [
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-dark-pr-pr-merged-label",
-                                  "name": "PR merged",
+                                  "id": "fnd-pal-dark-pr-pr-pending-label",
+                                  "name": "PR pending",
                                   "fill": "$--foreground",
-                                  "content": "PR merged",
+                                  "content": "PR pending",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
                                   "fontWeight": "normal"
                                 },
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-dark-pr-pr-merged-value",
-                                  "name": "#A371F7",
+                                  "id": "fnd-pal-dark-pr-pr-pending-value",
+                                  "name": "#D29922",
                                   "fill": "$--muted-foreground",
-                                  "content": "#A371F7",
+                                  "content": "#D29922",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-micro",
                                   "fontWeight": "normal"
@@ -2236,8 +2357,8 @@
                         },
                         {
                           "type": "frame",
-                          "id": "fnd-pal-dark-pr-pr-closed",
-                          "name": "PR closed",
+                          "id": "fnd-pal-dark-pr-pr-mergeable",
+                          "name": "PR mergeable",
                           "layout": "vertical",
                           "gap": "$--spacing-md",
                           "width": "fill_container",
@@ -2250,16 +2371,16 @@
                           "children": [
                             {
                               "type": "rectangle",
-                              "id": "fnd-pal-dark-pr-pr-closed-dot",
+                              "id": "fnd-pal-dark-pr-pr-mergeable-dot",
                               "name": "Colour",
                               "width": 24,
                               "height": 24,
-                              "fill": "$--pr-closed",
+                              "fill": "$--pr-mergeable",
                               "cornerRadius": "$--radius-sm"
                             },
                             {
                               "type": "frame",
-                              "id": "fnd-pal-dark-pr-pr-closed-text",
+                              "id": "fnd-pal-dark-pr-pr-mergeable-text",
                               "name": "Text",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs",
@@ -2267,20 +2388,20 @@
                               "children": [
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-dark-pr-pr-closed-label",
-                                  "name": "PR closed",
+                                  "id": "fnd-pal-dark-pr-pr-mergeable-label",
+                                  "name": "PR mergeable",
                                   "fill": "$--foreground",
-                                  "content": "PR closed",
+                                  "content": "PR mergeable",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
                                   "fontWeight": "normal"
                                 },
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-dark-pr-pr-closed-value",
-                                  "name": "#F85149",
+                                  "id": "fnd-pal-dark-pr-pr-mergeable-value",
+                                  "name": "#5EE69E",
                                   "fill": "$--muted-foreground",
-                                  "content": "#F85149",
+                                  "content": "#5EE69E",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-micro",
                                   "fontWeight": "normal"
@@ -2288,10 +2409,21 @@
                               ]
                             }
                           ]
-                        },
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fnd-pal-dark-pr-settled",
+                      "name": "Chips",
+                      "layout": "horizontal",
+                      "gap": "$--spacing-md",
+                      "alignItems": "start",
+                      "width": "fill_container",
+                      "children": [
                         {
                           "type": "frame",
-                          "id": "fnd-pal-dark-pr-pr-draft",
+                          "id": "fnd-pal-dark-pr-settled-pr-draft",
                           "name": "PR draft",
                           "layout": "vertical",
                           "gap": "$--spacing-md",
@@ -2305,7 +2437,7 @@
                           "children": [
                             {
                               "type": "rectangle",
-                              "id": "fnd-pal-dark-pr-pr-draft-dot",
+                              "id": "fnd-pal-dark-pr-settled-pr-draft-dot",
                               "name": "Colour",
                               "width": 24,
                               "height": 24,
@@ -2314,7 +2446,7 @@
                             },
                             {
                               "type": "frame",
-                              "id": "fnd-pal-dark-pr-pr-draft-text",
+                              "id": "fnd-pal-dark-pr-settled-pr-draft-text",
                               "name": "Text",
                               "layout": "vertical",
                               "gap": "$--spacing-xxs",
@@ -2322,7 +2454,7 @@
                               "children": [
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-dark-pr-pr-draft-label",
+                                  "id": "fnd-pal-dark-pr-settled-pr-draft-label",
                                   "name": "PR draft",
                                   "fill": "$--foreground",
                                   "content": "PR draft",
@@ -2332,10 +2464,120 @@
                                 },
                                 {
                                   "type": "text",
-                                  "id": "fnd-pal-dark-pr-pr-draft-value",
+                                  "id": "fnd-pal-dark-pr-settled-pr-draft-value",
                                   "name": "#9198A1",
                                   "fill": "$--muted-foreground",
                                   "content": "#9198A1",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fnd-pal-dark-pr-settled-pr-merged",
+                          "name": "PR merged",
+                          "layout": "vertical",
+                          "gap": "$--spacing-md",
+                          "width": "fill_container",
+                          "padding": "$--spacing-lg",
+                          "fill": "$--card",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner",
+                          "cornerRadius": "$--radius-lg",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "fnd-pal-dark-pr-settled-pr-merged-dot",
+                              "name": "Colour",
+                              "width": 24,
+                              "height": 24,
+                              "fill": "$--pr-merged",
+                              "cornerRadius": "$--radius-sm"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "fnd-pal-dark-pr-settled-pr-merged-text",
+                              "name": "Text",
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "width": "fill_container",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "fnd-pal-dark-pr-settled-pr-merged-label",
+                                  "name": "PR merged",
+                                  "fill": "$--foreground",
+                                  "content": "PR merged",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "fnd-pal-dark-pr-settled-pr-merged-value",
+                                  "name": "#A371F7",
+                                  "fill": "$--muted-foreground",
+                                  "content": "#A371F7",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fnd-pal-dark-pr-settled-pr-closed",
+                          "name": "PR closed",
+                          "layout": "vertical",
+                          "gap": "$--spacing-md",
+                          "width": "fill_container",
+                          "padding": "$--spacing-lg",
+                          "fill": "$--card",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner",
+                          "cornerRadius": "$--radius-lg",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "fnd-pal-dark-pr-settled-pr-closed-dot",
+                              "name": "Colour",
+                              "width": 24,
+                              "height": 24,
+                              "fill": "$--pr-closed",
+                              "cornerRadius": "$--radius-sm"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "fnd-pal-dark-pr-settled-pr-closed-text",
+                              "name": "Text",
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "width": "fill_container",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "fnd-pal-dark-pr-settled-pr-closed-label",
+                                  "name": "PR closed",
+                                  "fill": "$--foreground",
+                                  "content": "PR closed",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "fnd-pal-dark-pr-settled-pr-closed-value",
+                                  "name": "#92959A",
+                                  "fill": "$--muted-foreground",
+                                  "content": "#92959A",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-micro",
                                   "fontWeight": "normal"
@@ -11090,15 +11332,14 @@
                 {
                   "id": "c9QF3",
                   "type": "ref",
-                  "ref": "eHAjc",
-                  "name": "Session PR facts",
+                  "ref": "ath-pr-icon",
+                  "name": "Session PR mark",
                   "descendants": {
-                    "xXuNa": {
-                      "enabled": false
+                    "ath-pr-g": {
+                      "fill": "$--pr-mergeable"
                     },
-                    "n8L5dm": {
-                      "content": "#221 ✓",
-                      "fill": "$--pr-open"
+                    "ath-pr-n": {
+                      "content": "#221"
                     }
                   }
                 },
@@ -11449,14 +11690,14 @@
               "ref": "BaBaS",
               "name": "Overlaid state",
               "width": "fill_container",
-              "stroke": "$--pr-open",
+              "stroke": "$--pr-mergeable",
               "descendants": {
                 "yTDmi": {
-                  "fill": "$--pr-open"
+                  "fill": "$--pr-mergeable"
                 },
                 "GgeQQ": {
                   "content": "리뷰 · checks 통과, review 필요",
-                  "fill": "$--pr-open"
+                  "fill": "$--pr-mergeable"
                 },
                 "E0B9l": {
                   "enabled": true
@@ -11492,14 +11733,14 @@
               "ref": "BaBaS",
               "name": "Overlaid state",
               "width": "fill_container",
-              "stroke": "$--pr-open",
+              "stroke": "$--pr-mergeable",
               "descendants": {
                 "yTDmi": {
-                  "fill": "$--pr-open"
+                  "fill": "$--pr-mergeable"
                 },
                 "GgeQQ": {
                   "content": "머지 · checks 통과, 승인됨",
-                  "fill": "$--pr-open"
+                  "fill": "$--pr-mergeable"
                 },
                 "E0B9l": {
                   "enabled": true
@@ -14652,7 +14893,7 @@
                       "height": 14,
                       "icon": "git-pull-request",
                       "library": "lucide",
-                      "fill": "$--pr-open"
+                      "fill": "$--pr-mergeable"
                     },
                     {
                       "type": "frame",
@@ -16977,7 +17218,7 @@
                       "height": 14,
                       "icon": "git-pull-request",
                       "library": "lucide",
-                      "fill": "$--pr-open"
+                      "fill": "$--pr-mergeable"
                     },
                     {
                       "type": "text",
@@ -35583,13 +35824,13 @@
                           "height": 12,
                           "icon": "git-pull-request",
                           "library": "lucide",
-                          "fill": "$--pr-open"
+                          "fill": "$--pr-mergeable"
                         },
                         {
                           "type": "text",
                           "id": "pr-card-badge-label",
                           "name": "Open",
-                          "fill": "$--pr-open",
+                          "fill": "$--foreground",
                           "content": "Open",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-micro",
@@ -35604,7 +35845,7 @@
                       "y": 0,
                       "name": "Draft",
                       "enabled": false,
-                      "fill": "$--pr-draft",
+                      "fill": "$--muted-foreground",
                       "content": "Draft",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-caption",
@@ -35638,7 +35879,7 @@
                           "type": "text",
                           "id": "pr-card-open-label",
                           "name": "Open PR",
-                          "fill": "$--pr-open",
+                          "fill": "$--foreground",
                           "content": "Open PR",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
@@ -35652,7 +35893,7 @@
                           "height": 12,
                           "icon": "arrow-up-right",
                           "library": "lucide",
-                          "fill": "$--pr-open"
+                          "fill": "$--foreground"
                         }
                       ]
                     }
@@ -35722,7 +35963,7 @@
                           "type": "text",
                           "id": "pr-card-review",
                           "name": "Approved",
-                          "fill": "$--success",
+                          "fill": "$--pr-mergeable",
                           "content": "Approved",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
@@ -35753,7 +35994,7 @@
                           "type": "text",
                           "id": "pr-card-checks",
                           "name": "Passing",
-                          "fill": "$--success",
+                          "fill": "$--pr-mergeable",
                           "content": "Passing",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
@@ -36035,7 +36276,7 @@
                 },
                 "pr-card-badge-label": {
                   "content": "Draft",
-                  "fill": "$--pr-draft"
+                  "fill": "$--foreground"
                 },
                 "pr-card-number": {
                   "content": "#183"
@@ -36049,7 +36290,7 @@
                 },
                 "pr-card-checks": {
                   "content": "Failed",
-                  "fill": "$--destructive"
+                  "fill": "$--pr-failed"
                 },
                 "pr-card-branch": {
                   "content": "prd/agent-sleep"
@@ -36095,11 +36336,11 @@
               "name": "Card / Changes requested, checks pending",
               "descendants": {
                 "pr-card-badge-icon": {
-                  "fill": "$--destructive"
+                  "fill": "$--pr-failed"
                 },
                 "pr-card-badge-label": {
                   "content": "Changes requested",
-                  "fill": "$--destructive"
+                  "fill": "$--foreground"
                 },
                 "pr-card-number": {
                   "content": "#175"
@@ -36109,11 +36350,11 @@
                 },
                 "pr-card-review": {
                   "content": "Changes requested",
-                  "fill": "$--destructive"
+                  "fill": "$--pr-failed"
                 },
                 "pr-card-checks": {
                   "content": "Pending",
-                  "fill": "$--muted-foreground"
+                  "fill": "$--pr-pending"
                 },
                 "pr-card-branch": {
                   "content": "feat/task-agents-views"
@@ -36167,7 +36408,7 @@
                 },
                 "pr-card-badge-label": {
                   "content": "Merged",
-                  "fill": "$--pr-merged"
+                  "fill": "$--foreground"
                 },
                 "pr-card-number": {
                   "content": "#168"
@@ -36355,7 +36596,7 @@
                       "height": 14,
                       "icon": "git-pull-request",
                       "library": "lucide",
-                      "fill": "$--pr-open"
+                      "fill": "$--pr-mergeable"
                     }
                   ]
                 },
@@ -36366,7 +36607,7 @@
                   "width": 18,
                   "height": 18,
                   "cornerRadius": "$--radius-xs",
-                  "stroke": "$--pr-open",
+                  "stroke": "$--pr-mergeable",
                   "strokeWidth": "$--size-hairline",
                   "strokeAlignment": "inner",
                   "justifyContent": "center",
@@ -36380,7 +36621,7 @@
                       "height": 14,
                       "icon": "git-pull-request",
                       "library": "lucide",
-                      "fill": "$--pr-open"
+                      "fill": "$--pr-mergeable"
                     }
                   ]
                 },
@@ -36434,7 +36675,7 @@
           "type": "text",
           "id": "cmp-agent-graph-box-spec",
           "name": "A checkout in the Agents gra",
-          "content": "A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph in its pull request’s colour and the mono branch, the purpose, then the issue chip, PR chip with its CI mark and 변경 요청, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title, age; a step in for a delegation inside the checkout; the chip of a delegation into or from another project; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.",
+          "content": "A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph, a pull request’s mark in its state, and the mono branch, the purpose, then the issue chip, the PR mark (state icon and number, no border) with 변경 요청 in red only while a reviewer asks for changes, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title, age; a step in for a delegation inside the checkout; the chip of a delegation into or from another project; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.",
           "fill": "$--subtle-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -36560,46 +36801,45 @@
                         {
                           "type": "frame",
                           "id": "agb-pr",
-                          "name": "PR chip",
+                          "name": "PR mark",
                           "children": [
                             {
-                              "type": "icon",
-                              "id": "agb-pr-g",
-                              "name": "Glyph",
-                              "enabled": true,
-                              "width": 12,
-                              "height": 12,
-                              "icon": "git-pull-request",
-                              "library": "lucide",
-                              "fill": "$--pr-open"
-                            },
-                            {
-                              "type": "text",
-                              "id": "agb-pr-n",
-                              "name": "#221",
-                              "content": "#221",
-                              "fill": "$--pr-open",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "icon",
-                              "id": "agb-pr-ci",
-                              "name": "Glyph",
-                              "enabled": true,
-                              "width": 12,
-                              "height": 12,
-                              "icon": "check",
-                              "library": "lucide",
-                              "fill": "$--success"
+                              "type": "frame",
+                              "id": "agb-pr-mark",
+                              "name": "Mark",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "agb-pr-g",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "git-pull-request",
+                                  "library": "lucide",
+                                  "fill": "$--pr-mergeable"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "agb-pr-n",
+                                  "name": "#221",
+                                  "content": "#221",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center"
                             },
                             {
                               "type": "text",
                               "id": "agb-pr-rv",
                               "name": "변경 요청",
                               "content": "변경 요청",
-                              "fill": "$--warning",
+                              "fill": "$--pr-failed",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-caption",
                               "fontWeight": "400",
@@ -36607,17 +36847,14 @@
                             }
                           ],
                           "layout": "horizontal",
-                          "gap": "$--spacing-xxs",
+                          "gap": "$--spacing-xs",
                           "alignItems": "center",
                           "padding": [
                             0,
-                            "$--spacing-xs"
+                            "$--spacing-xxs"
                           ],
                           "height": 18,
-                          "cornerRadius": "$--radius-sm",
-                          "stroke": "$--border",
-                          "strokeWidth": "$--size-hairline",
-                          "strokeAlignment": "inner"
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "text",
@@ -37866,7 +38103,7 @@
                   "descendants": {
                     "agb-glyph": {
                       "icon": "git-pull-request",
-                      "fill": "$--pr-draft"
+                      "fill": "$--pr-failed"
                     },
                     "agb-branch": {
                       "content": "192-hided-sigterm-handler"
@@ -37885,16 +38122,10 @@
                     },
                     "agb-pr-g": {
                       "icon": "git-pull-request",
-                      "fill": "$--pr-draft"
+                      "fill": "$--pr-failed"
                     },
                     "agb-pr-n": {
-                      "content": "#221",
-                      "fill": "$--pr-draft"
-                    },
-                    "agb-pr-ci": {
-                      "enabled": true,
-                      "icon": "x",
-                      "fill": "$--destructive"
+                      "content": "#221"
                     },
                     "agb-pr-rv": {
                       "enabled": true
@@ -38319,11 +38550,7 @@
                       "fill": "$--pr-merged"
                     },
                     "agb-pr-n": {
-                      "content": "#216",
-                      "fill": "$--pr-merged"
-                    },
-                    "agb-pr-ci": {
-                      "enabled": false
+                      "content": "#216"
                     },
                     "agb-pr-rv": {
                       "enabled": false
@@ -39131,7 +39358,7 @@
                   "descendants": {
                     "agb-glyph": {
                       "icon": "git-pull-request",
-                      "fill": "$--pr-draft"
+                      "fill": "$--pr-failed"
                     },
                     "agb-branch": {
                       "content": "192-hided-sigterm-handler"
@@ -39150,16 +39377,10 @@
                     },
                     "agb-pr-g": {
                       "icon": "git-pull-request",
-                      "fill": "$--pr-draft"
+                      "fill": "$--pr-failed"
                     },
                     "agb-pr-n": {
-                      "content": "#221",
-                      "fill": "$--pr-draft"
-                    },
-                    "agb-pr-ci": {
-                      "enabled": true,
-                      "icon": "x",
-                      "fill": "$--destructive"
+                      "content": "#221"
                     },
                     "agb-pr-rv": {
                       "enabled": true
@@ -39584,11 +39805,7 @@
                       "fill": "$--pr-merged"
                     },
                     "agb-pr-n": {
-                      "content": "#216",
-                      "fill": "$--pr-merged"
-                    },
-                    "agb-pr-ci": {
-                      "enabled": false
+                      "content": "#216"
                     },
                     "agb-pr-rv": {
                       "enabled": false
@@ -40200,7 +40417,7 @@
           "type": "text",
           "id": "cmp-agent-tree-parts-spec",
           "name": "web/src/components/agent-tre",
-          "content": "web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the sidebar PR icon in the worst state of the agent's own PRs (failed red, pending amber, mergeable green, merged purple) and dimmed while GitHub cannot be read; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header's tree button, a tree icon and the direct child count; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. The Sessions and pane header PR chip and its list are the existing PR chip.",
+          "content": "web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state's icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number and +N for the other PRs, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header's tree button, a tree icon and the direct child count; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.",
           "fill": "$--subtle-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -40236,7 +40453,7 @@
             {
               "type": "frame",
               "id": "ath-pr-icon",
-              "name": "PR icon",
+              "name": "PR mark",
               "children": [
                 {
                   "type": "icon",
@@ -40247,15 +40464,36 @@
                   "height": 14,
                   "icon": "git-pull-request",
                   "library": "lucide",
-                  "fill": "$--destructive"
+                  "fill": "$--pr-failed"
+                },
+                {
+                  "type": "text",
+                  "id": "ath-pr-n",
+                  "name": "#924",
+                  "content": "#924",
+                  "fill": "$--subtle-foreground",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "400"
+                },
+                {
+                  "type": "text",
+                  "id": "ath-pr-more",
+                  "name": "+1",
+                  "content": "+1",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "400",
+                  "enabled": false
                 }
               ],
               "reusable": true,
               "layout": "horizontal",
-              "width": 14,
-              "height": 14,
-              "justifyContent": "center",
-              "alignItems": "center"
+              "gap": "$--spacing-xxs",
+              "alignItems": "center",
+              "width": "fit_content",
+              "height": 14
             },
             {
               "type": "frame",
@@ -40520,7 +40758,7 @@
                           "id": "ath-row-pr",
                           "type": "ref",
                           "ref": "ath-pr-icon",
-                          "name": "PR icon"
+                          "name": "PR mark"
                         },
                         {
                           "id": "ath-row-desc",
@@ -40762,11 +41000,11 @@
                   "id": "ath-l-pr-failed",
                   "type": "ref",
                   "ref": "ath-pr-icon",
-                  "name": "PR icon",
+                  "name": "PR mark",
                   "descendants": {
                     "ath-pr-g": {
                       "icon": "git-pull-request",
-                      "fill": "$--destructive"
+                      "fill": "$--pr-failed"
                     }
                   }
                 }
@@ -40795,7 +41033,7 @@
                   "id": "ath-l-pr-pending",
                   "type": "ref",
                   "ref": "ath-pr-icon",
-                  "name": "PR icon",
+                  "name": "PR mark",
                   "descendants": {
                     "ath-pr-g": {
                       "icon": "git-pull-request",
@@ -40828,11 +41066,44 @@
                   "id": "ath-l-pr-mergeable",
                   "type": "ref",
                   "ref": "ath-pr-icon",
-                  "name": "PR icon",
+                  "name": "PR mark",
                   "descendants": {
                     "ath-pr-g": {
                       "icon": "git-pull-request",
-                      "fill": "$--success"
+                      "fill": "$--pr-mergeable"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-draft-cell",
+              "name": "draft",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-draft-cap",
+                  "name": "draft",
+                  "content": "draft",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-draft",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR mark",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request-draft",
+                      "fill": "$--pr-draft"
                     }
                   }
                 }
@@ -40861,11 +41132,76 @@
                   "id": "ath-l-pr-merged",
                   "type": "ref",
                   "ref": "ath-pr-icon",
-                  "name": "PR icon",
+                  "name": "PR mark",
                   "descendants": {
                     "ath-pr-g": {
                       "icon": "git-merge",
                       "fill": "$--pr-merged"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-closed-cell",
+              "name": "닫힘",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-closed-cap",
+                  "name": "닫힘",
+                  "content": "닫힘",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-closed",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR mark",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request-closed",
+                      "fill": "$--pr-closed"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-more-cell",
+              "name": "여러 PR (+N)",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-more-cap",
+                  "name": "여러 PR (+N)",
+                  "content": "여러 PR (+N)",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-more",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR mark",
+                  "descendants": {
+                    "ath-pr-more": {
+                      "enabled": true
                     }
                   }
                 }
@@ -40894,11 +41230,81 @@
                   "id": "ath-l-pr-stale",
                   "type": "ref",
                   "ref": "ath-pr-icon",
-                  "name": "PR icon",
+                  "name": "PR mark",
                   "opacity": 0.5,
                   "descendants": {
                     "ath-pr-g": {
-                      "fill": "$--destructive"
+                      "icon": "git-pull-request",
+                      "fill": "$--pr-pending"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-hover-cell",
+              "name": "포인터 아래",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-hover-cap",
+                  "name": "포인터 아래",
+                  "content": "포인터 아래",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-hover",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR mark",
+                  "fill": "$--accent",
+                  "cornerRadius": "$--radius-xs",
+                  "padding": [
+                    0,
+                    "$--spacing-xxs"
+                  ]
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-l-pr-compact-cell",
+              "name": "좁은 변형 (번호 없음)",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-l-pr-compact-cap",
+                  "name": "좁은 변형 (번호 없음)",
+                  "content": "좁은 변형 (번호 없음)",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-l-pr-compact",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR mark",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--pr-mergeable"
+                    },
+                    "ath-pr-n": {
+                      "enabled": false
                     }
                   }
                 }
@@ -41069,7 +41475,7 @@
                       "fill": "$--foreground"
                     },
                     "ath-row-pr/ath-pr-g": {
-                      "fill": "$--success"
+                      "fill": "$--pr-mergeable"
                     }
                   }
                 }
@@ -41389,11 +41795,11 @@
                   "id": "ath-d-pr-failed",
                   "type": "ref",
                   "ref": "ath-pr-icon",
-                  "name": "PR icon",
+                  "name": "PR mark",
                   "descendants": {
                     "ath-pr-g": {
                       "icon": "git-pull-request",
-                      "fill": "$--destructive"
+                      "fill": "$--pr-failed"
                     }
                   }
                 }
@@ -41422,7 +41828,7 @@
                   "id": "ath-d-pr-pending",
                   "type": "ref",
                   "ref": "ath-pr-icon",
-                  "name": "PR icon",
+                  "name": "PR mark",
                   "descendants": {
                     "ath-pr-g": {
                       "icon": "git-pull-request",
@@ -41455,11 +41861,44 @@
                   "id": "ath-d-pr-mergeable",
                   "type": "ref",
                   "ref": "ath-pr-icon",
-                  "name": "PR icon",
+                  "name": "PR mark",
                   "descendants": {
                     "ath-pr-g": {
                       "icon": "git-pull-request",
-                      "fill": "$--success"
+                      "fill": "$--pr-mergeable"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-draft-cell",
+              "name": "draft",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-draft-cap",
+                  "name": "draft",
+                  "content": "draft",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-draft",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR mark",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request-draft",
+                      "fill": "$--pr-draft"
                     }
                   }
                 }
@@ -41488,11 +41927,76 @@
                   "id": "ath-d-pr-merged",
                   "type": "ref",
                   "ref": "ath-pr-icon",
-                  "name": "PR icon",
+                  "name": "PR mark",
                   "descendants": {
                     "ath-pr-g": {
                       "icon": "git-merge",
                       "fill": "$--pr-merged"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-closed-cell",
+              "name": "닫힘",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-closed-cap",
+                  "name": "닫힘",
+                  "content": "닫힘",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-closed",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR mark",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request-closed",
+                      "fill": "$--pr-closed"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-more-cell",
+              "name": "여러 PR (+N)",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-more-cap",
+                  "name": "여러 PR (+N)",
+                  "content": "여러 PR (+N)",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-more",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR mark",
+                  "descendants": {
+                    "ath-pr-more": {
+                      "enabled": true
                     }
                   }
                 }
@@ -41521,11 +42025,81 @@
                   "id": "ath-d-pr-stale",
                   "type": "ref",
                   "ref": "ath-pr-icon",
-                  "name": "PR icon",
+                  "name": "PR mark",
                   "opacity": 0.5,
                   "descendants": {
                     "ath-pr-g": {
-                      "fill": "$--destructive"
+                      "icon": "git-pull-request",
+                      "fill": "$--pr-pending"
+                    }
+                  }
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-hover-cell",
+              "name": "포인터 아래",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-hover-cap",
+                  "name": "포인터 아래",
+                  "content": "포인터 아래",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-hover",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR mark",
+                  "fill": "$--accent",
+                  "cornerRadius": "$--radius-xs",
+                  "padding": [
+                    0,
+                    "$--spacing-xxs"
+                  ]
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "alignItems": "start",
+              "width": "fit_content"
+            },
+            {
+              "type": "frame",
+              "id": "ath-d-pr-compact-cell",
+              "name": "좁은 변형 (번호 없음)",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ath-d-pr-compact-cap",
+                  "name": "좁은 변형 (번호 없음)",
+                  "content": "좁은 변형 (번호 없음)",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "id": "ath-d-pr-compact",
+                  "type": "ref",
+                  "ref": "ath-pr-icon",
+                  "name": "PR mark",
+                  "descendants": {
+                    "ath-pr-g": {
+                      "icon": "git-pull-request",
+                      "fill": "$--pr-mergeable"
+                    },
+                    "ath-pr-n": {
+                      "enabled": false
                     }
                   }
                 }
@@ -41696,7 +42270,7 @@
                       "fill": "$--foreground"
                     },
                     "ath-row-pr/ath-pr-g": {
-                      "fill": "$--success"
+                      "fill": "$--pr-mergeable"
                     }
                   }
                 }
@@ -42106,20 +42680,6 @@
         }
       ]
     },
-    "--pr-open": {
-      "type": "color",
-      "value": [
-        {
-          "value": "#1A7F37"
-        },
-        {
-          "value": "#3FB950",
-          "theme": {
-            "Mode": "Dark"
-          }
-        }
-      ]
-    },
     "--pr-merged": {
       "type": "color",
       "value": [
@@ -42138,10 +42698,10 @@
       "type": "color",
       "value": [
         {
-          "value": "#CF222E"
+          "value": "#6D6D76"
         },
         {
-          "value": "#F85149",
+          "value": "#92959A",
           "theme": {
             "Mode": "Dark"
           }
@@ -43718,13 +44278,41 @@
       "type": "number",
       "value": 8
     },
-    "--size-status-copy": {
-      "type": "number",
-      "value": 460
+    "--pr-failed": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#D62323"
+        },
+        {
+          "value": "#FF595C",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--pr-mergeable": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#15803D"
+        },
+        {
+          "value": "#5EE69E",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
     },
     "--size-rail-crown": {
       "type": "number",
       "value": 9
+    },
+    "--size-status-copy": {
+      "type": "number",
+      "value": 460
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

@@ -79,7 +79,7 @@ function task(number: number, open = true): Task {
 }
 
 function pr(badge: PullRequest["badge"]): PullRequest {
-  return { number: 9, title: "PR", url: "https://github.com/acme/project/pull/9", badge, review: null, is_draft: false, checks: "passing" };
+  return { number: 9, title: "PR", url: "https://github.com/acme/project/pull/9", badge, review: null, is_draft: false, checks: "passing", state: "mergeable" };
 }
 
 describe("the buckets", () => {
@@ -138,7 +138,7 @@ describe("the tiles", () => {
   });
 
   it("counts open pull requests, badges the operator's turn with review, drafts and finished agents to look at, and bars turn, fixing and blocked (B1, B22)", () => {
-    const row = (group: PrRow["group"], extra: Partial<PrRow> = {}) => ({ group, tone: "open", needsLook: false, ...extra }) as PrRow;
+    const row = (group: PrRow["group"], extra: Partial<PrRow> = {}) => ({ group, state: "pending", needsLook: false, ...extra }) as PrRow;
     const board = (rows: PrRow[], extra: Partial<PrBoard> = {}): PrBoard => ({
       counts: legacyPrCounts({ groups: (["turn", "fixing", "blocked", "merged"] as const).map((group) => ({ group, rows: rows.filter((r) => r.group === group) })) }),
       groups: (["turn", "fixing", "blocked", "merged"] as const).map((group) => ({ group, rows: rows.filter((value) => value.group === group) })).filter((entry) => entry.rows.length > 0),
@@ -147,7 +147,7 @@ describe("the tiles", () => {
       failure: null,
       ...extra,
     });
-    const tile = prsTile(board([row("turn"), row("turn"), row("turn", { needsLook: true }), row("turn", { tone: "draft" }), row("fixing"), row("blocked"), row("merged")]), t);
+    const tile = prsTile(board([row("turn"), row("turn"), row("turn", { needsLook: true }), row("turn", { state: "draft" }), row("fixing"), row("blocked"), row("merged")]), t);
     expect(tile).toMatchObject({ id: "prs", label: "PR", value: 6, unit: "열림", failure: null });
     expect(tile.badge).toEqual({
       count: 4,

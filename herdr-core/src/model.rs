@@ -988,6 +988,11 @@ pub struct SidebarAgentSnapshot {
     /// cannot stand in for this.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herdr_name: Option<String>,
+    /// Whether this agent is the pane Hide's Fork made from its declared
+    /// parent (`wire::FORK_TOKEN`). Any child has a parent; only a fork is a
+    /// fork of it, and a name cannot tell them apart once the agent is woken.
+    #[serde(skip_serializing)]
+    pub started_as_fork: bool,
     pub pane_id: String,
     pub workspace_label: String,
     /// The checkout the agent's pane is in, once the navigator has placed it.
@@ -2110,9 +2115,14 @@ pub struct ServerEndpointSnapshot {
 /// Both facts come from Herdr: whether the pane runs an agent whose own fork
 /// command can take its recorded session, and whether this pane is itself the
 /// result of such a fork.
+///
+/// `reason` is set only on a pane whose agent can be forked in principle but
+/// not yet, so the menu item that is drawn disabled can say why; an agent that
+/// cannot be forked at all, and a pane with no agent, carry neither.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct PaneForkSnapshot {
     pub available: bool,
+    pub reason: Option<String>,
     pub forked_from_pane_id: Option<String>,
 }
 
@@ -3102,8 +3112,9 @@ pub struct GithubSearchResult {
     /// `open`, `closed` or `merged`.
     pub state: String,
     pub url: String,
-    /// A draft pull request; always false for an issue.
-    pub is_draft: bool,
+    /// A pull request's one state ([`PrState::of`]), read with no checks or
+    /// review because a search does not ask for them; absent for an issue.
+    pub pr_state: Option<PrState>,
 }
 
 impl GithubSearchSnapshot {
@@ -3709,10 +3720,60 @@ pub enum PullRequestChecks {
     Passing,
 }
 
+/// The one state every PR mark draws (docs/status-model.md, Pull request
+/// visual states), worst first: a checkout's pull request and an agent row's
+/// own pull requests take it from [`PrState::of`] and nothing else decides it.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrState {
+    /// Checks failed, or a reviewer asked for changes.
+    Failed,
+    /// Checks running, absent or unknown, or a review still asked for.
+    Pending,
+    /// Checks passed, and the review is approved or not asked for.
+    Mergeable,
+    /// Open as a draft, whatever its checks say.
+    Draft,
+    Merged,
+    Closed,
+}
+
+impl PrState {
+    /// merged > closed > draft > failed > mergeable > pending. Absent or
+    /// unknown checks never read as a pass.
+    pub fn of(
+        badge: PullRequestBadge,
+        is_draft: bool,
+        checks: PullRequestChecks,
+        review: Option<ReviewDecision>,
+    ) -> Self {
+        match badge {
+            PullRequestBadge::Merged => Self::Merged,
+            PullRequestBadge::Closed => Self::Closed,
+            PullRequestBadge::Open | PullRequestBadge::Review => {
+                if is_draft {
+                    Self::Draft
+                } else if checks == PullRequestChecks::Failed
+                    || review == Some(ReviewDecision::ChangesRequested)
+                {
+                    Self::Failed
+                } else if checks == PullRequestChecks::Passing
+                    && matches!(review, None | Some(ReviewDecision::Approved))
+                {
+                    Self::Mergeable
+                } else {
+                    Self::Pending
+                }
+            }
+        }
+    }
+}
+
 /// One pull request GitHub listed. Which checkout it belongs to is decided
 /// by `github::pull_request_for_checkout`, never by comparing branch names
-/// where a call site stands.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+/// where a call site stands. Its wire form adds the derived `state`
+/// (the `Serialize` impl below), so no shell derives it again.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 pub struct PullRequestSnapshot {
     pub closing_issues: Vec<crate::issues::IssueReference>,
     pub title: String,
@@ -3729,21 +3790,47 @@ pub struct PullRequestSnapshot {
     pub updated_at_unix_ms: Option<u64>,
     /// When GitHub made the pull request, which ties it to the session whose
     /// tool printed its address then (PRD overview-request-view D-31).
-    #[serde(skip_serializing)]
     pub created_at_unix_ms: Option<u64>,
     /// When it was closed or merged, for a row's chip after the request.
-    #[serde(skip_serializing)]
     pub closed_at_unix_ms: Option<u64>,
     /// The commit its head branch pointed at when GitHub last saw it. A
     /// settled pull request belongs to a checkout only at exactly this
     /// commit, because a branch name can be used again for new work. Core
     /// only: no shell draws or compares it.
-    #[serde(skip_serializing)]
     pub head_oid: Option<String>,
     /// The head branch lives in another repository (a fork), so its name says
     /// nothing about this repository's branch of the same name.
-    #[serde(skip_serializing, default)]
+    #[serde(default)]
     pub cross_repository: bool,
+}
+
+impl PullRequestSnapshot {
+    pub fn state(&self) -> PrState {
+        PrState::of(self.badge, self.is_draft, self.checks, self.review)
+    }
+}
+
+impl Serialize for PullRequestSnapshot {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        // The head commit, the repository and the created and closed times
+        // stay off the wire: only the core compares them.
+        let mut out = serializer.serialize_struct("PullRequestSnapshot", 13)?;
+        out.serialize_field("closing_issues", &self.closing_issues)?;
+        out.serialize_field("title", &self.title)?;
+        out.serialize_field("checks", &self.checks)?;
+        out.serialize_field("number", &self.number)?;
+        out.serialize_field("head_branch", &self.head_branch)?;
+        out.serialize_field("base_branch", &self.base_branch)?;
+        out.serialize_field("url", &self.url)?;
+        out.serialize_field("badge", &self.badge)?;
+        out.serialize_field("review", &self.review)?;
+        out.serialize_field("is_draft", &self.is_draft)?;
+        out.serialize_field("merged_at_unix_ms", &self.merged_at_unix_ms)?;
+        out.serialize_field("updated_at_unix_ms", &self.updated_at_unix_ms)?;
+        out.serialize_field("state", &self.state())?;
+        out.end()
+    }
 }
 
 pub use hide_node_link::gh::GithubFailureCategory;
@@ -5049,6 +5136,56 @@ mod interface_language_tests {
 }
 
 #[cfg(test)]
+mod pull_request_state_tests {
+    use super::PullRequestSnapshot;
+
+    /// A checkout's pull request reaches the shell with the one state every
+    /// PR mark draws, so no shell derives it from the badge, draft flag,
+    /// checks and review again (docs/status-model.md, Pull request visual
+    /// states); the core-only facts stay off the wire.
+    #[test]
+    fn a_checkout_pull_request_carries_its_one_state_on_the_wire() {
+        for (badge, draft, checks, review, expected) in [
+            ("open", false, "failed", None, "failed"),
+            (
+                "review",
+                false,
+                "passing",
+                Some("changes_requested"),
+                "failed",
+            ),
+            (
+                "review",
+                false,
+                "passing",
+                Some("review_required"),
+                "pending",
+            ),
+            ("open", false, "unknown", None, "pending"),
+            ("review", false, "passing", Some("approved"), "mergeable"),
+            ("open", true, "failed", None, "draft"),
+            ("merged", true, "failed", None, "merged"),
+            ("closed", false, "passing", None, "closed"),
+        ] {
+            let pull: PullRequestSnapshot = serde_json::from_value(serde_json::json!({
+                "closing_issues": [], "title": "t", "checks": checks, "number": 7,
+                "head_branch": "feature", "base_branch": "main", "url": "https://github.com/acme/app/pull/7",
+                "badge": badge, "review": review, "is_draft": draft,
+                "merged_at_unix_ms": null, "updated_at_unix_ms": null,
+                "head_oid": "abc", "cross_repository": true,
+            }))
+            .expect("pull request decodes");
+            let wire = serde_json::to_value(&pull).expect("pull request encodes");
+            assert_eq!(
+                wire["state"], expected,
+                "{badge} {draft} {checks} {review:?}"
+            );
+            assert!(wire.get("head_oid").is_none() && wire.get("cross_repository").is_none());
+        }
+    }
+}
+
+#[cfg(test)]
 mod wire_enum_tests {
     //! The shell decodes these strings strictly, so the values the core emits
     //! are a contract, pinned in `contracts/snapshot-wire-enums.json` and
@@ -5317,7 +5454,7 @@ mod wire_enum_tests {
         checked.insert("right_panel_section");
 
         use crate::agent_state::escalation::{MarkKind, Verb};
-        use crate::agent_state::sessions::{Group, PrState};
+        use crate::agent_state::sessions::Group;
         let session_groups = crate::agent_state::sessions::GROUPS;
         for group in session_groups {
             match group {
@@ -5338,11 +5475,18 @@ mod wire_enum_tests {
             PrState::Failed,
             PrState::Pending,
             PrState::Mergeable,
+            PrState::Draft,
             PrState::Merged,
+            PrState::Closed,
         ];
         for state in pr_states {
             match state {
-                PrState::Failed | PrState::Pending | PrState::Mergeable | PrState::Merged => {}
+                PrState::Failed
+                | PrState::Pending
+                | PrState::Mergeable
+                | PrState::Draft
+                | PrState::Merged
+                | PrState::Closed => {}
             }
         }
         assert_wire(&contract, "pr_state", &pr_states);
@@ -5466,7 +5610,6 @@ mod wire_enum_tests {
                 | hide_kit::Feature::Letters
                 | hide_kit::Feature::Bell
                 | hide_kit::Feature::Memory
-                | hide_kit::Feature::Subagents
                 | hide_kit::Feature::SpawnGuard
                 | hide_kit::Feature::HerdrIntegration
                 | hide_kit::Feature::Sleep

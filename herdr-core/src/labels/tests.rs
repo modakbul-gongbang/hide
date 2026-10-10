@@ -568,6 +568,40 @@ fn a_turn_that_ran_between_two_looks_ends_the_question() {
     assert_eq!(label.task.as_deref(), Some("배포 방식 결정 작업"));
 }
 
+/// #901. Herdr drops a finished pane from `done` to `idle` at the same
+/// sequence when it marks the pane's tab seen. No turn ran, so the question
+/// or the block the turn ended on is still the turn's answer.
+#[test]
+fn herdr_marking_a_turn_seen_keeps_its_question_and_its_block() {
+    for (end, line) in [("question", "A/B 선택"), ("blocked", "디스크가 가득 참")] {
+        let harness = Harness::new();
+        let (mut worker, woken, _) = harness.worker(harness.store());
+        let path = harness.session(
+            "a",
+            "native-a",
+            &[("user", "배포할까?"), ("assistant", "답을 기다립니다")],
+        );
+        harness.backend.answer("배포 방식 결정 작업", end, line);
+        let finished = agent(&path, "done", 3);
+        observe(&mut worker, &finished);
+        settle(&mut worker, &woken);
+        let held = shown(&worker, &finished).unwrap();
+        assert!(
+            held.question || held.blocked,
+            "{end} is shown before the seen"
+        );
+
+        let seen = agent(&path, "idle", 3);
+        observe(&mut worker, &seen);
+        settle(&mut worker, &woken);
+        let after = shown(&worker, &seen).unwrap();
+        assert_eq!(after.question, held.question, "{end}: the question stays");
+        assert_eq!(after.blocked, held.blocked, "{end}: the block stays");
+        assert_eq!(after.expected_reply, held.expected_reply);
+        assert_eq!(after.progress, held.progress);
+    }
+}
+
 #[test]
 fn another_session_shows_nothing_of_the_last_one_until_it_is_proven() {
     let harness = Harness::new();
@@ -1518,6 +1552,80 @@ fn tool_session(harness: &Harness, name: &str, outputs: &[(String, u64)]) -> Pat
     path
 }
 
+/// A Claude session whose request is followed by `records`, then a reply.
+fn wake_session(harness: &Harness, name: &str, records: &[serde_json::Value]) -> PathBuf {
+    let project = harness.home.path().join(".claude/projects/-project");
+    std::fs::create_dir_all(&project).unwrap();
+    let path = project.join(format!("{name}.jsonl"));
+    let mut lines = vec![json!({"type":"user","sessionId":name,"timestamp":1_000,
+        "origin":{"kind":"human"},"message":{"role":"user","content":"서버 띄워줘"}})];
+    lines.extend(records.iter().cloned());
+    lines.push(
+        json!({"type":"assistant","sessionId":name,"timestamp":9_000,
+        "message":{"role":"assistant","content":[{"type":"text","text":"띄웠습니다"}]}}),
+    );
+    let lines: String = lines.iter().map(|record| format!("{record}\n")).collect();
+    std::fs::write(&path, lines).unwrap();
+    path
+}
+
+fn started_record(id: &str) -> serde_json::Value {
+    json!({"type":"user","timestamp":2_000,"message":{"role":"user","content":[{"type":"tool_result",
+        "tool_use_id":"toolu_start",
+        "content":format!("Command running in background with ID: {id}. Output is being written to: /x")}]}})
+}
+
+fn boot_record() -> serde_json::Value {
+    json!({"type":"attachment","timestamp":1_500,
+        "attachment":{"type":"hook_success","hookName":"SessionStart:startup"}})
+}
+
+/// The wake diagnostics one read of `records` writes, by kind.
+fn wake_diagnostics(records: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let path = wake_session(&harness, "native-wake", records);
+    harness.backend.answer("서버 띄우기 작업", "done", "");
+    observe(&mut worker, &agent(&path, "idle", 3));
+    let ((), diagnostics) = crate::diagnostics::capture(|| settle(&mut worker, &woken));
+    diagnostics
+        .into_iter()
+        .filter(|record| {
+            record["kind"]
+                .as_str()
+                .is_some_and(|kind| kind.starts_with("wake_devices."))
+        })
+        .collect()
+}
+
+#[test]
+fn more_background_tasks_than_are_tracked_is_logged_as_a_capacity() {
+    let mut records = vec![boot_record()];
+    records.extend(
+        (0..=hide_session::turns::WAKE_DEVICE_LIMIT)
+            .map(|index| started_record(&format!("t{index}"))),
+    );
+    let logged = wake_diagnostics(&records);
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert_eq!(logged[0]["kind"], "wake_devices.capacity");
+    assert_eq!(
+        logged[0]["limit"],
+        hide_session::turns::WAKE_DEVICE_LIMIT as u64
+    );
+}
+
+#[test]
+fn a_record_the_reader_could_not_follow_is_logged_as_lost_not_as_a_capacity() {
+    // A task id too long to keep: one record, one task, far below the limit.
+    let logged = wake_diagnostics(&[boot_record(), started_record(&"a".repeat(300))]);
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert_eq!(logged[0]["kind"], "wake_devices.lost");
+    assert!(
+        logged[0].get("limit").is_none(),
+        "a limit is no cause of a lost record: {logged:?}"
+    );
+}
+
 fn addresses(sighted: &[super::worker::SightedPullRequest]) -> Vec<(&str, &str, u64)> {
     sighted
         .iter()
@@ -2399,5 +2507,386 @@ fn a_codex_session_not_found_is_not_known_until_a_later_state_reads_it() {
     assert_eq!(
         waits(&worker, &by_id(3)),
         (Some(Waiting::PlanApproval), Some(true))
+    );
+}
+
+/// A Claude Code session whose process started and whose turn launched a
+/// background command, as Claude writes it (`attachment`, `tool_result`).
+fn claude_background_session(harness: &Harness, name: &str, id: &str) -> PathBuf {
+    let path = harness.session(name, id, &[("user", "빌드를 돌려줘")]);
+    let records = [
+        json!({"type":"attachment","timestamp":"2026-10-01T00:00:01Z",
+            "attachment":{"type":"hook_success","hookName":"SessionStart:startup"}}),
+        json!({"type":"user","sessionId":id,"timestamp":"2026-10-01T00:00:02Z",
+            "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1",
+                "content":"Command running in background with ID: bg1. Output is being written to: /x"}]}}),
+    ];
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    use std::io::Write;
+    for record in records {
+        writeln!(file, "{record}").unwrap();
+    }
+    path
+}
+
+/// The row's activity for the agent as Herdr lists it now, after the overlay
+/// is laid on it: what every group, mark and notification is decided from.
+fn activity_shown(worker: &LabelWorker, agent: &ObservedAgent) -> String {
+    let (kind, value) = agent.reference.clone().unwrap();
+    let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents": [{
+        "pane_id": agent.pane_id, "agent": agent.agent, "agent_status": agent.status,
+        "state_change_seq": agent.state_change_seq,
+        "agent_session": {"kind": kind, "value": value},
+    }]}))
+    .unwrap();
+    worker.overlay().apply(&mut payload);
+    crate::sidebar::project_agents(payload)
+        .agents
+        .remove(0)
+        .activity
+}
+
+/// #902: the turn ends, Herdr reports the stop, and the read of the session
+/// that says whether a background task will wake the agent has not landed.
+/// Until it does the row is not a stop: nothing yet says it has finished, and
+/// a Done announced in that gap is taken back when the read lands.
+#[test]
+fn a_turn_end_is_not_a_stop_until_its_session_read_lands() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let path =
+        claude_background_session(&harness, "turn-end", "c0000000-0000-4000-8000-000000000001");
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    assert_eq!(activity_shown(&worker, &working), "working");
+
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working.clone()
+    };
+    observe(&mut worker, &done);
+    assert_eq!(
+        activity_shown(&worker, &done),
+        "working",
+        "the read of the turn end has not landed"
+    );
+    settle(&mut worker, &woken);
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+    assert_eq!(shown_facts(&worker, &done).unwrap().wake_devices, 1);
+}
+
+/// Takes the worker's results until it settles and says whether any of them
+/// changed what a row shows, which is what the coordinator publishes on.
+fn settle_publishing(worker: &mut LabelWorker, woken: &Receiver<()>) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut published = false;
+    while !worker.settled() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        assert!(!left.is_zero(), "the worker did not settle");
+        let _ = woken.recv_timeout(left.min(Duration::from_millis(200)));
+        published |= worker.drain(Instant::now(), unix_now_ms());
+    }
+    published
+}
+
+/// A session reader that can be made to fail.
+struct Switched {
+    inner: NodeTranscripts,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+impl TranscriptSource for Switched {
+    fn read(&self, request: &LabelTranscriptRequest) -> Result<LabelTranscript, ReadFailure> {
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(ReadFailure::Unavailable("fixture_unreadable".to_owned()));
+        }
+        self.inner.read(request)
+    }
+}
+
+fn switched_worker(harness: &Harness) -> (LabelWorker, Receiver<()>, Arc<Switched>) {
+    let node: Arc<dyn crate::node_access::NodeLink> = Arc::new(hide_node::Local::new(Some(
+        harness.home.path().to_path_buf(),
+    )));
+    let source = Arc::new(Switched {
+        inner: NodeTranscripts::new(Box::new(move || Ok(Arc::clone(&node)))),
+        fail: false.into(),
+    });
+    let (worker, woken) =
+        harness.spawn(harness.store(), LOCAL_TARGET, "local.sock", source.clone());
+    (worker, woken, source)
+}
+
+/// #902: the hold on a turn end ends on every path of the read. One that
+/// landed says nothing new when no task wakes the agent, and the row must
+/// still be published as a stop.
+#[test]
+fn a_read_that_finds_no_task_releases_the_turn_end_and_publishes_it() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let path = harness.session(
+        "quiet",
+        "c0000000-0000-4000-8000-000000000002",
+        &[("user", "고쳐줘")],
+    );
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working.clone()
+    };
+    observe(&mut worker, &done);
+    assert_eq!(activity_shown(&worker, &done), "working");
+    assert!(
+        settle_publishing(&mut worker, &woken),
+        "the release reaches the projection"
+    );
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+    assert_eq!(shown_facts(&worker, &done).unwrap().wake_devices, 0);
+}
+
+#[test]
+fn a_read_that_fails_releases_the_turn_end_and_says_so() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = switched_worker(&harness);
+    worker.set_summaries(false, Instant::now());
+    let path =
+        claude_background_session(&harness, "failing", "c0000000-0000-4000-8000-000000000003");
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+
+    source.fail.store(true, Ordering::SeqCst);
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working.clone()
+    };
+    observe(&mut worker, &done);
+    assert_eq!(activity_shown(&worker, &done), "working");
+    let (published, diagnostics) =
+        crate::diagnostics::capture(|| settle_publishing(&mut worker, &woken));
+    assert!(published);
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+    let unread: Vec<_> = diagnostics
+        .iter()
+        .filter(|record| record["kind"] == "turn_end.unread")
+        .collect();
+    assert_eq!(unread.len(), 1, "{diagnostics:?}");
+    assert_eq!(unread[0]["state_change_seq"], 5);
+}
+
+/// A stop that is not a turn just ended owes no read: Herdr marking a finished
+/// row seen, a daemon that restarts and finds its record read, and an agent
+/// whose session cannot report background tasks.
+#[test]
+fn a_stop_that_is_not_a_turn_just_ended_is_not_held() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    worker.set_summaries(false, Instant::now());
+    let path = claude_background_session(&harness, "seen", "c0000000-0000-4000-8000-000000000004");
+    let working = agent(&path, "working", 4);
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working.clone()
+    };
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    observe(&mut worker, &done);
+    settle(&mut worker, &woken);
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+
+    let seen = ObservedAgent {
+        status: Some("idle".to_owned()),
+        state_change_seq: 6,
+        ..done.clone()
+    };
+    observe(&mut worker, &seen);
+    assert_eq!(
+        activity_shown(&worker, &seen),
+        "stopped",
+        "Herdr marking the row seen is no turn end"
+    );
+    settle(&mut worker, &woken);
+
+    drop(worker);
+    let (mut restarted, woken, _) = harness.worker(Arc::clone(&store));
+    observe(&mut restarted, &seen);
+    assert_eq!(
+        activity_shown(&restarted, &seen),
+        "stopped",
+        "a restart finds the row read"
+    );
+    settle(&mut restarted, &woken);
+
+    let other = Harness::new();
+    let (mut worker, woken, _) = other.worker(other.store());
+    worker.set_summaries(false, Instant::now());
+    let (_, codex_done) = codex_plan_session(&other, "done", 5);
+    let codex_working = ObservedAgent {
+        status: Some("working".to_owned()),
+        state_change_seq: 4,
+        ..codex_done.clone()
+    };
+    observe(&mut worker, &codex_working);
+    settle(&mut worker, &woken);
+    observe(&mut worker, &codex_done);
+    assert_eq!(
+        activity_shown(&worker, &codex_done),
+        "stopped",
+        "an agent that reports no background task is a stop at once"
+    );
+    settle(&mut worker, &woken);
+}
+
+/// A turn end held for its read, with the read not yet taken: the agent
+/// `working` settled, then `done` observed.
+fn held_turn_end(
+    harness: &Harness,
+    worker: &mut LabelWorker,
+    woken: &Receiver<()>,
+    name: &str,
+) -> (PathBuf, ObservedAgent) {
+    let path = claude_background_session(harness, name, "c0000000-0000-4000-8000-0000000000a1");
+    let working = agent(&path, "working", 4);
+    observe(worker, &working);
+    settle(worker, woken);
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working
+    };
+    observe(worker, &done);
+    assert_eq!(activity_shown(worker, &done), "working");
+    (path, done)
+}
+
+/// #902: the hold ends with the pane it is owed for. An agent that Herdr stops
+/// listing (a sleep, a close of its process) and a pane that is gone leave no
+/// hold behind for a pane or session that returns.
+#[test]
+fn a_hold_on_a_turn_end_ends_with_the_agent_and_the_pane() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let (_, done) = held_turn_end(&harness, &mut worker, &woken, "gone");
+
+    // Herdr no longer lists the agent, though the pane is still there.
+    let live = HashSet::from([done.pane_id.clone()]);
+    worker.observe(&[], Some(&live), Instant::now(), 2_000);
+    // It is listed again in the same state: nothing is owed for it any more.
+    worker.observe(
+        std::slice::from_ref(&done),
+        Some(&live),
+        Instant::now(),
+        3_000,
+    );
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+    settle(&mut worker, &woken);
+
+    // One worker holds a server's generator role at a time.
+    drop(worker);
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let (_, done) = held_turn_end(&harness, &mut worker, &woken, "closed");
+    // The pane is closed: its record goes with it.
+    worker.observe(&[], Some(&HashSet::new()), Instant::now(), 2_000);
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+    settle(&mut worker, &woken);
+}
+
+/// A session file that cannot be read fails the read at once, and the row is a
+/// stop as Herdr reports it.
+#[test]
+fn a_session_file_that_cannot_be_read_releases_the_turn_end() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let path =
+        claude_background_session(&harness, "vanished", "c0000000-0000-4000-8000-0000000000a2");
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+
+    std::fs::remove_file(&path).unwrap();
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working
+    };
+    observe(&mut worker, &done);
+    assert_eq!(activity_shown(&worker, &done), "working");
+    let (published, diagnostics) =
+        crate::diagnostics::capture(|| settle_publishing(&mut worker, &woken));
+    assert!(published);
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|record| record["kind"] == "turn_end.unread"),
+        "{diagnostics:?}"
+    );
+}
+
+/// A backlog longer than one read takes is read in several, and the row is
+/// held through all of them: only the read that completes the backlog says
+/// what wakes the agent.
+#[test]
+fn a_backlog_read_in_several_polls_holds_the_turn_end_until_the_last() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let path =
+        claude_background_session(&harness, "backlog", "c0000000-0000-4000-8000-0000000000a3");
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+
+    let reads_before = source.reads.load(Ordering::SeqCst);
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    use std::io::Write;
+    let filler = "x".repeat(60_000);
+    for index in 0..40 {
+        let record = json!({"type":"assistant","sessionId":"c0000000-0000-4000-8000-0000000000a3",
+            "timestamp":"2026-10-01T00:01:00Z",
+            "message":{"role":"assistant","content":[{"type":"text","text":format!("{index} {filler}")}]}});
+        writeln!(file, "{record}").unwrap();
+    }
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working
+    };
+    observe(&mut worker, &done);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let _ = woken.recv_timeout(Duration::from_millis(200));
+        worker.drain(Instant::now(), unix_now_ms());
+        let shown = activity_shown(&worker, &done);
+        if worker.settled() {
+            assert_eq!(shown, "stopped");
+            break;
+        }
+        assert_eq!(shown, "working", "a read of the backlog is still owed");
+        assert!(Instant::now() < deadline, "the worker did not settle");
+    }
+    assert!(
+        source.reads.load(Ordering::SeqCst) - reads_before >= 2,
+        "the backlog took more than one read"
     );
 }

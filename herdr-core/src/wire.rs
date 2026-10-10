@@ -391,6 +391,13 @@ pub(crate) const CHILD_SESSION_TOKEN: &str = "child_session";
 /// because only there are both rows at hand, on this machine or another.
 pub(crate) const PARENT_SESSION_TOKEN: &str = "parent_session";
 
+/// `"1"` on a pane that hosts a registration Hide's Fork made, written by
+/// `crate::coordination` with the lineage tokens (`AgentRecord::forked`), so a
+/// wake that continues the registration in another pane writes it there too.
+/// It is only read while the lineage tokens hold (the row declares a parent),
+/// so a pane that hosts another agent later is not a fork.
+pub(crate) const FORK_TOKEN: &str = "fork";
+
 /// How a session is written into a token: the lowercase hex SHA-256 of the
 /// value Herdr reports in `agent_session.value`. Herdr cuts a token value at
 /// 80 characters and a session can be a path, so a digest is the one form
@@ -1161,6 +1168,29 @@ pub(crate) fn agent_start_params(
         name: name.into(),
         pane_id: pane_id.into(),
         timeout_ms: Some(120_000),
+    })
+}
+
+/// The session report an agent's own Herdr integration would have sent for
+/// `pane_id`: under the source that integration uses, with a sequence that
+/// grows with time so a later report from the integration still replaces it.
+pub(crate) fn report_agent_session_params(
+    pane_id: &str,
+    kind: &str,
+    session_id: &str,
+    seq: u64,
+) -> Result<Value, String> {
+    let adapter = hide_agent_adapter::adapter(kind)
+        .ok_or_else(|| format!("{kind} has no Herdr integration to report as"))?;
+    params(req::PaneReportAgentSessionParams {
+        pane_id: pane_id.into(),
+        source: format!("herdr:{}", adapter.herdr.name),
+        agent: adapter.herdr.name.into(),
+        agent_session_id: Some(session_id.into()),
+        agent_session_path: None,
+        resume_argv: None,
+        seq: Some(seq),
+        session_start_source: None,
     })
 }
 

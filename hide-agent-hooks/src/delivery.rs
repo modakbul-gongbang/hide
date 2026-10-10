@@ -47,6 +47,20 @@ pub fn read_prompt(payload: &[u8], truncated: bool) -> Prompt {
     }
 }
 
+/// The session id of any runtime's hook payload, when the payload was read
+/// whole and names one that may travel as a `hide` argument.
+pub fn read_session(payload: &[u8], truncated: bool) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Input {
+        session_id: Option<String>,
+    }
+    (!truncated)
+        .then(|| serde_json::from_slice::<Input>(payload).ok())
+        .flatten()
+        .and_then(|input| input.session_id)
+        .filter(|id| valid_session(id))
+}
+
 /// What the hook tells the core about the submitted prompt: the SHA-256 of
 /// its trimmed text in lowercase hex. Only the core knows which line its
 /// doorbell typed into the pane, so the prompt is the bell exactly when this
@@ -338,6 +352,20 @@ fn diagnostic_path(home: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_payload_read_whole_names_its_session_and_a_cut_or_odd_one_names_none() {
+        assert_eq!(
+            read_session(br#"{"session_id":"s-1","hook_event_name":"Stop"}"#, false).as_deref(),
+            Some("s-1")
+        );
+        // Cut off, unreadable, absent, or not an id a `hide` argument may be.
+        assert_eq!(read_session(br#"{"session_id":"s-1""#, true), None);
+        assert_eq!(read_session(b"{", false), None);
+        assert_eq!(read_session(b"{}", false), None);
+        assert_eq!(read_session(br#"{"session_id":""}"#, false), None);
+        assert_eq!(read_session(br#"{"session_id":"-rf"}"#, false), None);
+    }
 
     #[test]
     fn only_a_complete_payload_carries_its_prompt_digest_and_session() {

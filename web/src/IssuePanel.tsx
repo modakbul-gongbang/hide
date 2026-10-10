@@ -1,7 +1,6 @@
 import { CircleCheckIcon, CircleDotIcon, EllipsisIcon, ExternalLinkIcon, GitBranchIcon, GitPullRequestIcon, HouseIcon, PencilIcon, PlayIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Actions } from "./actions";
-import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
@@ -17,7 +16,8 @@ import { useShellStore } from "./store";
 import { LinkSessions } from "./LinkSessions";
 import { sameIssue } from "./linkPanel";
 import { shownPullRequest } from "./projects";
-import { CardAgentRow, EDIT_HINT, IssueLabelView, IssueMenu, PR_TONE, ReviewMarks, START_HINT, TaskGlyph, neighbourCard, type BoardHandlers } from "./TaskBoards";
+import { CardAgentRow, EDIT_HINT, IssueLabelView, IssueMenu, START_HINT, TaskGlyph, neighbourCard, type BoardHandlers } from "./TaskBoards";
+import { PrChipMark } from "./components/pr-mark";
 import { useEscapeLayer } from "./components/ui/layer";
 import { holdsCommandKey } from "./host";
 import { fieldLabel } from "./shortcutLabels";
@@ -324,16 +324,12 @@ function SubIssueRow({ item, owner, handlers }: { item: CardSubIssue; owner: Tas
           className="shrink-0 rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
           aria-label={`PR #${item.pr.number}`}
           data-sub-issue-pr={item.pr.number}
-          data-pr-tone={item.pr.tone}
           onClick={(event) => {
             if (holdsCommandKey(event)) handlers.openGitHub(item.pr!.url, owner.device_id);
             else handlers.openPullRequestRow(owner, item.pr!.number);
           }}
         >
-          <Badge variant="outline" className={PR_TONE[item.pr.tone]}>
-            <GitPullRequestIcon aria-hidden="true" />#{item.pr.number}
-            <ReviewMarks pr={item.pr} review={false} />
-          </Badge>
+          <PrChipMark chip={item.pr} />
         </button>
       ) : null}
     </li>
@@ -381,7 +377,6 @@ function WorkDone({ card, handlers, focusedPaneId, actions }: { card: TaskCard; 
         <div className="flex min-w-0 items-center gap-xs text-caption text-muted-foreground" data-issue-work-pr={pr.number}>
           <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} onRow={(number) => handlers.openPullRequestRow(owner, number)} now={Date.now()} />
           <span className="min-w-0 flex-1 truncate text-foreground">{pr.title}</span>
-          <ReviewMarks pr={card.pr} />
         </div>
       ) : null}
     </section>

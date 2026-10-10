@@ -70,7 +70,8 @@
   --color-file-orange: var(--file-orange);
   --color-file-yellow: var(--file-yellow);
   --color-file-purple: var(--file-purple);
-  --color-pr-open: var(--pr-open);
+  --color-pr-failed: var(--pr-failed);
+  --color-pr-mergeable: var(--pr-mergeable);
   --color-pr-merged: var(--pr-merged);
   --color-pr-closed: var(--pr-closed);
   --color-pr-pending: var(--pr-pending);
@@ -342,9 +343,10 @@
   --file-orange: #b45118;
   --file-yellow: #7b6f00;
   --file-purple: #7e4fb0;
-  --pr-open: #1a7f37;
+  --pr-failed: var(--destructive);
+  --pr-mergeable: var(--success);
   --pr-merged: #8250df;
-  --pr-closed: #cf222e;
+  --pr-closed: var(--muted-foreground);
   --pr-pending: #bf8700;
   --lineage-rail: #c9c9ce;
   --pr-draft: #6e7781;
@@ -417,9 +419,10 @@
   --file-orange: #e37933;
   --file-yellow: #cbcb41;
   --file-purple: #a074c4;
-  --pr-open: #3fb950;
+  --pr-failed: var(--destructive);
+  --pr-mergeable: var(--success);
   --pr-merged: #a371f7;
-  --pr-closed: #f85149;
+  --pr-closed: var(--muted-foreground);
   --pr-pending: #d29922;
   --lineage-rail: #55585e;
   --pr-draft: #9198a1;

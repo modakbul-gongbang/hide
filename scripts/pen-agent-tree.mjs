@@ -14,11 +14,14 @@ export const AGENT_TREE_MASTERS = {
   row: 'ath-row',
 };
 
-const PR_STATES = [
-  ['failed', 'git-pull-request', '$--destructive', 'CI 실패'],
+// The one PR mark's six states (web/src/prMark.ts PR_LOOK), worst first; one token each.
+export const PR_STATES = [
+  ['failed', 'git-pull-request', '$--pr-failed', 'CI 실패'],
   ['pending', 'git-pull-request', '$--pr-pending', 'CI 도는 중 · 리뷰 대기'],
-  ['mergeable', 'git-pull-request', '$--success', '머지 가능'],
+  ['mergeable', 'git-pull-request', '$--pr-mergeable', '머지 가능'],
+  ['draft', 'git-pull-request-draft', '$--pr-draft', 'draft'],
   ['merged', 'git-merge', '$--pr-merged', '머지됨'],
+  ['closed', 'git-pull-request-closed', '$--pr-closed', '닫힘'],
 ];
 
 export function buildAgentTreeParts(tokens) {
@@ -47,9 +50,14 @@ export function buildAgentTreeParts(tokens) {
     caption('ath-verb-t', '승인', '$--warning', {weight: '600'}),
   ]);
 
-  // PR icon: the sidebar's PR mark, no number, in the worst own state's colour; dimmed while GitHub cannot be read (D-39, B24).
-  const prIcon = frame(AGENT_TREE_MASTERS.prIcon, 'PR icon', {reusable: true, layout: 'horizontal', width: PR, height: PR, justifyContent: 'center', alignItems: 'center'}, [
-    icon('ath-pr-g', 'git-pull-request', {size: PR, fill: '$--destructive'}),
+  // PR mark (web/src/components/pr-mark.tsx): the state's icon in its colour,
+  // the number in the subtle ink and `+N` for the other PRs; no border, a fill
+  // only under the pointer; dimmed while GitHub cannot be read. The compact
+  // variant hides the number where the row already names the pull request.
+  const prIcon = frame(AGENT_TREE_MASTERS.prIcon, 'PR mark', {reusable: true, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', width: 'fit_content', height: PR}, [
+    icon('ath-pr-g', 'git-pull-request', {size: PR, fill: '$--pr-failed'}),
+    caption('ath-pr-n', '#924', '$--subtle-foreground', {mono: true}),
+    {...caption('ath-pr-more', '+1', '$--muted-foreground', {mono: true}), enabled: false},
   ]);
 
   // Descendant mark: `! N` raised, else `● N` working, on a folded parent only (B17).
@@ -91,7 +99,7 @@ export function buildAgentTreeParts(tokens) {
         ]),
         frame('ath-row-provider', 'Provider artwork', {width: 14, height: 14, fill: {type: 'image', enabled: true, url: '../web/src/assets/agent-claude.png', mode: 'contain'}}, []),
         {...text('ath-row-title', '에이전트 제목', {fill: '$--subtle-foreground'}), textGrowth: 'fixed-width', width: 'fill_container'},
-        ref('ath-row-pr', AGENT_TREE_MASTERS.prIcon, 'PR icon'),
+        ref('ath-row-pr', AGENT_TREE_MASTERS.prIcon, 'PR mark'),
         ref('ath-row-desc', AGENT_TREE_MASTERS.mark, 'Descendant mark', {enabled: false}),
         caption('ath-row-age', '3m', '$--muted-foreground', {mono: true}),
       ]),
@@ -105,8 +113,11 @@ export function buildAgentTreeParts(tokens) {
   const states = suffix => {
     const id = name => `ath-${suffix}-${name}`;
     const verbs = ['승인', '답변', '확인', '초안'].map((word, index) => cell(`Verb ${index + 1}`, ref(id(`verb-${index}`), AGENT_TREE_MASTERS.verb, 'Verb', {}, {'ath-verb-t': {content: word}})));
-    const icons = PR_STATES.map(([state, glyph, fill, label]) => cell(label, ref(id(`pr-${state}`), AGENT_TREE_MASTERS.prIcon, 'PR icon', {}, {'ath-pr-g': {icon: glyph, fill}})));
-    const stale = cell('흐림 (GitHub 못 읽음)', ref(id('pr-stale'), AGENT_TREE_MASTERS.prIcon, 'PR icon', {opacity: DIMMED}, {'ath-pr-g': {fill: '$--destructive'}}));
+    const icons = PR_STATES.map(([state, glyph, fill, label]) => cell(label, ref(id(`pr-${state}`), AGENT_TREE_MASTERS.prIcon, 'PR mark', {}, {'ath-pr-g': {icon: glyph, fill}})));
+    const more = cell('여러 PR (+N)', ref(id('pr-more'), AGENT_TREE_MASTERS.prIcon, 'PR mark', {}, {'ath-pr-more': {enabled: true}}));
+    const stale = cell('흐림 (GitHub 못 읽음)', ref(id('pr-stale'), AGENT_TREE_MASTERS.prIcon, 'PR mark', {opacity: DIMMED}, {'ath-pr-g': {icon: 'git-pull-request', fill: '$--pr-pending'}}));
+    const hover = cell('포인터 아래', ref(id('pr-hover'), AGENT_TREE_MASTERS.prIcon, 'PR mark', {fill: '$--accent', cornerRadius: '$--radius-xs', padding: [0, '$--spacing-xxs']}));
+    const compact = cell('좁은 변형 (번호 없음)', ref(id('pr-compact'), AGENT_TREE_MASTERS.prIcon, 'PR mark', {}, {'ath-pr-g': {icon: 'git-pull-request', fill: '$--pr-mergeable'}, 'ath-pr-n': {enabled: false}}));
     const marks = [
       cell('! N raised', ref(id('mark-raised'), AGENT_TREE_MASTERS.mark, 'Descendant mark')),
       cell('● N working', ref(id('mark-working'), AGENT_TREE_MASTERS.mark, 'Descendant mark', {}, {'ath-mark-bang': {enabled: false}, 'ath-mark-dot': {enabled: true}, 'ath-mark-n': {content: '3', fill: '$--agent-working'}})),
@@ -116,12 +127,12 @@ export function buildAgentTreeParts(tokens) {
       cell('Tree button open', ref(id('tb-open'), AGENT_TREE_MASTERS.treeButton, 'Tree button', {fill: '$--secondary'}, {'ath-tb-n': {content: '2'}})),
     ];
     const rows = [
-      cell('Root, opened', ref(id('row-root'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-chev': {icon: 'chevron-down'}, 'ath-row-ring': {enabled: false}, 'ath-row-dot': {enabled: true}, 'ath-row-title': {content: '루트 에이전트', fill: '$--foreground'}, 'ath-row-pr/ath-pr-g': {fill: '$--success'}})),
+      cell('Root, opened', ref(id('row-root'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-chev': {icon: 'chevron-down'}, 'ath-row-ring': {enabled: false}, 'ath-row-dot': {enabled: true}, 'ath-row-title': {content: '루트 에이전트', fill: '$--foreground'}, 'ath-row-pr/ath-pr-g': {fill: '$--pr-mergeable'}})),
       cell('Child, folded with a raised descendant', ref(id('row-child'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-elbow': {enabled: true}, 'ath-row-title': {content: '자식'}, 'ath-row-desc': {enabled: true}, 'ath-row-age': {content: '19h'}})),
       cell('Grandchild, no children', ref(id('row-grand'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-rail': {enabled: true}, 'ath-row-elbow': {enabled: true}, 'ath-row-chev': {enabled: false}, 'ath-row-ring': {enabled: false}, 'ath-row-glyph': {enabled: true, content: '✓', fill: '$--success'}, 'ath-row-title': {content: '손자'}, 'ath-row-pr': {enabled: false}, 'ath-row-age': {content: '40m'}})),
       cell('Child on another device', ref(id('row-remote'), AGENT_TREE_MASTERS.row, 'Tree row', {}, {'ath-row-elbow': {enabled: true}, 'ath-row-chev': {enabled: false}, 'ath-row-ring': {stroke: '$--muted-foreground'}, 'ath-row-title': {content: '다른 기기의 자식'}, 'ath-row-pr': {enabled: false}, 'ath-row-device': {enabled: true}, 'ath-row-age': {content: '5h'}})),
     ];
-    return [...verbs, ...icons, stale, ...marks, ...buttons, ...rows];
+    return [...verbs, ...icons, more, stale, hover, compact, ...marks, ...buttons, ...rows];
   };
   const themeFrame = (frameId, mode, cells) => frame(frameId, mode, {
     theme: {Mode: mode}, layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'end', padding: '$--spacing-lg',
@@ -133,7 +144,7 @@ export function buildAgentTreeParts(tokens) {
     layout: 'vertical', gap: '$--spacing-xl', padding: '$--spacing-xl', fill: '$--card', cornerRadius: '$--radius-lg', width: 'fit_content',
   }, [
     text(`${id}-title`, 'Agent tree parts', {size: '$--text-headline', weight: '600'}),
-    text(`${id}-spec`, 'web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the sidebar PR icon in the worst state of the agent\'s own PRs (failed red, pending amber, mergeable green, merged purple) and dimmed while GitHub cannot be read; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header\'s tree button, a tree icon and the direct child count; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. The Sessions and pane header PR chip and its list are the existing PR chip.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
+    text(`${id}-spec`, 'web/src/components/agent-tree.tsx (PRD agent-hierarchy-screens D-37 to D-40): the verb a Needs You line and an ask band start with, coloured text with no box; the one PR mark every PR surface draws (web/src/components/pr-mark.tsx): the state\'s icon in its colour (failed red, pending amber, mergeable green, draft grey, merged purple, closed dim), the number and +N for the other PRs, no border, a fill under the pointer, dimmed while GitHub cannot be read, and a compact variant without the number; the one descendant mark a folded parent wears, ! N raised else ● N working; the pane header\'s tree button, a tree icon and the direct child count; and the one-line tree row with its elbow rails, chevron lane, PR icon, mark and age, plus a device line only for a child on another machine. Sessions rows, the pane header, the sidebar row and the tree popover all draw the same PR mark.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
     frame(`${id}-masters`, 'Masters', {layout: 'horizontal', gap: '$--spacing-xl', alignItems: 'start'}, [verb, prIcon, mark, treeButton, row]),
     themeFrame(`${id}-light`, 'Light', states('l')),
     themeFrame(`${id}-dark`, 'Dark', states('d')),

@@ -1867,6 +1867,7 @@ pub(crate) mod tests {
                 project: None,
                 actor,
                 ended: false,
+                forked: false,
             });
             guard.delivery_ledger = Ok(Arc::new(ledger));
         }
@@ -2348,6 +2349,7 @@ pub(crate) mod tests {
                 project: None,
                 actor: runtime.delivery_observations[pane].actor.clone(),
                 ended: false,
+                forked: false,
             });
         }
         ledger.next_id = 3;

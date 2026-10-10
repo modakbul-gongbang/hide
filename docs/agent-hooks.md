@@ -84,7 +84,7 @@ An item is eligible only after a lexical match, a bounded two- or three-characte
 At most three whole Memory items and 600 estimated tokens are returned in the same `additionalContext` envelope, excluding items already provided by `SessionStart` for that session.
 The core records the authoritative SessionStart receipt in the app-owned SQLite store after it observes the injected envelope, including an internal zero-item receipt when the session begins before any Memory exists.
 The core authenticates that receipt with the Project-scoped key in the same SQLite store, binding the runtime, session, hook event, and exact ordered item revisions without creating another persistence surface.
-The core accepts it only from provider-owned transcript metadata, including actual Codex developer messages, and verifies the authentication tag before recording or hiding the marker.
+The core accepts it only from provider-owned transcript records, including Claude Code's `hook_additional_context` attachment and actual Codex developer messages, and verifies the authentication tag before recording or hiding the marker.
 That zero-item receipt does not present a misleading `Project Memory ready 0` message; it only lets later prompts distinguish an observed empty start from a projection race.
 If the first prompt races that projection, the core omits Memory for that prompt rather than guessing which items were delivered; the next prompt retries the read-only lookup after the receipt exists, and no sidecar or second store is written.
 If multiple observed SessionStart envelopes name different item sets, the exclusion read returns their deterministic union so retries converge instead of selecting an arbitrary receipt.
@@ -136,6 +136,52 @@ A token that is not a count is dropped rather than coerced.
 `SessionStart` resets the pane, so a new session in a reused pane never inherits the last one's numbers.
 `Stop` sweeps `working` to zero, because the turn is over and a `SubagentStop` that never arrived cannot leave a count behind.
 A pane Herdr has stopped listing has its record swept on the next session bootstrap.
+
+### After Herdr hands off or restarts
+
+Herdr keeps a pane token only as long as the server that took it.
+A live handoff (what an update runs) and a restart both start the new server with no tokens, while the pane ids stay, so the pane's record is still there and the pane still has its name (measured on the pinned Herdr 0.9.3 in a private server, issue 799).
+The agent session Herdr reports for a pane (`agent_session`) survived the live handoff in the same measurement.
+Until the agent's next hook event, which for an idle session can be a long time, every instrumented pane then read as a session that predates Hide's setup, with a Reopen that restarted a healthy session.
+hided puts the tokens back, so the pane reads as it did before.
+
+A pane id alone does not say that the agent in the pane now is the one the record describes: a restart can leave the same id with another process in it.
+So each record names, besides its counts, who wrote it (`counters::Record`): the hook version of the helper, the adapter id of the runtime that reported, and the agent's own id of the session, read from the `session_id` of the hook's input when the helper read that input whole.
+Every pane that has reported has a record: an event that changes no count writes it when the pane has none or when it names another version, agent or session.
+An event that changes no count keeps the session the record names for the same agent, and any other event names its own, or none when its input named none.
+Grok and Cursor name their agent and no session, because their hook input is not read for one.
+The OpenCode and Pi plugins' count calls carry no session id today, so their records name none either (the helper records one it is given, after the same validity check).
+A record that names no session never has its counts put back; the version still is.
+
+The core's restorer (`herdr-core/src/coordination/hook_tokens.rs`) reads the agent list the coordinator already reads each second.
+For each listed agent that carries no `hide_hooks` token and that Hide has an adapter for, it reads that pane's record on a worker thread, under the shared side of the same lock, and sends the report the helper sends (`report::report_params`):
+
+| The record and what Herdr says now | What is put back |
+| --- | --- |
+| Names the agent Herdr detects, and the session Herdr reports | `hide_hooks` with the version the record names, and the counts |
+| Names the same agent, and Herdr reports no session or another one, or the record names none | `hide_hooks` only; the counts are left out, so they read as unknown and never as a zero |
+| Names another agent | nothing: the pane was taken over |
+| Is missing, or was written by an older helper (no version, no agent) | nothing; the pane waits for its next hook event, and no record is migrated |
+
+The version is put back for the same agent because a hook is installed in a runtime's configuration and not in a session.
+The counts are put back only for the same session, and nothing relies on `SessionStart` having reset the record: a session that started after the record was written and before the connection is the case the session id tells apart.
+What the counts can still be is the record's last word for that session: a subagent that ended with no `SubagentStop` reaching the helper still counts as working until the session's next `Stop`, exactly as it did before the loss.
+A record that changed while the report was on its way is sent again, as the helper does, so Herdr ends on the latest count.
+A report merges token by token, so when the second read finds the counts no longer vouched for (the session changed, or another agent's record replaced the file) the restorer clears the two count tokens with `null` instead of leaving the first report's values on the pane.
+
+What else it does not do:
+
+- A pane that already has its token is left alone, so a live helper's report is never raced.
+- The record sweep (`sweep_subagent_counters`, which drops the records of panes Herdr no longer lists) cannot take a record the restorer is about to read: both work from the same bootstrap snapshot, a pane the restorer asks about is listed in it, and the sweep keeps every listed pane's record.
+  After a server restart the first answer on the socket already lists every restored pane (measured on the pinned Herdr 0.9.3: five panes before a stop, the same five in the first snapshot after it), so a connect cannot see an empty pane list while the session is still being restored.
+  With a hided attached, a stop and start of the private Herdr left the pane's record in place after hided's reconnect.
+- A pane is asked once for each connection to Herdr, because every connect is a bootstrap and a handoff or a restart ends the connection.
+  A pane with no record, or one an older helper wrote, is not asked again: the helper's next event reports the token and writes the record in the same step.
+- It covers this machine's panes only.
+  A device's record is the device's file, and the core reaches a machine's files through its node, so a device's pane waits for its next hook event as before.
+
+The snapshot-rate work is a comparison of the tokens each listed agent already carries.
+The only file read and the only `pane.report_metadata` call are on the worker, at most 256 panes in one batch, one batch in flight and one waiting, a failed pane tried three times for a connection, and each failure is a `hook_tokens` diagnostic naming the pane (`restore.failed`, `restore.gave_up`, `restore.batch`, `restore.deferred`).
 
 The helper always exits zero and reads no more than its bounded standard-input prefix before writing applicable context.
 A producer that never closes stdin is released after the 500 ms payload wait.
@@ -309,7 +355,7 @@ Two pieces are written per agent into the agent's own files, and nothing else; a
   An agent's own folder (`~/.claude`) is never created for the stub: the hook code reads that folder as the agent's settings being there, so a pass that made it would write a hook on the next pass that it did not write on this one, and a second apply would not be a no-op; the row says the agent has not created its folder yet, and the stub goes in on the pass after it has.
 - The agent hook, for the agents below marked as done; for OpenCode this piece is Hide's plugin, and for Pi and omp Hide's extension, which carry the guidance with the rest ([OpenCode: Hide's plugin](#opencode-hides-plugin), [Pi and omp: Hide's extension](#pi-and-omp-hides-extension)).
   It is one entry per event the agent's documentation names, in the agent's own format, whose command is `hide-agent-hooks hook --runtime <agent id> --event <event>`.
-  `hide-agent-hooks` writes it (`src/guidance.rs`) and nothing else does, under the marker `hide-guidance@2` that proves an entry is Hide's and separates a current one from an older one; an entry of `@1`, which only knew the session start, is Hide's own and replaced by the next pass.
+  `hide-agent-hooks` writes it (`src/guidance.rs`) and nothing else does, under the marker `hide-guidance@3` that proves an entry is Hide's and separates a current one from an older one; an entry of `@1`, which only knew the session start, or of `@2`, is Hide's own and replaced by the next pass.
   Where the session start adds context (Cursor), its output is the worktree-purpose instruction, including the sentence that points at `hide factory add`, one fixed line that points at `hide browser help`, and the live Workspace guidance when the daemon answers, in the field the agent documents.
   It prints no Memory capsule, because a Memory receipt is read back only from a session Hide reads it from: Claude Code's, Codex's, Pi's and omp's files and OpenCode's database.
   A second delivery of the same session prints the same guidance: the output is a pure function of the daemon's answer, and a test runs the hook twice and compares.
@@ -317,7 +363,9 @@ Two pieces are written per agent into the agent's own files, and nothing else; a
 
 Cursor keeps its entry the way its documentation shapes it.
 A removal takes Hide's hook out of whatever group holds it and drops the group only when no hook is left, so another tool's hook that shares a group with Hide's stays.
-Cursor takes `~/.cursor/hooks.json` (`{"version": 1, "hooks": {"<camelCase event>": [{"command", "timeout", "matcher"?}]}}`, seconds), a file it shares with the operator's own hooks ([hooks](https://cursor.com/docs/hooks)); Hide adds `sessionStart`, `preToolUse` (matcher `Shell`), `subagentStart`, `subagentStop` and `stop`.
+Cursor takes `~/.cursor/hooks.json` (`{"version": 1, "hooks": {"<camelCase event>": [{"command", "timeout", "matcher"?}]}}`, seconds), a file it shares with the operator's own hooks ([hooks](https://cursor.com/docs/hooks)); Hide adds `sessionStart` and `preToolUse` (matcher `Shell`).
+Version 2 also wrote `subagentStart`, `subagentStop` and `stop` for a count Cursor no longer reports (issue 940); an install or Reinstall takes Hide's entries out of those three keys, with the same rule as every removal (only entries carrying Hide's marker; an entry of Orca's or Herdr's `herdr-agent-state.sh` under the same key stays, and a key Hide's entries alone filled goes), and Hide's switch-off takes them out too.
+Until the next pass, an installed `@2` file reads Outdated and its three retired hooks still answer: `subagentStart` with Cursor's allow, the other two with nothing.
 Cursor's documentation requires `version` (a positive integer, `1`), so Hide creates the file with it and adds `"version": 1` to an existing file only when it has none, which keeps the operator's own hooks beside Hide's valid; a `version` the operator wrote is left as it is.
 The documentation calls `command` a "script path or command" and does not say whether a shell parses it, so Hide writes the one form that means the same either way: the helper's absolute path and its arguments, with no `if`, `exec` or quoting (a path with a character a shell would read keeps the guarded, quoted form).
 The Cursor CLI 2026.10.01 runs it through a shell (its hook runner appends the payload as a heredoc to the command), so the guarded form works there too.
@@ -342,8 +390,8 @@ The agent hook is not written on Windows, because its command is a shell command
 Grok and Cursor each document a hook that can refuse a shell call and that sees a subagent start and end, so Hide's hook for them carries the spawn guard and, for Grok, the subagent count (PRD grok-cursor-hooks).
 Cursor declares no subagent count: Cursor CLI 2026.10.01 runs `subagentStart` and `subagentStop` only when its agent server asks for them, and a Task subagent run (issue 911) never produced one, so the count stayed 0 for a pane that had run a subagent.
 Its chat store does keep each subagent as a store of its own, in the parent's folder under `~/.cursor/chats`, with `subagentInfo` (`parentAgentId`, `toolCallId`, `typeName`), and the parent's graph holds the Task call and its tool result; a finished subagent could be counted from those, but nothing in a subagent's store says it is still running, so Hide shows no count rather than a zero it cannot stand behind (design principle 10).
-The pane's children projection follows the count's dialect, so a Cursor pane reads as Pi's does: the uninstrumented mark with the reason `unknown` and no count, which says Hide cannot tell what the session spawned ([status-model.md](status-model.md#uninstrumented-is-not-an-unknown-activity)), never a zero; the spawn guard and the guidance keep their own hooks.
-Each runs only the events its documentation names: Grok `SessionStart`, `PreToolUse` (matcher `Bash|ask_user_question|exit_plan_mode`; `Bash` is Grok's alias of `run_terminal_command`), `SubagentStart`, `SubagentStop` and `Stop` (the hooks guide Grok ships, `~/.grok/docs/user-guide/10-hooks.md`); Cursor `sessionStart`, `preToolUse` (matcher `Shell`), `subagentStart`, `subagentStop` and `stop`.
+The pane's children projection follows the count's dialect, so a Cursor pane reads as Pi's does: the uninstrumented projection with the reason `unknown` and no count, which says Hide cannot tell what the session spawned ([status-model.md](status-model.md#uninstrumented-is-not-an-unknown-activity)), never a zero, and no screen draws it; the spawn guard and the guidance keep their own hooks.
+Each runs only the events its documentation names: Grok `SessionStart`, `PreToolUse` (matcher `Bash|ask_user_question|exit_plan_mode`; `Bash` is Grok's alias of `run_terminal_command`), `SubagentStart`, `SubagentStop` and `Stop` (the hooks guide Grok ships, `~/.grok/docs/user-guide/10-hooks.md`); Cursor `sessionStart` and `preToolUse` (matcher `Shell`).
 Grok's `SessionStart` does not fire for a subagent, so it is where the pane's count starts over and the pane first reports itself instrumented.
 
 Grok's file is Hide's own, `~/.grok/hooks/hide.json`, beside Herdr's and Orca's files in that folder (`{"hooks": {"<Event>": [{"matcher"?, "hooks": [{"type": "command", "command", "timeout"}]}]}}`, seconds); a switch-off deletes the file and nothing else there.
@@ -360,7 +408,7 @@ The helper (`src/bin/hide-agent-hooks.rs`, `run_basic_hook`; the payload and ans
 | Turn end | `Stop`: `subagentType` marks a subagent's own stop, `backgroundTasks` lists what still runs | `stop` |
 
 The refusal's reason and every rule of what is refused are the spawn guard's above, through the same `guard_refusal`.
-Cursor reads output that is not a valid answer from `preToolUse` and `subagentStart` as a refusal even when the hook exits 0, and only the CLI's own code, not its documentation, says empty output proceeds, so for those two events every path that does not refuse prints `{"permission":"allow"}`: outside a pane or a registered checkout, an unreadable payload, a daemon that is down or slow, a panic, and a failed owner handshake before anything else runs (D-04).
+Cursor reads output that is not a valid answer from `preToolUse` and `subagentStart` as a refusal even when the hook exits 0, and only the CLI's own code, not its documentation, says empty output proceeds, so for those two events (`subagentStart` only from a `@2` entry an earlier build installed and the next pass has not yet removed) every path that does not refuse prints `{"permission":"allow"}`: outside a pane or a registered checkout, an unreadable payload, a daemon that is down or slow, a panic, and a failed owner handshake before anything else runs (D-04).
 Grok fails open on everything but a refusal, so its hook prints nothing on those paths, as Claude Code's does.
 A failure goes to the guard's log, never to the agent (B5).
 Cursor CLI 2026.10.01 reads a refusal on two paths: its local tool path (every shell call) shows the agent `user_message`, or "<tool> blocked by preToolUse hook" when there is none, and gives it `additional_context`, while only a `preToolUse` step the agent server asks for passes `agent_message` on; the reason is written to all three so it reaches the agent whichever path ran (issue 910, read from the installed CLI bundle).
@@ -431,7 +479,6 @@ Its popover groups the feature table into Herdr basics, session reading and mult
 | `guidance` | Hide's hook, plugin or extension prints the session guidance | yes | yes | yes | yes | no | yes |
 | `letters` | its prompt dialect declaration | yes | yes | yes | yes | no | no |
 | `spawn_guard` | its refusal dialect declaration | yes | yes | yes | yes | yes | yes |
-| `subagents` | its counter dialect declaration | yes | yes | no | yes | yes | yes |
 | `memory` | its Memory dialect declaration | yes | yes | yes | yes | no | no |
 | `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no | no | no | no |
 | `herdr_integration` | always: every supported agent has a Herdr target | yes | yes | yes | yes | yes | yes |
@@ -598,7 +645,7 @@ The kit looks for the agents once per pass, asks the login shell for its `PATH` 
 Removal does not need the helper, and must not: it reads the configuration file and takes out the entries carrying Hide's marker, and nothing else.
 Removing a device from Hide does that on the device while its helper is connected (D-16); the operator removes a hook on their own machine by editing the file, and the kit then leaves it removed.
 
-`hide-agent-hooks doctor [--json]` prints the same judgement in a terminal, because a broken hook shows on screen only as an uninstrumented mark and the output of that command is the evidence.
+`hide-agent-hooks doctor [--json]` prints the same judgement in a terminal, because a broken hook shows on screen only as a Not connected chip on a Claude Code or Codex pane and nowhere for any other agent, and the output of that command is the evidence.
 Install and remove are deliberately not CLI subcommands: writing to the operator's configuration is the kit's decision, agreed to when the app was installed or the device added, not something a stray command line performs.
 
 ## Testing

@@ -1161,6 +1161,7 @@ mod tests {
             project: None,
             actor: sender.clone(),
             ended: false,
+            forked: false,
         });
         assert_eq!(
             line(&ledger, &letter),

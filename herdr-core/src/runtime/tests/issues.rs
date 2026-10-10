@@ -766,7 +766,7 @@ fn found(number: u32) -> crate::model::GithubSearchResult {
         title: format!("PR {number}"),
         state: "open".into(),
         url: format!("https://github.com/acme/project/pull/{number}"),
-        is_draft: false,
+        pr_state: Some(crate::model::PrState::Pending),
     }
 }
 
@@ -1081,7 +1081,7 @@ fn the_search_slot_rides_the_snapshot_only_after_a_search() {
             "results": [{
                 "kind": "pr", "repository": "acme/project", "number": 5, "title": "PR 5",
                 "state": "open", "url": "https://github.com/acme/project/pull/5",
-                "is_draft": false,
+                "pr_state": "pending",
             }],
         })
     );

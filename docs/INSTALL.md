@@ -252,9 +252,9 @@ Everything Hide owns on a machine is under `~/.hide`:
 
 | Folder | What it holds |
 | --- | --- |
-| `~/.hide/state` | The daemon's state: registered projects, screen layout, labels, phone pairing, the session search index (`session-search.sqlite3`), the link record (`links.sqlite3`) and Project Memory (`project-memory.sqlite3`, which the agent hooks read from the default folder), logs (`HIDE_STATE_DIR` or a set `XDG_STATE_HOME` choose another folder) |
+| `~/.hide/state` | The daemon's state: registered projects, screen layout, labels, phone pairing, the session search index (`session-search.sqlite3`), the link record (`links.sqlite3`) and Project Memory (`project-memory.sqlite3`, which only the core opens; the agent hooks ask the core for it), logs (`HIDE_STATE_DIR` or a set `XDG_STATE_HOME` choose another folder) |
 | `~/.hide/kit` | The kit record and one-release retirement receipt |
-| `~/.hide/agent-hooks` | The hook helper's per-pane counters and last report, the spawn guard's refusal log (`spawn-guard.log`, capped, one older copy) and the lock beside it |
+| `~/.hide/agent-hooks` | The hook helper's per-pane counters, each with the hook version, agent and session that wrote it (hided reads them to put a pane's tokens back after a Herdr handoff or restart), the last report, the spawn guard's refusal log (`spawn-guard.log`, capped, one older copy) and the lock beside it |
 | `~/.hide/host-helper` | On a device: the `hided` builds that serve it as a node |
 
 Outside it stay only what another program reads at a place it chose: Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, and the `hide` link in `~/.local/bin`.
@@ -299,7 +299,7 @@ A machine allowed for the older `~/.local/share/hide/host-helper` is not asked a
 Once the helper runs from `~/.hide/host-helper`, a later step that fails (a hook entry or a link) shows on that machine's row while the old helper folder is kept as long as anything still names it, and the next connection finishes it; removing the old folders is retried on each connection and logged, not shown.
 Every connection brings the kit up to this Hide's version, and a part you removed there stays removed until Reinstall on that machine's row.
 A pane on that machine can then run `hide file open`, `hide diff open` or `hide browser open http://localhost:3000`, and the result opens in this Hide, with `localhost` meaning that machine; that shell's `PATH` has to include `~/.local/bin` for a bare `hide` to be found.
-Its agent panes show labels, subagent counts and Workspace guidance as panes on this Mac do, with the labels made on this Mac from the device's conversations, which the helper reads and sends in memory only; Project Memory stays on this Mac and is not given to a device's sessions.
+Its agent panes show labels and Workspace guidance as panes on this Mac do, with the labels made on this Mac from the device's conversations, which the helper reads and sends in memory only; Project Memory stays on this Mac and is not given to a device's sessions.
 A machine allowed by an earlier version of Hide gets the whole kit on its next connection without asking again; a machine added without the helper installs nothing until you press Allow and install on its row.
 Only machines on the platform this build carries get the kit; another platform shows why on its row and is only viewed and driven.
 Removing a machine while it is connected takes Hide's hook entries, the `hide` link and the helper folder `~/.hide/host-helper` off it, and leaves `~/.hide/kit` and `~/.hide/agent-hooks`; removing it while it is not connected leaves them there, where they do no harm, and adding it again replaces them.

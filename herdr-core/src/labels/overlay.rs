@@ -51,6 +51,8 @@ struct ProvenLabel {
     /// The expiries of the background tasks the session read proves alive,
     /// with the Herdr state it was read under.
     wake: Option<(u64, WakeRead)>,
+    /// The Herdr state whose turn end the session read still owes.
+    turn_end_owed: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -83,6 +85,7 @@ impl LabelOverlay {
                     turn: record.turn_read(),
                     user_turn: record.user_turn(),
                     wake: record.wake_read(),
+                    turn_end_owed: record.turn_end_owed,
                 });
                 (
                     pane_id.clone(),
@@ -195,6 +198,8 @@ impl LabelOverlay {
                 facts.wake_devices = u32::try_from(live.count()).unwrap_or(u32::MAX);
                 facts.wake_vanished = read.vanished;
             }
+            facts.turn_end_unread =
+                agent.state_change_seq.is_some() && label.turn_end_owed == agent.state_change_seq;
             if let Some(summary) = &label.summary {
                 let working = agent.agent_status.as_deref() == Some("working");
                 let asking = summary.end == Some(LabelEnd::Question);
@@ -245,6 +250,7 @@ fn row_facts(facts: &SessionFacts) -> RowFacts {
         awaiting_operator: false,
         user_turn: None,
         wake_devices: 0,
+        turn_end_unread: false,
         wake_vanished: false,
     }
 }

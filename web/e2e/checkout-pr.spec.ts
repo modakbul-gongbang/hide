@@ -119,8 +119,10 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     const card = page.locator('[data-checkout-card="pull_request"]');
 
     // B1, B3: once GitHub has answered, the worktree's glyph is the pull
-    // request's lifecycle and a button named after it; main's glyph is not.
-    await expect(feature.locator("[data-checkout]")).toHaveAttribute("data-checkout-kind", "pr_open", { timeout: 30_000 });
+    // request's mark in its state, approved with passing checks mergeable,
+    // and a button named after it; main's glyph is not.
+    await expect(feature.locator("[data-checkout]")).toHaveAttribute("data-checkout-kind", "pull_request", { timeout: 30_000 });
+    await expect(glyph.locator("[data-pr-mark]")).toHaveAttribute("data-pr-mark", "mergeable");
     await expect(glyph).toHaveAccessibleName("Open pull request #180");
     await expect(glyph).toHaveCSS("cursor", "pointer");
     await expect(primary.locator("[data-checkout-pr-glyph]")).toHaveCount(0);

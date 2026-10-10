@@ -17,7 +17,7 @@ import { docsUrl } from "./agentRows";
 const GROUPS = [
   { id: "herdr", features: ["skill", "guidance", "herdr_integration", "start"] },
   { id: "sessions", features: ["titles", "sleep", "fork"] },
-  { id: "collaboration", features: ["letters", "bell", "memory", "subagents", "spawn_guard"] },
+  { id: "collaboration", features: ["letters", "bell", "memory", "spawn_guard"] },
 ] as const;
 
 export function PartialChip({ agent }: { agent: KitAgent }) {

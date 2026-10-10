@@ -108,6 +108,7 @@ export function RelationStatus({ actions, visiblePaneIds }: { actions: Actions; 
 type PaneMenuId =
   | `open:${string}`
   | "sleep_agent"
+  | "fork_agent"
   | "copy_name"
   | "copy_pane_id"
   | "close_pane"
@@ -133,15 +134,26 @@ export function paneMenuItems(pane: PaneRow, title: string): MenuEntry<PaneMenuI
   }));
   // Sleep agent (PRD agent-sleep B15): offered on a local agent pane that is
   // awake, disabled with the core's reason when this agent cannot sleep now.
+  const agentActions: MenuEntry<PaneMenuId>[] = [];
   if (pane.sleep_action) {
-    items.push({
+    agentActions.push({
       id: "sleep_agent",
       label: translate("panes.menu.sleep"),
       unavailable: pane.sleep_action.available ? null : (pane.sleep_action.reason ?? translate("panes.menu.sleepUnavailable")),
-      separated: items.length > 0,
     });
   }
-  items.push({ id: "copy_name", label: translate("panes.menu.copyName"), unavailable: null, separated: items.length > 0 && !pane.sleep_action });
+  // Fork agent (issue 916): offered on an agent pane the core can fork, and drawn
+  // disabled with the core's reason on an agent that can fork but has not reported its
+  // conversation yet; an agent with no fork command, and a shell, get no item.
+  if (pane.fork?.available || pane.fork?.reason) {
+    agentActions.push({
+      id: "fork_agent",
+      label: translate("panes.menu.fork"),
+      unavailable: pane.fork.available ? null : (pane.fork.reason ?? translate("panes.menu.forkUnavailable")),
+    });
+  }
+  if (agentActions.length > 0) items.push(...agentActions.map((item, index) => (index === 0 ? { ...item, separated: items.length > 0 } : item)));
+  items.push({ id: "copy_name", label: translate("panes.menu.copyName"), unavailable: null, separated: items.length > 0 && agentActions.length === 0 });
   items.push({ id: "copy_pane_id", label: translate("panes.menu.copyPaneId"), unavailable: null });
   items.push({ id: "close_pane", label: translate("panes.close", { name: title }), unavailable: null, separated: true });
   return items;
@@ -183,7 +195,8 @@ export function terminalMenuItems(pane: PaneRow, title: string, context: Termina
   return [...items, ...paneItems];
 }
 
-type MenuOpen = { x: number; y: number; items: MenuEntry<PaneMenuId>[] };
+/** Where the menu opened, and what a terminal right-click knew then; its items are drawn from the pane as it is now. */
+type MenuOpen = { x: number; y: number; terminal: TerminalMenuContext | null };
 
 
 export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
@@ -199,6 +212,8 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
         return actions.closePane(pane.id);
       case "sleep_agent":
         return actions.sleepAgent(pane.id);
+      case "fork_agent":
+        return actions.forkPane(pane.id);
       case "copy":
         void copySelection(pane.id, "pane menu");
         return;
@@ -220,12 +235,16 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
     const target = relationEntries(pane).find((entry) => `open:${entry.paneId}` === id);
     if (target) actions.followRelation(pane.id, target.paneId, target.label);
   };
-  const menu = <EntryPointMenu label={t("panes.menu.aria", { name: title })} items={open?.items ?? []} onSelect={select} at={open} onClose={() => setOpen(null)} />;
+  // The name, the fork and sleep availability and the relatives change while a
+  // menu is open (the session's label arrives after its first turn), and the
+  // menu says what the header says now.
+  const items = open === null ? [] : open.terminal ? terminalMenuItems(pane, title, open.terminal) : paneMenuItems(pane, title);
+  const menu = <EntryPointMenu label={t("panes.menu.aria", { name: title })} items={items} onSelect={select} at={open} onClose={() => setOpen(null)} />;
   return {
     menu,
     open: open !== null,
-    openAt: (x: number, y: number) => setOpen({ x, y, items: paneMenuItems(pane, title) }),
-    openTerminalAt: (x: number, y: number, context: TerminalMenuContext) => setOpen({ x, y, items: terminalMenuItems(pane, title, context) }),
+    openAt: (x: number, y: number) => setOpen({ x, y, terminal: null }),
+    openTerminalAt: (x: number, y: number, context: TerminalMenuContext) => setOpen({ x, y, terminal: context }),
   };
 }
 

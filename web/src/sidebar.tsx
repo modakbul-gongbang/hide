@@ -15,6 +15,8 @@ import { EntryContextMenu } from "./components/entry-menu";
 import { SidebarHeader, type DeviceMenu, type FactoryProjectRow } from "./components/sidebar-header";
 import { Hint } from "./components/ui/tooltip";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
+import { PrMark } from "./components/pr-mark";
+import { PR_LOOK } from "./prMark";
 import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
 import { DeviceRail } from "./components/device-rail";
 import { frontDeviceId, frontTitle, homeProjectCount, railShown, sidebarBody } from "./devices";
@@ -1247,35 +1249,39 @@ const FolderRowView = memo(function FolderRowView({
 });
 
 /**
- * The checkout's kind glyph. On a row whose glyph is a pull request's
- * lifecycle it is a button that opens that pull request (PRD
- * checkout-pr-glyph-card D-02): a ring in the pull request's color under the
- * pointer says so, ⌘ asks for the default browser, and the press never
- * reaches the row button under it, so the checkout neither opens nor
- * unfolds. Every other kind is the plain icon the row button covers.
+ * The checkout's kind glyph. A row with a pull request draws that pull
+ * request's mark without its number (the name already names the branch) as a
+ * button that opens it (PRD checkout-pr-glyph-card D-02): a ring in the
+ * state's colour under the pointer says so, ⌘ asks for the default browser,
+ * and the press never reaches the row button under it, so the checkout
+ * neither opens nor unfolds. Every other kind is the plain icon the row
+ * button covers.
  */
 function KindGlyph({ view, deviceId, actions }: { view: CheckoutPresentation; deviceId: string; actions: Actions }) {
   const { t } = useInterfaceTranslation();
+  const pr = view.kind === "pull_request" ? view.pullRequest : null;
+  if (view.kind === "pull_request") {
+    if (!pr) throw new Error("A pull request glyph without its pull request");
+    return (
+      <button
+        type="button"
+        data-checkout-pr-glyph={pr.number}
+        aria-label={t("sidebar.openPullRequest", { number: pr.number })}
+        className={cn(
+          "pointer-events-auto relative flex size-(--size-checkout-icon) shrink-0 cursor-pointer items-center justify-center rounded-xs outline-none hover:ring-1 hover:ring-current focus-visible:ring-1 focus-visible:ring-ring",
+          PR_LOOK[pr.state].tone,
+        )}
+        onClick={(event) => {
+          event.stopPropagation();
+          actions.openPullRequest(pr.url, deviceId, pullRequestOpenExternal(event));
+        }}
+      >
+        <PrMark state={pr.state} stale={view.stale} compact />
+      </button>
+    );
+  }
   const KindIcon = CHECKOUT_KIND_ICON[view.kind];
-  const pr = view.kind.startsWith("pr_") ? view.pullRequest : null;
-  if (!pr) return <KindIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />;
-  return (
-    <button
-      type="button"
-      data-checkout-pr-glyph={pr.number}
-      aria-label={t("sidebar.openPullRequest", { number: pr.number })}
-      className={cn(
-        "pointer-events-auto relative flex size-(--size-checkout-icon) shrink-0 cursor-pointer items-center justify-center rounded-xs outline-none hover:ring-1 hover:ring-current focus-visible:ring-1 focus-visible:ring-ring",
-        view.kindTone,
-      )}
-      onClick={(event) => {
-        event.stopPropagation();
-        actions.openPullRequest(pr.url, deviceId, pullRequestOpenExternal(event));
-      }}
-    >
-      <KindIcon aria-hidden="true" className="size-(--size-checkout-icon)" />
-    </button>
-  );
+  return <KindIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { terminalMenuItems, type TerminalMenuContext } from "./PaneRelations";
+import { paneMenuItems, terminalMenuItems, type TerminalMenuContext } from "./PaneRelations";
 import type { PaneRow } from "./snapshot";
 
 const pane = { id: "w1:p1", children: null, lineage_path: [] } as unknown as PaneRow;
@@ -23,5 +23,31 @@ describe("a right-click in a terminal", () => {
     expect(zoom({ paneCount: 2 })).toMatchObject({ label: "Zoom pane", unavailable: null });
     expect(zoom({ paneCount: 3, zoomed: true })).toMatchObject({ label: "Unzoom pane", unavailable: null });
     expect(zoom({ paneCount: 1 })).toMatchObject({ label: "Zoom pane", unavailable: "This pane is the only one in its tab" });
+  });
+});
+
+describe("the pane menu's Fork agent item", () => {
+  const forkItem = (fork?: PaneRow["fork"], sleep_action?: PaneRow["sleep_action"]) =>
+    paneMenuItems({ id: "w1:p1", children: null, lineage_path: [], fork, sleep_action } as unknown as PaneRow, "reviewer").find((item) => item.id === "fork_agent");
+
+  it("is offered on a pane the core can fork", () => {
+    expect(forkItem({ available: true })).toMatchObject({ label: "Fork agent", unavailable: null });
+  });
+
+  it("is drawn disabled with the core's reason on an agent that cannot fork yet", () => {
+    expect(forkItem({ available: false, reason: "This agent has not reported its conversation yet" })).toMatchObject({
+      unavailable: "This agent has not reported its conversation yet",
+    });
+  });
+
+  it("is absent on a shell and on an agent with no fork command", () => {
+    expect(forkItem({ available: false, reason: null })).toBeUndefined();
+    expect(forkItem()).toBeUndefined();
+  });
+
+  it("sits with Sleep agent, apart from the copy items", () => {
+    const items = paneMenuItems({ id: "w1:p1", children: null, lineage_path: [], fork: { available: true }, sleep_action: { available: true } } as unknown as PaneRow, "reviewer");
+    expect(items.map((item) => item.id)).toEqual(["sleep_agent", "fork_agent", "copy_name", "copy_pane_id", "close_pane"]);
+    expect(items.filter((item) => item.separated).map((item) => item.id)).toEqual(["close_pane"]);
   });
 });
