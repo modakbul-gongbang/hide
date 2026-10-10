@@ -195,7 +195,8 @@ export function terminalMenuItems(pane: PaneRow, title: string, context: Termina
   return [...items, ...paneItems];
 }
 
-type MenuOpen = { x: number; y: number; items: MenuEntry<PaneMenuId>[] };
+/** Where the menu opened, and what a terminal right-click knew then; its items are drawn from the pane as it is now. */
+type MenuOpen = { x: number; y: number; terminal: TerminalMenuContext | null };
 
 
 export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
@@ -234,12 +235,16 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
     const target = relationEntries(pane).find((entry) => `open:${entry.paneId}` === id);
     if (target) actions.followRelation(pane.id, target.paneId, target.label);
   };
-  const menu = <EntryPointMenu label={t("panes.menu.aria", { name: title })} items={open?.items ?? []} onSelect={select} at={open} onClose={() => setOpen(null)} />;
+  // The name, the fork and sleep availability and the relatives change while a
+  // menu is open (the session's label arrives after its first turn), and the
+  // menu says what the header says now.
+  const items = open === null ? [] : open.terminal ? terminalMenuItems(pane, title, open.terminal) : paneMenuItems(pane, title);
+  const menu = <EntryPointMenu label={t("panes.menu.aria", { name: title })} items={items} onSelect={select} at={open} onClose={() => setOpen(null)} />;
   return {
     menu,
     open: open !== null,
-    openAt: (x: number, y: number) => setOpen({ x, y, items: paneMenuItems(pane, title) }),
-    openTerminalAt: (x: number, y: number, context: TerminalMenuContext) => setOpen({ x, y, items: terminalMenuItems(pane, title, context) }),
+    openAt: (x: number, y: number) => setOpen({ x, y, terminal: null }),
+    openTerminalAt: (x: number, y: number, context: TerminalMenuContext) => setOpen({ x, y, terminal: context }),
   };
 }
 
