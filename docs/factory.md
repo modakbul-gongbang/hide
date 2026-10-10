@@ -191,7 +191,7 @@ A worker starts when the Task may start.
 The engine asks the core to spawn it through coordination, the same path as `hide agent spawn`, under the Factory's own agent record as parent.
 The spawn runs on the host's starter thread, one at a time with at most 16 waiting, because it waits for Herdr to make the worktree and start the agent: the engine keeps the Task's slot, answers commands and worker reports meanwhile, and takes the started worker on the next tick.
 A Task cancelled or paused while its worker starts on the starter has that worker ended when it arrives, and a worktree that start made removed; its next start is a new attempt with its own spawn intent.
-For every agent that closes its pane to sleep, this abandoned-start rollback closes only the execution that start created; a resumed start keeps its existing worktree, branch, conversation and other panes.
+For Pi and omp, the agents a Factory puts to sleep by closing their pane, this abandoned-start rollback closes only the execution that start created; a resumed start keeps its existing worktree, branch, conversation and other panes.
 The unclaimed start retains its original connection generation and file node only until it is claimed or released.
 Rollback rechecks the created native session and terminal before and after opening the actual close connection, and refuses a replaced connection or execution before closing or deleting files.
 A refused rollback preserves the worktree and branch and records a cleanup failure; it never redirects the old pane ID to the replacement server.

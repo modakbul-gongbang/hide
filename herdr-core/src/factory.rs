@@ -639,6 +639,23 @@ impl Woken {
     }
 }
 
+impl WorkerState {
+    /// The letters held for a worker's closed pane follow it to the pane it
+    /// woke in, so none wait in front of a pane that no longer exists.
+    fn follow_rebound(&mut self, old_pane: &str, pane: &str, bound: &WorkerRef) {
+        let Some(mut woken) = self.waking.remove(old_pane) else {
+            return;
+        };
+        woken.worker = bound.clone();
+        match self.waking.get_mut(pane) {
+            Some(held) => held.letters.append(&mut woken.letters),
+            None => {
+                self.waking.insert(pane.to_owned(), woken);
+            }
+        }
+    }
+}
+
 /// Letters held for one woken worker, and how long a wake may take before
 /// they go to the diagnostic log instead (the engine's no-report rule then
 /// stops the Task).
@@ -1696,17 +1713,8 @@ impl CoreWorkers {
         let old = (entry.old_pane.as_str(), worker.agent.as_deref());
         match engine.worker_rebound(&worker.factory, old, pane, &agent) {
             Some(bound) => {
-                // The letters held for the worker's old pane follow it.
-                if let Ok(mut state) = self.state.lock()
-                    && let Some(mut woken) = state.waking.remove(&entry.old_pane)
-                {
-                    woken.worker = bound.clone();
-                    match state.waking.get_mut(pane) {
-                        Some(held) => held.letters.append(&mut woken.letters),
-                        None => {
-                            state.waking.insert(pane.to_owned(), woken);
-                        }
-                    }
+                if let Ok(mut state) = self.state.lock() {
+                    state.follow_rebound(&entry.old_pane, pane, &bound);
                 }
                 self.watch(&bound);
             }
@@ -3999,6 +4007,48 @@ mod tests {
         };
         port.abandon_start("f-1", "T-1");
         assert!(state.lock().unwrap().starts.unfinished.is_empty());
+    }
+
+    #[test]
+    fn letters_held_for_a_closed_pane_follow_the_worker_to_its_new_pane() {
+        let job = request("T-1", None);
+        let mut state = WorkerState::default();
+        state.waking.insert(
+            "pane-T-1".into(),
+            Woken {
+                worker: worker(&job),
+                letters: vec![("intent-1".into(), "first".into())],
+                since: Instant::now(),
+                waiting_on: None,
+                asked: true,
+            },
+        );
+        let mut bound = worker(&job);
+        bound.pane = Some("pane-new".into());
+        state.follow_rebound("pane-T-1", "pane-new", &bound);
+        assert!(!state.waking.contains_key("pane-T-1"));
+        let held = &state.waking["pane-new"];
+        assert_eq!(held.letters, [("intent-1".to_owned(), "first".to_owned())]);
+        assert_eq!(held.worker.pane.as_deref(), Some("pane-new"));
+        // A letter that arrived for the new pane first keeps its place.
+        state.waking.insert(
+            "pane-T-1".into(),
+            Woken {
+                worker: worker(&job),
+                letters: vec![("intent-2".into(), "second".into())],
+                since: Instant::now(),
+                waiting_on: None,
+                asked: true,
+            },
+        );
+        state.follow_rebound("pane-T-1", "pane-new", &bound);
+        assert!(!state.waking.contains_key("pane-T-1"));
+        let intents: Vec<&str> = state.waking["pane-new"]
+            .letters
+            .iter()
+            .map(|(intent, _)| intent.as_str())
+            .collect();
+        assert_eq!(intents, ["intent-1", "intent-2"]);
     }
 
     #[test]
