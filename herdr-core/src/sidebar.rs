@@ -1932,6 +1932,91 @@ mod tests {
         );
     }
 
+    /// #901. Herdr marks the pane's tab seen when it focuses it, which drops a
+    /// finished pane from `done` to `idle` without moving its sequence. A
+    /// demand the operator already read stays read through that, even when it
+    /// lands after the operator's focus has left the pane: the completion going
+    /// away is not news, the way a descendant's signal going away is not.
+    #[test]
+    fn a_read_demand_stays_read_when_herdr_marks_its_tab_seen_after_focus_left() {
+        let asking = |status: &str| {
+            json!([{
+                "pane_id":"a","agent_status":status,"state_change_seq":4,
+                "tokens":{"status_question_new":"?","activity":"0000000000004"}
+            }])
+        };
+        let mut records = BTreeMap::new();
+        let mut finished = projected(asking("done"));
+        apply_read_state(&mut finished, &mut records, Some("a"));
+        assert!(!finished[0].unread, "the operator read the question");
+
+        let mut seen = projected(asking("idle"));
+        apply_read_state(&mut seen, &mut records, Some("elsewhere"));
+        assert!(
+            !seen[0].unread,
+            "Herdr's seen at the same sequence returns nothing to unread"
+        );
+        assert_eq!(seen[0].group, "seen");
+    }
+
+    /// #901. What does turn a read demand unread again: the agent working
+    /// again, a turn between two looks (Herdr's sequence moved), a new session
+    /// in the pane, and a completion that appears after the operator read the
+    /// pane, including one that appears at the sequence the read was made at.
+    #[test]
+    fn a_read_demand_turns_unread_again_only_for_news() {
+        let state = |status: &str, seq: u64, session: &str| {
+            json!([{
+                "pane_id":"a","agent_status":status,"state_change_seq":seq,
+                "agent_session":{"source":"herdr:codex","agent":"codex","kind":"id","value":session},
+                "tokens":{"status_question_new":"?","activity":"0000000000004"}
+            }])
+        };
+        let read = |status: &str| {
+            let mut records = BTreeMap::new();
+            let mut agents = projected(state(status, 4, "s1"));
+            apply_read_state(&mut agents, &mut records, Some("a"));
+            assert!(!agents[0].unread);
+            records
+        };
+        let unread = |records: &mut BTreeMap<String, PaneReadRecord>, status, seq, session| {
+            let mut agents = projected(state(status, seq, session));
+            apply_read_state(&mut agents, records, Some("elsewhere"));
+            agents[0].unread
+        };
+
+        let mut records = read("done");
+        assert!(
+            unread(&mut records, "working", 4, "s1"),
+            "the agent works again"
+        );
+        let mut records = read("done");
+        assert!(
+            unread(&mut records, "done", 6, "s1"),
+            "a turn ran between two looks"
+        );
+        let mut records = read("done");
+        assert!(
+            unread(&mut records, "done", 4, "s2"),
+            "the pane holds another session"
+        );
+
+        let mut records = read("idle");
+        assert!(
+            unread(&mut records, "done", 4, "s1"),
+            "a completion appearing at the sequence the read was made at is news"
+        );
+        let mut records = read("done");
+        assert!(
+            !unread(&mut records, "idle", 4, "s1"),
+            "Herdr's seen is not news"
+        );
+        assert!(
+            unread(&mut records, "done", 4, "s1"),
+            "the completion Herdr's seen took away is news when it comes back"
+        );
+    }
+
     /// AC3, SC2. A demand raised on the pane the operator is already looking at
     /// is read on arrival; the same demand raised after focus moved away is
     /// unread.
