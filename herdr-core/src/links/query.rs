@@ -253,12 +253,10 @@ fn pr_value(
     project: &ScopeProject,
     sessions: &[LinkedSession],
 ) -> Value {
-    let state = if pr.merged_at.is_some() {
-        "merged"
-    } else if pr.closed_at.is_some() {
-        "closed"
-    } else {
-        "open"
+    let state = match pr.badge() {
+        crate::model::PullRequestBadge::Merged => "merged",
+        crate::model::PullRequestBadge::Closed => "closed",
+        _ => "open",
     };
     json!({
         "number": pr.number,

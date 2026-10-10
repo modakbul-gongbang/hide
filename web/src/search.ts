@@ -13,7 +13,8 @@ import { statusText } from "./agentStatus";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import { herdrPaneId, projectsOf } from "./remote";
-import type { AgentRow, Checkout, Device, GithubSearchResult, PullRequest, SnapshotRest, Task, Workspace } from "./snapshot";
+import { PR_LOOK } from "./prMark";
+import type { AgentRow, Checkout, Device, GithubSearchResult, PrState, PullRequest, SnapshotRest, Task, Workspace } from "./snapshot";
 
 /** The header an entry is drawn under: one per kind of thing; `label` is the catalog key the palette translates where it draws the header. */
 export type SearchGroup = { id: string; label: MessageKey };
@@ -37,7 +38,7 @@ export const RECENT_SHOWN = 5;
 type EntryKind = "agent" | "project" | "checkout" | "device" | "issue" | "pr" | "command";
 
 /** A colour family for a state; the palette maps each to a token class. */
-export type Tone = "working" | "attention" | "done" | "open" | "pending" | "failed" | "muted" | "merged" | "closed";
+export type Tone = "working" | "attention" | "done" | "open" | "pending" | "failed" | "muted";
 
 export type EntryStatus = { tone: Tone; label: string };
 
@@ -74,8 +75,8 @@ export type SearchEntry = {
   task?: Task;
   /** The state drawn at the row's end, when the snapshot names one. */
   status?: EntryStatus;
-  /** A pull request's CI rollup, when it is known. */
-  ci?: EntryStatus;
+  /** A pull request's one state, which its mark draws (`PrState::of`). */
+  prState?: PrState;
   /** The row of a relation list: how deep it nests and what it is to the thing in front. */
   depth?: number;
   tag?: "here" | "parent";
@@ -288,22 +289,8 @@ export function recentEntries(rest: SnapshotRest | null, shown: ReadonlySet<stri
   return entries;
 }
 
-const CI_STATUS: Partial<Record<NonNullable<PullRequest["checks"]>, { tone: Tone; label: MessageKey }>> = {
-  pending: { tone: "pending", label: "requests.checks.pending" },
-  failed: { tone: "failed", label: "requests.checks.failed" },
-  passing: { tone: "done", label: "requests.checks.passing" },
-};
-
-const PR_STATE: Record<PullRequest["badge"], { tone: Tone; label: MessageKey }> = {
-  open: { tone: "open", label: "requests.badge.open" },
-  review: { tone: "open", label: "requests.badge.open" },
-  merged: { tone: "merged", label: "requests.badge.merged" },
-  closed: { tone: "closed", label: "requests.badge.closed" },
-};
-
 export function pullRequestEntry(scope: SearchDevice, workspace: Workspace, pr: PullRequest, front: string, t: TFunction<"translation">): SearchEntry {
-  const state = t(PR_STATE[pr.badge].label);
-  const checks = pr.checks ? CI_STATUS[pr.checks] : undefined;
+  const state = t(PR_LOOK[pr.state].word);
   return {
     id: `pr:${workspace.id}:${pr.number}`,
     title: `#${pr.number} ${pr.title}`,
@@ -317,8 +304,9 @@ export function pullRequestEntry(scope: SearchDevice, workspace: Workspace, pr: 
     url: pr.url,
     workspace,
     pr,
-    status: { tone: PR_STATE[pr.badge].tone, label: state },
-    ci: checks ? { tone: checks.tone, label: t(checks.label) } : undefined,
+    prState: pr.state,
+    // The mark carries the colour; the word only names the state.
+    status: { tone: "muted", label: state },
   };
 }
 
@@ -350,10 +338,13 @@ function taskNumber(task: Task): number | undefined {
 /** A GitHub search result as a row: opened on GitHub, whichever project it came from. */
 function githubEntry(result: GithubSearchResult, t: TFunction<"translation">): SearchEntry {
   const pr = result.kind === "pr";
-  const state = result.state;
-  const open = pr ? t("requests.badge.open") : t("issue.state.open");
-  const closed = pr ? t("requests.badge.closed") : t("issue.state.closed");
-  const status: EntryStatus = state === "open" ? { tone: "open", label: result.is_draft ? t("overview.draft") : open } : state === "merged" ? { tone: "merged", label: t("requests.badge.merged") } : { tone: "closed", label: closed };
+  const prState = pr ? result.pr_state ?? undefined : undefined;
+  if (pr && !prState) throw new Error(`GitHub search result #${result.number} has no PR state`);
+  const status: EntryStatus = prState
+    ? { tone: "muted", label: t(PR_LOOK[prState].word) }
+    : result.state === "open"
+      ? { tone: "open", label: t("issue.state.open") }
+      : { tone: "muted", label: t("issue.state.closed") };
   return {
     id: `github:${result.kind}:${result.repository}#${result.number}`,
     title: `#${result.number} ${result.title}`,
@@ -364,6 +355,7 @@ function githubEntry(result: GithubSearchResult, t: TFunction<"translation">): S
     url: result.url,
     repository: result.repository,
     external: true,
+    prState,
     status,
   };
 }

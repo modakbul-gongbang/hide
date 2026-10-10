@@ -8,8 +8,8 @@ import {
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import type { Actions } from "./actions";
 import { lineTone, markTone, rowLine } from "./agentRow";
-import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint } from "./components/pr-card";
+import { PrMark } from "./components/pr-mark";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
@@ -19,10 +19,9 @@ import { cn } from "./lib/utils";
 import { AgentMessagePopover, type LensHandlers } from "./OverviewLenses";
 import { PrPanel } from "./PrPanel";
 import { PR_GROUP_LABEL, type PrBoard, type PrRow } from "./projectBoard";
-import { checkoutCard, pullRequestCard, pullRequestKind, relativeActivity, shownPullRequest } from "./projects";
+import { checkoutCard, pullRequestCard, relativeActivity, shownPullRequest } from "./projects";
 import type { Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import { ChecksMark, PR_TONE } from "./TaskBoards";
 import { useUiStore, type PrLens } from "./ui";
 import { holdsCommandKey } from "./host";
 
@@ -183,15 +182,14 @@ function own(handler: (event: MouseEvent) => void) {
 }
 
 /**
- * One pull request on one line (link-graph B1): its state glyph, its title,
- * the agent marks, CI and the time. The row itself is one button that opens
+ * One pull request on one line (link-graph B1): its PR mark, its title,
+ * the agent marks and the time. The row itself is one button that opens
  * its panel (⌘-click and ⌘↵: GitHub); every part above it is its own
  * destination.
  */
 function PullRequestRowView({ row, project, selected, onOpen, onLink, handlers, now }: { row: PrRow; project: Workspace; selected: boolean; onOpen: () => void; onLink: () => void; handlers: LensHandlers; now: number }) {
   const github = (url: string) => handlers.openGitHub(url, project.device_id);
   const { t } = useInterfaceTranslation();
-  const Glyph = CHECKOUT_KIND_ICON[pullRequestKind(row.pr)];
   const place = row.checkout?.branch ?? row.branch;
   const card = row.checkout && shownPullRequest(row.checkout)?.number === row.number ? checkoutCard(project, row.checkout, now, t) : pullRequestCard(row.pr, t);
   const age = relativeActivity(row.at, now, t);
@@ -217,7 +215,7 @@ function PullRequestRowView({ row, project, selected, onOpen, onLink, handlers, 
         />
         <CheckoutCardHint card={card} description={`PR #${row.number} · ${row.title}`} onOpenPullRequest={(url) => github(url)}>
           <span className="relative inline-flex shrink-0" data-pr-glyph={row.number}>
-            <Glyph aria-hidden="true" className={cn("size-(--size-pr-icon)", PR_TONE[row.tone])} data-pr-state={row.tone} />
+            <PrMark state={row.state} number={row.number} />
           </span>
         </CheckoutCardHint>
         <Hint label={row.title} reveals>
@@ -227,15 +225,6 @@ function PullRequestRowView({ row, project, selected, onOpen, onLink, handlers, 
         </Hint>
         <span className="flex-1" />
         <AgentMarks row={row} place={place} onOpen={onOpen} handlers={handlers} />
-        <span className="relative flex w-(--size-icon-sm) shrink-0 justify-center">
-          {row.checks ? (
-            <Hint label={t(row.checks === "failed" ? "prList.openFailedChecks" : "prList.openChecks")}>
-              <button type="button" className="inline-flex rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={own(() => github(`${row.url}/checks`))} data-pr-checks-open={row.checks}>
-                <ChecksMark checks={row.checks} />
-              </button>
-            </Hint>
-          ) : null}
-        </span>
         <span className="relative flex w-(--size-pr-slot) shrink-0 items-center justify-end">
           <span className="font-mono text-caption text-muted-foreground group-focus-within/pr-row:invisible group-hover/pr-row:invisible group-has-data-[state=open]/pr-row:invisible" data-pr-age={row.number}>
             {age}

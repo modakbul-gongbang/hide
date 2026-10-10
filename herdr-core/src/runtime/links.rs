@@ -449,6 +449,12 @@ impl Runtime {
             Ok(PanelAnswer::Pr(links)) => {
                 if let Some(links) = links {
                     panel.pr = Some(LinkedPr {
+                        state: crate::model::PrState::of(
+                            links.pr.badge(),
+                            false,
+                            crate::model::PullRequestChecks::Unknown,
+                            None,
+                        ),
                         number: links.pr.number,
                         branch: links.pr.branch,
                         title: links.pr.title,

@@ -50,7 +50,7 @@
 // gives each its own `Component / Panel Tab` / `Component / Keycap` sheet instead,
 // generated the same way as every other sheet here.
 
-import {buildAgentTreeParts} from './pen-agent-tree.mjs';
+import {buildAgentTreeParts, PR_STATES} from './pen-agent-tree.mjs';
 
 const UI = '$--font-ui';
 const MONO = '$--font-mono';
@@ -767,12 +767,13 @@ function buildAgentGraphBox(tokens) {
       frame('agb-issue', 'Issue chip', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
         icon('agb-issue-g', 'circle-dot', {size: ICON, fill: '$--muted-foreground'}), caption('agb-issue-t', '#192', '$--muted-foreground', true),
       ]),
-      frame('agb-pr', 'PR chip', {
-        layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs'], height: LINE, cornerRadius: '$--radius-sm',
-        stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner',
-      }, [
-        icon('agb-pr-g', 'git-pull-request', {size: ICON, fill: '$--pr-open'}), caption('agb-pr-n', '#221', '$--pr-open', true),
-        icon('agb-pr-ci', 'check', {size: ICON, fill: '$--success'}), disabled(caption('agb-pr-rv', '변경 요청', '$--warning')),
+      // The PR mark (web/src/components/pr-mark.tsx): no border, the icon in the state's colour, the number in the subtle ink;
+      // a change request keeps its word, red as failed checks are.
+      frame('agb-pr', 'PR mark', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-xxs'], height: LINE, cornerRadius: '$--radius-xs'}, [
+        frame('agb-pr-mark', 'Mark', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+          icon('agb-pr-g', 'git-pull-request', {size: ICON, fill: '$--pr-mergeable'}), caption('agb-pr-n', '#221', '$--subtle-foreground', true),
+        ]),
+        disabled(caption('agb-pr-rv', '변경 요청', '$--pr-failed')),
       ]),
       caption('agb-dist', '↑3', '$--muted-foreground', true),
       caption('agb-files', '4 files', '$--warning', true),
@@ -860,6 +861,12 @@ function buildAgentGraphBox(tokens) {
     };
   };
   const rowsOn = (...specs) => Object.assign({}, ...BOX_ROWS.map((n, index) => specs[index] ? {[`agb-row${n}`]: {enabled: true}, ...row(n, specs[index])} : {[`agb-row${n}`]: {enabled: false}}));
+  // Looked up when a state is drawn: pen-agent-tree.mjs imports this module back.
+  const prGlyph = state => {
+    const [, glyph, fill] = PR_STATES.find(([key]) => key === state) ?? [];
+    if (!glyph) throw new Error(`unknown PR state ${state}`);
+    return {icon: glyph, fill};
+  };
   const headOf = ({glyph, tone, branch, purpose, issue, pr, distance, files, agents, cleanup}) => ({
     'agb-glyph': {icon: glyph, fill: tone},
     'agb-branch': {content: branch},
@@ -868,9 +875,8 @@ function buildAgentGraphBox(tokens) {
     'agb-issue-t': {content: issue ?? ''},
     'agb-pr': {enabled: Boolean(pr)},
     ...(pr ? {
-      'agb-pr-g': {icon: pr.merged ? 'git-merge' : 'git-pull-request', fill: pr.tone},
-      'agb-pr-n': {content: `#${pr.number}`, fill: pr.tone},
-      'agb-pr-ci': {enabled: Boolean(pr.ci), ...(pr.ci ? {icon: pr.ci === 'passing' ? 'check' : 'x', fill: pr.ci === 'passing' ? '$--success' : '$--destructive'} : {})},
+      'agb-pr-g': prGlyph(pr.state),
+      'agb-pr-n': {content: `#${pr.number}`},
       'agb-pr-rv': {enabled: Boolean(pr.changes)},
     } : {}),
     'agb-dist': {enabled: Boolean(distance), content: distance ?? ''},
@@ -888,7 +894,7 @@ function buildAgentGraphBox(tokens) {
         ...rowsOn({symbol: '○', fill: '$--muted-foreground', title: 'SIGTERM 정리 오케스트레이션', age: '20m'}, {symbol: '●', fill: '$--agent-working', title: 'Overview 진입 흐름', age: '1m'}),
       }),
       state('asking', 'Worktree with asking row', {}, {
-        ...headOf({glyph: 'git-pull-request', tone: '$--pr-draft', branch: '192-hided-sigterm-handler', purpose: '#192 SIGTERM 정리', issue: '#192', pr: {number: 221, tone: '$--pr-draft', ci: 'failed', changes: true}, distance: '↑3', files: 4}),
+        ...headOf({glyph: 'git-pull-request', tone: '$--pr-failed', branch: '192-hided-sigterm-handler', purpose: '#192 SIGTERM 정리', issue: '#192', pr: {number: 221, state: 'failed', changes: true}, distance: '↑3', files: 4}),
         ...rowsOn(
           {symbol: '?', fill: '$--warning', provider: 'codex', title: 'SIGTERM 처리와 자식 정리', age: '4m', line: '기존 stdin 종료 경로도 남길까요?', asking: true},
           {symbol: '●', fill: '$--agent-working', title: '리뷰: 종료 경로 회귀', age: '2m', depth: 1},
@@ -902,7 +908,7 @@ function buildAgentGraphBox(tokens) {
         ),
       }),
       state('resting', 'Resting (merged, dimmed)', {opacity: DIMMED}, {
-        ...headOf({glyph: 'git-merge', tone: '$--pr-merged', branch: 'fix/checkout-capability-follow-up', purpose: '체크아웃 권한 후속', pr: {number: 216, tone: '$--pr-merged', merged: true}, cleanup: true}),
+        ...headOf({glyph: 'git-merge', tone: '$--pr-merged', branch: 'fix/checkout-capability-follow-up', purpose: '체크아웃 권한 후속', pr: {number: 216, state: 'merged'}, cleanup: true}),
         ...rowsOn({symbol: '○', fill: '$--muted-foreground', title: '체크아웃 기능 구현 및 정리', age: '2h'}),
       }),
       state('tucked', 'Row with tucked badge', {}, {
@@ -929,7 +935,7 @@ function buildAgentGraphBox(tokens) {
     layout: 'vertical', gap: '$--spacing-xl', padding: '$--spacing-xl', fill: '$--card', cornerRadius: '$--radius-lg', width: 'fit_content',
   }, [
     text(`${id}-title`, 'Agent graph box', {size: '$--text-headline', weight: '600'}),
-    text(`${id}-spec`, 'A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph in its pull request’s colour and the mono branch, the purpose, then the issue chip, PR chip with its CI mark and 변경 요청, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title, age; a step in for a delegation inside the checkout; the chip of a delegation into or from another project; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
+    text(`${id}-spec`, 'A checkout in the Agents graph (web/src/GraphView.tsx): a head (the kind glyph, a pull request’s mark in its state, and the mono branch, the purpose, then the issue chip, the PR mark (state icon and number, no border) with 변경 요청 in red only while a reviewer asks for changes, ↑N ↓N and the changed files; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title, age; a step in for a delegation inside the checkout; the chip of a delegation into or from another project; the tucked badge of folded children; the question as a second line in warning only while the agent asks). Width, head, row and padding are the --graph-* tokens. The master carries three rows that a state turns on; the lines between boxes belong to the screen that lays boxes out.', {size: '$--text-caption', fill: '$--subtle-foreground', width: 820}),
     masterCard(`${id}-master-card`, 'Master', master),
     themeFrame(`${id}-light`, 'Light', states('l')),
     themeFrame(`${id}-dark`, 'Dark', states('d')),

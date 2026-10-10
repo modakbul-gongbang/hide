@@ -48,7 +48,7 @@ import { cn } from "./lib/utils";
 import { prChip } from "./projectBoard";
 import type { CacheLayer, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import { PR_TONE } from "./TaskBoards";
+import { PrChipMark } from "./components/pr-mark";
 
 // The disk cleanup sheet of a local Git project (PRD disk-layers): one row per
 // checkout, one cell per layer a build tool remakes, and the checkboxes that
@@ -421,8 +421,8 @@ function Row({ row, selection, onSelection, nested = false }: { row: SheetRow; s
           </span>
         </Hint>
         {pr ? (
-          <span className={cn("shrink-0 font-mono text-caption", PR_TONE[pr.tone])} data-disk-pr={pr.number}>
-            #{pr.number}
+          <span className="flex shrink-0" data-disk-pr={pr.number}>
+            <PrChipMark chip={pr} />
           </span>
         ) : null}
         {row.inUse ? (

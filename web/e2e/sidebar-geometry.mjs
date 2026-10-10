@@ -21,7 +21,7 @@ const PARTS = [
   "[data-branch-chip]",
   "[data-device-chip]",
   "[data-descendant-mark]",
-  "[data-pr-icon]",
+  "[data-agent-pr]",
   "[data-agent-elapsed]",
   "[data-fold-slot]",
   "[data-row-name]",

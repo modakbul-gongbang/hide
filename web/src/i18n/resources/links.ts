@@ -6,10 +6,6 @@ import type { Catalog, Catalogs } from "../schema";
 
 export const linksEnglish = {
   "links.panel": "PR #{{number}}",
-  "links.state.open": "Open",
-  "links.state.draft": "Draft",
-  "links.state.merged": "Merged",
-  "links.state.closed": "Closed",
   "links.updated": "Updated {{age}}",
   "links.mergedOn": "Merged {{date}}",
   "links.closedOn": "Closed {{date}}",
@@ -59,10 +55,6 @@ export const linksEnglish = {
 
 const ko = {
   "links.panel": "PR #{{number}}",
-  "links.state.open": "열림",
-  "links.state.draft": "초안",
-  "links.state.merged": "머지됨",
-  "links.state.closed": "닫힘",
   "links.updated": "{{age}} 업데이트",
   "links.mergedOn": "{{date}} 머지",
   "links.closedOn": "{{date}} 닫힘",
@@ -112,10 +104,6 @@ const ko = {
 
 const zhCN = {
   "links.panel": "PR #{{number}}",
-  "links.state.open": "开启",
-  "links.state.draft": "草稿",
-  "links.state.merged": "已合并",
-  "links.state.closed": "已关闭",
   "links.updated": "{{age}}更新",
   "links.mergedOn": "{{date}} 合并",
   "links.closedOn": "{{date}} 关闭",
@@ -165,10 +153,6 @@ const zhCN = {
 
 const ja = {
   "links.panel": "PR #{{number}}",
-  "links.state.open": "オープン",
-  "links.state.draft": "ドラフト",
-  "links.state.merged": "マージ済み",
-  "links.state.closed": "クローズ",
   "links.updated": "{{age}}に更新",
   "links.mergedOn": "{{date}} マージ",
   "links.closedOn": "{{date}} クローズ",

@@ -36,13 +36,13 @@ export type AgentState = {
   /** Where the row stands among its siblings in a tree: asking, working, finished unread, the rest. */
   tree_rank: number;
   /** The row's own PRs, worst first; never its descendants'. `index` points into `request.pull_requests`. */
-  pr: { count: number; worst: PrState; worst_count: number; pulls: { index: number; state: PrState }[] } | null;
+  pr: { count: number; worst: PrState; pulls: { index: number; state: PrState }[] } | null;
 };
 
 /** What the operator does about a raised descendant, in lead order (`escalation::Verb`). */
 export type RaiseVerb = "approval" | "answer" | "confirm" | "draft";
-/** One PR's state as a chip or icon draws it, worst first (`sessions::PrState`). */
-export type PrState = "failed" | "pending" | "mergeable" | "merged";
+/** The one state every PR mark draws, worst first (`model::PrState`, docs/status-model.md, Pull request visual states). */
+export type PrState = "failed" | "pending" | "mergeable" | "draft" | "merged" | "closed";
 
 /** One raised descendant as its lineage root shows it (`escalation::RaisedAsk`). */
 export type RaisedAsk = {
@@ -270,6 +270,8 @@ export type PullRequest = {
   head_branch?: string;
   /** The issues its body closes when it merges, as GitHub reads the body. */
   closing_issues?: IssueReference[];
+  /** The one state its mark draws, decided by the core (`PrState::of`). */
+  state: PrState;
 };
 
 /** Why a `gh` lookup failed, as the core names it; the catalogs word each (issueSettings.gh*). */
@@ -421,7 +423,8 @@ export type GithubSearchResult = {
   title: string;
   state: string;
   url: string;
-  is_draft?: boolean;
+  /** A pull request's one state, decided by the core with no checks or review read; null for an issue. */
+  pr_state?: PrState | null;
 };
 
 /** The answer to the latest `github_search`: working while it runs, then ready with its results or failed. */
@@ -1465,6 +1468,8 @@ export type LinkPanel = {
     created_at_unix_ms: number | null;
     closed_at_unix_ms: number | null;
     merged_at_unix_ms: number | null;
+    /** The one state the record can say (`PrState::of`): merged, closed, or open and pending. */
+    state: PrState;
     issues: { key: string; source: LinkIssueSource }[];
     /** Recorded worktree paths for the branch, newest first. */
     worktrees: string[];

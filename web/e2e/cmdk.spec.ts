@@ -254,7 +254,8 @@ test("⌘K relates the agent in front to its issue and pull request, finds them 
     expect(recent).not.toBe(related);
     await expect(rows(page).first()).toContainText("팔레트 이동 이슈");
     await expect(page.locator('[data-palette-row^="pr:"]')).toContainText("⌘K를 이동 팔레트로");
-    await expect(page.locator('[data-palette-row^="pr:"]')).toContainText("Open");
+    // The row leads with the PR mark in the core's state and names that state (checks running, so pending).
+    await expect(page.locator('[data-palette-row^="pr:"] [data-pr-mark]')).toHaveAttribute("data-pr-mark", "pending");
     await expect(page.locator(`[data-palette-row="agent:${agent}"] [data-palette-here]`)).toBeVisible();
     await page.keyboard.press("Escape");
     // Opening ⌘K again, and typing in it, reads no project again (B10, B27).

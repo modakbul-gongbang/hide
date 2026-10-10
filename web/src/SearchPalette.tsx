@@ -1,8 +1,9 @@
-import { CircleDotIcon, FactoryIcon, FolderIcon, GlobeIcon, GitBranchIcon, GitPullRequestIcon, LoaderCircleIcon, SearchIcon, ServerIcon, TriangleAlertIcon, ChevronRightIcon } from "lucide-react";
+import { CircleDotIcon, FactoryIcon, FolderIcon, GlobeIcon, GitBranchIcon, LoaderCircleIcon, SearchIcon, ServerIcon, TriangleAlertIcon, ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
+import { PrMark } from "./components/pr-mark";
 import { DeviceChip } from "./components/device-chip";
 import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList } from "./components/ui/command";
 import { Kbd } from "./components/ui/kbd";
@@ -47,12 +48,10 @@ const TONE_CLASS: Record<Tone, string> = {
   working: "text-agent-working",
   attention: "text-warning",
   done: "text-success",
-  open: "text-pr-open",
+  open: "text-success",
   pending: "text-warning",
   failed: "text-destructive",
   muted: "text-muted-foreground",
-  merged: "text-pr-merged",
-  closed: "text-pr-closed",
 };
 
 export function SearchPalette({ actions }: { actions: Actions }) {
@@ -254,9 +253,16 @@ export function SearchPalette({ actions }: { actions: Actions }) {
 
 function EntryIcon({ entry }: { entry: SearchEntry }) {
   if (entry.kind === "agent") return <AgentMark kind={entry.agentKind} />;
+  if (entry.prState) {
+    return (
+      <span className="flex w-(--size-agent-badge-compact) shrink-0 justify-center" aria-hidden="true">
+        <PrMark state={entry.prState} compact />
+      </span>
+    );
+  }
   const Icon =
-    entry.command === "open_url" ? GlobeIcon : entry.command === "factory_open" ? FactoryIcon : entry.kind === "project" ? FolderIcon : entry.kind === "checkout" ? GitBranchIcon : entry.kind === "device" ? ServerIcon : entry.kind === "issue" ? CircleDotIcon : entry.kind === "pr" ? GitPullRequestIcon : ChevronRightIcon;
-  const tone = entry.kind === "issue" || entry.kind === "pr" ? TONE_CLASS[entry.status?.tone ?? "muted"] : "";
+    entry.command === "open_url" ? GlobeIcon : entry.command === "factory_open" ? FactoryIcon : entry.kind === "project" ? FolderIcon : entry.kind === "checkout" ? GitBranchIcon : entry.kind === "device" ? ServerIcon : entry.kind === "issue" ? CircleDotIcon : ChevronRightIcon;
+  const tone = entry.kind === "issue" ? TONE_CLASS[entry.status?.tone ?? "muted"] : "";
   return (
     <span className={`flex w-(--size-agent-badge-compact) shrink-0 justify-center ${tone}`} aria-hidden="true">
       <Icon />
@@ -295,7 +301,7 @@ function SearchRow({ entry, read, onSelect }: { entry: SearchEntry; read: Projec
             <TriangleAlertIcon className="size-(--size-icon-sm)" />
           </span>
         ) : null}
-        {entry.ci ? <StatusText status={entry.ci} /> : entry.status ? <StatusText status={entry.status} /> : null}
+        {entry.status ? <StatusText status={entry.status} /> : null}
         {entry.dimmed ? null : (
           <span aria-hidden="true" data-palette-enter="true" className="invisible shrink-0 text-caption text-muted-foreground group-data-[selected=true]/palette-row:visible">
             ↵
