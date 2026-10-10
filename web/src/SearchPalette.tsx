@@ -1,4 +1,4 @@
-import { CircleDotIcon, FactoryIcon, FolderIcon, GlobeIcon, GitBranchIcon, GitPullRequestIcon, LoaderCircleIcon, SearchIcon, ServerIcon, TriangleAlertIcon, ChevronRightIcon } from "lucide-react";
+import { CircleDotIcon, FactoryIcon, FolderIcon, GlobeIcon, GitBranchIcon, LoaderCircleIcon, SearchIcon, ServerIcon, TriangleAlertIcon, ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
@@ -261,7 +261,7 @@ function EntryIcon({ entry }: { entry: SearchEntry }) {
     );
   }
   const Icon =
-    entry.command === "open_url" ? GlobeIcon : entry.command === "factory_open" ? FactoryIcon : entry.kind === "project" ? FolderIcon : entry.kind === "checkout" ? GitBranchIcon : entry.kind === "device" ? ServerIcon : entry.kind === "issue" ? CircleDotIcon : entry.kind === "pr" ? GitPullRequestIcon : ChevronRightIcon;
+    entry.command === "open_url" ? GlobeIcon : entry.command === "factory_open" ? FactoryIcon : entry.kind === "project" ? FolderIcon : entry.kind === "checkout" ? GitBranchIcon : entry.kind === "device" ? ServerIcon : entry.kind === "issue" ? CircleDotIcon : ChevronRightIcon;
   const tone = entry.kind === "issue" ? TONE_CLASS[entry.status?.tone ?? "muted"] : "";
   return (
     <span className={`flex w-(--size-agent-badge-compact) shrink-0 justify-center ${tone}`} aria-hidden="true">

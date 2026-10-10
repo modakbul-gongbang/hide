@@ -125,13 +125,13 @@ function PullRequestHeader({
   return (
     <>
       <div className="flex items-center gap-sm">
-        <Badge variant="outline" className="gap-xs text-foreground" data-checkout-card-badge={header.badge.label} data-pr-state={header.state}>
+        <Badge variant="outline" className="gap-xs text-foreground" data-checkout-card-badge={header.badge.label}>
           <Icon aria-hidden="true" className={tone} />
           {header.badge.label}
         </Badge>
         {header.badge.draft ? (
           <span className="text-caption text-muted-foreground" data-checkout-card-draft="true">
-            {t("overview.draft")}
+            {t("agentSessions.pr.draft")}
           </span>
         ) : null}
         <span className="font-mono text-caption text-muted-foreground">#{header.number}</span>

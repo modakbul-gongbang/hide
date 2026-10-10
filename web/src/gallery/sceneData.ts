@@ -204,7 +204,7 @@ function ownPull(number: number, title: string, state: PullState): Pick<AgentRow
   return {
     request: {
       verb: "working", verb_since_unix_ms: 0, line: undefined, request: null, later_by: null, reply: null,
-      pull_requests: [{ number, title, url: `https://example.invalid/herdr-ide/pull/${number}`, badge: state === "merged" ? "merged" : "open", checks: state === "failed" ? "failed" : state === "pending" ? "pending" : "passing", review: state === "pending" ? "review_required" : "approved", is_draft: false, head_branch: `agents/${number}`, closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: state === "merged" ? 0 : null }],
+      pull_requests: [{ number, title, url: `https://example.invalid/herdr-ide/pull/${number}`, badge: state === "merged" ? "merged" : "open", checks: state === "failed" ? "failed" : state === "pending" ? "pending" : "passing", review: state === "pending" ? "review_required" : "approved", head_branch: `agents/${number}`, closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: state === "merged" ? 0 : null }],
     },
   };
 }

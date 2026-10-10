@@ -21,7 +21,7 @@ export const PR_LOOK: Record<PrState, { icon: LucideIcon; tone: string; word: Me
 };
 
 /** A word and its colour: a card's Checks and Review rows. */
-export type PrWord = { key: MessageKey; tone: string };
+type PrWord = { key: MessageKey; tone: string };
 
 const CHECKS_WORD: Partial<Record<NonNullable<PullRequest["checks"]>, PrWord>> = {
   passing: { key: "card.checkPassing", tone: "text-pr-mergeable" },
@@ -54,14 +54,18 @@ export function reviewWord(review: PullRequest["review"] | undefined): PrWord | 
 export function badgeWord(pr: PullRequest, t: TFunction<"translation">): { label: string; draft: boolean } {
   switch (pr.badge) {
     case "merged":
-      return { label: t("requests.badge.merged"), draft: false };
     case "closed":
-      return { label: t("requests.badge.closed"), draft: false };
+      return { label: t(PR_LOOK[pr.badge].word), draft: false };
     case "open":
-      return { label: pr.is_draft ? t("overview.draft") : t("requests.badge.open"), draft: false };
+      return { label: pr.is_draft ? t(PR_LOOK.draft.word) : t("requests.badge.open"), draft: false };
     case "review":
       return { label: t(REVIEW_WORD[pr.review ?? "review_required"].key), draft: pr.is_draft };
   }
+}
+
+/** Merged or closed: the pull request's life is over. */
+export function settled(state: PrState): boolean {
+  return state === "merged" || state === "closed";
 }
 
 /** When GitHub could not be read again, the last read time a PR mark dims for. */

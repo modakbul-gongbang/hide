@@ -1044,15 +1044,9 @@ fn parse_search(
             number: hit.number,
             title: hit.title,
             url: hit.url,
-            is_draft: matches!(kind, SearchKind::Pr) && hit.is_draft,
             pr_state: matches!(kind, SearchKind::Pr).then(|| {
-                let badge = match state.as_str() {
-                    "merged" => crate::model::PullRequestBadge::Merged,
-                    "closed" => crate::model::PullRequestBadge::Closed,
-                    _ => crate::model::PullRequestBadge::Open,
-                };
                 crate::model::PrState::of(
-                    badge,
+                    badge(&state, hit.is_draft, None),
                     hit.is_draft,
                     crate::model::PullRequestChecks::Unknown,
                     None,
@@ -2687,14 +2681,13 @@ mod tests {
                     hit.kind.as_str(),
                     hit.number,
                     hit.state.as_str(),
-                    hit.is_draft,
                     hit.pr_state
                 ))
                 .collect::<Vec<_>>(),
             vec![
-                ("pr", 10253, "open", true, Some(PrState::Draft)),
-                ("pr", 14054, "closed", false, Some(PrState::Closed)),
-                ("pr", 13949, "merged", false, Some(PrState::Merged)),
+                ("pr", 10253, "open", Some(PrState::Draft)),
+                ("pr", 14054, "closed", Some(PrState::Closed)),
+                ("pr", 13949, "merged", Some(PrState::Merged)),
             ],
             "the go-gh hit is another repository's"
         );
@@ -2710,10 +2703,10 @@ mod tests {
         assert_eq!(
             (
                 issues[0].kind.as_str(),
-                issues[0].is_draft,
+                issues[0].pr_state,
                 issues[0].number
             ),
-            ("issue", false, 14046)
+            ("issue", None, 14046)
         );
         assert_eq!(
             parse_search("[]", SearchKind::Pr, &["cli/cli".to_owned()]).unwrap(),

@@ -2,7 +2,7 @@ import type { HTMLAttributes, ReactNode } from "react";
 import { useInterfaceTranslation } from "../i18n/client";
 import { requireInterfaceLanguage } from "../i18n/locale";
 import { cn } from "../lib/utils";
-import { agentMark, agentStaleness, ownPulls, PR_LOOK, staleLabel, type PrStaleness } from "../prMark";
+import { agentMark, agentStaleness, ownPulls, PR_LOOK, reviewWord, staleLabel, type PrStaleness } from "../prMark";
 import type { PrChip } from "../projectBoard";
 import type { AgentPullRequest, AgentRow, PrState } from "../snapshot";
 import { useShellStore } from "../store";
@@ -48,16 +48,18 @@ export function PrMark({
 export function PrChipMark({ chip, stale = false }: { chip: PrChip; stale?: boolean }) {
   const { t } = useInterfaceTranslation();
   return (
-    <span className="inline-flex shrink-0 items-center gap-xs" data-pr-chip={chip.number} data-pr-state={chip.state}>
+    <span className="inline-flex shrink-0 items-center gap-xs">
       <PrMark state={chip.state} number={chip.number} stale={stale} />
       {chip.changesRequested ? (
-        <span className="font-sans text-caption text-pr-failed" data-pr-review="changes_requested">
-          {t("board.review.changes")}
+        <span className={cn("font-sans text-caption", CHANGES.tone)} data-pr-review="changes_requested">
+          {t(CHANGES.key)}
         </span>
       ) : null}
     </span>
   );
 }
+
+const CHANGES = reviewWord("changes_requested")!;
 
 /** The GitHub read behind a row's own PRs, read as two plain values so a snapshot that moves neither renders nothing. */
 export function useAgentStaleness(agent: AgentRow): PrStaleness | undefined {

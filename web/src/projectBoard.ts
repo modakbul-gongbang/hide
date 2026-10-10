@@ -13,6 +13,7 @@ import type { TFunction } from "i18next";
 import { formatDateTime } from "./i18n/format";
 import type { MessageKey } from "./i18n/catalogs";
 import { requireInterfaceLanguage } from "./i18n/locale";
+import { settled } from "./prMark";
 import type { AgentRow, Checkout, IssueLabel, PrState, PullRequest, Task, TaskSubIssue, Workspace } from "./snapshot";
 
 export type Stage = "backlog" | "working" | "review" | "done";
@@ -74,8 +75,7 @@ export type PrChip = {
 };
 
 export function prChip(pr: PullRequest): PrChip {
-  const live = pr.state !== "merged" && pr.state !== "closed";
-  return { number: pr.number, url: pr.url, state: pr.state, changesRequested: live && pr.review === "changes_requested" };
+  return { number: pr.number, url: pr.url, state: pr.state, changesRequested: !settled(pr.state) && pr.review === "changes_requested" };
 }
 
 /** Where an issue's work is (B2): its branch, commits ahead of the base, and changed files, each above zero only. */

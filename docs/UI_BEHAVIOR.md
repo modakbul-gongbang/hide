@@ -320,7 +320,8 @@ The zoom control names the panes it hides and unzooms the tab; the existing pane
 The core publishes at most one band: connection or sleep first, own demand next, the lead raised descendant next, then task state.
 An ask band, the pane's own Approval or Answer or a raised descendant's, is quiet text on the secondary fill with a warning rail: the verb in its colour, what to do, who asks (provider and name, with the path from the root, the checkout and the wait in its hover), the parent that has not received a letter, the elapsed time, `외 N건` for the other asks under this root, and Open.
 Open goes to the raised descendant, or for a draft to the parent whose input holds it, and is disabled with the connection reason beside it while that pane's device is not connected; `외 N건` opens the tree popover with the raised branches open, each raised row with its ask and Open.
-Blocked is a warning band with its cause, Fix is red, Result is success, and Review or Merge are in the mergeable PR colour.
+Blocked is a warning band with its cause, Fix is red, Result is success, and Review or Merge take its pull request's state colour (failed red, mergeable green, pending muted).
+Merge stands for a mergeable pull request and Review for a pending one, so a draft carries neither.
 Task bands carry a reason and stable action age; they navigate only, with answers in the terminal and merges in the PR view.
 Working has a thin blue line; CI wait, waiting and idle have no band.
 Normal termination, disconnection, starting, sleeping and control elsewhere are gray; a failed exit is red with the actual code.

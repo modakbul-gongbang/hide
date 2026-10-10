@@ -36,7 +36,7 @@ export type AgentState = {
   /** Where the row stands among its siblings in a tree: asking, working, finished unread, the rest. */
   tree_rank: number;
   /** The row's own PRs, worst first; never its descendants'. `index` points into `request.pull_requests`. */
-  pr: { count: number; worst: PrState; worst_count: number; pulls: { index: number; state: PrState }[] } | null;
+  pr: { count: number; worst: PrState; pulls: { index: number; state: PrState }[] } | null;
 };
 
 /** What the operator does about a raised descendant, in lead order (`escalation::Verb`). */
@@ -175,7 +175,6 @@ export type AgentPullRequest = {
   badge: PullRequest["badge"];
   checks: NonNullable<PullRequest["checks"]>;
   review?: PullRequest["review"];
-  is_draft: boolean;
   head_branch: string;
   closing_issues: IssueReference[];
   /** Drawn as the row's chip or counted in its `+N` (D-43). */
@@ -424,7 +423,6 @@ export type GithubSearchResult = {
   title: string;
   state: string;
   url: string;
-  is_draft?: boolean;
   /** A pull request's one state, decided by the core with no checks or review read; null for an issue. */
   pr_state?: PrState | null;
 };

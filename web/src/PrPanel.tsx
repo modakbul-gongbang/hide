@@ -15,7 +15,7 @@ import { folderName, sameIssue } from "./linkPanel";
 import { LinkSessions } from "./LinkSessions";
 import type { LensHandlers } from "./OverviewLenses";
 import { issueDate, readFailureText, type PrBoard, type PrRow } from "./projectBoard";
-import { checksWord, PR_LOOK, reviewWord } from "./prMark";
+import { checksWord, PR_LOOK, reviewWord, settled } from "./prMark";
 import { relativeActivity } from "./projects";
 import type { LinkIssueSource, LinkPanel, PrState, PullRequest, Task, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
@@ -143,7 +143,7 @@ export function PrPanel({
         : pr.at !== null
           ? t("links.updated", { age: relativeActivity(pr.at, now, t) ?? "" })
           : null;
-  const delegate = row && pr.state !== "merged" && pr.state !== "closed" ? () => useUiStore.getState().setWorkspaceDialog({ kind: "pr_delegate", workspaceId: project.id, prNumber: pr.number }) : null;
+  const delegate = row && !settled(pr.state) ? () => useUiStore.getState().setWorkspaceDialog({ kind: "pr_delegate", workspaceId: project.id, prNumber: pr.number }) : null;
   return (
     <aside
       aria-label={t("links.panel", { number: pr.number })}

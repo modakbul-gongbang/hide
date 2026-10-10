@@ -656,7 +656,6 @@
       "pr": {
         "count": 1,
         "worst": "mergeable",
-        "worst_count": 1,
         "pulls": [
           {
             "index": 0,
@@ -708,7 +707,6 @@
       "pr": {
         "count": 1,
         "worst": "failed",
-        "worst_count": 1,
         "pulls": [
           {
             "index": 0,
@@ -858,7 +856,6 @@
       "pr": {
         "count": 1,
         "worst": "pending",
-        "worst_count": 1,
         "pulls": [
           {
             "index": 0,
@@ -910,7 +907,6 @@
       "pr": {
         "count": 1,
         "worst": "mergeable",
-        "worst_count": 1,
         "pulls": [
           {
             "index": 0,
@@ -962,7 +958,6 @@
       "pr": {
         "count": 1,
         "worst": "merged",
-        "worst_count": 1,
         "pulls": [
           {
             "index": 0,

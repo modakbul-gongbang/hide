@@ -17,7 +17,7 @@ import { laneCheckoutCard, shownPullRequest } from "./projects";
 import type { AgentRow, Checkout, Task, Workspace } from "./snapshot";
 import { TaskGlyph } from "./TaskBoards";
 import { PR_MARK_PRESS, PrChipMark } from "./components/pr-mark";
-import { PR_LOOK } from "./prMark";
+import { PR_LOOK, reviewWord, staleness } from "./prMark";
 import { useUiStore, type OverviewTab } from "./ui";
 import { holdsCommandKey } from "./host";
 
@@ -219,7 +219,7 @@ export function PullRequestChip({ project, checkout, onOpen, onRow, now }: { pro
         type="button"
         data-lens-pr-chip={pr.number}
         data-graph-focus="chip"
-        aria-label={[`PR #${pr.number}`, t(PR_LOOK[chip.state].word), chip.changesRequested ? t("board.review.changes") : null].filter(Boolean).join(" · ")}
+        aria-label={[`PR #${pr.number}`, t(PR_LOOK[chip.state].word), chip.changesRequested ? t(reviewWord("changes_requested")!.key) : null].filter(Boolean).join(" · ")}
         className={cn("pointer-events-auto relative z-10", PR_MARK_PRESS)}
         onClick={(event) => {
           event.stopPropagation();
@@ -227,7 +227,7 @@ export function PullRequestChip({ project, checkout, onOpen, onRow, now }: { pro
           else onRow(pr.number);
         }}
       >
-        <PrChipMark chip={chip} stale={checkout.github?.stale === true} />
+        <PrChipMark chip={chip} stale={staleness(checkout.github)?.stale} />
       </button>
     </CheckoutCardHint>
   );

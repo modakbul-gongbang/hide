@@ -489,7 +489,7 @@ describe("the PRs tab", () => {
 
   it("lists the agent whose session made a pull request beside the branch's, leaving whose move it is to the branch (overview-request-view D-45, B55)", () => {
     const project = repo([checkout("feature", { panes: ["branch"] })], [listed(9, "feature")]);
-    const made = { number: 9, title: "PR 9", url: "https://github.com/acme/project/pull/9", badge: "open" as const, is_draft: false, checks: "passing" as const, head_branch: "feature", closing_issues: [], live: true, duty: false, created: true, settled_at_unix_ms: null };
+    const made = { number: 9, title: "PR 9", url: "https://github.com/acme/project/pull/9", badge: "open" as const, checks: "passing" as const, head_branch: "feature", closing_issues: [], live: true, duty: false, created: true, settled_at_unix_ms: null };
     const maker = agent("maker", "working", { request: { verb: "working", verb_since_unix_ms: NOW, request: null, later_by: null, reply: null, pull_requests: [made] } });
     const mentioned = agent("mentioned", "idle", { request: { verb: "idle", verb_since_unix_ms: NOW, request: null, later_by: null, reply: null, pull_requests: [{ ...made, created: false }] } });
     const board = buildPullRequests({ workspace: project, agents: [agent("branch", "idle", { activity: "idle" }), maker, mentioned], device: null }, NOW);

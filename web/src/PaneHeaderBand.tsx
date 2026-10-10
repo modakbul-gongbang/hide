@@ -4,6 +4,7 @@ import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { askWhat, TreeButtonFace, VerbText } from "./components/agent-tree";
 import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
+import { reviewWord } from "./prMark";
 import { AgentTreePopover } from "./components/agent-tree-popover";
 import { Elapsed } from "./components/elapsed";
 import { Hint } from "./components/ui/tooltip";
@@ -160,5 +161,5 @@ function bandReason(band: NonNullable<PaneHeader["band"]>, t: TFunction<"transla
   const facts = band.facts;
   if (!facts) return band.reason;
   if (facts.kind === "approval_command_unavailable") return t("agentSessions.approvalCommandUnavailable");
-  return [t(`agentSessions.checks.${facts.checks}`), t(`agentSessions.review.${facts.review ?? "unknown"}`), facts.checks === "failed" ? t("agentSessions.checkNamesUnavailable") : null].filter(Boolean).join(" · ");
+  return [t(`agentSessions.checks.${facts.checks}`), t(reviewWord(facts.review)?.key ?? "agentSessions.review.unknown"), facts.checks === "failed" ? t("agentSessions.checkNamesUnavailable") : null].filter(Boolean).join(" · ");
 }

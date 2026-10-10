@@ -526,6 +526,7 @@ The rule reads in this order: merged, closed, draft, failed (failed checks or a 
 A draft is draft even with failing checks, and absent or unknown checks never imply a pass.
 Each state has one token and one icon, drawn the same on every surface (operator approval, 2026-10-10): failed red (`--pr-failed`), pending amber (`--pr-pending`), mergeable green (`--pr-mergeable`), draft grey (`--pr-draft`), merged purple with the merge icon (`--pr-merged`), and closed dim (`--pr-closed`).
 A change request is red wherever its word is drawn, as failed checks are.
+The pane header's Review and Merge bands read the same state (`agent_state/header.rs`): Merge for a mergeable duty, Review for a pending one, the band's colour the state's.
 The web turns a state into its icon, colour and word in one module (`web/src/prMark.ts`) and draws it with one component (`web/src/components/pr-mark.tsx`); no screen keeps a colour table or a classifier of its own, and the checks and review words and the stale reading live in the same module.
 The state word and the accessibility label keep the meaning without relying on colour.
 A mark dims while GitHub cannot be read again, and its tooltip says when it was last read.

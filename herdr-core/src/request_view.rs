@@ -99,6 +99,8 @@ pub struct AgentPullRequestSnapshot {
     pub badge: PullRequestBadge,
     pub checks: PullRequestChecks,
     pub review: Option<ReviewDecision>,
+    /// Read by [`Self::state`] in the core; the shell draws the state.
+    #[serde(skip_serializing)]
     pub is_draft: bool,
     pub head_branch: String,
     pub closing_issues: Vec<IssueReference>,
@@ -110,6 +112,13 @@ pub struct AgentPullRequestSnapshot {
     /// The row's session made it (D-31), as opposed to its branch having it.
     pub created: bool,
     pub settled_at_unix_ms: Option<u64>,
+}
+
+impl AgentPullRequestSnapshot {
+    /// Its one state ([`crate::model::PrState::of`]).
+    pub fn state(&self) -> crate::model::PrState {
+        crate::model::PrState::of(self.badge, self.is_draft, self.checks, self.review)
+    }
 }
 
 /// The request view's part of an agent row.

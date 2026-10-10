@@ -222,10 +222,7 @@ fn own_pr_summary_counts_only_live_duty_prs_worst_first_and_never_a_closed_one()
     );
     // PR 1 is on `other`'s checkout branch, so `other` holds its duty.
     let maker = rows[0].state.pr.as_ref().expect("maker owns PRs");
-    assert_eq!(
-        (maker.count, maker.worst, maker.worst_count),
-        (2, PrState::Mergeable, 1)
-    );
+    assert_eq!((maker.count, maker.worst), (2, PrState::Mergeable));
     let states: Vec<_> = maker.pulls.iter().map(|pull| pull.state).collect();
     assert_eq!(states, [PrState::Mergeable, PrState::Merged]);
     let other = rows[1].state.pr.as_ref().expect("other owns PR 1");

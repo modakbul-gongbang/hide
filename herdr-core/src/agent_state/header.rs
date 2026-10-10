@@ -92,9 +92,9 @@ pub(crate) fn of(
                                 | PullRequestChecks::None
                                 | PullRequestChecks::Unknown
                         )
-                        && !super::sessions::mergeable(pull)
+                        && pull.state() == crate::model::PrState::Pending
                 }
-                Some(Tag::Merge) => pull.duty && super::sessions::mergeable(pull),
+                Some(Tag::Merge) => pull.duty && pull.state() == crate::model::PrState::Mergeable,
                 _ => false,
             }
         })
@@ -282,7 +282,9 @@ fn task_kind(agent: &SidebarAgentSnapshot) -> Tag {
                 .flat_map(|request| &request.pull_requests)
                 .filter(|pull| pull.live && pull.duty && !pull.badge.is_settled())
                 .peekable();
-            if duties.peek().is_some() && duties.all(super::sessions::mergeable) {
+            if duties.peek().is_some()
+                && duties.all(|pull| pull.state() == crate::model::PrState::Mergeable)
+            {
                 Tag::Merge
             } else {
                 Tag::Review
@@ -301,12 +303,13 @@ fn pull_tone(pull: &Option<Action>) -> &'static str {
     }
 }
 
+/// The band's colour is the pull request's one state ([`crate::model::PrState::of`]).
 fn pr_tone(pr: &crate::model::PullRequestSnapshot) -> &'static str {
-    use crate::model::{PullRequestBadge, ReviewDecision};
-    match (pr.badge, pr.review, pr.is_draft) {
-        (PullRequestBadge::Review, Some(ReviewDecision::ChangesRequested), _) => "error",
-        (PullRequestBadge::Review, Some(ReviewDecision::Approved), _) => "success",
-        (PullRequestBadge::Review, _, _) | (_, _, true) => "muted",
-        _ => "pr",
+    use crate::model::PrState;
+    match pr.state() {
+        PrState::Failed => "error",
+        PrState::Mergeable => "success",
+        PrState::Pending | PrState::Draft => "muted",
+        PrState::Merged | PrState::Closed => "pr",
     }
 }

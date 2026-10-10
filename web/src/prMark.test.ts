@@ -73,14 +73,14 @@ describe("staleness", () => {
 });
 
 describe("an agent row's mark", () => {
-  const pull = (number: number): AgentPullRequest => ({ number, title: `PR ${number}`, url: `https://github.com/acme/project/pull/${number}`, badge: "open", is_draft: false, checks: "passing", head_branch: `b${number}`, closing_issues: [], live: true, duty: false, created: true, settled_at_unix_ms: null });
+  const pull = (number: number): AgentPullRequest => ({ number, title: `PR ${number}`, url: `https://github.com/acme/project/pull/${number}`, badge: "open", checks: "passing", head_branch: `b${number}`, closing_issues: [], live: true, duty: false, created: true, settled_at_unix_ms: null });
   const row = (pr: AgentRow["state"]["pr"], pulls: AgentPullRequest[]): AgentRow => {
     const agent = legacyAgentRow({ id: "a", pane_id: "a", identity_label: "a", agent_kind: "claude", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", last_activity: "0" });
     return { ...agent, state: { ...agent.state, pr }, request: { verb: "working" as const, verb_since_unix_ms: 0, request: null, later_by: null, reply: null, pull_requests: pulls } };
   };
 
   it("stands for the worst PR the core ordered first, with how many others", () => {
-    const agent = row({ worst: "failed", count: 2, worst_count: 1, pulls: [{ index: 1, state: "failed" }, { index: 0, state: "pending" }] }, [pull(923), pull(924)]);
+    const agent = row({ worst: "failed", count: 2, pulls: [{ index: 1, state: "failed" }, { index: 0, state: "pending" }] }, [pull(923), pull(924)]);
     expect(agentMark(agent)).toEqual({ state: "failed", number: 924, more: 1 });
   });
 

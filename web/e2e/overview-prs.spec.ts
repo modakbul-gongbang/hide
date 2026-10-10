@@ -289,8 +289,8 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     // agent marks and the time on one line; the checks, the issue, the branch
     // and the review word are the panel's.
     const row = (number: number) => overview.locator(`[data-pr="${number}"]`);
-    await expect(row(21).locator("[data-pr-state]")).toHaveAttribute("data-pr-state", "pending");
-    await expect(row(24).locator("[data-pr-state]")).toHaveAttribute("data-pr-state", "failed");
+    await expect(row(21).locator("[data-pr-mark]")).toHaveAttribute("data-pr-mark", "pending");
+    await expect(row(24).locator("[data-pr-mark]")).toHaveAttribute("data-pr-mark", "failed");
     await expect(row(21).locator("[data-pr-issue], [data-pr-branch], [data-pr-review], [data-pr-panel-checks]")).toHaveCount(0);
     await expect(row(23).locator(`[data-pr-agent="${fixingPane}"]`)).toBeVisible();
 

@@ -215,7 +215,7 @@ function PullRequestRowView({ row, project, selected, onOpen, onLink, handlers, 
         />
         <CheckoutCardHint card={card} description={`PR #${row.number} · ${row.title}`} onOpenPullRequest={(url) => github(url)}>
           <span className="relative inline-flex shrink-0" data-pr-glyph={row.number}>
-            <PrMark state={row.state} number={row.number} data-pr-state={row.state} />
+            <PrMark state={row.state} number={row.number} />
           </span>
         </CheckoutCardHint>
         <Hint label={row.title} reveals>

@@ -60,7 +60,7 @@ function lens(row: AgentRow, task: Task | null = null): LensAgent {
 }
 
 function pull(number: number, extra: Partial<AgentPullRequest> = {}): AgentPullRequest {
-  return { number, title: `PR ${number}`, url: `https://github.com/acme/project/pull/${number}`, badge: "open", is_draft: false, checks: "passing", head_branch: `b${number}`, closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: null, ...extra };
+  return { number, title: `PR ${number}`, url: `https://github.com/acme/project/pull/${number}`, badge: "open", checks: "passing", head_branch: `b${number}`, closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: null, ...extra };
 }
 
 describe("the request line (D-42, B52)", () => {

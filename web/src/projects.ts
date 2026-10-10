@@ -8,7 +8,7 @@ import type { AgentScope } from "./agentScope";
 
 import type { TFunction } from "i18next";
 import { agentGroupTitle, type AgentGroup, type ListedAgent } from "./navigation";
-import { badgeWord, checksWord, PR_LOOK, reviewWord } from "./prMark";
+import { badgeWord, checksWord, PR_LOOK, reviewWord, settled, staleness } from "./prMark";
 import type { Checkout, InactiveProjectGroup, MarkCounts, PrState, PullRequest, RecentCheckout, Workspace } from "./snapshot";
 
 /** Return to this device's last usable checkout, then its primary, then row order. */
@@ -216,10 +216,10 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
   return {
     kind,
     kindTone,
-    stale: github?.stale === true,
+    stale: staleness(github)?.stale === true,
     age,
     secondLineReady: !gitLoading,
-    settled: pr?.state === "merged" || pr?.state === "closed",
+    settled: pr ? settled(pr.state) : false,
     detail: lines.join("\n"),
     pullRequest: pr,
   };

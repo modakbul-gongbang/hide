@@ -3074,8 +3074,6 @@ pub struct GithubSearchResult {
     /// `open`, `closed` or `merged`.
     pub state: String,
     pub url: String,
-    /// A draft pull request; always false for an issue.
-    pub is_draft: bool,
     /// A pull request's one state ([`PrState::of`]), read with no checks or
     /// review because a search does not ask for them; absent for an issue.
     pub pr_state: Option<PrState>,

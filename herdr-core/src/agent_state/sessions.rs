@@ -1,8 +1,7 @@
 //! The Sessions tool's groups, lines and order, from the row's own state
 //! (docs/status-model.md, The Sessions tool), and each row's own PR summary.
 //! Memory and conversation history are separate readers, not session state.
-use crate::model::{PrState, PullRequestChecks, ReviewDecision, SidebarAgentSnapshot};
-use crate::request_view::AgentPullRequestSnapshot;
+use crate::model::{PrState, SidebarAgentSnapshot};
 use serde::{Deserialize, Serialize};
 
 /// How long a resolved session stays under Resolved (PRD D-23).
@@ -121,20 +120,14 @@ pub(crate) fn row(agent: &SidebarAgentSnapshot) -> Row {
     }
 }
 
-pub(crate) fn mergeable(pull: &AgentPullRequestSnapshot) -> bool {
-    pull.checks == PullRequestChecks::Passing
-        && matches!(pull.review, None | Some(ReviewDecision::Approved))
-}
-
 /// The PRs this row holds the duty of, never its descendants' (PRD D-18,
-/// D-39): how many, the worst state and how many share it, and each PR as an
+/// D-39): how many, the worst state, and each PR as an
 /// index into `request.pull_requests`, worst first, each in the one PR state
 /// ([`PrState::of`]). Closed PRs are not counted.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PrSummary {
     pub count: usize,
     pub worst: PrState,
-    pub worst_count: usize,
     pub pulls: Vec<OwnPr>,
 }
 
@@ -152,7 +145,7 @@ pub(crate) fn own_prs(agent: &SidebarAgentSnapshot) -> Option<PrSummary> {
         .filter(|(_, pull)| pull.duty && pull.live)
         .map(|(index, pull)| OwnPr {
             index,
-            state: PrState::of(pull.badge, pull.is_draft, pull.checks, pull.review),
+            state: pull.state(),
         })
         .filter(|pull| pull.state != PrState::Closed)
         .collect();
@@ -161,7 +154,6 @@ pub(crate) fn own_prs(agent: &SidebarAgentSnapshot) -> Option<PrSummary> {
     Some(PrSummary {
         count: pulls.len(),
         worst,
-        worst_count: pulls.iter().filter(|pull| pull.state == worst).count(),
         pulls,
     })
 }
