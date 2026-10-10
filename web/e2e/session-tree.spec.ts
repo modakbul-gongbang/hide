@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { declareParent, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { measure } from "./session-panel-geometry.mjs";
 import { chooseTheme, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 240_000 });
@@ -93,6 +94,8 @@ test("Sessions opens a five-level tree, stops the indent at three and names a ch
     await expect(childRow(grandchild).locator("[data-session-branch]")).toHaveCount(0);
     await expect(childRow(deep).locator(`[data-session-branch="${deep}"]`)).toHaveText("deep-fixture");
     await expect(childRow(deeper).locator("[data-session-branch]")).toHaveCount(0);
+    // Branch, label and facts stay inside each row, with no part over another.
+    expect(await measure(page)).toEqual({ partProblems: [], rowsFit: [], overflow: [] });
     for (const theme of ["light", "dark"] as const) {
       await chooseTheme(page, theme);
       await screenshot(page, `session-tree-${theme}`);
