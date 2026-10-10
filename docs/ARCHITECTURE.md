@@ -1232,7 +1232,7 @@ The human notice's Herdr toast goes to the first connected node that dialed in, 
 ### Moving the core
 
 Before a move changes anything, the source checks both machines and names every check that fails, in one answer (PRD core-host-node-move B3; `hided/src/supervisor.rs`, `prepare`).
-On this machine: its Herdr server runs, Hide AI is set up and on, and no agent of this machine is asleep with its pane closed, since a node cannot wake it (`dormant`).
+On this machine: the device is one this core dials and is connected, no other node is linked to this core, its Herdr server runs, Hide AI is set up and on, and no agent of this machine is asleep with its pane closed, since a node cannot wake it (`dormant`).
 On the machine taking the core, through the same `hided core-move inspect` the move already runs there over SSH (`hided/src/core_move/target.rs`, `preflight.rs`): it is the same device, it runs this build of `hided`, its Herdr server runs, `gh` is signed in, someone is logged in to its desktop (the session the core's login item runs in), it does not sleep by itself on power, its state folder holds no core and no other move, its Hide AI settings are absent or the same as this machine's, and every agent this machine's Hide AI would ask answers there with that machine's own logins.
 The AI check runs inside `inspect`, not as a request over the device link, because a device's node answers no AI, GitHub or Factory request by design (`Call::answered_by_device`).
 A failing check says what it found and hide changes none of it: it does not sign in, start a session or change power settings.
