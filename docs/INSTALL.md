@@ -305,6 +305,42 @@ Only machines on the platform this build carries get the kit; another platform s
 Removing a machine while it is connected takes Hide's hook entries, the `hide` link and the helper folder `~/.hide/host-helper` off it, and leaves `~/.hide/kit` and `~/.hide/agent-hooks`; removing it while it is not connected leaves them there, where they do no harm, and adding it again replaces them.
 Each device row in Settings shows whether the remote session is connected and, when it is not, the reason in the words the connection failed with; `Test` runs the SSH, authentication, Herdr, protocol, PTY, SFTP, and Git stages one after another and lists the first one that needs attention on that host.
 
+## Move the core to another Mac
+
+The core is the part of `hided` that keeps your projects, layout, labels, letters, Factories and phone pairing; the app's window and Herdr's panes stay where they are.
+It can run on an always-on Mac you connected over SSH, so agents and phones keep working while this Mac sleeps.
+Open Settings, choose Devices, open that machine's `⋯` menu and choose **Move the core to this device…**; the item is dimmed until the machine is connected.
+
+Before anything changes, the move checks both machines and lists every check that fails, each with what to do about it; hide does not sign in, start a session or change power settings for you.
+The machine taking the core needs:
+
+- the same device you connected, running this app's build of `hided` (connecting installs it) and a running Herdr server;
+- `gh` signed in, because the core asks GitHub from its own machine;
+- someone logged in to its desktop, since the core runs as a login item in that session (turn on automatic login if the machine restarts unattended);
+- sleep turned off on power (`sudo pmset -c sleep 0`);
+- no core and no other move in its `~/.hide/state`, Hide AI settings that are absent or the same as this Mac's, and the agent Hide AI asks signed in there.
+
+This Mac needs that device connected, no other machine linked to this core, its Herdr server running and Hide AI set up; an agent of this Mac asleep with its pane closed has to be woken first.
+
+The move stops the core here, copies its state to the other machine and starts it there; the window keeps its address, refuses input for those seconds and then reconnects as a window of that core.
+Phones scan the core machine's QR once again in Settings > Mobile.
+If a step fails, the core starts again here and the window shows which step failed.
+From then on this Mac is a node of that core: its panes, files and terminals stay here, and the rail marks the core's machine with a crown.
+This Mac's own `⋯` menu moves the core back, or disconnects from the core: while disconnected the core refuses this Mac's panes, files and browser, and **Reconnect** in the window's strip restores them.
+
+What the move leaves on each machine:
+
+| Where | File | What it is |
+| --- | --- | --- |
+| This Mac | `~/.hide/state/core-placement.json` | Where the core runs (the SSH alias, the machine, the core's program and state folder), and `disconnected` while you disconnected from it; present only while the core is elsewhere |
+| This Mac | `~/.hide/state/moved-out/<move>/` | The state this Mac held before its core moved away, the latest move's only |
+| The machine giving the core | `~/.hide/state/core-move.json` | The move's record, written before each step that cannot be undone; a move cut short resumes or undoes itself from it at the next start |
+| The core machine | `~/.hide/state/core-handover.json` | Whether its core waits for the move's first link, runs, or stopped or retired for a move back |
+| The core machine | `~/Library/LaunchAgents/dev.withhide.core.plist` | The login item that runs `hided core-login` at login and keeps the core running |
+| The core machine | `~/.hide/state/move-incoming/` | A copy being received; empty once the move ends |
+
+Hide AI's settings move with the core and come back with it.
+
 ## Update
 
 Quit hide, replace `/Applications/hide.app` on macOS or unpack the new Windows/Linux package into its permanent folder, and reopen it.
@@ -312,11 +348,14 @@ Opening the updated app replaces a `hided` still running from the previous build
 State under `~/.hide/state` and the desktop profile at `~/Library/Application Support/hide-desktop` both persist across an update.
 Files the previous Swift app left under `~/Library/Application Support/hide/` are not read by the current app, apart from `state.json`'s shortcut bindings, which are imported once, and can be deleted by hand.
 Each packaged launch replaces an outdated part of the kit on this machine, and each device connection does the same there, hook entries included; a part you removed stays removed.
+When the core runs on another machine, a newer app updates it to its own build before it connects, once per connection, while agents keep running; if that fails, the window shows both builds with Retry, and the core goes on with its previous build.
+An updated app on the core's own machine updates the core the login item runs in the same way, and an older app there is told to update.
 
 ## Uninstall
 
 Quit hide and move `/Applications/hide.app` to the Trash.
 This removes the application but keeps `~/.hide` and `~/Library/Application Support/hide-desktop`.
+If the core runs on another machine, move it back first; its login item otherwise keeps running there until you remove it with `launchctl bootout gui/$(id -u)/dev.withhide.core` and delete `~/Library/LaunchAgents/dev.withhide.core.plist` on that machine.
 Delete both directories only when you deliberately want to reset hide's saved state.
 Hide's hook entries stay in `~/.claude/settings.json` and `~/.codex/hooks.json` and do nothing once the app is gone; delete the entries whose command carries `hide-subagents@` to take them out; Codex's trust records for them stay in `~/.codex/config.toml` and match only that same command.
 `~/.local/bin/hide` stays as well until you remove it.
