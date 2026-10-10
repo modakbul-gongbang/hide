@@ -317,15 +317,51 @@ impl Upstream {
     /// already placed stay.
     pub fn upload(
         &self,
-        files: &[super::transfer::FileUpload],
+        files: &[super::transfer::FileCopy],
         sent: &(dyn Fn(u64) + Sync),
-    ) -> Result<(), super::transfer::UploadError> {
-        use super::transfer::UploadError;
+    ) -> Result<(), super::transfer::TransferError> {
+        self.sftp("core-move-upload", |raw| async move {
+            for file in files {
+                super::transfer::upload_file(&raw, file, sent).await?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Copies `files` from the machine over one SFTP channel of the same
+    /// connection, one after another, each streamed and renamed into place
+    /// here whole (`transfer::download_file`); `received` hears the bytes as
+    /// each chunk is written. The first failure stops the copy; the files
+    /// already placed stay.
+    pub fn download(
+        &self,
+        files: &[super::transfer::FileCopy],
+        received: &(dyn Fn(u64) + Sync),
+    ) -> Result<(), super::transfer::TransferError> {
+        self.sftp("core-move-download", |raw| async move {
+            for file in files {
+                super::transfer::download_file(&raw, file, received).await?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Runs `copy` on one SFTP channel of the same connection.
+    fn sftp<'a, F, Fut>(
+        &self,
+        operation: &'static str,
+        copy: F,
+    ) -> Result<(), super::transfer::TransferError>
+    where
+        F: FnOnce(std::sync::Arc<russh_sftp::client::RawSftpSession>) -> Fut,
+        Fut: std::future::Future<Output = Result<(), super::transfer::TransferError>> + 'a,
+    {
+        use super::transfer::TransferError;
         let client = &self.client;
         client.runtime.block_on(async {
-            let remote = |error: String| UploadError::Remote(error);
+            let remote = |error: String| TransferError::Remote(error);
             let _permit = client
-                .session_channel("core-move-upload", RemoteStage::Sftp)
+                .session_channel(operation, RemoteStage::Sftp)
                 .await
                 .map_err(|error| remote(error.to_string()))?;
             let session = client
@@ -341,18 +377,14 @@ impl Upstream {
                 .request_subsystem(true, "sftp")
                 .await
                 .map_err(|error| remote(format!("SFTP is not available: {error}")))?;
-            let raw = russh_sftp::client::RawSftpSession::new(channel.into_stream());
+            let raw = std::sync::Arc::new(russh_sftp::client::RawSftpSession::new(
+                channel.into_stream(),
+            ));
             raw.set_timeout(30);
-            let copied = async {
-                raw.init()
-                    .await
-                    .map_err(|error| remote(format!("SFTP did not start: {error}")))?;
-                for file in files {
-                    super::transfer::upload_file(&raw, file, sent).await?;
-                }
-                Ok(())
-            }
-            .await;
+            let copied = match raw.init().await {
+                Ok(_) => copy(std::sync::Arc::clone(&raw)).await,
+                Err(error) => Err(remote(format!("SFTP did not start: {error}"))),
+            };
             let _ = raw.close_session();
             copied
         })

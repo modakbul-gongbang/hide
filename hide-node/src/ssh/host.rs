@@ -1929,33 +1929,14 @@ async fn remote_digest(
         .handle;
     let mut hasher = Sha256::new();
     let mut offset = 0usize;
-    // Several reads in flight, hashed in file order; a read may answer
-    // short, so each one asks again for the rest of its range. A file that
-    // ends early answers nothing more and is incomplete below.
+    // Several reads in flight, hashed in file order. A file that ends early
+    // answers nothing more and is incomplete below.
     let read_range = |start: usize, end: usize| {
         let handle = handle.clone();
         async move {
-            let mut bytes = Vec::with_capacity(end - start);
-            while start + bytes.len() < end {
-                let at = start + bytes.len();
-                let data = match raw.read(handle.clone(), at as u64, (end - at) as u32).await {
-                    Ok(data) => data.data,
-                    Err(SftpError::Status(status)) if status.status_code == StatusCode::Eof => {
-                        Vec::new()
-                    }
-                    Err(error) => {
-                        return Err(sftp_failure(
-                            &format!("The {what} could not be read back"),
-                            error,
-                        ));
-                    }
-                };
-                if data.is_empty() {
-                    break;
-                }
-                bytes.extend_from_slice(&data);
-            }
-            Ok(bytes)
+            super::transfer::read_range(raw, &handle, start as u64, end as u64)
+                .await
+                .map_err(|error| sftp_failure(&format!("The {what} could not be read back"), error))
         }
     };
     let result = stream::iter((0..length).step_by(TRANSFER_CHUNK))
