@@ -3747,6 +3747,52 @@ fn restored_selection_opens_on_herdrs_focus(
     assert!(!runtime.snapshot.ui_state.focus_from_herdr, "taken once");
 }
 
+/// Herdr's keyboard on a pane no catalog checkout holds is no place to open:
+/// a restore that missed starts on the catalog's first checkout, with no
+/// selected pane outside it.
+#[test]
+fn a_missed_restore_with_herdrs_focus_outside_every_checkout_opens_catalog_first() {
+    let (mut runtime, first_checkout, repository, worktree) =
+        split_workspace_checkouts("restore-outside");
+    runtime.snapshot.ui_state.focused_checkout_id =
+        Some("remote:old-core:checkout:feature".to_owned());
+    runtime.snapshot.navigator.focused_checkout_id =
+        Some("remote:old-core:checkout:feature".to_owned());
+    runtime.snapshot.ui_state.focus_from_herdr = true;
+    let repository = repository.to_string_lossy().into_owned();
+    let worktree = worktree.to_string_lossy().into_owned();
+    let mut payload = split_workspace_payload(
+        &[
+            ("w-order:t1", repository.as_str()),
+            ("w-order:t5", worktree.as_str()),
+        ],
+        "w-order:t1",
+    );
+    // A layout Herdr reports for a tab it lists in no workspace, so no
+    // checkout holds its pane.
+    let mut outside = payload.layouts[0].clone();
+    outside.workspace_id = "w-loose".to_owned();
+    outside.tab_id = "w-loose:t1".to_owned();
+    outside.focused_pane_id = "w-loose:t1:p".to_owned();
+    outside.panes[0].pane_id = "w-loose:t1:p".to_owned();
+    payload.layouts.push(outside);
+    payload.focused_pane_id = Some("w-loose:t1:p".to_owned());
+    runtime.ingest_session(Ok(payload));
+
+    assert_eq!(
+        runtime.snapshot().navigator.focused_checkout_id.as_deref(),
+        Some(first_checkout.as_str())
+    );
+    assert_ne!(
+        runtime.snapshot().ui_state.selected_pane_id.as_deref(),
+        Some("w-loose:t1:p")
+    );
+    assert_ne!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w-loose:t1:p")
+    );
+}
+
 #[test]
 fn a_restored_pane_the_session_no_longer_has_retargets_without_reporting() {
     let mut runtime = runtime();

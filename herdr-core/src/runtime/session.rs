@@ -2032,13 +2032,23 @@ impl Runtime {
         // so never at all (a core move's rekey says so, `focus_from_herdr`).
         // Either way Herdr's own focus is where Hide left the keyboard last,
         // since Hide tells Herdr every focus it takes, so the window opens on
-        // Herdr's pane and its checkout; with nothing saved, the catalog's
-        // first checkout stays the start.
+        // Herdr's pane and its checkout; with nothing saved, or Herdr's focus
+        // outside every checkout, the catalog's first checkout is the start.
+        // Only a pane a catalog checkout holds: one outside every checkout
+        // would leave a selected pane with no checkout to show it.
         let herdr_focus = payload.focused_pane_id.as_deref().filter(|pane_id| {
             payload
                 .layouts
                 .iter()
                 .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == *pane_id))
+                && self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .flat_map(|checkout| checkout.tabs.iter())
+                    .any(|tab| tab.panes.iter().any(|pane| pane.id == *pane_id))
         });
         let restored_pane_exists = self
             .snapshot
