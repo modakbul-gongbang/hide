@@ -139,25 +139,41 @@ A pane Herdr has stopped listing has its record swept on the next session bootst
 
 Herdr keeps a pane token only as long as the server that took it.
 A live handoff (what an update runs) and a restart both start the new server with no tokens, while the pane ids stay, so the pane's record is still there and the pane still has its name (measured on the pinned Herdr 0.9.3 in a private server, issue 799).
+The agent session Herdr reports for a pane (`agent_session`) survived the live handoff in the same measurement.
 Until the agent's next hook event, which for an idle session can be a long time, every instrumented pane then read as a session that predates Hide's setup, with a Reopen that restarted a healthy session.
 hided puts the tokens back, so the pane reads as it did before.
-Each record names the hook version of the helper that wrote it (`counters::Record`), and every pane that has reported has one: an event that changes no count writes the record when the pane has none.
-The core's restorer (`herdr-core/src/coordination/hook_tokens.rs`) reads the agent list the coordinator already reads each second.
-For each listed agent that carries no `hide_hooks` token, it reads that pane's record on a worker thread, under the shared side of the same lock, and sends the report the helper sends (`report::report_params`), with the version the record names and not the one this build would write.
-A record that changed while the report was on its way is sent again, as the helper does, so Herdr ends on the latest count.
 
-What it does not do:
+A pane id alone does not say that the agent in the pane now is the one the record describes: a restart can leave the same id with another process in it.
+So each record names, besides its counts, who wrote it (`counters::Record`): the hook version of the helper, the adapter id of the runtime that reported, and the agent's own id of the session, read from the `session_id` of the hook's input when the helper read that input whole.
+Every pane that has reported has a record: an event that changes no count writes it when the pane has none or when it names another version, agent or session.
+An event that changes no count keeps the session the record names for the same agent, and any other event names its own, or none when its input named none.
+Grok, Cursor and the OpenCode and Pi plugins name their agent and no session, because their hook input is not read for one, so their counts are never put back.
+
+The core's restorer (`herdr-core/src/coordination/hook_tokens.rs`) reads the agent list the coordinator already reads each second.
+For each listed agent that carries no `hide_hooks` token and that Hide has an adapter for, it reads that pane's record on a worker thread, under the shared side of the same lock, and sends the report the helper sends (`report::report_params`):
+
+| The record and what Herdr says now | What is put back |
+| --- | --- |
+| Names the agent Herdr detects, and the session Herdr reports | `hide_hooks` with the version the record names, and the counts |
+| Names the same agent, and Herdr reports no session or another one, or the record names none | `hide_hooks` only; the counts are left out, so they read as unknown and never as a zero |
+| Names another agent | nothing: the pane was taken over |
+| Is missing, or was written by an older helper (no version, no agent) | nothing; the pane waits for its next hook event, and no record is migrated |
+
+The version is put back for the same agent because a hook is installed in a runtime's configuration and not in a session.
+The counts are put back only for the same session, and nothing relies on `SessionStart` having reset the record: a session that started after the record was written and before the connection is the case the session id tells apart.
+What the counts can still be is the record's last word for that session: a subagent that ended with no `SubagentStop` reaching the helper still counts as working until the session's next `Stop`, exactly as it did before the loss.
+A record that changed while the report was on its way is sent again, as the helper does, so Herdr ends on the latest count, and the second report drops the counts if the session changed in between.
+
+What else it does not do:
 
 - A pane that already has its token is left alone, so a live helper's report is never raced.
 - A pane is asked once for each connection to Herdr, because every connect is a bootstrap and a handoff or a restart ends the connection.
-  A pane with no record, or one an older helper wrote without a version, is not guessed at and is not asked again: the helper's next event reports the token and writes the record in the same step.
+  A pane with no record, or one an older helper wrote, is not asked again: the helper's next event reports the token and writes the record in the same step.
 - It covers this machine's panes only.
   A device's record is the device's file, and the core reaches a machine's files through its node, so a device's pane waits for its next hook event as before.
-- It restores the counts as well as the version.
-  The record is what the helper last reported, so it is what Herdr held before the loss, or newer when a report failed while the server was away.
-  It is pane-keyed, not session-keyed, as Herdr's tokens are: a session that takes over a pane without a hook (hooks switched off, or Codex hooks not trusted) shows the last session's counts exactly as it did before the handoff.
 
-At most 256 panes are in one batch, one batch is in flight and one waits, a failed pane is tried three times for a connection, and a failure is a `hook_tokens` diagnostic naming the pane (`restore.failed`, `restore.gave_up`, `restore.batch`, `restore.deferred`).
+The snapshot-rate work is a comparison of the tokens each listed agent already carries.
+The only file read and the only `pane.report_metadata` call are on the worker, at most 256 panes in one batch, one batch in flight and one waiting, a failed pane tried three times for a connection, and each failure is a `hook_tokens` diagnostic naming the pane (`restore.failed`, `restore.gave_up`, `restore.batch`, `restore.deferred`).
 
 The helper always exits zero and reads no more than its bounded standard-input prefix before writing applicable context.
 A producer that never closes stdin is released at the same absolute Memory deadline.
