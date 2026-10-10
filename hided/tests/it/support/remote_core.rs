@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 use super::remote_delivery::renderer::Renderer;
 use super::remote_delivery::{Environment, Ssh, capture, read, successful, wait_for};
+use super::run::{Run, finish};
 
 /// The core machine's node id.
 pub const CORE_NODE: &str = "fixture-core-machine";
@@ -138,7 +139,17 @@ pub struct Fixture {
 }
 
 impl Fixture {
-    pub fn start() -> Result<Self> {
+    /// Runs one journey in a fresh fixture and ends it by how the journey
+    /// went (`support::run::finish`): a passing journey leaves no run
+    /// directory, a failing one keeps it for the lane to upload. The only way
+    /// to start a fixture, so no test has to remember either half.
+    pub fn journey(body: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
+        let mut fixture = Self::start()?;
+        let journey = body(&mut fixture);
+        finish(&mut fixture, journey)
+    }
+
+    fn start() -> Result<Self> {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let bin = PathBuf::from(
             std::env::var_os("HIDE_E2E_HERDR_BIN")
@@ -519,9 +530,22 @@ impl Fixture {
             json!({"device_id": node, "path": path, "label": "Screen fixture", "initialize_git": false}),
         )
     }
+}
 
-    pub fn stop(&mut self) -> Result<()> {
+impl Run for Fixture {
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
+    fn stop(&mut self) -> Result<()> {
         if let Some(mut node) = self.node.take() {
+            // A journey that stopped the node (`signal_running_node`) and
+            // failed before it resumed it would leave a process that cannot
+            // act on its termination.
+            if let Ok(pid) = i32::try_from(node.id()) {
+                // SAFETY: the pid is the fixture's own unreaped child.
+                unsafe { libc::kill(pid, libc::SIGCONT) };
+            }
             node.kill_tree()?;
             wait_for("private node hided confirmed exit", || {
                 Ok(node.try_wait()?.map(|_| ()))
@@ -534,19 +558,14 @@ impl Fixture {
         Ok(())
     }
 
-    /// The journey passed and every owned process confirmed its exit: the
-    /// run directory holds nothing anyone needs.
-    pub fn remove_run_dir(&mut self) -> Result<()> {
-        self.stop()?;
-        fs::remove_dir_all(&self.root)
-            .with_context(|| format!("remove {}", self.root.display()))?;
+    fn removed(&mut self) {
         self.removed = true;
-        Ok(())
     }
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        // `finish` confirmed every exit before it removed the folder.
         if self.removed {
             return;
         }

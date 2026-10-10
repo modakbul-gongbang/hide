@@ -42,9 +42,8 @@ fn identity(fixture: &Fixture) -> Result<NodeIdentity> {
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_node_dials_its_core_and_the_core_reaches_its_herdr_through_the_link() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
-        let identity = identity(&fixture)?;
+    Fixture::journey(|fixture| {
+        let identity = identity(fixture)?;
         let node = identity.node.clone();
         let role = NodeRole::start(
             fixture.screen_home(),
@@ -105,22 +104,14 @@ fn a_node_dials_its_core_and_the_core_reaches_its_herdr_through_the_link() -> Re
                 .map(|_| ()))
         })?;
         Ok(())
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_node_of_another_build_or_the_cores_own_machine_is_refused() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
-        let mut other = identity(&fixture)?;
+    Fixture::journey(|fixture| {
+        let mut other = identity(fixture)?;
         other.build = "0".repeat(64);
         let role = NodeRole::start(fixture.screen_home(), fixture.placement(), other, screen())
             .map_err(anyhow::Error::msg)?;
@@ -133,7 +124,7 @@ fn a_node_of_another_build_or_the_cores_own_machine_is_refused() -> Result<()> {
             "another build was not refused: {phase:?}"
         );
         drop(role);
-        let mut own = identity(&fixture)?;
+        let mut own = identity(fixture)?;
         own.node = CORE_NODE.to_owned();
         let role = NodeRole::start(fixture.screen_home(), fixture.placement(), own, screen())
             .map_err(anyhow::Error::msg)?;
@@ -146,14 +137,7 @@ fn a_node_of_another_build_or_the_cores_own_machine_is_refused() -> Result<()> {
             "the core's own machine was not refused: {phase:?}"
         );
         Ok(())
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 type Socket =
@@ -472,8 +456,7 @@ async fn type_and_read(
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_screen_on_the_node_draws_the_cores_state_and_its_own_pane() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, token) = fixture.start_node()?;
         let node = herdr_core::node::NodeId::of_this_machine()
             .map_err(anyhow::Error::msg)?
@@ -512,7 +495,7 @@ fn a_screen_on_the_node_draws_the_cores_state_and_its_own_pane() -> Result<()> {
                 json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
             )
             .await?;
-            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            focus_checkout(fixture, &mut socket, &node, &project).await?;
             type_and_read(&mut socket, &pane, "echo node-\"ok\"", "node-ok").await?;
             // A pane of the core's machine, typed from the node's screen: its
             // keys and output ride the node's terminals relay.
@@ -524,7 +507,7 @@ fn a_screen_on_the_node_draws_the_cores_state_and_its_own_pane() -> Result<()> {
                 json!({"path": core_project, "label": "core", "initialize_git": false}),
             )
             .await?;
-            focus_checkout(&fixture, &mut socket, CORE_NODE, &core_project).await?;
+            focus_checkout(fixture, &mut socket, CORE_NODE, &core_project).await?;
             type_and_read(&mut socket, &core_pane, "echo core-\"ok\"", "core-ok").await?;
             // A window of the core's own draws the node's pane too, once it
             // opens: the node sends its output up only then.
@@ -538,7 +521,7 @@ fn a_screen_on_the_node_draws_the_cores_state_and_its_own_pane() -> Result<()> {
             {}
             // The operator looks at the node's checkout again, from the
             // node's screen, and a window of the core's own opens on it.
-            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            focus_checkout(fixture, &mut socket, &node, &project).await?;
             send(
                 &mut window,
                 "terminal_viewport",
@@ -564,14 +547,7 @@ fn a_screen_on_the_node_draws_the_cores_state_and_its_own_pane() -> Result<()> {
             }
             Ok::<_, anyhow::Error>(())
         })
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// What a screen shows of the operator's layout: the focus, the tab and
@@ -589,8 +565,7 @@ fn layout(snapshot: &Value) -> Value {
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, token) = fixture.start_node()?;
         let node = herdr_core::node::NodeId::of_this_machine()
             .map_err(anyhow::Error::msg)?
@@ -612,7 +587,7 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
                 json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
             )
             .await?;
-            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            focus_checkout(fixture, &mut socket, &node, &project).await?;
             type_and_read(&mut socket, &pane, "echo before-\"ok\"", "before-ok").await?;
             // The layout as a screen opened now draws it.
             let mut look = screen_socket(port, &token).await?;
@@ -700,14 +675,7 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
             ensure!(!fixture.logs_mention(typed)?, "{typed} reached a log");
         }
         Ok(())
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// A node whose link went half open, so neither end saw it close (a
@@ -719,8 +687,7 @@ fn a_node_that_loses_its_core_holds_its_screens_and_returns_as_it_was() -> Resul
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<()> {
     use hided::attach::{Line, NodeHello, read_line, write_line};
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, _token) = fixture.start_node()?;
         let node = herdr_core::node::NodeId::of_this_machine()
             .map_err(anyhow::Error::msg)?
@@ -780,15 +747,7 @@ fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<
         // The node finds its own link ended and returns.
         runtime.block_on(node_link(port, "live", LINK_BOUND))?;
         Ok(())
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.signal_running_node(libc::SIGCONT);
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// `hide connect --json` of the screen machine, run with `hide` at `cli`.
@@ -809,14 +768,13 @@ fn screen_connect(fixture: &Fixture, cli: &std::path::Path) -> Result<Value> {
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_screen_whose_core_is_not_running_attaches_and_waits_for_it() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let core_state = fixture.core_state.join("hided.json");
         let before = std::fs::read(&core_state)?;
         fixture.stop_core()?;
         let (port, _) = fixture.start_node()?;
         let cli = fixture.hided.parent().context("the CLI folder")?.to_owned();
-        let answer = screen_connect(&fixture, &cli)?;
+        let answer = screen_connect(fixture, &cli)?;
         ensure!(answer["ok"] == true, "hide connect refused: {answer}");
         // B13: the screen's page learns which machine it runs on.
         let node = herdr_core::node::NodeId::of_this_machine().map_err(anyhow::Error::msg)?;
@@ -846,21 +804,13 @@ fn a_screen_whose_core_is_not_running_attaches_and_waits_for_it() -> Result<()> 
         fixture.start_core()?;
         runtime.block_on(node_link(port, "live", LINK_BOUND))?;
         Ok(())
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_screen_of_another_build_than_its_core_is_told_so() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         // The screen machine's app is another build: its hided differs from
         // the core's by one byte past the program's end.
         let cli = fixture.root.join("other-build");
@@ -873,7 +823,7 @@ fn a_screen_of_another_build_than_its_core_is_told_so() -> Result<()> {
         bytes.push(0);
         std::fs::write(cli.join("hided"), bytes)?;
         fixture.start_node_with(&cli.join("hided"))?;
-        let answer = screen_connect(&fixture, &cli)?;
+        let answer = screen_connect(fixture, &cli)?;
         ensure!(
             answer["ok"] == false && answer["reason"] == "other_build",
             "hide connect did not answer other_build: {answer}"
@@ -886,21 +836,13 @@ fn a_screen_of_another_build_than_its_core_is_told_so() -> Result<()> {
             })
             .context("the core logged no build mismatch")?;
         Ok(())
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_node_pane_calls_its_core_through_the_link() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, token) = fixture.start_node()?;
         let node = herdr_core::node::NodeId::of_this_machine()
             .map_err(anyhow::Error::msg)?
@@ -928,7 +870,7 @@ fn a_node_pane_calls_its_core_through_the_link() -> Result<()> {
                 json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
             )
             .await?;
-            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            focus_checkout(fixture, &mut socket, &node, &project).await?;
             // A pane's agent: vouched for by the node's kernel as that pane,
             // so it may act as the pane's agent.
             let answer = type_and_read(&mut socket, &pane, &call, "info-done").await?;
@@ -1014,14 +956,7 @@ fn a_node_pane_calls_its_core_through_the_link() -> Result<()> {
             );
             Ok::<_, anyhow::Error>(())
         })
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// The one JSON answer a `hide workspace` command printed among `text`.
@@ -1128,8 +1063,7 @@ async fn grid_holds(file: &std::path::Path, expected: &str) -> Result<()> {
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_pane_runs_at_the_grid_of_the_screen_that_last_typed_into_it() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, token) = fixture.start_node()?;
         let node = herdr_core::node::NodeId::of_this_machine()
             .map_err(anyhow::Error::msg)?
@@ -1151,7 +1085,7 @@ fn a_pane_runs_at_the_grid_of_the_screen_that_last_typed_into_it() -> Result<()>
                 json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
             )
             .await?;
-            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            focus_checkout(fixture, &mut socket, &node, &project).await?;
             // The screen machine's window types into the pane and draws it
             // wide: the pane takes its grid.
             type_and_read(&mut socket, &pane, "echo wide-\"ok\"", "wide-ok").await?;
@@ -1179,14 +1113,7 @@ fn a_pane_runs_at_the_grid_of_the_screen_that_last_typed_into_it() -> Result<()>
             grid_becomes(&grids, "33 120").await.context("grid 4")?;
             Ok::<_, anyhow::Error>(())
         })
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// The next binary frame on `socket` within `bound`: its JSON header and
@@ -1218,8 +1145,7 @@ async fn next_bytes(socket: &mut Socket, bound: Duration) -> Result<(Value, Vec<
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_node_screen_reads_its_own_checkouts_files_without_the_core() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, token) = fixture.start_node()?;
         let node = herdr_core::node::NodeId::of_this_machine()
             .map_err(anyhow::Error::msg)?
@@ -1241,7 +1167,7 @@ fn a_node_screen_reads_its_own_checkouts_files_without_the_core() -> Result<()> 
                 json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
             )
             .await?;
-            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            focus_checkout(fixture, &mut socket, &node, &project).await?;
             // The Explorer lists the checkout through the core, which opens
             // its root on this machine's node.
             send(
@@ -1297,14 +1223,7 @@ fn a_node_screen_reads_its_own_checkouts_files_without_the_core() -> Result<()> 
             "a file's content reached a log"
         );
         Ok(())
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// Amendment 10: removing a node that dials in ends its link, and with it
@@ -1313,8 +1232,7 @@ fn a_node_screen_reads_its_own_checkouts_files_without_the_core() -> Result<()> 
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_removed_node_loses_its_link_and_registers_again_on_its_next_attach() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, token) = fixture.start_node()?;
         let node = herdr_core::node::NodeId::of_this_machine()
             .map_err(anyhow::Error::msg)?
@@ -1343,14 +1261,7 @@ fn a_removed_node_loses_its_link_and_registers_again_on_its_next_attach() -> Res
             })?;
             Ok::<_, anyhow::Error>(())
         })
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// B17: a screen that stops reading while its core sends it a large file
@@ -1359,8 +1270,7 @@ fn a_removed_node_loses_its_link_and_registers_again_on_its_next_attach() -> Res
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_screen_that_stops_reading_holds_up_no_other_screen() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, token) = fixture.start_node()?;
         let core_project = fixture.core_home().join("project");
         let core_pane = fixture.core.workspace_at(&core_project)?;
@@ -1379,7 +1289,7 @@ fn a_screen_that_stops_reading_holds_up_no_other_screen() -> Result<()> {
                 json!({"path": core_project, "label": "core", "initialize_git": false}),
             )
             .await?;
-            focus_checkout(&fixture, &mut socket, CORE_NODE, &core_project).await?;
+            focus_checkout(fixture, &mut socket, CORE_NODE, &core_project).await?;
             type_and_read(&mut socket, &core_pane, "echo before-\"ok\"", "before-ok").await?;
 
             // A second screen asks the core for the file and reads no more.
@@ -1417,21 +1327,13 @@ fn a_screen_that_stops_reading_holds_up_no_other_screen() -> Result<()> {
             first_snapshot(&mut again, Duration::from_secs(20)).await?;
             Ok::<_, anyhow::Error>(())
         })
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_node_that_ends_leaves_no_attach_role_or_ssh_connection() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -1480,14 +1382,7 @@ fn a_node_that_ends_leaves_no_attach_role_or_ssh_connection() -> Result<()> {
         runtime.block_on(node_link(port, "live", LINK_BOUND))?;
         eprintln!("the attach role ended {ended:?} after its node fell silent");
         Ok(())
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// Serves `body` to every request on a loopback port until the test ends.
@@ -1523,8 +1418,7 @@ fn http_agent() -> ureq::Agent {
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_page_an_agent_of_the_core_opens_shows_on_the_node_and_reaches_the_cores_loopback() -> Result<()>
 {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, token) = fixture.start_node()?;
         // Its own repository, so the checkout is this folder and not the
         // repository the run folder sits in.
@@ -1555,7 +1449,7 @@ fn a_page_an_agent_of_the_core_opens_shows_on_the_node_and_reaches_the_cores_loo
             // checkout_not_registered (#912).
             let answer = tokio::task::block_in_place(|| {
                 wait_for("the core registered the site's checkout", || {
-                    let answer = open(&fixture)?;
+                    let answer = open(fixture)?;
                     Ok((answer["reason"] != "checkout_not_registered").then_some(answer))
                 })
             })?;
@@ -1568,7 +1462,7 @@ fn a_page_an_agent_of_the_core_opens_shows_on_the_node_and_reaches_the_cores_loo
             first_snapshot(&mut desktop, Duration::from_secs(20)).await?;
             let answer = tokio::task::block_in_place(|| {
                 wait_for("the page opened in the node's window", || {
-                    let answer = open(&fixture)?;
+                    let answer = open(fixture)?;
                     Ok((answer["ok"] == true).then_some(answer))
                 })
             })?;
@@ -1641,14 +1535,7 @@ fn a_page_an_agent_of_the_core_opens_shows_on_the_node_and_reaches_the_cores_loo
             })?;
             Ok::<_, anyhow::Error>(())
         })
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// The pane object named `id` anywhere in a core snapshot.
@@ -1670,8 +1557,7 @@ fn pane_row<'a>(value: &'a Value, id: &str) -> Option<&'a Value> {
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_server_started_in_a_node_pane_is_that_panes_on_the_core() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, token) = fixture.start_node()?;
         let node = herdr_core::node::NodeId::of_this_machine()
             .map_err(anyhow::Error::msg)?
@@ -1693,7 +1579,7 @@ fn a_server_started_in_a_node_pane_is_that_panes_on_the_core() -> Result<()> {
                 json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
             )
             .await?;
-            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            focus_checkout(fixture, &mut socket, &node, &project).await?;
             // A listener started in the node's pane, in its checkout.
             let screen = type_and_read(
                 &mut socket,
@@ -1729,14 +1615,7 @@ fn a_server_started_in_a_node_pane_is_that_panes_on_the_core() -> Result<()> {
             .with_context(|| format!("the pane's row: {last}"))?;
             Ok::<_, anyhow::Error>(())
         })
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// Uploads `bytes` from a screen as the web shell does, as one dropped file
@@ -1824,8 +1703,7 @@ fn staged_files(state: &std::path::Path) -> Vec<std::path::PathBuf> {
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_file_dropped_on_the_node_stays_there_for_its_own_pane_and_crosses_once_for_the_cores()
 -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, token) = fixture.start_node()?;
         let node = herdr_core::node::NodeId::of_this_machine()
             .map_err(anyhow::Error::msg)?
@@ -1849,7 +1727,7 @@ fn a_file_dropped_on_the_node_stays_there_for_its_own_pane_and_crosses_once_for_
                 json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
             )
             .await?;
-            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            focus_checkout(fixture, &mut socket, &node, &project).await?;
             // Into the node's own pane: the file is pasted from where the
             // node staged it, and the core never holds a copy.
             let here = format!("node-drop-{}", std::process::id());
@@ -1873,7 +1751,7 @@ fn a_file_dropped_on_the_node_stays_there_for_its_own_pane_and_crosses_once_for_
                 json!({"path": core_project, "label": "core", "initialize_git": false}),
             )
             .await?;
-            focus_checkout(&fixture, &mut socket, CORE_NODE, &core_project).await?;
+            focus_checkout(fixture, &mut socket, CORE_NODE, &core_project).await?;
             let there = format!("core-drop-{}", std::process::id());
             drop_into_cat(&mut socket, &core_pane, there.as_bytes(), &there).await?;
             ensure!(
@@ -1890,14 +1768,7 @@ fn a_file_dropped_on_the_node_stays_there_for_its_own_pane_and_crosses_once_for_
             );
             Ok::<_, anyhow::Error>(())
         })
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// The core's row for `device`'s project at `path`, in that device's session.
@@ -1920,8 +1791,7 @@ fn device_project(snapshot: &Value, device: &str, path: &std::path::Path) -> Opt
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_node_project_is_measured_on_the_node_as_a_local_one_is() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, token) = fixture.start_node()?;
         let node = herdr_core::node::NodeId::of_this_machine()
             .map_err(anyhow::Error::msg)?
@@ -1975,21 +1845,13 @@ fn a_node_project_is_measured_on_the_node_as_a_local_one_is() -> Result<()> {
             .with_context(|| format!("the project's disk: {last}"))?;
             Ok::<_, anyhow::Error>(())
         })
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_node_checkouts_pull_request_is_read_with_the_cores_login_by_repository_name() -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         // The node's own account runs git, so the operator's configuration
         // (a signing key behind their agent) never reaches the fixture.
         let git = |folder: &std::path::Path, arguments: &[&str]| -> Result<String> {
@@ -2077,14 +1939,7 @@ esac
             .with_context(|| format!("the project's checkouts: {last}"))?;
             Ok::<_, anyhow::Error>(())
         })
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// A provider that says which arguments it started with and then waits, as
@@ -2140,8 +1995,7 @@ fn foreground(
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn an_agent_in_a_node_pane_sleeps_and_wakes_there_as_the_cores_own_does() -> Result<()> {
     const SESSION: &str = "11111111-2222-3333-4444-555555555555";
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let source = fixture.root.join("sleep-provider.c");
         std::fs::write(&source, SLEEP_PROVIDER)?;
         let mut compiler = fixture.screen.environment.command("/usr/bin/cc");
@@ -2202,7 +2056,7 @@ fn an_agent_in_a_node_pane_sleeps_and_wakes_there_as_the_cores_own_does() -> Res
                 json!({"device_id": node, "path": project, "label": "node", "initialize_git": false}),
             )
             .await?;
-            focus_checkout(&fixture, &mut socket, &node, &project).await?;
+            focus_checkout(fixture, &mut socket, &node, &project).await?;
             let row = |snapshot: &Value| pane_row(snapshot, &pane).cloned().unwrap_or(Value::Null);
             let mut last = Value::Null;
             // The node's pane offers Sleep agent as the core's own panes do.
@@ -2287,14 +2141,7 @@ fn an_agent_in_a_node_pane_sleeps_and_wakes_there_as_the_cores_own_does() -> Res
             .with_context(|| format!("the pane's row: {last}"))?;
             Ok::<_, anyhow::Error>(())
         })
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
 
 /// What the scripted desktop gateway saw.
@@ -2504,8 +2351,7 @@ fn relay_streams(fixture: &Fixture) -> Result<usize> {
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
 fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_core_through_it()
 -> Result<()> {
-    let mut fixture = Fixture::start()?;
-    let journey = (|| {
+    Fixture::journey(|fixture| {
         let (port, token) = fixture.start_node()?;
         let node = herdr_core::node::NodeId::of_this_machine()
             .map_err(anyhow::Error::msg)?
@@ -2544,7 +2390,7 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
                 json!({"device_id": node, "path": project, "label": "page", "initialize_git": false}),
             )
             .await?;
-            focus_checkout(&fixture, &mut screen, &node, &project).await?;
+            focus_checkout(fixture, &mut screen, &node, &project).await?;
             send(
                 &mut screen,
                 "create_workspace",
@@ -2637,7 +2483,7 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
             // back), and every CDP byte the gateway carried went through the
             // node's own relay.
             ensure!(
-                relay_streams(&fixture)? == 0,
+                relay_streams(fixture)? == 0,
                 "the node pane's CDP crossed the link"
             );
             // Each relay logs as it ends, which may be after the command
@@ -2729,7 +2575,7 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
             // A page of the core's checkout, driven from the core's pane: the
             // only window is the node's, so the core relays through the link
             // to it, and hands out no capability URL of another machine.
-            focus_checkout(&fixture, &mut screen, CORE_NODE, &site).await?;
+            focus_checkout(fixture, &mut screen, CORE_NODE, &site).await?;
             let core_in = (core_side.0.as_path(), core_side.1.as_path());
             let opened = workspace_answer(
                 &hide_in_pane((&fixture.core, &core_pane), core_in, &format!("browser open {url}"), &out)?,
@@ -2765,7 +2611,7 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
                 "the core pane's click never reached the window"
             );
             ensure!(
-                relay_streams(&fixture)? >= 2,
+                relay_streams(fixture)? >= 2,
                 "the core pane's commands opened no browser relay stream through the link"
             );
             let core_rows = tokio::task::block_in_place(|| {
@@ -2813,7 +2659,7 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
             first_snapshot(&mut desktop, Duration::from_secs(20)).await?;
             let mut screen = screen_socket(port, &token).await?;
             first_snapshot(&mut screen, Duration::from_secs(20)).await?;
-            focus_checkout(&fixture, &mut screen, CORE_NODE, &site).await?;
+            focus_checkout(fixture, &mut screen, CORE_NODE, &site).await?;
             let mut last = String::new();
             let deadline = Instant::now() + LINK_BOUND;
             while !last.contains("@1 button \"Go\"") {
@@ -2830,12 +2676,5 @@ fn a_node_window_s_page_is_driven_from_its_machine_off_the_link_and_from_the_cor
             }
             Ok::<_, anyhow::Error>(())
         })
-    })();
-    match journey {
-        Ok(()) => fixture.remove_run_dir(),
-        Err(error) => {
-            let _ = fixture.stop();
-            Err(error).context(format!("run kept at {}", fixture.root.display()))
-        }
-    }
+    })
 }
