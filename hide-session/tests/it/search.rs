@@ -665,14 +665,21 @@ mod capacity {
             more: false,
         }
     }
-    /// `count` messages of `session`, the newest at `newest` ms.
+    /// `count` messages of `session`, the newest at `newest` ms. Only the
+    /// first says "needle": a search is bounded to half a second of work, so
+    /// one that matched all 25,000 messages of a full index would measure the
+    /// machine's speed, not the policy.
     fn messages(session: &str, count: usize, newest: u64) -> Vec<IndexedMessage> {
         (0..count)
             .map(|i| IndexedMessage {
                 offset: i as u64,
                 role: "user".into(),
                 at_unix_ms: newest - (count - 1 - i) as u64,
-                text: format!("needle {session} message {i}"),
+                text: if i == 0 {
+                    format!("needle {session}")
+                } else {
+                    format!("filler {session} message {i}")
+                },
             })
             .collect()
     }
@@ -684,10 +691,26 @@ mod capacity {
         newest: u64,
     ) -> Result<(), String> {
         // A read is at most 1 MiB of a file, so a big session arrives in many.
-        for chunk in messages(session, count, newest).chunks(500) {
-            index.apply(project, session, session, 0, read(chunk.to_vec()))?;
+        // Small ones keep each apply far from its half-second work budget,
+        // which a loaded machine would otherwise cross.
+        for chunk in messages(session, count, newest).chunks(100) {
+            until_not_interrupted(|| {
+                index.apply(project, session, session, 0, read(chunk.to_vec()))
+            })?;
         }
         Ok(())
+    }
+    /// Work past its half-second budget is interrupted and rolled back whole,
+    /// and the worker reads the same step again; a loaded machine can cross the
+    /// budget on any step, so a fixture does what the worker does.
+    fn until_not_interrupted<T>(mut work: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+        for _ in 0..20 {
+            match work() {
+                Err(error) if error == "interrupted" => continue,
+                other => return other,
+            }
+        }
+        work()
     }
     fn stored(database: &Path) -> usize {
         rusqlite::Connection::open(database)
@@ -697,22 +720,28 @@ mod capacity {
     }
     /// The sessions of `project` the search finds a hit in.
     fn found(index: &SearchIndex, project: &str) -> Vec<String> {
-        let mut sessions = index
-            .search_scoped(project, "needle", 0, None, &mut |paths| {
+        let mut sessions = until_not_interrupted(|| {
+            index.search_scoped(project, "needle", 0, None, &mut |paths| {
                 Ok(paths.iter().map(|_| Some("s".to_owned())).collect())
             })
-            .unwrap()
-            .hits
-            .into_iter()
-            .map(|hit| hit.session_id)
-            .collect::<Vec<_>>();
+        })
+        .unwrap()
+        .hits
+        .into_iter()
+        .map(|hit| hit.session_id)
+        .collect::<Vec<_>>();
         sessions.sort();
         sessions
     }
     fn full_of_another_project(index: &mut SearchIndex) {
-        for k in 0..5 {
-            index_session(index, "other", &format!("o{k}"), 5_000, 10_000 + k * 10_000).unwrap();
+        for k in 0..25 {
+            index_session(index, "other", &format!("o{k}"), 1_000, 10_000 + k * 10_000).unwrap();
         }
+    }
+    fn names(prefix: &str, range: std::ops::Range<usize>) -> Vec<String> {
+        let mut names = range.map(|k| format!("{prefix}{k}")).collect::<Vec<_>>();
+        names.sort();
+        names
     }
 
     #[test]
@@ -730,15 +759,15 @@ mod capacity {
         let database = tmp.path().join("index.db");
         let mut index = SearchIndex::open(&database).unwrap();
         full_of_another_project(&mut index);
-        assert_eq!(found(&index, "other").len(), 5);
+        assert_eq!(found(&index, "other").len(), 25);
 
         index_session(&mut index, "viewed", "fresh", 3, 900_000).unwrap();
 
         assert_eq!(found(&index, "viewed"), ["fresh"]);
-        assert_eq!(stored(&database), CAP - 5_000 + 3);
+        assert_eq!(stored(&database), CAP - 1_000 + 3);
         // The oldest session went whole, with its saved cursor, so it is read
         // again from the start rather than searched half-copied.
-        assert_eq!(found(&index, "other"), ["o1", "o2", "o3", "o4"]);
+        assert_eq!(found(&index, "other"), names("o", 1..25));
         assert!(index.saved("other", "o0").unwrap().is_none());
         assert!(index.saved("other", "o1").unwrap().is_some());
     }
@@ -765,12 +794,12 @@ mod capacity {
         let tmp = tempdir().unwrap();
         let database = tmp.path().join("index.db");
         let mut index = SearchIndex::open(&database).unwrap();
-        for k in 0..5 {
+        for k in 0..25 {
             index_session(
                 &mut index,
                 "viewed",
                 &format!("v{k}"),
-                5_000,
+                1_000,
                 10_000 + k * 10_000,
             )
             .unwrap();
@@ -778,8 +807,11 @@ mod capacity {
 
         index_session(&mut index, "viewed", "new", 10, 900_000).unwrap();
 
-        assert_eq!(found(&index, "viewed"), ["new", "v1", "v2", "v3", "v4"]);
-        assert_eq!(stored(&database), CAP - 5_000 + 10);
+        let mut expected = names("v", 1..25);
+        expected.push("new".into());
+        expected.sort();
+        assert_eq!(found(&index, "viewed"), expected);
+        assert_eq!(stored(&database), CAP - 1_000 + 10);
         assert!(index.saved("viewed", "v0").unwrap().is_none());
     }
 

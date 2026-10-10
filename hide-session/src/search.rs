@@ -323,27 +323,34 @@ impl SearchIndex {
                 witness,
                 more,
             } => {
-                let tx = self.db.transaction().map_err(|e| e.to_string())?;
-                if reset {
-                    erase(&tx, project, Some(session), None)?;
-                }
                 let kept = messages.iter().filter(|m| m.at_unix_ms >= cutoff);
                 if kept.clone().any(|m| m.text.len() > BODY_LIMIT) {
                     return Err("A message is over the 64 KiB the search index copies.".into());
                 }
                 let incoming = kept.clone().count();
                 let newest = kept.map(|m| m.at_unix_ms).max().unwrap_or(0);
-                let count: usize = tx
+                let mut count: usize = self
+                    .db
                     .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
                     .map_err(|e| e.to_string())?;
+                if reset {
+                    // The reset below gives these back before the read is written.
+                    count -= self
+                        .db
+                        .query_row(
+                            "SELECT count(*) FROM messages WHERE project=?1 AND session=?2",
+                            params![project, session],
+                            |r| r.get::<_, usize>(0),
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
                 if count + incoming > MESSAGE_LIMIT {
-                    make_room(
-                        &tx,
-                        project,
-                        session,
-                        count + incoming - MESSAGE_LIMIT,
-                        newest,
-                    )?;
+                    self.make_room(project, session, count + incoming - MESSAGE_LIMIT, newest)?;
+                    self.budget();
+                }
+                let tx = self.db.transaction().map_err(|e| e.to_string())?;
+                if reset {
+                    erase(&tx, project, Some(session), None)?;
                 }
                 for message in messages {
                     if message.at_unix_ms < cutoff {
@@ -477,54 +484,63 @@ fn limit_work(db: &Connection) {
 /// recently active first, so the Project being searched wins the room; then
 /// this Project's own sessions that are older than the incoming read, so a
 /// session never displaces newer content. Nothing is dropped unless the room
-/// can be made in full.
-fn make_room(
-    tx: &rusqlite::Transaction<'_>,
-    project: &str,
-    session: &str,
-    needed: usize,
-    newest: u64,
-) -> Result<(), String> {
-    let mut victims = Vec::new();
-    let mut freed = 0;
-    {
-        let mut stmt = tx
-            .prepare(
-                "SELECT project,session,count(*) FROM messages WHERE NOT (project=?1 AND session=?2)
-                 GROUP BY project,session HAVING project<>?1 OR max(at)<?3
-                 ORDER BY project=?1,max(at),project,session",
+/// can be made in full. Each session goes in a transaction of its own with
+/// its own work budget, so a read interrupted part way keeps the room it made
+/// and the retry needs less, instead of repeating the same work and
+/// interrupting at the same place.
+impl SearchIndex {
+    fn make_room(
+        &mut self,
+        project: &str,
+        session: &str,
+        needed: usize,
+        newest: u64,
+    ) -> Result<(), String> {
+        let mut victims = Vec::new();
+        let mut freed = 0;
+        {
+            let mut stmt = self
+                .db
+                .prepare(
+                    "SELECT project,session,count(*) FROM messages WHERE NOT (project=?1 AND session=?2)
+                     GROUP BY project,session HAVING project<>?1 OR max(at)<?3
+                     ORDER BY project=?1,max(at),project,session",
+                )
+                .map_err(|e| e.to_string())?;
+            let mut rows = stmt
+                .query(params![project, session, newest])
+                .map_err(|e| e.to_string())?;
+            while freed < needed {
+                let Some(row) = rows.next().map_err(|e| e.to_string())? else {
+                    break;
+                };
+                let count: usize = row.get(2).map_err(|e| e.to_string())?;
+                victims.push((
+                    row.get::<_, String>(0).map_err(|e| e.to_string())?,
+                    row.get::<_, String>(1).map_err(|e| e.to_string())?,
+                ));
+                freed += count;
+            }
+        }
+        if freed < needed {
+            return Err(
+                "This Project's recent conversations are more than the search index holds (25,000 messages). A shorter Copied history period keeps the newest."
+                    .into(),
+            );
+        }
+        for (victim_project, victim_session) in victims {
+            limit_work(&self.db);
+            let tx = self.db.transaction().map_err(|e| e.to_string())?;
+            erase(&tx, &victim_project, Some(&victim_session), None)?;
+            tx.execute(
+                "DELETE FROM files WHERE project=?1 AND session=?2",
+                params![victim_project, victim_session],
             )
             .map_err(|e| e.to_string())?;
-        let mut rows = stmt
-            .query(params![project, session, newest])
-            .map_err(|e| e.to_string())?;
-        while freed < needed {
-            let Some(row) = rows.next().map_err(|e| e.to_string())? else {
-                break;
-            };
-            let count: usize = row.get(2).map_err(|e| e.to_string())?;
-            victims.push((
-                row.get::<_, String>(0).map_err(|e| e.to_string())?,
-                row.get::<_, String>(1).map_err(|e| e.to_string())?,
-            ));
-            freed += count;
+            tx.commit().map_err(|e| e.to_string())?;
         }
+        Ok(())
     }
-    if freed < needed {
-        return Err(
-            "This Project's recent conversations are more than the search index holds (25,000 messages). A shorter Copied history period keeps the newest."
-                .into(),
-        );
-    }
-    for (victim_project, victim_session) in victims {
-        erase(tx, &victim_project, Some(&victim_session), None)?;
-        tx.execute(
-            "DELETE FROM files WHERE project=?1 AND session=?2",
-            params![victim_project, victim_session],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
 fn erase(
     tx: &rusqlite::Transaction<'_>,

@@ -978,31 +978,40 @@ fn a_full_search_index_makes_room_for_the_named_projects_newest_session() {
     let mut index = SearchIndex::open(&database).unwrap();
     let month_ago = now - 30 * 86_400_000;
     for session in 0..5u64 {
-        for chunk in 0..10u64 {
-            let messages = (0..500u64)
+        for chunk in 0..50u64 {
+            let messages = (0..100u64)
                 .map(|i| IndexedMessage {
-                    offset: chunk * 500 + i,
+                    offset: chunk * 100 + i,
                     role: "user".into(),
-                    at_unix_ms: month_ago + session * 1_000_000 + chunk * 500 + i,
+                    at_unix_ms: month_ago + session * 1_000_000 + chunk * 100 + i,
                     text: format!("other project body {session} {chunk} {i}"),
                 })
-                .collect();
-            index
-                .apply(
+                .collect::<Vec<_>>();
+            // A step past its half-second work budget is interrupted whole and
+            // read again, as the worker does; a loaded machine can cross it.
+            for attempt in 0..20 {
+                let step = IndexStep::Read {
+                    reset: false,
+                    messages: messages.clone(),
+                    cursor: "c".into(),
+                    stamp: "s".into(),
+                    witness: "w".into(),
+                    more: false,
+                };
+                match index.apply(
                     "other-project",
                     &format!("other-{session}"),
                     "/gone",
                     0,
-                    IndexStep::Read {
-                        reset: false,
-                        messages,
-                        cursor: "c".into(),
-                        stamp: "s".into(),
-                        witness: "w".into(),
-                        more: false,
-                    },
-                )
-                .unwrap();
+                    step,
+                ) {
+                    Err(error) if error == "interrupted" && attempt < 19 => continue,
+                    result => {
+                        result.unwrap();
+                        break;
+                    }
+                }
+            }
         }
     }
     drop(index);
