@@ -345,7 +345,6 @@ impl SearchIndex {
                         newest,
                     )?;
                 }
-                let mut added = 0;
                 for message in messages {
                     if message.at_unix_ms < cutoff {
                         continue;
