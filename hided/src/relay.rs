@@ -30,6 +30,7 @@ use hide_node_link::terminal::{
 };
 use serde_json::json;
 
+use crate::owned_task::AbortOnDrop;
 use crate::terminal_hub::TerminalHub;
 
 /// How long a relay that ended waits for its writer to hand back the
@@ -507,8 +508,10 @@ pub async fn serve_terminals(
         }
     }
     let (sink, stream) = socket.split();
-    let reason = relay_terminals(sink, stream, &tap, terminals, &node, link.closed()).await;
-    outputs.remove(&tap);
+    let reason = relay_terminals(sink, stream, &tap, terminals, &node, link.closed(), || {
+        outputs.remove(&tap)
+    })
+    .await;
     herdr_core::diagnostic!(json!({
         "component": "node_relay",
         "kind": "relay.terminals_closed",
@@ -520,14 +523,17 @@ pub async fn serve_terminals(
 /// The relay's two directions until one ends: the tap's output goes down
 /// on a task of its own, so a send the node is slow to take (a 1 MiB message
 /// over a slow forward) never stops this relay reading the node's keys or
-/// the link's end. The node side is split the same way.
+/// the link's end. The node side is split the same way. `ended` runs as
+/// soon as the relay ends, before the close frame, so the core stops
+/// collecting output for a relay that no longer sends it.
 async fn relay_terminals<S, R>(
-    mut sink: S,
+    sink: S,
     mut stream: R,
     tap: &Arc<RelayTap>,
     terminals: Arc<dyn TerminalNode>,
     node: &str,
     link_closed: impl std::future::Future<Output = String>,
+    ended: impl FnOnce(),
 ) -> &'static str
 where
     S: futures_util::Sink<Message> + Unpin + Send + 'static,
@@ -537,6 +543,7 @@ where
     let mut writer = {
         let tap = Arc::clone(tap);
         let terminals = Arc::clone(&terminals);
+        let mut sink = sink;
         tokio::spawn(async move {
             let reason = loop {
                 tap.wake.notified().await;
@@ -556,16 +563,21 @@ where
             (reason, sink)
         })
     };
+    let _writer = AbortOnDrop(writer.abort_handle());
     let mut link_closed = std::pin::pin!(link_closed);
-    let mut closing = None;
+    // Set once the writer has finished: its sink when it handed one back,
+    // None when it panicked or was cancelled. A finished task is never
+    // polled again.
+    let mut finished: Option<Option<S>> = None;
     let reason = loop {
         tokio::select! {
-            written = &mut writer => match written {
-                Ok((reason, sink)) => {
-                    closing = Some(sink);
-                    break reason;
-                }
-                Err(_) => break "writer_ended",
+            written = &mut writer => {
+                let (reason, sink) = match written {
+                    Ok((reason, sink)) => (reason, Some(sink)),
+                    Err(_) => ("writer_ended", None),
+                };
+                finished = Some(sink);
+                break reason;
             },
             incoming = stream.next() => match incoming {
                 Some(Ok(Message::Text(text))) => {
@@ -585,21 +597,27 @@ where
         }
     };
     tap.close();
-    if closing.is_none() {
-        // A writer between sends sees the tap closed and hands its sink back
-        // for the close; one held by a send the node does not take is ended
-        // with the relay.
-        tap.wake.notify_one();
-        closing = match tokio::time::timeout(WRITER_HANDBACK, &mut writer).await {
-            Ok(written) => written.ok().map(|(_, sink)| sink),
-            Err(_) => {
-                writer.abort();
-                None
+    ended();
+    let closing = match finished {
+        Some(sink) => sink,
+        None => {
+            // A writer between sends sees the tap closed and hands its sink
+            // back for the close; one held by a send the node does not take
+            // is ended with the relay.
+            tap.wake.notify_one();
+            match tokio::time::timeout(WRITER_HANDBACK, &mut writer).await {
+                Ok(written) => written.ok().map(|(_, sink)| sink),
+                Err(_) => {
+                    writer.abort();
+                    None
+                }
             }
-        };
-    }
+        }
+    };
+    // The close is a courtesy: a node that takes nothing more has it for as
+    // long as a handback lasts, never longer.
     if let Some(mut sink) = closing {
-        let _ = sink.send(Message::Close(None)).await;
+        let _ = tokio::time::timeout(WRITER_HANDBACK, sink.send(Message::Close(None))).await;
     }
     reason
 }
@@ -682,10 +700,18 @@ mod tests {
             let tap = Arc::clone(&tap);
             let terminals: Arc<dyn TerminalNode> = keys.clone();
             tokio::spawn(async move {
-                relay_terminals(stalled, stream, &tap, terminals, "node-b", async move {
-                    let _ = ended.await;
-                    "closed".to_owned()
-                })
+                relay_terminals(
+                    stalled,
+                    stream,
+                    &tap,
+                    terminals,
+                    "node-b",
+                    async move {
+                        let _ = ended.await;
+                        "closed".to_owned()
+                    },
+                    || {},
+                )
                 .await
             })
         };
@@ -716,6 +742,73 @@ mod tests {
             .unwrap();
         assert_eq!(reason, "link_ended");
         assert_eq!(lock(&keys.0).as_slice(), [b"k".to_vec()]);
+    }
+
+    /// A writer that dies mid-send (a panic in the socket's send) ends the
+    /// relay as `writer_ended`; the relay never polls the finished task again.
+    #[tokio::test]
+    async fn a_writer_that_dies_ends_the_relay_without_a_second_poll() {
+        let tap = RelayTap::new("node-b");
+        tap.output("core-pane", b"\x1bcwhole", true);
+        let panicking = Box::pin(futures_util::sink::unfold((), |(), _: Message| async {
+            panic!("the socket's send panicked");
+            #[allow(unreachable_code)]
+            Ok::<(), axum::Error>(())
+        }));
+        let stream = Box::pin(futures_util::stream::pending::<Result<Message, axum::Error>>());
+        let terminals: Arc<dyn TerminalNode> = Arc::new(Keys::default());
+        let relay = tokio::spawn(async move {
+            relay_terminals(
+                panicking,
+                stream,
+                &tap,
+                terminals,
+                "node-b",
+                std::future::pending(),
+                || {},
+            )
+            .await
+        });
+        let reason = tokio::time::timeout(std::time::Duration::from_secs(5), relay)
+            .await
+            .expect("the relay did not end")
+            .expect("the relay panicked");
+        assert_eq!(reason, "writer_ended");
+    }
+
+    /// A relay that ended stops collecting output first, then sends its
+    /// close frame only as long as a handback lasts: a node that takes
+    /// nothing more never holds the relay open.
+    #[tokio::test]
+    async fn a_close_the_node_does_not_take_never_holds_the_relay() {
+        let tap = RelayTap::new("node-b");
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let sent = Arc::clone(&order);
+        let stalled = Box::pin(futures_util::sink::unfold((), move |(), _: Message| {
+            lock(&sent).push("close");
+            std::future::pending::<Result<(), axum::Error>>()
+        }));
+        let removed = Arc::clone(&order);
+        let stream = Box::pin(futures_util::stream::empty::<Result<Message, axum::Error>>());
+        let terminals: Arc<dyn TerminalNode> = Arc::new(Keys::default());
+        let relay = tokio::spawn(async move {
+            relay_terminals(
+                stalled,
+                stream,
+                &tap,
+                terminals,
+                "node-b",
+                std::future::pending(),
+                move || lock(&removed).push("removed"),
+            )
+            .await
+        });
+        let reason = tokio::time::timeout(std::time::Duration::from_secs(5), relay)
+            .await
+            .expect("the close held the relay")
+            .unwrap();
+        assert_eq!(reason, "node_closed");
+        assert_eq!(lock(&order).as_slice(), ["removed", "close"]);
     }
 
     #[test]

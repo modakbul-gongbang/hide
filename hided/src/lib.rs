@@ -28,6 +28,7 @@ pub mod node_uploads;
 
 pub mod node_panes;
 pub mod node_role;
+mod owned_task;
 pub mod pane_auth;
 mod pane_sizes;
 pub mod placement;

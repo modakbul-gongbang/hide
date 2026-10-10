@@ -3,6 +3,7 @@
 //! keeps to its core, with keys for those held while it is away.
 
 use super::*;
+use crate::owned_task::AbortOnDrop;
 
 /// Terminal lines for the core's panes waiting to go up the terminals
 /// relay, in bytes; past it a key is refused to its screen.
@@ -387,15 +388,6 @@ where
             return;
         }
         in_flight.connection = None;
-    }
-}
-
-/// Ends a task when its owner ends.
-struct AbortOnDrop(tokio::task::AbortHandle);
-
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
     }
 }
 
