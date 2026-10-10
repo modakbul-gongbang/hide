@@ -160,6 +160,12 @@ pub(crate) fn send(
         watch_warning: None,
         answer_wait_ended: None,
         bell_line: None,
+        // A letter to a machine with a clock waits on that clock from now;
+        // the store gives one to a machine a letter waits on.
+        intake_from: ledger
+            .node_clocks
+            .get(&recipient.device_id)
+            .map(|clock| clock.reading(now)),
     };
     ledger.letters.push(letter.clone());
     Ok(letter)
@@ -395,9 +401,9 @@ fn rang(ledger: &Ledger, actor: &Actor, digest: &str) -> bool {
 /// are spent, or whose recipient is never belled, stays pending for
 /// `hide inbox` and expires undelivered; the operator's own prompt promises
 /// it nothing.
-fn bell_pending(letter: &Letter, now: u64) -> bool {
+fn bell_pending(ledger: &Ledger, letter: &Letter, now: u64) -> bool {
     letter.state == State::Pending
-        && now.saturating_sub(letter.created_at_unix_ms) < super::DELIVERY_EXPIRY_MS
+        && letter.within_deadline(&ledger.node_clocks, now)
         && letter.attempts() < 3
         && super::doorbell::bell_target(&letter.recipient.kind)
 }
@@ -410,7 +416,7 @@ fn operator_prompt_intake(ledger: &Ledger, actor: &Actor, now: u64) -> Result<In
     let waiting = ledger
         .letters
         .iter()
-        .filter(|letter| letter.recipient.same_identity(actor) && bell_pending(letter, now))
+        .filter(|letter| letter.recipient.same_identity(actor) && bell_pending(ledger, letter, now))
         .count();
     let mut intake = Intake::default();
     if waiting > 0 && prompt_hook(&actor.kind) {
@@ -828,7 +834,9 @@ mod tests {
 
     /// The doorbell typing `line` for the letter at `index`.
     fn ring(ledger: &mut Ledger, index: usize, line: &str) {
-        ledger.letters[index].reserve_bell(50, line.into()).unwrap();
+        ledger.letters[index]
+            .reserve_bell(&Default::default(), 50, line.into())
+            .unwrap();
     }
 
     #[test]

@@ -450,6 +450,15 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
         Mechanism::Rewritten,
         Moves::Device,
     ),
+    // A machine's clock follows its id; the clock of the machine that becomes
+    // the owner is ended by the new core's store, which keeps each letter's
+    // wait (`Ledger::observe_reach`).
+    (
+        DELIVERY_LEDGER,
+        "/node_clocks/{key}",
+        Mechanism::Rewritten,
+        Moves::Device,
+    ),
     (
         DELIVERY_LEDGER,
         "/agents/*/native_machine",
@@ -1304,6 +1313,7 @@ mod tests {
                 "agents": [{"machine": "local", "native_machine": "local", "actor": actor("local"), "pane": "w1:p1", "host_scope": "/tmp/herdr.sock",
                             "project": root, "session": "s1", "instance": "term_1"}],
                 "spawns": [{"repo": root, "path": root, "requested_path": root, "pane": "w1:p2", "machine": "mini"}],
+                "node_clocks": {"mini": {"connected_ms": 60_000, "since": null}},
             }),
         );
         write(

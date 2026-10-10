@@ -226,6 +226,74 @@ fn an_older_app_on_the_core_machine_leaves_its_core_running() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// A letter that had waited 59 minutes for an agent on the window's machine
+/// when the core moved keeps that wait on the core's new machine, where it
+/// counts only while the window's machine is reachable: it outlives its hour
+/// while that machine is away and turns undelivered soon after it is back
+/// (amendment 4, B13).
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_letter_held_across_the_move_keeps_its_wait() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let unix_ms = || -> Result<u64> {
+            Ok(std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis() as u64)
+        };
+        let sent = unix_ms()? - 59 * 60_000;
+        fixture.kill_source()?;
+        let path = fixture.source.state.join("delivery-ledger.json");
+        let mut ledger: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        let actor = |pane: &str| json!({"pane_id": pane, "name": "lead", "kind": "claude", "device_id": SOURCE_NODE, "session": "lead-session"});
+        ledger["next_id"] = json!(100);
+        ledger["letters"] = json!([{"id": "letter-1", "intent": "held-across-move", "sender": actor("w9:p8"), "recipient": actor("w9:p9"), "kind": "report", "body": "A letter held across the move", "state": "pending", "hook_confirmed": false, "waiting_answer": false, "reply_to": null, "created_at_unix_ms": sent, "finished_at_unix_ms": null, "bell_errors": 0, "bell_sent": false, "bell_attempts": 0, "human_notified": false}]);
+        write_record(&path, &ledger)?;
+        fixture.start_source()?;
+        fixture.device_ready()?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.journal_until("done")?;
+        let target_ledger = fixture.target.state.join("delivery-ledger.json");
+        let held = || -> Result<(Value, Value)> {
+            let ledger: Value = serde_json::from_slice(&std::fs::read(&target_ledger)?)?;
+            let letter = ledger["letters"]
+                .as_array()
+                .and_then(|letters| letters.iter().find(|letter| letter["id"] == "letter-1"))
+                .cloned()
+                .context("the held letter")?;
+            Ok((letter, ledger["node_clocks"][SOURCE_NODE].clone()))
+        };
+        // The window's machine goes away.
+        fixture.kill_source()?;
+        wait_for("the window's machine read as away", || {
+            let (_, clock) = held()?;
+            Ok((clock.is_object() && clock["since"].is_null()).then_some(()))
+        })?;
+        let hour_passed = sent + 60 * 60_000 + 5_000;
+        wait_within(
+            "an hour since the letter was sent",
+            std::time::Duration::from_secs(120),
+            || Ok((unix_ms()? >= hour_passed).then_some(())),
+        )?;
+        let (letter, clock) = held()?;
+        ensure!(
+            letter["state"] == "pending",
+            "the letter did not wait while its machine was away: {letter} {clock}"
+        );
+        fixture.start_source()?;
+        wait_within(
+            "the held letter's deadline once its machine is back",
+            std::time::Duration::from_secs(120),
+            || {
+                let (letter, _) = held()?;
+                Ok((letter["state"] == "undelivered").then_some(()))
+            },
+        )?;
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The program the source's placement names on the target.
 fn placed_program(fixture: &Fixture) -> Result<String> {
     Ok(fixture
@@ -1164,9 +1232,10 @@ fn a_failing_move_back_check_changes_nothing() -> Result<()> {
             fixture.target_core()? == Some(core),
             "the target's core changed"
         );
+        let target_after = listing(&fixture.target.state)?;
         ensure!(
-            listing(&fixture.target.state)? == target_before,
-            "the target changed"
+            target_after == target_before,
+            "the target changed from {target_before:?} to {target_after:?}"
         );
         let journal = fixture
             .source

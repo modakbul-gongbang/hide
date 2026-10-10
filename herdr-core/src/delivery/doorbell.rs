@@ -254,12 +254,11 @@ impl Doorbell {
             .letters
             .iter()
             .filter(|letter| {
-                letter.state == State::Pending
-                    && now.saturating_sub(letter.created_at_unix_ms) < super::DELIVERY_EXPIRY_MS
+                letter.state == State::Pending && letter.within_deadline(&ledger.node_clocks, now)
             })
             .collect();
         let ids: HashSet<_> = pending.iter().map(|letter| letter.id.as_str()).collect();
-        self.forget(&ledger.letters, &ids, now);
+        self.forget(&ledger, &ids, now);
         self.rung.retain(|pane, _| {
             pending
                 .iter()
@@ -383,14 +382,14 @@ impl Doorbell {
     /// Drops what the doorbell kept for letters that left the pass. A letter
     /// that reached its deadline while held is logged with the reason it last
     /// waited for, so an undelivered letter names its cause.
-    fn forget(&mut self, letters: &[super::ledger::Letter], ids: &HashSet<&str>, now: u64) {
+    fn forget(&mut self, ledger: &super::ledger::Ledger, ids: &HashSet<&str>, now: u64) {
         for (id, reason) in &self.held {
             if ids.contains(id.as_str()) {
                 continue;
             }
-            if let Some(letter) = letters.iter().find(|letter| &letter.id == id)
+            if let Some(letter) = ledger.letters.iter().find(|letter| &letter.id == id)
                 && matches!(letter.state, State::Pending | State::Undelivered)
-                && now.saturating_sub(letter.created_at_unix_ms) >= super::DELIVERY_EXPIRY_MS
+                && !letter.within_deadline(&ledger.node_clocks, now)
             {
                 crate::diagnostic!(json!({"component":"delivery","kind":"doorbell.expired",
                     "letter_id":id,"pane_id":letter.recipient.pane_id,"reason":reason.code()}));

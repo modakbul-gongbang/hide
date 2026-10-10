@@ -1064,6 +1064,10 @@ mod tests {
                     {"repo": C_ROOT, "path": C_ROOT, "requested_path": C_ROOT, "pane": "w2:p2", "machine": ALIAS},
                     {"repo": X_ROOT, "path": X_ROOT, "requested_path": X_ROOT, "pane": "w3:p2", "machine": X},
                 ],
+                "node_clocks": {
+                    ALIAS: {"connected_ms": 600_000, "since": null},
+                    X: {"connected_ms": 60_000, "since": null},
+                },
             }),
         );
         write(

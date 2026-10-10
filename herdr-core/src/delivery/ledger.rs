@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
 use std::path::{Component, Path};
 
@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use super::watch::Watch;
 use super::{
-    ANSWER_WAIT_MS, Actor, BODY_LIMIT, FILE_LIMIT, LETTER_LIMIT, OPEN_LIMIT, RETENTION_MS,
-    WATCH_LIMIT,
+    ANSWER_WAIT_MS, Actor, BODY_LIMIT, DELIVERY_EXPIRY_MS, FILE_LIMIT, LETTER_LIMIT, OPEN_LIMIT,
+    RETENTION_MS, WATCH_LIMIT,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -74,7 +74,40 @@ pub struct Letter {
     /// submitted prompt is that bell exactly when it is this line.
     #[serde(default)]
     pub bell_line: Option<String>,
+    /// Where the letter's wait for intake began: on its recipient machine's
+    /// clock while the ledger keeps one (`Ledger::node_clocks`), on the wall
+    /// clock otherwise; null is its creation on the wall clock.
+    #[serde(default)]
+    pub intake_from: Option<u64>,
 }
+
+/// How long one machine other than this core's own has been reachable, which
+/// the delivery deadline of a letter to an agent there counts instead of wall
+/// time (PRD core-host-node-move B13, D-11).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeClock {
+    /// Reachable time in ended stretches.
+    pub connected_ms: u64,
+    /// When the stretch running now began; null while the machine is not
+    /// reachable.
+    #[serde(default)]
+    pub since: Option<u64>,
+}
+
+impl NodeClock {
+    pub(crate) fn reading(&self, now: u64) -> u64 {
+        self.connected_ms
+            .saturating_add(self.since.map_or(0, |since| now.saturating_sub(since)))
+    }
+}
+
+/// The machines other than this core's own that the delivery store hears of,
+/// each with whether a letter can reach it now (PRD core-host-node-move B13).
+pub type Reach = BTreeMap<String, bool>;
+
+/// How often a reachable machine's running stretch is written into its clock,
+/// which bounds what a core that stops without a last save loses of it.
+pub const CLOCK_FOLD_MS: u64 = 60_000;
 
 impl Ledger {
     /// When this pane's session sent the newest request or block letter whose
@@ -117,11 +150,27 @@ impl Letter {
             || (self.state == State::Acknowledged && self.hook_confirmed == Some(false))
     }
 
+    /// How long the letter has waited for intake at `now`: the time its
+    /// recipient's machine was reachable since then, while `clocks` keeps one
+    /// for it, and wall time otherwise (this core's own machine).
+    pub(crate) fn intake_waited(&self, clocks: &BTreeMap<String, NodeClock>, now: u64) -> u64 {
+        match clocks.get(&self.recipient.device_id) {
+            Some(clock) => clock
+                .reading(now)
+                .saturating_sub(self.intake_from.unwrap_or_default()),
+            None => now.saturating_sub(self.intake_from.unwrap_or(self.created_at_unix_ms)),
+        }
+    }
+
+    /// Whether the letter is still within its delivery deadline at `now`.
+    pub(crate) fn within_deadline(&self, clocks: &BTreeMap<String, NodeClock>, now: u64) -> bool {
+        self.intake_waited(clocks, now) < DELIVERY_EXPIRY_MS
+    }
+
     /// Whether the delivery deadline passed while the letter still waits for
     /// intake; `Ledger::expire` ends that wait.
-    pub(crate) fn intake_overdue(&self, now: u64) -> bool {
-        self.awaiting_intake()
-            && now.saturating_sub(self.created_at_unix_ms) >= super::DELIVERY_EXPIRY_MS
+    pub(crate) fn intake_overdue(&self, clocks: &BTreeMap<String, NodeClock>, now: u64) -> bool {
+        self.awaiting_intake() && !self.within_deadline(clocks, now)
     }
 
     /// Whether the answer is still awaited past its deadline.
@@ -148,14 +197,17 @@ impl Letter {
 
     /// Spends one of the letter's three bells on `line`, which the doorbell
     /// types once this reservation is saved.
-    pub(crate) fn reserve_bell(&mut self, now: u64, line: String) -> Result<u8, String> {
+    pub(crate) fn reserve_bell(
+        &mut self,
+        clocks: &BTreeMap<String, NodeClock>,
+        now: u64,
+        line: String,
+    ) -> Result<u8, String> {
         self.recipient.require_native_identity()?;
         if !super::bell::valid_line(&line) {
             return Err("bell_line_invalid".into());
         }
-        if self.state != State::Pending
-            || now.saturating_sub(self.created_at_unix_ms) >= super::DELIVERY_EXPIRY_MS
-        {
+        if self.state != State::Pending || !self.within_deadline(clocks, now) {
             return Err("letter_not_pending".into());
         }
         if self.attempts() >= 3 {
@@ -178,6 +230,12 @@ pub struct Ledger {
     pub agents: Vec<crate::coordination::AgentRecord>,
     #[serde(default)]
     pub spawns: Vec<crate::coordination::SpawnRecord>,
+    /// The clock of each machine other than this core's own that a letter
+    /// waits on, by its registration id; a machine without one, this core's
+    /// own among them, is waited on in wall time. One per machine with a
+    /// letter awaiting intake, so the letters bound them.
+    #[serde(default)]
+    pub node_clocks: BTreeMap<String, NodeClock>,
 }
 
 impl Default for Ledger {
@@ -189,6 +247,7 @@ impl Default for Ledger {
             watches: Vec::new(),
             agents: Vec::new(),
             spawns: Vec::new(),
+            node_clocks: BTreeMap::new(),
         }
     }
 }
@@ -201,6 +260,7 @@ impl Ledger {
         if self.letters.len() > LETTER_LIMIT
             || self.letters.iter().filter(|letter| letter.open()).count() > OPEN_LIMIT
             || self.watches.len() > WATCH_LIMIT
+            || self.node_clocks.len() > OPEN_LIMIT
         {
             return Err("capacity".into());
         }
@@ -240,6 +300,10 @@ impl Ledger {
                     letter.state,
                     State::Cancelled | State::Undelivered | State::Expired
                 ) && letter.waiting_answer)
+                // A letter waiting on a machine's clock knows where on it.
+                || (letter.awaiting_intake()
+                    && letter.intake_from.is_none()
+                    && self.node_clocks.contains_key(&letter.recipient.device_id))
             {
                 return Err("ledger_unavailable".into());
             }
@@ -282,8 +346,9 @@ impl Ledger {
 
     pub fn expire(&mut self, now: u64) -> bool {
         let mut changed = self.cleanup(now);
+        let clocks = &self.node_clocks;
         for letter in &mut self.letters {
-            if !letter.intake_overdue(now) {
+            if !letter.intake_overdue(clocks, now) {
                 continue;
             }
             if letter.state == State::Pending {
@@ -303,6 +368,141 @@ impl Ledger {
             changed = true;
         }
         changed
+    }
+
+    /// Brings the machines' clocks to what `reach` says at `now` (PRD
+    /// core-host-node-move B13): a machine with a letter awaiting intake and
+    /// no clock gets one, a stretch starts when the machine becomes
+    /// reachable and ends when it stops being so, a running stretch is
+    /// written in every [`CLOCK_FOLD_MS`], and a clock goes once no letter
+    /// waits on it or its machine is no longer another machine this core
+    /// hears of (it left, or it is now this core's own). Every letter keeps
+    /// the wait it had through each of these. Returns whether anything
+    /// changed.
+    pub fn observe_reach(&mut self, reach: &Reach, now: u64) -> bool {
+        let mut changed = false;
+        let waited_on: HashSet<String> = self
+            .letters
+            .iter()
+            .filter(|letter| letter.awaiting_intake())
+            .map(|letter| letter.recipient.device_id.clone())
+            .collect();
+        let ended: Vec<String> = self
+            .node_clocks
+            .keys()
+            .filter(|device| !reach.contains_key(*device) || !waited_on.contains(*device))
+            .cloned()
+            .collect();
+        for device in ended {
+            self.stop_clock(&device, now);
+            changed = true;
+        }
+        for (device, &reachable) in reach {
+            if !waited_on.contains(device) {
+                continue;
+            }
+            let Some(clock) = self.node_clocks.get_mut(device) else {
+                self.start_clock(device, reachable, now);
+                changed = true;
+                continue;
+            };
+            match (clock.since, reachable) {
+                (None, true) => clock.since = Some(now),
+                (Some(since), false) => {
+                    clock.connected_ms =
+                        clock.connected_ms.saturating_add(now.saturating_sub(since));
+                    clock.since = None;
+                }
+                (Some(since), true) if now.saturating_sub(since) >= CLOCK_FOLD_MS => {
+                    clock.connected_ms =
+                        clock.connected_ms.saturating_add(now.saturating_sub(since));
+                    clock.since = Some(now);
+                }
+                _ => continue,
+            }
+            changed = true;
+        }
+        changed
+    }
+
+    /// Whether [`Ledger::observe_reach`] would change anything at `now`, asked
+    /// without a copy of the ledger.
+    pub fn reach_moves(&self, reach: &Reach, now: u64) -> bool {
+        let waited_on = |device: &str| {
+            self.letters
+                .iter()
+                .any(|letter| letter.awaiting_intake() && letter.recipient.device_id == device)
+        };
+        self.node_clocks
+            .iter()
+            .any(|(device, clock)| match reach.get(device) {
+                None => true,
+                Some(&reachable) => {
+                    !waited_on(device)
+                        || match (clock.since, reachable) {
+                            (None, true) | (Some(_), false) => true,
+                            (Some(since), true) => now.saturating_sub(since) >= CLOCK_FOLD_MS,
+                            (None, false) => false,
+                        }
+                }
+            })
+            || reach
+                .keys()
+                .any(|device| !self.node_clocks.contains_key(device) && waited_on(device))
+    }
+
+    /// Puts the letters awaiting intake by an agent on `device` on a new
+    /// clock for it, each with the wall time it waited so far: the clock
+    /// starts at the longest of those waits.
+    fn start_clock(&mut self, device: &str, reachable: bool, now: u64) {
+        let waits: Vec<(usize, u64)> = self
+            .letters
+            .iter()
+            .enumerate()
+            .filter(|(_, letter)| letter.awaiting_intake() && letter.recipient.device_id == device)
+            .map(|(index, letter)| (index, letter.intake_waited(&self.node_clocks, now)))
+            .collect();
+        let start = waits
+            .iter()
+            .map(|(_, waited)| *waited)
+            .max()
+            .unwrap_or_default();
+        for (index, waited) in waits {
+            self.letters[index].intake_from = Some(start - waited);
+        }
+        self.node_clocks.insert(
+            device.to_owned(),
+            NodeClock {
+                connected_ms: start,
+                since: reachable.then_some(now),
+            },
+        );
+    }
+
+    /// Ends the clock of `device`; the letters still awaiting intake by an
+    /// agent there wait on in wall time, each with the wait it had.
+    fn stop_clock(&mut self, device: &str, now: u64) {
+        let waits: Vec<(usize, u64)> = self
+            .letters
+            .iter()
+            .enumerate()
+            .filter(|(_, letter)| letter.recipient.device_id == device)
+            .map(|(index, letter)| (index, letter.intake_waited(&self.node_clocks, now)))
+            .collect();
+        self.node_clocks.remove(device);
+        for (index, waited) in waits {
+            let letter = &mut self.letters[index];
+            letter.intake_from = letter.awaiting_intake().then(|| now.saturating_sub(waited));
+        }
+    }
+
+    /// What a ledger read at a core's start knows of a stretch that was
+    /// running when the last core stopped is only up to its last write, so
+    /// every running stretch ends there, with what was written of it.
+    fn end_stretches_at_start(&mut self) {
+        for clock in self.node_clocks.values_mut() {
+            clock.since = None;
+        }
     }
 
     /// Ends the answer wait of every letter `actor` sent or received and the
@@ -363,8 +563,9 @@ pub fn load(path: &Path) -> Result<Ledger, String> {
     if bytes.len() > FILE_LIMIT {
         return Err("ledger_unavailable".into());
     }
-    let ledger: Ledger = serde_json::from_slice(&bytes).map_err(|_| "ledger_unavailable")?;
+    let mut ledger: Ledger = serde_json::from_slice(&bytes).map_err(|_| "ledger_unavailable")?;
     ledger.validate().map_err(|_| "ledger_unavailable")?;
+    ledger.end_stretches_at_start();
     Ok(ledger)
 }
 
@@ -514,6 +715,101 @@ pub fn recover(path: &Path) -> Result<Ledger, SaveError> {
 mod tests {
     use super::*;
 
+    const MINUTE: u64 = 60_000;
+
+    /// A ledger holding one letter sent at `sent` to an agent on `device`.
+    fn letter_to(device: &str, sent: u64) -> Ledger {
+        let mut ledger = Ledger::default();
+        let actor = |name: &str, device: &str| Actor {
+            pane_id: name.into(),
+            name: name.into(),
+            kind: "codex".into(),
+            device_id: device.into(),
+            session: Some(format!("{name}-native")),
+        };
+        super::super::mailbox::send(
+            &mut ledger,
+            &actor("sender", "local"),
+            &actor("recipient", device),
+            "once",
+            "private",
+            "request",
+            None,
+            sent,
+        )
+        .unwrap();
+        ledger
+    }
+
+    fn reach(device: &str, reachable: bool) -> Reach {
+        [(device.to_owned(), reachable)].into()
+    }
+
+    /// The deadline of a letter to another machine runs only while that
+    /// machine is reachable: two hours away count nothing, and the letter
+    /// turns undelivered 60 reachable minutes after it was sent; then the
+    /// clock goes with the last letter waiting on it (B13).
+    #[test]
+    fn a_letter_to_another_machine_waits_only_while_that_machine_is_reachable() {
+        let mut ledger = letter_to("mini", 0);
+        ledger.observe_reach(&reach("mini", true), 0);
+        ledger.observe_reach(&reach("mini", false), 10 * MINUTE);
+        ledger.expire(130 * MINUTE);
+        assert_eq!(ledger.letters[0].state, State::Pending);
+        ledger.observe_reach(&reach("mini", true), 130 * MINUTE);
+        ledger.expire(179 * MINUTE);
+        assert_eq!(ledger.letters[0].state, State::Pending);
+        ledger.expire(180 * MINUTE);
+        assert_eq!(ledger.letters[0].state, State::Undelivered);
+        ledger.observe_reach(&reach("mini", true), 180 * MINUTE);
+        assert!(ledger.node_clocks.is_empty());
+    }
+
+    /// A letter keeps the wait it had when its recipient's machine changes
+    /// sides in a move (amendment 4): fifty wall minutes to this core's own
+    /// machine leave ten reachable minutes once it is another machine, and
+    /// fifty reachable minutes leave ten wall minutes once it is this core's.
+    #[test]
+    fn a_letter_keeps_its_wait_when_its_machine_changes_sides() {
+        let mut ledger = letter_to("macbook", 0);
+        ledger.observe_reach(&Reach::new(), 50 * MINUTE);
+        ledger.observe_reach(&reach("macbook", false), 50 * MINUTE);
+        ledger.observe_reach(&reach("macbook", true), 300 * MINUTE);
+        ledger.expire(309 * MINUTE);
+        assert_eq!(ledger.letters[0].state, State::Pending);
+        ledger.expire(310 * MINUTE);
+        assert_eq!(ledger.letters[0].state, State::Undelivered);
+
+        let mut ledger = letter_to("mini", 0);
+        ledger.observe_reach(&reach("mini", true), 0);
+        ledger.observe_reach(&reach("mini", false), 50 * MINUTE);
+        ledger.observe_reach(&Reach::new(), 400 * MINUTE);
+        ledger.expire(409 * MINUTE);
+        assert_eq!(ledger.letters[0].state, State::Pending);
+        ledger.expire(410 * MINUTE);
+        assert_eq!(ledger.letters[0].state, State::Undelivered);
+    }
+
+    /// A core that stops loses only the part of a reachable stretch it had
+    /// not written: the stretch is written every minute, and the next core
+    /// counts from what was written, not from the stretch's start (B13).
+    #[test]
+    fn a_restart_counts_a_running_stretch_only_up_to_its_last_write() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("ledger.json");
+        let mut ledger = letter_to("mini", 0);
+        ledger.observe_reach(&reach("mini", true), 0);
+        assert!(ledger.observe_reach(&reach("mini", true), 30 * MINUTE));
+        save(&path, &ledger).unwrap();
+        // Stopped at 31 minutes, started again an hour later.
+        let mut ledger = load(&path).unwrap();
+        ledger.observe_reach(&reach("mini", true), 90 * MINUTE);
+        ledger.expire(119 * MINUTE);
+        assert_eq!(ledger.letters[0].state, State::Pending);
+        ledger.expire(120 * MINUTE);
+        assert_eq!(ledger.letters[0].state, State::Undelivered);
+    }
+
     fn letter() -> Ledger {
         let mut ledger = Ledger::default();
         let sender = Actor {
@@ -553,7 +849,9 @@ mod tests {
             for attempt in 1..=3 {
                 let line = format!("🔔 sender 보고: 시도 {attempt}");
                 assert_eq!(
-                    ledger.letters[0].reserve_bell(2, line.clone()).unwrap(),
+                    ledger.letters[0]
+                        .reserve_bell(&Default::default(), 2, line.clone())
+                        .unwrap(),
                     attempt
                 );
                 save(&path, &ledger).unwrap();
@@ -574,7 +872,7 @@ mod tests {
             let before = ledger.bytes().unwrap();
             assert_eq!(
                 ledger.letters[0]
-                    .reserve_bell(2, "🔔 a 보고: b".into())
+                    .reserve_bell(&Default::default(), 2, "🔔 a 보고: b".into())
                     .unwrap_err(),
                 "doorbell_attempt_limit"
             );
@@ -593,7 +891,7 @@ mod tests {
             ledger = load(&path).unwrap();
             assert_eq!(
                 ledger.letters[0]
-                    .reserve_bell(2, "🔔 a 보고: b".into())
+                    .reserve_bell(&Default::default(), 2, "🔔 a 보고: b".into())
                     .unwrap_err(),
                 "letter_not_pending"
             );
@@ -620,20 +918,20 @@ mod tests {
             if sent {
                 assert_eq!(
                     restored.letters[0]
-                        .reserve_bell(2, "🔔 a 보고: b".into())
+                        .reserve_bell(&Default::default(), 2, "🔔 a 보고: b".into())
                         .unwrap_err(),
                     "doorbell_attempt_limit"
                 );
             } else {
                 assert_eq!(
                     restored.letters[0]
-                        .reserve_bell(2, "🔔 a 보고: b".into())
+                        .reserve_bell(&Default::default(), 2, "🔔 a 보고: b".into())
                         .unwrap(),
                     3
                 );
                 assert_eq!(
                     restored.letters[0]
-                        .reserve_bell(2, "🔔 a 보고: b".into())
+                        .reserve_bell(&Default::default(), 2, "🔔 a 보고: b".into())
                         .unwrap_err(),
                     "doorbell_attempt_limit"
                 );
@@ -642,7 +940,7 @@ mod tests {
         let mut invalid = ledger;
         assert_eq!(
             invalid.letters[0]
-                .reserve_bell(2, "🔔 a\n보고".into())
+                .reserve_bell(&Default::default(), 2, "🔔 a\n보고".into())
                 .unwrap_err(),
             "bell_line_invalid"
         );

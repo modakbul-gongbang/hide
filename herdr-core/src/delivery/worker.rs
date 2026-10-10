@@ -585,13 +585,14 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
             ));
         }
         Effect::BellAttempt { id, observed, line } => {
+            let clocks = &ledger.node_clocks;
             let letter = ledger
                 .letters
                 .iter_mut()
                 .find(|letter| letter.id == *id && letter.recipient.same_identity(&observed.actor))
                 .ok_or("letter_unavailable")?;
             return Ok((
-                json!({"attempt":letter.reserve_bell(now, line.clone())?}),
+                json!({"attempt":letter.reserve_bell(clocks, now, line.clone())?}),
                 false,
             ));
         }
@@ -723,9 +724,10 @@ fn run(
                     guard.delivery_state()?,
                     guard.delivery_registrations_gone(),
                     guard.delivery_registration_rebinds(),
+                    guard.delivery_reach(),
                 ))
             });
-        let (state, gone, rebinds) = match state {
+        let (state, gone, rebinds, reach) = match state {
             Ok(state) => state,
             Err(code) => {
                 for request in batch {
@@ -742,8 +744,9 @@ fn run(
             maintenance_at = now;
             if gone.is_empty()
                 && rebinds.is_empty()
+                && !state.reach_moves(&reach, now)
                 && !state.letters.iter().any(|letter| {
-                    letter.intake_overdue(now)
+                    letter.intake_overdue(&state.node_clocks, now)
                         || letter.answer_overdue(now)
                         || (!letter.open()
                             && letter.finished_at_unix_ms.is_some_and(|finished| {
@@ -755,6 +758,9 @@ fn run(
             }
         }
         let mut candidate = (*state).clone();
+        // First, so a deadline and a letter sent in this batch read the
+        // machines' clocks as they are now.
+        candidate.observe_reach(&reach, now);
         candidate.expire(now);
         candidate.end_overdue_answer_waits(now);
         let moved = crate::coordination::rebind(&mut candidate, &rebinds);
@@ -872,6 +878,8 @@ fn run(
             }
             results.push(result);
         }
+        // A letter this batch sent to a machine without a clock gets one.
+        candidate.observe_reach(&reach, now);
         let changed = candidate != *state;
         let mut saved = if changed {
             ledger::save(&path, &candidate)

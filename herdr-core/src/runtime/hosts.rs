@@ -734,6 +734,16 @@ impl Runtime {
             .map_or(0, |host| host.generation)
     }
 
+    /// Whether the device's link was up and has ended: its helper reports
+    /// unavailable, or the channel it was ready on has closed.
+    pub(super) fn device_host_ended(&self, device_id: &str) -> bool {
+        match self.device_hosts.get(device_id).map(|host| &host.phase) {
+            Some(HostPhase::Unavailable(_)) => true,
+            Some(HostPhase::Ready { host, .. }) => host.closed_reason().is_some(),
+            _ => false,
+        }
+    }
+
     pub(super) fn device_host_connecting(&self, device_id: &str) -> bool {
         matches!(
             self.device_hosts.get(device_id).map(|host| &host.phase),

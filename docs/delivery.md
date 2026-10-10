@@ -216,7 +216,7 @@ Capacity errors retain existing letters and watches.
 
 | Resource or clock | Bound |
 | --- | --- |
-| Pending delivery deadline | 60 minutes, then `undelivered`; visible through CLI |
+| Pending delivery deadline | 60 minutes of the recipient's machine being reachable (wall time on the core's own machine), then `undelivered`; visible through CLI |
 | Quiet period | 30 seconds since hide last routed a key and since Herdr last changed the pane's status |
 | Doorbell reservations per letter | Three total, persisted across restart |
 | First inactivity warning | 20 minutes without activity; the Factory's stall window (30 minutes by default) when the observer is a Factory |
@@ -230,10 +230,18 @@ Capacity errors retain existing letters and watches.
 | Hook batch / context / total deadline | Five letters / 8 KiB / two seconds |
 
 Automatic doorbells apply only to `pending` letters, and the deadline turns only a `pending` letter `undelivered`, while watch clocks remain distinct.
+
+The deadline of a letter to an agent on another machine counts only the time that machine is reachable (PRD core-host-node-move B13, D-11): the core holds that machine's Herdr connection and its link has not ended, so a MacBook that is closed, asleep or away holds its letters at the core and they are handed over when it is back, with the hours away not counted.
+The ledger keeps one clock per machine a letter awaits intake on (`node_clocks`, keyed by its registration id: the reachable time in ended stretches and the start of the one running now), and each letter records where on its machine's clock its wait began (`intake_from`); a letter to the core's own machine, and one written before this rule, waits in wall time from its creation as before.
+The store reads which machines are reachable under the runtime lock on each pass (`Runtime::delivery_reach`); a node's link end is read there at once, before the sync that notices its Herdr is gone.
+A stretch is written into its clock every minute while a letter waits on it, so a core that stops loses at most that minute of it, and a core reading the ledger at its start counts no time between the last write and its own start.
+A machine gets a clock when a letter waits on it, and loses it once none does, it leaves, or a move makes it the core's own; each of these keeps every letter's wait, so a letter that waited 50 minutes when the core moved turns `undelivered` after 10 more, never resetting and never losing what it waited (`Ledger::observe_reach`; the move renames the clocks with their machines, `node_migration::KEYS`).
+The open-letter limit bounds the letters held this way, and with them the clocks.
+A bell reserved and then lost with its machine's link spends one of the letter's three attempts, as any bell that failed after its reservation does, because a failed call may still have typed it; the letter is still handed over at the agent's next turn.
 A letter an earlier build acknowledged without a receipt stops awaiting intake at the same 60-minute deadline, on the store's first pass after it (within a second of startup for an existing backlog): the hook no longer hands it over, its receipt reads `null` like the legacy acknowledged records below, and it no longer counts against the open-letter limit unless it still awaits a reply.
 Legacy records with missing or null `hook_confirmed` prove intake only in `delivered` state; older `acknowledged` records remain unknown, excluded from pull and subject to their previous closed-state retention rules unless still awaiting a reply.
 The 24-hour answer deadline is judged in the store's same maintenance pass, which runs when some letter or registration needs it: a wait past its deadline counts as such work, so no new thread or timer exists.
-A registration ending leaves a letter still awaiting intake alone: it follows the 60-minute delivery deadline above, and only a letter the recipient took in has its answer wait ended.
+A registration ending leaves a letter still awaiting intake alone: it follows the 60-minute delivery deadline above, in wall time from then on, and only a letter the recipient took in has its answer wait ended.
 The first pass of a build that has this rule closes every wait older than 24 hours in the ledger it finds and leaves the younger ones; the ledger stays at version 1, and an older build ignores the new field and drops it at its next save.
 Each closed wait logs one `delivery` diagnostic `answer_wait.ended` with the letter id, both agents' names and panes and the reason, never the body, and nothing reaches the screen.
 There is no transition to `expired` in this contract; an undelivered letter uses the existing human notification paths without creating another letter or UI banner.
