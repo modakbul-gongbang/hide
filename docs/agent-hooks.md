@@ -84,7 +84,7 @@ An item is eligible only after a lexical match, a bounded two- or three-characte
 At most three whole Memory items and 600 estimated tokens are returned in the same `additionalContext` envelope, excluding items already provided by `SessionStart` for that session.
 The core records the authoritative SessionStart receipt in the app-owned SQLite store after it observes the injected envelope, including an internal zero-item receipt when the session begins before any Memory exists.
 The helper authenticates that receipt with the Project-scoped key in the same SQLite store, binding the runtime, session, hook event, and exact ordered item revisions without creating another persistence surface.
-The core accepts it only from provider-owned transcript metadata, including actual Codex developer messages, and verifies the authentication tag before recording or hiding the marker.
+The core accepts it only from provider-owned transcript records, including Claude Code's `hook_additional_context` attachment and actual Codex developer messages, and verifies the authentication tag before recording or hiding the marker.
 That zero-item receipt does not present a misleading `Project Memory ready 0` message; it only lets later prompts distinguish an observed empty start from a projection race.
 If the first prompt races that projection, the helper omits Memory for that prompt rather than guessing which items were delivered; the next prompt retries the read-only lookup after the receipt exists, and no sidecar or second store is written.
 If multiple observed SessionStart envelopes name different item sets, the exclusion read returns their deterministic union so retries converge instead of selecting an arbitrary receipt.

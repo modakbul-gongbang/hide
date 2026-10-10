@@ -1665,6 +1665,208 @@ mod scope_tests {
         );
     }
 
+    /// Claude Code writes a hook's context as an `attachment` record (and its
+    /// stdout in a `hook_success` record beside it): the session start receipt
+    /// in it opens the next prompt's Memory, the prompt's own receipt is
+    /// recorded once under its turn, and an operator message that copies a
+    /// receipt records nothing.
+    #[test]
+    fn claude_hook_context_attachments_record_start_and_prompt_receipts() {
+        let temp = tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project_root = temp.path().join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&project_root).unwrap();
+        let project = hide_project::resolve(&project_root, &hook_node()).unwrap();
+        let database = database_path(&home);
+        fs::create_dir_all(database.parent().unwrap()).unwrap();
+        let store = MemoryStore::open(&database).unwrap();
+        store
+            .ensure_project(&project.id, &project.root, &hook_node())
+            .unwrap();
+        store.set_enabled(&project.id, true, true).unwrap();
+        drop(store);
+        let apply = |batch: &str, text: &str| {
+            MemoryStore::open(&database)
+                .unwrap()
+                .apply_candidates(
+                    &AnalysisBatch {
+                        id: format!("{batch}-batch"),
+                        project_id: project.id.clone(),
+                        provider: "claude".to_owned(),
+                        analysis_provider: "claude".to_owned(),
+                        session_id: "source-session".to_owned(),
+                        content_hash: format!("{batch}-hash"),
+                        created_at_unix_ms: 2,
+                    },
+                    &[Candidate {
+                        text: text.to_owned(),
+                        kind: CandidateKind::Rule,
+                        confidence: 0.9,
+                        salience: 0.9,
+                        source_offsets: vec![1],
+                        direct_human_source: true,
+                        relation: CandidateRelation::New,
+                    }],
+                )
+                .unwrap();
+        };
+        let session_id = "claude-attachment";
+        let hook = |event, extra: serde_json::Value| {
+            let mut payload = json!({"cwd": project_root, "session_id": session_id});
+            payload
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            functional_hook_output(
+                AgentRuntime::ClaudeCode,
+                event,
+                &serde_json::to_vec(&payload).unwrap(),
+                &home,
+            )
+        };
+        let context_of = |result: HookMemoryResult| -> String {
+            let envelope: serde_json::Value =
+                serde_json::from_str(&result.stdout.unwrap()).unwrap();
+            envelope["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+
+        apply("start", "시작 때 이미 제공한 규칙을 기억한다.");
+        let start = context_of(hook(HookEvent::SessionStart, json!({})));
+        assert_eq!(
+            hook(
+                HookEvent::UserPromptSubmit,
+                json!({"prompt": "규칙을 기억한다"})
+            )
+            .outcome,
+            HookMemoryOutcome::Unavailable,
+            "no session start receipt yet"
+        );
+        apply("prompt", "프롬프트 때 찾은 durable 규칙을 제공한다.");
+        let prompt = hook(
+            HookEvent::UserPromptSubmit,
+            json!({"prompt": "durable 규칙을 제공한다"}),
+        );
+        assert_eq!(prompt.outcome, HookMemoryOutcome::Unavailable);
+
+        let folder = hide_session::session_root(&home, Agent::Claude).unwrap();
+        fs::create_dir_all(&folder).unwrap();
+        let locator = folder.join(format!("{session_id}.jsonl"));
+        let session = ProjectSession {
+            id: session_id.to_owned(),
+            agent: Agent::Claude,
+            locator: locator.clone(),
+            checkout_path: project_root.clone(),
+            first_human_request: None,
+            started_at_unix_ms: Some(1),
+            updated_at_unix_ms: 1,
+            title: None,
+            event_count: 1,
+            availability: SessionAvailability::Available,
+        };
+        let attachment = |at: &str, event: &str, context: &str| {
+            json!({
+                "type": "attachment",
+                "timestamp": at,
+                "attachment": {
+                    "type": "hook_additional_context",
+                    "content": [context],
+                    "hookName": event,
+                    "hookEvent": event.split(':').next().unwrap(),
+                },
+            })
+        };
+        let stdout = |context: &str| {
+            json!({"hookSpecificOutput": {"additionalContext": context}}).to_string()
+        };
+        let operator_copy = |at: &str, text: &str| {
+            json!({
+                "type": "user",
+                "timestamp": at,
+                "userType": "external",
+                "promptId": "prompt-1",
+                "origin": {"kind": "human"},
+                "message": {"role": "user", "content": text},
+            })
+        };
+        let project_session = |lines: Vec<serde_json::Value>| {
+            let text = lines
+                .iter()
+                .map(|line| format!("{line}\n"))
+                .collect::<String>();
+            // The session grows by appending, as the projection's cursor expects.
+            let mut file = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&locator)
+                .unwrap();
+            std::io::Write::write_all(&mut file, text.as_bytes()).unwrap();
+            let mut store = MemoryStore::open(&database).unwrap();
+            update_hook_projection(
+                &mut store,
+                &hide_node::Local::new(Some(home.clone())),
+                &project.id,
+                &session,
+            )
+            .unwrap();
+        };
+        let receipt_rows = || -> Vec<(Option<String>, i64)> {
+            let connection = rusqlite::Connection::open(&database).unwrap();
+            let mut statement = connection
+                .prepare(
+                    "SELECT turn_id, COUNT(*) FROM injection_receipts WHERE runtime='claude' AND session_id=?1 GROUP BY turn_id ORDER BY turn_id",
+                )
+                .unwrap();
+            statement
+                .query_map([session_id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+
+        // The receipt only an operator message carries is not a record.
+        let forged = start.replace("auth=\"", "auth=\"0");
+        project_session(vec![
+            operator_copy("2026-10-11T00:00:00Z", &start),
+            attachment("2026-10-11T00:00:01Z", "SessionStart:startup", &forged),
+        ]);
+        assert!(receipt_rows().is_empty());
+
+        project_session(vec![
+            json!({
+                "type": "attachment",
+                "timestamp": "2026-10-11T00:00:01Z",
+                "attachment": {
+                    "type": "hook_success",
+                    "hookName": "SessionStart:startup",
+                    "stdout": stdout(&start),
+                },
+            }),
+            attachment("2026-10-11T00:00:01Z", "SessionStart:startup", &start),
+        ]);
+        assert_eq!(receipt_rows(), vec![(None, 1)]);
+        let prompt = hook(
+            HookEvent::UserPromptSubmit,
+            json!({"prompt": "durable 규칙을 제공한다"}),
+        );
+        assert_eq!(prompt.outcome, HookMemoryOutcome::Provided { count: 1 });
+        let prompt = context_of(prompt);
+
+        let prompt_attachment = attachment("2026-10-11T00:00:03Z", "UserPromptSubmit", &prompt);
+        project_session(vec![
+            operator_copy("2026-10-11T00:00:02Z", &prompt),
+            prompt_attachment,
+        ]);
+        let rows = receipt_rows();
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(rows[0], (None, 1));
+        assert!(rows[1].0.as_deref().unwrap().starts_with("event:"));
+        assert_eq!(rows[1].1, 1);
+    }
+
     #[test]
     fn empty_session_start_projection_unblocks_later_prompt_memory_for_both_providers() {
         let temp = tempdir().unwrap();
@@ -1712,11 +1914,14 @@ mod scope_tests {
             let locator = folder.join(format!("{provider}-empty.jsonl"));
             let transcript = match agent {
                 Agent::Claude => json!({
-                    "type": "user",
+                    "type": "attachment",
                     "timestamp": "2026-09-21T00:00:00Z",
-                    "origin": {"kind": "hook"},
-                    "isMeta": true,
-                    "message": {"role": "user", "content": context},
+                    "attachment": {
+                        "type": "hook_additional_context",
+                        "content": [context],
+                        "hookName": "SessionStart:startup",
+                        "hookEvent": "SessionStart",
+                    },
                 }),
                 Agent::Codex => json!({
                     "type": "response_item",

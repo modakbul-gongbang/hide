@@ -17,6 +17,7 @@ use serde_json::Value;
 
 use super::{NATIVE_ID_LIMIT_BYTES, StopOutcome, TurnMark, WakeMark, native::TOOL_MARK_LIMIT};
 use crate::SkipReason;
+use crate::claude_attachment::Attachment;
 
 const BACKGROUND_STARTED: &str = "Command running in background with ID: ";
 const TIMED_OUT: &str = "Command did not complete within its ";
@@ -106,21 +107,11 @@ fn push(marks: &mut Vec<WakeMark>, mark: Option<WakeMark>) {
 }
 
 fn attachment(item: &Value, marks: &mut Vec<WakeMark>) {
-    let attachment = &item["attachment"];
-    match attachment.get("type").and_then(Value::as_str) {
-        Some("hook_success") => {
-            if matches!(
-                attachment.get("hookName").and_then(Value::as_str),
-                Some("SessionStart:startup" | "SessionStart:resume")
-            ) {
-                push(marks, Some(WakeMark::Boot));
-            }
-        }
-        Some("queued_command") => {
-            if let Some(text) = attachment.get("prompt").and_then(Value::as_str) {
-                notifications(text, marks);
-            }
-        }
+    match Attachment::of(item) {
+        Some(Attachment::HookSuccess {
+            hook_name: Some("SessionStart:startup" | "SessionStart:resume"),
+        }) => push(marks, Some(WakeMark::Boot)),
+        Some(Attachment::QueuedCommand { prompt: Some(text) }) => notifications(text, marks),
         _ => {}
     }
 }
