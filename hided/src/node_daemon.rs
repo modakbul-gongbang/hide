@@ -21,8 +21,9 @@
 //! terminals relay is not there to take them (it opens after the link, and
 //! again after it fails): at most 64 KiB, each at most 3 s, as the core
 //! holds keys typed before a pane exists. A key past the bound is refused
-//! to the screen that typed it, and one that waited too long is dropped and
-//! that screen told; none is lost unsaid.
+//! to the screen that typed it; one that waited too long, was held for a
+//! link that ended, or whose write was cut off is dropped and that screen
+//! told, once per burst with the count and the cause; none is lost unsaid.
 //!
 //! While the link is down a screen is held: its socket stays open, every
 //! frame it sends is dropped and counted, and nothing reaches it until the

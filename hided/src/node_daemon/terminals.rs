@@ -41,8 +41,124 @@ pub struct ScreenTerminals {
     held: Mutex<HeldLines>,
     /// Wakes the terminals relay's writer when a line is held.
     ready: Notify,
-    /// The screen connection whose held key was dropped as too old.
-    pub(super) dropped: tokio::sync::broadcast::Sender<u64>,
+    /// Keys each screen typed for the core's panes that were not sent.
+    pub(super) unsent: Arc<UnsentNotices>,
+}
+
+/// Why a key a screen typed for one of the core's panes was not sent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Unsent {
+    /// It waited for the terminals relay longer than [`HELD_FOR`].
+    WaitedTooLong,
+    /// The link it was typed for ended before it went up.
+    LinkEnded,
+    /// The relay's write of it failed or was cut off.
+    CutOff,
+}
+
+impl Unsent {
+    const ALL: [Unsent; 3] = [Unsent::WaitedTooLong, Unsent::LinkEnded, Unsent::CutOff];
+
+    fn bit(self) -> u8 {
+        1 << self as u8
+    }
+
+    fn says(self) -> &'static str {
+        match self {
+            Unsent::WaitedTooLong => "they waited too long",
+            Unsent::LinkEnded => "the link to the core ended",
+            Unsent::CutOff => "the relay to the core was cut off",
+        }
+    }
+}
+
+/// Not-sent keys per live screen connection, told once per burst: each
+/// screen is woken once however many of its lines were lost, and a screen
+/// slow to look loses nothing, because the count waits here rather than in
+/// a queue that could pass it by. Bounded by the live screens: a line whose
+/// screen already left is only logged.
+#[derive(Default)]
+pub(super) struct UnsentNotices {
+    screens: Mutex<HashMap<u64, Pending>>,
+}
+
+#[derive(Default)]
+struct Pending {
+    keys: usize,
+    causes: u8,
+    wake: Arc<Notify>,
+}
+
+impl UnsentNotices {
+    /// Starts counting for one screen connection until the returned handle
+    /// is dropped.
+    pub(super) fn watch(self: &Arc<Self>, connection: u64) -> UnsentScreen {
+        let wake = Arc::new(Notify::new());
+        lock(&self.screens).insert(
+            connection,
+            Pending {
+                wake: Arc::clone(&wake),
+                ..Pending::default()
+            },
+        );
+        UnsentScreen {
+            notices: Arc::clone(self),
+            connection,
+            wake,
+        }
+    }
+
+    fn report(&self, connection: u64, cause: Unsent) {
+        let mut screens = lock(&self.screens);
+        if let Some(pending) = screens.get_mut(&connection) {
+            pending.keys += 1;
+            pending.causes |= cause.bit();
+            pending.wake.notify_one();
+        }
+    }
+}
+
+/// One screen connection's not-sent keys.
+pub(super) struct UnsentScreen {
+    notices: Arc<UnsentNotices>,
+    connection: u64,
+    wake: Arc<Notify>,
+}
+
+impl UnsentScreen {
+    /// Resolves when keys of this screen were not sent since it last looked.
+    pub(super) async fn ready(&self) {
+        self.wake.notified().await;
+    }
+
+    /// The one notice for every key not sent since the last, if any.
+    pub(super) fn take(&self) -> Option<String> {
+        let mut screens = lock(&self.notices.screens);
+        let pending = screens.get_mut(&self.connection)?;
+        if pending.keys == 0 {
+            return None;
+        }
+        let keys = std::mem::take(&mut pending.keys);
+        let causes = std::mem::take(&mut pending.causes);
+        drop(screens);
+        let why: Vec<&str> = Unsent::ALL
+            .into_iter()
+            .filter(|cause| causes & cause.bit() != 0)
+            .map(Unsent::says)
+            .collect();
+        let what = if keys == 1 {
+            "A key for one of the core's panes was not sent".to_owned()
+        } else {
+            format!("{keys} keys for the core's panes were not sent")
+        };
+        Some(format!("{what}: {}", why.join("; ")))
+    }
+}
+
+impl Drop for UnsentScreen {
+    fn drop(&mut self) {
+        lock(&self.notices.screens).remove(&self.connection);
+    }
 }
 
 /// Lines for the core's panes not yet written up the terminals relay, in
@@ -61,24 +177,20 @@ struct HeldLine {
 
 impl HeldLines {
     /// The next line still in time and the screen connection that typed
-    /// it, telling `dropped` of each that is not.
-    fn next(
-        &mut self,
-        now: Instant,
-        dropped: &tokio::sync::broadcast::Sender<u64>,
-    ) -> Option<(String, u64)> {
+    /// it, telling the screen of each that is not.
+    fn next(&mut self, now: Instant, unsent: &UnsentNotices) -> Option<(String, u64)> {
         while let Some(line) = self.lines.pop_front() {
             self.bytes -= line.text.len();
             if now.duration_since(line.at) <= HELD_FOR {
                 return Some((line.text, line.connection));
             }
-            expired(line.connection, dropped);
+            not_sent(line.connection, Unsent::WaitedTooLong, unsent);
         }
         None
     }
 
     /// Drops every line older than [`HELD_FOR`], telling its screen.
-    fn expire(&mut self, now: Instant, dropped: &tokio::sync::broadcast::Sender<u64>) {
+    fn expire(&mut self, now: Instant, unsent: &UnsentNotices) {
         while self
             .lines
             .front()
@@ -86,15 +198,15 @@ impl HeldLines {
         {
             if let Some(line) = self.lines.pop_front() {
                 self.bytes -= line.text.len();
-                expired(line.connection, dropped);
+                not_sent(line.connection, Unsent::WaitedTooLong, unsent);
             }
         }
     }
 
     /// Drops every line: the link they were typed for ended.
-    fn clear(&mut self, dropped: &tokio::sync::broadcast::Sender<u64>) {
+    fn clear(&mut self, unsent: &UnsentNotices) {
         for line in self.lines.drain(..) {
-            expired(line.connection, dropped);
+            not_sent(line.connection, Unsent::LinkEnded, unsent);
         }
         self.bytes = 0;
     }
@@ -105,30 +217,28 @@ impl HeldLines {
 /// its relay loses no key unsaid.
 struct InFlight<'a> {
     connection: Option<u64>,
-    dropped: &'a tokio::sync::broadcast::Sender<u64>,
+    unsent: &'a UnsentNotices,
 }
 
 impl Drop for InFlight<'_> {
     fn drop(&mut self) {
         if let Some(connection) = self.connection.take() {
-            herdr_core::diagnostic!(json!({
-                "component": "node_daemon",
-                "kind": "terminals.held_unsent",
-                "connection": connection,
-            }));
-            let _ = self.dropped.send(connection);
+            not_sent(connection, Unsent::CutOff, self.unsent);
         }
     }
 }
 
-fn expired(connection: u64, dropped: &tokio::sync::broadcast::Sender<u64>) {
+fn not_sent(connection: u64, cause: Unsent, unsent: &UnsentNotices) {
     herdr_core::diagnostic!(json!({
         "component": "node_daemon",
-        "kind": "terminals.held_dropped",
+        "kind": match cause {
+            Unsent::CutOff => "terminals.held_unsent",
+            Unsent::WaitedTooLong | Unsent::LinkEnded => "terminals.held_dropped",
+        },
         "connection": connection,
-        "held_ms": HELD_FOR.as_millis() as u64,
+        "cause": format!("{cause:?}"),
     }));
-    let _ = dropped.send(connection);
+    unsent.report(connection, cause);
 }
 
 impl ScreenTerminals {
@@ -138,7 +248,7 @@ impl ScreenTerminals {
             live,
             held: Mutex::new(HeldLines::default()),
             ready: Notify::new(),
-            dropped: tokio::sync::broadcast::channel(64).0,
+            unsent: Arc::default(),
         }
     }
 
@@ -314,10 +424,10 @@ pub(super) async fn keep_terminals_relay(
             .is_some_and(|now| now.generation == link.generation);
         if still {
             tokio::time::sleep(RELAY_RETRY).await;
-            lock(&terminals.held).expire(Instant::now(), &terminals.dropped);
+            lock(&terminals.held).expire(Instant::now(), &terminals.unsent);
         } else {
             // Lines typed for a link that ended are never delivered later.
-            lock(&terminals.held).clear(&terminals.dropped);
+            lock(&terminals.held).clear(&terminals.unsent);
         }
     }
 }
@@ -371,14 +481,14 @@ where
     S: futures_util::Sink<tungstenite::Message> + Unpin,
 {
     loop {
-        let next = lock(&terminals.held).next(Instant::now(), &terminals.dropped);
+        let next = lock(&terminals.held).next(Instant::now(), &terminals.unsent);
         let Some((line, connection)) = next else {
             terminals.ready.notified().await;
             continue;
         };
         let mut in_flight = InFlight {
             connection: Some(connection),
-            dropped: &terminals.dropped,
+            unsent: &terminals.unsent,
         };
         if sink
             .send(tungstenite::Message::Text(line.into()))
@@ -431,20 +541,23 @@ mod tests {
     fn keys_for_the_core_s_panes_wait_for_the_relay_in_order_and_none_is_lost_unsaid() {
         let terminals =
             ScreenTerminals::new("remote:screen:pane:".to_owned(), watch::channel(None).1);
-        let mut dropped = terminals.dropped.subscribe();
+        let first_screen = terminals.unsent.watch(1);
+        let second_screen = terminals.unsent.watch(2);
         let key = |text: &str| KeyTarget::Pane(format!("core-pane-{text}"));
         terminals.key(1, key("a"), b"a".to_vec(), 1).unwrap();
         terminals.key(2, key("b"), b"b".to_vec(), 2).unwrap();
         let now = Instant::now();
         let mut held = lock(&terminals.held);
-        let (first, typed_by) = held.next(now, &terminals.dropped).expect("the first key");
+        let (first, typed_by) = held.next(now, &terminals.unsent).expect("the first key");
         assert!(first.contains("core-pane-a"), "{first}");
         assert_eq!(typed_by, 1);
         // The second waited too long: dropped, and its screen told.
         let late = now + HELD_FOR + Duration::from_millis(1);
-        assert_eq!(held.next(late, &terminals.dropped), None);
-        assert_eq!(dropped.try_recv().unwrap(), 2);
+        assert_eq!(held.next(late, &terminals.unsent), None);
         drop(held);
+        assert_eq!(first_screen.take(), None);
+        let told = second_screen.take().expect("the second screen is told");
+        assert!(told.contains("waited too long"), "{told}");
 
         // A paste larger than the bound goes alone; behind it, a key that
         // would cross the bound is refused.
@@ -473,7 +586,8 @@ mod tests {
             "remote:screen:pane:".to_owned(),
             watch::channel(None).1,
         ));
-        let mut dropped = terminals.dropped.subscribe();
+        let first_screen = terminals.unsent.watch(7);
+        let second_screen = terminals.unsent.watch(8);
         let key = KeyTarget::Pane("core-pane".to_owned());
         terminals.key(7, key.clone(), b"a".to_vec(), 1).unwrap();
         let failing = Box::pin(futures_util::sink::unfold(
@@ -481,7 +595,8 @@ mod tests {
             |(), _: tungstenite::Message| async { Err::<(), ()>(()) },
         ));
         write_held(Arc::clone(&terminals), failing).await;
-        assert_eq!(dropped.try_recv().unwrap(), 7);
+        let told = first_screen.take().expect("the failed write is told");
+        assert!(told.contains("cut off"), "{told}");
 
         terminals.key(8, key, b"b".to_vec(), 2).unwrap();
         let stalled = Box::pin(futures_util::sink::unfold(
@@ -498,7 +613,47 @@ mod tests {
         .expect("the writer never took the line");
         writer.abort();
         let _ = writer.await;
-        assert_eq!(dropped.try_recv().unwrap(), 8);
+        let told = second_screen.take().expect("the cut-off write is told");
+        assert!(told.contains("cut off"), "{told}");
+    }
+
+    /// A burst of lost keys, more than any queue of notices held, reaches
+    /// each screen as one notice with the count and the actual cause, and a
+    /// screen that already left is only logged.
+    #[test]
+    fn a_burst_of_unsent_keys_is_one_notice_per_screen_with_its_cause() {
+        let terminals =
+            ScreenTerminals::new("remote:screen:pane:".to_owned(), watch::channel(None).1);
+        let waiting = terminals.unsent.watch(1);
+        let linked = terminals.unsent.watch(2);
+        let left = terminals.unsent.watch(3);
+        let key = KeyTarget::Pane("core-pane".to_owned());
+        for at in 0..70 {
+            terminals.key(1, key.clone(), b"a".to_vec(), at).unwrap();
+        }
+        terminals.key(3, key.clone(), b"c".to_vec(), 70).unwrap();
+        drop(left);
+        let late = Instant::now() + HELD_FOR + Duration::from_millis(1);
+        lock(&terminals.held).expire(late, &terminals.unsent);
+        for at in 0..70 {
+            terminals.key(2, key.clone(), b"b".to_vec(), at).unwrap();
+        }
+        lock(&terminals.held).clear(&terminals.unsent);
+
+        assert_eq!(
+            waiting.take().as_deref(),
+            Some("70 keys for the core's panes were not sent: they waited too long")
+        );
+        assert_eq!(waiting.take(), None, "told once");
+        assert_eq!(
+            linked.take().as_deref(),
+            Some("70 keys for the core's panes were not sent: the link to the core ended")
+        );
+        assert_eq!(linked.take(), None, "told once");
+        assert!(
+            lock(&terminals.unsent.screens).len() == 2,
+            "the screen that left is not kept"
+        );
     }
 
     #[test]

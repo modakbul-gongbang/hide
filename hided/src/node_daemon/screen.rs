@@ -145,7 +145,7 @@ async fn attached(
     let mut live = state.live.clone();
     let mut terminals: Option<HubClient> = None;
     let mut told = InputNotices::default();
-    let mut dropped = state.terminals.dropped.subscribe();
+    let unsent = state.terminals.unsent.watch(connection);
     let mut uploads = ScreenUploads::new(
         Arc::clone(&state.attachments),
         connection,
@@ -182,13 +182,9 @@ async fn attached(
                     return ScreenEnd::Left;
                 }
             }
-            missed = dropped.recv() => {
-                if matches!(missed, Ok(missed) if missed == connection) {
-                    let frame = json!({
-                        "type": "error",
-                        "payload": {},
-                        "message": "A key for one of the core's panes waited too long and was not sent",
-                    });
+            () = unsent.ready() => {
+                if let Some(message) = unsent.take() {
+                    let frame = json!({"type": "error", "payload": {}, "message": message});
                     if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
                         return ScreenEnd::Left;
                     }
