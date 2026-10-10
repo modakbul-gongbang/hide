@@ -601,14 +601,32 @@ function unclaimedWorkspace<T>(env: NodeJS.ProcessEnv, bin: string, root: string
   return replacement;
 }
 
-export async function startHerdr({ agents = true }: { agents?: boolean } = {}): Promise<HerdrFixture> {
+/**
+ * Hands the private server's session to a new server process of the same
+ * pinned binary, the way an update does (`herdr server live-handoff`): pane
+ * ids and the panes' processes stay, and every pane token is gone. The new
+ * server derives its own sockets below the config folder, so the fixture it
+ * ran under was started with `shortRoot`.
+ */
+export function liveHandoff(fixture: Pick<HerdrFixture, "bin" | "env">): void {
+  const contract = JSON.parse(fs.readFileSync(path.resolve("..", "contracts/herdr-api.schema.json"), "utf8")) as { protocol: number };
+  const args = ["server", "live-handoff", "--import-exe", fixture.bin, "--expected-protocol", String(contract.protocol), "--expected-version", pinnedHerdrVersion()];
+  execFileSync(fixture.bin, args, { env: fixture.env, encoding: "utf8", timeout: 60_000 });
+}
+
+/**
+ * `shortRoot` puts the fixture's folder directly under /tmp: a live handoff
+ * binds sockets named from the config folder, and the macOS temp folder is
+ * too long for a Unix socket path. Windows has no such limit and no handoff.
+ */
+export async function startHerdr({ agents = true, shortRoot = false }: { agents?: boolean; shortRoot?: boolean } = {}): Promise<HerdrFixture> {
   const bin = herdrBinary();
   const version = execFileSync(bin, ["--version"], { encoding: "utf8" }).trim().split(/\s+/)[1];
   const pinned = pinnedHerdrVersion();
   if (version !== pinned) {
     throw new Error(`herdr ${version} at ${bin} is not the pinned ${pinned}`);
   }
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-herdr-")));
+  const root = fs.realpathSync.native(shortRoot && process.platform !== "win32" ? fs.mkdtempSync("/tmp/hh-") : fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-herdr-")));
   // Windows Herdr maps this path to its pipe and marker; Unix needs /tmp's
   // short spelling, including room for the derived -client.sock address.
   const socket = process.platform === "win32" ? path.join(root, "herdr.sock") : `/tmp/hide-e2e-${crypto.randomBytes(4).toString("hex")}.sock`;
