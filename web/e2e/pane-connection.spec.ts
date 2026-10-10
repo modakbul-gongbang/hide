@@ -44,10 +44,10 @@ function installHook(home: string): void {
   fs.writeFileSync(path.join(home, ".claude", "settings.json"), JSON.stringify({ hooks }));
 }
 
-/** Runs the real helper for one of the agent's hook events, the way the agent would run it in `pane`. */
+/** Runs the real helper for one of the agent's hook events, the way the agent would run it in `pane`: its input names the session. */
 function runHook(daemon: Daemon, herdr: HerdrFixture, pane: string, event: "SessionStart" | "SubagentStart"): void {
   execFileSync(HELPER, ["hook", "--runtime", "claude-code", "--event", event, "--memory-injection", "--source", "hide-subagents@6"], {
-    input: "{}",
+    input: JSON.stringify({ session_id: SESSION }),
     env: { ...process.env, HOME: daemon.home, HERDR_PANE_ID: pane, HERDR_SOCKET_PATH: herdr.socket, HERDR_ENV: "1" },
     timeout: 20_000,
   });
