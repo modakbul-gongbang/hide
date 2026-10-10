@@ -4,4 +4,5 @@
 
 pub mod remote_core;
 pub mod remote_delivery;
+pub mod run;
 pub mod ssh_server;

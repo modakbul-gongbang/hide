@@ -2,6 +2,7 @@
 //! Every candidate child has an owned process tree; counts and reads are capped.
 
 pub mod renderer;
+use super::run::{Run, finish};
 use super::ssh_server as ssh;
 
 use std::collections::BTreeMap;
@@ -484,7 +485,17 @@ pub struct Fixture {
 }
 
 impl Fixture {
-    pub fn start() -> Result<Self> {
+    /// Runs one journey in a fresh fixture and ends it by how the journey
+    /// went (`support::run::finish`): a passing journey leaves no run
+    /// directory, a failing one keeps it for the lane to upload. The only way
+    /// to start a fixture, so no test has to remember either half.
+    pub fn journey(body: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
+        let mut fixture = Self::start()?;
+        let journey = body(&mut fixture);
+        finish(&mut fixture, journey)
+    }
+
+    fn start() -> Result<Self> {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let bin = PathBuf::from(
             std::env::var_os("HIDE_E2E_HERDR_BIN")
@@ -830,8 +841,14 @@ impl Fixture {
             Ok((count >= minimum).then_some(()))
         })
     }
+}
 
-    pub fn stop(&mut self) -> Result<()> {
+impl Run for Fixture {
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
+    fn stop(&mut self) -> Result<()> {
         if let Some(mut daemon) = self.daemon.take() {
             daemon.kill_tree()?;
             wait_for("private hided confirmed exit", || {
@@ -848,23 +865,14 @@ impl Fixture {
         Ok(())
     }
 
-    /// The journey passed and every owned process confirmed its exit, so the
-    /// run directory holds no evidence anyone needs: remove it. A failed run
-    /// never reaches this and keeps its directory for the lane to upload; a
-    /// passed one used to keep its two accounts and staged binaries too,
-    /// about 400 MB under `agents/runs/` per run.
-    pub fn remove_run_dir(&mut self) -> Result<()> {
-        self.stop()?;
-        fs::remove_dir_all(&self.root)
-            .with_context(|| format!("remove {}", self.root.display()))?;
+    fn removed(&mut self) {
         self.removed = true;
-        Ok(())
     }
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        // `remove_run_dir` confirmed every exit before it removed the folder.
+        // `finish` confirmed every exit before it removed the folder.
         if self.removed {
             return;
         }
