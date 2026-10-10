@@ -117,6 +117,43 @@ pub enum CheckId {
     Dormant,
 }
 
+/// The checks of a move toward a device, each once.
+pub const FORWARD_CHECKS: [CheckId; 11] = [
+    CheckId::Connection,
+    CheckId::OtherNode,
+    CheckId::Herdr,
+    CheckId::Ai,
+    CheckId::Identity,
+    CheckId::Build,
+    CheckId::Gh,
+    CheckId::GuiSession,
+    CheckId::Sleep,
+    CheckId::Dormant,
+    CheckId::TargetState,
+];
+
+/// The checks of a move back to this machine, each once.
+pub const BACK_CHECKS: [CheckId; 7] = [
+    CheckId::Link,
+    CheckId::Herdr,
+    CheckId::OwnState,
+    CheckId::Connection,
+    CheckId::Identity,
+    CheckId::TargetState,
+    CheckId::Ai,
+];
+
+/// How many of `checks` ran when `failed` came back, or none when some
+/// did not: a connection that failed stops the checks behind it, and with
+/// nobody logged in to the desktop of the machine taking the core its
+/// logins may not have been checked.
+pub fn checks_run(checks: &[CheckId], failed: &[FailedCheck]) -> Option<u32> {
+    let stopped = failed
+        .iter()
+        .any(|check| matches!(check.check, CheckId::Connection | CheckId::GuiSession));
+    (!stopped).then_some(checks.len() as u32)
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MoveView {
     pub state: MoveState,
@@ -127,6 +164,10 @@ pub struct MoveView {
     pub sent: u64,
     pub total: u64,
     pub failed: Vec<FailedCheck>,
+    /// How many checks ran, so the window counts the ones that passed;
+    /// none when some did not run ([`checks_run`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked: Option<u32>,
     pub step: Option<MoveStep>,
     pub cause: Option<MoveFailure>,
     /// The node the window becomes after the move, so the page names it in

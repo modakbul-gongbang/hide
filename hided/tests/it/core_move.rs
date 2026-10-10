@@ -528,6 +528,8 @@ fn a_failing_check_changes_nothing() -> Result<()> {
         fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
         let failed = fixture.logged(&fixture.source, "checks.failed")?;
         ensure!(failed["checks"] == json!(["target_state"]), "{failed}");
+        // Every check ran, so the window counts the ten that passed.
+        ensure!(failed["checked"] == 11, "{failed}");
         let detail = failed["failed"][0]["detail"].as_str().unwrap_or_default();
         ensure!(
             detail.contains("core-state.json") && detail.contains("Hide AI settings"),
@@ -569,6 +571,8 @@ fn each_step_missing_on_the_target_is_named_and_nothing_changes() -> Result<()> 
             failed["checks"] == json!(["gui_session", "sleep", "gh", "ai"]),
             "{failed}"
         );
+        // With no desktop session its logins may not have run: no count.
+        ensure!(failed["checked"].is_null(), "{failed}");
         ensure!(fixture.role()? == "core");
         ensure!(visible(&fixture)? == before, "the window changed");
         ensure!(!fixture.source.state.join("core-move.json").exists());
@@ -1227,6 +1231,7 @@ fn a_failing_move_back_check_changes_nothing() -> Result<()> {
                 .find(|record| record["direction"] == "back"))
         })?;
         ensure!(failed["checks"] == json!(["own_state"]), "{failed}");
+        ensure!(failed["checked"] == 7, "{failed}");
         ensure!(fixture.role()? == "node");
         ensure!(
             fixture.target_core()? == Some(core),

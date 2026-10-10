@@ -68,13 +68,16 @@ pub(super) async fn release_core(
 }
 
 pub(super) fn back_checks_failed(moves: &MoveControl, failed: Vec<FailedCheck>) {
+    let checked =
+        crate::core_move::control::checks_run(&crate::core_move::control::BACK_CHECKS, &failed);
     log(
         "checks.failed",
-        json!({"direction": "back", "checks": failed.iter().map(|check| check.check).collect::<Vec<_>>()}),
+        json!({"direction": "back", "checks": failed.iter().map(|check| check.check).collect::<Vec<_>>(), "checked": checked}),
     );
     moves.set(MoveView {
         state: MoveState::ChecksFailed,
         direction: Some(Direction::Back),
+        checked,
         failed,
         ..MoveView::default()
     });

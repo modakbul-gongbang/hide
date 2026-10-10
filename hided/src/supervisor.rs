@@ -447,13 +447,16 @@ struct Prepared {
 }
 
 fn checks_failed(moves: &MoveControl, device: &str, failed: Vec<FailedCheck>) {
+    let checked =
+        crate::core_move::control::checks_run(&crate::core_move::control::FORWARD_CHECKS, &failed);
     log(
         "checks.failed",
-        json!({"device": device, "checks": failed.iter().map(|check| check.check).collect::<Vec<_>>(), "failed": failed}),
+        json!({"device": device, "checks": failed.iter().map(|check| check.check).collect::<Vec<_>>(), "checked": checked, "failed": failed}),
     );
     moves.set(MoveView {
         state: MoveState::ChecksFailed,
         device: Some(device.to_owned()),
+        checked,
         failed,
         ..MoveView::default()
     });
