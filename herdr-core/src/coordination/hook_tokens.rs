@@ -43,6 +43,7 @@
 use crate::agent_hooks::PaneHookTokens;
 use crate::session_sync::ProjectedAgent;
 use hide_agent_hooks::counters::{self, PaneCounters, Restorable, Restore};
+use hide_agent_hooks::report::Counts;
 use hide_herdr_client::{ApiConnector, request_with_connector};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -321,13 +322,13 @@ fn restore(home: &std::path::Path, connector: &dyn ApiConnector, ask: &Ask) -> O
     let mut sent: Option<Report> = None;
     for _ in 0..=RESEND_LIMIT {
         let found = match counters::restore_of(home, &ask.pane) {
-            Ok(Restore::NoRecord) => return finish(sent, Outcome::NoRecord),
-            Ok(Restore::Unpairable) => return finish(sent, Outcome::Unpairable),
+            Ok(Restore::NoRecord) => return finish(connector, ask, sent, Outcome::NoRecord),
+            Ok(Restore::Unpairable) => return finish(connector, ask, sent, Outcome::Unpairable),
             Ok(Restore::Report(found)) => found,
             Err(error) => return Outcome::Failed(format!("the pane's file: {error}")),
         };
         if found.agent != ask.agent {
-            return finish(sent, Outcome::OtherAgent);
+            return finish(connector, ask, sent, Outcome::OtherAgent);
         }
         let report = (found.version, running_counts(&found, ask));
         // A file another event changed while the last report was on its way
@@ -337,11 +338,19 @@ fn restore(home: &std::path::Path, connector: &dyn ApiConnector, ask: &Ask) -> O
                 counts: report.1.is_some(),
             };
         }
+        // Counts this file cannot vouch for are left out, unless an earlier
+        // report of this restore already put some on the pane: a report
+        // merges token by token, so those are cleared and not left behind.
+        let counts = match (report.1, sent.is_some_and(|earlier| earlier.1.is_some())) {
+            (Some(counters), _) => Counts::Set(counters),
+            (None, true) => Counts::Clear,
+            (None, false) => Counts::Leave,
+        };
         // The same report the helper sends, so the tokens are the helper's.
         if let Err(error) = request_with_connector(
             connector,
             "pane.report_metadata",
-            hide_agent_hooks::report::report_params(&ask.pane, report.0, report.1),
+            hide_agent_hooks::report::report_params(&ask.pane, report.0, counts),
             REPORT_TIMEOUT,
         ) {
             return Outcome::Failed(format!("pane.report_metadata: {error}"));
@@ -363,16 +372,31 @@ fn running_counts(found: &Restorable, ask: &Ask) -> Option<PaneCounters> {
     }
 }
 
-fn finish(sent: Option<Report>, unreadable: Outcome) -> Outcome {
-    // A file that was there when it was sent and is gone now was swept with
-    // its pane, or replaced by one that is not this agent's; what was sent is
-    // the pane's last word.
-    match sent {
-        Some(report) => Outcome::Restored {
-            counts: report.1.is_some(),
-        },
-        None => unreadable,
+/// Ends a restore whose file stopped being the pane's: the file went (swept
+/// with its pane) or another agent's replaced it. What an earlier report of
+/// this restore put on the pane is cleared when it was counts, since they
+/// are no longer vouched for; the version it put stays, as the helper's own
+/// next report will say.
+fn finish(
+    connector: &dyn ApiConnector,
+    ask: &Ask,
+    sent: Option<Report>,
+    unreadable: Outcome,
+) -> Outcome {
+    let Some((version, counts)) = sent else {
+        return unreadable;
+    };
+    if counts.is_some()
+        && let Err(error) = request_with_connector(
+            connector,
+            "pane.report_metadata",
+            hide_agent_hooks::report::report_params(&ask.pane, version, Counts::Clear),
+            REPORT_TIMEOUT,
+        )
+    {
+        return Outcome::Failed(format!("pane.report_metadata: {error}"));
     }
+    Outcome::Restored { counts: false }
 }
 
 #[derive(Default)]
@@ -500,7 +524,7 @@ mod tests {
         hide_agent_hooks::report::report_params(
             pane,
             HOOK_VERSION,
-            Some(PaneCounters {
+            Counts::Set(PaneCounters {
                 working: 1,
                 done: 1,
             }),
@@ -508,7 +532,36 @@ mod tests {
     }
 
     fn version_only(pane: &str) -> Value {
-        hide_agent_hooks::report::report_params(pane, HOOK_VERSION, None)
+        hide_agent_hooks::report::report_params(pane, HOOK_VERSION, Counts::Leave)
+    }
+
+    fn cleared(pane: &str) -> Value {
+        hide_agent_hooks::report::report_params(pane, HOOK_VERSION, Counts::Clear)
+    }
+
+    /// The tokens Herdr ends up holding for `pane`: every report merged in
+    /// order, token by token, a `null` removing the token, as Herdr does.
+    fn held(herdr: &FakeHerdr, pane: &str) -> BTreeMap<String, String> {
+        let mut tokens = BTreeMap::new();
+        for params in reports(herdr)
+            .iter()
+            .filter(|params| params["pane_id"] == pane)
+        {
+            for (name, value) in params["tokens"].as_object().unwrap() {
+                match value.as_str() {
+                    Some(value) => tokens.insert(name.clone(), value.to_owned()),
+                    None => tokens.remove(name),
+                };
+            }
+        }
+        tokens
+    }
+
+    fn expect_tokens(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
     }
 
     /// Asks again until no pane is out with the worker, so what the worker
@@ -543,6 +596,14 @@ mod tests {
         restorer.observe(&agents, true);
         until_answered(&mut restorer, &agents);
         assert_eq!(reports(&herdr), [full("w1:p1")]);
+        assert_eq!(
+            held(&herdr, "w1:p1"),
+            expect_tokens(&[
+                ("hide_hooks", &HOOK_VERSION.to_string()),
+                ("hide_sub_working", "1"),
+                ("hide_sub_done", "1"),
+            ])
+        );
     }
 
     #[test]
@@ -742,7 +803,42 @@ mod tests {
         let sent = reports(&herdr);
         assert_eq!(sent.len(), 2);
         assert_eq!(sent[0], full("w1:p1"));
-        assert_eq!(sent[1], version_only("w1:p1"));
+        // A report merges token by token, so leaving the counts out of the
+        // second would keep the first session's on the pane.
+        assert_eq!(sent[1], cleared("w1:p1"));
+        assert_eq!(
+            held(&herdr, "w1:p1"),
+            expect_tokens(&[("hide_hooks", &HOOK_VERSION.to_string())])
+        );
+    }
+
+    #[test]
+    fn counts_put_on_a_pane_are_cleared_when_another_agent_takes_the_file() {
+        let home = tempfile::tempdir().unwrap();
+        count(&home, "w1:p1", WHO);
+        let events = home.path().to_path_buf();
+        let mut answered = 0;
+        let herdr = FakeHerdr::start("hook-tokens-other-agent", move |_, _| {
+            answered += 1;
+            if answered == 1 {
+                // Codex starts in the pane before Herdr answers.
+                let codex = Reporter {
+                    agent: Some("codex"),
+                    session: Some("session-c"),
+                };
+                change(&events, "w1:p1", Change::Reset, codex).unwrap();
+            }
+            json!({"type": "ok"})
+        });
+        let agents = [agent("w1:p1", Some("session-a"), &[])];
+        let mut restorer = restorer(&home, &herdr);
+        restorer.observe(&agents, true);
+        until_answered(&mut restorer, &agents);
+        assert_eq!(reports(&herdr), [full("w1:p1"), cleared("w1:p1")]);
+        assert_eq!(
+            held(&herdr, "w1:p1"),
+            expect_tokens(&[("hide_hooks", &HOOK_VERSION.to_string())])
+        );
     }
 
     #[test]
