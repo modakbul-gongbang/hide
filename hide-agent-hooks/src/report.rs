@@ -72,13 +72,16 @@ pub fn metadata_source() -> &'static str {
 /// can inspect.
 ///
 /// Building them apart from sending them is what lets the contract be
-/// asserted without a Herdr server (engineering rule 12).
-pub fn report_params(pane_id: &str, counters: PaneCounters) -> serde_json::Value {
+/// asserted without a Herdr server (engineering rule 12). `version` is the
+/// hook version the report speaks for: the running helper's own, or the one
+/// a pane's file recorded when hided puts the tokens back after Herdr lost
+/// them (`counters::restore_of`).
+pub fn report_params(pane_id: &str, version: u32, counters: PaneCounters) -> serde_json::Value {
     json!({
         "pane_id": pane_id,
         "source": metadata_source(),
         "tokens": {
-            INSTRUMENTED_TOKEN: HOOK_VERSION.to_string(),
+            INSTRUMENTED_TOKEN: version.to_string(),
             WORKING_TOKEN: counters.working.to_string(),
             DONE_TOKEN: counters.done.to_string(),
         },
@@ -90,7 +93,7 @@ pub fn report(socket_path: &Path, pane_id: &str, counters: PaneCounters) -> Resu
     request_with_timeout(
         socket_path,
         "pane.report_metadata",
-        report_params(pane_id, counters),
+        report_params(pane_id, HOOK_VERSION, counters),
         REPORT_TIMEOUT,
     )
     .map(|_| ())
@@ -199,9 +202,19 @@ mod tests {
     }
 
     #[test]
+    fn a_restored_report_carries_the_version_the_file_recorded() {
+        let params = report_params("w7B:pM", HOOK_VERSION - 1, PaneCounters::default());
+        assert_eq!(
+            params["tokens"]["hide_hooks"],
+            (HOOK_VERSION - 1).to_string()
+        );
+    }
+
+    #[test]
     fn the_report_names_the_pane_the_source_and_all_three_tokens() {
         let params = report_params(
             "w7B:pM",
+            HOOK_VERSION,
             PaneCounters {
                 working: 2,
                 done: 5,

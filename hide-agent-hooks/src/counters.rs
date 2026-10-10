@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::HookEvent;
+use crate::runtime::{HOOK_VERSION, HookEvent};
 
 /// What one pane's session has spawned.
 ///
@@ -27,6 +27,48 @@ pub struct PaneCounters {
     pub working: u32,
     #[serde(default)]
     pub done: u32,
+}
+
+/// What the file of one pane holds: the counts, and the hook version of the
+/// helper that wrote them.
+///
+/// Herdr keeps the tokens a report sets only as long as the server that took
+/// it, so a handoff or a restart empties them while this file stays. The
+/// version is what lets a restore say what the helper said (`hide_hooks`)
+/// instead of what this build would say. A file an older helper wrote has no
+/// version and cannot be restored from.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+struct Record {
+    #[serde(default)]
+    working: u32,
+    #[serde(default)]
+    done: u32,
+    #[serde(default)]
+    version: Option<u32>,
+}
+
+impl Record {
+    fn counters(self) -> PaneCounters {
+        PaneCounters {
+            working: self.working,
+            done: self.done,
+        }
+    }
+}
+
+/// What a restore can do with a pane's file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Restore {
+    /// No event ever counted this pane here.
+    NoRecord,
+    /// An older helper wrote the file. Which hook version it reported with is
+    /// unknown, so nothing is guessed: the pane waits for its next event.
+    Unversioned,
+    /// What the pane's last report said.
+    Report {
+        counters: PaneCounters,
+        version: u32,
+    },
 }
 
 /// Where the counts live. Under Hide's own directory, never the runtime's.
@@ -95,6 +137,26 @@ impl Change {
 /// shared side of the lock, so a change being written is never read half
 /// way; a record that cannot be read fails rather than answering zeros.
 pub fn read_settled(home: &Path, pane_id: &str) -> io::Result<PaneCounters> {
+    read_record(home, pane_id).map(Record::counters)
+}
+
+/// What a pane's last report said, read under the shared side of the lock
+/// like [`read_settled`], for putting it back on a Herdr that lost it.
+pub fn restore_of(home: &Path, pane_id: &str) -> io::Result<Restore> {
+    match read_record(home, pane_id) {
+        Ok(record) => Ok(match record.version {
+            Some(version) => Restore::Report {
+                counters: record.counters(),
+                version,
+            },
+            None => Restore::Unversioned,
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Restore::NoRecord),
+        Err(error) => Err(error),
+    }
+}
+
+fn read_record(home: &Path, pane_id: &str) -> io::Result<Record> {
     let _held = hold(home, hide_platform::fs::lock::Mode::Shared)?;
     let raw = fs::read(record_path(home, pane_id))?;
     serde_json::from_slice(&raw).map_err(io::Error::from)
@@ -120,11 +182,17 @@ pub fn change(home: &Path, pane_id: &str, change: Change) -> io::Result<PaneCoun
         hide_platform::fs::private::create_dir_all(parent)?;
     }
     if change == Change::None {
-        // A pane no event has counted yet has nothing running.
-        return match read_settled(home, pane_id) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(PaneCounters::default()),
-            settled => settled,
-        };
+        // An event that changes nothing leaves a file this helper wrote
+        // alone, so the common event stays a shared read. A pane with no file
+        // yet, or one an older helper wrote, gets one below: every pane that
+        // has reported has a file that says what it reported, which is what
+        // a restore reads.
+        match read_record(home, pane_id) {
+            Ok(record) if record.version == Some(HOOK_VERSION) => return Ok(record.counters()),
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
     }
     let held = hold(home, hide_platform::fs::lock::Mode::Exclusive)?;
     let mut counters = read(home, pane_id);
@@ -162,7 +230,11 @@ pub fn store(home: &Path, pane_id: &str, counters: PaneCounters) -> io::Result<(
 fn write_record(path: &Path, counters: PaneCounters) -> io::Result<()> {
     let mut record = hide_platform::fs::private::open_or_create_file(path)?;
     record.set_len(0)?;
-    record.write_all(&serde_json::to_vec(&counters)?)
+    record.write_all(&serde_json::to_vec(&Record {
+        working: counters.working,
+        done: counters.done,
+        version: Some(HOOK_VERSION),
+    })?)
 }
 
 /// One lock file beside the records, not the record itself: Windows locks a
@@ -272,6 +344,87 @@ mod tests {
                 working: 1,
                 done: 1
             }
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_pane_that_reported_has_a_file_that_says_what_it_reported() {
+        let root = home("restore");
+        let pane = "w7B:pM";
+        assert_eq!(restore_of(&root, pane).unwrap(), Restore::NoRecord);
+        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStart)).unwrap();
+        change(&root, pane, Change::of(HookEvent::SubagentStop)).unwrap();
+        assert_eq!(
+            restore_of(&root, pane).unwrap(),
+            Restore::Report {
+                counters: PaneCounters {
+                    working: 1,
+                    done: 1
+                },
+                version: HOOK_VERSION,
+            }
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_event_that_changes_nothing_still_leaves_a_file_for_a_pane_with_none() {
+        let root = home("restore-none");
+        let pane = "w7B:pM";
+        assert_eq!(
+            change(&root, pane, Change::of(HookEvent::PreToolUse)).unwrap(),
+            PaneCounters::default()
+        );
+        assert_eq!(
+            restore_of(&root, pane).unwrap(),
+            Restore::Report {
+                counters: PaneCounters::default(),
+                version: HOOK_VERSION,
+            }
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_file_an_older_helper_wrote_is_not_restored_and_the_next_event_versions_it() {
+        let root = home("restore-old");
+        let pane = "w7B:pM";
+        fs::create_dir_all(state_directory(&root)).unwrap();
+        fs::write(record_path(&root, pane), br#"{"working":2,"done":4}"#).unwrap();
+        assert_eq!(restore_of(&root, pane).unwrap(), Restore::Unversioned);
+        // The counts are still read the way they always were.
+        assert_eq!(
+            read_settled(&root, pane).unwrap(),
+            PaneCounters {
+                working: 2,
+                done: 4
+            }
+        );
+        change(&root, pane, Change::of(HookEvent::PreToolUse)).unwrap();
+        assert_eq!(
+            restore_of(&root, pane).unwrap(),
+            Restore::Report {
+                counters: PaneCounters {
+                    working: 2,
+                    done: 4
+                },
+                version: HOOK_VERSION,
+            }
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_is_an_error_and_not_an_empty_restore() {
+        let root = home("restore-corrupt");
+        let pane = "w7B:pM";
+        fs::create_dir_all(state_directory(&root)).unwrap();
+        fs::write(record_path(&root, pane), b"not a record").unwrap();
+        assert_eq!(
+            restore_of(&root, pane).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
         );
         fs::remove_dir_all(&root).unwrap();
     }
