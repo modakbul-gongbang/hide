@@ -438,7 +438,7 @@ fn wakes_on_move(phase: &Phase, answered: Option<bool>) -> bool {
 
 /// Whether the watch probes the core machine's SSH port: only while the
 /// node waits after a dial that could not reach the machine, and not again
-/// in that wait once the port answered. A port that answers while the dial
+/// in that outage once the port answered. A port that answers while the dial
 /// still fails says the failure is past the port, and the wait's own retry
 /// tries it again.
 fn probes_port(phase: &Phase, port: &PortWatch) -> bool {
@@ -517,13 +517,15 @@ fn routable(addresses: BTreeSet<IpAddr>) -> BTreeSet<IpAddr> {
         .collect()
 }
 
-/// The watch's probes of the core machine's SSH port, look by look. What
-/// the port said holds for the phase it was probed in: it starts over only
-/// when the phase changes or the machine moves, so a port that answers is
-/// probed once per wait, not every other look.
+/// The watch's probes of the core machine's SSH port, look by look, over
+/// one outage: the unreachable waits and the dials between them. What the
+/// port said holds for the whole outage, so a port silent in one wait and
+/// answering at the first look of the next still wakes the node, and a port
+/// that answers is probed once, not every other look. It starts over when
+/// the outage ends (a link, or a failure past the port) or the machine
+/// moves.
 #[derive(Default)]
 struct PortProbe {
-    phase: Option<Phase>,
     port: PortWatch,
 }
 
@@ -531,9 +533,16 @@ impl PortProbe {
     /// One look in `phase`: probes when [`probes_port`] says so, and answers
     /// whether the port came back.
     fn look(&mut self, phase: &Phase, probe: impl FnOnce() -> bool) -> bool {
-        if self.phase.as_ref() != Some(phase) {
-            self.phase = Some(phase.clone());
+        let outage = matches!(
+            phase,
+            Phase::Connecting
+                | Phase::Waiting {
+                    reason: LinkFailure::Unreachable(_)
+                }
+        );
+        if !outage {
             self.port = PortWatch::default();
+            return false;
         }
         probes_port(phase, &self.port) && self.port.came_back(probe())
     }
@@ -1128,11 +1137,11 @@ mod tests {
     }
 
     /// Through the watch's looks: a port that answers during an unreachable
-    /// wait is probed once and then left alone until the phase changes or
+    /// outage is probed once and then left alone until the outage ends or
     /// the machine moves; a silent port is probed each look and wakes the
     /// node once when it answers.
     #[test]
-    fn the_watch_probes_an_answering_port_once_per_wait() {
+    fn the_watch_probes_an_answering_port_once_per_outage() {
         let unreachable = Phase::Waiting {
             reason: LinkFailure::Unreachable("connection reset".to_owned()),
         };
@@ -1144,7 +1153,7 @@ mod tests {
                 true
             }));
         }
-        assert_eq!(probes, 1, "an answering port is probed once per wait");
+        assert_eq!(probes, 1, "an answering port is probed once per outage");
 
         port.moved();
         let mut probes = 0;
@@ -1156,8 +1165,11 @@ mod tests {
         }
         assert_eq!(probes, 1, "a move starts the probes over");
 
-        let connecting = Phase::Connecting;
-        assert!(!port.look(&connecting, || unreachable!("not probed while connecting")));
+        // A link that lived ends the outage; the next one starts over.
+        let lost = Phase::Waiting {
+            reason: LinkFailure::Lost("link_closed".to_owned()),
+        };
+        assert!(!port.look(&lost, || unreachable!("not probed after a lost link")));
         let mut answers = [false, false, true, true].into_iter();
         let woke: Vec<bool> = (0..4)
             .map(|_| port.look(&unreachable, || answers.next().unwrap()))
@@ -1165,7 +1177,26 @@ mod tests {
         assert_eq!(
             woke,
             [false, false, true, false],
-            "a new wait, a port that comes back"
+            "a new outage, a port that comes back"
+        );
+    }
+
+    /// One unreachable wait after another is one outage: a port silent in
+    /// the first wait and answering at the first look of the next wakes the
+    /// node, however soon after the retry SSH came back.
+    #[test]
+    fn a_port_that_comes_back_between_two_unreachable_waits_wakes_the_node() {
+        let unreachable = |cause: &str| Phase::Waiting {
+            reason: LinkFailure::Unreachable(cause.to_owned()),
+        };
+        let mut port = PortProbe::default();
+        assert!(!port.look(&unreachable("reset"), || false));
+        assert!(!port.look(&Phase::Connecting, || unreachable!(
+            "not probed while connecting"
+        )));
+        assert!(
+            port.look(&unreachable("disconnected"), || true),
+            "the port came back during the outage"
         );
     }
 
