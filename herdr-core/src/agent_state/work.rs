@@ -71,30 +71,38 @@ pub(crate) fn linked_pull_requests<'a>(
     linked
 }
 
-/// Gives each pull request's duty to one row: the first on its branch's
-/// checkout, else the one whose session printed it first.
-pub(crate) fn assign_duty(rows: &mut [Vec<Linked<'_>>]) {
-    let mut holder: HashMap<&str, (usize, usize, bool, u64)> = HashMap::new();
-    for (row, linked) in rows.iter().enumerate() {
-        for (index, link) in linked.iter().enumerate() {
-            let rank = (link.on_branch, link.sighted_at.unwrap_or(u64::MAX));
-            let better = |held: &(usize, usize, bool, u64)| {
-                (rank.0 && !held.2) || (rank.0 == held.2 && !rank.0 && rank.1 < held.3)
-            };
-            match holder.get(link.pull_request.url.as_str()) {
-                Some(held) if !better(held) => {}
-                _ => {
-                    holder.insert(&link.pull_request.url, (row, index, rank.0, rank.1));
-                }
+/// Gives each pull request's duty to one row. On its branch's checkout that
+/// is the row nearest its lineage root, then the one whose session printed
+/// it, then the lowest pane id; with no row there, the one whose session
+/// printed it first. `linked[i]` belongs to `rows[i]`. The rows' order never
+/// decides: it follows activity, and the duty would move between the agents
+/// of one checkout as they take turns working.
+pub(crate) fn assign_duty(rows: &[SidebarAgentSnapshot], linked: &mut [Vec<Linked<'_>>]) {
+    /// Off the checkout, lineage depth, when its session printed it, pane id:
+    /// the smallest holds the duty.
+    type Rank<'r> = (bool, usize, u64, &'r str);
+    let mut holder: HashMap<&str, (Rank<'_>, usize, usize)> = HashMap::new();
+    for (row, links) in linked.iter().enumerate() {
+        let agent = &rows[row];
+        for (index, link) in links.iter().enumerate() {
+            let rank = (
+                !link.on_branch,
+                if link.on_branch {
+                    agent.lineage_depth
+                } else {
+                    0
+                },
+                link.sighted_at.unwrap_or(u64::MAX),
+                agent.pane_id.as_str(),
+            );
+            let url = link.pull_request.url.as_str();
+            if holder.get(url).is_none_or(|(held, _, _)| rank < *held) {
+                holder.insert(url, (rank, row, index));
             }
         }
     }
-    let chosen: Vec<(usize, usize)> = holder
-        .values()
-        .map(|(row, index, _, _)| (*row, *index))
-        .collect();
-    for (row, index) in chosen {
-        rows[row][index].duty = true;
+    for (_, row, index) in holder.into_values() {
+        linked[row][index].duty = true;
     }
 }
 

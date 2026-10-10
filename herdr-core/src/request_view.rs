@@ -9,8 +9,8 @@
 //!
 //! A row's pull requests are those of its checkout's branch and those its
 //! session made (D-31, D-46). A pull request on several rows gives its duty
-//! (fix, review) to one of them: the row on that branch's checkout, else the
-//! row whose session printed it first.
+//! (fix, review) to one of them: on that branch's checkout the row nearest
+//! its lineage root, else the row whose session printed it first.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -170,7 +170,7 @@ pub(crate) fn apply<'a>(
         .iter()
         .map(|row| linked_pull_requests(row, place(&row.pane_id), github))
         .collect();
-    assign_duty(&mut linked);
+    assign_duty(rows, &mut linked);
     let mut verbs_changed = false;
     for (row, linked) in rows.iter_mut().zip(linked) {
         let facts = row.row_facts.clone().unwrap_or_default();

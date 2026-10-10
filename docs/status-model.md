@@ -598,7 +598,8 @@ Only the label gives `stopped` and `blocked` (D-33); `waiting` comes from `wait`
 The block also carries the label's `line` and `end` when there is one: the request view shows the line in place of the reply (B18) and both as the expanded row's verdict (B6); `end` is pinned as `label_end` in `contracts/snapshot-wire-enums.json`.
 A row's pull requests are its checkout branch's and those its session made: a tool in the session printed the address within thirty seconds of GitHub's `createdAt` (D-31), judged once by the label worker and kept with the session's facts.
 An address in a reply or a request is a mention and links nothing.
-A pull request on several rows gives its duty to the row on its branch's checkout, else to the row whose session printed it first, so `fix` and `review` appear once.
+A pull request on several rows gives its duty to one row, so `fix` and `review` appear once: on its branch's checkout the row nearest its lineage root (`lineage_depth`), then the one whose session printed it, then the lowest pane id; with no row there, the row whose session printed it first.
+Activity never decides, so agents on one checkout that take turns working never trade a pull request; an Observer and the implementor it spawned there keep it on the Observer's row, the one Sessions draws, even when the implementor's session printed it.
 A settled pull request counts as live only when it settled after the operator's last request (D-43).
 The verb's time is kept per pane in `core-state.json` (`request_verbs`), so a restart does not restart the wait.
 Opening a finished row in the request view (`overview_open_result`) reads the pane the way a focus does and moves no focus; a demand outlives the read as everywhere else.
