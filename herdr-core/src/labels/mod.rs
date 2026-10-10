@@ -22,6 +22,12 @@ pub(crate) mod worker;
 #[cfg(test)]
 mod tests;
 
+/// The store key of a device's or linked node's records, which stay in
+/// memory (`store`).
+pub(crate) fn device_target(device: &str) -> String {
+    format!("device:{device}")
+}
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -138,7 +144,7 @@ impl LabelServices {
     ) -> Result<LabelWorker, String> {
         LabelWorker::spawn(
             WorkerConfig {
-                target: format!("device:{device_id}"),
+                target: device_target(device_id),
                 // The device's node locks the server its pane service serves.
                 lock: LockPlace {
                     node: device_channel(device_id, runtime.clone()),

@@ -54,6 +54,17 @@ struct StoredUiState {
     expanded_inactive_project_device_ids: Vec<String>,
     #[serde(default)]
     project_base_branches: BTreeMap<String, String>,
+    /// The same path-keyed settings for every other machine, by its id; a
+    /// core move swaps a machine's between these and the owner's
+    /// (`node_migration::reown`, PRD core-host-node-move B4).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    device_project_base_branches: BTreeMap<String, BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    device_project_issue_sources: BTreeMap<String, BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    device_expanded_inactive_checkout_project_paths: BTreeMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    device_selected_paths: BTreeMap<String, String>,
     /// The folded-by-default agent tree's open rows. The former
     /// `collapsed_agent_pane_ids` key is ignored on load and dropped on the
     /// next write: the ids it held name panes of some earlier Herdr server,
@@ -320,6 +331,11 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
                 .expanded_inactive_checkout_project_paths,
             expanded_inactive_project_device_ids: stored.expanded_inactive_project_device_ids,
             project_base_branches: stored.project_base_branches,
+            device_project_base_branches: stored.device_project_base_branches,
+            device_project_issue_sources: stored.device_project_issue_sources,
+            device_expanded_inactive_checkout_project_paths: stored
+                .device_expanded_inactive_checkout_project_paths,
+            device_selected_paths: stored.device_selected_paths,
             expanded_agent_pane_ids: stored.expanded_agent_pane_ids,
             sessions_expanded_agent_pane_ids: stored.sessions_expanded_agent_pane_ids,
             selected_path: stored.selected_path,
@@ -425,6 +441,12 @@ pub fn save(
             .clone(),
         expanded_inactive_project_device_ids: state.expanded_inactive_project_device_ids.clone(),
         project_base_branches: state.project_base_branches.clone(),
+        device_project_base_branches: state.device_project_base_branches.clone(),
+        device_project_issue_sources: state.device_project_issue_sources.clone(),
+        device_expanded_inactive_checkout_project_paths: state
+            .device_expanded_inactive_checkout_project_paths
+            .clone(),
+        device_selected_paths: state.device_selected_paths.clone(),
         expanded_agent_pane_ids: state.expanded_agent_pane_ids.clone(),
         sessions_expanded_agent_pane_ids: state.sessions_expanded_agent_pane_ids.clone(),
         selected_path: state.selected_path.clone(),
@@ -911,6 +933,64 @@ mod tests {
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(root);
+    }
+
+    /// Another machine's path-keyed settings, which a core move puts here,
+    /// survive a restart, and a store written before them loads with none.
+    #[test]
+    fn another_machines_path_settings_survive_a_restart() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("state.json");
+        let state = UiStateSnapshot {
+            device_project_base_branches: BTreeMap::from([(
+                "mac".to_owned(),
+                BTreeMap::from([("/Users/op/alpha".to_owned(), "trunk".to_owned())]),
+            )]),
+            device_project_issue_sources: BTreeMap::from([(
+                "mac".to_owned(),
+                BTreeMap::from([("/Users/op/alpha".to_owned(), "local".to_owned())]),
+            )]),
+            device_expanded_inactive_checkout_project_paths: BTreeMap::from([(
+                "mac".to_owned(),
+                vec!["/Users/op/alpha".to_owned()],
+            )]),
+            device_selected_paths: BTreeMap::from([(
+                "mac".to_owned(),
+                "/Users/op/alpha/src".to_owned(),
+            )]),
+            ..UiStateSnapshot::default()
+        };
+        save(&path, &state, &PaneTerminalSizes::new()).unwrap();
+        let restored = load(&path).0;
+        assert_eq!(
+            restored.device_project_base_branches,
+            state.device_project_base_branches
+        );
+        assert_eq!(
+            restored.device_project_issue_sources,
+            state.device_project_issue_sources
+        );
+        assert_eq!(
+            restored.device_expanded_inactive_checkout_project_paths,
+            state.device_expanded_inactive_checkout_project_paths
+        );
+        assert_eq!(restored.device_selected_paths, state.device_selected_paths);
+
+        let older = br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null}"#;
+        fs::write(&path, older).unwrap();
+        let restored = load(&path).0;
+        assert!(restored.device_project_base_branches.is_empty());
+        assert!(restored.device_selected_paths.is_empty());
+        // Empty maps are left out of the file, so a store without them is
+        // written as before.
+        save(
+            &path,
+            &UiStateSnapshot::default(),
+            &PaneTerminalSizes::new(),
+        )
+        .unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("device_project_base_branches"), "{text}");
     }
 
     /// B5, B12. Fold disclosure is independent at the project and device

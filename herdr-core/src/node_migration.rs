@@ -26,9 +26,12 @@ use serde_json::Value;
 
 use crate::node::{LEGACY_LOCAL_DEVICE_ID as LEGACY, NodeId};
 
+mod reown;
+pub use reown::{IdTable, KnownProject, OwnerChange, ReownOutcome, id_table, reown, staging_dir};
+
 pub const MARKER_FILE: &str = "node.json";
 pub const BACKUP_DIR: &str = "node-migration-backup";
-const MARKER_VERSION: u32 = 1;
+pub(crate) const MARKER_VERSION: u32 = 1;
 
 const CORE_STATE: &str = "core-state.json";
 const WORKSPACE_VIEWS: &str = "workspace-views.json";
@@ -37,6 +40,9 @@ const DELIVERY_LEDGER: &str = "delivery-ledger.json";
 const PROJECT_MEMORY: &str = hide_memory::DATABASE_FILE;
 const SESSION_SEARCH: &str = "session-search.sqlite3";
 const LINKS: &str = "links.sqlite3";
+const LOCAL_ISSUES: &str = "local-issues.json";
+/// Where a move keeps its staging copies (`reown::staging_dir`).
+pub const MOVE_STAGING: &str = "move-staging";
 
 /// How one machine-bound key is kept pointing at the right machine.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -48,157 +54,540 @@ pub enum Mechanism {
     Owned,
 }
 
+/// How a machine-bound key moves when the core moves to another machine and
+/// the folder changes owner (`reown`). A move never guesses: a key the
+/// table leaves naming the new owner by its old id stops the move.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Moves {
+    /// A machine id: the new owner's old id becomes its node id, the old
+    /// owner's node id becomes the id the result gives it.
+    Device,
+    /// A Herdr pane id: unqualified for the owner, `remote:<id>:pane:` for
+    /// any other machine.
+    Pane,
+    /// A Herdr tab id, the same way.
+    Tab,
+    /// A registered project's id (`workspace:` for the owner,
+    /// `remote:<id>:project:` otherwise), through the source's id table.
+    Registration,
+    /// A checkout's id, through the same table.
+    Checkout,
+    /// A session fold: a registration id or `cleanup/<machine>`.
+    Fold,
+    /// The owner's own setting, swapped with the `device_*` map beside it
+    /// (`reown::OWN_PATHS`).
+    OwnPath(&'static str),
+    /// The label records, which travel one hop (`reown`, labels).
+    Labels,
+    /// Moved by code that reads the whole file, not by the pattern: the
+    /// ledger's host scopes and spawn machines, the View layouts' tabs.
+    Whole,
+    /// Names its machine through a sibling machine id or a node id no owner
+    /// change touches (a path beside its `device_id`, a `project:` digest,
+    /// a native machine id): it stays as it is.
+    Stays,
+}
+
 /// Every key in the state folder that names a machine, by file and JSON
-/// pointer pattern (`*` is every array element or object key), and how each
-/// is converted. The contract test holds a fully populated legacy folder to
-/// this list, so a store that gains a machine-bound key must be added here.
-pub const KEYS: &[(&str, &str, Mechanism)] = &[
+/// pointer pattern (`*` is every array element or object key), how the
+/// layer-1 conversion keeps it, and how a core move changes it. The contract
+/// tests hold a fully populated folder to this list in every shape (the
+/// owner's, a linked node's, a dialed device's), so a store that gains a
+/// machine-bound key must be added here.
+pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     (
         CORE_STATE,
         "/workspace_registrations/*/device_id",
         Mechanism::Rewritten,
+        Moves::Device,
     ),
-    (CORE_STATE, "/focused_device_id", Mechanism::Rewritten),
+    (
+        CORE_STATE,
+        "/workspace_registrations/*/id",
+        Mechanism::Owned,
+        Moves::Registration,
+    ),
+    (
+        CORE_STATE,
+        "/workspace_registrations/*/primary_checkout_id",
+        Mechanism::Owned,
+        Moves::Checkout,
+    ),
+    (
+        CORE_STATE,
+        "/workspace_registrations/*/path",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
+    (
+        CORE_STATE,
+        "/device_registrations/*/id",
+        Mechanism::Rewritten,
+        Moves::Whole,
+    ),
+    (
+        CORE_STATE,
+        "/focused_device_id",
+        Mechanism::Rewritten,
+        Moves::Device,
+    ),
     (
         CORE_STATE,
         "/expanded_inactive_project_device_ids/*",
         Mechanism::Rewritten,
+        Moves::Device,
     ),
     (
         CORE_STATE,
         "/recent_checkouts/*/device_id",
         Mechanism::Rewritten,
+        Moves::Device,
+    ),
+    (
+        CORE_STATE,
+        "/recent_checkouts/*/checkout_id",
+        Mechanism::Owned,
+        Moves::Checkout,
     ),
     (
         CORE_STATE,
         "/device_expanded_paths/{key}",
         Mechanism::Rewritten,
+        Moves::OwnPath("expanded_paths"),
     ),
     (
         CORE_STATE,
         "/sessions_mode_by_project/{key}",
         Mechanism::Rewritten,
+        Moves::Stays,
     ),
-    (CORE_STATE, "/selected_pane_id", Mechanism::Owned),
-    (CORE_STATE, "/expanded_agent_pane_ids/*", Mechanism::Owned),
+    (
+        CORE_STATE,
+        "/selected_pane_id",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/expanded_agent_pane_ids/*",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
     (
         CORE_STATE,
         "/sessions_expanded_agent_pane_ids/*",
         Mechanism::Owned,
+        Moves::Pane,
     ),
-    (CORE_STATE, "/recent_pane_ids/*", Mechanism::Owned),
-    (CORE_STATE, "/pane_text_scales/{key}", Mechanism::Owned),
-    (CORE_STATE, "/pane_read_records/{key}", Mechanism::Owned),
-    (CORE_STATE, "/request_verbs/{key}", Mechanism::Owned),
-    (CORE_STATE, "/pane_terminal_sizes/{key}", Mechanism::Owned),
-    (CORE_STATE, "/agent_sleep/stamps/{key}", Mechanism::Owned),
-    (CORE_STATE, "/agent_sleep/records/{key}", Mechanism::Owned),
-    (CORE_STATE, "/expanded_paths/*", Mechanism::Owned),
-    (CORE_STATE, "/selected_path", Mechanism::Owned),
-    (CORE_STATE, "/focused_checkout_id", Mechanism::Owned),
-    (CORE_STATE, "/collapsed_workspace_ids/*", Mechanism::Owned),
-    (CORE_STATE, "/collapsed_checkout_ids/*", Mechanism::Owned),
-    (CORE_STATE, "/expanded_checkout_ids/*", Mechanism::Owned),
-    (CORE_STATE, "/project_base_branches/{key}", Mechanism::Owned),
-    (CORE_STATE, "/project_issue_sources/{key}", Mechanism::Owned),
+    (
+        CORE_STATE,
+        "/recent_pane_ids/*",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/pane_text_scales/{key}",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/pane_read_records/{key}",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/pane_read_records/*/descendant_signals/*/pane_id",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/request_verbs/{key}",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/pane_terminal_sizes/{key}",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/resolved_sessions/{key}",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/session_resolution_inputs/{key}",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/agent_sleep/stamps/{key}",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/agent_sleep/records/{key}",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/agent_sleep/records/*/parent_pane_id",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/agent_sleep/records/*/cwd",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
+    (
+        CORE_STATE,
+        "/agent_sleep/dormant/*/node_id",
+        Mechanism::Rewritten,
+        Moves::Device,
+    ),
+    (
+        CORE_STATE,
+        "/agent_sleep/dormant/*/old_pane_id",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/agent_sleep/dormant/*/cwd",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
+    (
+        CORE_STATE,
+        "/factory_secretary_pane",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        CORE_STATE,
+        "/expanded_paths/*",
+        Mechanism::Owned,
+        Moves::OwnPath("device_expanded_paths"),
+    ),
+    (
+        CORE_STATE,
+        "/selected_path",
+        Mechanism::Owned,
+        Moves::OwnPath("device_selected_paths"),
+    ),
+    (
+        CORE_STATE,
+        "/device_selected_paths/{key}",
+        Mechanism::Rewritten,
+        Moves::OwnPath("selected_path"),
+    ),
+    (
+        CORE_STATE,
+        "/focused_checkout_id",
+        Mechanism::Owned,
+        Moves::Checkout,
+    ),
+    (
+        CORE_STATE,
+        "/collapsed_workspace_ids/*",
+        Mechanism::Owned,
+        Moves::Registration,
+    ),
+    (
+        CORE_STATE,
+        "/collapsed_checkout_ids/*",
+        Mechanism::Owned,
+        Moves::Checkout,
+    ),
+    (
+        CORE_STATE,
+        "/expanded_checkout_ids/*",
+        Mechanism::Owned,
+        Moves::Checkout,
+    ),
+    (
+        CORE_STATE,
+        "/session_collapsed_checkout_ids/*",
+        Mechanism::Owned,
+        Moves::Checkout,
+    ),
+    (
+        CORE_STATE,
+        "/session_open_folds/*",
+        Mechanism::Rewritten,
+        Moves::Fold,
+    ),
+    (
+        CORE_STATE,
+        "/project_base_branches/{key}",
+        Mechanism::Owned,
+        Moves::OwnPath("device_project_base_branches"),
+    ),
+    (
+        CORE_STATE,
+        "/device_project_base_branches/{key}",
+        Mechanism::Rewritten,
+        Moves::OwnPath("project_base_branches"),
+    ),
+    (
+        CORE_STATE,
+        "/project_issue_sources/{key}",
+        Mechanism::Owned,
+        Moves::OwnPath("device_project_issue_sources"),
+    ),
+    (
+        CORE_STATE,
+        "/device_project_issue_sources/{key}",
+        Mechanism::Rewritten,
+        Moves::OwnPath("project_issue_sources"),
+    ),
     (
         CORE_STATE,
         "/expanded_inactive_checkout_project_paths/*",
         Mechanism::Owned,
+        Moves::OwnPath("device_expanded_inactive_checkout_project_paths"),
+    ),
+    (
+        CORE_STATE,
+        "/device_expanded_inactive_checkout_project_paths/{key}",
+        Mechanism::Rewritten,
+        Moves::OwnPath("expanded_inactive_checkout_project_paths"),
     ),
     (
         WORKSPACE_VIEWS,
         "/workspaces/*/device_id",
         Mechanism::Rewritten,
+        Moves::Device,
     ),
-    (WORKSPACE_VIEWS, "/workspaces/*/path", Mechanism::Owned),
+    (
+        WORKSPACE_VIEWS,
+        "/workspaces/*/path",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
     (
         WORKSPACE_VIEWS,
         "/workspaces/*/agent_layout",
         Mechanism::Owned,
+        Moves::Whole,
     ),
     (
         WORKSPACE_VIEWS,
-        "/workspaces/*/view_bookmarks",
+        "/workspaces/*/view_bookmarks/{key}",
         Mechanism::Owned,
+        Moves::Tab,
     ),
-    (LABELS, "/targets/{key}", Mechanism::Rewritten),
-    (LABELS, "/targets/*/{key}", Mechanism::Owned),
+    (
+        WORKSPACE_VIEWS,
+        "/workspaces/*/layout",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
+    (
+        LABELS,
+        "/targets/{key}",
+        Mechanism::Rewritten,
+        Moves::Labels,
+    ),
+    (LABELS, "/targets/*/{key}", Mechanism::Owned, Moves::Labels),
     (
         DELIVERY_LEDGER,
         "/letters/*/sender/device_id",
         Mechanism::Rewritten,
+        Moves::Device,
     ),
     (
         DELIVERY_LEDGER,
         "/letters/*/recipient/device_id",
         Mechanism::Rewritten,
+        Moves::Device,
     ),
     (
         DELIVERY_LEDGER,
         "/letters/*/watch_warning/target/device_id",
         Mechanism::Rewritten,
+        Moves::Device,
     ),
     (
         DELIVERY_LEDGER,
         "/watches/*/parent/device_id",
         Mechanism::Rewritten,
+        Moves::Device,
     ),
     (
         DELIVERY_LEDGER,
         "/watches/*/target/device_id",
         Mechanism::Rewritten,
+        Moves::Device,
     ),
-    (DELIVERY_LEDGER, "/agents/*/machine", Mechanism::Rewritten),
+    (
+        DELIVERY_LEDGER,
+        "/agents/*/machine",
+        Mechanism::Rewritten,
+        Moves::Device,
+    ),
     (
         DELIVERY_LEDGER,
         "/agents/*/actor/device_id",
         Mechanism::Rewritten,
+        Moves::Device,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/agents/*/native_machine",
+        Mechanism::Rewritten,
+        Moves::Stays,
     ),
     (
         DELIVERY_LEDGER,
         "/letters/*/sender/pane_id",
         Mechanism::Owned,
+        Moves::Pane,
     ),
-    (DELIVERY_LEDGER, "/agents/*/pane", Mechanism::Owned),
-    (DELIVERY_LEDGER, "/agents/*/host_scope", Mechanism::Owned),
-    (DELIVERY_LEDGER, "/agents/*/project", Mechanism::Owned),
-    (DELIVERY_LEDGER, "/agents/*/session", Mechanism::Owned),
-    (DELIVERY_LEDGER, "/agents/*/instance", Mechanism::Owned),
-    (DELIVERY_LEDGER, "/spawns/*/repo", Mechanism::Owned),
-    (DELIVERY_LEDGER, "/spawns/*/path", Mechanism::Owned),
+    (
+        DELIVERY_LEDGER,
+        "/letters/*/recipient/pane_id",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/letters/*/watch_warning/target/pane_id",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/watches/*/parent/pane_id",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/watches/*/target/pane_id",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/agents/*/actor/pane_id",
+        Mechanism::Owned,
+        Moves::Pane,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/agents/*/pane",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/agents/*/host_scope",
+        Mechanism::Owned,
+        Moves::Whole,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/agents/*/project",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/agents/*/session",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/agents/*/instance",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/spawns/*/machine",
+        Mechanism::Rewritten,
+        Moves::Whole,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/spawns/*/repo",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/spawns/*/path",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
     (
         DELIVERY_LEDGER,
         "/spawns/*/requested_path",
         Mechanism::Owned,
+        Moves::Stays,
     ),
-    (DELIVERY_LEDGER, "/spawns/*/pane", Mechanism::Owned),
+    (
+        DELIVERY_LEDGER,
+        "/spawns/*/pane",
+        Mechanism::Owned,
+        Moves::Stays,
+    ),
     (
         PROJECT_MEMORY,
         "projects.device_id, every project_id column",
         Mechanism::Rewritten,
+        Moves::Stays,
     ),
     (
         SESSION_SEARCH,
         "policy, control_outcomes, files, messages: project",
         Mechanism::Rewritten,
+        Moves::Stays,
     ),
     (
         LINKS,
         "projects.device and projects.key, prs.project, worktrees.project, every device column",
         Mechanism::Rewritten,
+        Moves::Whole,
     ),
     (
         LINKS,
-        "meta listed_at, pr_issues.issue `local:<root>#n`, paths and cwds",
+        "meta listed_at and listed_at:<device>, pr_issues.issue `local:<root>#n`, paths and cwds",
         Mechanism::Owned,
+        Moves::Whole,
     ),
     (
         "github-snapshot.json",
         "/projects/*/root_path",
         Mechanism::Owned,
+        Moves::Stays,
     ),
-    ("local-issues.json", "/{key}", Mechanism::Owned),
+    (
+        LOCAL_ISSUES,
+        "/projects/{key}",
+        Mechanism::Owned,
+        Moves::OwnPath("devices"),
+    ),
+    (
+        LOCAL_ISSUES,
+        "/devices/{key}",
+        Mechanism::Rewritten,
+        Moves::OwnPath("projects"),
+    ),
 ];
 
 /// The rest of a state folder, which names no machine: the daemon's own
@@ -226,9 +615,9 @@ pub const UNBOUND: &[&str] = &[
 /// `node.json`: the node that owns every unqualified key in this folder,
 /// whichever machine runs the core that reads it.
 #[derive(Debug, Deserialize, Serialize)]
-struct Marker {
-    version: u32,
-    node: String,
+pub(crate) struct Marker {
+    pub(crate) version: u32,
+    pub(crate) node: String,
 }
 
 /// Why the daemon cannot start on this state folder.
@@ -470,7 +859,7 @@ fn over_limit(path: &Path, limit: usize) -> bool {
     std::fs::metadata(path).is_ok_and(|metadata| metadata.len() > limit as u64)
 }
 
-fn read_marker(path: &Path) -> Result<Option<String>, String> {
+pub(crate) fn read_marker(path: &Path) -> Result<Option<String>, String> {
     match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice::<Marker>(&bytes)
             .map_err(|error| format!("node.json is not readable: {error}"))
@@ -489,7 +878,7 @@ fn read_marker(path: &Path) -> Result<Option<String>, String> {
 /// A store's JSON, or `None` when there is no file. A file that does not
 /// parse is left to its own loader, which already handles a damaged store,
 /// and is not converted.
-fn read_json(path: &Path) -> Result<Option<Value>, String> {
+pub(crate) fn read_json(path: &Path) -> Result<Option<Value>, String> {
     match std::fs::read(path) {
         Ok(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -497,7 +886,7 @@ fn read_json(path: &Path) -> Result<Option<Value>, String> {
     }
 }
 
-fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     hide_platform::fs::atomic::write_file(path, bytes, hide_platform::fs::Access::Private)
         .map(|_| ())
         .map_err(|error| error.to_string())
@@ -607,7 +996,30 @@ fn convert_core_state(value: &mut Value, node: &str, projects: &BTreeMap<String,
     for row in each(value, "recent_checkouts") {
         changed |= rewrite(row.get_mut("device_id"), node);
     }
-    changed |= rename_key(value.get_mut("device_expanded_paths"), node);
+    for map in [
+        "device_expanded_paths",
+        "device_selected_paths",
+        "device_project_base_branches",
+        "device_project_issue_sources",
+        "device_expanded_inactive_checkout_project_paths",
+    ] {
+        changed |= rename_key(value.get_mut(map), node);
+    }
+    for fold in each(value, "session_open_folds") {
+        if fold.as_str() == Some(&format!("cleanup/{LEGACY}")) {
+            *fold = Value::String(format!("cleanup/{node}"));
+            changed = true;
+        }
+    }
+    if let Some(dormant) = value
+        .get_mut("agent_sleep")
+        .and_then(|sleep| sleep.get_mut("dormant"))
+        .and_then(Value::as_object_mut)
+    {
+        for record in dormant.values_mut() {
+            changed |= rewrite(record.get_mut("node_id"), node);
+        }
+    }
     if let Some(modes) = value
         .get_mut("sessions_mode_by_project")
         .and_then(Value::as_object_mut)
@@ -658,7 +1070,11 @@ fn convert_delivery_ledger(value: &mut Value, node: &str, _: &BTreeMap<String, S
     }
     for agent in each(value, "agents") {
         changed |= rewrite(agent.get_mut("machine"), node);
+        changed |= rewrite(agent.get_mut("native_machine"), node);
         changed |= actor(agent.get_mut("actor"));
+    }
+    for spawn in each(value, "spawns") {
+        changed |= rewrite(spawn.get_mut("machine"), node);
     }
     changed
 }
@@ -821,24 +1237,38 @@ mod tests {
             json!({
                 "schema_version": 1,
                 "workspace_registrations": [
-                    {"id": "workspace:a", "label": "alpha", "path": root, "device_id": "local"},
+                    {"id": "workspace:a", "label": "alpha", "path": root, "device_id": "local", "primary_checkout_id": "workspace:a:checkout:1"},
                     {"id": "workspace:b", "label": "old", "path": "/gone/old"},
                     {"id": "remote:mini:project:p", "label": "mini", "path": "/srv/p", "device_id": "mini"},
                 ],
                 "focused_device_id": "local",
                 "expanded_inactive_project_device_ids": ["local", "mini"],
-                "recent_checkouts": [{"device_id": "local", "device_name": "This Mac", "path": root}],
+                "recent_checkouts": [{"device_id": "local", "checkout_id": "workspace:a:checkout:1", "device_name": "This Mac", "path": root}],
+                "device_registrations": [{"id": "mini", "label": "Mac mini", "ssh_alias": "mini"}],
                 "device_expanded_paths": {"local": ["/x"], "mini": ["/srv/p"]},
+                "device_selected_paths": {"mini": "/srv/p/a"},
+                "device_project_base_branches": {"mini": {"/srv/p": "main"}},
+                "device_project_issue_sources": {"mini": {"/srv/p": "github"}},
+                "device_expanded_inactive_checkout_project_paths": {"mini": ["/srv/p"]},
+                "resolved_sessions": {"w1:p1": {"at_unix_ms": 1}},
+                "session_resolution_inputs": {"w1:p1": 1},
+                "session_collapsed_checkout_ids": ["workspace:a:checkout:1"],
+                "session_open_folds": ["workspace:a", "cleanup/local"],
+                "factory_secretary_pane": "w1:p3",
                 "sessions_mode_by_project": {old_project.clone(): "memory"},
                 "selected_pane_id": "w1:p1",
                 "expanded_agent_pane_ids": ["w1:p1"],
                 "sessions_expanded_agent_pane_ids": ["w1:p1"],
                 "recent_pane_ids": ["w1:p1", "remote:mini:pane:w2:p1"],
                 "pane_text_scales": {"w1:p1": 1.2},
-                "pane_read_records": {"w1:p1": {"seen_at_unix_ms": 1}},
+                "pane_read_records": {"w1:p1": {"seen_at_unix_ms": 1, "descendant_signals": [{"pane_id": "w1:p4"}]}},
                 "request_verbs": {"w1:p1": "review"},
                 "pane_terminal_sizes": {"w1:p1": {"cols": 80, "rows": 24}},
-                "agent_sleep": {"stamps": {"w1:p1": {}}, "records": {"w1:p1": {}}},
+                "agent_sleep": {
+                    "stamps": {"w1:p1": {}},
+                    "records": {"w1:p1": {"parent_pane_id": "w1:p0", "cwd": root}},
+                    "dormant": {"sleep-1": {"node_id": "local", "old_pane_id": "w1:p5", "cwd": root}},
+                },
                 "expanded_paths": [root],
                 "project_base_branches": {root.clone(): "main"},
                 "project_issue_sources": {root.clone(): "github"},
@@ -853,7 +1283,7 @@ mod tests {
         write(
             WORKSPACE_VIEWS,
             json!({"schema_version": 2, "workspaces": [
-                {"device_id": "local", "path": root, "agent_layout": {"tabs": ["w1:t1"]}, "view_bookmarks": [{"tab": "w1:t1"}]},
+                {"device_id": "local", "path": root, "agent_layout": {"tabs": ["w1:t1"]}, "view_bookmarks": {"w1:t1": {"area-1": "display-1"}}, "layout": {"root": {}}},
                 {"device_id": "mini", "path": "/srv/p"},
             ]}),
         );
@@ -869,16 +1299,19 @@ mod tests {
                 "letters": [{"sender": actor("local"), "recipient": actor("mini"),
                              "watch_warning": {"target": actor("local")}}],
                 "watches": [{"parent": actor("local"), "target": actor("local")}],
-                "agents": [{"machine": "local", "actor": actor("local"), "pane": "w1:p1", "host_scope": "/tmp/herdr.sock",
+                "agents": [{"machine": "local", "native_machine": "local", "actor": actor("local"), "pane": "w1:p1", "host_scope": "/tmp/herdr.sock",
                             "project": root, "session": "s1", "instance": "term_1"}],
-                "spawns": [{"repo": root, "path": root, "requested_path": root, "pane": "w1:p2"}],
+                "spawns": [{"repo": root, "path": root, "requested_path": root, "pane": "w1:p2", "machine": "mini"}],
             }),
         );
         write(
             "github-snapshot.json",
             json!({"projects": [{"root_path": root}]}),
         );
-        write("local-issues.json", json!({root.clone(): []}));
+        write(
+            "local-issues.json",
+            json!({"version": 1, "projects": {root.clone(): []}, "devices": {"mini": {"/srv/p": []}}}),
+        );
 
         let memory = hide_memory::MemoryStore::open(&state.join(PROJECT_MEMORY)).unwrap();
         memory
@@ -944,7 +1377,7 @@ mod tests {
 
     /// Every value a pointer pattern reaches; `*` is each array element or
     /// object value, `{key}` each object key.
-    fn reach(value: &Value, pattern: &str) -> Vec<Value> {
+    pub(super) fn reach(value: &Value, pattern: &str) -> Vec<Value> {
         let mut found = vec![value.clone()];
         for part in pattern.trim_start_matches('/').split('/') {
             found = found
@@ -985,12 +1418,12 @@ mod tests {
         let legacy = legacy();
         let before: BTreeMap<String, Value> = KEYS
             .iter()
-            .filter(|(file, _, _)| file.ends_with(".json"))
-            .map(|(file, _, _)| (file.to_string(), read(&legacy.state.join(file))))
+            .filter(|(file, ..)| file.ends_with(".json"))
+            .map(|(file, ..)| (file.to_string(), read(&legacy.state.join(file))))
             .collect();
         // The fixture holds a value at every key the table names, so a key
         // the table adds without a fixture value fails here.
-        for (file, pattern, _) in KEYS.iter().filter(|(file, _, _)| file.ends_with(".json")) {
+        for (file, pattern, _, _) in KEYS.iter().filter(|(file, ..)| file.ends_with(".json")) {
             assert!(
                 !reach(&before[*file], pattern).is_empty(),
                 "the legacy fixture has no value at {file}{pattern}"
@@ -1000,7 +1433,8 @@ mod tests {
         let outcome = convert(&legacy.state, &legacy.home, &node()).unwrap();
         assert!(outcome.files.len() >= 6, "{outcome:?}");
 
-        for (file, pattern, mechanism) in KEYS.iter().filter(|(file, _, _)| file.ends_with(".json"))
+        for (file, pattern, mechanism, _) in
+            KEYS.iter().filter(|(file, ..)| file.ends_with(".json"))
         {
             let after = reach(&read(&legacy.state.join(file)), pattern);
             match mechanism {
@@ -1128,7 +1562,7 @@ mod tests {
         convert(&legacy.state, &legacy.home, &node()).unwrap();
         let listed: Vec<&str> = KEYS
             .iter()
-            .map(|(file, _, _)| *file)
+            .map(|(file, ..)| *file)
             .chain(UNBOUND.iter().copied())
             .collect();
         for entry in std::fs::read_dir(&legacy.state).unwrap() {
@@ -1139,7 +1573,7 @@ mod tests {
             );
         }
         for file in UNBOUND {
-            assert!(!KEYS.iter().any(|(listed, _, _)| listed == file), "{file}");
+            assert!(!KEYS.iter().any(|(listed, ..)| listed == file), "{file}");
         }
     }
 
