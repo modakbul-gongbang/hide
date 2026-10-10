@@ -259,19 +259,28 @@ pub(crate) fn refresh_session_folds(
             folds.cleanup.push(checkout.id.clone());
             continue;
         }
-        let live = checkout
-            .tabs
-            .iter()
-            .flat_map(|tab| &tab.panes)
-            .filter_map(|pane| agents.get(pane.id.as_str()))
-            .any(|agent| agent.resolved.is_none());
+        let unresolved = || {
+            checkout
+                .tabs
+                .iter()
+                .flat_map(|tab| &tab.panes)
+                .filter_map(|pane| agents.get(pane.id.as_str()))
+                .filter(|agent| agent.resolved.is_none())
+        };
+        let live = unresolved().next().is_some();
+        // A worktree that only delegated children work in is the parent's
+        // tree, not a line of its own: the children already reach the screen
+        // as the descendant mark on the parent root's row. A Factory worker
+        // is not delegated here, because its spawn parent is the Factory's
+        // code-owned identity, which is no pane in the list, so the worker
+        // resolves as an orphan root.
+        let child_only = live && !unresolved().any(|agent| agent.state.root);
         if checkout.is_worktree
             && !checkout.is_primary
             && !workspace
                 .inactive_checkouts
                 .checkout_ids
                 .contains(&checkout.id)
-            && !live
             && !checkout.dirty
             && checkout
                 .unpushed
@@ -279,13 +288,17 @@ pub(crate) fn refresh_session_folds(
                 .is_none_or(|value| value.count == 0)
             && focused_checkout_id != Some(checkout.id.as_str())
         {
-            folds.empty.push(checkout.id.clone());
-            folds.open_prs += usize::from(
-                checkout
-                    .pull_request
-                    .as_ref()
-                    .is_some_and(|pr| !pr.badge.is_settled()),
-            );
+            if !live {
+                folds.empty.push(checkout.id.clone());
+                folds.open_prs += usize::from(
+                    checkout
+                        .pull_request
+                        .as_ref()
+                        .is_some_and(|pr| !pr.badge.is_settled()),
+                );
+            } else if child_only {
+                folds.child_only.push(checkout.id.clone());
+            }
         }
     }
     workspace.session_folds = folds;
@@ -709,6 +722,55 @@ mod tests {
         assert_eq!(
             navigator.workspaces[0].inactive_checkouts.checkout_ids,
             ["control"]
+        );
+    }
+
+    /// A worktree that only delegated children work in gets no checkout line
+    /// and no fold: the children reach the screen as the descendant mark on
+    /// the root that owns them. Every other case keeps its line - a root of
+    /// its own, an orphan whose parent ended, a Factory worker (its spawn
+    /// parent is no pane in the list) and the live-work exceptions.
+    #[test]
+    fn worktrees_with_only_delegated_children_are_hidden() {
+        let now_ms = 20 * 24 * 60 * 60 * 1_000;
+        let mut project = project("alpha", "local", None, &[]);
+        let panes = [
+            ("owner", "root-pane"),
+            ("kids", "child-pane"),
+            ("orphan", "orphan-pane"),
+            ("factory", "worker-pane"),
+            ("kids-dirty", "dirty-child-pane"),
+            ("kids-focused", "focused-child-pane"),
+        ];
+        for (id, pane) in panes {
+            let mut worktree = make_worktree_checkout("alpha", id, None);
+            worktree.tabs = checkout(id, None, &[pane]).tabs;
+            project.checkouts.push(worktree);
+        }
+        project.checkouts[5].dirty = true;
+        let mut navigator = navigator(vec![project]);
+        navigator.focused_checkout_id = Some("kids-focused".to_owned());
+        navigator.agents = agents(json!([
+            {"pane_id": "root-pane", "agent_status": "working", "state_change_seq": 1},
+            {"pane_id": "child-pane", "agent_status": "working", "state_change_seq": 1, "spawned_from_pane_id": "root-pane"},
+            {"pane_id": "orphan-pane", "agent_status": "working", "state_change_seq": 1, "spawned_from_pane_id": "gone-pane"},
+            {"pane_id": "worker-pane", "agent_status": "working", "state_change_seq": 1, "spawned_from_pane_id": "factory:one"},
+            {"pane_id": "dirty-child-pane", "agent_status": "working", "state_change_seq": 1, "spawned_from_pane_id": "root-pane"},
+            {"pane_id": "focused-child-pane", "agent_status": "working", "state_change_seq": 1, "spawned_from_pane_id": "root-pane"}
+        ]));
+        let workspaces = navigator.workspaces.clone();
+        crate::agent_state::apply_lineage(&mut navigator.agents, &workspaces, &[]);
+
+        refresh_inactive_groups(&mut navigator, &UiStateSnapshot::default(), now_ms);
+
+        let folds = &navigator.workspaces[0].session_folds;
+        assert_eq!(folds.child_only, ["kids"]);
+        assert!(!folds.empty.contains(&"kids".to_owned()));
+        assert!(
+            navigator.workspaces[0]
+                .inactive_checkouts
+                .checkout_ids
+                .is_empty()
         );
     }
 

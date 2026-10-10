@@ -637,7 +637,7 @@ export type Workspace = {
   removal?: { pane_count: number; running_agent_count: number };
   checkouts: Checkout[];
   inactive_checkouts: { expanded: boolean; checkout_ids: string[] };
-  session_folds?: { empty: string[]; cleanup: string[]; empty_open: boolean; cleanup_open: boolean; open_prs: number };
+  session_folds?: { empty: string[]; child_only: string[]; cleanup: string[]; empty_open: boolean; cleanup_open: boolean; open_prs: number };
   /** The repository's open issues, in the shape older readers read. */
   home_issues?: ProjectIssues;
   /** The project's tasks, the Overview's Tasks and Agents views read these. */

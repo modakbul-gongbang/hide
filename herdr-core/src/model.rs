@@ -1334,6 +1334,10 @@ pub struct InactiveCheckoutGroupSnapshot {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct SessionCheckoutFolds {
     pub empty: Vec<String>,
+    /// Worktrees whose unresolved agents are all delegated children. They get
+    /// no checkout line and sit in no fold: the way to a child is the tree of
+    /// the root that owns it.
+    pub child_only: Vec<String>,
     pub cleanup: Vec<String>,
     pub empty_open: bool,
     pub cleanup_open: bool,

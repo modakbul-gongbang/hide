@@ -385,9 +385,9 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await expect(project.locator("[data-checkout]")).toHaveCount(0);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await projectRow.click();
-    // B1: this checkout now contains only the delegated child. It keeps its
-    // checkout identity but has no operator session rows to disclose.
-    await expect(featureToggle).toHaveCount(0);
+    // B1: this checkout now contains only the delegated child, so it has no
+    // line of its own; the child is reached from its root's tree.
+    await expect(feature).toHaveCount(0);
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
     await expect(parentRow.locator(`[data-tree-chevron="${mainPane}"]`)).toBeVisible();
     await expect(page.locator(`nav[data-sidebar] [data-pane="${rowsPane}"]`)).toHaveCount(0);
@@ -428,7 +428,7 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     // rows are the ones the default draws, while text outside it grows, and
     // hover still moves nothing.
     await rest(page);
-    const projectsAtDefault = { sizes: await sidebarTextSizes(page), row: await rowGeometry(primaryRow, feature, primaryParts) };
+    const projectsAtDefault = { sizes: await sidebarTextSizes(page), row: await rowGeometry(primaryRow, parentRow, primaryParts) };
     const outsideAtDefault = await probeTextSize(page, "main");
     await rest(page);
     const agentsAtDefault = { sizes: await sidebarTextSizes(page), row: await rowGeometry(agentRow, nextRow, agentParts) };
@@ -445,14 +445,14 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await rest(page);
     expect(await probeTextSize(page, "nav[data-sidebar]")).toBe(12);
     expect(await sidebarTextSizes(page)).toEqual(projectsAtDefault.sizes);
-    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(projectsAtDefault.row);
+    expect(await rowGeometry(primaryRow, parentRow, primaryParts)).toEqual(projectsAtDefault.row);
     expect(await sidebarRowsFit(page)).toEqual([]);
     expect(await projectButtonFills(page)).toBe(true);
     await primaryRow.hover();
-    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(projectsAtDefault.row);
+    expect(await rowGeometry(primaryRow, parentRow, primaryParts)).toEqual(projectsAtDefault.row);
     await rest(page);
     await keyboardFocus(page, primary.locator("[data-checkout]"));
-    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(projectsAtDefault.row);
+    expect(await rowGeometry(primaryRow, parentRow, primaryParts)).toEqual(projectsAtDefault.row);
     await rest(page);
     await screenshot(page, "projects-sidebar-large-font");
     await rest(page);
