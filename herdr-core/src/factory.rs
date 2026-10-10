@@ -3194,7 +3194,7 @@ mod tests {
     }
 
     #[test]
-    fn a_worker_is_queued_to_sleep_whatever_agent_it_runs() {
+    fn a_worker_whose_agent_a_factory_does_not_sleep_is_refused_rather_queued() {
         let state = Arc::new(Mutex::new(WorkerState::default()));
         let mut port = CoreWorkers {
             runtime: Weak::new(),
@@ -3204,11 +3204,11 @@ mod tests {
         for (agent, sleeps) in [
             ("claude", true),
             ("codex", true),
-            ("grok", true),
+            ("grok", false),
             ("pi", true),
             ("omp", true),
-            ("opencode", true),
-            ("cursor", true),
+            ("opencode", false),
+            ("cursor", false),
         ] {
             job.runtime = AgentRuntime::parse(agent).expect(agent);
             let answer = port.sleep(&worker(&job));
@@ -3228,9 +3228,9 @@ mod tests {
             ("claude", true),
             ("pi", true),
             ("omp", true),
-            ("grok", true),
-            ("opencode", true),
-            ("cursor", true),
+            ("grok", false),
+            ("opencode", false),
+            ("cursor", false),
         ] {
             let state = Arc::new(Mutex::new(WorkerState::default()));
             let mut port = CoreWorkers {

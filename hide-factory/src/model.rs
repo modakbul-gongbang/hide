@@ -186,11 +186,15 @@ impl Runtime {
             .map(|kind| Self(kind))
     }
 
-    /// Whether the agent's adapter declares a sleep (D-28). One that keeps
-    /// its pane wakes in it; one that closes its pane wakes in a fresh one,
-    /// and the core binds that pane to this worker again (#857).
+    /// Whether a Factory can put this worker to sleep (D-28): its adapter
+    /// declares a sleep, and one that closes its pane to sleep is bound back
+    /// to its worker only for Pi and omp (#857). Grok, OpenCode and Cursor
+    /// close their pane too but keep working through a pause until a task of
+    /// their own settles that.
     pub fn sleeps(self) -> bool {
-        self.adapter().sleep.is_some()
+        self.adapter().sleep.is_some_and(|dialect| {
+            !dialect.closes_pane_when_sleeping() || matches!(self.0, "pi" | "omp")
+        })
     }
 
     /// How the agent's start takes a model and an effort.
@@ -1536,9 +1540,9 @@ mod summary_tests {
             ("codex", true),
             ("pi", true),
             ("omp", true),
-            ("grok", true),
-            ("opencode", true),
-            ("cursor", true),
+            ("grok", false),
+            ("opencode", false),
+            ("cursor", false),
         ] {
             assert_eq!(Runtime::parse(kind).unwrap().sleeps(), supported, "{kind}");
         }

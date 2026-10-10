@@ -1153,7 +1153,8 @@ impl Engine {
         self.task(factory, &id)?.worker.clone()
     }
 
-    /// The panes of the workers whose agent closes its pane to sleep, with
+    /// The panes of the workers whose agent closes its pane to sleep and that a
+    /// Factory sleeps, with
     /// whose they are: what the core needs to keep a conversation tied to its
     /// worker when it sleeps.
     pub fn sleeper_panes(&self) -> impl Iterator<Item = (&Task, &WorkerRef)> {
@@ -1162,6 +1163,7 @@ impl Engine {
             .filter_map(|task| Some((task, task.worker.as_ref()?)))
             .filter(|(_, worker)| {
                 worker.pane.is_some()
+                    && worker.runtime.sleeps()
                     && worker
                         .runtime
                         .adapter()
