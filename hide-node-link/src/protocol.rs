@@ -90,7 +90,41 @@ use crate::error::HostError;
 /// terminal could cut. A node on 26 would refuse it as unknown, and a long
 /// first prompt could not start on that device, so it is refused at Hello and
 /// reinstalled.
-pub const PROTOCOL_VERSION: u32 = 27;
+/// 28: a node may dial its core (PRD core-host-node-remote-core D-04): the
+/// core reaches such a node's Herdr and its desktop's browser gateway
+/// through streams inside the link (`link_open`, `link_write`, `link_close`
+/// and [`crate::panes::NodeEvent::LinkData`]), asks that gateway for a
+/// capability (`browser_gateway`), takes a label generator's lock on the
+/// node that owns the Herdr server, and terminal lines name the screen a
+/// view or a key came from. A node on 27 would refuse the first as unknown,
+/// so it is refused at Hello and reinstalled.
+pub const PROTOCOL_VERSION: u32 = 28;
+
+/// What a link stream the core opens on a node that dialed it reaches on
+/// the node's machine ([`Call::LinkOpen`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkEnd {
+    /// The node's own Herdr socket (D-18, D-19).
+    Herdr,
+    /// The browser relay of the node's daemon, which carries a caller's CDP
+    /// to the gateway of the desktop window whose registration the daemon
+    /// holds: a caller on another machine driving a page only that window
+    /// shows (B15). The stream's first bytes ask for a relay ticket the
+    /// node handed out over this link.
+    BrowserRelay,
+}
+
+impl LinkEnd {
+    /// Streams to this end one link carries at once; the next open is
+    /// refused.
+    pub const fn cap(self) -> usize {
+        match self {
+            Self::Herdr => crate::panes::MAX_HERDR_STREAMS,
+            Self::BrowserRelay => crate::panes::MAX_BROWSER_STREAMS,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -422,10 +456,14 @@ pub enum Call {
     },
     /// One `gh` command with the operator's login, in `cwd` when named
     /// (`gh::allowed` names the command lines; any other is refused unrun).
-    /// Answers `gh::GhAnswer`.
+    /// `repository` (`[HOST/]OWNER/NAME`, `gh::valid_repository`) names the
+    /// repository a command that would read it from `cwd` works on instead,
+    /// for a checkout on another machine. Answers `gh::GhAnswer`.
     Gh {
         cwd: Option<String>,
         args: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repository: Option<String>,
     },
     /// The machine's TCP listeners and where each was started
     /// (`ports::ListeningPorts`).
@@ -555,6 +593,56 @@ pub enum Call {
     StreamClose {
         stream: u64,
     },
+    /// Opens `stream` to `end` on this node's machine for the core: the
+    /// only way a core reaches what listens only there on a node that
+    /// dialed it (PRD core-host-node-remote-core D-18, D-19, B15). What the
+    /// node reads arrives as [`crate::panes::NodeEvent::LinkData`]. A node
+    /// with nothing at that end, a device its core dialed included,
+    /// refuses it.
+    LinkOpen {
+        stream: u64,
+        end: LinkEnd,
+    },
+    /// Base64 bytes for `stream`'s end; answered once they are written.
+    LinkWrite {
+        stream: u64,
+        data: String,
+    },
+    /// Ends `stream` from the core's side.
+    LinkClose {
+        stream: u64,
+    },
+    /// Asks the browser gateway of the desktop window on this node's
+    /// machine for a capability in `scope` (the Workspace, area and display
+    /// the core decided for its caller). Answered with the gateway's
+    /// `cdp_http_url` and `browser_ws_url`, both on this machine's loopback;
+    /// with `relay`, with a one-shot `relay_url` on this node's daemon
+    /// instead, whose relay carries the CDP to the gateway: a caller on
+    /// this machine dials it, and the core reaches it for a caller on
+    /// another machine through a [`LinkEnd::BrowserRelay`] stream. A node
+    /// with no gateway registered refuses it, its reason in the message.
+    BrowserGateway {
+        scope: serde_json::Value,
+        relay: bool,
+    },
+    /// Takes the label generator lock of the Herdr server at `herdr_socket`
+    /// on this node's machine, or of the server this link's pane service
+    /// serves when it names none, for the core's worker `generator`, and
+    /// holds it while the link lives. Answered with [`LabelLock`]; asked
+    /// again by the same worker while held, it is held, and by another
+    /// worker of the same core, it is not.
+    LabelLock {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        herdr_socket: Option<String>,
+        generator: u64,
+    },
+    /// Gives back the lock [`Call::LabelLock`] took for `generator` on the
+    /// same server; a lock another worker holds stays held.
+    LabelUnlock {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        herdr_socket: Option<String>,
+        generator: u64,
+    },
     /// Stops the reporting call `request`: its next report is answered with
     /// false, and it answers as stopped. Answered at once, before any
     /// waiting request, and a request that is no longer running is left
@@ -576,6 +664,27 @@ impl Call {
     /// call, a clone included, settles to its own result.
     pub fn runs_until_stopped(&self) -> bool {
         matches!(self, Self::GitWatch { .. })
+    }
+
+    /// Whether this request is link control rather than machine work: a
+    /// greeting, a pane's proof answer or stream, or a Herdr stream. Each is
+    /// short on the node, so both ends run them in a lane of their own, and
+    /// four slow machine calls (a port scan, a disk walk) never hold a pane's
+    /// reply or a Herdr write behind them. One may still wait: a link write
+    /// to an end that stops reading holds its worker until the write
+    /// deadline (`hide_host::link_bridge`, 5 s) and then ends that stream,
+    /// so four such streams can hold the lane for one such window.
+    pub fn is_control(&self) -> bool {
+        matches!(
+            self,
+            Self::Hello
+                | Self::PaneProofAnswer { .. }
+                | Self::StreamWrite { .. }
+                | Self::StreamClose { .. }
+                | Self::LinkOpen { .. }
+                | Self::LinkWrite { .. }
+                | Self::LinkClose { .. }
+        )
     }
 
     /// Whether a device's node answers this request. A device answers the
@@ -649,6 +758,12 @@ impl Call {
             | Self::PaneInspect { .. }
             | Self::StreamWrite { .. }
             | Self::StreamClose { .. }
+            | Self::LinkOpen { .. }
+            | Self::LinkWrite { .. }
+            | Self::LinkClose { .. }
+            | Self::BrowserGateway { .. }
+            | Self::LabelLock { .. }
+            | Self::LabelUnlock { .. }
             | Self::Cancel { .. } => true,
             Self::AiAvailability { .. }
             | Self::AiModels { .. }
@@ -781,6 +896,16 @@ impl MachineIdentity {
             Self::Unavailable { reason } => Err(reason),
         }
     }
+}
+
+/// What [`Call::LabelLock`] answers: whether this core now generates labels
+/// for the server, and the process that holds its lock when the system lets
+/// it be read.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LabelLock {
+    pub held: bool,
+    #[serde(default)]
+    pub holder: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

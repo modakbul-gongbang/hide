@@ -29,6 +29,8 @@ pub mod git_watch;
 pub mod home;
 pub mod index;
 pub mod kit;
+pub mod label_lock;
+pub mod link_bridge;
 pub mod list;
 pub mod mutate;
 pub mod pane_peer;

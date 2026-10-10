@@ -188,7 +188,7 @@ fn a_rows_verb_follows_its_demand_its_activity_and_its_pull_requests() {
 
 #[test]
 fn own_pr_summary_counts_only_live_duty_prs_worst_first_and_never_a_closed_one() {
-    use crate::agent_state::sessions::PrState;
+    use crate::model::PrState;
     let mut rows = rows(&[("maker", "idle"), ("other", "idle")]);
     rows[0].row_facts.as_mut().unwrap().created_prs = vec![
         ("acme/app".into(), 1, 1),
@@ -222,10 +222,7 @@ fn own_pr_summary_counts_only_live_duty_prs_worst_first_and_never_a_closed_one()
     );
     // PR 1 is on `other`'s checkout branch, so `other` holds its duty.
     let maker = rows[0].state.pr.as_ref().expect("maker owns PRs");
-    assert_eq!(
-        (maker.count, maker.worst, maker.worst_count),
-        (2, PrState::Mergeable, 1)
-    );
+    assert_eq!((maker.count, maker.worst), (2, PrState::Mergeable));
     let states: Vec<_> = maker.pulls.iter().map(|pull| pull.state).collect();
     assert_eq!(states, [PrState::Mergeable, PrState::Merged]);
     let other = rows[1].state.pr.as_ref().expect("other owns PR 1");
@@ -233,41 +230,51 @@ fn own_pr_summary_counts_only_live_duty_prs_worst_first_and_never_a_closed_one()
 }
 
 #[test]
-fn a_pr_is_mergeable_only_after_passing_checks_and_an_acceptable_review() {
-    use crate::agent_state::sessions::PrState;
-    for (checks, review, expected) in [
-        (PullRequestChecks::Passing, None, PrState::Mergeable),
+fn a_pr_reads_draft_then_failed_or_changes_requested_then_mergeable_then_pending() {
+    use crate::model::PrState;
+    for (draft, checks, review, expected) in [
+        (false, PullRequestChecks::Passing, None, PrState::Mergeable),
         (
+            false,
             PullRequestChecks::Passing,
             Some(ReviewDecision::Approved),
             PrState::Mergeable,
         ),
         (
+            false,
             PullRequestChecks::Passing,
             Some(ReviewDecision::ReviewRequired),
             PrState::Pending,
         ),
+        // A reviewer asking for changes is something to fix, like a failed check.
         (
+            false,
             PullRequestChecks::Passing,
             Some(ReviewDecision::ChangesRequested),
-            PrState::Pending,
+            PrState::Failed,
         ),
         (
+            false,
             PullRequestChecks::Unknown,
             Some(ReviewDecision::Approved),
             PrState::Pending,
         ),
-        (PullRequestChecks::Pending, None, PrState::Pending),
-        (PullRequestChecks::Failed, None, PrState::Failed),
+        (false, PullRequestChecks::None, None, PrState::Pending),
+        (false, PullRequestChecks::Pending, None, PrState::Pending),
+        (false, PullRequestChecks::Failed, None, PrState::Failed),
+        // A draft is grey whatever its checks say.
+        (true, PullRequestChecks::Failed, None, PrState::Draft),
+        (true, PullRequestChecks::Passing, None, PrState::Draft),
     ] {
         let mut rows = rows(&[("agent", "idle")]);
         let mut pull = pull_request(1, "feature", PullRequestBadge::Open, checks);
         pull.review = review;
+        pull.is_draft = draft;
         run(&mut rows, &[("agent", "feature")], &github(vec![pull]));
         assert_eq!(
             rows[0].state.pr.as_ref().map(|pr| pr.worst),
             Some(expected),
-            "{checks:?} {review:?}"
+            "{draft} {checks:?} {review:?}"
         );
     }
 }
@@ -562,6 +569,98 @@ fn a_shared_pull_request_gives_its_duty_to_the_row_on_its_branch() {
     );
     assert!(!rows[0].request.as_ref().unwrap().pull_requests[0].duty);
     assert_eq!(verb(&rows[1]), RequestVerb::Fix);
+}
+
+#[test]
+fn a_checkouts_pull_request_stays_with_its_row_nearest_the_root_whichever_works_last() {
+    // A lead on main spawned an Observer, which spawned an implementor; both
+    // work on the pull request's checkout, and the implementor's session
+    // printed it. Rows arrive in activity order, so either may come first.
+    for implementor_first in [false, true] {
+        let mut rows = rows(&[
+            ("lead", "idle"),
+            ("observer", "idle"),
+            ("implementor", "idle"),
+        ]);
+        rows[1].lineage_depth = 1;
+        rows[2].lineage_depth = 2;
+        rows[2].row_facts.as_mut().unwrap().created_prs = vec![("acme/app".to_owned(), 5, 1)];
+        if implementor_first {
+            rows.swap(1, 2);
+        }
+        run(
+            &mut rows,
+            &[
+                ("lead", "main"),
+                ("observer", "prd/x"),
+                ("implementor", "prd/x"),
+            ],
+            &github(vec![pull_request(
+                5,
+                "prd/x",
+                PullRequestBadge::Open,
+                PullRequestChecks::Failed,
+            )]),
+        );
+        let row = |pane: &str| rows.iter().find(|row| row.pane_id == pane).unwrap();
+        let pulls = |pane: &str| &row(pane).request.as_ref().unwrap().pull_requests;
+        assert_eq!(
+            verb(row("observer")),
+            RequestVerb::Fix,
+            "implementor first: {implementor_first}"
+        );
+        assert_eq!(verb(row("implementor")), RequestVerb::Idle);
+        assert!(
+            !pulls("implementor")[0].duty,
+            "the link stays, the duty goes"
+        );
+    }
+}
+
+#[test]
+fn rows_alike_on_the_checkout_keep_one_holder_whatever_their_order() {
+    let holder = |helper_first: bool| {
+        let mut rows = rows(&[("helper", "idle"), ("other", "idle")]);
+        if !helper_first {
+            rows.swap(0, 1);
+        }
+        run(
+            &mut rows,
+            &[("helper", "prd/x"), ("other", "prd/x")],
+            &github(vec![pull_request(
+                5,
+                "prd/x",
+                PullRequestBadge::Open,
+                PullRequestChecks::Failed,
+            )]),
+        );
+        let holders: Vec<String> = rows
+            .iter()
+            .filter(|row| row.request.as_ref().unwrap().pull_requests[0].duty)
+            .map(|row| row.pane_id.clone())
+            .collect();
+        assert_eq!(holders.len(), 1, "one row holds the duty");
+        holders.into_iter().next().unwrap()
+    };
+    assert_eq!(holder(true), holder(false));
+}
+
+#[test]
+fn rows_at_one_depth_on_the_checkout_give_the_duty_to_the_session_that_made_it() {
+    let mut rows = rows(&[("helper", "idle"), ("maker", "idle")]);
+    rows[1].row_facts.as_mut().unwrap().created_prs = vec![("acme/app".to_owned(), 5, 1)];
+    run(
+        &mut rows,
+        &[("helper", "prd/x"), ("maker", "prd/x")],
+        &github(vec![pull_request(
+            5,
+            "prd/x",
+            PullRequestBadge::Open,
+            PullRequestChecks::Failed,
+        )]),
+    );
+    assert_eq!(verb(&rows[1]), RequestVerb::Fix);
+    assert_eq!(verb(&rows[0]), RequestVerb::Idle);
 }
 
 #[test]

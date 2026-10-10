@@ -270,7 +270,9 @@ export const PaneView = memo(function PaneView({
   const hidden = paneCount - 1;
 
   const caption = transportCaption(transport, t, local, offline);
-  const sleep = local ? pane.sleep : undefined;
+  // The core marks only the panes of a machine whose agents sleep: its own,
+  // and a node's that dials it, which this canvas draws as a device's.
+  const sleep = pane.sleep;
   const header = useShellStore((s) => s.rest?.terminal?.headers?.[paneId]);
   return (
     <section

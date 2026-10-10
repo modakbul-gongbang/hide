@@ -12,7 +12,7 @@ const DEVICE: &str = "studio";
 
 /// A device helper that answers only kit calls: a set report, and a set
 /// removal outcome for `remove`.
-struct KitDevice {
+pub(super) struct KitDevice {
     calls: Mutex<Vec<(KitAction, String, Option<String>)>>,
     retirement_projects: Mutex<Vec<Vec<String>>>,
     answer: Mutex<Result<KitReport, String>>,
@@ -23,7 +23,7 @@ struct KitDevice {
 }
 
 impl KitDevice {
-    fn answering(answer: Result<KitReport, String>) -> Arc<Self> {
+    pub(super) fn answering(answer: Result<KitReport, String>) -> Arc<Self> {
         Arc::new(Self {
             calls: Mutex::new(Vec::new()),
             retirement_projects: Mutex::new(Vec::new()),
@@ -159,9 +159,10 @@ fn device_runtime(
                     phase: hosts::HostPhase::Ready {
                         host: helper,
                         platform: "macos aarch64".to_owned(),
-                        helper_path:
+                        helper_path: Some(
                             "/home/me/.local/share/hide/host-helper/0123456789abcdef/hided"
                                 .to_owned(),
+                        ),
                     },
                     generation: 1,
                 },
@@ -1042,7 +1043,9 @@ fn removing_one_of_two_registrations_of_the_same_account_keeps_the_kit() {
             });
         let mut twin = device.clone();
         twin.id = "studio-second-herdr".to_owned();
-        twin.ssh_alias = Some("studio-by-address".to_owned());
+        twin.origin = crate::model::LinkOrigin::Dialed {
+            ssh_alias: "studio-by-address".to_owned(),
+        };
         twin.host_consent
             .as_mut()
             .unwrap()
@@ -1885,7 +1888,11 @@ fn a_devices_terminals_ride_its_link_and_end_with_it() {
     runtime.start_device_host(DEVICE);
     let generation = runtime.device_host_generation(DEVICE);
     let established = established_with_terminals();
-    runtime.ingest_host_established(DEVICE, generation, Ok(established));
+    runtime.ingest_host_established(
+        DEVICE,
+        generation,
+        Ok(hosts::HostReady::Dialed(established)),
+    );
     assert_eq!(terminals.devices(), ["install:studio"]);
 
     let pane = "remote:studio:pane:w1:p1";
@@ -1923,13 +1930,27 @@ pub(super) fn established(
     terminals: Option<Arc<dyn hide_node_link::terminal::TerminalNode>>,
 ) -> hide_node_link::device::Established {
     hide_node_link::device::Established {
-        host,
+        node: node_ready(host, terminals),
         identity: hide_node_link::device::HostIdentity {
             user: "me".to_owned(),
             hostname: "studio.local".to_owned(),
             port: 22,
             host_key_sha256: "key".to_owned(),
         },
+        installed: false,
+        helper_path: "/home/me/.local/share/hide/host-helper/0123456789abcdef/hided".to_owned(),
+        upload: Default::default(),
+    }
+}
+
+/// A device's node answering over `host`, with `terminals` when it runs a
+/// terminal service.
+pub(super) fn node_ready(
+    host: Arc<dyn crate::node_access::NodeLink>,
+    terminals: Option<Arc<dyn hide_node_link::terminal::TerminalNode>>,
+) -> hide_node_link::device::NodeReady {
+    hide_node_link::device::NodeReady {
+        host,
         hello: hide_node_link::protocol::Hello {
             protocol: hide_node_link::protocol::PROTOCOL_VERSION,
             version: "test".to_owned(),
@@ -1941,9 +1962,6 @@ pub(super) fn established(
             },
             reader_features: None,
         },
-        installed: false,
-        helper_path: "/home/me/.local/share/hide/host-helper/0123456789abcdef/hided".to_owned(),
-        upload: Default::default(),
         terminals: terminals.ok_or_else(|| "the test's node runs no terminal service".to_owned()),
     }
 }
@@ -2001,7 +2019,11 @@ fn a_devices_shown_pane_attaches_again_when_its_link_returns() {
 
     runtime.start_device_host(DEVICE);
     let first = runtime.device_host_generation(DEVICE);
-    runtime.ingest_host_established(DEVICE, first, Ok(established_with_terminals()));
+    runtime.ingest_host_established(
+        DEVICE,
+        first,
+        Ok(hosts::HostReady::Dialed(established_with_terminals())),
+    );
     runtime.ingest_remote_session(DEVICE, Ok(session));
     assert_eq!(attaches(&terminals), 1, "the shown pane attached");
     report_terminal(&mut runtime, pane_id, terminal_state("controlling", 1));
@@ -2017,7 +2039,11 @@ fn a_devices_shown_pane_attaches_again_when_its_link_returns() {
     runtime.start_device_host(DEVICE);
     let second = runtime.device_host_generation(DEVICE);
     assert_ne!(first, second);
-    runtime.ingest_host_established(DEVICE, second, Ok(established_with_terminals()));
+    runtime.ingest_host_established(
+        DEVICE,
+        second,
+        Ok(hosts::HostReady::Dialed(established_with_terminals())),
+    );
     assert_eq!(
         terminals.devices(),
         ["install:studio", "remove:studio", "install:studio"]

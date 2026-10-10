@@ -84,7 +84,6 @@ export const RENAME = {
   '--color-file-orange': '--file-orange',
   '--color-file-yellow': '--file-yellow',
   '--color-file-purple': '--file-purple',
-  '--color-pr-open': '--pr-open',
   '--color-pr-merged': '--pr-merged',
   '--color-pr-closed': '--pr-closed',
   '--color-pr-draft': '--pr-draft',

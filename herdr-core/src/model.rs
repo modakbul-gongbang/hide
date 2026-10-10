@@ -1339,6 +1339,10 @@ pub struct InactiveCheckoutGroupSnapshot {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct SessionCheckoutFolds {
     pub empty: Vec<String>,
+    /// Worktrees whose unresolved agents are all delegated children. They get
+    /// no checkout line and sit in no fold: the way to a child is the tree of
+    /// the root that owns it.
+    pub child_only: Vec<String>,
     pub cleanup: Vec<String>,
     pub empty_open: bool,
     pub cleanup_open: bool,
@@ -3080,8 +3084,9 @@ pub struct GithubSearchResult {
     /// `open`, `closed` or `merged`.
     pub state: String,
     pub url: String,
-    /// A draft pull request; always false for an issue.
-    pub is_draft: bool,
+    /// A pull request's one state ([`PrState::of`]), read with no checks or
+    /// review because a search does not ask for them; absent for an issue.
+    pub pr_state: Option<PrState>,
 }
 
 impl GithubSearchSnapshot {
@@ -3336,21 +3341,127 @@ pub struct WorkspaceRegistration {
     pub home: bool,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    try_from = "StoredDeviceRegistration",
+    into = "StoredDeviceRegistration"
+)]
 pub struct DeviceRegistration {
     pub id: String,
     pub label: String,
-    #[serde(default)]
-    pub ssh_alias: Option<String>,
+    pub origin: LinkOrigin,
     /// The Herdr socket on the device, for a host whose server does not
     /// listen at its default path; absent reads the host's default server.
-    #[serde(default)]
     pub herdr_socket_path: Option<String>,
     /// The operator's one consent for Hide's helper on this device (PRD S5.5
     /// D-20, D-23). Absent until given; a device registered before consent
     /// existed asks before its first file or Git use.
-    #[serde(default)]
     pub host_consent: Option<HostConsent>,
+}
+
+/// How a registered machine's link opens, and so what the core may do to
+/// it (PRD core-host-node-remote-core D-04, D-10).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LinkOrigin {
+    /// The core dials the machine over SSH under this alias.
+    Dialed { ssh_alias: String },
+    /// The machine's own node dials this core over the operator's SSH
+    /// login; its id is its node id.
+    Inbound,
+}
+
+impl LinkOrigin {
+    pub fn ssh_alias(&self) -> Option<&str> {
+        match self {
+            Self::Dialed { ssh_alias } => Some(ssh_alias),
+            Self::Inbound => None,
+        }
+    }
+
+    /// Whether the core brings a lost link back itself; a node that dials
+    /// in comes back only by dialing again.
+    pub fn core_redials(&self) -> bool {
+        matches!(self, Self::Dialed { .. })
+    }
+
+    /// Whether the core installs and keeps Hide's kit there; a node that
+    /// dials in is a machine with Hide's own install, whose kit its own
+    /// hided keeps.
+    pub fn takes_kit(&self) -> bool {
+        matches!(self, Self::Dialed { .. })
+    }
+
+    /// Whether the core's helper there waits for the operator's consent; a
+    /// node that dials in was allowed by the operator's own SSH login.
+    pub fn takes_consent(&self) -> bool {
+        matches!(self, Self::Dialed { .. })
+    }
+
+    /// Whether the machine's own node reports its facts (ports, disk,
+    /// GitHub) to the core, rather than the core reading them over a dial.
+    pub fn reports_own_facts(&self) -> bool {
+        matches!(self, Self::Inbound)
+    }
+}
+
+/// A registration as the store and the shell spell it: the alias of a
+/// device the core dials, or the flag of a node that dials in, never both.
+#[derive(Deserialize, Serialize)]
+struct StoredDeviceRegistration {
+    id: String,
+    label: String,
+    #[serde(default)]
+    ssh_alias: Option<String>,
+    #[serde(default)]
+    herdr_socket_path: Option<String>,
+    #[serde(default)]
+    host_consent: Option<HostConsent>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    inbound: bool,
+}
+
+impl TryFrom<StoredDeviceRegistration> for DeviceRegistration {
+    type Error = String;
+
+    fn try_from(stored: StoredDeviceRegistration) -> Result<Self, String> {
+        let origin = match (stored.ssh_alias, stored.inbound) {
+            (Some(ssh_alias), false) => LinkOrigin::Dialed { ssh_alias },
+            (None, true) => LinkOrigin::Inbound,
+            (Some(_), true) => {
+                return Err(format!(
+                    "device {} has both an SSH alias and a node that dials in",
+                    stored.id
+                ));
+            }
+            (None, false) => {
+                return Err(format!(
+                    "device {} has neither an SSH alias nor a node that dials in",
+                    stored.id
+                ));
+            }
+        };
+        Ok(Self {
+            id: stored.id,
+            label: stored.label,
+            origin,
+            herdr_socket_path: stored.herdr_socket_path,
+            host_consent: stored.host_consent,
+        })
+    }
+}
+
+impl From<DeviceRegistration> for StoredDeviceRegistration {
+    fn from(registration: DeviceRegistration) -> Self {
+        let inbound = matches!(registration.origin, LinkOrigin::Inbound);
+        Self {
+            id: registration.id,
+            label: registration.label,
+            ssh_alias: registration.origin.ssh_alias().map(str::to_owned),
+            herdr_socket_path: registration.herdr_socket_path,
+            host_consent: registration.host_consent,
+            inbound,
+        }
+    }
 }
 
 pub use hide_node_link::device::HostConsent;
@@ -3580,10 +3691,60 @@ pub enum PullRequestChecks {
     Passing,
 }
 
+/// The one state every PR mark draws (docs/status-model.md, Pull request
+/// visual states), worst first: a checkout's pull request and an agent row's
+/// own pull requests take it from [`PrState::of`] and nothing else decides it.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrState {
+    /// Checks failed, or a reviewer asked for changes.
+    Failed,
+    /// Checks running, absent or unknown, or a review still asked for.
+    Pending,
+    /// Checks passed, and the review is approved or not asked for.
+    Mergeable,
+    /// Open as a draft, whatever its checks say.
+    Draft,
+    Merged,
+    Closed,
+}
+
+impl PrState {
+    /// merged > closed > draft > failed > mergeable > pending. Absent or
+    /// unknown checks never read as a pass.
+    pub fn of(
+        badge: PullRequestBadge,
+        is_draft: bool,
+        checks: PullRequestChecks,
+        review: Option<ReviewDecision>,
+    ) -> Self {
+        match badge {
+            PullRequestBadge::Merged => Self::Merged,
+            PullRequestBadge::Closed => Self::Closed,
+            PullRequestBadge::Open | PullRequestBadge::Review => {
+                if is_draft {
+                    Self::Draft
+                } else if checks == PullRequestChecks::Failed
+                    || review == Some(ReviewDecision::ChangesRequested)
+                {
+                    Self::Failed
+                } else if checks == PullRequestChecks::Passing
+                    && matches!(review, None | Some(ReviewDecision::Approved))
+                {
+                    Self::Mergeable
+                } else {
+                    Self::Pending
+                }
+            }
+        }
+    }
+}
+
 /// One pull request GitHub listed. Which checkout it belongs to is decided
 /// by `github::pull_request_for_checkout`, never by comparing branch names
-/// where a call site stands.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+/// where a call site stands. Its wire form adds the derived `state`
+/// (the `Serialize` impl below), so no shell derives it again.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 pub struct PullRequestSnapshot {
     pub closing_issues: Vec<crate::issues::IssueReference>,
     pub title: String,
@@ -3600,21 +3761,47 @@ pub struct PullRequestSnapshot {
     pub updated_at_unix_ms: Option<u64>,
     /// When GitHub made the pull request, which ties it to the session whose
     /// tool printed its address then (PRD overview-request-view D-31).
-    #[serde(skip_serializing)]
     pub created_at_unix_ms: Option<u64>,
     /// When it was closed or merged, for a row's chip after the request.
-    #[serde(skip_serializing)]
     pub closed_at_unix_ms: Option<u64>,
     /// The commit its head branch pointed at when GitHub last saw it. A
     /// settled pull request belongs to a checkout only at exactly this
     /// commit, because a branch name can be used again for new work. Core
     /// only: no shell draws or compares it.
-    #[serde(skip_serializing)]
     pub head_oid: Option<String>,
     /// The head branch lives in another repository (a fork), so its name says
     /// nothing about this repository's branch of the same name.
-    #[serde(skip_serializing, default)]
+    #[serde(default)]
     pub cross_repository: bool,
+}
+
+impl PullRequestSnapshot {
+    pub fn state(&self) -> PrState {
+        PrState::of(self.badge, self.is_draft, self.checks, self.review)
+    }
+}
+
+impl Serialize for PullRequestSnapshot {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        // The head commit, the repository and the created and closed times
+        // stay off the wire: only the core compares them.
+        let mut out = serializer.serialize_struct("PullRequestSnapshot", 13)?;
+        out.serialize_field("closing_issues", &self.closing_issues)?;
+        out.serialize_field("title", &self.title)?;
+        out.serialize_field("checks", &self.checks)?;
+        out.serialize_field("number", &self.number)?;
+        out.serialize_field("head_branch", &self.head_branch)?;
+        out.serialize_field("base_branch", &self.base_branch)?;
+        out.serialize_field("url", &self.url)?;
+        out.serialize_field("badge", &self.badge)?;
+        out.serialize_field("review", &self.review)?;
+        out.serialize_field("is_draft", &self.is_draft)?;
+        out.serialize_field("merged_at_unix_ms", &self.merged_at_unix_ms)?;
+        out.serialize_field("updated_at_unix_ms", &self.updated_at_unix_ms)?;
+        out.serialize_field("state", &self.state())?;
+        out.end()
+    }
 }
 
 pub use hide_node_link::gh::GithubFailureCategory;
@@ -3916,6 +4103,10 @@ pub struct ProjectWorktreesSnapshot {
     /// Why this repository has no worktree list. An empty list with no reason
     /// means the repository genuinely has none.
     pub unavailable_reason: Option<String>,
+    /// The GitHub repository its `origin` names (`[HOST/]OWNER/NAME`), by
+    /// which a device's pull requests are read with this machine's login.
+    #[serde(skip)]
+    pub repository: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -4913,6 +5104,56 @@ mod interface_language_tests {
 }
 
 #[cfg(test)]
+mod pull_request_state_tests {
+    use super::PullRequestSnapshot;
+
+    /// A checkout's pull request reaches the shell with the one state every
+    /// PR mark draws, so no shell derives it from the badge, draft flag,
+    /// checks and review again (docs/status-model.md, Pull request visual
+    /// states); the core-only facts stay off the wire.
+    #[test]
+    fn a_checkout_pull_request_carries_its_one_state_on_the_wire() {
+        for (badge, draft, checks, review, expected) in [
+            ("open", false, "failed", None, "failed"),
+            (
+                "review",
+                false,
+                "passing",
+                Some("changes_requested"),
+                "failed",
+            ),
+            (
+                "review",
+                false,
+                "passing",
+                Some("review_required"),
+                "pending",
+            ),
+            ("open", false, "unknown", None, "pending"),
+            ("review", false, "passing", Some("approved"), "mergeable"),
+            ("open", true, "failed", None, "draft"),
+            ("merged", true, "failed", None, "merged"),
+            ("closed", false, "passing", None, "closed"),
+        ] {
+            let pull: PullRequestSnapshot = serde_json::from_value(serde_json::json!({
+                "closing_issues": [], "title": "t", "checks": checks, "number": 7,
+                "head_branch": "feature", "base_branch": "main", "url": "https://github.com/acme/app/pull/7",
+                "badge": badge, "review": review, "is_draft": draft,
+                "merged_at_unix_ms": null, "updated_at_unix_ms": null,
+                "head_oid": "abc", "cross_repository": true,
+            }))
+            .expect("pull request decodes");
+            let wire = serde_json::to_value(&pull).expect("pull request encodes");
+            assert_eq!(
+                wire["state"], expected,
+                "{badge} {draft} {checks} {review:?}"
+            );
+            assert!(wire.get("head_oid").is_none() && wire.get("cross_repository").is_none());
+        }
+    }
+}
+
+#[cfg(test)]
 mod wire_enum_tests {
     //! The shell decodes these strings strictly, so the values the core emits
     //! are a contract, pinned in `contracts/snapshot-wire-enums.json` and
@@ -5181,7 +5422,7 @@ mod wire_enum_tests {
         checked.insert("right_panel_section");
 
         use crate::agent_state::escalation::{MarkKind, Verb};
-        use crate::agent_state::sessions::{Group, PrState};
+        use crate::agent_state::sessions::Group;
         let session_groups = crate::agent_state::sessions::GROUPS;
         for group in session_groups {
             match group {
@@ -5202,11 +5443,18 @@ mod wire_enum_tests {
             PrState::Failed,
             PrState::Pending,
             PrState::Mergeable,
+            PrState::Draft,
             PrState::Merged,
+            PrState::Closed,
         ];
         for state in pr_states {
             match state {
-                PrState::Failed | PrState::Pending | PrState::Mergeable | PrState::Merged => {}
+                PrState::Failed
+                | PrState::Pending
+                | PrState::Mergeable
+                | PrState::Draft
+                | PrState::Merged
+                | PrState::Closed => {}
             }
         }
         assert_wire(&contract, "pr_state", &pr_states);

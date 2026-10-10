@@ -226,10 +226,12 @@ export class BrowserCdpGateway {
   setAvailable(value: boolean): void {
     if (this.available === value) return;
     this.available = value;
-    if (!value) {
-      this.capabilities.clear();
-      for (const client of [...this.clients]) this.end(client);
-    }
+    if (!value) this.revokeAll();
+  }
+
+  private revokeAll(): void {
+    this.capabilities.clear();
+    for (const client of [...this.clients]) this.end(client);
   }
 
   /** Synchronous revocation/detach precedes asynchronous server close. */
@@ -307,6 +309,14 @@ export class BrowserCdpGateway {
     this.httpPending++;
     try {
       const path = request.url ?? "";
+      if (path === "/revoke" && request.method === "POST") {
+        if (!sameToken(request.headers.authorization ?? "", `Bearer ${this.controlToken}`)) { this.reply(response, 401, { error: "Unauthorized" }); return; }
+        // A node daemon whose link to its core ended: what the core authorized
+        // through that link stops working, and the gateway stays available.
+        this.revokeAll();
+        this.reply(response, 200, {});
+        return;
+      }
       if (path === "/connect" && request.method === "POST") {
         if (!sameToken(request.headers.authorization ?? "", `Bearer ${this.controlToken}`)) { this.reply(response, 401, { error: "Unauthorized" }); return; }
         const scope = scopeOf(await this.body(request));

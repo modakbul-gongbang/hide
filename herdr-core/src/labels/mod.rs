@@ -32,6 +32,7 @@ use hide_session::label_transcript::{LabelTranscript, LabelTranscriptRequest};
 use crate::node_access::{LinkError, NodeLink, call_as};
 use crate::runtime::Runtime;
 use analyzer::LabelAnalyzer;
+use generator::LockPlace;
 use store::LabelStore;
 use worker::{LabelWorker, ReadFailure, TranscriptSource, Wake, WorkerConfig};
 
@@ -50,8 +51,6 @@ pub(crate) struct LabelServices {
     /// than its coordinator (new pull request creation times).
     local_wake: Mutex<Option<Wake>>,
     home: Option<PathBuf>,
-    /// The daemon's state folder, which holds the device generator locks.
-    state_dir: Option<PathBuf>,
 }
 
 impl LabelServices {
@@ -83,7 +82,6 @@ impl LabelServices {
             input: Arc::new(input::OperatorInput::new(node.as_str())),
             local_wake: Mutex::new(None),
             home,
-            state_dir: state_dir.map(Path::to_path_buf),
         })
     }
 
@@ -105,14 +103,15 @@ impl LabelServices {
         LabelWorker::spawn(
             WorkerConfig {
                 target: self.store.node().to_owned(),
-                lock_path: Some(generator::local_lock_path(socket_path)),
+                lock: LockPlace {
+                    node: own_channel(&node),
+                    herdr_socket: Some(socket_path.display().to_string()),
+                },
                 input: Arc::clone(&self.input),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
-            Arc::new(NodeTranscripts::new(Box::new(move || {
-                Ok(Arc::clone(&node))
-            }))),
+            Arc::new(NodeTranscripts::new(own_channel(&node))),
             wake,
         )
         .map(Some)
@@ -140,15 +139,16 @@ impl LabelServices {
         LabelWorker::spawn(
             WorkerConfig {
                 target: format!("device:{device_id}"),
-                lock_path: self
-                    .state_dir
-                    .as_deref()
-                    .map(|state_dir| generator::device_lock_path(state_dir, device_id)),
+                // The device's node locks the server its pane service serves.
+                lock: LockPlace {
+                    node: device_channel(device_id, runtime.clone()),
+                    herdr_socket: None,
+                },
                 input: Arc::clone(&self.input),
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
-            Arc::new(NodeTranscripts::of_device(device_id, runtime)),
+            Arc::new(NodeTranscripts::new(device_channel(device_id, runtime))),
             wake,
         )
     }
@@ -199,19 +199,25 @@ impl NodeTranscripts {
     pub(crate) fn new(channel: ChannelSource) -> Self {
         Self { channel }
     }
+}
 
-    /// The registered device's helper, taken under a brief runtime lock;
-    /// the read itself runs outside it.
-    fn of_device(device_id: &str, runtime: Weak<Mutex<Runtime>>) -> Self {
-        let device_id = device_id.to_owned();
-        Self::new(Box::new(move || {
-            let runtime = runtime.upgrade().ok_or("runtime_gone")?;
-            let mut guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
-            guard
-                .node_link(&device_id)
-                .map_err(|_| "device_helper_not_ready")
-        }))
-    }
+/// The core's own node, which is always there.
+fn own_channel(node: &Arc<dyn NodeLink>) -> ChannelSource {
+    let node = Arc::clone(node);
+    Box::new(move || Ok(Arc::clone(&node)))
+}
+
+/// The registered device's helper, taken under a brief runtime lock; the
+/// call itself runs outside it.
+fn device_channel(device_id: &str, runtime: Weak<Mutex<Runtime>>) -> ChannelSource {
+    let device_id = device_id.to_owned();
+    Box::new(move || {
+        let runtime = runtime.upgrade().ok_or("runtime_gone")?;
+        let mut guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
+        guard
+            .node_link(&device_id)
+            .map_err(|_| "device_helper_not_ready")
+    })
 }
 
 impl TranscriptSource for NodeTranscripts {

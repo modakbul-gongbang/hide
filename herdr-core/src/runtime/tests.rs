@@ -41,6 +41,8 @@ mod factory_screen;
 mod github_reads;
 #[path = "tests/home.rs"]
 mod home;
+#[path = "tests/inbound.rs"]
+mod inbound;
 #[path = "tests/issues.rs"]
 mod issues;
 #[path = "tests/key_routing.rs"]

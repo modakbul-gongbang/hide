@@ -99,11 +99,12 @@ pub fn apply_lineage(
                 .tabs
                 .iter()
                 .flat_map(|tab| &tab.panes)
+                // The sidebar names a checkout by its branch, and so does the
+                // badge: a device checkout's label is its folder until its
+                // worktree facts arrive, and they bring only the branch.
                 .map(move |pane| {
-                    (
-                        pane.id.as_str(),
-                        (checkout.id.clone(), checkout.label.clone()),
-                    )
+                    let name = checkout.branch.as_ref().unwrap_or(&checkout.label);
+                    (pane.id.as_str(), (checkout.id.clone(), name.clone()))
                 })
         })
         .collect::<BTreeMap<_, _>>();
@@ -744,14 +745,21 @@ pub(crate) fn agent_demand(agent: &SessionAgentPayload) -> AgentDemand {
 }
 
 /// Session plan approval holds the same state as Herdr's blocked prompt.
-/// A current-state read cannot hold an agent that is already working again.
+/// A wait read from how the last turn ended cannot hold an agent that is
+/// already working again; one an agent kind reads from its session's current
+/// state can, because Herdr keeps that kind `working` while it waits.
 pub(crate) fn agent_blocked(agent: &SessionAgentPayload) -> bool {
     agent.agent_status.as_deref() == Some("blocked")
-        || (agent.agent_status.as_deref() != Some("working")
-            && agent
-                .facts
-                .as_ref()
-                .is_some_and(|facts| facts.awaiting_operator))
+        || (agent
+            .facts
+            .as_ref()
+            .is_some_and(|facts| facts.awaiting_operator)
+            && (agent.agent_status.as_deref() != Some("working")
+                || agent
+                    .agent
+                    .as_deref()
+                    .and_then(hide_session::Agent::from_kind)
+                    .is_some_and(hide_session::Agent::waits_while_working)))
 }
 
 /// The activity axis. A state Herdr does not name is reported as unknown

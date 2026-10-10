@@ -99,8 +99,8 @@ describe("branch names", () => {
 });
 
 describe("row menus", () => {
-  const desktop = { reveal: { label: "explorer.revealFinder" as const }, newTabChord: "⌘T", node: "local" };
-  const browser = { reveal: null, newTabChord: "⌥T", node: "local" };
+  const desktop = { reveal: { label: "explorer.revealFinder" as const }, newTabChord: "⌘T", node: "local", screen: "local" };
+  const browser = { reveal: null, newTabChord: "⌥T", node: "local", screen: "local" };
   /** Each item as the menu draws it: a separator line before it, its label, and its reason when disabled. */
   const drawn = (items: { label: string; separated?: boolean; unavailable: string | null; shortcut?: string }[]) =>
     items.flatMap((item) => [...(item.separated ? ["─"] : []), item.shortcut ? `${item.label} ${item.shortcut}` : item.label]);
@@ -166,7 +166,7 @@ describe("row menus", () => {
   });
 
   it("draws a checkout's menu in the board's order with the pull request after New tab (B4)", () => {
-    const pr = { number: 180, title: "Sidebar readability", url: "https://example.invalid/pull/180", badge: "open" as const, review: null, is_draft: false };
+    const pr = { number: 180, title: "Sidebar readability", url: "https://example.invalid/pull/180", badge: "open" as const, review: null, is_draft: false, state: "pending" as const };
     expect(drawn(checkoutMenu(workspace(), checkout({ pull_request: pr }), desktop))).toEqual([
       "Open",
       "New tab here ⌘T",
@@ -258,7 +258,7 @@ describe("row menus", () => {
     const folder = primary({ is_primary: false, branch: null });
     const menu = folderMenu(workspace({ is_git: false, checkouts: [folder] }), folder, desktop);
     expect(drawn(menu)).toEqual(["New worktree…", "New tab in main ⌘T", "─", "Reveal in Finder", "Copy path", "─", "Pin", "Remove project…", "─", "Open", "Set purpose…"]);
-    const pr = { number: 7, title: "", url: "https://example.invalid/pull/7", badge: "open" as const, review: null, is_draft: false };
+    const pr = { number: 7, title: "", url: "https://example.invalid/pull/7", badge: "open" as const, review: null, is_draft: false, state: "pending" as const };
     expect(drawn(folderMenu(workspace({ checkouts: [folder] }), { ...folder, pull_request: pr }, browser)).slice(-4)).toEqual(["─", "Open", "Open pull request #7", "Set purpose…"]);
   });
 

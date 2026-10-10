@@ -38,9 +38,10 @@ mod attachments;
 mod device;
 pub mod host;
 pub mod hosts;
+pub mod upstream;
 
 pub use device::{Connector, SshDevice};
-pub use host::{PaneEvents, PaneEventsSlot, RemoteHost};
+pub use host::{LinkStream, LinkWriter, OpenError, PaneEvents, PaneEventsSlot, RemoteHost};
 
 use hide_node_link::device::{
     CapabilityReport, HOST_KEY_CHANGED, HOST_KEY_UNKNOWN, RemoteError, RemoteHostIdentity,
@@ -1037,6 +1038,28 @@ impl RusshRemoteClient {
         }
     }
 
+    /// Ends the device's connection now, whatever still holds it; the next
+    /// use dials again.
+    pub(crate) fn disconnect(&self) {
+        let connection = Arc::clone(&self.connection);
+        let ended = async move {
+            let session = connection.session.lock().await.take();
+            if let Some(session) = session {
+                let _ = bounded_ssh_operation(session.disconnect(
+                    Disconnect::ByApplication,
+                    "node closed",
+                    "en",
+                ))
+                .await;
+            }
+        };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.runtime.spawn(ended);
+        } else {
+            self.runtime.block_on(ended);
+        }
+    }
+
     /// The host key the connection's last dial accepted.
     fn observed_host_key(&self) -> Option<String> {
         lock_recover(&self.connection.observed_key).clone()
@@ -1515,12 +1538,25 @@ impl RusshRemoteClient {
             keepalive_interval: Some(Duration::from_secs(5)),
             ..client::Config::default()
         };
+        // Whether the server presented its host key: a connection that ends
+        // before it (refused, reset before the SSH greeting, or no answer in
+        // time) is a dial that never reached an SSH server, as the node's
+        // port probe, which reads the greeting, also counts it.
+        let presented = Arc::clone(&handler.presented);
+        let rejected = Arc::clone(&handler.rejected);
+        let reached_operation = || {
+            if presented.load(std::sync::atomic::Ordering::SeqCst) {
+                "remote-connect"
+            } else {
+                hide_node_link::device::DIAL_OPERATION
+            }
+        };
         tokio::time::timeout(SSH_OPERATION_TIMEOUT, async {
             let socket = TcpStream::connect((self.host.hostname.as_str(), self.host.port))
                 .await
                 .map_err(|error| {
                     remote_error(
-                        "remote-connect",
+                        hide_node_link::device::DIAL_OPERATION,
                         &self.host.host_id,
                         RemoteStage::Ssh,
                         error,
@@ -1574,14 +1610,25 @@ impl RusshRemoteClient {
             let mut session = client::connect_stream(Arc::new(config), socket, handler)
                 .await
                 .map_err(|error| {
-                    remote_error(
-                        "remote-connect",
-                        &self.host.host_id,
-                        RemoteStage::Ssh,
-                        error,
-                        true,
-                        false,
-                    )
+                    if rejected.load(std::sync::atomic::Ordering::SeqCst) {
+                        remote_error(
+                            hide_node_link::device::HOST_KEY_OPERATION,
+                            &self.host.host_id,
+                            RemoteStage::Ssh,
+                            error,
+                            false,
+                            true,
+                        )
+                    } else {
+                        remote_error(
+                            reached_operation(),
+                            &self.host.host_id,
+                            RemoteStage::Ssh,
+                            error,
+                            true,
+                            false,
+                        )
+                    }
                 })?;
             authenticate(&mut session, &self.host).await?;
             connecting.release();
@@ -1589,11 +1636,17 @@ impl RusshRemoteClient {
         })
         .await
         .map_err(|_| {
+            let operation = reached_operation();
+            let reason = if operation == hide_node_link::device::DIAL_OPERATION {
+                "no SSH server answered in time"
+            } else {
+                "SSH connection or authentication timed out"
+            };
             remote_error(
-                "remote-connect",
+                operation,
                 &self.host.host_id,
                 RemoteStage::Ssh,
-                "SSH connection or authentication timed out",
+                reason,
                 true,
                 false,
             )
@@ -2010,6 +2063,11 @@ struct KnownHostHandler {
     /// Receives the SHA-256 fingerprint of a host key known_hosts accepted,
     /// the identity a device's helper consent is bound to.
     observed_key: Option<Arc<Mutex<Option<String>>>>,
+    /// Set once the server presented its host key: the dial reached an SSH
+    /// server, whatever is decided of the key.
+    presented: Arc<std::sync::atomic::AtomicBool>,
+    /// Set when known_hosts refused the key the server presented.
+    rejected: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl KnownHostHandler {
@@ -2019,6 +2077,8 @@ impl KnownHostHandler {
             port: host.port,
             known_hosts_file: host.known_hosts_file.clone(),
             observed_key: None,
+            presented: Arc::default(),
+            rejected: Arc::default(),
         }
     }
 
@@ -2035,6 +2095,22 @@ impl Handler for KnownHostHandler {
         &mut self,
         server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        self.presented
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let checked = self.check_key(server_public_key);
+        if checked.is_err() {
+            self.rejected
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        checked
+    }
+}
+
+impl KnownHostHandler {
+    fn check_key(
+        &mut self,
+        server_public_key: &PublicKeyOrCertificate,
+    ) -> Result<bool, anyhow::Error> {
         let public_key = server_public_key.public_key();
         // A changed key and an unknown one need different actions from the
         // operator, so they are named differently (PRD S5.5 B38); neither is

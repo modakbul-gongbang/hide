@@ -1,8 +1,7 @@
 //! The Sessions tool's groups, lines and order, from the row's own state
 //! (docs/status-model.md, The Sessions tool), and each row's own PR summary.
 //! Memory and conversation history are separate readers, not session state.
-use crate::model::{PullRequestBadge, PullRequestChecks, ReviewDecision, SidebarAgentSnapshot};
-use crate::request_view::AgentPullRequestSnapshot;
+use crate::model::{PrState, SidebarAgentSnapshot};
 use serde::{Deserialize, Serialize};
 
 /// How long a resolved session stays under Resolved (PRD D-23).
@@ -121,46 +120,14 @@ pub(crate) fn row(agent: &SidebarAgentSnapshot) -> Row {
     }
 }
 
-pub(crate) fn mergeable(pull: &AgentPullRequestSnapshot) -> bool {
-    pull.checks == PullRequestChecks::Passing
-        && matches!(pull.review, None | Some(ReviewDecision::Approved))
-}
-
-/// One PR's state as a chip or icon draws it, worst first (PRD D-30).
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PrState {
-    Failed,
-    /// Checks running, or waiting on a review.
-    Pending,
-    Mergeable,
-    Merged,
-}
-
-pub(crate) fn pr_state(pull: &AgentPullRequestSnapshot) -> Option<PrState> {
-    match pull.badge {
-        PullRequestBadge::Closed => None,
-        PullRequestBadge::Merged => Some(PrState::Merged),
-        PullRequestBadge::Open | PullRequestBadge::Review => {
-            Some(if pull.checks == PullRequestChecks::Failed {
-                PrState::Failed
-            } else if mergeable(pull) {
-                PrState::Mergeable
-            } else {
-                PrState::Pending
-            })
-        }
-    }
-}
-
 /// The PRs this row holds the duty of, never its descendants' (PRD D-18,
-/// D-39): how many, the worst state and how many share it, and each PR as an
-/// index into `request.pull_requests`, worst first. Closed PRs are not counted.
+/// D-39): how many, the worst state, and each PR as an
+/// index into `request.pull_requests`, worst first, each in the one PR state
+/// ([`PrState::of`]). Closed PRs are not counted.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PrSummary {
     pub count: usize,
     pub worst: PrState,
-    pub worst_count: usize,
     pub pulls: Vec<OwnPr>,
 }
 
@@ -176,14 +143,17 @@ pub(crate) fn own_prs(agent: &SidebarAgentSnapshot) -> Option<PrSummary> {
         .iter()
         .flat_map(|request| request.pull_requests.iter().enumerate())
         .filter(|(_, pull)| pull.duty && pull.live)
-        .filter_map(|(index, pull)| pr_state(pull).map(|state| OwnPr { index, state }))
+        .map(|(index, pull)| OwnPr {
+            index,
+            state: pull.state(),
+        })
+        .filter(|pull| pull.state != PrState::Closed)
         .collect();
     pulls.sort_by_key(|pull| pull.state);
     let worst = pulls.first()?.state;
     Some(PrSummary {
         count: pulls.len(),
         worst,
-        worst_count: pulls.iter().filter(|pull| pull.state == worst).count(),
         pulls,
     })
 }
@@ -234,8 +204,9 @@ pub(crate) fn scope<'a>(members: impl Iterator<Item = (usize, &'a SidebarAgentSn
                     Some(PrState::Failed) => 1,
                     Some(PrState::Mergeable) => 2,
                     Some(PrState::Pending) => 3,
-                    Some(PrState::Merged) => 4,
-                    None => 5,
+                    Some(PrState::Draft) => 4,
+                    Some(PrState::Merged | PrState::Closed) => 5,
+                    None => 6,
                 }
             }
         };

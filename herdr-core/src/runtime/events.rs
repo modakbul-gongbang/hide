@@ -19,6 +19,12 @@ pub(super) struct AttachmentPayload {
     pub clipboard: bool,
     #[serde(default)]
     pub paths: Vec<String>,
+    /// The node whose own screen staged `paths` on its machine, for a pane
+    /// of that machine: they are pasted as they are, never read or copied
+    /// (PRD core-host-node-remote-core D-06). Only that node's relay may
+    /// send it (hided `relay_attachment`).
+    #[serde(default)]
+    pub staged_on: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2360,7 +2366,16 @@ impl Runtime {
             }
             Event::DeviceHostRetry(payload) => {
                 let device_id = payload.device_id.trim().to_owned();
-                if self.device_registration_exists(&device_id) {
+                if self
+                    .link_origin(&device_id)
+                    .is_some_and(|origin| !origin.core_redials())
+                {
+                    self.set_error(
+                        "device.host.inbound",
+                        "This machine connects to the core itself; it reconnects when it can reach the core",
+                        false,
+                    );
+                } else if self.device_registration_exists(&device_id) {
                     self.close_device_host(&device_id, "retry requested");
                     self.retry_device_host_now(&device_id);
                 } else {
@@ -2426,7 +2441,9 @@ impl Runtime {
                 let registration = crate::model::DeviceRegistration {
                     id: id.clone(),
                     label,
-                    ssh_alias: Some(ssh_alias.clone()),
+                    origin: crate::model::LinkOrigin::Dialed {
+                        ssh_alias: ssh_alias.clone(),
+                    },
                     herdr_socket_path,
                     host_consent: payload.host_consent.then(|| self.new_host_consent()),
                 };
@@ -2506,6 +2523,7 @@ impl Runtime {
                     .count();
                 self.retire_device_editor_tabs(&payload.device_id);
                 self.forget_device_views(&payload.device_id);
+                self.forget_device_sleep(&payload.device_id);
                 self.forget_recent_checkouts(|held| held.device_id == payload.device_id);
                 self.rebuild_device_rows();
                 self.rebuild_tab_strips();

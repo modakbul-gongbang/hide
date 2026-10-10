@@ -122,6 +122,7 @@ Follow `next_action`; the reasons you will meet:
 | `browser_relay_limit`, `browser_control_busy` | Other `hide browser` commands or CDP clients are running; let one finish. |
 | `browser_relay_message_limit`, `browser_limit` | A message crossed a size or rate limit; capture a region with `screenshot --ref`, narrow the request, or wait a minute. |
 | `browser_control_unavailable` | Reconnect the Hide desktop app. |
+| `browser_window_unreachable` | The machine whose window shows the display is not reachable; retry once it is back. |
 
 Network rows come from the page's resource timing: no request or response headers or bodies.
 `console` shows the messages the current document logged, newest first.

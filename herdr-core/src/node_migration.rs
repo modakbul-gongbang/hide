@@ -215,6 +215,7 @@ pub const UNBOUND: &[&str] = &[
     "pane-capabilities",
     "attachments",
     "TerminalClipboard",
+    // Device generator locks before they moved to each device's node.
     "label-generators",
     "workspace-bridges",
     "Logs",

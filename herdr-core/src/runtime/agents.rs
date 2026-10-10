@@ -1060,6 +1060,7 @@ impl Runtime {
             &mut session.workspaces,
             &session.agents,
             session.focused_pane_id.as_deref(),
+            self.sleep_machine(target_id),
         );
         sync_remote_pane_relations(session);
         let pruned = prune_pane_text_scales(
@@ -1108,6 +1109,7 @@ impl Runtime {
             &mut self.snapshot.navigator.workspaces,
             agents,
             self.snapshot.focused.pane_id.as_deref(),
+            crate::agent_sleep::SleepMachine::Core,
         )
     }
 

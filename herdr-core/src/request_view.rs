@@ -9,8 +9,8 @@
 //!
 //! A row's pull requests are those of its checkout's branch and those its
 //! session made (D-31, D-46). A pull request on several rows gives its duty
-//! (fix, review) to one of them: the row on that branch's checkout, else the
-//! row whose session printed it first.
+//! (fix, review) to one of them: on that branch's checkout the row nearest
+//! its lineage root, else the row whose session printed it first.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -99,6 +99,9 @@ pub struct AgentPullRequestSnapshot {
     pub badge: PullRequestBadge,
     pub checks: PullRequestChecks,
     pub review: Option<ReviewDecision>,
+    /// Read by [`Self::state`] in the core; the shell draws the state.
+    #[serde(skip_serializing)]
+    pub is_draft: bool,
     pub head_branch: String,
     pub closing_issues: Vec<IssueReference>,
     /// Drawn as the row's chip or counted in its `+N` (D-43): open, or
@@ -109,6 +112,13 @@ pub struct AgentPullRequestSnapshot {
     /// The row's session made it (D-31), as opposed to its branch having it.
     pub created: bool,
     pub settled_at_unix_ms: Option<u64>,
+}
+
+impl AgentPullRequestSnapshot {
+    /// Its one state ([`crate::model::PrState::of`]).
+    pub fn state(&self) -> crate::model::PrState {
+        crate::model::PrState::of(self.badge, self.is_draft, self.checks, self.review)
+    }
 }
 
 /// The request view's part of an agent row.
@@ -170,7 +180,7 @@ pub(crate) fn apply<'a>(
         .iter()
         .map(|row| linked_pull_requests(row, place(&row.pane_id), github))
         .collect();
-    assign_duty(&mut linked);
+    assign_duty(rows, &mut linked);
     let mut verbs_changed = false;
     for (row, linked) in rows.iter_mut().zip(linked) {
         let facts = row.row_facts.clone().unwrap_or_default();

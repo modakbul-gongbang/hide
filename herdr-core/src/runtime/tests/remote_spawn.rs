@@ -164,7 +164,11 @@ fn spawner() -> Spawner {
                 .push(crate::model::DeviceRegistration {
                     id: id.to_owned(),
                     label: id.to_owned(),
-                    ..Default::default()
+                    origin: crate::model::LinkOrigin::Dialed {
+                        ssh_alias: id.to_owned(),
+                    },
+                    herdr_socket_path: None,
+                    host_consent: None,
                 });
         }
         guard.snapshot.status.remote.push(RemoteStatusSnapshot {
@@ -192,7 +196,7 @@ fn spawner() -> Spawner {
                 phase: hosts::HostPhase::Ready {
                     host: node.clone(),
                     platform: "macos aarch64".to_owned(),
-                    helper_path: "/fake/hided".to_owned(),
+                    helper_path: Some("/fake/hided".to_owned()),
                 },
                 generation: 1,
             },

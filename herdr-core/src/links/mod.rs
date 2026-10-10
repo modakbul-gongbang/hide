@@ -301,6 +301,9 @@ pub struct LinkedPr {
     pub created_at_unix_ms: Option<u64>,
     pub closed_at_unix_ms: Option<u64>,
     pub merged_at_unix_ms: Option<u64>,
+    /// The one PR state ([`crate::model::PrState::of`]) the record can say:
+    /// merged, closed, or open with no checks or review read.
+    pub state: crate::model::PrState,
     pub issues: Vec<LinkedIssue>,
     /// The worktrees recorded for its branch, newest first; whether each is
     /// still there is the navigator's to say (B5).

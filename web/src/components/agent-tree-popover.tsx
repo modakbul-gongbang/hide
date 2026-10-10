@@ -12,7 +12,9 @@ import { statusText } from "../agentStatus";
 import { useShellStore } from "../store";
 import { SIBLINGS_SHOWN } from "../sidebarTree";
 import { useUiStore } from "../ui";
-import { askWhat, AskLine, DescendantMark, PrIcon, prStaleness, TreeChevron, TreeRails, treePlaces } from "./agent-tree";
+import { askWhat, AskLine, DescendantMark, TreeChevron, TreeRails, treePlaces } from "./agent-tree";
+import { AgentPrHover } from "./pr-mark";
+import { agentStaleness } from "../prMark";
 import { DeviceChip } from "./device-chip";
 import { Elapsed } from "./elapsed";
 import { StatusMark } from "./status-mark";
@@ -308,7 +310,7 @@ function TreeItem({
         : remoteTargetOfPane(rest, ask.open_pane_id) ?? localDeviceId(rest);
   const askUnavailable = !deviceConnected(rest, askDevice);
   const branch = child.state.branch_badge;
-  const staleness = prStaleness(rest, child);
+  const staleness = agentStaleness(rest, child);
   const minutes = ask?.since_unix_ms == null ? null : Math.max(0, Math.floor((Date.now() - ask.since_unix_ms) / 60_000));
   return (
     <CommandItem
@@ -330,7 +332,7 @@ function TreeItem({
           <span className="min-w-0 flex-1 truncate text-foreground" title={child.identity_label}>
             {child.identity_label}
           </span>
-          <PrIcon agent={child} staleness={staleness} />
+          <AgentPrHover agent={child} staleness={staleness} />
           {line.hasChildren && !line.open ? <DescendantMark agent={child} /> : null}
           <Elapsed since={child.state.request_since} className="shrink-0 font-mono text-micro text-muted-foreground" />
         </span>

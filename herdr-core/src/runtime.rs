@@ -22,6 +22,7 @@ mod events;
 mod factory;
 mod home;
 mod hosts;
+mod inbound;
 mod issues;
 mod kit;
 pub(crate) mod links;
@@ -79,16 +80,16 @@ use crate::live::{
 use crate::model::{
     AgentStatusCode, ArchiveDetailSnapshot, CheckoutSnapshot, CoreOptions, DEFAULT_PANE_TEXT_SCALE,
     DiagnosticSnapshot, Edited, EditorDocumentSnapshot, EditorTabKind, EditorTabSnapshot,
-    ExplorerOperationSnapshot, LastErrorSnapshot, OperatorFocusAck, PANE_TEXT_SCALE_STEP,
-    PaneFindOpened, PaneFindRoute, PaneFindSnapshot, PaneFocusRequestSnapshot, PaneForkSnapshot,
-    PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot,
-    PetSnapshot, RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot,
-    RightPanelSection, SCHEMA_VERSION, SessionRowSnapshot, SidebarAgentSnapshot, Snapshot,
-    StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalPaneSnapshot, UiStateSnapshot,
-    WorkspaceSnapshot, clamp_pane_text_scale,
+    ExplorerOperationSnapshot, LastErrorSnapshot, LinkOrigin, OperatorFocusAck,
+    PANE_TEXT_SCALE_STEP, PaneFindOpened, PaneFindRoute, PaneFindSnapshot,
+    PaneFocusRequestSnapshot, PaneForkSnapshot, PaneLayoutNodeSnapshot, PaneLayoutSnapshot,
+    PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, RemoteFileEntrySnapshot,
+    RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection, SCHEMA_VERSION,
+    SessionRowSnapshot, SidebarAgentSnapshot, Snapshot, StripTabKind, StripTabSnapshot, Surface,
+    TabSnapshot, TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
-use crate::remote::{DeviceConnector, DeviceTransport};
+use crate::remote::DeviceConnector;
 use crate::sidebar::{SessionSnapshotPayload, project_agents};
 use crate::{environment, files, live, persistence, pet, session_sync, workspace};
 
@@ -743,6 +744,7 @@ fn sync_pane_status(
     workspaces: &mut [WorkspaceSnapshot],
     agents: &[SidebarAgentSnapshot],
     focused: Option<&str>,
+    machine: crate::agent_sleep::SleepMachine,
 ) -> bool {
     let by_pane = agents
         .iter()
@@ -838,7 +840,10 @@ fn sync_pane_status(
         .map(|agent| {
             (
                 agent.pane_id.as_str(),
-                (agent.sleep.clone(), crate::agent_sleep::sleep_action(agent)),
+                (
+                    agent.sleep.clone(),
+                    crate::agent_sleep::sleep_action(agent, machine),
+                ),
             )
         })
         .collect::<BTreeMap<_, _>>();
@@ -1079,6 +1084,9 @@ pub struct Runtime {
     /// connected or connecting, keyed by device id. Removing a device drops
     /// its entry; the coordinator handle moves to `retired_remote_syncs`.
     remote_connections: HashMap<String, devices::RemoteDeviceConnection>,
+    /// The link each node that dialed this core brought, until its
+    /// connection takes it (`inbound`).
+    inbound_arrivals: HashMap<String, crate::remote::Arrived>,
     /// Coordinators of removed devices, waiting for the FFI layer to join
     /// them off the runtime lock: a join under the lock would wait for a
     /// worker that is itself waiting for the lock.
@@ -1108,6 +1116,21 @@ pub struct Runtime {
     /// Each device's repositories' worktrees, read through its helper
     /// (`hide_host::worktrees`); the device's rows carry them.
     device_worktrees: HashMap<String, crate::device_catalog::DeviceWorktrees>,
+    /// The TCP listeners of each node that dials this core, read through its
+    /// link; that device's panes carry them (PRD core-host-node-remote-core
+    /// B13). An SSH device's listeners are not read, so its panes have none.
+    device_ports: HashMap<String, Vec<crate::model::ListeningPortSnapshot>>,
+    /// What each node that dials this core measured of its own projects, and
+    /// the project a web Overview named for measuring there.
+    device_disk: HashMap<String, Vec<crate::model::DiskUsageSnapshot>>,
+    device_disk_project: HashMap<String, String>,
+    /// The pull requests of each node that dials this core, read here by
+    /// repository name, and when each of its repositories was last asked.
+    device_github: HashMap<String, crate::model::GithubSnapshot>,
+    device_github_reads: HashMap<(String, String), (u64, std::time::Instant)>,
+    /// How many of each device's projects the pull-request read left out at
+    /// its cap, last logged.
+    device_github_over_limit: HashMap<String, usize>,
     /// This machine's file host: the helper's dispatch, run in place.
     own_node: Arc<dyn crate::node_access::NodeLink>,
     /// Opens the transport to each registered device; the node that holds
@@ -1126,7 +1149,7 @@ pub struct Runtime {
     host_cli_dir: String,
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
-    remote_file_transports: HashMap<String, Arc<dyn DeviceTransport>>,
+    remote_file_transports: HashMap<String, devices::DeviceReach>,
     remote_control_requests: VecDeque<(String, String)>,
     /// Remote mutations waiting for a transport answer or fresh topology,
     /// keyed by target and request id.
@@ -1547,6 +1570,12 @@ pub struct Runtime {
     /// When the agent sleep decision may run next; the coordinator ticks every
     /// 250 ms and the decision runs once a minute (PRD agent-sleep).
     agent_sleep_next_decision_unix_ms: u64,
+    /// The same for each node that dials this core (PRD
+    /// core-host-node-remote-core B13); one entry per registered node.
+    node_sleep_next_decision_unix_ms: HashMap<String, u64>,
+    /// The tabs each such node's screen showed at its last session, so a
+    /// tab its Herdr brings forward is a visit (B12).
+    node_sleep_shown_tabs: HashMap<String, Vec<String>>,
     /// Panes whose agent would not end, and until when they are left alone (B8).
     agent_sleep_backoff: HashMap<String, agent_sleep::Backoff>,
     /// Panes with a Reopen running or just refused, until the pane connects,
@@ -1867,6 +1896,7 @@ impl Runtime {
             state_path,
             home_path: environment.home_path,
             remote_connections: HashMap::new(),
+            inbound_arrivals: HashMap::new(),
             retired_remote_syncs: Vec::new(),
             remote_device_tests: HashMap::new(),
             device_hosts: HashMap::new(),
@@ -1877,6 +1907,12 @@ impl Runtime {
             device_facts: HashMap::new(),
             device_recent_tabs: HashMap::new(),
             device_worktrees: HashMap::new(),
+            device_ports: HashMap::new(),
+            device_disk: HashMap::new(),
+            device_disk_project: HashMap::new(),
+            device_github: HashMap::new(),
+            device_github_reads: HashMap::new(),
+            device_github_over_limit: HashMap::new(),
             own_node,
             devices,
             document_places: HashMap::new(),
@@ -2054,6 +2090,8 @@ impl Runtime {
             unresolved_active_tabs: BTreeSet::new(),
             forks_in_flight: HashSet::new(),
             agent_sleep_next_decision_unix_ms: 0,
+            node_sleep_next_decision_unix_ms: HashMap::new(),
+            node_sleep_shown_tabs: HashMap::new(),
             agent_sleep_backoff: HashMap::new(),
             pane_reopens: HashMap::new(),
             fork_sequence: 0,
@@ -2197,10 +2235,10 @@ impl Runtime {
             .map(RemoteControlContext::api_connector)
     }
 
-    pub fn install_remote_file_transport(
+    pub(crate) fn install_remote_file_transport(
         &mut self,
         target_id: impl Into<String>,
-        transport: Arc<dyn DeviceTransport>,
+        transport: devices::DeviceReach,
     ) {
         self.remote_file_transports
             .insert(target_id.into(), transport);

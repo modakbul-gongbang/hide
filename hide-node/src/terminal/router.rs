@@ -91,6 +91,9 @@ struct Routes {
     /// Keys refused for a device with no link, and lines a device sent
     /// that were not taken, logged once a window and counted after that.
     refusals: Refusals,
+    /// Whether a screen of this machine draws device panes, as
+    /// [`Router::mirror`] last said; every node is told on its link.
+    mirror: bool,
 }
 
 struct ReportRate {
@@ -332,6 +335,23 @@ impl Router {
         }
     }
 
+    /// Tells every node whether a screen of this machine draws its panes
+    /// (`TerminalControl::Mirror`): a node that draws them on its own
+    /// screens sends their output up only while one does, and a node with
+    /// no screen of its own sends it always.
+    pub fn mirror(&self, on: bool) {
+        let mut routes = lock(&self.routes);
+        if routes.mirror == on {
+            return;
+        }
+        routes.mirror = on;
+        let nodes = routes.devices.values().cloned().collect::<Vec<_>>();
+        drop(routes);
+        for node in nodes {
+            node.control(TerminalControl::Mirror { on });
+        }
+    }
+
     /// Tells a device which of its panes hold a sleeping agent or are
     /// closing.
     fn flags_to(routes: &Routes, device: &str, node: &dyn TerminalNode) {
@@ -425,6 +445,8 @@ impl TerminalNode for Router {
                 }
                 return;
             }
+            // Sent to one node by `Router::mirror`, never routed by pane.
+            TerminalControl::Mirror { .. } => return,
             TerminalControl::AttachmentRelease { intent } => {
                 let mut routes = lock(&self.routes);
                 let device = routes.intents.remove(intent.as_str());
@@ -554,6 +576,9 @@ impl TerminalRoutes for Router {
         Self::shown_to(&routes, device, node.as_ref());
         Self::focus_to(&routes, device, node.as_ref());
         Self::flags_to(&routes, device, node.as_ref());
+        if routes.mirror {
+            node.control(TerminalControl::Mirror { on: true });
+        }
         drop(routes);
         // The replaced link's writer ends once it is dropped, outside the
         // routing lock.

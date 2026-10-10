@@ -257,6 +257,7 @@ fn pane_pr_band_targets_its_duty_instead_of_another_link_with_higher_sort_priori
             badge: p.badge,
             checks: p.checks,
             review: p.review,
+            is_draft: p.is_draft,
             head_branch: p.head_branch.clone(),
             closing_issues: vec![],
             live: true,
@@ -315,6 +316,19 @@ fn pane_pr_band_targets_its_duty_instead_of_another_link_with_higher_sort_priori
             review: Some(crate::model::ReviewDecision::ReviewRequired)
         })
     );
+    // A draft with passing checks is a draft, as its mark says: no Merge band
+    // and nothing to review points at it.
+    let links = &mut agent.request.as_mut().unwrap().pull_requests;
+    links[0].duty = false;
+    links[1].is_draft = true;
+    links[1].review = None;
+    agent.state = crate::agent_state::turn::row_state(agent);
+    let draft = header::of(&pane, Some(agent), None, &project, None).band;
+    assert_ne!(draft.as_ref().map(|band| band.kind.as_str()), Some("merge"));
+    assert!(!matches!(
+        draft.and_then(|band| band.action),
+        Some(header::Action::Pr { number: 2, .. })
+    ));
 }
 
 #[test]

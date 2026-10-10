@@ -5,13 +5,13 @@
 // that the core did not produce.
 
 import type { TFunction } from "i18next";
-import type { MessageKey } from "./i18n/catalogs";
 import type { InterfaceLanguage } from "./i18n/locale";
 import { relationRows, relationsOf, type RelationTarget, type Relations } from "./relations";
 import type { EntryStatus, SearchEntry } from "./search";
 import { lastReadWords } from "./searchGithub";
 import { searchDevices } from "./search";
-import type { LinkSummaries, PullRequest, SnapshotRest } from "./snapshot";
+import { reviewWord } from "./prMark";
+import type { LinkSummaries, SnapshotRest } from "./snapshot";
 import { sameIssue } from "./linkPanel";
 
 export type Detail = {
@@ -28,11 +28,6 @@ export type Detail = {
   action: string;
 };
 
-const REVIEW: Record<NonNullable<PullRequest["review"]>, MessageKey> = {
-  approved: "board.review.approved",
-  changes_requested: "board.review.changes",
-  review_required: "board.review.required",
-};
 
 function provider(kind: string | undefined, t: TFunction<"translation">): string {
   if (!kind) return t("common.agent");
@@ -114,14 +109,15 @@ export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: num
       }
       const pr = entry.pr;
       const closes = (pr?.closing_issues ?? []).map((issue) => `#${issue.number}`).join(", ");
+      const review = reviewWord(pr?.review);
       return {
         ...base,
         kind: t("search.kind.pullRequest"),
         title: pr?.title ?? entry.title,
-        pills: [entry.status, pr?.is_draft ? { tone: "muted" as const, label: t("overview.draft") } : null, entry.ci].filter((row): row is EntryStatus => Boolean(row)),
+        pills: entry.status ? [entry.status] : [],
         tags: [`#${entry.number}`],
         facts: present([
-          [t("search.fact.review"), pr?.review ? t(REVIEW[pr.review]) : null],
+          [t("search.fact.review"), review ? t(review.key) : null],
           [t("workspace.branch"), pr?.head_branch],
           [t("search.fact.closingIssues"), closes],
           sessionsFact(links, entry, t),

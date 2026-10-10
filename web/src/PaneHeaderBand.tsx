@@ -2,7 +2,9 @@ import { ChevronDownIcon, CircleAlertIcon, GitForkIcon, GitPullRequestIcon, Moon
 import type { TFunction } from "i18next";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
-import { askWhat, PrChip, prStaleness, TreeButtonFace, VerbText } from "./components/agent-tree";
+import { askWhat, TreeButtonFace, VerbText } from "./components/agent-tree";
+import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
+import { reviewWord } from "./prMark";
 import { AgentTreePopover } from "./components/agent-tree-popover";
 import { Elapsed } from "./components/elapsed";
 import { Hint } from "./components/ui/tooltip";
@@ -24,8 +26,8 @@ const LABELS: Record<string, MessageKey> = {
   blocked: "agentSessions.tag.blocked", stopped: "agentSessions.tag.stopped",
   result: "agentSessions.tag.result", fix: "agentSessions.tag.fix", review: "agentSessions.tag.review", merge: "agentSessions.tag.merge",
 };
-const TONES = { muted: "bg-secondary text-muted-foreground", warning: "bg-warning/10 text-warning", error: "bg-destructive/10 text-destructive", success: "bg-success/10 text-success", pr: "bg-pr-open/10 text-pr-open" };
-const ACTION_TONES = { muted: "bg-secondary text-secondary-foreground", warning: "bg-warning text-status-foreground", error: "bg-destructive text-destructive-foreground", success: "bg-success text-status-foreground", pr: "bg-pr-open text-status-foreground" };
+const TONES = { muted: "bg-secondary text-muted-foreground", warning: "bg-warning/10 text-warning", error: "bg-destructive/10 text-destructive", success: "bg-success/10 text-success", pr: "bg-pr-mergeable/10 text-pr-mergeable" };
+const ACTION_TONES = { muted: "bg-secondary text-secondary-foreground", warning: "bg-warning text-status-foreground", error: "bg-destructive text-destructive-foreground", success: "bg-success text-status-foreground", pr: "bg-pr-mergeable text-status-foreground" };
 
 /**
  * Marks the pane Fork agent made (issue 916): a quiet icon after the title whose
@@ -141,13 +143,17 @@ export function usePaneAgents(): AgentRow[] {
   return rows(rest, local);
 }
 
-/** The pane's own PR chip after its title (B21, B22); a descendant's PRs stay on its own rows. */
+/** The pane's own PR mark after its title (B21, B22); a descendant's PRs stay on its own rows. */
 export function PanePrChip({ paneId, actions }: { paneId: string; actions: Actions }) {
-  const rest = useShellStore((state) => state.rest);
   const agent = usePaneAgents().find((row) => row.pane_id === paneId);
   if (!agent?.state.pr) return null;
+  return <PaneAgentPrMark agent={agent} actions={actions} />;
+}
+
+function PaneAgentPrMark({ agent, actions }: { agent: AgentRow; actions: Actions }) {
+  const staleness = useAgentStaleness(agent);
   // The pane names no project; the PR's URL finds the one that lists it.
-  return <PrChip agent={agent} staleness={prStaleness(rest, agent)} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} />;
+  return <AgentPrMark agent={agent} staleness={staleness} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} />;
 }
 
 /** The pane header's child button (B21): a tree icon and the direct child count, opening the tree popover. */
@@ -175,5 +181,5 @@ function bandReason(band: NonNullable<PaneHeader["band"]>, t: TFunction<"transla
   const facts = band.facts;
   if (!facts) return band.reason;
   if (facts.kind === "approval_command_unavailable") return t("agentSessions.approvalCommandUnavailable");
-  return [t(`agentSessions.checks.${facts.checks}`), t(`agentSessions.review.${facts.review ?? "unknown"}`), facts.checks === "failed" ? t("agentSessions.checkNamesUnavailable") : null].filter(Boolean).join(" · ");
+  return [t(`agentSessions.checks.${facts.checks}`), t(reviewWord(facts.review)?.key ?? "agentSessions.review.unknown"), facts.checks === "failed" ? t("agentSessions.checkNamesUnavailable") : null].filter(Boolean).join(" · ");
 }

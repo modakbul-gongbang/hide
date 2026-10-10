@@ -139,4 +139,26 @@ describe("Workspace server action", () => {
     }]);
     expect(document.querySelector('[aria-label="Running servers"]')).toBeNull();
   });
+
+  it("opens a server of the machine this screen runs on when the core runs on another, and of no other device", async () => {
+    const remote = checkout([{ host: "127.0.0.1", port: 4000 }]);
+    const remoteView = { ...view, device_id: "mini" };
+    useShellStore.setState({ rest: catalog(checkout([]), remote) });
+    const actions = createActions((event) => { events.push(event); return true; });
+    const show = async () => act(async () => root.render(<TooltipProvider><RunningServers checkout={remote} view={remoteView} actions={actions} /></TooltipProvider>));
+    await show();
+    expect(container.querySelector("button[data-open-server]")?.getAttribute("aria-label")).toBe("Open server");
+
+    window.location.hash = "#token=t&node=mini";
+    try {
+      await show();
+      await openServer();
+    } finally {
+      window.location.hash = "";
+    }
+    expect(events.filter((event) => event.kind === "browser_open")).toEqual([{
+      schema_version: 2, kind: "browser_open",
+      payload: { url: "http://127.0.0.1:4000", workspace: { device_id: "mini", path: view.path } },
+    }]);
+  });
 });

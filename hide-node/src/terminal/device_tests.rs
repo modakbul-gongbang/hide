@@ -100,6 +100,30 @@ fn a_device_past_its_unsent_reports_keeps_each_panes_last_state() {
     assert_eq!(last_key, Some(2 * MAX_UNSENT_REPORT_LINES as u64 - 1));
 }
 
+/// B4: while the core has no screen of its own drawing a node's panes, the
+/// node's pane output never goes up the link; once one does, each pane that
+/// had output is drawn again whole, and nothing of what was withheld follows.
+#[test]
+fn a_withheld_panes_output_stays_off_the_link_until_the_core_draws_it_whole() {
+    let uplink = Uplink::default();
+    uplink.withhold(true);
+    uplink.push_output("w1:p1", b"typed on this machine", false);
+    uplink.push_output("w1:p1", b"\x1bcwhole while withheld", true);
+    uplink.withhold(false);
+    let (line, redraws) = uplink.next().unwrap();
+    assert!(line.is_none(), "withheld output went up the link");
+    assert_eq!(redraws, ["w1:p1"]);
+    // Only the full frame the redraw brings goes up, never the withheld tail.
+    uplink.push_output("w1:p1", b"late", false);
+    uplink.push_output("w1:p1", b"\x1bcredrawn", true);
+    let (line, _) = uplink.next().unwrap();
+    let TerminalUp::Output(output) = up(&line.unwrap()) else {
+        panic!("output");
+    };
+    assert!(output.full);
+    assert_eq!(decode_base64(&output.data).unwrap(), b"\x1bcredrawn");
+}
+
 #[test]
 fn a_pane_past_its_unsent_output_loses_it_and_is_drawn_again_from_a_full_frame() {
     let uplink = Uplink::default();

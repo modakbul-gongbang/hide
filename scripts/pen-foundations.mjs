@@ -112,7 +112,8 @@ function palette(variables, mode) {
     ], {gap: '$--spacing-md'}),
     chips(variables, `pal-${mode}-accent`, [['accent-choice-lime', 'lime'], ['accent-choice-sky', 'sky'], ['accent-choice-violet', 'violet'], ['accent-choice-amber', 'amber']], mode),
     chips(variables, `pal-${mode}-semantic`, [['agent-working', 'agent working'], ['success', 'success'], ['warning', 'warning'], ['destructive', 'destructive']], mode),
-    chips(variables, `pal-${mode}-pr`, [['pr-open', 'PR open'], ['pr-merged', 'PR merged'], ['pr-closed', 'PR closed'], ['pr-draft', 'PR draft']], mode),
+    chips(variables, `pal-${mode}-pr`, [['pr-failed', 'PR failed'], ['pr-pending', 'PR pending'], ['pr-mergeable', 'PR mergeable']], mode),
+    chips(variables, `pal-${mode}-pr-settled`, [['pr-draft', 'PR draft'], ['pr-merged', 'PR merged'], ['pr-closed', 'PR closed']], mode),
     chips(variables, `pal-${mode}-diff`, [['diff-added', 'diff added'], ['diff-removed', 'diff removed'], ['border', 'border'], ['ring', 'ring']], mode),
   ], {gap: '$--spacing-lg', width: PALETTE_WIDTH, clip: true, padding: '$--spacing-xl', fill: '$--background', cornerRadius: '$--radius-lg', theme: {Mode: mode}});
 }

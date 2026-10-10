@@ -139,7 +139,8 @@ Demand has these sources:
 - Approval is Herdr's `blocked` lifecycle, whether or not the operator has read it.
 - Approval is also a plan waiting for the operator's approval that Herdr reads as an ordinary stop, Codex's "Implement this plan?" (PRD codex-plan-approval-hold).
   The core reads it from the session file, not the screen: the label worker's session read folds the agent's turn records into a turn tracker (`hide-session/src/turns.rs`), and a plan-mode turn that proposed a plan and finished, with no later turn or person's message, waits.
-  The answer holds only for the Herdr `state_change_seq` the read was asked under and the session it proved, it is laid on the row's facts (`RowFacts.awaiting_operator`, never on the wire) and resolved by `agent_state::agent_blocked`, and it is not shown while Herdr says the agent works.
+  The answer holds only for the Herdr `state_change_seq` the read was asked under and the session it proved, it is laid on the row's facts (`RowFacts.awaiting_operator`, never on the wire) and resolved by `agent_state::agent_blocked`, and it is not shown while Herdr says the agent works, except for an agent kind whose adapter declares `waits_while_working` (`SessionFormat`).
+  Herdr reports Grok `working` while it waits for a plan approval or an answer, and Grok's waits are read from the session as it is now (`plan_mode.json`, a question call with no result yet) rather than inferred from how the last turn ended, so for Grok the wait holds the row, and raises a delegated child as `ChildBlocked`, whatever Herdr says; it clears on the next poll after the operator answers.
   A wait no read has settled for the current state is not shown: the row shows what Herdr says, and the letter doorbell holds instead (`docs/delivery.md`, A menu Herdr reads as a stop).
   It needs no Hide AI: agent summaries off, the read still runs.
   "No, stay in Plan mode" writes nothing to the session, so after that answer the row stays in Needs You until Codex's next turn starts.
@@ -235,6 +236,7 @@ Idle, done and unknown descendants add nothing, so a mark never says only that c
 The sidebar tree under an opened root is `agent_scope.sidebar_tree.visible_rows` from `agent_state/tally/lineage.rs::sidebar_tree`: children and grandchildren wherever they work, two levels only, with the digit shortcuts on roots alone.
 The shell shows five siblings per parent and folds the rest behind `N개 더` (`web/src/sidebarTree.ts`).
 A grandchild's own children open in the tree popover instead of a third level.
+A delegated row whose checkout differs from its parent's carries `row.state.branch_badge` (`agent_state/axes.rs::apply_lineage`): that checkout's branch, or its label when it has none, the name the sidebar gives the checkout; a device checkout's label is its folder name, so the label alone would name a folder there.
 The tree popover (`web/src/components/agent-tree-popover.tsx`) opens from the pane header's tree button, a grandchild's chevron and an ask band's `외 N건`.
 Its head names the parent with its direct child count, and its body draws the same rows two levels deep with five siblings each, the children that finished and were read, with nothing below them raised or working, folded below them behind `끝난 자식 N`; choosing a grandchild that has children re-roots the popover on it.
 Arrows move, Right and Left open and fold a branch, Enter opens the agent's pane, and Escape closes it and returns focus to what opened it.
@@ -246,7 +248,7 @@ The one sidebar raises Needs You and Done above its project tree, at most five a
 Those rows also remain under their checkouts, and a shortcut belongs to the first visible occurrence in physical sidebar order.
 A checkout starts open; `session_collapsed_checkout_ids` remembers only explicit collapses, independently of older disclosure records.
 A collapsed checkout still shows its Needs You rows.
-Core `session_folds` puts agentless worktrees behind No agents, excluding the primary, front, dirty, unpushed and already inactive checkouts, and collects agent worktrees and missing folders behind Cleanup at the bottom.
+Core `session_folds` puts agentless worktrees behind No agents, excluding the primary, front, dirty, unpushed and already inactive checkouts, lists in `child_only` the worktrees (same exclusions) whose unresolved agents are all delegated children, which the sidebar draws nowhere because the parent root's tree reaches them, and collects agent worktrees and missing folders behind Cleanup at the bottom.
 `session_open_folds` remembers explicit openings across startup and device reconnects, including an intermediate empty catalog.
 A confirmed project unregistration removes its project key; removing a device removes its project keys and Cleanup key.
 Resolving a session removes it from sidebar membership without changing its pane, tab or graph membership.
@@ -493,7 +495,7 @@ Asking for the checks of every merged and closed pull request made one read take
 Either call failing fails the project's read, which keeps the last answer and states the failure, so half an answer is never a repository with no pull requests; `pull_requests.ok`, `pull_requests.empty` and `pull_requests.failed` carry the read's `duration_ms`.
 Which pull request belongs to a checkout is one rule (`github::belongs_to_checkout`, chosen by `pull_request_for_checkout`), because a branch name is used again for new work: a pull request from a fork never belongs to a local branch of the same name, an open one belongs to the checkout on its head branch, and a merged or closed one only while the checkout's commit (the worktree reader's `head_sha`, or, before that reader has answered, the commit `Repository::head_oid` read from the repository's own files with no process) is exactly the pull request's head commit on that branch; a checkout that was amended, rebased or left behind after the last push therefore loses its merged pull request.
 Several candidates resolve open, then merged, then closed, the most recently updated first among equals, and a checkout whose commit is not read yet takes no settled pull request.
-The sidebar row, the worktree catalog, the agent rows' pull request chip and the link and hand-off actions all ask that rule, and a catalog read that moves a HEAD decides the connection again.
+The sidebar row, the worktree catalog, the agent rows' PR mark and the link and hand-off actions all ask that rule, and a catalog read that moves a HEAD decides the connection again.
 The PRs view and a worktree's base still list one pull request per head branch (`preferred_per_branch`).
 The same generation also reads open issues, their Project Status, and PR closing references for Project Home.
 The issue list uses `sort:updated-desc` and reads one sentinel beyond the 200-issue display cap so overflow is based on evidence.
@@ -520,11 +522,15 @@ This is linear in the visited project panes and agent projection per recomputati
 
 ### Pull request visual states
 
-PR lifecycle uses the GitHub convention: Open is green, Merged purple, Closed red, and Draft gray.
-The sidebar and popover share one color mapping and the matching Octicon; the State text and accessibility label preserve meaning without relying on color.
-A merged or closed result takes precedence over an old draft flag.
-Glyphs match the 14pt branch icon inside the existing 24pt trailing control, aligned with Workspace disclosure.
-CI colors remain separate from PR lifecycle, so Merged does not imply Passing.
+A pull request has one state, decided in the core by one rule (`model::PrState::of`, from its lifecycle, draft flag, checks and review decision) and sent on the wire as `state` on every checkout pull request, as `pr_state` on a GitHub search result and as `state` on a link panel's pull request (`contracts/snapshot-wire-enums.json`: `pr_state`).
+The rule reads in this order: merged, closed, draft, failed (failed checks or a change request), mergeable (passing checks with an approved or absent review decision), and pending for the rest (checks running, none or unknown, or a review still required).
+A draft is draft even with failing checks, and absent or unknown checks never imply a pass.
+Each state has one token and one icon, drawn the same on every surface (operator approval, 2026-10-10): failed red (`--pr-failed`), pending amber (`--pr-pending`), mergeable green (`--pr-mergeable`), draft grey (`--pr-draft`), merged purple with the merge icon (`--pr-merged`), and closed dim (`--pr-closed`).
+A change request is red wherever its word is drawn, as failed checks are.
+The pane header's Review and Merge bands read the same state (`agent_state/header.rs`): Merge for a mergeable duty, Review for a pending one, the band's colour the state's.
+The web turns a state into its icon, colour and word in one module (`web/src/prMark.ts`) and draws it with one component (`web/src/components/pr-mark.tsx`); no screen keeps a colour table or a classifier of its own, and the checks and review words and the stale reading live in the same module.
+The state word and the accessibility label keep the meaning without relying on colour.
+A mark dims while GitHub cannot be read again, and its tooltip says when it was last read.
 
 ### Project Overview summary
 
@@ -598,7 +604,8 @@ Only the label gives `stopped` and `blocked` (D-33); `waiting` comes from `wait`
 The block also carries the label's `line` and `end` when there is one: the request view shows the line in place of the reply (B18) and both as the expanded row's verdict (B6); `end` is pinned as `label_end` in `contracts/snapshot-wire-enums.json`.
 A row's pull requests are its checkout branch's and those its session made: a tool in the session printed the address within thirty seconds of GitHub's `createdAt` (D-31), judged once by the label worker and kept with the session's facts.
 An address in a reply or a request is a mention and links nothing.
-A pull request on several rows gives its duty to the row on its branch's checkout, else to the row whose session printed it first, so `fix` and `review` appear once.
+A pull request on several rows gives its duty to one row, so `fix` and `review` appear once: on its branch's checkout the row nearest its lineage root (`lineage_depth`), then the one whose session printed it, then the lowest pane id; with no row there, the row whose session printed it first.
+Activity never decides, so agents on one checkout that take turns working never trade a pull request; an Observer and the implementor it spawned there keep it on the Observer's row, the one Sessions draws, even when the implementor's session printed it.
 A settled pull request counts as live only when it settled after the operator's last request (D-43).
 The verb's time is kept per pane in `core-state.json` (`request_verbs`), so a restart does not restart the wait.
 Opening a finished row in the request view (`overview_open_result`) reads the pane the way a focus does and moves no focus; a demand outlives the read as everywhere else.
@@ -612,16 +619,15 @@ Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull
 A Needs You row draws its `row.state.ask` (verb and what to do) in place of a line, and a blocked one, which has no ask, its cause; a Working row its label line, or while it waits on its children the line of its most recently changed working descendant; a Done row its label line.
 An Idle row carries a line only for a stopped turn (`◐`, the same rule as the sidebar's Stopped mark), marked `unfinished`.
 Needs You is ordered by when the ask began, Working puts a failed PR first and then the most recent, Done is most recent first, and Resolved is most recently resolved first.
-Idle puts unfinished work first, then a failed, mergeable, pending and merged PR, then the rest, and publishes those with neither a PR nor unfinished work as `more`, which the panel folds behind `그 외 N`.
+Idle puts unfinished work first, then a failed, mergeable, pending, draft and merged PR, then the rest, and publishes those with neither a PR nor unfinished work as `more`, which the panel folds behind `그 외 N`.
 A blocked menu takes Approval before an unread AI question's Answer.
 A current native `user_turn.kind = question` instead takes Answer while its session holds for a reply, including after it is read and when its content is absent.
 Native plan approval keeps Approval; the typed native wait, rather than a provider name or an AI question label, distinguishes these cases.
 Reading an AI question skips its demand rung and leaves a dimmed question; menu and plan approval stay in Needs You until answered.
-`row.state.pr` is the row's own PR summary (PRD D-18, D-39): the live PRs it holds the duty of, never a descendant's, with the count, the worst state (failed, pending, mergeable, merged) and each PR worst first; a closed PR is not counted.
-Mergeable requires passing checks and an approved or absent review decision; absent or unknown checks never imply a pass.
+`row.state.pr` is the row's own PR summary (PRD D-18, D-39): the live PRs it holds the duty of, never a descendant's, with the count, the worst state and each PR worst first, each state the one rule of Pull request visual states decides; a closed PR is not counted.
 Without a label line the row keeps its outline but carries no invented line.
 `agent_scope.sessions` publishes the ordered member indices and the nonempty groups for checkout, project, device and overall scopes, with no counts.
-Delegated children are never Sessions members of their own: they are drawn one level under their root when the operator expands it (`sessions_expanded_agent_pane_ids` in core UI state), and Factory workers retain their dedicated surface.
+Delegated children are never Sessions members of their own: they are drawn under their root through every row the operator expands, at any depth (`sessions_expanded_agent_pane_ids` in core UI state holds each expanded pane), and Factory workers retain their dedicated surface.
 
 Resolve records `resolved_sessions` in core UI state and publishes the hidden row only after the existing coalesced writer acknowledges that exact save.
 Failure keeps it visible with the existing actionable save error; input, activity, session replacement or pane closure invalidates a pending acknowledgement.
@@ -664,7 +670,7 @@ PR reason facts carry checks and review separately from label progress.
 The existing input does not supply an approval command or failed check names; the band explicitly says those details are unavailable rather than treating a generated sentence as that evidence.
 A failed exit is red with its real exit code, a normal termination is gray, and connection and sleep actions remain in their existing body surfaces.
 The band overlays the terminal so state changes never resize its PTY grid.
-The identity row reads the ancestor path, provider, title, the pane's own PR chip from `row.state.pr`, the tree button with the direct child count, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
+The identity row reads the ancestor path, provider, title, the pane's own PR mark from `row.state.pr`, the tree button with the direct child count, the Not connected chip and the existing controls; the ancestors' names drop first when narrow, leaving `›` and the accessible name.
 Pending or failed relationship navigation stays visible at its popover, ancestor step or band with retry where available, and in the retained Agent-area status when the source pane is no longer on screen.
 Regression owners: `runtime::tests::session_state`, `web/src/PaneHeaderBand.test.tsx`, `web/e2e/sidebar-status.spec.ts`, and the pane/lineage desktop checks.
 

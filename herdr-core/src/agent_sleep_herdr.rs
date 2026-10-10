@@ -12,6 +12,7 @@
 //!
 //! Every call here runs on a worker thread, never under `Mutex<Runtime>`.
 
+use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -22,7 +23,8 @@ use crate::node_access::{NodeLink, call_as};
 
 use crate::agent_sleep::WakeMode;
 use crate::agent_start::StartError;
-use crate::live::LiveContext;
+use crate::handle::ChangeNotifier;
+use crate::runtime::Runtime;
 use crate::wire;
 
 mod dormant;
@@ -242,14 +244,27 @@ fn refused_reason(mode: WakeMode) -> &'static str {
     }
 }
 
-pub(crate) fn spawn_end(context: LiveContext, pane_id: String, kind: String) -> Result<(), String> {
+/// The machine a sleep or a wake runs on, gathered under the lock: the core's
+/// own Herdr and node, or those of a node that dials the core (PRD
+/// core-host-node-remote-core B13).
+pub(crate) struct SleepTarget {
+    pub(crate) api_connector: Arc<dyn ApiConnector>,
+    pub(crate) node: Arc<dyn NodeLink>,
+    pub(crate) runtime: Weak<Mutex<Runtime>>,
+    pub(crate) notifier: ChangeNotifier,
+    /// The pane as the machine's Herdr names it; a node's pane is kept in
+    /// the core under its `remote:` scope.
+    pub(crate) herdr_pane_id: String,
+}
+
+pub(crate) fn spawn_end(context: SleepTarget, pane_id: String, kind: String) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-agent-sleep".into())
         .spawn(move || {
             let result = end_agent(
                 context.api_connector.as_ref(),
                 context.node.as_ref(),
-                &pane_id,
+                &context.herdr_pane_id,
                 &kind,
             )
             .map_err(|error| error.to_string());
@@ -269,14 +284,17 @@ pub(crate) fn spawn_end(context: LiveContext, pane_id: String, kind: String) -> 
         .map_err(|error| format!("agent sleep worker could not be started: {error}"))
 }
 
-pub(crate) fn spawn_wake(context: LiveContext, request: WakeRequest) -> Result<(), String> {
+pub(crate) fn spawn_wake(context: SleepTarget, request: WakeRequest) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-agent-wake".into())
         .spawn(move || {
             let outcome = start_agent(
                 context.api_connector.as_ref(),
                 context.node.as_ref(),
-                &request,
+                &WakeRequest {
+                    pane_id: context.herdr_pane_id.clone(),
+                    ..request.clone()
+                },
             );
             let Some(runtime) = context.runtime.upgrade() else {
                 return;

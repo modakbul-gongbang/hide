@@ -23,8 +23,8 @@ export const OTHER = agent("p-dag", "그래프 다이어그램 DAG 시각화");
 const pane = (id: string) => ({ id, herdr_label: null, terminal_title: null, cwd: "/repo", status_code: "unknown", requires_close_confirmation: false, requires_close_status_check: false, identity_label: null });
 const tab = (checkout: string, panes: string[]) => ({ id: `t-${checkout}`, workspace_id: "w1", checkout_id: checkout, label: "Tab", empty: false, delegated: false, panes: panes.map(pane) });
 
-export const PR_275 = { number: 275, title: "Surface mailbox sandbox refusals", url: "https://github.com/acme/herdr-ide/pull/275", badge: "open", review: null, is_draft: false, checks: "pending", head_branch: "fix/mailbox-sandbox-letters", closing_issues: [{ repository: "acme/herdr-ide", number: 273 }] };
-export const PR_260 = { number: 260, title: "Terminal links click path", url: "https://github.com/acme/herdr-ide/pull/260", badge: "merged", review: null, is_draft: false, checks: "passing", head_branch: "feat/terminal-links" };
+export const PR_275 = { number: 275, title: "Surface mailbox sandbox refusals", url: "https://github.com/acme/herdr-ide/pull/275", badge: "open", review: null, is_draft: false, checks: "pending", head_branch: "fix/mailbox-sandbox-letters", closing_issues: [{ repository: "acme/herdr-ide", number: 273 }], state: "pending" as const };
+export const PR_260 = { number: 260, title: "Terminal links click path", url: "https://github.com/acme/herdr-ide/pull/260", badge: "merged", review: null, is_draft: false, checks: "passing", head_branch: "feat/terminal-links", state: "merged" as const };
 
 export const RICH = {
   navigator: {
@@ -61,6 +61,6 @@ export const RICH = {
 
 /** What the explicit GitHub search finds for the scene: a pull request and an issue this Mac does not hold. */
 export const CMDK_RESULTS: GithubSearchResult[] = [
-  { kind: "pr", repository: "acme/herdr-ide", number: 118, title: "Close stale sandbox watches", state: "merged", url: "https://github.com/acme/herdr-ide/pull/118" },
+  { kind: "pr", repository: "acme/herdr-ide", number: 118, title: "Close stale sandbox watches", state: "merged", url: "https://github.com/acme/herdr-ide/pull/118", pr_state: "merged" },
   { kind: "issue", repository: "acme/herdr-ide", number: 96, title: "mailbox sandbox 거부 로그가 비어 있음", state: "closed", url: "https://github.com/acme/herdr-ide/issues/96" },
 ];

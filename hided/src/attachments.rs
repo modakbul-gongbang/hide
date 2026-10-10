@@ -497,6 +497,30 @@ impl Attachments {
         }
     }
 
+    /// The file a stage wrote, once all its bytes have arrived.
+    pub fn staged_path(&self, request_id: &str) -> Result<PathBuf, &'static str> {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match state.uploads.get(request_id) {
+            Some(upload) if upload.file.is_none() => Ok(upload.path.clone()),
+            Some(_) => Err("stage_incomplete"),
+            None => Err("unknown_stage"),
+        }
+    }
+
+    /// Removes a stage and its file whatever its state: a node whose screen
+    /// staged a file for another machine's pane sends the bytes on and keeps
+    /// no copy (`node_uploads`).
+    pub fn remove(&self, request_id: &str) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        drop_stage(&mut state, request_id);
+    }
+
     /// Drops a stage that was refused or abandoned, so the file goes with it.
     /// A file the core was already told about is left to eviction's grace: a
     /// cancel must not unlink a path the terminal was just handed.

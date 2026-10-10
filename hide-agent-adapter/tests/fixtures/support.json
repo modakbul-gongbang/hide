@@ -188,7 +188,6 @@
     "features": [
       "skill",
       "guidance",
-      "subagents",
       "spawn_guard",
       "herdr_integration",
       "sleep",

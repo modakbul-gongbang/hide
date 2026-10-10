@@ -16,9 +16,32 @@ pub use hide_host::pane_peer::{
     PaneIdentity, descends_from, inspect, inspect_until, process_start,
 };
 
-/// The listener a pane's process asks for a capability on: a Unix socket or
-/// a named pipe, whose system reports the caller's pid.
-pub type BootstrapListener = hide_platform::ipc::LocalListener;
+/// The listener a pane's process asks for a capability on, or a node asks
+/// its core on: a Unix socket or a named pipe, whose system reports the
+/// caller's pid. It owns the private folder [`bind_recorded`] made for it:
+/// the socket and its lock go as the listener drops, and the folder after
+/// them, so a daemon that stopped leaves no folder behind.
+pub struct BootstrapListener {
+    listener: Option<hide_platform::ipc::LocalListener>,
+    directory: PathBuf,
+}
+
+impl std::ops::Deref for BootstrapListener {
+    type Target = hide_platform::ipc::LocalListener;
+
+    fn deref(&self) -> &Self::Target {
+        self.listener
+            .as_ref()
+            .expect("the listener is held until drop")
+    }
+}
+
+impl Drop for BootstrapListener {
+    fn drop(&mut self) {
+        drop(self.listener.take());
+        let _ = fs::remove_dir(&self.directory);
+    }
+}
 
 /// The longest bootstrap socket path the record may hold: a short `/tmp`
 /// path on Unix, the account's temporary folder on Windows.
@@ -52,30 +75,54 @@ pub fn bind(
     state_dir: &Path,
     token: impl Fn() -> String,
 ) -> Result<(BootstrapListener, PathBuf), String> {
+    bind_recorded(
+        &bootstrap_socket_record(state_dir),
+        "hide-pane",
+        "b.sock",
+        token,
+    )
+}
+
+/// Binds a local socket named `name` in a new private folder whose name
+/// starts with `prefix`, and records its path at `record`, so a process of
+/// this account finds it there: the pane bootstrap, and the attach socket a
+/// node's link reaches its core on (PRD core-host-node-remote-core D-07).
+/// The folder is owner-only, so only this account's processes connect.
+pub fn bind_recorded(
+    record: &Path,
+    prefix: &str,
+    name: &str,
+    token: impl Fn() -> String,
+) -> Result<(BootstrapListener, PathBuf), String> {
     let parent = bootstrap_parent();
     let directory = (0..8)
         .find_map(|_| {
-            let candidate = parent.join(format!("hide-pane-{}", &token()[..24]));
+            let candidate = parent.join(format!("{prefix}-{}", &token()[..24]));
             match private::create_dir(&candidate) {
                 Ok(()) => Some(Ok(candidate)),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
                 Err(error) => Some(Err(error.to_string())),
             }
         })
-        .unwrap_or_else(|| Err("pane bootstrap directory collision limit".to_owned()))?;
-    let path = directory.join("b.sock");
+        .unwrap_or_else(|| Err(format!("{prefix} directory collision limit")))?;
+    let path = directory.join(name);
     let result = (|| {
-        let listener = BootstrapListener::bind(&path).map_err(|error| error.to_string())?;
+        let listener = BootstrapListener {
+            listener: Some(
+                hide_platform::ipc::LocalListener::bind(&path)
+                    .map_err(|error| error.to_string())?,
+            ),
+            directory: directory.clone(),
+        };
         private::restrict_to_owner(&path).map_err(|error| error.to_string())?;
-        let record = bootstrap_socket_record(state_dir);
         let staging = record.with_extension(format!("{}.tmp", &token()[..16]));
         let mut file = private::create_new_file(&staging).map_err(|error| error.to_string())?;
         let published = (|| {
-            let text = path.to_str().ok_or("pane bootstrap path is not text")?;
+            let text = path.to_str().ok_or("socket path is not text")?;
             file.write_all(text.as_bytes())
                 .map_err(|error| error.to_string())?;
             file.sync_all().map_err(|error| error.to_string())?;
-            fs::rename(&staging, &record).map_err(|error| error.to_string())
+            fs::rename(&staging, record).map_err(|error| error.to_string())
         })();
         if published.is_err() {
             let _ = fs::remove_file(staging);
@@ -98,29 +145,66 @@ pub fn bootstrap_socket_record(state_dir: &Path) -> PathBuf {
 /// record and the folder the socket sits in are this account's own and
 /// private.
 pub fn bootstrap_socket_path(state_dir: &Path) -> Result<PathBuf, String> {
-    let record = bootstrap_socket_record(state_dir);
-    let file = private::open_own_file(&record, false).map_err(|_| "hide_unavailable".to_owned())?;
-    let metadata = file.metadata().map_err(|_| "hide_unavailable".to_owned())?;
-    if !private::is_private(&record).unwrap_or(false) || metadata.len() > BOOTSTRAP_RECORD_CAP {
-        return Err("invalid_bootstrap_socket_record".to_owned());
+    recorded_socket_path(&bootstrap_socket_record(state_dir))
+        .map_err(|refusal| refusal.code().to_owned())
+}
+
+/// Why a socket record is not followed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecordRefusal {
+    /// There is no record this account can open: nothing published one.
+    Missing,
+    /// The record or the socket's folder is not this account's own and
+    /// private, or the record is not a path.
+    Untrusted,
+    /// The folder the record names is gone: the process that wrote it ended
+    /// without removing it.
+    Stale,
+}
+
+impl RecordRefusal {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Missing => "hide_unavailable",
+            Self::Untrusted | Self::Stale => "invalid_bootstrap_socket_record",
+        }
+    }
+}
+
+impl std::fmt::Display for RecordRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.code())
+    }
+}
+
+/// The socket a record written by [`bind_recorded`] names, trusted only when
+/// the record and the socket's folder are this account's own and private.
+pub fn recorded_socket_path(record: &Path) -> Result<PathBuf, RecordRefusal> {
+    let file = private::open_own_file(record, false).map_err(|_| RecordRefusal::Missing)?;
+    let metadata = file.metadata().map_err(|_| RecordRefusal::Missing)?;
+    if !private::is_private(record).unwrap_or(false) || metadata.len() > BOOTSTRAP_RECORD_CAP {
+        return Err(RecordRefusal::Untrusted);
     }
     let mut bytes = Vec::new();
     file.take(BOOTSTRAP_RECORD_CAP)
         .read_to_end(&mut bytes)
-        .map_err(|_| "invalid_bootstrap_socket_record".to_owned())?;
-    let path = PathBuf::from(
-        String::from_utf8(bytes).map_err(|_| "invalid_bootstrap_socket_record".to_owned())?,
-    );
-    let directory = path.parent().ok_or("invalid_bootstrap_socket_record")?;
-    let metadata = fs::symlink_metadata(directory)
-        .map_err(|_| "invalid_bootstrap_socket_record".to_owned())?;
+        .map_err(|_| RecordRefusal::Untrusted)?;
+    let path = PathBuf::from(String::from_utf8(bytes).map_err(|_| RecordRefusal::Untrusted)?);
+    let directory = path.parent().ok_or(RecordRefusal::Untrusted)?;
+    let metadata = fs::symlink_metadata(directory).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            RecordRefusal::Stale
+        } else {
+            RecordRefusal::Untrusted
+        }
+    })?;
     if !path.is_absolute()
         || !metadata.is_dir()
         || metadata.file_type().is_symlink()
         || !private::owned_by_current_user(directory).unwrap_or(false)
         || !private::is_private(directory).unwrap_or(false)
     {
-        return Err("invalid_bootstrap_socket_record".to_owned());
+        return Err(RecordRefusal::Untrusted);
     }
     Ok(path)
 }
@@ -143,5 +227,30 @@ mod tests {
     #[test]
     fn a_caller_that_is_gone_is_unavailable() {
         assert_eq!(caller_directory(i32::MAX), Err("caller_unavailable"));
+    }
+
+    /// A recorded listener takes its private folder with it: the socket,
+    /// its lock and the folder are gone once it drops (L4).
+    #[test]
+    fn a_recorded_listener_leaves_no_folder_behind() {
+        let state = tempfile::tempdir().unwrap();
+        // The folder takes the token's first 24 characters, and the record's
+        // staging file its first 16, so both vary within them: a folder a
+        // failed run left never collides with the next run's.
+        let started = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        let tokens = std::sync::atomic::AtomicU64::new(0);
+        let token = || {
+            let next = tokens.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            format!("{next:04x}{started:016x}{:08x}", std::process::id())
+        };
+        let (listener, socket) =
+            bind_recorded(&state.path().join("record"), "hide-test", "t.sock", token).unwrap();
+        let folder = socket.parent().unwrap().to_path_buf();
+        assert!(folder.is_dir());
+        drop(listener);
+        assert!(!folder.exists(), "{} was left", folder.display());
     }
 }

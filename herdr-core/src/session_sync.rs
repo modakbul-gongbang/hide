@@ -128,6 +128,14 @@ pub(crate) struct SessionSyncContext {
     /// The link to the node this target's machine work goes to, for a
     /// target the core reads that work from (PRD core-host-node D-21).
     node: Option<Arc<dyn crate::node_access::NodeLink>>,
+    /// The link a node that dials this core brought, which its machine's
+    /// readers ask (PRD core-host-node-remote-core B13); `None` for this
+    /// machine, whose readers ask `node`, and for an SSH device.
+    inbound: Option<Arc<dyn crate::node_access::NodeLink>>,
+    /// This machine's own node, where `gh` runs with the operator's login,
+    /// for a node that dials this core: its pull requests are read here by
+    /// repository name (PRD core-host-node-remote-core D-16).
+    login: Option<Arc<dyn crate::node_access::NodeLink>>,
     api_connector: Arc<dyn ApiConnector>,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
@@ -143,6 +151,8 @@ impl SessionSyncContext {
                 socket_path: context.socket_path.clone(),
             },
             node: Some(node),
+            inbound: None,
+            login: None,
             api_connector: Arc::clone(&context.api_connector),
             runtime: context.runtime.clone(),
             notifier: context.notifier.clone(),
@@ -162,10 +172,24 @@ impl SessionSyncContext {
                 label: label.into(),
             },
             node: None,
+            inbound: None,
+            login: None,
             api_connector,
             runtime,
             notifier,
         }
+    }
+
+    /// A device whose node dials this core: its machine is read through
+    /// `link`, as this machine is through its own node.
+    pub(crate) fn dialed_in(
+        mut self,
+        link: Arc<dyn crate::node_access::NodeLink>,
+        login: Arc<dyn crate::node_access::NodeLink>,
+    ) -> Self {
+        self.inbound = Some(link);
+        self.login = Some(login);
+        self
     }
 
     fn log_target(&self) -> &str {
@@ -202,6 +226,24 @@ impl SessionSyncContext {
 
     fn node(&self) -> Option<&Arc<dyn crate::node_access::NodeLink>> {
         self.node.as_ref()
+    }
+
+    /// The node `gh` runs on for this target's pull requests: this
+    /// machine's own, for this machine and for a node that dials this core.
+    fn login(&self) -> Option<&Arc<dyn crate::node_access::NodeLink>> {
+        match &self.target {
+            SessionSyncTarget::Local { .. } => self.node.as_ref(),
+            SessionSyncTarget::Remote { .. } => self.login.as_ref(),
+        }
+    }
+
+    /// The node this target's own machine is read through: this machine's
+    /// node, or the link of a node that dials this core.
+    fn machine(&self) -> Option<&Arc<dyn crate::node_access::NodeLink>> {
+        match &self.target {
+            SessionSyncTarget::Local { .. } => self.node.as_ref(),
+            SessionSyncTarget::Remote { .. } => self.inbound.as_ref(),
+        }
     }
 }
 

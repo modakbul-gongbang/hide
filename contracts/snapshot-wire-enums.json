@@ -51,7 +51,7 @@
   "review_decision": ["review_required", "changes_requested", "approved"],
   "session_group": ["needs_you", "working", "done", "idle", "resolved"],
   "raise_verb": ["approval", "answer", "confirm", "draft"],
-  "pr_state": ["failed", "pending", "mergeable", "merged"],
+  "pr_state": ["failed", "pending", "mergeable", "draft", "merged", "closed"],
   "descendant_mark": ["raised", "working"],
   "right_panel_section": ["overview", "explorer", "changes", "agent_sessions", "sessions"],
   "strip_tab_kind": ["herdr", "file", "diff", "session", "memory"]

@@ -275,7 +275,7 @@ Hide supports an agent only when the pinned Herdr ships an integration for it (`
 Lineage, the mailbox identity, labels and sleep all read the session id that integration gives Herdr, and an agent without one could only have its state judged from its screen, a second kind of row that behaves unlike every other; so the support list follows Herdr's, and an agent Herdr has no target for is not listed (Gemini CLI left for that reason and is retired below).
 `AgentAdapter::herdr` is therefore required, not optional.
 Among the supported agents, one gets the multi-agent collaboration tier (letters, the spawn guard, Memory and the subagent count) when its official documentation or SDK types give a hook or plugin that can both put text into the prompt and refuse a tool call; today that is Claude Code and Codex, through the six-event hook, OpenCode, through Hide's plugin, and Pi and omp, through Hide's extension (Pi without a subagent count, since Pi runs none).
-Every other supported agent is the basic tier: the skill, Herdr's integration and, where its documentation gives a command hook, the agent hook: the spawn guard and the subagent count where the hook can refuse a shell call and sees a subagent start and end (Grok and Cursor), and the guidance where its session start adds context (Cursor).
+Every other supported agent is the basic tier: the skill, Herdr's integration and, where its documentation gives a command hook, the agent hook: the spawn guard where the hook can refuse a shell call (Grok and Cursor), the subagent count where the hook also sees a subagent start and end (Grok), and the guidance where its session start adds context (Cursor).
 A basic-tier agent takes no letters through a hook, so `hide request ack` stays its receipt and it is no bell target (PRD grok-cursor-hooks D-07).
 Adding an agent to the list checks, in order: the pinned Herdr lists a target for it and which folder that target needs; the vendor's documentation confirms the folder it reads skills from and the name of the program it installs; the vendor publishes a mark (`docs/BRAND.md`) or the row draws a monogram; and whether its hooks or plugins meet the collaboration tier above.
 It is then one shared declaration, its contract fixtures, the logo manifest, and the expected kit case; the web shell reads the generated `contracts/agent-adapters.json` rather than maintaining its own order, names or links.
@@ -311,7 +311,7 @@ Two pieces are written per agent into the agent's own files, and nothing else; a
   Where the session start adds context (Cursor), its output is the worktree-purpose instruction, including the sentence that points at `hide factory add`, one fixed line that points at `hide browser help`, and the live Workspace guidance when the daemon answers, in the field the agent documents.
   It prints no Memory capsule, because a Memory receipt is read back only from a session Hide reads it from: Claude Code's, Codex's, Pi's and omp's files and OpenCode's database.
   A second delivery of the same session prints the same guidance: the output is a pure function of the daemon's answer, and a test runs the hook twice and compares.
-  The other events carry the spawn guard and the subagent count ([Grok's and Cursor's own hooks](#groks-and-cursors-own-hooks)).
+  The other events carry the spawn guard, and Grok's subagent count ([Grok's and Cursor's own hooks](#groks-and-cursors-own-hooks)).
 
 Cursor keeps its entry the way its documentation shapes it.
 A removal takes Hide's hook out of whatever group holds it and drops the group only when no hook is left, so another tool's hook that shares a group with Hide's stays.
@@ -337,7 +337,10 @@ The agent hook is not written on Windows, because its command is a shell command
 
 ### Grok's and Cursor's own hooks
 
-Grok and Cursor each document a hook that can refuse a shell call and that sees a subagent start and end, so Hide's hook for them carries the spawn guard and the subagent count (PRD grok-cursor-hooks).
+Grok and Cursor each document a hook that can refuse a shell call and that sees a subagent start and end, so Hide's hook for them carries the spawn guard and, for Grok, the subagent count (PRD grok-cursor-hooks).
+Cursor declares no subagent count: Cursor CLI 2026.10.01 runs `subagentStart` and `subagentStop` only when its agent server asks for them, and a Task subagent run (issue 911) never produced one, so the count stayed 0 for a pane that had run a subagent.
+Its chat store does keep each subagent as a store of its own, in the parent's folder under `~/.cursor/chats`, with `subagentInfo` (`parentAgentId`, `toolCallId`, `typeName`), and the parent's graph holds the Task call and its tool result; a finished subagent could be counted from those, but nothing in a subagent's store says it is still running, so Hide shows no count rather than a zero it cannot stand behind (design principle 10).
+The pane's children projection follows the count's dialect, so a Cursor pane reads as Pi's does: the uninstrumented mark with the reason `unknown` and no count, which says Hide cannot tell what the session spawned ([status-model.md](status-model.md#uninstrumented-is-not-an-unknown-activity)), never a zero; the spawn guard and the guidance keep their own hooks.
 Each runs only the events its documentation names: Grok `SessionStart`, `PreToolUse` (matcher `Bash|ask_user_question|exit_plan_mode`; `Bash` is Grok's alias of `run_terminal_command`), `SubagentStart`, `SubagentStop` and `Stop` (the hooks guide Grok ships, `~/.grok/docs/user-guide/10-hooks.md`); Cursor `sessionStart`, `preToolUse` (matcher `Shell`), `subagentStart`, `subagentStop` and `stop`.
 Grok's `SessionStart` does not fire for a subagent, so it is where the pane's count starts over and the pane first reports itself instrumented.
 
@@ -350,7 +353,7 @@ The helper (`src/bin/hide-agent-hooks.rs`, `run_basic_hook`; the payload and ans
 | | Grok | Cursor |
 | --- | --- | --- |
 | Shell call | `toolName` `run_terminal_command`, `toolInput.command`, `cwd` | `tool_name` `Shell`, `tool_input.command`, `tool_input.working_directory` (else `cwd`) |
-| Refusal | Claude Code's envelope, `hookSpecificOutput.permissionDecision = "deny"`, which Grok takes | `{"permission": "deny", "agent_message": <reason>}` |
+| Refusal | Claude Code's envelope, `hookSpecificOutput.permissionDecision = "deny"`, which Grok takes | `{"permission": "deny", "user_message": <reason>, "agent_message": <reason>, "additional_context": <reason>}` |
 | Nothing to refuse | no output | `{"permission": "allow"}` |
 | Turn end | `Stop`: `subagentType` marks a subagent's own stop, `backgroundTasks` lists what still runs | `stop` |
 
@@ -358,16 +361,16 @@ The refusal's reason and every rule of what is refused are the spawn guard's abo
 Cursor reads output that is not a valid answer from `preToolUse` and `subagentStart` as a refusal even when the hook exits 0, and only the CLI's own code, not its documentation, says empty output proceeds, so for those two events every path that does not refuse prints `{"permission":"allow"}`: outside a pane or a registered checkout, an unreadable payload, a daemon that is down or slow, a panic, and a failed owner handshake before anything else runs (D-04).
 Grok fails open on everything but a refusal, so its hook prints nothing on those paths, as Claude Code's does.
 A failure goes to the guard's log, never to the agent (B5).
+Cursor CLI 2026.10.01 reads a refusal on two paths: its local tool path (every shell call) shows the agent `user_message`, or "<tool> blocked by preToolUse hook" when there is none, and gives it `additional_context`, while only a `preToolUse` step the agent server asks for passes `agent_message` on; the reason is written to all three so it reaches the agent whichever path ran (issue 910, read from the installed CLI bundle).
 
 The count is the same per-pane record and the same `pane.report_metadata` report as Claude Code's (above), changed under an exclusive lock on `~/.hide/agent-hooks/panes.lock` (private to the account), so subagents started in parallel are all counted; a report that finds the record changed by another event while it was sent sends the record again, so Herdr ends on the latest count, and a lock not taken within one second is written down as the pane's last report failure.
 A subagent start adds one working, a subagent stop moves one from working to done.
 Grok's `Stop` from inside a subagent leaves the count alone, and the main session's `Stop` sets working to the number of `subagent` entries in `backgroundTasks`, so a background subagent stays counted past the turn and its own `SubagentStop` ends it (D-06); a payload that is cut off or unreadable leaves the count alone.
-Cursor's `stop` sets working to zero, since its subagents end with the turn.
 The core judges a Grok or Cursor pane instrumented by that agent's hook piece in the kit (`herdr_core::agent_hooks::kit_hook_status` for the agent's `HookDialect`, as for OpenCode's plugin), not by a Claude Code or Codex component.
 
 Grok's question tools `ask_user_question` and `exit_plan_mode` are in its `PreToolUse` matcher, but the hook routes them to the Factory question guard ([Native questions from Factory workers](#native-questions-from-factory-workers)) only for an agent whose `direct_ask` the adapter table declares, and Grok's stays Unconfirmed until a live Grok shows `PreToolUse` firing for them; until then Grok's questions stay native.
 
-`hide-agent-hooks/tests/it/grok_cursor_hooks.rs` runs the built helper with each agent's documented payloads beside a stand-in `hide` and a stand-in Herdr socket, and asserts the answers, the counts Herdr is told, and a single count when Grok runs all three of Hide's hooks for one subagent.
+`hide-agent-hooks/tests/it/grok_cursor_hooks.rs` runs the built helper with each agent's documented payloads beside a stand-in `hide` and a stand-in Herdr socket, and asserts the answers, the counts Herdr is told (none for Cursor), and a single count when Grok runs all three of Hide's hooks for one subagent.
 
 The record `~/.hide/kit/installed.json` keeps the operator's choice per agent (`agents`) and the pieces Hide installed (`hook:<agent>`, `skill:<folder>`, `herdr:<agent>`), and an older build ignores them.
 With no choice on record Claude Code and Codex are on, as they have been since their hooks became part of the kit, and every other agent is off.
@@ -414,7 +417,7 @@ Every row gets the skill stub where the system column says so.
 | OpenCode | `~/.agents/skills` (macOS, Linux) | done: Hide's plugin in `~/.config/opencode/plugins/` (macOS, Linux), not a command hook; OpenCode has none, only JS plugins (<https://opencode.ai/docs/plugins/>), whose `chat.message` hook adds a synthetic part to the prompt and whose `tool.execute.before` refuses a call by throwing ([OpenCode: Hide's plugin](#opencode-hides-plugin)) | `opencode` | [skills](https://opencode.ai/docs/skills/) |
 | Pi | `~/.agents/skills` (all) | done: Hide's extension in `~/.pi/agent/extensions/` (macOS, Linux), not a command hook; Pi has none, only TS extensions, whose `before_agent_start` adds a hidden message to the prompt and whose `tool_call` refuses a call ([Pi and omp: Hide's extension](#pi-and-omp-hides-extension)) | `pi` | [skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
 | omp | `~/.agents/skills` (macOS, Linux) | done: the same extension in `~/.omp/agent/extensions/` (macOS, Linux), with omp's subagent counts and `ask` guard | `omp`, in `~/.omp/agent` | [skills](https://omp.sh/docs/skills) |
-| Cursor | `~/.agents/skills` (macOS, Linux) | done: spawn guard and subagent count, and guidance `sessionStart` in `~/.cursor/hooks.json`, returning `additional_context` ([hooks](https://cursor.com/docs/hooks)); the hooks page does not mention the CLI, and its changelog says the CLI runs session-start hooks (<https://cursor.com/docs/cli/changelog>), so whether the CLI honours `additional_context` is unconfirmed; no Windows shell is named | `cursor` | [skills](https://cursor.com/docs/context/skills) |
+| Cursor | `~/.agents/skills` (macOS, Linux) | done: spawn guard and guidance `sessionStart` in `~/.cursor/hooks.json`, no subagent count (above), returning `additional_context` ([hooks](https://cursor.com/docs/hooks)); the hooks page does not mention the CLI, and its changelog says the CLI runs session-start hooks (<https://cursor.com/docs/cli/changelog>), so whether the CLI honours `additional_context` is unconfirmed; no Windows shell is named | `cursor` | [skills](https://cursor.com/docs/context/skills) |
 
 Each row also carries what Hide can do for that agent as a list of features (`hide_agent_adapter::Feature`, re-exported by `hide_kit::agents`, and `KitAgentSnapshot.features`).
 An agent without both prompt intake and spawn refusal wears the Basic chip, regardless of other missing features.

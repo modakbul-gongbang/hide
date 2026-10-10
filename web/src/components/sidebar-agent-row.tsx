@@ -8,7 +8,9 @@ import { branchChip, lineText, lineTone, markTone, rowAccessibleName, sidebarLin
 import { cn } from "../lib/utils";
 import type { AgentRow } from "../snapshot";
 import type { AgentMenuItem } from "../workspaceManage";
-import { AskLine, DescendantMark, ownPulls, PrHoverList, PrIcon, prStaleness, TreeChevron, TreeRails, type PrStaleness, type TreePlace } from "./agent-tree";
+import { AskLine, DescendantMark, TreeChevron, TreeRails, type TreePlace } from "./agent-tree";
+import { AgentPrHover, PrHoverList, useAgentStaleness } from "./pr-mark";
+import { ownPulls, type PrStaleness } from "../prMark";
 import { AgentTreePopover } from "./agent-tree-popover";
 import { Elapsed } from "./elapsed";
 import { EntryContextMenu, type MenuEntry } from "./entry-menu";
@@ -124,8 +126,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   const main = useRef<HTMLButtonElement>(null);
   // Each row reads only the facts it draws, so a snapshot that moves nothing here renders nothing.
   const closing = useShellStore((s) => agentClosing(s.rest?.status?.async_operations, agent.pane_id));
-  const stale = useShellStore((s) => (ask ? undefined : prStaleness(s.rest, agent)?.stale));
-  const lastRead = useShellStore((s) => (ask ? undefined : prStaleness(s.rest, agent)?.lastRead));
+  const agentPrStaleness = useAgentStaleness(agent);
   // A tree row is one line (B14), except that a block keeps its cause, read or
   // not (agent-blocked-state B2): the triangle alone does not say what stopped it.
   const line = tree && agent.status_code !== "error" ? null : sidebarLine(agent);
@@ -134,7 +135,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   const unreachable = remote !== null && !remote.reachable;
   const titleTone = agent.state.title_emphasized || (selected && agent.state.selection_emphasizes_title) ? "text-foreground" : "text-subtle-foreground";
   const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agent.detail?.trim(), place].filter(Boolean).join("\n");
-  const staleness: PrStaleness | undefined = stale === undefined ? undefined : { stale, lastRead: lastRead ?? null };
+  const staleness = ask ? undefined : agentPrStaleness;
   const folded = tree ? tree.open !== true : true;
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (!tree || tree.open === null || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -209,7 +210,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             {device ? (
               <DeviceChip label={device} className="pointer-events-none max-w-2/5" />
             ) : null}
-            {ask ? null : <PrIcon agent={agent} staleness={staleness} card={(icon) => <PrHoverCard agent={agent} icon={icon} staleness={staleness} onOpenPullRequest={onOpenPullRequest} />} />}
+            {ask ? null : <AgentPrHover agent={agent} staleness={staleness} card={(icon) => <PrHoverCard agent={agent} icon={icon} staleness={staleness} onOpenPullRequest={onOpenPullRequest} />} />}
             {ask || !folded ? null : <span className="pointer-events-none flex shrink-0"><DescendantMark agent={agent} /></span>}
             {/* A time the core never measured draws nothing, and nothing stands in for it. */}
             <Elapsed since={agent.changed_at_unix_ms} aria-hidden="true" className="pointer-events-none shrink-0 font-mono text-caption text-muted-foreground" data-agent-elapsed="true" />
@@ -268,7 +269,7 @@ function RowChevron({ agent, tree, returnFocus }: { agent: AgentRow; tree: Sideb
 }
 
 /**
- * Under the pointer, the sidebar PR icon shows the existing PR card for one
+ * Under the pointer, the sidebar PR mark shows the existing PR card for one
  * own PR, and each own PR with its state and title for several (B23).
  */
 function PrHoverCard({ agent, icon, staleness, onOpenPullRequest }: { agent: AgentRow; icon: ReactNode; staleness?: PrStaleness; onOpenPullRequest: (url: string, external: boolean) => void }) {

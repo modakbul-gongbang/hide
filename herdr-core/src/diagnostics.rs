@@ -32,8 +32,10 @@ macro_rules! diagnostic {
     };
 }
 
+/// Sends every record to the Logs file beside `state_path`: the core's, or
+/// a node-role daemon's, which has no core to install it.
 #[cfg(not(test))]
-pub(crate) fn install(state_path: &Path) -> io::Result<()> {
+pub fn install(state_path: &Path) -> io::Result<()> {
     let directory = state_path
         .parent()
         .ok_or_else(|| io::Error::other("state path has no parent"))?

@@ -1,5 +1,5 @@
 import { useEscapeLayer } from "./components/ui/layer";
-import { ArrowLeftIcon, ArrowRightIcon, CornerDownRightIcon, GitMergeIcon, SearchIcon, XIcon } from "lucide-react";
+import { ArrowLeftIcon, ArrowRightIcon, CornerDownRightIcon, SearchIcon, XIcon } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   backPath,
@@ -29,6 +29,7 @@ import { AgentMark } from "./AgentMark";
 import { badgeParts, badgeWords, lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint } from "./components/pr-card";
+import { PrMark } from "./components/pr-mark";
 import { Elapsed } from "./components/elapsed";
 import { StatusMark } from "./components/status-mark";
 import { BadgeMarks } from "./components/status-badge";
@@ -413,8 +414,19 @@ function BoxHead({ box, handlers, now }: { box: GraphBox; handlers: LensHandlers
   const { project, checkout, cleanup } = box;
   const view = checkoutPresentation(project, checkout, now, t);
   const pr = view.pullRequest;
-  const Glyph = cleanup === "missing" ? XIcon : cleanup === "merged" && !pr ? GitMergeIcon : CHECKOUT_KIND_ICON[view.kind];
-  const glyphTone = cleanup === "missing" ? "text-destructive" : cleanup === "merged" && !pr ? "text-pr-merged" : view.kindTone;
+  // A missing folder's cross, a merged worktree with no pull request left the
+  // merged mark, a pull request its own mark, else the checkout's kind.
+  const KindIcon = view.kind === "pull_request" ? null : CHECKOUT_KIND_ICON[view.kind];
+  const glyph =
+    cleanup === "missing" ? (
+      <XIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-destructive" />
+    ) : cleanup === "merged" && !pr ? (
+      <PrMark state="merged" compact />
+    ) : view.kind === "pull_request" && pr ? (
+      <PrMark state={pr.state} stale={view.stale} compact />
+    ) : KindIcon ? (
+      <KindIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
+    ) : null;
   const name = checkout.branch ?? checkout.label;
   const purpose = checkout.purpose?.text ?? pr?.title ?? null;
   const worktree = checkout.worktree;
@@ -438,7 +450,7 @@ function BoxHead({ box, handlers, now }: { box: GraphBox; handlers: LensHandlers
         />
       </CheckoutCardHint>
       <span className="pointer-events-none relative flex h-(--graph-head-line) min-w-0 items-center gap-xs">
-        <Glyph aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", glyphTone)} />
+        {glyph}
         <span className="min-w-0 flex-1 truncate font-mono text-body text-foreground">{name}</span>
         <span className="absolute inset-y-0 right-0 hidden items-center bg-accent pl-xs text-caption text-foreground group-hover/head:flex group-focus-within/head:flex" data-graph-head-hint="true">
           {t("graph.workspaceHint")}

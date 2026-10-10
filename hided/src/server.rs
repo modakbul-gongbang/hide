@@ -24,6 +24,7 @@ use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
 use crate::index::{IndexAnswer, IndexService};
 use crate::pane_auth::Registry;
+use crate::screen_event::{self, Kind};
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 use crate::terminal_hub::Resume;
 use crate::watch::WatchService;
@@ -115,19 +116,25 @@ pub struct AppState {
     pub daemon_info: Arc<Value>,
     /// Settings > Mobile and the phones it pairs (`mobile/`).
     pub mobile: Arc<crate::mobile::Mobile>,
+    /// The grants this core handed linked nodes' screen relays (`relay`).
+    pub relay_grants: Arc<crate::attach::RelayGrants>,
+    /// Windows of this machine open now (`OwnScreen`).
+    pub own_screens: Arc<Mutex<usize>>,
+    /// Which screen each pane's terminal size follows (`pane_sizes`).
+    pub pane_sizes: Arc<crate::pane_sizes::PaneSizes>,
 }
 
 #[derive(Debug, Deserialize)]
-struct Handshake {
-    token: String,
-    schema_version: u32,
-    client_kind: Option<String>,
-    have_revision: Option<u64>,
+pub(crate) struct Handshake {
+    pub(crate) token: String,
+    pub(crate) schema_version: u32,
+    pub(crate) client_kind: Option<String>,
+    pub(crate) have_revision: Option<u64>,
     /// The last `terminal` frame's cursor the client applied, which resumes
     /// every pane's output from the terminal hub that gave it.
-    have_terminal_sequence: Option<u64>,
+    pub(crate) have_terminal_sequence: Option<u64>,
     /// The epoch of the hub that gave the cursor.
-    have_terminal_epoch: Option<String>,
+    pub(crate) have_terminal_epoch: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -158,11 +165,29 @@ impl CloseReason {
     }
 }
 
+mod relay_routes;
+
+pub use relay_routes::RELAY_GRANT_HEADER;
+use relay_routes::{
+    RELAY_TAKES, RelayScreen, relay_attachment, relay_browser_control,
+    relay_browser_control_action, relay_browser_source, relay_busy, relay_upgrade,
+};
+
 pub fn router(state: AppState) -> Router {
     let browser_control_limit = axum::extract::DefaultBodyLimit::max(16 * 1024);
     Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws_upgrade))
+        .route("/relay", get(relay_upgrade))
+        .route("/relay/browser-source", post(relay_browser_source))
+        .route(
+            "/relay/browser-control",
+            post(relay_browser_control).layer(browser_control_limit),
+        )
+        .route(
+            "/relay/browser-control/action",
+            post(relay_browser_control_action).layer(browser_control_limit),
+        )
         .route(
             "/browser-route",
             post(resolve_browser_route).delete(release_browser_route),
@@ -222,89 +247,41 @@ async fn tailnet_gate(request: axum::extract::Request, next: axum::middleware::N
     next.run(request).await
 }
 
-#[derive(Deserialize)]
-struct BrowserRouteRequest {
-    device_id: String,
-    checkout_path: String,
-    id: String,
-    load: u64,
-    owner_pid: i32,
-}
-
-fn browser_route_authorized(headers: &HeaderMap, state: &AppState) -> bool {
+/// Whether `headers` carry this daemon's token, as the desktop host sends
+/// it for a route or a browser control.
+pub(crate) fn bearer_matches(headers: &HeaderMap, token: &str) -> bool {
     let offered = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .unwrap_or("");
-    token_matches(offered, &state.token)
+    token_matches(offered, token)
 }
 
-fn browser_route_request_valid(request: &BrowserRouteRequest) -> bool {
-    !request.device_id.is_empty()
-        && request.device_id.len() <= 256
-        && hide_platform::path::is_wire_absolute(&request.checkout_path)
-        && request.checkout_path.len() <= 8192
-        && !request.id.is_empty()
-        && request.id.len() <= 256
-        && request.owner_pid > 0
+fn browser_route_authorized(headers: &HeaderMap, state: &AppState) -> bool {
+    bearer_matches(headers, &state.token)
 }
 
 async fn resolve_browser_route(
     State(state): State<AppState>,
     headers: HeaderMap,
-    axum::Json(request): axum::Json<BrowserRouteRequest>,
+    axum::Json(request): axum::Json<crate::browser_routes::RouteRequest>,
 ) -> Response {
     if !browser_route_authorized(&headers, &state) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    if !browser_route_request_valid(&request) {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    match state
-        .browser_routes
-        .resolve(
-            request.device_id,
-            request.checkout_path,
-            request.id,
-            request.load,
-            request.owner_pid,
-        )
-        .await
-    {
-        Ok(route) => axum::Json(route).into_response(),
-        Err(reason) => {
-            eprintln!(
-                "{}",
-                json!({"component":"browser_routes","kind":"resolve.refused","reason":reason})
-            );
-            (StatusCode::CONFLICT, axum::Json(json!({"reason":reason}))).into_response()
-        }
-    }
+    crate::browser_routes::resolve_answer(&state.browser_routes, request).await
 }
 
 async fn release_browser_route(
     State(state): State<AppState>,
     headers: HeaderMap,
-    axum::Json(request): axum::Json<BrowserRouteRequest>,
+    axum::Json(request): axum::Json<crate::browser_routes::RouteRequest>,
 ) -> Response {
     if !browser_route_authorized(&headers, &state) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    if !browser_route_request_valid(&request) {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    state
-        .browser_routes
-        .release(
-            &request.device_id,
-            &request.checkout_path,
-            &request.id,
-            request.load,
-            request.owner_pid,
-        )
-        .await;
-    StatusCode::NO_CONTENT.into_response()
+    crate::browser_routes::release_answer(&state.browser_routes, request).await
 }
 
 fn browser_control_failure((reason, next_action): crate::browser_control::Failure) -> Response {
@@ -354,10 +331,27 @@ async fn browser_control_action(
     headers: HeaderMap,
     axum::Json(request): axum::Json<crate::browser_control::BrowserAction>,
 ) -> Response {
-    use herdr_core::workspace_control::{ActionPreparation, Query};
     if !browser_route_authorized(&headers, &state) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    run_browser_action(state, request, |control, request| {
+        control.caller(request.owner_pid, &request.checkout_path)
+    })
+    .await
+}
+
+/// A window's page action, run as the caller `caller` names for it.
+async fn run_browser_action(
+    state: AppState,
+    request: crate::browser_control::BrowserAction,
+    caller: impl FnOnce(
+        &crate::browser_control::BrowserControl,
+        &crate::browser_control::BrowserAction,
+    ) -> Result<String, crate::browser_control::Failure>
+    + Send
+    + 'static,
+) -> Response {
+    use herdr_core::workspace_control::{ActionPreparation, Query};
     if !request.valid() {
         return StatusCode::BAD_REQUEST.into_response();
     }
@@ -370,9 +364,7 @@ async fn browser_control_action(
         if state.desktop_renderers.load(Ordering::SeqCst) == 0 {
             return Err(("browser_unsupported", "Open the Hide desktop app and retry"));
         }
-        let caller = state
-            .browser_control
-            .caller(request.owner_pid, &request.checkout_path)?;
+        let caller = caller(&state.browser_control, &request)?;
         let source = state
             .core
             .workspace_query(&request.device_id, &caller, Query::ViewList)
@@ -462,7 +454,12 @@ fn confined_file(root: &std::path::Path, relative: &str) -> Option<std::path::Pa
 }
 
 async fn static_asset(uri: Uri, State(state): State<AppState>) -> Response {
-    let path = uri.path();
+    ui_asset(state.ui_dir.as_deref(), uri.path()).await
+}
+
+/// The web shell's file at `path`: embedded in a release build, read from
+/// the confined `ui_dir` in a debug build, and the fallback page at `/`.
+pub(crate) async fn ui_asset(ui_dir: Option<&Path>, path: &str) -> Response {
     if has_embedded_ui() {
         return match embedded_file(path) {
             Some((name, bytes)) => Response::builder()
@@ -473,7 +470,7 @@ async fn static_asset(uri: Uri, State(state): State<AppState>) -> Response {
             None => StatusCode::NOT_FOUND.into_response(),
         };
     }
-    if let Some(dir) = &state.ui_dir {
+    if let Some(dir) = ui_dir {
         let relative = path.trim_start_matches('/');
         if let Some(candidate) = confined_file(dir, relative)
             && candidate.is_file()
@@ -662,9 +659,12 @@ async fn link_client_loop(mut socket: WebSocket, route: LinkRoute) {
 /// The largest message a WebSocket that came through `tailscale serve` may send.
 const TAILNET_MAX_MESSAGE: usize = 64 * 1024;
 /// How long a new WebSocket may wait before its first frame.
-const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn check_origin(origin: Option<&str>, allowed: &HashSet<String>) -> Result<(), CloseReason> {
+pub(crate) fn check_origin(
+    origin: Option<&str>,
+    allowed: &HashSet<String>,
+) -> Result<(), CloseReason> {
     let Some(origin) = origin else {
         return Err(CloseReason::OriginNotAllowed);
     };
@@ -752,6 +752,20 @@ async fn client_loop(
         }
         return;
     }
+    screen_loop(socket, state, connection, handshake, None).await;
+}
+
+/// One screen's session after its handshake: the snapshot stream, the
+/// answers to its events and, for a screen of this machine, its terminals.
+/// A linked node's screen (`relay`) draws terminals from its own node's hub
+/// and ends with the node's link.
+async fn screen_loop(
+    mut socket: WebSocket,
+    state: AppState,
+    connection: u64,
+    handshake: Handshake,
+    relay: Option<RelayScreen>,
+) {
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
     if previous >= MAX_CLIENTS {
         state.clients.fetch_sub(1, Ordering::SeqCst);
@@ -769,6 +783,9 @@ async fn client_loop(
     if desktop {
         state.desktop_renderers.fetch_add(1, Ordering::SeqCst);
     }
+    // A window of this machine draws linked nodes' panes from this hub, so
+    // they send their output up while one is open (`Router::mirror`).
+    let _own_screen = (renderer && relay.is_none()).then(|| OwnScreen::arrive(&state));
     // A reconnecting client resumes from the cursor it last applied, so the
     // first frame carries only what changed while it was away; a fresh client
     // (cursor 0) gets the whole state.
@@ -819,18 +836,21 @@ async fn client_loop(
     // across a reconnect resumes every pane from its cursor, or is drawn
     // again whole when it names none; one that got a whole snapshot draws
     // each pane from the full frame its view asks for.
-    let terminals = state.core.hub.connect(
-        match (
-            first,
-            handshake.have_terminal_sequence,
-            handshake.have_terminal_epoch,
-        ) {
-            (FrameKind::Snapshot, _, _) => Resume::Fresh,
-            (FrameKind::Delta, Some(cursor), Some(epoch)) => Resume::After { epoch, cursor },
-            // A cursor without the hub it came from is not trusted.
-            (FrameKind::Delta, _, _) => Resume::Redraw,
-        },
-    );
+    let terminals = relay.is_none().then(|| {
+        state.core.hub.connect(
+            match (
+                first,
+                handshake.have_terminal_sequence,
+                handshake.have_terminal_epoch.clone(),
+            ) {
+                (FrameKind::Snapshot, _, _) => Resume::Fresh,
+                (FrameKind::Delta, Some(cursor), Some(epoch)) => Resume::After { epoch, cursor },
+                // A cursor without the hub it came from is not trusted.
+                (FrameKind::Delta, _, _) => Resume::Redraw,
+            },
+        )
+    });
+    let link = relay.as_ref().map(|relay| relay.link.clone());
     loop {
         tokio::select! {
             changed = notify.recv() => {
@@ -841,12 +861,30 @@ async fn client_loop(
                 }
                 match send_snapshot(&mut socket, &state, &mut have_revision).await {
                     // A whole snapshot resets the client's terminals too.
-                    Ok(FrameKind::Snapshot) => terminals.restart(),
+                    Ok(FrameKind::Snapshot) => {
+                        if let Some(terminals) = &terminals {
+                            terminals.restart();
+                        }
+                    }
                     Ok(FrameKind::Delta) => {}
                     Err(()) => break,
                 }
             }
-            () = terminals.ready() => {
+            () = async {
+                match &link {
+                    Some(link) => {
+                        link.closed().await;
+                    }
+                    None => std::future::pending().await,
+                }
+            } => break,
+            () = async {
+                match &terminals {
+                    Some(terminals) => terminals.ready().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                let Some(terminals) = &terminals else { continue };
                 let (frame, redraws) = terminals.take();
                 for pane in redraws {
                     state.core.terminals.redraw(&pane);
@@ -912,10 +950,37 @@ async fn client_loop(
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
+                        let routed = relay
+                            .as_ref()
+                            .and_then(|relay| Some((relay, screen_event::read(&text, RELAY_TAKES)?)));
+                        if let Some((relay, routed)) = routed {
+                            match routed.kind {
+                                Kind::TerminalInput => {
+                                    screen_input(&state, connection, &payload_str(&routed.event, "pane_id"));
+                                }
+                                _ => {
+                                    let refused = relay_attachment(&state, connection, &relay.node, &routed.event, &text);
+                                    if let Some(refused) = refused
+                                        && socket.send(Message::Text(refused.to_string().into())).await.is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+                            }
+                            continue;
+                        }
                         match handle_client_text(&state, &text, connection) {
                             Ok(ClientAction::FileBytes(event)) => {
                                 if let Some(device) = event_device(&state.boundary, &event) {
-                                    let superseded = start_device_read(&state, &mut device_reads, device_bytes_tx.clone(), device, event);
+                                    let slot = relay.as_ref().map(RelayScreen::slot);
+                                    if matches!(slot, Some(None)) {
+                                        let refused = file_bytes_error(&payload_str(&event, "request_id"), &payload_str(&event, "path"), "relay_busy");
+                                        if socket.send(refused).await.is_err() {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                    let superseded = start_device_read(&state, &mut device_reads, device_bytes_tx.clone(), (device, slot.flatten()), event);
                                     // Sent here rather than through `device_bytes`,
                                     // which this loop drains and could be full.
                                     if let Some(frame) = superseded
@@ -928,7 +993,14 @@ async fn client_loop(
                                 }
                             }
                             Ok(ClientAction::DeviceListing(event)) => {
-                                spawn_device_listing(&state, event, device_frames_tx.clone());
+                                let slot = relay.as_ref().map(RelayScreen::slot);
+                                if matches!(slot, Some(None)) {
+                                    if socket.send(relay_busy()).await.is_err() {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                spawn_device_listing(&state, event, device_frames_tx.clone(), slot.flatten());
                             }
                             outcome => {
                                 let replies = match outcome {
@@ -1105,8 +1177,12 @@ async fn scoped_client_loop(
     // Set only for an admitted `browser_relay`: its slot, its display and the
     // gateway socket it pumps once the answer and the claim are through.
     let mut relay = None;
+    let mut relay_way = crate::browser_relay::Way::Core;
     let mut relay_for: Option<String> = None;
     let mut relay_slot = None;
+    // Where an admitted relay runs, which its answer leaves here: the
+    // answer itself is the same JSON every scoped request gives.
+    let chosen: Arc<std::sync::Mutex<Option<crate::browser_control::Relay>>> = Arc::default();
     let response = match incoming {
         Ok(Some(Ok(Message::Text(text)))) if text.len() <= 128 * 1024 => {
             match serde_json::from_str::<Value>(&text) {
@@ -1212,6 +1288,8 @@ async fn scoped_client_loop(
                         // fresh native read and engine reply. No stage renews it.
                         let guard_deadline = std::time::Instant::now() + Duration::from_secs(2);
                         let command_source = source.clone();
+                        let caller_node = source.as_ref().map(|(node, _)| node.clone());
+                        let command_relay = Arc::clone(&chosen);
                         let outcome = if let Some(Err((reason, next_action))) = &relay_slot {
                             Ok(Err(((*reason).to_owned(), *next_action)))
                         } else {
@@ -1259,7 +1337,7 @@ async fn scoped_client_loop(
                                         let (reason, next_action) = cap.changed_refusal();
                                         return Err((reason.to_owned(), next_action));
                                     }
-                                    browser_control.connect(&result, display_id.as_deref())
+                                    browser_control.connect(&result, display_id.as_deref(), caller_node.as_deref())
                                         .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?
                                 }
                                 ScopedRequest::BrowserRelay(display_id) => {
@@ -1273,13 +1351,13 @@ async fn scoped_client_loop(
                                         let (reason, next_action) = cap.changed_refusal();
                                         return Err((reason.to_owned(), next_action));
                                     }
-                                    let mut capability = browser_control.connect(&result, Some(&display_id))
+                                    let relay = browser_control.relay(&result, &display_id, caller_node.as_deref())
                                         .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?;
+                                    *command_relay.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(relay);
                                     // Only an area's selected View is ever on screen; the
                                     // CLI refuses input to any other before sending it.
-                                    capability["selected"] = json!(result.views.iter().flatten()
-                                        .any(|view| view.view_id == display_id && view.selected));
-                                    capability
+                                    json!({"selected": result.views.iter().flatten()
+                                        .any(|view| view.view_id == display_id && view.selected)})
                                 }
                                 ScopedRequest::Delivery(command, hint) => {
                                     core.prepare_delivery(&cap.context.device_id, &cap.pane_id, &cap.context, hint, command)
@@ -1392,25 +1470,44 @@ async fn scoped_client_loop(
                         };
                         // The relay's gateway side opens before the answer,
                         // so a refused upgrade is a reason, not a dropped
-                        // socket; its URL stays in this process.
+                        // socket; its URL stays in this process. A window on
+                        // the caller's own machine is relayed there: the
+                        // caller dials its node's relay URL itself.
                         let outcome = match (outcome, &relay_display) {
                             (Ok(Ok(result)), Some(display_id)) => {
-                                match result["browser_ws_url"].as_str() {
-                                    Some(url) => match crate::browser_relay::connect(url).await {
-                                        Ok(gateway) => {
-                                            relay = Some(gateway);
-                                            Ok(Ok(
-                                                json!({"display_id": display_id, "selected": result["selected"]}),
-                                            ))
-                                        }
-                                        Err((reason, next_action)) => {
-                                            Ok(Err((reason.to_owned(), next_action)))
-                                        }
-                                    },
-                                    None => Ok(Err((
-                                        "browser_control_unavailable".to_owned(),
+                                use crate::browser_control::Relay;
+                                let mut ready = json!({"display_id": display_id, "selected": result["selected"]});
+                                let chosen = chosen
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                    .take();
+                                let opened = match chosen {
+                                    Some(Relay::Core(url)) => {
+                                        crate::browser_relay::connect(&url).await.map(Some)
+                                    }
+                                    Some(Relay::Through { link, relay_url }) => {
+                                        relay_way = crate::browser_relay::Way::Link;
+                                        crate::browser_relay::connect_through(link, &relay_url)
+                                            .await
+                                            .map(Some)
+                                    }
+                                    Some(Relay::Own(relay_url)) => {
+                                        ready["relay_url"] = json!(relay_url);
+                                        Ok(None)
+                                    }
+                                    None => Err((
+                                        "browser_control_unavailable",
                                         "Reconnect the Hide desktop app and retry",
-                                    ))),
+                                    )),
+                                };
+                                match opened {
+                                    Ok(gateway) => {
+                                        relay = gateway;
+                                        Ok(Ok(ready))
+                                    }
+                                    Err((reason, next_action)) => {
+                                        Ok(Err((reason.to_owned(), next_action)))
+                                    }
                                 }
                             }
                             (outcome, _) => outcome,
@@ -1459,8 +1556,14 @@ async fn scoped_client_loop(
         // A relay starts only for a caller that completed the claim, and
         // holds its slot until the pump ends.
         if let (Some(gateway), true) = (relay.take(), claimed) {
-            crate::browser_relay::pump(&mut socket, gateway, relay_for.as_deref().unwrap_or(""))
-                .await;
+            crate::browser_relay::pump(
+                &mut socket,
+                gateway,
+                relay_for.as_deref().unwrap_or(""),
+                relay_way,
+                std::future::pending(),
+            )
+            .await;
         }
         drop(relay_slot);
     }
@@ -1485,11 +1588,12 @@ struct DeviceRead {
 
 /// Starts a device read and returns the error frame for the read it ended to
 /// make room, if any.
+/// `device` comes with the slot a linked node's screen holds for the read.
 fn start_device_read(
     state: &AppState,
     reads: &mut std::collections::VecDeque<DeviceRead>,
     frames: tokio::sync::mpsc::Sender<Message>,
-    device: String,
+    (device, slot): (String, Option<crate::relay::RelaySlot>),
     event: Value,
 ) -> Option<Message> {
     reads.retain(|read| !read.task.is_finished());
@@ -1518,14 +1622,18 @@ fn start_device_read(
         payload_str(&event, "request_id"),
         payload_str(&event, "path"),
     );
-    let task = tokio::spawn(stream_device_file_bytes(
+    let read = stream_device_file_bytes(
         frames,
         Arc::clone(&state.core),
         Arc::clone(&state.boundary),
         Arc::clone(&state.roots),
         device,
         event,
-    ));
+    );
+    let task = tokio::spawn(async move {
+        let _slot = slot;
+        read.await
+    });
     reads.push_back(DeviceRead {
         request_id,
         path,
@@ -1616,6 +1724,7 @@ fn handle_client_text(
             )));
         }
         Some("attachment_commit") => {
+            screen_input(state, connection, &payload_str(&event, "pane_id"));
             return Ok(ClientAction::Replies(handle_attachment_commit(
                 state, &event,
             )));
@@ -1634,12 +1743,27 @@ fn handle_client_text(
         // D-05).
         Some("key") => {
             let (target, bytes) = terminal_key(&event)?;
+            if let KeyTarget::Pane(pane) = &target {
+                screen_input(state, connection, pane);
+            }
             state.core.terminals.key(target, bytes, unix_ms_now());
             return Ok(ClientAction::Replies(Vec::new()));
         }
+        Some("terminal_click") => {
+            screen_input(state, connection, &payload_str(&event, "pane_id"));
+        }
+        // A screen's grid goes on to the core only while the pane follows
+        // that screen (`pane_sizes`).
+        Some("terminal_resize") => {
+            let (pane, size) = terminal_grid(&event)?;
+            if state.pane_sizes.resized(connection, &pane, size).is_none() {
+                return Ok(ClientAction::Replies(Vec::new()));
+            }
+        }
         Some("terminal_viewport") => {
             let (pane, size, new_view) = terminal_view(&event)?;
-            state.core.terminals.view(&pane, size, new_view);
+            let shown = state.pane_sizes.view(connection, &pane, size);
+            state.core.terminals.view(&pane, shown, new_view);
             return Ok(ClientAction::Replies(Vec::new()));
         }
         Some("request_view") => {
@@ -1704,11 +1828,17 @@ fn handle_client_text(
 
 /// Lists one folder of a device checkout on a blocking task and hands the
 /// answer to the client's socket loop. A client gone by then drops it.
-fn spawn_device_listing(state: &AppState, event: Value, frames: tokio::sync::mpsc::Sender<String>) {
+fn spawn_device_listing(
+    state: &AppState,
+    event: Value,
+    frames: tokio::sync::mpsc::Sender<String>,
+    slot: Option<crate::relay::RelaySlot>,
+) {
     let core = Arc::clone(&state.core);
     let boundary = Arc::clone(&state.boundary);
     let roots = Arc::clone(&state.roots);
     tokio::spawn(async move {
+        let _slot = slot;
         let frame = tokio::task::spawn_blocking(move || device_listing(&core, &boundary, &roots, &event))
             .await
             .unwrap_or_else(|error| {
@@ -2589,6 +2719,25 @@ async fn send_file_bytes(
     roots: &crate::RootFollower,
     event: &Value,
 ) -> Result<(), ()> {
+    let path = payload_str(event, "path");
+    let opened = match boundary.open_file(&path) {
+        Err(Refusal::OutsideCheckout) if roots_current(roots) => boundary.open_file(&path),
+        opened => opened,
+    };
+    send_opened_file_bytes(socket, event, opened).await
+}
+
+/// A file a boundary opened for a read: its real path, the open file and its
+/// size, or why it was refused.
+pub(crate) type OpenedFile = Result<(PathBuf, std::fs::File, u64), Refusal>;
+
+/// Answers a `file_bytes` event with the file `opened` gave for its path, or
+/// with the refusal: the same frames whichever daemon read the file.
+pub(crate) async fn send_opened_file_bytes(
+    socket: &mut WebSocket,
+    event: &Value,
+    opened: OpenedFile,
+) -> Result<(), ()> {
     let request_id = payload_str(event, "request_id");
     let path = payload_str(event, "path");
     let offset = event
@@ -2596,10 +2745,6 @@ async fn send_file_bytes(
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let length = event.pointer("/payload/length").and_then(Value::as_u64);
-    let opened = match boundary.open_file(&path) {
-        Err(Refusal::OutsideCheckout) if roots_current(roots) => boundary.open_file(&path),
-        opened => opened,
-    };
     let (real, file, total) = match opened {
         Ok(source) => source,
         Err(refusal) => {
@@ -2786,7 +2931,7 @@ fn device_root_known(
 
 /// A `key` event's target, a pane or a creation request (exactly one), and
 /// its bytes.
-fn terminal_key(event: &Value) -> Result<(KeyTarget, Vec<u8>), String> {
+pub(crate) fn terminal_key(event: &Value) -> Result<(KeyTarget, Vec<u8>), String> {
     let field = |name: &str| {
         event
             .pointer(&format!("/payload/{name}"))
@@ -2814,7 +2959,7 @@ fn terminal_key(event: &Value) -> Result<(KeyTarget, Vec<u8>), String> {
 
 /// A `terminal_viewport` event: the pane, the grid its view draws at, and
 /// whether the view has nothing drawn yet.
-fn terminal_view(event: &Value) -> Result<(String, GridSize, bool), String> {
+pub(crate) fn terminal_view(event: &Value) -> Result<(String, GridSize, bool), String> {
     let pane = payload_str(event, "pane_id");
     let dimension = |name: &str| {
         event
@@ -2838,7 +2983,54 @@ fn terminal_view(event: &Value) -> Result<(String, GridSize, bool), String> {
     Ok((pane, GridSize { rows, cols }, new_view))
 }
 
-fn unix_ms_now() -> u64 {
+/// A `terminal_resize` event's pane and grid; the core refuses a grid that
+/// is not positive, so one is passed on as it came.
+fn terminal_grid(event: &Value) -> Result<(String, GridSize), String> {
+    let pane = payload_str(event, "pane_id");
+    let dimension = |name: &str| {
+        event
+            .pointer(&format!("/payload/{name}"))
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+    };
+    match (dimension("rows"), dimension("cols")) {
+        (Some(rows), Some(cols)) if !pane.is_empty() => Ok((pane, GridSize { rows, cols })),
+        _ => Err("terminal_resize needs a pane_id, rows and cols".to_owned()),
+    }
+}
+
+/// `connection` sent `pane` input: the pane takes that screen's grid when
+/// it now follows it (`pane_sizes`).
+fn screen_input(state: &AppState, connection: u64, pane: &str) {
+    if pane.is_empty() {
+        return;
+    }
+    if let Some(size) = state.pane_sizes.input(connection, pane) {
+        send_grid(state, pane, size);
+    }
+}
+
+/// Views and sizes `pane` at `size`, as the screen that now sizes it would:
+/// its node expects frames at the new grid before the core's resize brings
+/// them.
+fn send_grid(state: &AppState, pane: &str, size: GridSize) {
+    state.core.terminals.view(pane, size, false);
+    let event = json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "terminal_resize",
+        "payload": {"pane_id": pane, "cols": size.cols, "rows": size.rows},
+    });
+    if let Err(error) = state.core.dispatch(event.to_string().into_bytes()) {
+        herdr_core::diagnostic!(json!({
+            "component": "pane_sizes",
+            "kind": "pane_sizes.dispatch_failed",
+            "pane_id": pane,
+            "message": error,
+        }));
+    }
+}
+
+pub(crate) fn unix_ms_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| {
@@ -3270,6 +3462,43 @@ pub(crate) fn dispatch_ui_attached(core: &CoreHandle, attached: bool) {
     }
 }
 
+/// A window of this machine, counted while it is open; the first to open
+/// and the last to close tell every node whether one draws its panes.
+struct OwnScreen {
+    count: Arc<Mutex<usize>>,
+    terminals: Arc<hide_node::terminal::router::Router>,
+}
+
+impl OwnScreen {
+    fn arrive(state: &AppState) -> Self {
+        let mut count = state
+            .own_screens
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *count += 1;
+        if *count == 1 {
+            state.core.terminals.mirror(true);
+        }
+        Self {
+            count: Arc::clone(&state.own_screens),
+            terminals: Arc::clone(&state.core.terminals),
+        }
+    }
+}
+
+impl Drop for OwnScreen {
+    fn drop(&mut self) {
+        let mut count = self
+            .count
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            self.terminals.mirror(false);
+        }
+    }
+}
+
 fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool) {
     if renderer {
         renderer_count(state, false);
@@ -3279,6 +3508,9 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
     }
     state.attachments.release(connection);
     state.mobile.release(connection);
+    for (pane, size) in state.pane_sizes.left(connection) {
+        send_grid(state, &pane, size);
+    }
     for demand in [Demand::Settings, Demand::Start, Demand::RequestView] {
         demand.of(state).release(connection, |observing| {
             dispatch_observation(&state.core, demand, connection, observing)
@@ -3302,7 +3534,7 @@ const REFUSE_LIMIT: Duration = Duration::from_secs(10);
 /// the connection, and a reset can discard the close frame before the client
 /// reads it, which Windows does (issue 785), so the client would read a lost
 /// daemon instead of the refusal.
-async fn refuse(socket: &mut WebSocket, reason: CloseReason, extra: Option<usize>) {
+pub(crate) async fn refuse(socket: &mut WebSocket, reason: CloseReason, extra: Option<usize>) {
     log_refusal(reason, extra);
     // Bounded: a stalled tailnet socket must not hold this task open.
     let _ = tokio::time::timeout(REFUSE_LIMIT, async {
@@ -3336,58 +3568,22 @@ fn log_refusal(reason: CloseReason, extra: Option<usize>) {
 }
 
 pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result<(), String> {
-    let idle_secs = state.idle_secs;
-    let keep_alive = state.keep_alive;
-    let last_client_gone = Arc::clone(&state.last_client_gone);
-    let clients = Arc::clone(&state.clients);
     let shutdown = Arc::clone(&state.shutdown);
     let mobile = Arc::clone(&state.mobile);
-    let herdr_socket = state.herdr_socket.clone();
-    let idle_task = {
-        let shutdown = Arc::clone(&shutdown);
-        tokio::spawn(async move {
-            if keep_alive {
-                return;
-            }
-            let mut herdr_probed: Option<Instant> = None;
-            let mut herdr_up = false;
-            loop {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                if clients.load(Ordering::SeqCst) != 0 {
-                    continue;
-                }
-                // Mobile on with a phone paired: the phone may come back at
-                // any time and push has to keep going (PRD D-10). The idle
-                // clock starts over when that ends.
-                if mobile.keep_alive() {
-                    *last_client_gone.lock().expect("client timestamp") = Instant::now();
-                    continue;
-                }
-                // The daemon lives as long as its Herdr server: labels keep
-                // being made with no window open (PRD labels-in-hided D-18).
-                // The idle clock runs only while the server is unreachable,
-                // so a restart or a live handoff, which brings it back within
-                // the idle window, never ends the daemon.
-                if let Some(socket) = herdr_socket.clone()
-                    && herdr_probed.is_none_or(|at| at.elapsed() >= HERDR_PROBE_INTERVAL)
-                {
-                    herdr_probed = Some(Instant::now());
-                    herdr_up = tokio::task::spawn_blocking(move || herdr_reachable(&socket))
-                        .await
-                        .unwrap_or(false);
-                }
-                if herdr_up {
-                    *last_client_gone.lock().expect("client timestamp") = Instant::now();
-                    continue;
-                }
-                let gone = *last_client_gone.lock().expect("client timestamp");
-                if gone.elapsed() >= Duration::from_secs(idle_secs) {
-                    shutdown.notify_waiters();
-                    return;
-                }
-            }
-        })
-    };
+    let idle_task = watch_idle(
+        Idle {
+            idle_secs: state.idle_secs,
+            keep_alive: state.keep_alive,
+            clients: Arc::clone(&state.clients),
+            last_client_gone: Arc::clone(&state.last_client_gone),
+            shutdown: Arc::clone(&shutdown),
+            herdr_socket: state.herdr_socket.clone(),
+        },
+        // Mobile on with a phone paired: the phone may come back at any
+        // time and push has to keep going (PRD D-10). The idle clock starts
+        // over when that ends.
+        move || mobile.keep_alive(),
+    );
     let app = router(state);
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
@@ -3399,12 +3595,72 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
     Ok(())
 }
 
+/// What decides when a daemon with no screen ends.
+pub(crate) struct Idle {
+    pub idle_secs: u64,
+    pub keep_alive: bool,
+    pub clients: Arc<AtomicUsize>,
+    pub last_client_gone: Arc<Mutex<Instant>>,
+    pub shutdown: Arc<Notify>,
+    pub herdr_socket: Option<PathBuf>,
+}
+
+/// Ends the daemon once it had no screen for `idle_secs` while `held` was
+/// false and its Herdr server could not be reached; never with
+/// `keep_alive`. Aborted by its owner when the daemon stops another way.
+pub(crate) fn watch_idle(
+    idle: Idle,
+    held: impl Fn() -> bool + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        if idle.keep_alive {
+            return;
+        }
+        let mut herdr_probed: Option<Instant> = None;
+        let mut herdr_up = false;
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if idle.clients.load(Ordering::SeqCst) != 0 {
+                continue;
+            }
+            if held() {
+                *idle.last_client_gone.lock().expect("client timestamp") = Instant::now();
+                continue;
+            }
+            // The daemon lives as long as its Herdr server: labels keep
+            // being made with no window open (PRD labels-in-hided D-18), and
+            // a screen machine's agents keep reaching their core through its
+            // node (PRD core-host-node-remote-core D-08). The idle clock runs
+            // only while the server is unreachable, so a restart or a live
+            // handoff, which brings it back within the idle window, never
+            // ends the daemon.
+            if let Some(socket) = idle.herdr_socket.clone()
+                && herdr_probed.is_none_or(|at| at.elapsed() >= HERDR_PROBE_INTERVAL)
+            {
+                herdr_probed = Some(Instant::now());
+                herdr_up = tokio::task::spawn_blocking(move || herdr_reachable(&socket))
+                    .await
+                    .unwrap_or(false);
+            }
+            if herdr_up {
+                *idle.last_client_gone.lock().expect("client timestamp") = Instant::now();
+                continue;
+            }
+            let gone = *idle.last_client_gone.lock().expect("client timestamp");
+            if gone.elapsed() >= Duration::from_secs(idle.idle_secs) {
+                idle.shutdown.notify_waiters();
+                return;
+            }
+        }
+    })
+}
+
 /// How often an idle daemon asks whether its Herdr server is still there.
 const HERDR_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 const HERDR_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Whether the Herdr server at `socket` answers; a refusal is an answer.
-fn herdr_reachable(socket: &std::path::Path) -> bool {
+pub(crate) fn herdr_reachable(socket: &std::path::Path) -> bool {
     matches!(
         hide_herdr_client::request_with_timeout(socket, "ping", json!({}), HERDR_PROBE_TIMEOUT),
         Ok(_) | Err(hide_herdr_client::ApiError::Remote { .. })

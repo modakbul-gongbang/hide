@@ -19,7 +19,6 @@
 //! the generation it started under so a late one is dropped.
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
@@ -40,7 +39,7 @@ use super::analysis::{
 use super::analyzer::{AnalysisJob, AnalysisResult, LabelAnalyzer};
 use super::context_label;
 use super::facts::{InputView, LogTarget, PullRequestTimes, ReadFacts};
-use super::generator::GeneratorLock;
+use super::generator::{GeneratorLock, LockPlace};
 use super::input::{OperatorInput, Submit};
 use super::overlay::LabelOverlay;
 use super::store::{LabelStore, PaneRecord};
@@ -134,8 +133,8 @@ pub(crate) struct ObservedAgent {
 pub(crate) struct WorkerConfig {
     /// The store key: the core's node id, or `device:<id>`.
     pub(crate) target: String,
-    /// The Herdr server's generator lock (D-10); see `generator`.
-    pub(crate) lock_path: Option<PathBuf>,
+    /// Where the Herdr server's generator lock is (D-10); see `generator`.
+    pub(crate) lock: LockPlace,
     /// Where the runtime records the operator's submits (D-19).
     pub(crate) input: Arc<OperatorInput>,
 }
@@ -258,7 +257,7 @@ impl LabelWorker {
         let reader = Reader::spawn(source, sender.clone(), Arc::clone(&wake))?;
         Ok(Self {
             records: store.target(&config.target),
-            generator: GeneratorLock::new(config.lock_path, &config.target),
+            generator: GeneratorLock::new(config.lock, &config.target, Arc::clone(&wake)),
             target: config.target,
             input: config.input,
             store,
@@ -570,7 +569,7 @@ impl LabelWorker {
     pub(crate) fn tick(&mut self, now: Instant) -> bool {
         let mut changed = self.ensure_generator(now);
         if !self.generator.held() {
-            return false;
+            return changed;
         }
         let ids: Vec<String> = self.panes.keys().cloned().collect();
         for id in ids {
@@ -596,7 +595,8 @@ impl LabelWorker {
     /// Takes the reader's and the analyzer's results. Returns whether
     /// anything shown changed.
     pub(crate) fn drain(&mut self, now: Instant, now_unix_ms: u64) -> bool {
-        let mut changed = false;
+        // A linked node's answer to the generator lock wakes the worker too.
+        let mut changed = self.ensure_generator(now);
         while let Ok(result) = self.results.try_recv() {
             changed |= match result {
                 WorkerResult::Read {
@@ -625,7 +625,7 @@ impl LabelWorker {
 
     /// What these labels lay onto a projection; see [`LabelOverlay`].
     pub(crate) fn overlay(&self) -> LabelOverlay {
-        LabelOverlay::of_records(&self.records, self.generator.held(), self.summaries)
+        LabelOverlay::of_records(&self.records, self.generator.shows(), self.summaries)
     }
 
     /// Takes the operator's agent-summary switch. Off cancels the request
@@ -666,16 +666,16 @@ impl LabelWorker {
     }
 
     /// Takes the generator role when it is free. Returns whether this worker
-    /// just took it over from a standby, in which case whatever moved while
-    /// another daemon generated is read again.
+    /// started or stopped generating; one that took the role over from
+    /// another core reads again whatever moved while that one generated.
     fn ensure_generator(&mut self, now: Instant) -> bool {
-        let (_, took_over) = self.generator.ensure(now);
+        let (changed, took_over) = self.generator.ensure(now);
         if took_over {
             for pane in self.panes.values_mut() {
                 pane.needs_read |= pane.reference_token.is_some();
             }
         }
-        took_over
+        changed
     }
 
     fn forget_pane(&mut self, pane_id: &str) {

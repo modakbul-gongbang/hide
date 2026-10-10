@@ -7,6 +7,7 @@
 // path and number is invented mock content, never a value the shell could read.
 
 import {frame, icon, num, text} from './pen-system.mjs';
+import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
 
 // Pen draws no ellipsis, so a name the web truncates is written already cut.
 export function textWidth(content, size, mono = false) {
@@ -30,6 +31,11 @@ export function fitText(content, max, size, mono = false) {
 }
 
 export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogSurface}, s) {
+  // A checkout's pull request as the one PR mark (web/src/components/pr-mark.tsx).
+  const prMark = (id, [number, state]) => {
+    const [, glyph, fill] = PR_STATES.find(([key]) => key === state);
+    return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: `#${number}`}});
+  };
   const HAIR = num(tokens, '--size-hairline');
   const DIM = num(tokens, '--opacity-dimmed');
   const SECONDARY = num(tokens, '--opacity-secondary');
@@ -59,7 +65,6 @@ export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogS
     source: {label: '워크트리 소스', dot: '$--file-neutral'},
     shared_git: {label: '공유 Git', dot: '$--file-neutral'},
   };
-  const PR_TONE = {open: '$--pr-open', merged: '$--pr-merged', closed: '$--pr-closed'};
   const OTHER_TEXT = 'hide가 모르는 폴더라 지우지 않는다';
 
   // inUse: the words inUseText gives; tree: 'ok', or the reason the worktree cell is a lock; sizes in GB
@@ -67,7 +72,7 @@ export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogS
     {id: 'main', name: 'main', main: true, build: 4.9, deps: 0.64, other: 2.6, source: 0.6},
     {id: 'rwb', name: 'fix/remote-workspace-bridge', pr: [227, 'merged'], build: 7.3, deps: 0.63, other: 0.005, source: 0.6, tree: 'ok'},
     {id: 'oif', name: 'feat/overview-issue-first', pr: [218, 'closed'], build: 5.9, deps: 0.32, other: 0, source: 0.6, tree: 'main에 머지되지 않음'},
-    {id: 'mc', name: 'mobile-conversation', pr: [252, 'open'], build: 4.1, deps: 0.32, other: 0, source: 0.6, inUse: '에이전트 작업 중', tree: '에이전트 작업 중'},
+    {id: 'mc', name: 'mobile-conversation', pr: [252, 'pending'], build: 4.1, deps: 0.32, other: 0, source: 0.6, inUse: '에이전트 작업 중', tree: '에이전트 작업 중'},
     {id: 'vt', name: 'feat/vite-dev-server', build: 3.9, deps: 0.32, other: 0, source: 0.6, inUse: '터미널에서 vite 실행 중', tree: '터미널에서 vite 실행 중'},
     {id: 'pfs', name: 'fix/pane-find-scroll', build: 3.6, deps: 0.32, other: 0.1, source: 0.6, tree: '바뀐 파일 3'},
     {id: 'ol', name: 'feat/overview-lenses', pr: [238, 'merged'], build: 3.4, deps: 0.32, other: 0, source: 0.6, tree: 'ok'},
@@ -231,9 +236,9 @@ export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogS
   }
 
   function checkoutName(id, checkout, width) {
-    const pr = checkout.pr ? [text(`${id}-pr`, `#${checkout.pr[0]}`, {size: '$--text-caption', fill: PR_TONE[checkout.pr[1]], mono: true})] : [];
+    const pr = checkout.pr ? [prMark(`${id}-pr`, checkout.pr)] : [];
     const busy = checkout.inUse ? [text(`${id}-use`, checkout.inUse, {size: '$--text-caption', fill: '$--warning'})] : [];
-    const reserve = (checkout.pr ? 40 : 0) + (checkout.inUse ? textWidth(checkout.inUse, 12) + 8 : 0);
+    const reserve = (checkout.pr ? 48 : 0) + (checkout.inUse ? textWidth(checkout.inUse, 12) + 8 : 0);
     return frame(id, checkout.name, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width}, [
       icon(`${id}-g`, checkout.main ? 'house' : 'git-branch', {size: 14, fill: '$--muted-foreground'}),
       text(`${id}-t`, fitText(checkout.name, width - 22 - reserve, BODY), {size: '$--text-body', fill: '$--foreground'}),

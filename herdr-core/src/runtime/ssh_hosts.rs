@@ -51,7 +51,7 @@ impl Runtime {
             .ui_state
             .device_registrations
             .iter()
-            .filter_map(|registration| registration.ssh_alias.clone())
+            .filter_map(|registration| registration.origin.ssh_alias().map(str::to_owned))
             .collect();
         self.next_ssh_hosts_id = self.next_ssh_hosts_id.wrapping_add(1).max(1);
         let id = self.next_ssh_hosts_id;
@@ -115,7 +115,7 @@ impl Runtime {
                 let added_as = registrations
                     .iter()
                     .find(|registration| {
-                        let Some(alias) = registration.ssh_alias.as_deref() else {
+                        let Some(alias) = registration.origin.ssh_alias() else {
                             return false;
                         };
                         alias == entry.alias

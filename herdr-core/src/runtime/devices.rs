@@ -14,10 +14,57 @@ use crate::model::{
     DeviceRegistration, DeviceTestSnapshot, DeviceTestStageSnapshot, RemoteFileListSnapshot,
     RemoteStatusSnapshot,
 };
-use crate::remote::{CapabilityReport, CapabilityState, DeviceTransport};
+use crate::remote::{Arrived, CapabilityReport, CapabilityState, DeviceTransport, DialedTransport};
+
+/// How the core reaches a connected device: over a dial of its own, or over
+/// the link a node that dials in brought.
+#[derive(Clone)]
+pub(crate) enum DeviceReach {
+    Dialed(Arc<dyn DialedTransport>),
+    Inbound(Arc<dyn DeviceTransport>),
+}
+
+impl DeviceReach {
+    pub(crate) fn device(&self) -> &dyn DeviceTransport {
+        match self {
+            Self::Dialed(transport) => &**transport,
+            Self::Inbound(transport) => &**transport,
+        }
+    }
+
+    /// Stages `files` on the device for a pane there. Files reach a node
+    /// that dials in from its own screen (D-06); a window on another machine
+    /// stages nothing there.
+    pub(crate) fn stage_attachments(
+        &self,
+        request_id: &str,
+        files: &[hide_node_link::attachments::AttachmentFile],
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<Vec<String>, String> {
+        match self {
+            Self::Dialed(transport) => transport.stage_attachments(request_id, files, cancelled),
+            Self::Inbound(_) => Err(
+                "A file reaches a pane of this machine from a window on this machine only"
+                    .to_owned(),
+            ),
+        }
+    }
+
+    /// Removes what `request_id` staged; nothing was staged on a node that
+    /// dials in.
+    pub(crate) fn remove_attachments(
+        &self,
+        request_id: &str,
+        files: &[hide_node_link::attachments::AttachmentFile],
+    ) {
+        if let Self::Dialed(transport) = self {
+            transport.remove_attachments(request_id, files);
+        }
+    }
+}
 
 pub(super) struct RemoteDeviceConnection {
-    pub(super) transport: Arc<dyn DeviceTransport>,
+    pub(super) transport: DeviceReach,
     /// `None` when the coordinator could not be started; the status entry
     /// then carries why.
     sync: Option<session_sync::SessionSyncHandle>,
@@ -82,12 +129,18 @@ impl Runtime {
     /// reason, so the row never reads as "not attempted".
     pub(super) fn connect_remote_device(&mut self, registration: &DeviceRegistration) -> bool {
         let device_id = registration.id.clone();
-        let Some(ssh_alias) = registration.ssh_alias.clone() else {
-            return false;
-        };
         if self.remote_connections.contains_key(&device_id) {
             return false;
         }
+        // A node that dials this core has a connection only once it has
+        // brought its link; until then its row reads not connected.
+        let source = match &registration.origin {
+            LinkOrigin::Inbound => match self.inbound_arrivals.remove(&device_id) {
+                Some(arrived) => Ok(arrived),
+                None => return false,
+            },
+            LinkOrigin::Dialed { ssh_alias } => Err(ssh_alias.clone()),
+        };
         if !self
             .snapshot
             .status
@@ -112,19 +165,29 @@ impl Runtime {
             if !hide_node_link::terminal::device_id_is_unambiguous(&device_id) {
                 return Err("This device's id contains \":\", so its panes cannot be told apart from another device's; remove it and register it under another id".to_owned());
             }
-            let home_path = self.home_path.as_ref().ok_or_else(|| {
-                "HOME is unavailable, so the SSH config cannot be resolved".to_owned()
-            })?;
-            let transport = self.devices.transport(
-                home_path,
-                &device_id,
-                &ssh_alias,
-                registration.herdr_socket_path.clone(),
-            )?;
-            let connector = transport.herdr_api_connector();
-            Ok::<_, String>((transport, connector))
+            let (transport, arrived) = match source {
+                Ok(Arrived {
+                    transport,
+                    node,
+                    hear_close,
+                }) => (DeviceReach::Inbound(transport), Some((node, hear_close))),
+                Err(ssh_alias) => {
+                    let home_path = self.home_path.as_ref().ok_or_else(|| {
+                        "HOME is unavailable, so the SSH config cannot be resolved".to_owned()
+                    })?;
+                    let transport = self.devices.transport(
+                        home_path,
+                        &device_id,
+                        &ssh_alias,
+                        registration.herdr_socket_path.clone(),
+                    )?;
+                    (DeviceReach::Dialed(transport), None)
+                }
+            };
+            let connector = transport.device().herdr_api_connector();
+            Ok::<_, String>((transport, arrived, connector))
         })();
-        let (transport, connector) = match started {
+        let (transport, arrived, connector) = match started {
             Ok(parts) => parts,
             Err(message) => {
                 crate::diagnostic!(serde_json::json!({
@@ -153,14 +216,20 @@ impl Runtime {
             context.runtime.clone(),
             context.notifier.clone(),
         ));
-        self.install_remote_file_transport(device_id.clone(), Arc::clone(&transport));
-        let sync_context = session_sync::SessionSyncContext::remote(
+        self.install_remote_file_transport(device_id.clone(), transport.clone());
+        let mut sync_context = session_sync::SessionSyncContext::remote(
             device_id.clone(),
             registration.label.clone(),
             connector,
             context.runtime.clone(),
             context.notifier.clone(),
         );
+        if registration.origin == LinkOrigin::Inbound {
+            sync_context = sync_context.dialed_in(
+                super::inbound::InboundLink::for_device(&device_id, context.runtime.clone()),
+                self.own_node(),
+            );
+        }
         let (sync, changed) = match session_sync::spawn(sync_context, None) {
             Ok(handle) => (Some(handle), false),
             Err(message) => {
@@ -185,7 +254,10 @@ impl Runtime {
                 test_in_flight: false,
             },
         );
-        let host_changed = self.start_device_host(&device_id);
+        let host_changed = match arrived {
+            Some((node, hear_close)) => self.start_arrived_host(&device_id, node, hear_close),
+            None => self.start_device_host(&device_id),
+        };
         changed || host_changed || self.refresh_device_snapshots()
     }
 
@@ -222,6 +294,13 @@ impl Runtime {
     /// lock, by whoever drains `take_retired_remote_syncs`.
     pub(super) fn disconnect_remote_device(&mut self, device_id: &str) {
         self.device_machine_ids.remove(device_id);
+        self.device_ports.remove(device_id);
+        self.device_disk.remove(device_id);
+        self.device_disk_project.remove(device_id);
+        self.device_github.remove(device_id);
+        self.device_github_reads
+            .retain(|(device, _), _| device != device_id);
+        self.device_github_over_limit.remove(device_id);
         self.forget_device_host(device_id);
         if let Some(connection) = self.remote_connections.remove(device_id)
             && let Some(sync) = connection.sync
@@ -297,6 +376,14 @@ impl Runtime {
             );
             return true;
         };
+        if !registration.origin.core_redials() {
+            self.set_error(
+                "remote.retry_inbound",
+                "This machine connects to the core itself; it reconnects when it can reach the core",
+                false,
+            );
+            return true;
+        }
         if self
             .snapshot
             .status
@@ -368,7 +455,17 @@ impl Runtime {
             );
             return true;
         };
-        let transport = Arc::clone(&connection.transport);
+        // A node that dials in has no connection of the core's to test; its
+        // row reports its link as it is.
+        let DeviceReach::Dialed(transport) = &connection.transport else {
+            self.set_error(
+                "device.test_inbound",
+                "This machine connects to the core itself; test it from its own side",
+                false,
+            );
+            return true;
+        };
+        let transport = Arc::clone(transport);
         connection.test_in_flight = true;
         self.remote_device_tests.insert(
             device_id.to_owned(),

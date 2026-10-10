@@ -7,7 +7,8 @@ use super::hosts::{Resolve, ssh_g};
 use super::*;
 use hide_node_link::attachments::AttachmentFile;
 use hide_node_link::device::{
-    DeviceConnector, DeviceTransport, EstablishError, Established, HostConsent, SshHostListing,
+    DeviceConnector, DeviceTransport, DialedTransport, EstablishError, Established, HostConsent,
+    OnClose, SshHostListing,
 };
 
 /// Opens the SSH transport to a device by alias. It carries this build's
@@ -72,7 +73,7 @@ impl DeviceConnector for Connector {
         node: &str,
         alias: &str,
         herdr_socket: Option<String>,
-    ) -> Result<Arc<dyn DeviceTransport>, String> {
+    ) -> Result<Arc<dyn DialedTransport>, String> {
         // The row is what the operator reads, so it names the fix; the full
         // staged diagnostic stays in the error's diagnostic.
         let resolved =
@@ -128,6 +129,12 @@ impl DeviceTransport for SshDevice {
         self.client.cached_herdr_version()
     }
 
+    fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+}
+
+impl DialedTransport for SshDevice {
     fn capability_test(&self, operation_id: &str, check: SnapshotCheck<'_>) -> CapabilityReport {
         self.client.staged_capability_test(operation_id, check)
     }
@@ -136,7 +143,7 @@ impl DeviceTransport for SshDevice {
         &self,
         consent: &HostConsent,
         retirement_projects: &[String],
-        on_close: Box<dyn FnOnce(String) + Send + 'static>,
+        on_close: OnClose,
     ) -> Result<Established, EstablishError> {
         host::establish(
             &self.client,
@@ -160,9 +167,5 @@ impl DeviceTransport for SshDevice {
 
     fn remove_attachments(&self, request_id: &str, files: &[AttachmentFile]) {
         self.client.remove_attachments(request_id, files)
-    }
-
-    fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
-        self
     }
 }

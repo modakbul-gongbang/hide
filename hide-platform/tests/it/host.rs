@@ -595,6 +595,20 @@ fn herdrs_default_socket_is_resolved_in_herdrs_own_order() {
 }
 
 #[test]
+fn the_network_address_set_leaves_loopback_out() {
+    match host::network_addresses() {
+        Ok(addresses) => assert!(
+            addresses.iter().all(|address| !address.is_loopback()),
+            "{addresses:?}"
+        ),
+        Err(error) => assert!(
+            cfg!(windows) && error.kind() == ErrorKind::Unsupported,
+            "{error}"
+        ),
+    }
+}
+
+#[test]
 fn a_posix_locale_names_its_language_in_the_order_messages_are_read() {
     let locale = |pairs: Vec<(&'static str, &'static str)>| {
         let pairs: Vec<(&'static str, PathBuf)> = pairs

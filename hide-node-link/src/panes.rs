@@ -13,6 +13,18 @@ pub const MAX_STREAMS: usize = 8;
 pub const MAX_CHUNK: usize = 48 * 1024;
 /// Chunks the core holds for one stream before the stream is ended.
 pub const MAX_PENDING_CHUNKS: usize = 64;
+/// Herdr streams one link carries at once (PRD core-host-node-remote-core
+/// D-20): the session subscription, controls, doorbell, find and phone
+/// reply of a node that dialed its core each hold one while they run.
+pub const MAX_HERDR_STREAMS: usize = 32;
+/// Browser relay streams one link carries at once (B15): as many as the
+/// core relays `hide browser` commands at once.
+pub const MAX_BROWSER_STREAMS: usize = 4;
+/// How often a node that dialed its core writes [`NodeEvent::Ping`].
+pub const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10);
+/// How long the attach role waits for a byte from its node before it ends
+/// the link as gone: three heartbeats.
+pub const HEARTBEAT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Which shell a pane runs, as its Herdr terminal and the shell's pid and
 /// start: the identity a bootstrap checks a caller against.
@@ -39,6 +51,18 @@ pub enum NodeEvent {
         nonce: String,
         one_shot: bool,
     },
+    /// A process that is in no pane the node can prove asked for a
+    /// credential, and the node's kernel says its working directory is
+    /// `path` (the wire spelling of its canonical form). Only a node that
+    /// dialed its core sends it (PRD core-host-node-remote-core D-10), and
+    /// the core binds the caller to the node's own registered checkout that
+    /// holds `path`. `request` pairs the core's [`ProofAnswer`].
+    CheckoutProof {
+        request: u64,
+        path: String,
+        nonce: String,
+        one_shot: bool,
+    },
     /// A credential the node handed out is no longer held: its reference
     /// expired, was removed, or its holder ended.
     Revoke { token: String },
@@ -48,6 +72,16 @@ pub enum NodeEvent {
     StreamData { stream: u64, data: String },
     /// The command's side of the stream ended.
     StreamClosed { stream: u64 },
+    /// The node is alive: a node that dialed its core says so every
+    /// [`HEARTBEAT`], so the attach role on the core's machine ends a link
+    /// whose node fell silent (PRD core-host-node-remote-core B20).
+    Ping,
+    /// Base64 bytes the node read from a stream's end (its Herdr or its
+    /// browser relay) on a stream the core opened with `link_open`.
+    LinkData { stream: u64, data: String },
+    /// A stream's end closed a stream the core opened, or the node did at
+    /// one of its caps; `reason` says which, never what the stream carried.
+    LinkClosed { stream: u64, reason: String },
     /// The node turned a caller away on its own, before the core was asked
     /// or at one of its caps, with the reason the caller read; the core
     /// records it with the node, since a device's stderr reaches no log.

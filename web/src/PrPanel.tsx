@@ -1,7 +1,7 @@
 import { CircleDashedIcon, CircleDotIcon, ExternalLinkIcon, FolderGit2Icon, GitBranchIcon, Link2Icon, PlayIcon, SquareTerminalIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import type { Actions } from "./actions";
-import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
+import { PrMark } from "./components/pr-mark";
 import { Button } from "./components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from "./components/ui/command";
 import { Kbd } from "./components/ui/kbd";
@@ -15,10 +15,11 @@ import { folderName, sameIssue } from "./linkPanel";
 import { LinkSessions } from "./LinkSessions";
 import type { LensHandlers } from "./OverviewLenses";
 import { issueDate, readFailureText, type PrBoard, type PrRow } from "./projectBoard";
-import { pullRequestKind, relativeActivity, type PullRequestKind } from "./projects";
-import type { LinkIssueSource, LinkPanel, Task, Workspace } from "./snapshot";
+import { checksWord, PR_LOOK, reviewWord, settled } from "./prMark";
+import { relativeActivity } from "./projects";
+import type { LinkIssueSource, LinkPanel, PrState, PullRequest, Task, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import { ChecksMark, PR_TONE, REVIEW, TaskGlyph } from "./TaskBoards";
+import { TaskGlyph } from "./TaskBoards";
 import { useUiStore } from "./ui";
 
 // The PR panel beside the PRs list (PRD link-graph D-08, B2-B5, B23-B26): the
@@ -28,13 +29,6 @@ import { useUiStore } from "./ui";
 // from the snapshot and wins over the record (B5); the links and the sessions
 // are the record's, read when the panel opens and on its own revision.
 
-const STATE_WORD: Record<PullRequestKind, { key: MessageKey; tone: string }> = {
-  pr_open: { key: "links.state.open", tone: PR_TONE.open },
-  pr_draft: { key: "links.state.draft", tone: PR_TONE.draft },
-  pr_merged: { key: "links.state.merged", tone: PR_TONE.merged },
-  pr_closed: { key: "links.state.closed", tone: PR_TONE.closed },
-};
-
 const SOURCE_WORD: Record<LinkIssueSource, MessageKey> = { closes: "links.source.closes", hide: "links.source.hide" };
 
 /** The pull request as the panel draws it: the board's row when it lists the PR, else the record's copy. */
@@ -43,8 +37,8 @@ type Shown = {
   title: string;
   url: string;
   branch: string;
-  kind: PullRequestKind;
-  checks: PrRow["checks"];
+  state: PrState;
+  checks: PullRequest["checks"];
   review: PrRow["review"];
   at: number | null;
   mergedAt: number | null;
@@ -53,11 +47,10 @@ type Shown = {
 
 function shownPr(row: PrRow | null, record: LinkPanel["pr"]): Shown | null {
   if (row) {
-    return { number: row.number, title: row.title, url: row.url, branch: row.branch, kind: pullRequestKind(row.pr), checks: row.checks, review: row.review, at: row.at, mergedAt: row.pr.merged_at_unix_ms ?? null, closedAt: record?.closed_at_unix_ms ?? null };
+    return { number: row.number, title: row.title, url: row.url, branch: row.branch, state: row.state, checks: row.pr.checks, review: row.review, at: row.at, mergedAt: row.pr.merged_at_unix_ms ?? null, closedAt: record?.closed_at_unix_ms ?? null };
   }
   if (!record) return null;
-  const kind: PullRequestKind = record.merged_at_unix_ms !== null ? "pr_merged" : record.closed_at_unix_ms !== null ? "pr_closed" : "pr_open";
-  return { number: record.number, title: record.title, url: record.url, branch: record.branch, kind, checks: null, review: null, at: null, mergedAt: record.merged_at_unix_ms, closedAt: record.closed_at_unix_ms };
+  return { number: record.number, title: record.title, url: record.url, branch: record.branch, state: record.state, checks: undefined, review: null, at: null, mergedAt: record.merged_at_unix_ms, closedAt: record.closed_at_unix_ms };
 }
 
 /** A GitHub task key's web address, for an issue the project's list no longer holds. */
@@ -138,19 +131,19 @@ export function PrPanel({
       </aside>
     );
   }
-  const Glyph = CHECKOUT_KIND_ICON[pr.kind];
-  const state = STATE_WORD[pr.kind];
+  const checks = checksWord(pr.checks);
+  const review = reviewWord(pr.review);
   const checkout = row?.checkout && row.checkout.exists ? row.checkout : null;
   const github = (url: string) => handlers.openGitHub(url, project.device_id);
   const when =
-    pr.kind === "pr_merged" && pr.mergedAt !== null
+    pr.state === "merged" && pr.mergedAt !== null
       ? t("links.mergedOn", { date: issueDate(pr.mergedAt, i18n.language) })
-      : pr.kind === "pr_closed" && pr.closedAt !== null
+      : pr.state === "closed" && pr.closedAt !== null
         ? t("links.closedOn", { date: issueDate(pr.closedAt, i18n.language) })
         : pr.at !== null
           ? t("links.updated", { age: relativeActivity(pr.at, now, t) ?? "" })
           : null;
-  const delegate = row && pr.kind !== "pr_merged" && pr.kind !== "pr_closed" ? () => useUiStore.getState().setWorkspaceDialog({ kind: "pr_delegate", workspaceId: project.id, prNumber: pr.number }) : null;
+  const delegate = row && !settled(pr.state) ? () => useUiStore.getState().setWorkspaceDialog({ kind: "pr_delegate", workspaceId: project.id, prNumber: pr.number }) : null;
   return (
     <aside
       aria-label={t("links.panel", { number: pr.number })}
@@ -159,10 +152,9 @@ export function PrPanel({
       tabIndex={-1}
     >
       <header className="flex min-w-0 items-center gap-xs text-caption">
-        <Glyph aria-hidden="true" className={cn("size-(--size-pr-icon) shrink-0", state.tone)} />
-        <span className="font-mono text-muted-foreground">#{pr.number}</span>
-        <span className={cn("font-medium", state.tone)} data-pr-panel-state={pr.kind}>
-          {t(state.key)}
+        <PrMark state={pr.state} number={pr.number} />
+        <span className="font-medium text-foreground" data-pr-panel-state={pr.state}>
+          {t(PR_LOOK[pr.state].word)}
         </span>
         <span className="flex-1" />
         {checkout ? (
@@ -197,17 +189,19 @@ export function PrPanel({
             </span>
           </Hint>
         </span>
-        {pr.checks ? (
+        {checks ? (
           <>
             <span aria-hidden="true">·</span>
-            <button type="button" className="inline-flex rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => github(`${pr.url}/checks`)} data-pr-panel-checks={pr.checks}>
-              <ChecksMark checks={pr.checks} />
-            </button>
+            <Hint label={t(pr.checks === "failed" ? "prList.openFailedChecks" : "prList.openChecks")}>
+              <button type="button" className={cn("rounded-xs outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring", checks.tone)} onClick={() => github(`${pr.url}/checks`)} data-pr-panel-checks={pr.checks}>
+                {t(checks.key)}
+              </button>
+            </Hint>
           </>
         ) : null}
-        {pr.review ? (
-          <button type="button" className={cn("rounded-xs outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring", REVIEW[pr.review].tone)} onClick={() => github(`${pr.url}/files`)} data-pr-panel-review={pr.review}>
-            {t(REVIEW[pr.review].label)}
+        {review ? (
+          <button type="button" className={cn("rounded-xs outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring", review.tone)} onClick={() => github(`${pr.url}/files`)} data-pr-panel-review={pr.review}>
+            {t(review.key)}
           </button>
         ) : null}
         {when ? (

@@ -10,7 +10,7 @@
 //! | | Grok | Cursor |
 //! | --- | --- | --- |
 //! | Shell call | `toolName` `run_terminal_command` (`Bash` in a matcher), `toolInput.command`, `cwd` | `tool_name` `Shell`, `tool_input.command`, `tool_input.working_directory`, `cwd` |
-//! | Refusal | Claude Code's `hookSpecificOutput.permissionDecision` | `{"permission": "deny", "agent_message": ...}` |
+//! | Refusal | Claude Code's `hookSpecificOutput.permissionDecision` | `{"permission": "deny", "user_message": ..., "agent_message": ..., "additional_context": ...}` |
 //! | Nothing to refuse | no output | `{"permission": "allow"}`, on every path (D-04) |
 //! | Turn end | `Stop`: `subagentType` inside a subagent, `backgroundTasks` still running | `stop` |
 //!
@@ -34,8 +34,20 @@ pub fn cursor_permission_event(event: HookEvent) -> bool {
 }
 
 /// Cursor's refusal of a tool call: the reason goes back to the agent.
+///
+/// Cursor CLI reads a refusal on two paths. The local tool path (every shell
+/// call) takes the refusal text from `user_message`, falling back to "<tool>
+/// blocked by preToolUse hook", and hands `additional_context` to the agent as
+/// hook context; the path the agent server asks for takes `agent_message`. The
+/// reason is written to all three so it reaches the agent on either path.
 pub fn cursor_deny(reason: &str) -> String {
-    serde_json::json!({ "permission": "deny", "agent_message": reason }).to_string()
+    serde_json::json!({
+        "permission": "deny",
+        "user_message": reason,
+        "agent_message": reason,
+        "additional_context": reason,
+    })
+    .to_string()
 }
 
 /// What a Grok `Stop` says about the pane's subagents.
@@ -97,7 +109,12 @@ mod tests {
         let deny: Value = serde_json::from_str(&cursor_deny("use hide agent spawn")).unwrap();
         assert_eq!(
             deny,
-            serde_json::json!({ "permission": "deny", "agent_message": "use hide agent spawn" })
+            serde_json::json!({
+                "permission": "deny",
+                "user_message": "use hide agent spawn",
+                "agent_message": "use hide agent spawn",
+                "additional_context": "use hide agent spawn",
+            })
         );
         assert!(cursor_permission_event(HookEvent::PreToolUse));
         assert!(cursor_permission_event(HookEvent::SubagentStart));

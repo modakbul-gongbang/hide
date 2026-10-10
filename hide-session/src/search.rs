@@ -71,6 +71,7 @@ pub enum IndexStep {
 }
 pub struct SearchIndex {
     db: Connection,
+    work_budget: Duration,
 }
 /// The current stamp of each asked session file, in order; `None` for one
 /// that is gone or cannot be read.
@@ -83,9 +84,9 @@ impl SearchIndex {
         if !path.exists() {
             hide_platform::fs::private::create_new_file(path).map_err(|e| e.to_string())?;
         }
-        let db = Connection::open(path).map_err(|e| e.to_string())?;
+        let db = Connection::open(path).map_err(db_error)?;
         db.busy_timeout(Duration::from_millis(100))
-            .map_err(|e| e.to_string())?;
+            .map_err(db_error)?;
         db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA secure_delete=ON; PRAGMA max_page_count=65536;
             CREATE TABLE IF NOT EXISTS policy(project TEXT PRIMARY KEY, days INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS control_outcomes(project TEXT PRIMARY KEY, failure TEXT);
@@ -96,8 +97,17 @@ impl SearchIndex {
                 folded TEXT NOT NULL, UNIQUE(project,session,offset,role));
             CREATE INDEX IF NOT EXISTS messages_scope ON messages(project,session);
             CREATE VIRTUAL TABLE IF NOT EXISTS grams USING fts5(terms, content='');")
-            .map_err(|e| e.to_string())?;
-        Ok(Self { db })
+            .map_err(db_error)?;
+        Ok(Self {
+            db,
+            work_budget: WORK_BUDGET,
+        })
+    }
+    /// The same index with each write step stopped after `budget` instead of
+    /// the half second a step normally has.
+    pub fn with_work_budget(mut self, budget: Duration) -> Self {
+        self.work_budget = budget;
+        self
     }
     /// Moves every row of each `(old, new)` Project to its new id, in one
     /// transaction (PRD core-host-node D-23). A row whose new key is already
@@ -118,13 +128,13 @@ impl SearchIndex {
                         [old],
                         |row| row.get::<_, bool>(0),
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(db_error)?;
             }
         }
         if !pending {
             return Ok((0, 0));
         }
-        let tx = self.db.transaction().map_err(|e| e.to_string())?;
+        let tx = self.db.transaction().map_err(db_error)?;
         let (mut moved, mut dropped) = (0, 0);
         for (old, new) in pairs {
             for table in ["policy", "control_outcomes", "files", "messages"] {
@@ -133,7 +143,7 @@ impl SearchIndex {
                         &format!("UPDATE OR IGNORE {table} SET project=?1 WHERE project=?2"),
                         params![new, old],
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(db_error)?;
             }
             for table in ["policy", "control_outcomes", "files", "messages"] {
                 dropped += tx
@@ -142,23 +152,19 @@ impl SearchIndex {
                         [old],
                         |row| row.get::<_, i64>(0),
                     )
-                    .map_err(|e| e.to_string())? as usize;
+                    .map_err(db_error)? as usize;
             }
             erase(&tx, old, None, None)?;
             for table in ["policy", "control_outcomes", "files"] {
                 tx.execute(&format!("DELETE FROM {table} WHERE project=?1"), [old])
-                    .map_err(|e| e.to_string())?;
+                    .map_err(db_error)?;
             }
         }
-        tx.commit().map_err(|e| e.to_string())?;
+        tx.commit().map_err(db_error)?;
         Ok((moved, dropped))
     }
     fn budget(&self) {
-        let started = Instant::now();
-        self.db.progress_handler(
-            1000,
-            Some(move || started.elapsed() > Duration::from_millis(500)),
-        );
+        limit_work(&self.db, self.work_budget);
     }
     pub fn days(&self, project: &str) -> Result<u16, String> {
         self.db
@@ -167,7 +173,7 @@ impl SearchIndex {
             })
             .optional()
             .map(|v| v.unwrap_or(90))
-            .map_err(|e| e.to_string())
+            .map_err(db_error)
     }
     pub fn control_failure(&self, project: &str) -> Result<Option<String>, String> {
         self.db
@@ -178,7 +184,7 @@ impl SearchIndex {
             )
             .optional()
             .map(|v| v.flatten())
-            .map_err(|e| e.to_string())
+            .map_err(db_error)
     }
     pub fn record_control_outcome(
         &mut self,
@@ -186,11 +192,11 @@ impl SearchIndex {
         failure: Option<&str>,
     ) -> Result<(), String> {
         if let Some(failure) = failure {
-            self.db.execute("INSERT INTO control_outcomes VALUES(?1,?2) ON CONFLICT(project) DO UPDATE SET failure=excluded.failure", params![project,failure]).map_err(|e| e.to_string())?;
+            self.db.execute("INSERT INTO control_outcomes VALUES(?1,?2) ON CONFLICT(project) DO UPDATE SET failure=excluded.failure", params![project,failure]).map_err(db_error)?;
         } else {
             self.db
                 .execute("DELETE FROM control_outcomes WHERE project=?1", [project])
-                .map_err(|e| e.to_string())?;
+                .map_err(db_error)?;
         }
         Ok(())
     }
@@ -199,63 +205,63 @@ impl SearchIndex {
         if ![0, 30, 90, 365].contains(&days) {
             return Err("Choose Off, 30, 90 or 365 days.".into());
         }
-        let tx = self.db.transaction().map_err(|e| e.to_string())?;
+        let tx = self.db.transaction().map_err(db_error)?;
         erase(&tx, project, None, None)?;
         tx.execute("DELETE FROM files WHERE project=?1", [project])
-            .map_err(|e| e.to_string())?;
+            .map_err(db_error)?;
         tx.execute("INSERT INTO policy VALUES(?1,?2) ON CONFLICT(project) DO UPDATE SET days=excluded.days",params![project,days]).map_err(|e|e.to_string())?;
-        tx.commit().map_err(|e| e.to_string())?;
-        self.db.execute_batch("VACUUM").map_err(|e| e.to_string())?;
+        tx.commit().map_err(db_error)?;
+        self.db.execute_batch("VACUUM").map_err(db_error)?;
         Ok(())
     }
     pub fn clear(&mut self, project: &str) -> Result<(), String> {
         self.budget();
         self.remove(project, None)?;
-        self.db.execute_batch("VACUUM").map_err(|e| e.to_string())
+        self.db.execute_batch("VACUUM").map_err(db_error)
     }
     pub fn remove(&mut self, project: &str, session: Option<&str>) -> Result<(), String> {
         self.budget();
-        let tx = self.db.transaction().map_err(|e| e.to_string())?;
+        let tx = self.db.transaction().map_err(db_error)?;
         erase(&tx, project, session, None)?;
         tx.execute(
             "DELETE FROM files WHERE project=?1 AND (?2 IS NULL OR session=?2)",
             params![project, session],
         )
-        .map_err(|e| e.to_string())?;
-        tx.commit().map_err(|e| e.to_string())
+        .map_err(db_error)?;
+        tx.commit().map_err(db_error)
     }
     /// Remove expired copied bodies, even when source files never change.
     pub fn prune(&mut self, project: &str, cutoff: u64) -> Result<(), String> {
         self.budget();
-        let tx = self.db.transaction().map_err(|e| e.to_string())?;
+        let tx = self.db.transaction().map_err(db_error)?;
         erase(&tx, project, None, Some(cutoff))?;
-        tx.commit().map_err(|e| e.to_string())
+        tx.commit().map_err(db_error)
     }
     /// Retention applies to every copied Project, including inactive scopes.
     pub fn prune_all(&mut self, now: u64) -> Result<(), String> {
         self.budget();
-        let tx = self.db.transaction().map_err(|e| e.to_string())?;
+        let tx = self.db.transaction().map_err(db_error)?;
         let expired = {
-            let mut stmt = tx.prepare("SELECT m.id,m.folded FROM messages m LEFT JOIN policy p ON p.project=m.project WHERE m.at < ?1 - COALESCE(p.days,90)*86400000 OR p.days=0").map_err(|e| e.to_string())?;
-            let mut rows = stmt.query([now]).map_err(|e| e.to_string())?;
+            let mut stmt = tx.prepare("SELECT m.id,m.folded FROM messages m LEFT JOIN policy p ON p.project=m.project WHERE m.at < ?1 - COALESCE(p.days,90)*86400000 OR p.days=0").map_err(db_error)?;
+            let mut rows = stmt.query([now]).map_err(db_error)?;
             let mut ids = Vec::new();
-            while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-                let id: i64 = row.get(0).map_err(|e| e.to_string())?;
-                let text: String = row.get(1).map_err(|e| e.to_string())?;
+            while let Some(row) = rows.next().map_err(db_error)? {
+                let id: i64 = row.get(0).map_err(db_error)?;
+                let text: String = row.get(1).map_err(db_error)?;
                 tx.execute(
                     "INSERT INTO grams(grams,rowid,terms) VALUES('delete',?1,?2)",
                     params![id, grams(&text)],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(db_error)?;
                 ids.push(id);
             }
             ids
         };
         for id in expired {
             tx.execute("DELETE FROM messages WHERE id=?1", [id])
-                .map_err(|e| e.to_string())?;
+                .map_err(db_error)?;
         }
-        tx.commit().map_err(|e| e.to_string())
+        tx.commit().map_err(db_error)
     }
     /// Reconcile membership without accepting rows from another Project.
     pub fn retain(&mut self, project: &str, sessions: &[String]) -> Result<(), String> {
@@ -263,11 +269,11 @@ impl SearchIndex {
             let mut stmt = self
                 .db
                 .prepare("SELECT session FROM files WHERE project=?1")
-                .map_err(|e| e.to_string())?;
+                .map_err(db_error)?;
             stmt.query_map([project], |r| r.get::<_, String>(0))
-                .map_err(|e| e.to_string())?
+                .map_err(db_error)?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?
+                .map_err(db_error)?
         };
         for session in old {
             if !sessions.contains(&session) {
@@ -291,7 +297,7 @@ impl SearchIndex {
                 },
             )
             .optional()
-            .map_err(|e| e.to_string())
+            .map_err(db_error)
     }
     /// Writes one read of the session file at `path` (`search_read`),
     /// keeping messages from `cutoff` on. True means the file has more.
@@ -316,7 +322,7 @@ impl SearchIndex {
                         "UPDATE files SET witness=?3 WHERE project=?1 AND session=?2",
                         params![project, session, witness],
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(db_error)?;
                 Ok(more)
             }
             IndexStep::Read {
@@ -327,34 +333,51 @@ impl SearchIndex {
                 witness,
                 more,
             } => {
-                let tx = self.db.transaction().map_err(|e| e.to_string())?;
+                let kept = messages.iter().filter(|m| m.at_unix_ms >= cutoff);
+                if kept.clone().any(|m| m.text.len() > BODY_LIMIT) {
+                    return Err("A message is over the 64 KiB the search index copies.".into());
+                }
+                let incoming = kept.clone().count();
+                let newest = kept.map(|m| m.at_unix_ms).max().unwrap_or(0);
+                let mut count: usize = self
+                    .db
+                    .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+                    .map_err(db_error)?;
+                if reset {
+                    // The reset below gives these back before the read is written.
+                    count -= self
+                        .db
+                        .query_row(
+                            "SELECT count(*) FROM messages WHERE project=?1 AND session=?2",
+                            params![project, session],
+                            |r| r.get::<_, usize>(0),
+                        )
+                        .map_err(db_error)?;
+                }
+                if count + incoming > MESSAGE_LIMIT {
+                    self.make_room(project, session, count + incoming - MESSAGE_LIMIT, newest)?;
+                    self.budget();
+                }
+                let tx = self.db.transaction().map_err(db_error)?;
                 if reset {
                     erase(&tx, project, Some(session), None)?;
                 }
-                let count: usize = tx
-                    .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
-                    .map_err(|e| e.to_string())?;
-                let mut added = 0;
                 for message in messages {
                     if message.at_unix_ms < cutoff {
                         continue;
                     }
-                    if message.text.len() > BODY_LIMIT || count + added >= MESSAGE_LIMIT {
-                        return Err("Search index capacity reached (25,000 messages, 64 KiB per message). Reduce retention or clear the index.".into());
-                    }
                     let folded = message.text.to_lowercase();
-                    tx.execute("INSERT OR IGNORE INTO messages(project,session,offset,role,at,body,folded) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![project,session,message.offset,message.role,message.at_unix_ms,message.text,folded]).map_err(|e| e.to_string())?;
+                    tx.execute("INSERT OR IGNORE INTO messages(project,session,offset,role,at,body,folded) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![project,session,message.offset,message.role,message.at_unix_ms,message.text,folded]).map_err(db_error)?;
                     if tx.changes() > 0 {
                         tx.execute(
                             "INSERT INTO grams(rowid,terms) VALUES(?1,?2)",
                             params![tx.last_insert_rowid(), grams(&folded)],
                         )
-                        .map_err(|e| e.to_string())?;
-                        added += 1;
+                        .map_err(db_error)?;
                     }
                 }
-                tx.execute("INSERT INTO files VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(project,session) DO UPDATE SET path=excluded.path,cursor=excluded.cursor,stamp=excluded.stamp,witness=excluded.witness", params![project,session,path,cursor,stamp,witness]).map_err(|e| e.to_string())?;
-                tx.commit().map_err(|e| e.to_string())?;
+                tx.execute("INSERT INTO files VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(project,session) DO UPDATE SET path=excluded.path,cursor=excluded.cursor,stamp=excluded.stamp,witness=excluded.witness", params![project,session,path,cursor,stamp,witness]).map_err(db_error)?;
+                tx.commit().map_err(db_error)?;
                 Ok(more)
             }
         }
@@ -385,7 +408,7 @@ impl SearchIndex {
             Some(move || start.elapsed() > Duration::from_millis(150)),
         );
         let result = (|| {
-            let mut stmt = self.db.prepare("WITH candidates AS (SELECT m.session,m.offset,m.role,m.at,m.body,f.path,f.stamp,row_number() OVER (PARTITION BY m.session ORDER BY m.at DESC,m.offset DESC) AS rank FROM grams JOIN messages m ON m.id=grams.rowid JOIN files f ON f.project=m.project AND f.session=m.session WHERE grams MATCH ?1 AND m.project=?2 AND m.at>=?3 AND instr(m.folded,?4)>0 AND (?5 IS NULL OR m.session IN (SELECT value FROM json_each(?5)))) SELECT session,offset,role,at,body,path,stamp FROM candidates WHERE rank=1 ORDER BY at DESC LIMIT 101").map_err(|e| e.to_string())?;
+            let mut stmt = self.db.prepare("WITH candidates AS (SELECT m.session,m.offset,m.role,m.at,m.body,f.path,f.stamp,row_number() OVER (PARTITION BY m.session ORDER BY m.at DESC,m.offset DESC) AS rank FROM grams JOIN messages m ON m.id=grams.rowid JOIN files f ON f.project=m.project AND f.session=m.session WHERE grams MATCH ?1 AND m.project=?2 AND m.at>=?3 AND instr(m.folded,?4)>0 AND (?5 IS NULL OR m.session IN (SELECT value FROM json_each(?5)))) SELECT session,offset,role,at,body,path,stamp FROM candidates WHERE rank=1 ORDER BY at DESC LIMIT 101").map_err(db_error)?;
             let rows = stmt
                 .query_map(
                     params![
@@ -412,10 +435,8 @@ impl SearchIndex {
                         ))
                     },
                 )
-                .map_err(|e| e.to_string())?;
-            let rows = rows
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?;
+                .map_err(db_error)?;
+            let rows = rows.collect::<Result<Vec<_>, _>>().map_err(db_error)?;
             let paths = rows
                 .iter()
                 .map(|(_, path, _)| path.clone())
@@ -456,6 +477,134 @@ impl SearchIndex {
         result
     }
 }
+/// What a statement the work budget stopped answers. The step it belongs to
+/// rolled back whole and changed nothing, so asking again is safe and, for a
+/// session being dropped, needs less than before.
+pub const INTERRUPTED: &str = "interrupted";
+fn db_error(error: rusqlite::Error) -> String {
+    if error.sqlite_error_code() == Some(rusqlite::ErrorCode::OperationInterrupted) {
+        INTERRUPTED.into()
+    } else {
+        error.to_string()
+    }
+}
+/// Stops the statements that follow after half a second.
+fn limit_work(db: &Connection, budget: Duration) {
+    let started = Instant::now();
+    db.progress_handler(1000, Some(move || started.elapsed() > budget));
+}
+const WORK_BUDGET: Duration = Duration::from_millis(500);
+/// Frees `needed` messages for a read of `project`'s `session` whose newest
+/// message is at `newest`, by dropping whole sessions so none is half-copied
+/// in a search. Other Projects' sessions go first, least recently active
+/// first, so the Project being searched wins the room; then this Project's
+/// own sessions that are older than the incoming read, so a session never
+/// displaces newer content. Nothing is dropped unless the room can be made in
+/// full.
+///
+/// A session goes in steps that each commit on their own work budget, so a
+/// read interrupted part way keeps what was freed and its retry needs less,
+/// however large the session. The first step removes the session's saved
+/// cursor, which takes it out of every search and makes its Project read it
+/// again from the start; the rest remove its messages `ERASE_STEP` at a time.
+/// A session left with no cursor but some messages is the remains of an
+/// interrupted drop, and is dropped first, whoever is reading.
+impl SearchIndex {
+    fn make_room(
+        &mut self,
+        project: &str,
+        session: &str,
+        needed: usize,
+        newest: u64,
+    ) -> Result<(), String> {
+        let mut victims = Vec::new();
+        let mut freed = 0;
+        {
+            let mut stmt = self
+                .db
+                .prepare(
+                    "SELECT m.project,m.session,count(*) FROM messages m
+                     WHERE NOT (m.project=?1 AND m.session=?2)
+                     GROUP BY m.project,m.session
+                     HAVING NOT EXISTS(SELECT 1 FROM files f WHERE f.project=m.project AND f.session=m.session)
+                        OR m.project<>?1 OR max(m.at)<?3
+                     ORDER BY EXISTS(SELECT 1 FROM files f WHERE f.project=m.project AND f.session=m.session),
+                        m.project=?1,max(m.at),m.project,m.session",
+                )
+                .map_err(db_error)?;
+            let mut rows = stmt
+                .query(params![project, session, newest])
+                .map_err(db_error)?;
+            while freed < needed {
+                let Some(row) = rows.next().map_err(db_error)? else {
+                    break;
+                };
+                let count: usize = row.get(2).map_err(db_error)?;
+                victims.push((
+                    row.get::<_, String>(0).map_err(db_error)?,
+                    row.get::<_, String>(1).map_err(db_error)?,
+                ));
+                freed += count;
+            }
+        }
+        if freed < needed {
+            return Err(
+                "This Project's recent conversations are more than the search index holds (25,000 messages). A shorter Copied history period keeps the newest."
+                    .into(),
+            );
+        }
+        for (victim_project, victim_session) in victims {
+            limit_work(&self.db, self.work_budget);
+            self.db
+                .execute(
+                    "DELETE FROM files WHERE project=?1 AND session=?2",
+                    params![victim_project, victim_session],
+                )
+                .map_err(db_error)?;
+            loop {
+                limit_work(&self.db, self.work_budget);
+                let tx = self.db.transaction().map_err(db_error)?;
+                let erased = erase_step(&tx, &victim_project, &victim_session)?;
+                tx.commit().map_err(db_error)?;
+                if erased < ERASE_STEP {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+/// Messages one step of dropping a session removes.
+const ERASE_STEP: usize = 2_000;
+/// Removes up to `ERASE_STEP` messages of one session, from the index and the
+/// search terms alike; returns how many went.
+fn erase_step(
+    tx: &rusqlite::Transaction<'_>,
+    project: &str,
+    session: &str,
+) -> Result<usize, String> {
+    let entries = {
+        let mut stmt = tx
+            .prepare("SELECT id,folded FROM messages WHERE project=?1 AND session=?2 LIMIT ?3")
+            .map_err(db_error)?;
+        stmt.query_map(params![project, session, ERASE_STEP], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(db_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_error)?
+    };
+    for (id, body) in &entries {
+        tx.execute(
+            "INSERT INTO grams(grams,rowid,terms) VALUES('delete',?1,?2)",
+            params![id, grams(body)],
+        )
+        .map_err(db_error)?;
+        tx.execute("DELETE FROM messages WHERE id=?1", [id])
+            .map_err(db_error)?;
+    }
+    Ok(entries.len())
+}
 fn erase(
     tx: &rusqlite::Transaction<'_>,
     project: &str,
@@ -467,26 +616,26 @@ fn erase(
             .prepare(
                 "SELECT id,folded FROM messages WHERE project=?1 AND (?2 IS NULL OR session=?2) AND (?3 IS NULL OR at<?3)",
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(db_error)?;
         let entries = stmt
             .query_map(params![project, session, cutoff], |r| {
                 Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(db_error)?;
         for entry in entries {
-            let (id, body) = entry.map_err(|e| e.to_string())?;
+            let (id, body) = entry.map_err(db_error)?;
             tx.execute(
                 "INSERT INTO grams(grams,rowid,terms) VALUES('delete',?1,?2)",
                 params![id, grams(&body)],
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(db_error)?;
         }
     }
     tx.execute(
         "DELETE FROM messages WHERE project=?1 AND (?2 IS NULL OR session=?2) AND (?3 IS NULL OR at<?3)",
         params![project, session, cutoff],
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(db_error)?;
     Ok(())
 }
 // Hex-encoded Unicode unigrams and bigrams are safe literal FTS tokens. No

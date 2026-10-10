@@ -83,6 +83,10 @@ pub struct RepositoryWorktrees {
     /// Why this repository has no worktree list. An empty list with no reason
     /// means the repository genuinely has none.
     pub unavailable_reason: Option<String>,
+    /// The `origin` remote's URL from the repository's own configuration,
+    /// which names its GitHub repository for a core on another machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_url: Option<String>,
 }
 
 /// One worktree's Git facts.

@@ -2,7 +2,7 @@ import { projectRows, checkoutPresentation, checkoutCard } from "../test/legacyA
 import { emptyScope, legacyProject } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { cardSingleValue, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, projectMarks as drawProjectMarks, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
+import { activeCheckouts, cardSingleValue, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, projectMarks as drawProjectMarks, relativeActivity, shownPullRequest } from "./projects";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import type { AgentRow, Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
 
@@ -25,6 +25,18 @@ function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
 }
 
 const NO_MARKS = { error: 0, approval: 0, question: 0, working: 0, stopped: 0, done: 0, idle: 0 };
+
+describe("activeCheckouts", () => {
+  it("leaves out the checkouts the core folded, hid as child-only, or put in Cleanup", () => {
+    const rows = ["a", "b", "c", "d", "e"].map((id) => ({ id }) as Checkout);
+    const draw = workspace("p", {
+      checkouts: rows,
+      inactive_checkouts: { expanded: false, checkout_ids: ["b"] },
+      session_folds: { empty: ["c"], child_only: ["d"], cleanup: ["e"], empty_open: false, cleanup_open: false, open_prs: 0 },
+    });
+    expect(activeCheckouts(draw).map((row) => row.id)).toEqual(["a"]);
+  });
+});
 
 describe("projectRows", () => {
   it("draws pinned rows under their header, then the activity list with the device fold", () => {
@@ -118,36 +130,11 @@ describe("activity", () => {
   });
 });
 
-describe("pullRequestBadge", () => {
-  it("names the lifecycle, or the review decision for a pull request under review (D-08)", () => {
-    const base = { number: 1, title: "", url: "", is_draft: false };
-    expect(pullRequestBadge({ ...base, badge: "merged", review: null }, t)).toEqual({ label: "Merged", color: "text-pr-merged", draft: false });
-    expect(pullRequestBadge({ ...base, badge: "closed", review: null }, t)).toEqual({ label: "Closed", color: "text-pr-closed", draft: false });
-    expect(pullRequestBadge({ ...base, badge: "open", review: null }, t)).toEqual({ label: "Open", color: "text-pr-open", draft: false });
-    expect(pullRequestBadge({ ...base, badge: "open", review: null, is_draft: true }, t)).toEqual({ label: "Draft", color: "text-pr-draft", draft: false });
-    expect(pullRequestBadge({ ...base, badge: "review", review: "approved" }, t)).toEqual({ label: "Approved", color: "text-success", draft: false });
-    expect(pullRequestBadge({ ...base, badge: "review", review: "changes_requested" }, t)).toEqual({ label: "Changes requested", color: "text-destructive", draft: false });
-    expect(pullRequestBadge({ ...base, badge: "review", review: "review_required" }, t)).toEqual({ label: "Review required", color: "text-muted-foreground", draft: false });
-  });
-
-  it("names the lifecycle and review decision in the interface language", () => {
-    const base = { number: 1, title: "", url: "", is_draft: false };
-    expect(pullRequestBadge({ ...base, badge: "merged", review: null }, tKo).label).toBe("머지됨");
-    expect(pullRequestBadge({ ...base, badge: "review", review: "changes_requested" }, tKo).label).toBe("변경 요청");
-    expect(pullRequestBadge({ ...base, badge: "open", review: null, is_draft: true }, tKo).label).toBe("초안");
-  });
-
-  it("keeps the decision on a draft under review and says Draft beside it", () => {
-    const base = { number: 1, title: "", url: "", is_draft: true };
-    expect(pullRequestBadge({ ...base, badge: "review", review: "approved" }, t)).toEqual({ label: "Approved", color: "text-success", draft: true });
-  });
-});
-
 describe("checkoutPresentation", () => {
   const now = 1_000_000_000_000;
   const github = (extra: Partial<GithubStatus> = {}): GithubStatus =>
     ({ failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: now, unavailable_reason: null, ...extra }) as GithubStatus;
-  const pr = (extra: Partial<PullRequest> = {}): PullRequest => ({ number: 155, title: "Browser display", url: "", badge: "open", review: null, is_draft: false, ...extra });
+  const pr = (extra: Partial<PullRequest> = {}): PullRequest => ({ number: 155, title: "Browser display", url: "", badge: "open", review: null, is_draft: false, state: "pending", ...extra });
   const project = workspace("repo", { path: "/h/repo", is_git: true });
   const checkout = (extra: Partial<Checkout> = {}): Checkout =>
     ({ agent_scope: emptyScope(),
@@ -170,24 +157,18 @@ describe("checkoutPresentation", () => {
       ...extra,
     }) as Checkout;
 
-  it("draws a known pull request's lifecycle before the kind of checkout", () => {
-    expect(checkoutPresentation(project, checkout({ pull_request: pr() }), now, t)).toMatchObject({ kind: "pr_open", kindTone: "text-pr-open" });
-    expect(checkoutPresentation(project, checkout({ pull_request: pr({ is_draft: true }) }), now, t).kind).toBe("pr_draft");
-    expect(checkoutPresentation(project, checkout({ pull_request: pr({ badge: "merged" }) }), now, t)).toMatchObject({ kind: "pr_merged", settled: true });
-    expect(checkoutPresentation(project, checkout({ pull_request: pr({ badge: "review" }) }), now, t).kind).toBe("pr_open");
+  it("draws a known pull request's mark before the kind of checkout, and names its state in the tooltip", () => {
+    expect(checkoutPresentation(project, checkout({ pull_request: pr() }), now, t)).toMatchObject({ kind: "pull_request", stale: false, settled: false });
+    expect(checkoutPresentation(project, checkout({ pull_request: pr({ badge: "merged", state: "merged" }) }), now, t)).toMatchObject({ kind: "pull_request", settled: true });
+    expect(checkoutPresentation(project, checkout({ pull_request: pr({ state: "failed" }) }), now, t).detail.split("\n")[0]).toBe("#155 · CI failed · Browser display");
   });
 
-  it("draws one shape for a pull request on the row and in its card, a draft under review included", () => {
-    for (const request of [pr(), pr({ is_draft: true }), pr({ badge: "review", is_draft: true }), pr({ badge: "merged" }), pr({ badge: "closed", is_draft: true })]) {
-      const row = checkout({ pull_request: request });
-      const header = checkoutCard(project, row, now, t).header;
-      expect(header?.kind === "pull_request" ? header.glyph : null).toBe(checkoutPresentation(project, row, now, t).kind);
-    }
-    expect(checkoutCard(project, checkout({ pull_request: pr({ badge: "review", is_draft: true }) }), now, t).header).toMatchObject({ glyph: "pr_draft" });
+  it("draws a missing folder's kind in danger rather than its pull request's mark", () => {
+    expect(checkoutPresentation(project, checkout({ pull_request: pr(), exists: false }), now, t)).toMatchObject({ kind: "branch", kindTone: "text-destructive" });
   });
 
-  it("mutes a stale pull request and falls back to the branch when GitHub could not answer", () => {
-    expect(checkoutPresentation(project, checkout({ pull_request: pr(), github: github({ stale: true }) }), now, t)).toMatchObject({ kind: "pr_open", kindTone: "text-muted-foreground" });
+  it("dims a stale pull request's mark and falls back to the branch when GitHub could not answer", () => {
+    expect(checkoutPresentation(project, checkout({ pull_request: pr(), github: github({ stale: true }) }), now, t)).toMatchObject({ kind: "pull_request", stale: true });
     expect(checkoutPresentation(project, checkout({ pull_request: pr(), github: github({ available: false, unavailable_reason: "gh is not signed in" }) }), now, t).kind).toBe("branch");
   });
 
@@ -221,7 +202,7 @@ describe("checkoutPresentation", () => {
 describe("checkoutCard", () => {
   const now = 1_000_000_000_000;
   const project = workspace("repo", { path: "/h/repo", is_git: true });
-  const pr = (extra: Partial<PullRequest> = {}): PullRequest => ({ number: 180, title: "Sidebar readability", url: "https://example.invalid/pull/180", badge: "review", review: "approved", is_draft: false, checks: "passing", ...extra });
+  const pr = (extra: Partial<PullRequest> = {}): PullRequest => ({ number: 180, title: "Sidebar readability", url: "https://example.invalid/pull/180", badge: "review", review: "approved", is_draft: false, checks: "passing", state: "mergeable", ...extra });
   const summary = (marks: Partial<typeof NO_MARKS>, counts: Partial<{ needs_you: number; done: number; working: number; seen: number }> = {}) => ({
     representative_pane_id: null,
     needs_you: 0,
@@ -257,15 +238,15 @@ describe("checkoutCard", () => {
     const card = checkoutCard(project, checkout({ pull_request: pr(), agent_summary: summary({ question: 1, working: 2 }, { needs_you: 1, working: 2 }) }), now, t);
     expect(card.header).toEqual({
       kind: "pull_request",
-      badge: { label: "Approved", color: "text-success", draft: false },
-      glyph: "pr_open",
+      badge: { label: "Approved", draft: false },
+      state: "mergeable",
       number: 180,
       url: "https://example.invalid/pull/180",
       title: "Sidebar readability",
     });
     expect(card.rows).toEqual([
-      { key: "review", label: "Review", value: "Approved", tone: "text-success" },
-      { key: "checks", label: "Checks", value: "Passing", tone: "text-success" },
+      { key: "review", label: "Review", value: "Approved", tone: "text-pr-mergeable" },
+      { key: "checks", label: "Checks", value: "Passing", tone: "text-pr-mergeable" },
       { key: "branch", label: "Branch", value: "feature" },
       { key: "agents", label: "Agents", marks: { ...NO_MARKS, question: 1, working: 2 } },
       { key: "commit", label: "Commit", value: "2h ago" },
@@ -274,8 +255,8 @@ describe("checkoutCard", () => {
   });
 
   it("colors Checks by result and leaves the row out when there are none or they are unknown (B6)", () => {
-    expect(checkoutCard(project, checkout({ pull_request: pr({ checks: "failed" }) }), now, t).rows[1]).toEqual({ key: "checks", label: "Checks", value: "Failed", tone: "text-destructive" });
-    expect(checkoutCard(project, checkout({ pull_request: pr({ checks: "pending" }) }), now, t).rows[1]).toMatchObject({ value: "Pending", tone: "text-muted-foreground" });
+    expect(checkoutCard(project, checkout({ pull_request: pr({ checks: "failed" }) }), now, t).rows[1]).toEqual({ key: "checks", label: "Checks", value: "Failed", tone: "text-pr-failed" });
+    expect(checkoutCard(project, checkout({ pull_request: pr({ checks: "pending" }) }), now, t).rows[1]).toMatchObject({ value: "Pending", tone: "text-pr-pending" });
     expect(keys(checkoutCard(project, checkout({ pull_request: pr({ checks: "none" }) }), now, t))).toEqual(["review", "branch", "commit", "path"]);
     expect(keys(checkoutCard(project, checkout({ pull_request: pr({ checks: "unknown" }) }), now, t))).toEqual(["review", "branch", "commit", "path"]);
     expect(keys(checkoutCard(project, checkout({ pull_request: pr({ checks: undefined }) }), now, t))).toEqual(["review", "branch", "commit", "path"]);
@@ -283,7 +264,7 @@ describe("checkoutCard", () => {
 
   it("leaves Review out of an open pull request with no decision, and names the others (B6)", () => {
     expect(keys(checkoutCard(project, checkout({ pull_request: pr({ badge: "open", review: null }) }), now, t))).toEqual(["checks", "branch", "commit", "path"]);
-    expect(checkoutCard(project, checkout({ pull_request: pr({ review: "changes_requested" }) }), now, t).rows[0]).toMatchObject({ value: "Changes requested", tone: "text-destructive" });
+    expect(checkoutCard(project, checkout({ pull_request: pr({ review: "changes_requested" }) }), now, t).rows[0]).toMatchObject({ value: "Changes requested", tone: "text-pr-failed" });
     expect(checkoutCard(project, checkout({ pull_request: pr({ review: "review_required" }) }), now, t).rows[0]).toMatchObject({ value: "Review required", tone: "text-muted-foreground" });
   });
 

@@ -882,9 +882,20 @@ impl Mobile {
             if *self.stopping.borrow() {
                 return;
             }
-            // Herdr is skipped only when this Mac has no socket for it; its
-            // toast setting is not readable, so every other case is tried.
-            let herdr = match self.herdr_api(self.node().as_str()) {
+            // The toast goes to the Herdr of the machine the operator works
+            // at: a screen machine linked to this core, through its link,
+            // and otherwise this machine's (PRD core-host-node-remote-core
+            // D-18). Herdr is skipped only when that machine has no socket
+            // for it; its toast setting is not readable, so every other case
+            // is tried.
+            let machine = self
+                .config
+                .core
+                .linked_nodes()
+                .ok()
+                .and_then(|nodes| nodes.into_iter().next())
+                .unwrap_or_else(|| self.node().as_str().to_owned());
+            let herdr = match self.herdr_api(&machine) {
                 Ok(connector) => match notice.notify_herdr(connector.as_ref()) {
                     Ok(()) => continue,
                     Err(reason) => reason,
@@ -897,7 +908,7 @@ impl Mobile {
             herdr_core::diagnostic!(json!({
                 "component": "delivery", "kind": "human.channels_failed",
                 "notice": notice.kind.code(), "letter_id": notice.id,
-                "push": push, "herdr": herdr,
+                "push": push, "herdr": herdr, "herdr_node": machine,
             }));
         }
     }
