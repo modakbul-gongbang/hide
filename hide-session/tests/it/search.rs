@@ -895,4 +895,25 @@ mod capacity {
         assert_eq!(found(&index, "other"), names("o", 0..24));
         assert!(index.saved("other", "o0").unwrap().is_some());
     }
+
+    #[test]
+    fn a_step_the_budget_stops_answers_its_word_and_changes_nothing() {
+        let tmp = tempdir().unwrap();
+        let database = tmp.path().join("index.db");
+        let mut stopped = SearchIndex::open(&database)
+            .unwrap()
+            .with_work_budget(std::time::Duration::ZERO);
+        let step = read(messages("s", 100, 1_000_000));
+
+        let error = stopped.apply("p", "s", "s", 0, step).unwrap_err();
+
+        assert_eq!(error, hide_session::search::INTERRUPTED);
+        assert_eq!(stored(&database), 0);
+        assert!(stopped.saved("p", "s").unwrap().is_none());
+        // Asked again with room to work, the same step lands.
+        drop(stopped);
+        let mut index = SearchIndex::open(&database).unwrap();
+        index_session(&mut index, "p", "s", 100, 1_000_000).unwrap();
+        assert_eq!(stored(&database), 100);
+    }
 }
