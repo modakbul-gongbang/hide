@@ -2,10 +2,13 @@
 # Installs the pinned cargo-nextest release binary into $CARGO_HOME/bin on a
 # CI runner, with no compile: the Rust lanes run `scripts/verify-cargo.sh
 # nextest` (.config/nextest.toml, docs/TESTING.md "Flaky tests"). The version
-# lives here only, so a bump is one line.
+# lives here only, so a bump is one line. It is at least 0.9.145: before that,
+# on macOS a test spawned beside another inherited the other's output pipe and
+# held it open, so nextest reported a test that had left nothing running as
+# LEAK (nextest #3553).
 set -euo pipefail
 
-version=0.9.143
+version=0.9.146
 case "$(uname -s)" in
     Linux) platform=linux ;;
     Darwin) platform=mac ;;

@@ -34,6 +34,7 @@ pub const HIDE_HOST_CLI_DIR: &str = "HIDE_HOST_CLI_DIR";
 pub const HERDR_PANE_ID: &str = "HERDR_PANE_ID";
 pub const HIDE_CAP_REF: &str = "HIDE_CAP_REF";
 pub const HIDE_TAILSCALE_BIN: &str = "HIDE_TAILSCALE_BIN";
+pub const HIDE_MACHINE_ID: &str = host::MACHINE_ID_VARIABLE;
 
 pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
@@ -143,6 +144,12 @@ pub const REGISTRY: &[EnvKey] = &[
         required: false,
         format: "absolute path of the tailscale CLI Settings > Mobile runs; a path that does not exist reads as Tailscale not installed",
         absent_behavior: "The CLI the system's Tailscale app installs (/Applications/Tailscale.app/Contents/MacOS/Tailscale on macOS, %ProgramFiles%\\Tailscale\\tailscale.exe on Windows), then `tailscale` on PATH; isolated verification sets it so no test reaches the account's own Tailscale",
+    },
+    EnvKey {
+        key: HIDE_MACHINE_ID,
+        required: false,
+        format: "a node id: lowercase letters, digits and '-'; only a test fixture sets it, so one host runs a node and the core it dials as two machines",
+        absent_behavior: "The machine id the system reports (IOPlatformUUID on macOS, /etc/machine-id on Linux, MachineGuid on Windows) names this node",
     },
     EnvKey {
         key: HOME,

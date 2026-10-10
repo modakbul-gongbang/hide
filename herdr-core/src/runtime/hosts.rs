@@ -13,11 +13,13 @@
 
 use std::sync::Arc;
 
+use super::devices::DeviceReach;
 use super::*;
 use crate::model::{DeviceHostSnapshot, HostConsent};
 use crate::node_access::NodeLink;
 use crate::remote::{
-    EstablishError, Established, HOST_CONSENT_CARRIED_FROM, HOST_CONSENT_CONTRACT,
+    EstablishError, Established, HOST_CONSENT_CARRIED_FROM, HOST_CONSENT_CONTRACT, NodeReady,
+    OnClose,
 };
 
 /// The daemon may open a pane-scoped return route only while the same
@@ -27,8 +29,7 @@ use crate::remote::{
 pub struct WorkspaceRemoteRoute {
     pub device_id: String,
     pub generation: u64,
-    pub helper_path: String,
-    pub transport: Arc<dyn crate::remote::DeviceTransport>,
+    pub transport: Arc<dyn crate::remote::DialedTransport>,
     pub channel: Arc<dyn NodeLink>,
 }
 
@@ -38,7 +39,9 @@ pub(super) enum HostPhase {
     Ready {
         host: Arc<dyn NodeLink>,
         platform: String,
-        helper_path: String,
+        /// The core's helper on a device it dialed; a node that dials in
+        /// runs its own Hide, so it has none.
+        helper_path: Option<String>,
     },
     IdentityChanged(String),
     Unsupported(String),
@@ -67,6 +70,35 @@ impl Default for HostRetry {
     }
 }
 
+/// One connection attempt's work: a dial of the core's own, or the node a
+/// node that dialed in brought.
+enum HostStart {
+    Dial {
+        client: Arc<dyn crate::remote::DialedTransport>,
+        consent: HostConsent,
+        retirement_projects: Vec<String>,
+    },
+    Arrived {
+        node: NodeReady,
+        hear_close: Box<dyn FnOnce(OnClose) + Send + 'static>,
+    },
+}
+
+/// A connection attempt that reached the device's node.
+pub(super) enum HostReady {
+    Dialed(Established),
+    Arrived(NodeReady),
+}
+
+impl HostReady {
+    fn node(&self) -> &NodeReady {
+        match self {
+            Self::Dialed(established) => &established.node,
+            Self::Arrived(node) => node,
+        }
+    }
+}
+
 pub(super) struct DeviceHost {
     pub(super) phase: HostPhase,
     /// Taken from the runtime-wide counter on every connection attempt and
@@ -81,12 +113,7 @@ impl Runtime {
         self.device_hosts
             .iter()
             .filter_map(|(device_id, host)| {
-                let HostPhase::Ready {
-                    host: channel,
-                    helper_path,
-                    ..
-                } = &host.phase
-                else {
+                let HostPhase::Ready { host: channel, .. } = &host.phase else {
                     return None;
                 };
                 if channel.closed_reason().is_some()
@@ -99,12 +126,16 @@ impl Runtime {
                 {
                     return None;
                 }
-                let transport = self.remote_connections.get(device_id)?.transport.clone();
+                // A return route is an SSH forward of the core's own dial.
+                let DeviceReach::Dialed(transport) =
+                    &self.remote_connections.get(device_id)?.transport
+                else {
+                    return None;
+                };
                 Some(WorkspaceRemoteRoute {
                     device_id: device_id.clone(),
                     generation: host.generation,
-                    helper_path: helper_path.clone(),
-                    transport,
+                    transport: Arc::clone(transport),
                     channel: Arc::clone(channel),
                 })
             })
@@ -118,7 +149,10 @@ impl Runtime {
         self.device_registration(device_id).is_some()
     }
 
-    fn device_registration(&self, device_id: &str) -> Option<&crate::model::DeviceRegistration> {
+    pub(super) fn device_registration(
+        &self,
+        device_id: &str,
+    ) -> Option<&crate::model::DeviceRegistration> {
         self.snapshot
             .ui_state
             .device_registrations
@@ -224,6 +258,17 @@ impl Runtime {
 
     /// Gives or withdraws consent for one device.
     pub(super) fn set_host_consent(&mut self, device_id: &str, allow: bool) -> bool {
+        if self
+            .link_origin(device_id)
+            .is_some_and(|origin| !origin.takes_consent())
+        {
+            self.set_error(
+                "device.host.inbound",
+                "This machine connects to the core itself with your SSH login; it takes no helper consent",
+                false,
+            );
+            return true;
+        }
         let fresh = self.new_host_consent();
         let Some(registration) = self
             .snapshot
@@ -287,11 +332,16 @@ impl Runtime {
     }
 
     /// Starts a helper connection for a consented device unless one is
-    /// running or starting. Returns whether the device row changed.
+    /// running or starting. Returns whether the device row changed. A node
+    /// that dials this core is started only by the link it brings
+    /// ([`Self::start_arrived_host`]).
     pub(super) fn start_device_host(&mut self, device_id: &str) -> bool {
         let Some(registration) = self.device_registration(device_id).cloned() else {
             return false;
         };
+        if !registration.origin.core_redials() {
+            return false;
+        }
         if matches!(
             self.device_hosts.get(device_id).map(|host| &host.phase),
             Some(HostPhase::Connecting | HostPhase::Ready { .. })
@@ -326,7 +376,10 @@ impl Runtime {
         let Some(client) = self
             .remote_connections
             .get(device_id)
-            .map(|connection| Arc::clone(&connection.transport))
+            .and_then(|connection| match &connection.transport {
+                DeviceReach::Dialed(transport) => Some(Arc::clone(transport)),
+                DeviceReach::Inbound(_) => None,
+            })
         else {
             self.set_host_phase(
                 device_id,
@@ -334,6 +387,39 @@ impl Runtime {
             );
             return self.refresh_device_snapshots();
         };
+        let retirement_projects = self.retirement_projects(device_id);
+        self.spawn_host_start(
+            device_id,
+            generation,
+            HostStart::Dial {
+                client,
+                consent,
+                retirement_projects,
+            },
+        )
+    }
+
+    /// Takes the node a node that dialed this core brought: its link is up
+    /// already, so it is ready as soon as the worker takes it.
+    pub(super) fn start_arrived_host(
+        &mut self,
+        device_id: &str,
+        node: NodeReady,
+        hear_close: Box<dyn FnOnce(OnClose) + Send + 'static>,
+    ) -> bool {
+        let generation = self.advance_host_generation(device_id);
+        self.device_host_retries.remove(device_id);
+        self.spawn_host_start(
+            device_id,
+            generation,
+            HostStart::Arrived { node, hear_close },
+        )
+    }
+
+    /// Runs one connection attempt on a worker, off the runtime lock: a dial
+    /// blocks, and a link that already ended tells its end at once, which
+    /// takes the lock.
+    fn spawn_host_start(&mut self, device_id: &str, generation: u64, start: HostStart) -> bool {
         let Some(context) = self.worker_context.clone() else {
             self.set_host_phase(
                 device_id,
@@ -342,14 +428,13 @@ impl Runtime {
             return self.refresh_device_snapshots();
         };
         self.set_host_phase(device_id, HostPhase::Connecting);
-        let retirement_projects = self.retirement_projects(device_id);
         let device = device_id.to_owned();
         let spawned = thread::Builder::new()
             .name("herdr-core-device-host".to_owned())
             .spawn(move || {
                 let close_context = context.clone();
                 let close_device = device.clone();
-                let on_close = Box::new(move |reason: String| {
+                let on_close: OnClose = Box::new(move |reason: String| {
                     let Some(runtime) = close_context.runtime.upgrade() else {
                         return;
                     };
@@ -364,7 +449,24 @@ impl Runtime {
                         close_context.notifier.notify();
                     }
                 });
-                let result = client.establish(&consent, &retirement_projects, on_close);
+                // An arrived link hears its end only once its node is
+                // ready, so a link that ended already is told to a phase
+                // that takes it.
+                let (result, end) = match start {
+                    HostStart::Dial {
+                        client,
+                        consent,
+                        retirement_projects,
+                    } => (
+                        client
+                            .establish(&consent, &retirement_projects, on_close)
+                            .map(HostReady::Dialed),
+                        None,
+                    ),
+                    HostStart::Arrived { node, hear_close } => {
+                        (Ok(HostReady::Arrived(node)), Some((hear_close, on_close)))
+                    }
+                };
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -375,6 +477,9 @@ impl Runtime {
                 drop(runtime);
                 if changed {
                     context.notifier.notify();
+                }
+                if let Some((hear_close, on_close)) = end {
+                    hear_close(on_close);
                 }
             });
         if let Err(error) = spawned {
@@ -389,6 +494,13 @@ impl Runtime {
     /// Starts the device's link for a read that needs it, unless a lost or
     /// failed one is still waiting out its retry.
     fn reconnect_device_host(&mut self, device_id: &str, now_unix_ms: u64) -> bool {
+        // Only the node can bring a node that dials this core back.
+        if self
+            .link_origin(device_id)
+            .is_some_and(|origin| !origin.core_redials())
+        {
+            return false;
+        }
         let waiting = self
             .device_host_retries
             .get(device_id)
@@ -468,60 +580,78 @@ impl Runtime {
         &mut self,
         device_id: &str,
         generation: u64,
-        result: Result<Established, EstablishError>,
+        result: Result<HostReady, EstablishError>,
     ) -> bool {
         let current = self
             .device_hosts
             .get(device_id)
             .is_some_and(|host| host.generation == generation);
         if !current {
-            if let Ok(established) = result {
-                established.host.close("superseded by a newer attempt");
+            if let Ok(ready) = result {
+                ready.node().host.close("superseded by a newer attempt");
             }
             return false;
         }
         match result {
-            Ok(established) => {
+            Ok(ready) => {
+                let (node, dialed) = match ready {
+                    HostReady::Dialed(established) => {
+                        let Established {
+                            node,
+                            identity,
+                            installed,
+                            helper_path,
+                            upload,
+                        } = established;
+                        (node, Some((identity, installed, helper_path, upload)))
+                    }
+                    HostReady::Arrived(node) => (node, None),
+                };
                 self.ingest_device_machine_id(
                     device_id,
-                    established.hello.machine_identity.into_result(),
+                    node.hello.machine_identity.clone().into_result(),
                 );
+                let platform = format!("{} {}", node.hello.os, node.hello.arch);
                 let mut bound_now = false;
-                if let Some(consent) = self
-                    .snapshot
-                    .ui_state
-                    .device_registrations
-                    .iter_mut()
-                    .find(|registration| registration.id == device_id)
-                    .and_then(|registration| registration.host_consent.as_mut())
-                    && consent.identity.is_none()
-                {
-                    consent.identity = Some(established.identity.clone());
-                    bound_now = true;
+                let mut helper_path = None;
+                if let Some((identity, installed, path, upload)) = dialed {
+                    if let Some(consent) = self
+                        .snapshot
+                        .ui_state
+                        .device_registrations
+                        .iter_mut()
+                        .find(|registration| registration.id == device_id)
+                        .and_then(|registration| registration.host_consent.as_mut())
+                        && consent.identity.is_none()
+                    {
+                        consent.identity = Some(identity);
+                        bound_now = true;
+                    }
+                    if bound_now {
+                        self.persist_current_ui_state();
+                    }
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "remote_host",
+                        "kind": "host.ready",
+                        "target": device_id,
+                        "generation": generation,
+                        "installed": installed,
+                        "platform": platform,
+                        "consent_bound": bound_now,
+                        "upload": upload,
+                    }));
+                    helper_path = Some(path);
                 }
-                if bound_now {
-                    self.persist_current_ui_state();
-                }
-                crate::diagnostic!(serde_json::json!({
-                    "component": "remote_host",
-                    "kind": "host.ready",
-                    "target": device_id,
-                    "generation": generation,
-                    "installed": established.installed,
-                    "platform": format!("{} {}", established.hello.os, established.hello.arch),
-                    "consent_bound": bound_now,
-                    "upload": established.upload,
-                }));
                 self.device_host_retries.remove(device_id);
                 self.set_host_phase(
                     device_id,
                     HostPhase::Ready {
-                        host: established.host,
-                        platform: format!("{} {}", established.hello.os, established.hello.arch),
-                        helper_path: established.helper_path,
+                        host: node.host,
+                        platform,
+                        helper_path,
                     },
                 );
-                match established.terminals {
+                match node.terminals {
                     Ok(terminals) => {
                         self.terminals.install_device(device_id, terminals);
                         // The device's panes on screen attach inside the new
@@ -543,11 +673,17 @@ impl Runtime {
                 self.restore_front_when_ready();
                 self.home_helper_ready(device_id);
                 // Every connection brings the device's kit up to this build
-                // without asking (B10, B13, B19).
-                self.queue_device_kit(
-                    device_id,
-                    super::KitJob::Apply(hide_kit::Scope::automatic()),
-                );
+                // without asking (B10, B13, B19); a node that dials this core
+                // keeps its own.
+                if self
+                    .link_origin(device_id)
+                    .is_some_and(LinkOrigin::takes_kit)
+                {
+                    self.queue_device_kit(
+                        device_id,
+                        super::KitJob::Apply(hide_kit::Scope::automatic()),
+                    );
+                }
             }
             Err(error) => {
                 let message = error.to_string();
@@ -574,7 +710,12 @@ impl Runtime {
                     EstablishError::IdentityChanged { .. } => HostPhase::IdentityChanged(message),
                     EstablishError::Unsupported(_) => HostPhase::Unsupported(message),
                     _ => {
-                        self.schedule_host_retry(device_id, now_unix_ms());
+                        if self
+                            .link_origin(device_id)
+                            .is_some_and(LinkOrigin::core_redials)
+                        {
+                            self.schedule_host_retry(device_id, now_unix_ms());
+                        }
                         HostPhase::Unavailable(message)
                     }
                 };
@@ -613,7 +754,13 @@ impl Runtime {
             return false;
         }
         host.phase = HostPhase::Unavailable(format!("The device helper disconnected: {reason}"));
-        self.schedule_host_retry(device_id, now_unix_ms());
+        // A node that dials this core comes back by dialing again.
+        if self
+            .link_origin(device_id)
+            .is_some_and(LinkOrigin::core_redials)
+        {
+            self.schedule_host_retry(device_id, now_unix_ms());
+        }
         self.end_device_terminals(
             device_id,
             &format!("The device helper disconnected: {reason}"),
@@ -729,6 +876,9 @@ impl Runtime {
     /// The host row for one device, read by Settings and by every file or
     /// Git surface that needs to say why it cannot act.
     pub(super) fn host_snapshot(&self, device_id: &str) -> DeviceHostSnapshot {
+        if self.link_origin(device_id) == Some(&LinkOrigin::Inbound) {
+            return self.inbound_host_snapshot(device_id);
+        }
         let consent = self
             .device_registration(device_id)
             .and_then(|registration| registration.host_consent.as_ref());
@@ -774,7 +924,7 @@ impl Runtime {
             ),
             (Some(_), true, Some(HostPhase::Ready { host, platform, helper_path })) => {
                 snapshot.platform = Some(platform.clone());
-                snapshot.helper_path = Some(helper_path.clone());
+                snapshot.helper_path = helper_path.clone();
                 match host.closed_reason() {
                     None => ("ready", None),
                     Some(reason) => ("unavailable", Some(format!("The device helper disconnected: {reason}"))),
@@ -792,6 +942,49 @@ impl Runtime {
         snapshot.state = state.to_owned();
         snapshot.message = message;
         snapshot
+    }
+
+    /// The host row of a node that dials this core: its link's state, with
+    /// the operator's SSH login as its consent and no helper of the core's.
+    fn inbound_host_snapshot(&self, device_id: &str) -> DeviceHostSnapshot {
+        let (state, message, platform) =
+            match self.device_hosts.get(device_id).map(|host| &host.phase) {
+                Some(HostPhase::Ready { host, platform, .. }) => match host.closed_reason() {
+                    None => ("ready", None, Some(platform.clone())),
+                    Some(reason) => (
+                        "unavailable",
+                        Some(format!("The machine's link ended: {reason}")),
+                        Some(platform.clone()),
+                    ),
+                },
+                Some(HostPhase::Connecting) => (
+                    "connecting",
+                    Some("Connecting to the machine…".to_owned()),
+                    None,
+                ),
+                Some(
+                    HostPhase::Unavailable(message)
+                    | HostPhase::IdentityChanged(message)
+                    | HostPhase::Unsupported(message),
+                ) => ("unavailable", Some(message.clone()), None),
+                Some(HostPhase::NotAllowed) | None => (
+                    "unavailable",
+                    Some("The machine has not connected to this core yet".to_owned()),
+                    None,
+                ),
+            };
+        DeviceHostSnapshot {
+            consent: "granted".to_owned(),
+            helper_root: None,
+            cli_dir: None,
+            contract: HOST_CONSENT_CONTRACT,
+            bound_identity: None,
+            granted_at_unix_ms: None,
+            state: state.to_owned(),
+            message,
+            platform,
+            helper_path: None,
+        }
     }
 
     /// The install root and the command folder a consent names.

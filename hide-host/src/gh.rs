@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use hide_node_link::gh::{GhAnswer, GithubFailureCategory, allowed};
+use hide_node_link::gh::{GhAnswer, GithubFailureCategory, allowed, valid_repository};
 use hide_platform::process::OwnedChild;
 
 /// How long one `gh` command may run.
@@ -52,8 +52,14 @@ fn classify_failure(reason: String, exit_code: Option<i32>) -> GhFailure {
 
 /// Runs one allowed `gh` command for the account this node runs as, with no
 /// prompt and a bounded wait; any other command line is refused unrun.
-pub fn run(cwd: Option<&Path>, arguments: &[&str]) -> GhAnswer {
-    match run_gh(Path::new("gh"), cwd, arguments, COMMAND_TIMEOUT) {
+pub fn run(cwd: Option<&Path>, repository: Option<&str>, arguments: &[&str]) -> GhAnswer {
+    if repository.is_some_and(|repository| !valid_repository(repository)) {
+        return GhAnswer::Failed {
+            category: GithubFailureCategory::NetworkOrRateLimit,
+            reason: "Unsupported gh repository".to_owned(),
+        };
+    }
+    match run_gh_for(Path::new("gh"), cwd, repository, arguments, COMMAND_TIMEOUT) {
         Ok(stdout) => GhAnswer::Output { stdout },
         Err(failure) => GhAnswer::Failed {
             category: failure.category,
@@ -62,10 +68,23 @@ pub fn run(cwd: Option<&Path>, arguments: &[&str]) -> GhAnswer {
     }
 }
 
-#[allow(clippy::disallowed_methods)] // a production wait, not test code
+#[cfg(test)]
 fn run_gh(
     binary: &Path,
     cwd: Option<&Path>,
+    arguments: &[&str],
+    timeout: Duration,
+) -> Result<String, GhFailure> {
+    run_gh_for(binary, cwd, None, arguments, timeout)
+}
+
+/// Runs one allowed `gh` command; `repository` is the repository a command
+/// that reads it from its folder works on (`GH_REPO`).
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
+fn run_gh_for(
+    binary: &Path,
+    cwd: Option<&Path>,
+    repository: Option<&str>,
     arguments: &[&str],
     timeout: Duration,
 ) -> Result<String, GhFailure> {
@@ -83,6 +102,9 @@ fn run_gh(
         .stderr(Stdio::piped());
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
+    }
+    if let Some(repository) = repository {
+        command.env("GH_REPO", repository);
     }
     let mut child = OwnedChild::spawn(&mut command).map_err(|error| GhFailure {
         category: if error.kind() == std::io::ErrorKind::NotFound {

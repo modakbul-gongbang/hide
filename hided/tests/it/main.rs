@@ -18,6 +18,7 @@ mod opener_lifecycle;
 #[path = "support/private_herdr.rs"]
 mod private_herdr;
 mod real_herdr;
+mod remote_core;
 mod remote_delivery;
 #[cfg(unix)]
 mod support;

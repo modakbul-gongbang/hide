@@ -21,6 +21,14 @@
 # with no configuration file. The recorded host key (MEASURE_DEVICE_KNOWN_HOSTS)
 # names that host and port only and is the only key file read (no global
 # one), so no other sshd's key is trusted.
+#
+# With the core on the device (MEASURE_SCENARIO=remote-core, PRD
+# core-host-node-remote-core B5-B7, B21) nothing is installed there by
+# consent; instead a core-role hided runs in the private HOME: its program
+# (MEASURE_CORE_PROGRAM) and its state folder (MEASURE_CORE_STATE) are
+# absolute paths inside MEASURE_DEVICE_HOME, and its node id
+# (MEASURE_CORE_NODE) is a plain name it is started with, never the machine's
+# own.
 
 device_guard_refuse() { echo "device guard: $*" >&2; exit 2; }
 
@@ -41,11 +49,21 @@ device_guard_under_tmp() {
 }
 
 [[ -z "${MEASURE_DEVICE_SSH_CONFIG:-}" ]] || device_guard_refuse "MEASURE_DEVICE_SSH_CONFIG is not read; name the alias's parts in MEASURE_DEVICE_HOST, MEASURE_DEVICE_USER and MEASURE_DEVICE_IDENTITY"
-for name in MEASURE_DEVICE_ALIAS MEASURE_DEVICE_HOST MEASURE_DEVICE_PORT MEASURE_DEVICE_USER MEASURE_DEVICE_IDENTITY MEASURE_DEVICE_KNOWN_HOSTS MEASURE_DEVICE_HOME MEASURE_DEVICE_SOCKET MEASURE_DEVICE_HELPER_ROOT MEASURE_DEVICE_CLI_DIR; do
-  [[ -n "${!name:-}" ]] || device_guard_refuse "the device scenario needs $name"
+device_guard_core=false
+[[ "${MEASURE_SCENARIO:-}" != remote-core ]] || device_guard_core=true
+device_guard_names=(MEASURE_DEVICE_ALIAS MEASURE_DEVICE_HOST MEASURE_DEVICE_PORT MEASURE_DEVICE_USER MEASURE_DEVICE_IDENTITY MEASURE_DEVICE_KNOWN_HOSTS MEASURE_DEVICE_HOME MEASURE_DEVICE_SOCKET)
+if $device_guard_core; then
+  device_guard_names+=(MEASURE_CORE_PROGRAM MEASURE_CORE_STATE MEASURE_CORE_NODE)
+else
+  device_guard_names+=(MEASURE_DEVICE_HELPER_ROOT MEASURE_DEVICE_CLI_DIR)
+fi
+for name in "${device_guard_names[@]}"; do
+  [[ -n "${!name:-}" ]] || device_guard_refuse "the ${MEASURE_SCENARIO:-device} scenario needs $name"
 done
 # Names that cannot read as an option or split a configuration line.
-for name in MEASURE_DEVICE_ALIAS MEASURE_DEVICE_USER; do
+device_guard_plain=(MEASURE_DEVICE_ALIAS MEASURE_DEVICE_USER)
+! $device_guard_core || device_guard_plain+=(MEASURE_CORE_NODE)
+for name in "${device_guard_plain[@]}"; do
   [[ "${!name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || device_guard_refuse "$name ${!name} is not a plain name"
 done
 [[ "$MEASURE_DEVICE_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]] || device_guard_refuse "MEASURE_DEVICE_HOST $MEASURE_DEVICE_HOST is not a plain host name or address"
@@ -54,8 +72,13 @@ done
 device_guard_port=$((10#$MEASURE_DEVICE_PORT))
 [[ "$MEASURE_DEVICE_IDENTITY" == /* && "$MEASURE_DEVICE_IDENTITY" != *[[:space:]]* && -f "$MEASURE_DEVICE_IDENTITY" ]] || device_guard_refuse "MEASURE_DEVICE_IDENTITY $MEASURE_DEVICE_IDENTITY is not an absolute key file path without spaces"
 device_guard_under_tmp "$MEASURE_DEVICE_HOME" || device_guard_refuse "MEASURE_DEVICE_HOME $MEASURE_DEVICE_HOME is not a private path under /tmp"
-for name in MEASURE_DEVICE_HELPER_ROOT MEASURE_DEVICE_CLI_DIR; do
-  device_guard_inside "${!name}" "$MEASURE_DEVICE_HOME" || device_guard_refuse "$name ${!name} is not an absolute folder inside MEASURE_DEVICE_HOME"
+if $device_guard_core; then
+  device_guard_inside_names=(MEASURE_CORE_PROGRAM MEASURE_CORE_STATE)
+else
+  device_guard_inside_names=(MEASURE_DEVICE_HELPER_ROOT MEASURE_DEVICE_CLI_DIR)
+fi
+for name in "${device_guard_inside_names[@]}"; do
+  device_guard_inside "${!name}" "$MEASURE_DEVICE_HOME" || device_guard_refuse "$name ${!name} is not an absolute path inside MEASURE_DEVICE_HOME"
 done
 device_guard_under_tmp "$MEASURE_DEVICE_SOCKET" || device_guard_refuse "MEASURE_DEVICE_SOCKET $MEASURE_DEVICE_SOCKET is not a private path under /tmp"
 # Every recorded key is for the private sshd's host and port, written out

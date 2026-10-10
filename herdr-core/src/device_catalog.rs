@@ -640,6 +640,24 @@ pub(crate) fn git_roots(session: &RemoteSessionSnapshot) -> BTreeSet<String> {
         .collect()
 }
 
+/// Attributes a device's listeners to its panes, each to the panes at or
+/// above the folder it was started in, as this machine's are to its own.
+pub(crate) fn apply_ports(
+    session: &mut RemoteSessionSnapshot,
+    listeners: &[crate::model::ListeningPortSnapshot],
+) {
+    for pane in session
+        .workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.checkouts.iter_mut())
+        .flat_map(|checkout| checkout.tabs.iter_mut())
+        .flat_map(|tab| tab.panes.iter_mut())
+    {
+        pane.ports = crate::ports::attributed_ports(&pane.cwd, listeners);
+        pane.servers = crate::ports::attributed_servers(&pane.cwd, listeners);
+    }
+}
+
 /// Carries a device repository's worktree facts onto the rows its session
 /// already has. Paths are compared as the device's helper reported them;
 /// nothing is resolved on this machine's filesystem, where the same path may

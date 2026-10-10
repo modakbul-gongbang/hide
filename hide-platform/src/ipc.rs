@@ -18,8 +18,10 @@
 //! - A [`LocalStream::duplicate`] reads on one thread while the original
 //!   writes on another, and the bytes of each direction arrive whole.
 //! - [`ShutdownHandle::shutdown`] called from another thread ends a read
-//!   that is blocked, with `Ok(0)`; later reads return `Ok(0)` and later
-//!   writes fail with `BrokenPipe`.
+//!   that is blocked, with `Ok(0)`, and a write a peer that stopped reading
+//!   holds, with an error; later reads return `Ok(0)` and later writes fail
+//!   with `BrokenPipe`. A caller that bounds a write on every system ends it
+//!   this way, since a Windows pipe has no write timeout.
 //! - [`LocalListener::bind`] fails with `AddrInUse` while another listener
 //!   lives at the path, whether or not its queue is full (#403), and replaces
 //!   what a dead one left behind. A listener is alive while it holds a lock
@@ -179,7 +181,8 @@ impl LocalStream {
         }
     }
 
-    /// A handle another thread uses to end this stream's blocked reads.
+    /// A handle another thread uses to end this stream's blocked reads and
+    /// writes.
     pub fn shutdown_handle(&self) -> ShutdownHandle {
         ShutdownHandle {
             shared: Arc::clone(&self.shared),
@@ -195,6 +198,13 @@ impl LocalStream {
     /// The pid of the process at the other end, when the system reports it.
     pub fn peer_pid(&self) -> io::Result<u32> {
         sys::peer_pid(&self.shared)
+    }
+
+    /// Whether the process at the other end runs as this process's account.
+    /// On Unix the system names the peer's user; a pipe on Windows admits
+    /// only the account that owns it, so its peer always is.
+    pub fn peer_is_this_account(&self) -> io::Result<bool> {
+        sys::peer_is_this_account(&self.shared)
     }
 }
 
@@ -235,8 +245,9 @@ impl fmt::Debug for ShutdownHandle {
 }
 
 impl ShutdownHandle {
-    /// A read blocked on the stream returns `Ok(0)`; later reads return
-    /// `Ok(0)` and later writes fail with `BrokenPipe`. Idempotent.
+    /// A read blocked on the stream returns `Ok(0)` and a blocked write
+    /// fails; later reads return `Ok(0)` and later writes fail with
+    /// `BrokenPipe`. Idempotent.
     pub fn shutdown(&self) {
         sys::shutdown(&self.shared);
     }
@@ -529,6 +540,43 @@ fn peer_pid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<u32> {
         .ok_or_else(|| io::Error::from(io::ErrorKind::Unsupported))
 }
 
+/// The user id of the process at the other end of a connected Unix socket.
+#[cfg(target_os = "macos")]
+fn peer_uid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<libc::uid_t> {
+    use std::os::fd::AsRawFd;
+    let mut uid: libc::uid_t = 0;
+    let mut gid: libc::gid_t = 0;
+    // SAFETY: the output pointers refer to initialized stack values and the
+    // descriptor stays owned by `socket` for the whole call.
+    if unsafe { libc::getpeereid(socket.as_fd().as_raw_fd(), &mut uid, &mut gid) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(uid)
+}
+
+#[cfg(target_os = "linux")]
+fn peer_uid_of_fd(socket: &impl std::os::fd::AsFd) -> io::Result<libc::uid_t> {
+    use std::os::fd::AsRawFd;
+    // SAFETY: an all-zero `ucred` is a valid value.
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut size = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: the output pointers are writable for their declared sizes and
+    // the descriptor stays owned by `socket` for the whole call.
+    let result = unsafe {
+        libc::getsockopt(
+            socket.as_fd().as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut credentials as *mut libc::ucred).cast(),
+            &mut size,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(credentials.uid)
+}
+
 fn already_answers(path: &Path) -> io::Error {
     io::Error::new(
         io::ErrorKind::AddrInUse,
@@ -649,6 +697,12 @@ mod sys {
     pub(super) fn peer_pid(shared: &Shared) -> io::Result<u32> {
         let RawStream::UdSocket(socket) = &shared.raw;
         peer_pid_of_fd(socket.inner())
+    }
+
+    pub(super) fn peer_is_this_account(shared: &Shared) -> io::Result<bool> {
+        let RawStream::UdSocket(socket) = &shared.raw;
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        Ok(peer_uid_of_fd(socket.inner())? == unsafe { libc::geteuid() })
     }
 
     pub(super) fn pair() -> io::Result<(LocalStream, LocalStream)> {
@@ -979,12 +1033,12 @@ mod sys {
     /// Waits between looks at a pipe that has no data yet, growing to a cap.
     const FIRST_PAUSE: Duration = Duration::from_millis(1);
     const LONGEST_PAUSE: Duration = Duration::from_millis(4);
-    /// How long `shutdown` keeps cancelling a read that is still starting.
+    /// How long `shutdown` keeps cancelling a read or write still starting.
     const SHUTDOWN_ATTEMPTS: u32 = 200;
 
-    /// `cancelled` ends the stream; `blocked` counts reads parked inside the
-    /// system call, so a `shutdown` that raced one cancels again until it
-    /// has left.
+    /// `cancelled` ends the stream; `blocked` counts reads and writes parked
+    /// inside the system call, so a `shutdown` that raced one cancels again
+    /// until it has left.
     #[derive(Default)]
     pub(super) struct Stop {
         cancelled: AtomicBool,
@@ -1095,12 +1149,19 @@ mod sys {
     }
 
     pub(super) fn write(shared: &Shared, _: Option<Duration>, buffer: &[u8]) -> io::Result<usize> {
-        if shared.stop.cancelled.load(Ordering::SeqCst) {
-            return Err(io::ErrorKind::BrokenPipe.into());
-        }
-        let mut raw = &shared.raw;
-        raw.write(buffer).map_err(|error| {
-            if shared.stop.cancelled.load(Ordering::SeqCst) {
+        let stop = &shared.stop;
+        // Counted before the cancel check, as a read is, so a shutdown that
+        // lands between the check and the write cancels it again.
+        stop.blocked.fetch_add(1, Ordering::SeqCst);
+        let result = if stop.cancelled.load(Ordering::SeqCst) {
+            Err(io::ErrorKind::BrokenPipe.into())
+        } else {
+            let mut raw = &shared.raw;
+            raw.write(buffer)
+        };
+        stop.blocked.fetch_sub(1, Ordering::SeqCst);
+        result.map_err(|error| {
+            if stop.cancelled.load(Ordering::SeqCst) {
                 io::ErrorKind::BrokenPipe.into()
             } else {
                 error
@@ -1108,7 +1169,7 @@ mod sys {
         })
     }
 
-    #[allow(clippy::disallowed_methods)] // a production wait: shutdown retries the pipe cancel until the blocked reader has left, one millisecond apart
+    #[allow(clippy::disallowed_methods)] // a production wait: shutdown retries the pipe cancel until the blocked reader or writer has left, one millisecond apart
     pub(super) fn shutdown(shared: &Shared) {
         let stop = &shared.stop;
         stop.cancelled.store(true, Ordering::SeqCst);
@@ -1126,6 +1187,12 @@ mod sys {
 
     pub(super) fn peer_pid(shared: &Shared) -> io::Result<u32> {
         shared.raw.peer_pid()
+    }
+
+    /// Every pipe is created with an access list that admits only the
+    /// account that owns it (`PRIVATE_SDDL`).
+    pub(super) fn peer_is_this_account(_shared: &Shared) -> io::Result<bool> {
+        Ok(true)
     }
 
     /// A pipe has no unnamed pair, so the two ends meet on a private name that

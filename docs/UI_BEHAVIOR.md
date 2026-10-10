@@ -15,6 +15,7 @@ The toolbar spans the Workspace's full width and holds the path back (`Home / Pr
 Its right end holds three icons and nothing else, in this order: `Open server`, File Views and Tools.
 `Open server` (a globe): one known listener opens directly as a page in File Views, and multiple listeners open a compact keyboard picker.
 Its accessible name carries how many listeners are known (`Open server, 2 running`), so a screen reader tells a globe that opens a page at once from one that opens the picker; while the count is unknown (a remote Workspace, no connection, a discovery that is still reading or failed) the name is `Open server`, and the tooltip always says `Open server`.
+A Workspace of the machine the window runs on counts as local when that machine's core runs on another machine: the core reads that machine's listeners through its link, and its server opens in that window.
 The picker shows each real bind address and port, preserves IPv4/IPv6 scope, and supports arrows, Home, End, Enter and Escape.
 An empty, loading, disconnected, failed or stale catalog gives small feedback in the same popover; a remote Workspace explicitly has no local discovery.
 Discovery never starts or stops a server, and an opened page retains the Browser View’s own connection failure and recovery controls.
@@ -337,7 +338,8 @@ The right-click leaves the drag selection as it was, so Copy copies what the ope
 A pane whose agent sleeps (PRD agent-sleep) shows its state in place of the terminal, which stays hidden until the agent is back because the shell under it is not what the operator was talking to: Sleeping with the last progress line and Wake agent; Waking… with how old the resumed conversation is; or `Couldn’t resume this conversation` with the core's plain reason, Retry, and Start new session.
 The core band reads Sleeping, Waking or the resume failure, and typed input to the pane goes nowhere.
 Opening the pane's tab by a committed move (a row, a tab, a checkout, a relation) wakes it in the same pane with its conversation; a Recent Panels preview does not, and neither does a click inside the tab already on screen.
-The pane menu offers Sleep agent on a local agent pane that is awake, disabled with the core's reason when the agent is working, waiting for the operator, of another kind, or has no conversation Herdr reported.
+The pane menu offers Sleep agent on an agent pane that is awake on this machine, or on the machine the window runs on when that machine's core runs on another machine, disabled with the core's reason when the agent is working, waiting for the operator, of another kind, or has no conversation Herdr reported; a device's pane offers none.
+On such a window's own machine, bringing a tab forward wakes what sleeps there once that machine's Herdr has it in front.
 Web owner: `web/src/PaneView.tsx` (`SleepBody`), `web/src/sleep.ts`, `web/src/PaneRelations.tsx`.
 
 An implemented provider whose sleep policy closes its pane retains a separate sleeping conversation row in its checkout's expanded rows.
@@ -1342,6 +1344,10 @@ The View menu of the desktop app carries `Toggle device rail` (`toggle_device_ra
 The hidden state is the core's `ui_state.device_rail_visible`, kept beside `left_sidebar_visible`, so it survives a restart.
 
 A device's Workspace in front wears the device color, `--device-remote`: a band at the start of the Workspace toolbar with the server glyph and the device's name, truncated, and a border of the same color around its panes; this machine's Workspace has neither.
+
+A machine whose core runs on another machine (ARCHITECTURE.md, A core on another machine) is a device on that core's rail like any other, named by its host name.
+Its `다시 연결` is answered that the machine reconnects by itself, and removing it ends its connection until it attaches again; neither adds a state or a line of its own.
+A window on that machine shows its core's state; while the core cannot be reached it shows the shell's own connecting state, in the place and size it takes when hided is gone, takes no input, and sends none of what was typed meanwhile once the core is back.
 
 ## Start panel
 

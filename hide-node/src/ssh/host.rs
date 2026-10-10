@@ -15,6 +15,10 @@
 //! by reading the target again rather than by resending it (B14, B33).
 
 use super::*;
+#[path = "inbound.rs"]
+pub mod inbound;
+#[path = "link_streams.rs"]
+mod link_streams;
 #[path = "retirement.rs"]
 mod retirement;
 use futures_util::{StreamExt, TryStreamExt, stream};
@@ -24,6 +28,9 @@ use hide_node_link::device::{HostConsent, HostIdentity};
 use hide_node_link::panes::{NodeEvent, PanesStarted};
 use hide_node_link::protocol::{Call, Hello, PROTOCOL_VERSION, Request};
 use hide_node_link::{LinkAnswer, NodeLink, call_as};
+pub use link_streams::{
+    LinkHerdrConnector, LinkStream, LinkWriter, MAX_HERDR_PENDING, OpenError, StreamCloser,
+};
 use russh_sftp::client::{RawSftpSession, error::Error as SftpError};
 use russh_sftp::protocol::{FileAttributes, StatusCode};
 use serde_json::value::RawValue;
@@ -92,10 +99,13 @@ fn present<'de, D: serde::Deserializer<'de>>(
 
 pub use hide_node_link::device::{
     DEFAULT_CLI_DIR, DEFAULT_HELPER_ROOT, EstablishError, Established, HOST_CONSENT_CARRIED_FROM,
-    HOST_CONSENT_CONTRACT, Upload,
+    HOST_CONSENT_CONTRACT, NodeReady, Upload,
 };
 
 pub const MAX_RUNNING: usize = hide_host::serve::CONCURRENCY;
+/// Link control requests ([`Call::is_control`]) running at once, beside
+/// the machine calls: the node answers them on workers of their own.
+pub const MAX_CONTROL_RUNNING: usize = hide_host::serve::CONTROL_CONCURRENCY;
 pub const MAX_QUEUED: usize = 32;
 
 /// This program, which a device runs in its node role (`hided node serve`,
@@ -341,10 +351,12 @@ impl fmt::Debug for RemoteHost {
 /// Admission to one helper connection: four running and thirty-two waiting
 /// requests (PRD S5.5 D-15). Once the connection is draining or closed it
 /// admits nothing new, and a request still waiting is refused rather than
-/// sent, because nothing went out for it (B52).
+/// sent, because nothing went out for it (B52). A link has two: one for
+/// machine calls and one for link control (`Call::is_control`).
 struct Gate {
     state: Mutex<Admission>,
     changed: Condvar,
+    running: usize,
 }
 
 struct Admission {
@@ -354,7 +366,7 @@ struct Admission {
 }
 
 impl Gate {
-    fn new() -> Self {
+    fn new(running: usize) -> Self {
         Self {
             state: Mutex::new(Admission {
                 running: 0,
@@ -362,6 +374,7 @@ impl Gate {
                 stopped: None,
             }),
             changed: Condvar::new(),
+            running,
         }
     }
 
@@ -370,7 +383,7 @@ impl Gate {
         if let Some(reason) = &admission.stopped {
             return Err(LinkError::NotConnected(reason.clone()));
         }
-        if admission.running < MAX_RUNNING {
+        if admission.running < self.running {
             admission.running += 1;
             return Ok(());
         }
@@ -387,7 +400,7 @@ impl Gate {
                 self.changed.notify_all();
                 return Err(LinkError::NotConnected(reason));
             }
-            if admission.running < MAX_RUNNING {
+            if admission.running < self.running {
                 break;
             }
             let now = Instant::now();
@@ -450,12 +463,17 @@ struct Inner {
     /// and when the last clone is dropped. The device's connection stays,
     /// since other channels share it.
     closing: Arc<tokio::sync::Notify>,
-    /// The link's place among the connection's session channels.
-    _session_channel: tokio::sync::OwnedSemaphorePermit,
+    /// The link's place among the connection's session channels; a link
+    /// over a local stream takes none.
+    _session_channel: Option<tokio::sync::OwnedSemaphorePermit>,
     writer: tokio::sync::Mutex<Pin<Box<dyn AsyncWrite + Send>>>,
     pending: Mutex<HashMap<u64, Waiting>>,
-    closed: Mutex<Option<String>>,
+    /// Why the connection ended, once it has; waiters subscribe to it
+    /// rather than ask again ([`RemoteHost::closed`]).
+    closed: tokio::sync::watch::Sender<Option<String>>,
     gate: Gate,
+    /// Admission for link control, which never waits behind machine calls.
+    control_gate: Gate,
     next_id: AtomicU64,
     /// Checkout roots this connection has opened, pinned to the directory
     /// they named then.
@@ -464,11 +482,35 @@ struct Inner {
     /// on this link (`crate::terminal::device`).
     terminals: std::sync::OnceLock<crate::terminal::device::LineHandler>,
     readers: std::sync::OnceLock<hide_node_link::sessions::ReaderFeatures>,
+    /// The protocol the node's Hello named.
+    protocol: std::sync::OnceLock<u32>,
+    /// The streams to the node's own Herdr and its daemon's browser relay
+    /// open on this link, for a node that dialed its core (`link_streams`).
+    streams: link_streams::LinkStreams,
+    /// The link runs over the attach role's local stream: a node that dialed
+    /// this core, not a device it dialed.
+    dialed_by_node: bool,
 }
 
 impl Drop for Inner {
     fn drop(&mut self) {
         self.closing.notify_one();
+    }
+}
+
+impl Inner {
+    fn gate_for(&self, call: &Call) -> &Gate {
+        if call.is_control() {
+            &self.control_gate
+        } else {
+            &self.gate
+        }
+    }
+
+    /// Admits nothing more on either lane; the first reason given is kept.
+    fn stop_gates(&self, reason: &str) {
+        self.gate.stop(reason);
+        self.control_gate.stop(reason);
     }
 }
 
@@ -505,24 +547,46 @@ impl RemoteHost {
                 target: target.to_owned(),
                 runtime: Arc::new(RemoteRuntime(Some(runtime))),
                 closing: Arc::new(tokio::sync::Notify::new()),
-                _session_channel: Arc::new(Semaphore::new(1))
-                    .try_acquire_owned()
-                    .expect("a fresh permit"),
+                _session_channel: None,
                 writer: tokio::sync::Mutex::new(writer),
                 pending: Mutex::new(HashMap::new()),
-                closed: Mutex::new(None),
-                gate: Gate::new(),
+                closed: tokio::sync::watch::Sender::new(None),
+                gate: Gate::new(MAX_RUNNING),
+                control_gate: Gate::new(MAX_CONTROL_RUNNING),
                 next_id: AtomicU64::new(1),
                 roots: Mutex::new(HashMap::new()),
                 terminals: std::sync::OnceLock::new(),
                 readers: std::sync::OnceLock::new(),
+                protocol: std::sync::OnceLock::new(),
+                streams: Default::default(),
+                dialed_by_node: false,
             }),
         }
     }
 
+    /// Whether a node dialed this core for this link (PRD
+    /// core-host-node-remote-core D-07): the screen machine's node, which
+    /// vouches for checkout callers as well as pane callers.
+    pub fn dialed_by_node(&self) -> bool {
+        self.inner.dialed_by_node
+    }
+
     /// Why the connection ended, once it has.
     pub fn closed_reason(&self) -> Option<String> {
-        lock_recover(&self.inner.closed).clone()
+        self.inner.closed.borrow().clone()
+    }
+
+    /// Resolves with why the connection ended, as soon as it has. Holds no
+    /// clone of the link, so waiting never keeps it alive.
+    pub fn closed(&self) -> impl std::future::Future<Output = String> + Send + 'static {
+        let mut closed = self.inner.closed.subscribe();
+        async move {
+            match closed.wait_for(Option::is_some).await {
+                Ok(reason) => reason.clone().unwrap_or_default(),
+                // Every clone of the link was dropped.
+                Err(_) => "the link was dropped".to_owned(),
+            }
+        }
     }
 
     /// Ends the link; the helper exits when its channel closes. Requests
@@ -536,9 +600,10 @@ impl RemoteHost {
     /// not be called from inside an async context.
     pub fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         hide_node_link::link::check_reader_call(self, &call)?;
-        self.inner.gate.admit(timeout)?;
+        let gate = self.inner.gate_for(&call);
+        gate.admit(timeout)?;
         let result = self.send_and_wait(call, timeout, None);
-        self.inner.gate.release();
+        gate.release();
         result
     }
 
@@ -552,9 +617,10 @@ impl RemoteHost {
         progress: &mut dyn FnMut(serde_json::Value) -> bool,
     ) -> Result<LinkAnswer, LinkError> {
         hide_node_link::link::check_reader_call(self, &call)?;
-        self.inner.gate.admit(timeout)?;
+        let gate = self.inner.gate_for(&call);
+        gate.admit(timeout)?;
         let result = self.send_and_wait(call, timeout, Some(progress));
-        self.inner.gate.release();
+        gate.release();
         result
     }
 
@@ -685,6 +751,20 @@ impl RemoteHost {
         written
     }
 
+    /// Takes the protocol and reader facts the node's Hello advertised;
+    /// once per link.
+    pub(super) fn take_readers(
+        &self,
+        protocol: u32,
+        readers: hide_node_link::sessions::ReaderFeatures,
+    ) -> Result<(), String> {
+        let _ = self.inner.protocol.set(protocol);
+        self.inner
+            .readers
+            .set(readers)
+            .map_err(|_| "The node's reader facts were already established".to_owned())
+    }
+
     /// Hands what the node's terminal service sends on this link to
     /// `terminals`; a link takes one handler for its life.
     pub fn take_terminal_lines(&self, terminals: crate::terminal::device::LineHandler) -> bool {
@@ -769,6 +849,13 @@ impl NodeLink for RemoteHost {
         self.inner.readers.get()
     }
 
+    fn predates_current_protocol(&self) -> bool {
+        self.inner
+            .protocol
+            .get()
+            .is_some_and(|protocol| *protocol < PROTOCOL_VERSION)
+    }
+
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         RemoteHost::call(self, call, timeout)
     }
@@ -788,7 +875,7 @@ impl NodeLink for RemoteHost {
         };
         // Nothing new goes out from here, whoever still holds the channel;
         // a request waiting for a slot is refused, since nothing was sent.
-        self.inner.gate.stop(reason);
+        self.inner.stop_gates(reason);
         let drained = reason.to_owned();
         let spawned = std::thread::Builder::new()
             .name("remote-host-drain".into())
@@ -806,7 +893,9 @@ impl NodeLink for RemoteHost {
                 }
                 // Admitted requests are bounded by their own timeouts; this
                 // bound only keeps a wedged count from holding the link open.
-                host.inner.gate.wait_idle(Instant::now() + DRAIN_BOUND);
+                let deadline = Instant::now() + DRAIN_BOUND;
+                host.inner.gate.wait_idle(deadline);
+                host.inner.control_gate.wait_idle(deadline);
                 host.close(&drained);
             });
         if let Err(error) = spawned {
@@ -846,14 +935,17 @@ impl NodeLink for RemoteHost {
 }
 
 fn mark_closed(inner: &Inner, reason: String) {
-    let mut closed = lock_recover(&inner.closed);
-    if closed.is_none() {
+    inner.closed.send_if_modified(|closed| {
+        if closed.is_some() {
+            return false;
+        }
         *closed = Some(reason.clone());
-    }
-    drop(closed);
+        true
+    });
     // Dropping the senders wakes every waiting request as disconnected.
     lock_recover(&inner.pending).clear();
-    inner.gate.stop(&reason);
+    inner.streams.end_all();
+    inner.stop_gates(&reason);
 }
 
 /// Connects, checks consent against the device that answered, installs the
@@ -960,9 +1052,8 @@ pub fn establish(
             "reason": reason,
         }));
     }
-    host.inner.readers.set(readers).map_err(|_| {
-        EstablishError::Helper("The device reader facts were already established".to_owned())
-    })?;
+    host.take_readers(hello.protocol, readers)
+        .map_err(EstablishError::Helper)?;
     if panes.is_some() {
         establish_stage(target, "panes", since);
         start_panes(client, &host);
@@ -992,13 +1083,15 @@ pub fn establish(
     };
     establish_stage(target, "ready", since);
     Ok(Established {
-        host: Arc::new(host),
+        node: NodeReady {
+            host: Arc::new(host),
+            hello,
+            terminals,
+        },
         identity,
-        hello,
         installed,
         helper_path,
         upload,
-        terminals,
     })
 }
 
@@ -1012,9 +1105,23 @@ fn start_terminals(
     host: &RemoteHost,
     hook: TerminalHook,
 ) -> Result<Arc<dyn hide_node_link::terminal::TerminalNode>, String> {
-    let started = client
-        .herdr_socket_path()
-        .map_err(|error| error.to_string())
+    start_terminals_at(
+        client
+            .herdr_socket_path()
+            .map_err(|error| error.to_string()),
+        host,
+        hook,
+    )
+}
+
+/// [`start_terminals`] for the node's Herdr at `herdr_socket`, as the node
+/// names it.
+pub(super) fn start_terminals_at(
+    herdr_socket: Result<String, String>,
+    host: &RemoteHost,
+    hook: TerminalHook,
+) -> Result<Arc<dyn hide_node_link::terminal::TerminalNode>, String> {
+    let started = herdr_socket
         .and_then(|herdr_socket| {
             host.call(Call::TerminalsStart { herdr_socket }, HELLO_TIMEOUT)
                 .map_err(|error| error.to_string())
@@ -1090,13 +1197,21 @@ fn establish_stage(target: &str, stage: &str, since: Instant) {
 /// found keeps its files and Git; its panes' `hide` answers that the node is
 /// unavailable, and the reason goes to the log.
 fn start_panes(client: &RusshRemoteClient, host: &RemoteHost) {
-    let started = client
-        .herdr_socket_path()
-        .map_err(|error| error.to_string())
-        .and_then(|herdr_socket| {
-            call_as::<PanesStarted>(host, Call::PanesStart { herdr_socket }, HELLO_TIMEOUT)
-                .map_err(|error| error.to_string())
-        });
+    start_panes_at(
+        client
+            .herdr_socket_path()
+            .map_err(|error| error.to_string()),
+        host,
+    );
+}
+
+/// [`start_panes`] for the node's Herdr at `herdr_socket`, as the node
+/// names it.
+pub(super) fn start_panes_at(herdr_socket: Result<String, String>, host: &RemoteHost) {
+    let started = herdr_socket.and_then(|herdr_socket| {
+        call_as::<PanesStarted>(host, Call::PanesStart { herdr_socket }, HELLO_TIMEOUT)
+            .map_err(|error| error.to_string())
+    });
     match started {
         Ok(_) => crate::diagnostic!(json!({
             "component": "remote_host",
@@ -1897,37 +2012,256 @@ fn spawn_host(
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> RemoteHost {
     let writer: Pin<Box<dyn AsyncWrite + Send>> = Box::pin(channel.make_writer());
+    start_reader(
+        client.host.host_id.clone(),
+        Arc::clone(&client.runtime),
+        Some(session_channel),
+        writer,
+        LinkSource::Channel {
+            channel,
+            _connection: connection,
+        },
+        panes,
+        on_close,
+    )
+}
+
+/// Where a link's lines come from: a device helper's SSH exec channel, or
+/// the bytes of a node that dialed this core, as its attach role hands them
+/// over a local stream (PRD core-host-node-remote-core D-04, D-10).
+enum LinkSource {
+    Channel {
+        channel: Channel<Msg>,
+        _connection: Arc<Connection>,
+    },
+    Stream(tokio::sync::mpsc::Receiver<Vec<u8>>),
+}
+
+/// What one read of a link's source brought.
+enum Arrival {
+    Data(Vec<u8>),
+    Stderr(Vec<u8>),
+    Ended(String),
+}
+
+impl LinkSource {
+    async fn next(&mut self) -> Arrival {
+        match self {
+            LinkSource::Channel { channel, .. } => loop {
+                match channel.wait().await {
+                    Some(ChannelMsg::Data { data }) => return Arrival::Data(data.to_vec()),
+                    Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        return Arrival::Stderr(data.to_vec());
+                    }
+                    Some(ChannelMsg::ExitStatus { exit_status }) => {
+                        return Arrival::Ended(format!(
+                            "the device helper exited with status {exit_status}"
+                        ));
+                    }
+                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                        return Arrival::Ended(
+                            "the connection to the device helper closed".to_owned(),
+                        );
+                    }
+                    Some(_) => {}
+                }
+            },
+            LinkSource::Stream(chunks) => match chunks.recv().await {
+                Some(chunk) => Arrival::Data(chunk),
+                None => Arrival::Ended("the node's attach stream closed".to_owned()),
+            },
+        }
+    }
+
+    /// Ends what the link read from, so its far end reads the end of its
+    /// input and exits.
+    async fn finish(self) {
+        match self {
+            LinkSource::Channel { channel, .. } => {
+                let _ = channel.eof().await;
+                let _ = channel.close().await;
+            }
+            LinkSource::Stream(chunks) => drop(chunks),
+        }
+    }
+}
+
+/// A link that runs the same reader, calls and pane events as a device's
+/// over a local byte stream: the attach role's, for a node that dialed this
+/// core (PRD core-host-node-remote-core D-10). Its identity, credentials and
+/// revocation are those of any link, whoever dialed. `target` names it in the
+/// log; `stream` is closed when the link ends.
+pub fn over_local_stream(
+    target: &str,
+    stream: hide_platform::ipc::LocalStream,
+    panes: Option<PaneHook>,
+    on_close: Box<dyn FnOnce(String) + Send + 'static>,
+) -> std::io::Result<RemoteHost> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_name("node-link")
+        .enable_all()
+        .build()?;
+    let runtime = Arc::new(RemoteRuntime(Some(runtime)));
+    let shutdown = stream.shutdown_handle();
+    let mut reading = stream.duplicate();
+    let (chunks, arrivals) = tokio::sync::mpsc::channel::<Vec<u8>>(LOCAL_READ_CHUNKS);
+    std::thread::Builder::new()
+        .name("node-link-read".into())
+        .spawn(move || {
+            let mut buffer = vec![0u8; LOCAL_READ_BYTES];
+            loop {
+                match std::io::Read::read(&mut reading, &mut buffer) {
+                    // A signal that cut the read short is no end of the link.
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Ok(0) | Err(_) => return,
+                    Ok(read) => {
+                        if chunks.blocking_send(buffer[..read].to_vec()).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        })?;
+    let writer: Pin<Box<dyn AsyncWrite + Send>> = Box::pin(BlockingWriter::new(stream));
+    // The read thread ends with the stream, whichever side ended it. The
+    // stream is shut down as this closure goes, run or not: a link dropped
+    // right after its close (a refused node) tears its runtime down before
+    // the reader runs it, and the peer would otherwise never read the end.
+    let shutdown = ShutdownOnDrop(shutdown);
+    let ended = Box::new(move |reason: String| {
+        drop(shutdown);
+        on_close(reason);
+    });
+    Ok(start_reader(
+        target.to_owned(),
+        runtime,
+        None,
+        writer,
+        LinkSource::Stream(arrivals),
+        panes,
+        ended,
+    ))
+}
+
+/// Shuts a local link's stream down when it goes.
+struct ShutdownOnDrop(hide_platform::ipc::ShutdownHandle);
+
+impl Drop for ShutdownOnDrop {
+    fn drop(&mut self) {
+        self.0.shutdown();
+    }
+}
+
+/// Chunks a local link's read thread holds before the reader takes them; a
+/// reader that falls behind holds the thread, never memory.
+const LOCAL_READ_CHUNKS: usize = 16;
+const LOCAL_READ_BYTES: usize = 64 * 1024;
+
+/// A blocking local stream as the link's writer: each write runs on the
+/// runtime's blocking pool, so a stalled peer holds a pool thread, never the
+/// runtime, and the link's own write timeout still ends the wait.
+struct BlockingWriter {
+    stream: Arc<std::sync::Mutex<hide_platform::ipc::LocalStream>>,
+    writing: Option<tokio::task::JoinHandle<std::io::Result<usize>>>,
+}
+
+impl BlockingWriter {
+    fn new(stream: hide_platform::ipc::LocalStream) -> Self {
+        Self {
+            stream: Arc::new(std::sync::Mutex::new(stream)),
+            writing: None,
+        }
+    }
+}
+
+impl AsyncWrite for BlockingWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffer: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        use std::task::Poll;
+        if self.writing.is_none() {
+            let stream = Arc::clone(&self.stream);
+            let bytes = buffer.to_vec();
+            self.writing = Some(tokio::task::spawn_blocking(move || {
+                let mut stream = lock_recover(&stream);
+                std::io::Write::write_all(&mut *stream, &bytes)?;
+                Ok(bytes.len())
+            }));
+        }
+        let writing = self.writing.as_mut().expect("a write in flight");
+        match Pin::new(writing).poll(context) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(result) => {
+                self.writing = None;
+                Poll::Ready(result.unwrap_or_else(|error| Err(std::io::Error::other(error))))
+            }
+        }
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        _context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+/// The link's reader, the same for every source: lines are framed, sorted
+/// into terminal lines, pane events, reports and answers, and the first
+/// reason to stop ends the link.
+fn start_reader(
+    target: String,
+    runtime: Arc<RemoteRuntime>,
+    session_channel: Option<tokio::sync::OwnedSemaphorePermit>,
+    writer: Pin<Box<dyn AsyncWrite + Send>>,
+    mut source: LinkSource,
+    panes: Option<PaneHook>,
+    on_close: Box<dyn FnOnce(String) + Send + 'static>,
+) -> RemoteHost {
     let closing = Arc::new(tokio::sync::Notify::new());
+    let dialed_by_node = matches!(source, LinkSource::Stream(_));
     let inner = Arc::new(Inner {
-        target: client.host.host_id.clone(),
-        runtime: Arc::clone(&client.runtime),
+        target,
+        runtime: Arc::clone(&runtime),
         closing: Arc::clone(&closing),
         _session_channel: session_channel,
         writer: tokio::sync::Mutex::new(writer),
         pending: Mutex::new(HashMap::new()),
-        closed: Mutex::new(None),
-        gate: Gate::new(),
+        closed: tokio::sync::watch::Sender::new(None),
+        gate: Gate::new(MAX_RUNNING),
+        control_gate: Gate::new(MAX_CONTROL_RUNNING),
         next_id: AtomicU64::new(1),
         roots: Mutex::new(HashMap::new()),
         terminals: std::sync::OnceLock::new(),
         readers: std::sync::OnceLock::new(),
+        protocol: std::sync::OnceLock::new(),
+        streams: Default::default(),
+        dialed_by_node,
     });
     let reader = Arc::downgrade(&inner);
-    client.runtime.spawn(async move {
-        let _connection = connection;
-        let mut channel = channel;
+    runtime.spawn(async move {
         let mut buffer: Vec<u8> = Vec::new();
         // How far `buffer` has been searched for a line end, so a large
         // answer arriving in many chunks is scanned once.
         let mut scanned = 0;
         let mut stderr: Vec<u8> = Vec::new();
         let reason = 'read: loop {
-            let message = tokio::select! {
-                message = channel.wait() => message,
+            let arrival = tokio::select! {
+                arrival = source.next() => arrival,
                 () = closing.notified() => break "this Hide closed the link".to_owned(),
             };
-            match message {
-                Some(ChannelMsg::Data { data }) => {
+            match arrival {
+                Arrival::Data(data) => {
                     buffer.extend_from_slice(&data);
                     while let Some(offset) = buffer[scanned..].iter().position(|byte| *byte == b'\n') {
                         let end = scanned + offset;
@@ -1937,91 +2271,25 @@ fn spawn_host(
                         if let Some(reason) = overlong_line(&line) {
                             break 'read reason;
                         }
-                        if line.starts_with(hide_node_link::terminal::TERMINAL_LINE_PREFIX) {
-                            match inner.terminals.get() {
-                                Some(terminals) => terminals(&line),
-                                None => crate::diagnostic!(json!({
-                                    "component": "remote_host",
-                                    "kind": "host.terminal_line_unheard",
-                                    "target": inner.target,
-                                    "bytes": line.len(),
-                                })),
-                            }
-                            continue;
-                        }
-                        if line.starts_with(b"{\"event\":") {
-                            deliver_event(&inner, panes.as_ref(), &line);
-                            continue;
-                        }
-                        if line.starts_with(b"{\"progress\":") {
-                            deliver_report(&inner, &line);
-                            continue;
-                        }
-                        // The answer is only tokenized here and kept as its
-                        // own text; one nobody waits for is never copied.
-                        match serde_json::from_slice::<AnswerLine<'_>>(&line) {
-                            Ok(answer) => {
-                                let outcome = match (answer.ok, answer.error) {
-                                    (Some(raw), None) => Some(Ok(raw)),
-                                    (None, Some(error)) => Some(Err(error)),
-                                    _ => None,
-                                };
-                                let sender = lock_recover(&inner.pending)
-                                    .remove(&answer.id)
-                                    .map(|waiting| waiting.sender);
-                                match (sender, outcome) {
-                                    (Some(sender), Some(outcome)) => {
-                                        let _ = sender
-                                            .send(Delivery::Answer(outcome.map(ToOwned::to_owned)));
-                                    }
-                                    (sender, _) => crate::diagnostic!(json!({
-                                        "component": "remote_host",
-                                        "kind": "host.answer_unmatched",
-                                        "target": inner.target,
-                                        "id": answer.id,
-                                        "awaited": sender.is_some(),
-                                        "bytes": line.len(),
-                                    })),
-                                }
-                            }
-                            // serde's own text can quote the value it could
-                            // not read, which may be file contents, so only
-                            // its class and position are logged (S5.5 B48).
-                            Err(error) => crate::diagnostic!(json!({
-                                "component": "remote_host",
-                                "kind": "host.answer_unreadable",
-                                "target": inner.target,
-                                "class": format!("{:?}", error.classify()),
-                                "line": error.line(),
-                                "column": error.column(),
-                                "bytes": line.len(),
-                            })),
-                        }
+                        deliver_line(&inner, panes.as_ref(), &line);
                     }
                     scanned = buffer.len();
                     if let Some(reason) = overlong_line(&buffer) {
                         break reason;
                     }
                 }
-                Some(ChannelMsg::ExtendedData { data, .. }) => {
+                Arrival::Stderr(data) => {
                     stderr.extend_from_slice(&data);
                     if stderr.len() > 4096 {
                         stderr.drain(..stderr.len() - 4096);
                     }
                 }
-                Some(ChannelMsg::ExitStatus { exit_status }) => {
-                    break format!("the device helper exited with status {exit_status}");
-                }
-                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
-                    break "the connection to the device helper closed".to_owned();
-                }
-                Some(_) => {}
+                Arrival::Ended(reason) => break reason,
             }
         };
-        // Whatever ended the loop, the helper's channel ends with it, so the
-        // helper reads the end of its input and exits.
-        let _ = channel.eof().await;
-        let _ = channel.close().await;
+        // Whatever ended the loop, the source ends with it, so the node
+        // reads the end of its input and exits.
+        source.finish().await;
         if let Some(inner) = reader.upgrade() {
             crate::diagnostic!(json!({
                 "component": "remote_host",
@@ -2040,6 +2308,79 @@ fn spawn_host(
         on_close(reason);
     });
     RemoteHost { inner }
+}
+
+/// Sorts one whole line from the node: a terminal line, a pane event, a
+/// call's report, or an answer.
+fn deliver_line(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
+    if line.starts_with(hide_node_link::terminal::TERMINAL_LINE_PREFIX) {
+        match inner.terminals.get() {
+            Some(terminals) => terminals(line),
+            None => crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.terminal_line_unheard",
+                "target": inner.target,
+                "bytes": line.len(),
+            })),
+        }
+        return;
+    }
+    if line.starts_with(b"{\"event\":\"ping\"}") {
+        return;
+    }
+    if line.starts_with(b"{\"event\":\"link_data\"")
+        || line.starts_with(b"{\"event\":\"link_closed\"")
+    {
+        deliver_link(inner, line);
+        return;
+    }
+    if line.starts_with(b"{\"event\":") {
+        deliver_event(inner, panes, line);
+        return;
+    }
+    if line.starts_with(b"{\"progress\":") {
+        deliver_report(inner, line);
+        return;
+    }
+    // The answer is only tokenized here and kept as its own text; one nobody
+    // waits for is never copied.
+    match serde_json::from_slice::<AnswerLine<'_>>(line) {
+        Ok(answer) => {
+            let outcome = match (answer.ok, answer.error) {
+                (Some(raw), None) => Some(Ok(raw)),
+                (None, Some(error)) => Some(Err(error)),
+                _ => None,
+            };
+            let sender = lock_recover(&inner.pending)
+                .remove(&answer.id)
+                .map(|waiting| waiting.sender);
+            match (sender, outcome) {
+                (Some(sender), Some(outcome)) => {
+                    let _ = sender.send(Delivery::Answer(outcome.map(ToOwned::to_owned)));
+                }
+                (sender, _) => crate::diagnostic!(json!({
+                    "component": "remote_host",
+                    "kind": "host.answer_unmatched",
+                    "target": inner.target,
+                    "id": answer.id,
+                    "awaited": sender.is_some(),
+                    "bytes": line.len(),
+                })),
+            }
+        }
+        // serde's own text can quote the value it could not read, which may
+        // be file contents, so only its class and position are logged (S5.5
+        // B48).
+        Err(error) => crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.answer_unreadable",
+            "target": inner.target,
+            "class": format!("{:?}", error.classify()),
+            "line": error.line(),
+            "column": error.column(),
+            "bytes": line.len(),
+        })),
+    }
 }
 
 /// Hands one event line to hided's pane events. A node that sends events
@@ -2087,6 +2428,33 @@ fn deliver_report(inner: &Arc<Inner>, line: &[u8]) {
         .send(Delivery::Report(report.report.to_owned()));
 }
 
+/// Hands what the node read from a stream's end to the stream the core
+/// opened (`link_streams`); these never reach hided's pane events.
+fn deliver_link(inner: &Arc<Inner>, line: &[u8]) {
+    match serde_json::from_slice::<NodeEvent>(line) {
+        Ok(NodeEvent::LinkData { stream, data }) => {
+            inner.streams.data(&inner.target, stream, &data);
+        }
+        Ok(NodeEvent::LinkClosed { stream, reason }) => {
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "link_stream.closed_by_node",
+                "target": inner.target,
+                "stream": stream,
+                "end": inner.streams.end_of(stream),
+                "reason": reason.chars().take(64).collect::<String>(),
+            }));
+            inner.streams.end(stream, "the node ended the stream");
+        }
+        Ok(_) | Err(_) => crate::diagnostic!(json!({
+            "component": "remote_host",
+            "kind": "host.event_unreadable",
+            "target": inner.target,
+            "bytes": line.len(),
+        })),
+    }
+}
+
 fn deliver_event(inner: &Arc<Inner>, panes: Option<&PaneHook>, line: &[u8]) {
     let event = match serde_json::from_slice::<NodeEvent>(line) {
         Ok(event) => event,
@@ -2125,6 +2493,31 @@ mod tests {
     /// A device's terminal line past its cap ends the link, and an answer
     /// keeps its own, larger cap: a device's node is another machine's
     /// program.
+    /// Waiting for a link's end is told the reason as soon as the link
+    /// closes, and that the link is gone once every clone was dropped,
+    /// with no look again in between.
+    #[test]
+    fn a_link_s_end_wakes_its_waiters_at_once() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("a runtime");
+        let link = RemoteHost::detached("ssh:ending");
+        let closed = link.closed();
+        link.close("this Hide closed the link");
+        let reason = runtime
+            .block_on(async { tokio::time::timeout(Duration::from_millis(100), closed).await })
+            .expect("woken at once");
+        assert_eq!(reason, "this Hide closed the link");
+        let dropped = RemoteHost::detached("ssh:dropped");
+        let closed = dropped.closed();
+        drop(dropped);
+        let reason = runtime
+            .block_on(async { tokio::time::timeout(Duration::from_millis(100), closed).await })
+            .expect("woken at once");
+        assert_eq!(reason, "the link was dropped");
+    }
+
     #[test]
     fn a_terminal_line_past_its_cap_ends_the_link_and_an_answer_keeps_its_own() {
         use hide_node_link::terminal::{MAX_TERMINAL_LINE_BYTES, TERMINAL_LINE_PREFIX};
@@ -2218,6 +2611,66 @@ mod tests {
         assert!(matches!(&heard[0].1, NodeEvent::PaneProof { pane_id, .. } if pane_id == "w1:p1"));
     }
 
+    /// A link over a local stream, the one a node that dialed the core
+    /// arrives on (PRD core-host-node-remote-core D-10), answers calls,
+    /// carries the node's events as its own, and ends with its stream: the
+    /// node closing it ends the link, and the link closing ends the stream.
+    #[test]
+    fn a_link_over_a_local_stream_answers_and_ends_with_its_stream() {
+        use std::io::{BufRead, Write};
+        let (core_end, node_end) = hide_platform::ipc::LocalStream::pair().expect("a stream pair");
+        let heard = Arc::new(Heard::default());
+        let slot: PaneEventsSlot = Arc::default();
+        let _ = slot.set(Arc::clone(&heard) as Arc<dyn PaneEvents>);
+        let (closed, ended) = mpsc::channel();
+        let link = over_local_stream(
+            "inbound:node-a",
+            core_end,
+            Some(PaneHook {
+                node: "node-a".to_owned(),
+                events: slot,
+            }),
+            Box::new(move |reason| {
+                let _ = closed.send(reason);
+            }),
+        )
+        .expect("a local link");
+        // The core vouches for a checkout caller only on such a link.
+        assert!(link.dialed_by_node());
+        assert!(!RemoteHost::detached("device").dialed_by_node());
+        let node = std::thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(node_end.duplicate());
+            let mut writer = node_end;
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("a request");
+            let request: serde_json::Value = serde_json::from_str(&line).expect("a request line");
+            let event = json!({"event": "revoke", "token": "t"});
+            writeln!(writer, "{event}").expect("an event");
+            let answer = json!({"id": request["id"], "ok": {"echo": request["call"]["call"]}});
+            writeln!(writer, "{answer}").expect("an answer");
+            // The node ends its side; the link reads the end.
+            drop(writer);
+            drop(reader);
+        });
+        let answer = link
+            .call(Call::HookDiagnosis, Duration::from_secs(10))
+            .expect("an answer");
+        let LinkAnswer::Raw(raw) = answer else {
+            panic!("a raw answer")
+        };
+        assert!(raw.get().contains("echo"), "{}", raw.get());
+        node.join().expect("the node thread");
+        let reason = ended
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the link ends with its stream");
+        assert!(reason.contains("attach stream closed"), "{reason}");
+        assert!(link.closed_reason().is_some());
+        let heard = lock_recover(&heard.0);
+        assert_eq!(heard.len(), 1);
+        assert_eq!(heard[0].0, "node-a");
+        assert!(matches!(&heard[0].1, NodeEvent::Revoke { token } if token == "t"));
+    }
+
     fn folder(uid: u32, mode: u32) -> FileAttributes {
         FileAttributes {
             uid: Some(uid),
@@ -2244,7 +2697,7 @@ mod tests {
     #[test]
     #[allow(clippy::disallowed_methods)] // a window in which the idle wait must not end: no state reports an event that has not happened
     fn a_draining_connection_refuses_new_and_waiting_requests_and_waits_for_running_ones() {
-        let gate = Arc::new(Gate::new());
+        let gate = Arc::new(Gate::new(MAX_RUNNING));
         for _ in 0..MAX_RUNNING {
             assert!(gate.admit(Duration::from_secs(1)).is_ok());
         }
@@ -2834,10 +3287,10 @@ mod probe {
             established.identity.describe(),
             established.installed,
             established.helper_path,
-            established.hello.os,
-            established.hello.arch
+            established.node.hello.os,
+            established.node.hello.arch
         );
-        let host = established.host;
+        let host = established.node.host;
         let timeout = Duration::from_secs(20);
         let root_path = format!("{fixture}/checkout");
         let opened: RootOpened = call_as(

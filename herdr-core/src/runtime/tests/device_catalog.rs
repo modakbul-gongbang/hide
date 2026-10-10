@@ -299,7 +299,7 @@ fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
             phase: hosts::HostPhase::Ready {
                 host: device.clone(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hided".to_owned(),
+                helper_path: Some("/fake/hided".to_owned()),
             },
             generation: 1,
         },
@@ -368,7 +368,7 @@ fn a_device_session_is_grouped_when_its_helper_answers() {
             phase: hosts::HostPhase::Ready {
                 host: device.clone(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hided".to_owned(),
+                helper_path: Some("/fake/hided".to_owned()),
             },
             generation: 1,
         },
@@ -480,7 +480,7 @@ fn a_reconnected_device_keeps_its_panes_in_their_checkouts_until_its_helper_answ
             phase: hosts::HostPhase::Ready {
                 host: device.clone(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hided".to_owned(),
+                helper_path: Some("/fake/hided".to_owned()),
             },
             generation: 1,
         },
@@ -540,7 +540,10 @@ fn a_reconnected_device_keeps_its_panes_in_their_checkouts_until_its_helper_answ
     runtime.ingest_host_established(
         TARGET,
         generation,
-        Ok(super::device_kit::established(device.clone(), None)),
+        Ok(hosts::HostReady::Dialed(super::device_kit::established(
+            device.clone(),
+            None,
+        ))),
     );
     // The new connection's helper has not answered: nothing moved.
     assert_eq!(context(&runtime), Ok(bound.clone()));
@@ -573,7 +576,9 @@ fn retrying_a_device_keeps_its_panes_in_their_checkouts() {
         .push(crate::model::DeviceRegistration {
             id: TARGET.to_owned(),
             label: "Mini".to_owned(),
-            ssh_alias: Some(TARGET.to_owned()),
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: TARGET.to_owned(),
+            },
             herdr_socket_path: None,
             host_consent: None,
         });
@@ -591,7 +596,7 @@ fn retrying_a_device_keeps_its_panes_in_their_checkouts() {
             phase: hosts::HostPhase::Ready {
                 host: CatalogDevice::new(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hided".to_owned(),
+                helper_path: Some("/fake/hided".to_owned()),
             },
             generation: 1,
         },
@@ -636,7 +641,9 @@ fn catalog_device_runtime(workspaces: Vec<WorkspaceSnapshot>) -> (Runtime, tempf
         .push(crate::model::DeviceRegistration {
             id: TARGET.to_owned(),
             label: "Mini".to_owned(),
-            ssh_alias: Some(TARGET.to_owned()),
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: TARGET.to_owned(),
+            },
             herdr_socket_path: None,
             host_consent: None,
         });
@@ -654,7 +661,7 @@ fn catalog_device_runtime(workspaces: Vec<WorkspaceSnapshot>) -> (Runtime, tempf
             phase: hosts::HostPhase::Ready {
                 host: CatalogDevice::new(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hided".to_owned(),
+                helper_path: Some("/fake/hided".to_owned()),
             },
             generation: 1,
         },
@@ -710,7 +717,10 @@ fn a_retried_device_rereads_its_worktrees_when_its_helper_is_up_before_its_sessi
     runtime.ingest_host_established(
         TARGET,
         generation,
-        Ok(super::device_kit::established(CatalogDevice::new(), None)),
+        Ok(hosts::HostReady::Dialed(super::device_kit::established(
+            CatalogDevice::new(),
+            None,
+        ))),
     );
     runtime.ingest_remote_session(TARGET, Ok(session(workspaces)));
     assert_eq!(
@@ -873,7 +883,7 @@ fn a_helper_attempt_from_before_a_removal_cannot_settle_the_new_connection() {
     runtime.device_hosts.get_mut(TARGET).unwrap().phase = hosts::HostPhase::Ready {
         host: device,
         platform: "macos aarch64".to_owned(),
-        helper_path: "/fake/hided".to_owned(),
+        helper_path: Some("/fake/hided".to_owned()),
     };
     runtime.ingest_device_machine_id(TARGET, Ok("machine-device".to_owned()));
 
@@ -926,7 +936,7 @@ fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_devi
             phase: hosts::HostPhase::Ready {
                 host: FakeDevice::new(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hided".to_owned(),
+                helper_path: Some("/fake/hided".to_owned()),
             },
             generation: 1,
         },
@@ -1026,7 +1036,7 @@ fn a_device_folder_outside_its_home_is_refused_by_its_helper() {
             phase: hosts::HostPhase::Ready {
                 host: FakeDevice::new(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hided".to_owned(),
+                helper_path: Some("/fake/hided".to_owned()),
             },
             generation: 1,
         },
@@ -1100,7 +1110,7 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
             phase: hosts::HostPhase::Ready {
                 host: FakeDevice::new(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hided".to_owned(),
+                helper_path: Some("/fake/hided".to_owned()),
             },
             generation: 1,
         },
@@ -1336,7 +1346,9 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
         .push(crate::model::DeviceRegistration {
             id: TARGET.to_owned(),
             label: "Mini".to_owned(),
-            ssh_alias: Some(TARGET.to_owned()),
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: TARGET.to_owned(),
+            },
             herdr_socket_path: None,
             host_consent: None,
         });
@@ -1906,7 +1918,9 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
         .push(crate::model::DeviceRegistration {
             id: TARGET.to_owned(),
             label: TARGET.to_owned(),
-            ssh_alias: Some(TARGET.to_owned()),
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: TARGET.to_owned(),
+            },
             herdr_socket_path: None,
             host_consent: Some(consent),
         });

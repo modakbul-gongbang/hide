@@ -109,13 +109,7 @@ STORES = {
 # What a later layer of the PRD moves to a node, with that layer. Each entry
 # goes in the change that moves it; the check fails once a listed file no
 # longer reaches a machine, so a stale entry cannot linger.
-LATER_LAYERS = {
-    "herdr-core/src/labels/generator.rs": (
-        6,
-        "4: the one-generator lock is keyed by the Herdr server it labels, "
-        "which a node-role hided answers for its own Herdr",
-    ),
-}
+LATER_LAYERS = {}
 
 # Fixtures that are built for tests and never shipped.
 FIXTURES = {

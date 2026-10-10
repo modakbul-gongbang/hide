@@ -842,9 +842,18 @@ fn browser_open(
         Err(reason) => {
             // Opening already applied. Endpoint discovery cannot recast it as
             // a failed action and tempt a caller to create the page again.
+            let next_action = if reason == "browser_control_elsewhere" {
+                // The only window showing it is on another machine: its
+                // endpoints are that machine's loopback, its page commands
+                // reach it through Hide.
+                format!("Run hide browser snapshot {display_id} and the other page commands")
+            } else {
+                format!(
+                    "Run hide browser connect --display {display_id} after the desktop window reconnects"
+                )
+            };
             answer["result"]["browser_control"] = serde_json::json!({
-                "state":"unavailable","reason":reason,
-                "next_action":format!("Run hide browser connect --display {display_id} after the desktop window reconnects")
+                "state":"unavailable","reason":reason,"next_action":next_action
             });
         }
     }
@@ -971,7 +980,65 @@ impl ConnectError {
 ///
 /// The whole look-and-replace holds this state folder's connect lock, so
 /// two connects never both stop a daemon and start their own.
-fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
+///
+/// A daemon in the node role is then waited for as [`await_core_link`]
+/// says.
+fn connect(env: &Env) -> Result<Healthy, ConnectError> {
+    let healthy = find_or_start(env)?;
+    await_core_link(&healthy.0)?;
+    Ok(healthy)
+}
+
+/// A daemon and the `/health` it answered when it was found or started: its
+/// role and node are read from that answer, never asked for again.
+type Healthy = (DaemonState, serde_json::Value);
+
+/// How long `hide connect` waits for a node-role daemon's first word from
+/// its core.
+const CORE_LINK_WITHIN: Duration = Duration::from_secs(20);
+
+/// A daemon in the node role (PRD core-host-node-remote-core D-08, D-23)
+/// attaches the host once its first attempt to link to its core ended: a
+/// live link, or a core that is not running or cannot be reached, which
+/// the window shows as its reconnecting state. A core of another build
+/// refuses the node, and the host shows the failure it shows for a local
+/// daemon of another build. Past [`CORE_LINK_WITHIN`] the host attaches
+/// and the window shows the same reconnecting state. A daemon that is its
+/// own core answers at once.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
+fn await_core_link(state: &DaemonState) -> Result<(), ConnectError> {
+    let deadline = std::time::Instant::now() + CORE_LINK_WITHIN;
+    loop {
+        let Ok(health) = health_json(state.port, HEALTH_REQUEST) else {
+            return Ok(());
+        };
+        if health["role"] != "node" {
+            return Ok(());
+        }
+        if health["core_link"] == "connecting" && std::time::Instant::now() < deadline {
+            std::thread::sleep(HEALTH_PAUSE);
+            continue;
+        }
+        if health["core_link_reason"] == "other_build" {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "hide", "kind": "core.other_build_refused",
+                    "pid": state.pid, "build": health["build"],
+                })
+            );
+            return Err(ConnectError::OtherBuild(format!(
+                "the core this machine's hided links to runs another build than build {}, and refused it",
+                health["build"].as_str().unwrap_or("unknown"),
+            )));
+        }
+        return Ok(());
+    }
+}
+
+/// The daemon of this state folder, replaced or started as [`connect`]
+/// says.
+fn find_or_start(env: &Env) -> Result<Healthy, ConnectError> {
     let build = crate::build_id::of_file(&daemon_binary().map_err(ConnectError::StartFailed)?)
         .map_err(ConnectError::StartFailed)?;
     #[cfg(unix)]
@@ -981,7 +1048,7 @@ fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
     if let Some((state, health)) = healthy_daemon(env) {
         let running = health.get("build").and_then(serde_json::Value::as_str);
         if running == Some(build.as_str()) {
-            return Ok(state);
+            return Ok((state, health));
         }
         // Judged by the file this `hide` is, not the link it was invoked
         // through: the kit's command resolves into its package, and a
@@ -1083,30 +1150,37 @@ fn proven_daemon(
 }
 
 fn open(env: &Env) -> Result<(), String> {
-    let state = connect(env).map_err(|error| error.detail().to_owned())?;
-    open_browser(&state)
+    let (state, health) = connect(env).map_err(|error| error.detail().to_owned())?;
+    open_browser(&state, &health)
 }
 
 fn connect_json(env: &Env) -> Result<(), String> {
-    let (line, result) = match connect(env) {
-        Ok(state) => (attached_json(&state, "ok"), Ok(())),
-        Err(error) => (
-            match &error {
-                ConnectError::StateRefused { file, .. } => serde_json::json!({
-                    "ok": false,
-                    "reason": error.reason(),
-                    "detail": error.detail(),
-                    "file": file,
-                }),
-                _ => serde_json::json!({
-                    "ok": false,
-                    "reason": error.reason(),
-                    "detail": error.detail(),
-                }),
-            },
-            Err(format!("{}: {}", error.reason(), error.detail())),
-        ),
-    };
+    let (line, result) =
+        match connect(env).map(|(state, health)| attached_json(&state, &health, "ok")) {
+            Ok(Ok(line)) => (line, Ok(())),
+            // The node names a machine this build does not take, so where its
+            // screens run is unknown: no address is handed out.
+            Ok(Err(detail)) => (
+                serde_json::json!({"ok": false, "reason": "no_response", "detail": detail}),
+                Err(format!("no_response: {detail}")),
+            ),
+            Err(error) => (
+                match &error {
+                    ConnectError::StateRefused { file, .. } => serde_json::json!({
+                        "ok": false,
+                        "reason": error.reason(),
+                        "detail": error.detail(),
+                        "file": file,
+                    }),
+                    _ => serde_json::json!({
+                        "ok": false,
+                        "reason": error.reason(),
+                        "detail": error.detail(),
+                    }),
+                },
+                Err(format!("{}: {}", error.reason(), error.detail())),
+            ),
+        };
     println!("{line}");
     result
 }
@@ -1126,8 +1200,8 @@ fn needed_keys(kind: &CommandKind) -> Option<&'static [&'static str]> {
 }
 
 fn status_json(state_dir: &Path) -> Result<(), String> {
-    let line = match healthy_daemon_in(state_dir).map(|(state, _)| state) {
-        Some(state) => attached_json(&state, "running"),
+    let line = match healthy_daemon_in(state_dir) {
+        Some((state, health)) => attached_json(&state, &health, "running")?,
         None => serde_json::json!({ "running": false }),
     };
     println!("{line}");
@@ -1136,17 +1210,50 @@ fn status_json(state_dir: &Path) -> Result<(), String> {
 
 /// A live daemon as a host loads it. The URL carries the token in its hash,
 /// exactly as `open` hands it to a browser.
-fn attached_json(state: &DaemonState, flag: &str) -> serde_json::Value {
-    serde_json::json!({
+fn attached_json(
+    state: &DaemonState,
+    health: &serde_json::Value,
+    flag: &str,
+) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({
         flag: true,
-        "url": daemon_url(state),
+        "url": daemon_url(state, health)?,
         "port": state.port,
         "pid": state.pid,
+    }))
+}
+
+fn daemon_url(state: &DaemonState, health: &serde_json::Value) -> Result<String, String> {
+    let url = format!("http://127.0.0.1:{}/#token={}", state.port, state.token);
+    Ok(match screen_node(health)? {
+        Some(node) => format!("{url}&node={node}"),
+        None => url,
     })
 }
 
-fn daemon_url(state: &DaemonState) -> String {
-    format!("http://127.0.0.1:{}/#token={}", state.port, state.token)
+/// The machine a node-role daemon's screens run on, which the page reads
+/// from its hash to tell this machine's panes and checkouts from the
+/// core's (PRD core-host-node-remote-core B13); `None` for a daemon that is
+/// its own core, whose screens' machine is the core's. Read from the
+/// `/health` the daemon answered when it was found, so no second request can
+/// fail where the first answered. A node id this build does not take is an
+/// error: a node's screen opened as the core's would draw the node's panes
+/// as the core's.
+fn screen_node(health: &serde_json::Value) -> Result<Option<String>, String> {
+    if health["role"] != "node" {
+        return Ok(None);
+    }
+    health["node"]
+        .as_str()
+        .filter(|node| {
+            !node.is_empty()
+                && node.len() <= 128
+                && node
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        })
+        .map(|node| Some(node.to_owned()))
+        .ok_or_else(|| "the node daemon names a machine this build does not take".to_owned())
 }
 
 fn status(state_dir: &Path, idle_secs: u64) -> Result<(), String> {
@@ -1326,17 +1433,17 @@ fn wait_healthy(
     env: &Env,
     daemon: &mut std::process::Child,
     spawned_at: u64,
-) -> Result<DaemonState, ConnectError> {
+) -> Result<Healthy, ConnectError> {
     let pid = daemon.id();
     let waited = wait_started(
         HEALTHY_WITHIN,
         std::time::Instant::now,
         std::thread::sleep,
         || daemon.try_wait().ok().flatten(),
-        |timeout| probe_daemon(&env.state_dir, timeout).map(|(state, _)| state),
+        |timeout| probe_daemon(&env.state_dir, timeout),
     );
     match waited {
-        Ok(state) => Ok(state),
+        Ok(healthy) => Ok(healthy),
         Err(Waited::Timeout(detail)) => Err(ConnectError::NoResponse(detail)),
         Err(Waited::Exited(status)) => {
             let refusal = herdr_core::diagnostics::newest_record(
@@ -1379,13 +1486,13 @@ enum Waited {
     Exited(std::process::ExitStatus),
 }
 
-fn wait_started(
+fn wait_started<T>(
     within: Duration,
     now: impl Fn() -> std::time::Instant,
     mut pause: impl FnMut(Duration),
     mut exited: impl FnMut() -> Option<std::process::ExitStatus>,
-    mut probe: impl FnMut(Duration) -> Result<DaemonState, String>,
-) -> Result<DaemonState, Waited> {
+    mut probe: impl FnMut(Duration) -> Result<T, String>,
+) -> Result<T, Waited> {
     let deadline = now() + within;
     loop {
         let left = deadline.saturating_duration_since(now());
@@ -1490,8 +1597,8 @@ fn health_json(port: u16, timeout: Duration) -> Result<serde_json::Value, String
     serde_json::from_str(&body).map_err(|error| error.to_string())
 }
 
-fn open_browser(state: &DaemonState) -> Result<(), String> {
-    let url = daemon_url(state);
+fn open_browser(state: &DaemonState, health: &serde_json::Value) -> Result<(), String> {
+    let url = daemon_url(state, health)?;
     Command::new("/usr/bin/open")
         .arg(&url)
         .status()
@@ -1503,6 +1610,43 @@ fn open_browser(state: &DaemonState) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The address is decided from the health the daemon answered when it
+    /// was found: a daemon that does not answer a second request still gets
+    /// its own, and a node id the filter refuses gets none.
+    #[test]
+    fn a_daemon_s_address_comes_from_the_health_it_answered() {
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let state = DaemonState {
+            pid: 1,
+            port,
+            token: "t".to_owned(),
+            socket: None,
+            started_at: String::new(),
+            pid_started: None,
+        };
+        let core = serde_json::json!({"role": "core"});
+        assert_eq!(
+            daemon_url(&state, &core).unwrap(),
+            format!("http://127.0.0.1:{port}/#token=t"),
+            "no second request decides the address"
+        );
+        let node = serde_json::json!({"role": "node", "node": "mac-1"});
+        assert_eq!(
+            daemon_url(&state, &node).unwrap(),
+            format!("http://127.0.0.1:{port}/#token=t&node=mac-1")
+        );
+        let refused = daemon_url(
+            &state,
+            &serde_json::json!({"role": "node", "node": "mac 1&x=y"}),
+        )
+        .expect_err("a node id the filter refuses");
+        assert!(refused.contains("does not take"), "{refused}");
+    }
 
     #[test]
     fn a_refusal_is_read_only_from_the_daemon_this_start_spawned() {
@@ -1808,7 +1952,7 @@ mod tests {
             pid_started: None,
         };
         assert_eq!(
-            attached_json(&state, "ok"),
+            attached_json(&state, &serde_json::json!({"role": "core"}), "ok").unwrap(),
             serde_json::json!({
                 "ok": true,
                 "url": "http://127.0.0.1:7001/#token=abc",

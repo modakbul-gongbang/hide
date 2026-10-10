@@ -1,5 +1,6 @@
 //! Real loopback SSH boundary, with fixture-only keys and owned channel jobs.
-//! The account is a private HOME; streamlocal opens only its exact Herdr socket.
+//! The account is a private HOME; streamlocal opens only its exact Herdr socket,
+//! and direct-tcpip only a loopback port.
 //! Shared by the device link's tests (`remote_delivery`, `node_contract`),
 //! each of which uses part of it.
 #![allow(dead_code)]
@@ -134,6 +135,15 @@ impl Ssh {
     /// How many connections clients have opened to this server.
     pub fn accepted(&self) -> usize {
         self.shared.accepted.load(Ordering::SeqCst)
+    }
+
+    /// How many client connections are open now.
+    pub fn open(&self) -> usize {
+        self.shared
+            .connections
+            .lock()
+            .expect("SSH connections")
+            .len()
     }
 
     pub fn online(&self, value: bool) -> Result<()> {
@@ -312,6 +322,38 @@ impl server::Handler for Handler {
             return Ok(());
         }
         let mut socket = UnixStream::connect(&self.shared.socket).await?;
+        reply.accept().await;
+        let mut stream = channel.into_stream();
+        let mut stop = self.cancelled.clone();
+        self.shared.job(async move {
+            tokio::select! {
+                _ = tokio::io::copy_bidirectional(&mut socket, &mut stream) => {}
+                _ = stop.changed() => {}
+            }
+        })
+    }
+
+    /// A forward to a loopback port of this host, as OpenSSH's sshd makes
+    /// one for `direct-tcpip`; any other host is refused.
+    async fn channel_open_direct_tcpip(
+        &mut self,
+        channel: Channel<Msg>,
+        host_to_connect: &str,
+        port_to_connect: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: ChannelOpenHandle,
+        _session: &mut Session,
+    ) -> Result<()> {
+        let Ok(port) = u16::try_from(port_to_connect) else {
+            return Ok(());
+        };
+        if !matches!(host_to_connect, "127.0.0.1" | "localhost") {
+            return Ok(());
+        }
+        let Ok(mut socket) = tokio::net::TcpStream::connect(("127.0.0.1", port)).await else {
+            return Ok(());
+        };
         reply.accept().await;
         let mut stream = channel.into_stream();
         let mut stop = self.cancelled.clone();

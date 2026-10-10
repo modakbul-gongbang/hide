@@ -26,6 +26,7 @@
 //! | `SHELL` | macOS, Linux | no default shell |
 //! | `ComSpec` | Windows | no default shell |
 //! | `ProgramFiles` | Windows | no Tailscale location |
+//! | `HIDE_MACHINE_ID` | all | the machine id the system reports |
 //! | `LC_ALL`, `LC_MESSAGES`, `LANG` | Linux, read in that order | no primary language |
 
 use std::ffi::{OsStr, OsString};
@@ -48,10 +49,15 @@ pub const VARIABLES: &[&str] = &[
     "SHELL",
     "ComSpec",
     "ProgramFiles",
+    MACHINE_ID_VARIABLE,
     "LC_ALL",
     "LC_MESSAGES",
     "LANG",
 ];
+
+/// Names this process's machine for [`machine_id`] in place of the one the
+/// system reports: only a test fixture sets it.
+pub const MACHINE_ID_VARIABLE: &str = "HIDE_MACHINE_ID";
 
 /// How a caller with its own record of the environment (a registry that
 /// validates at start, a test) hands it to the `_from` functions: the value
@@ -311,6 +317,13 @@ pub fn tailscale_cli() -> io::Result<PathBuf> {
     }
 }
 
+/// The addresses this machine's network interfaces hold now, loopback
+/// left out: a change in the set means the machine moved to another
+/// network. `Unsupported` on Windows, where nothing asks yet.
+pub fn network_addresses() -> io::Result<std::collections::BTreeSet<std::net::IpAddr>> {
+    sys::network_addresses()
+}
+
 /// The machine's host name, as the system reports it.
 pub fn name() -> io::Result<String> {
     let name = sys::name()?;
@@ -328,8 +341,19 @@ pub fn name() -> io::Result<String> {
 /// Hide: the hardware UUID on macOS (`IOPlatformUUID`), `/etc/machine-id` on
 /// Linux, the `MachineGuid` Windows keeps in its registry.
 /// Its trimmed lowercase spelling is shared with stored lineage tokens.
+///
+/// [`MACHINE_ID_VARIABLE`] names another machine instead, so a test runs a
+/// node and the core it dials as two machines on one host.
 pub fn machine_id() -> io::Result<String> {
-    let id = sys::machine_id()?;
+    let id = match nonempty_variable(&process, MACHINE_ID_VARIABLE) {
+        Some(id) => id.into_string().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the machine id variable is not text",
+            )
+        })?,
+        None => sys::machine_id()?,
+    };
     let id = id.trim();
     if id.is_empty() {
         return Err(io::Error::new(
@@ -396,6 +420,49 @@ fn absolute_variable(variables: Variables, name: &str) -> io::Result<PathBuf> {
 #[cfg(unix)]
 mod sys {
     use std::io;
+
+    pub(super) fn network_addresses() -> io::Result<std::collections::BTreeSet<std::net::IpAddr>> {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+        let mut first: *mut libc::ifaddrs = std::ptr::null_mut();
+        // SAFETY: getifaddrs fills `first` with a list it allocates, which
+        // freeifaddrs releases below on every path.
+        if unsafe { libc::getifaddrs(&mut first) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut addresses = std::collections::BTreeSet::new();
+        let mut entry = first;
+        while !entry.is_null() {
+            // SAFETY: `entry` is a node of the list getifaddrs returned, which
+            // lives until freeifaddrs.
+            let interface = unsafe { &*entry };
+            entry = interface.ifa_next;
+            let up = interface.ifa_flags & libc::IFF_UP as libc::c_uint != 0;
+            let loopback = interface.ifa_flags & libc::IFF_LOOPBACK as libc::c_uint != 0;
+            if !up || loopback || interface.ifa_addr.is_null() {
+                continue;
+            }
+            // SAFETY: a non-null ifa_addr points at a sockaddr whose family
+            // says which sockaddr it is.
+            let family = i32::from(unsafe { (*interface.ifa_addr).sa_family });
+            let address = match family {
+                libc::AF_INET => {
+                    // SAFETY: an AF_INET address is a sockaddr_in.
+                    let address = unsafe { &*(interface.ifa_addr as *const libc::sockaddr_in) };
+                    IpAddr::V4(Ipv4Addr::from(u32::from_be(address.sin_addr.s_addr)))
+                }
+                libc::AF_INET6 => {
+                    // SAFETY: an AF_INET6 address is a sockaddr_in6.
+                    let address = unsafe { &*(interface.ifa_addr as *const libc::sockaddr_in6) };
+                    IpAddr::V6(Ipv6Addr::from(address.sin6_addr.s6_addr))
+                }
+                _ => continue,
+            };
+            addresses.insert(address);
+        }
+        // SAFETY: `first` came from getifaddrs and is freed once.
+        unsafe { libc::freeifaddrs(first) };
+        Ok(addresses)
+    }
 
     pub(super) fn name() -> io::Result<String> {
         let mut buffer = [0u8; 256];
@@ -574,6 +641,13 @@ mod sys {
     use std::io;
     use std::os::windows::ffi::OsStringExt;
     use std::ptr::null_mut;
+
+    pub(super) fn network_addresses() -> io::Result<std::collections::BTreeSet<std::net::IpAddr>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "the network address set is not read on Windows yet",
+        ))
+    }
 
     use windows_sys::Win32::Foundation::ERROR_SUCCESS;
     use windows_sys::Win32::System::Registry::{

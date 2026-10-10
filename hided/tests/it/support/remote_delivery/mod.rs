@@ -1,7 +1,7 @@
 //! Isolated process fixture for the actual SSH return-route journey.
 //! Every candidate child has an owned process tree; counts and reads are capped.
 
-mod renderer;
+pub mod renderer;
 use super::ssh_server as ssh;
 
 use std::collections::BTreeMap;
@@ -20,6 +20,10 @@ pub use ssh::Ssh;
 const READY_BOUND: Duration = Duration::from_secs(30);
 const READ_CAP: usize = 1024 * 1024;
 
+/// The prompt every fixture shell draws, so a test types into a pane only
+/// once its shell is ready for keys.
+pub const PROMPT: &str = "fixture-ready> ";
+
 #[derive(Clone)]
 pub struct Environment {
     pub home: PathBuf,
@@ -37,7 +41,7 @@ impl ssh::Account for Environment {
 }
 
 impl Environment {
-    fn new(root: &Path, socket: &Path, bin: &Path, state_dir: Option<&Path>) -> Result<Self> {
+    pub fn new(root: &Path, socket: &Path, bin: &Path, state_dir: Option<&Path>) -> Result<Self> {
         let home = root.join("home");
         for folder in [
             &home,
@@ -48,7 +52,7 @@ impl Environment {
         ] {
             fs::create_dir_all(folder)?;
         }
-        fs::write(home.join(".zshrc"), "PS1='fixture %# '\n")?;
+        fs::write(home.join(".zshrc"), format!("PS1='{PROMPT}'\n"))?;
         // This journey starts after retirement. Mark only that private
         // prerequisite complete so candidate kit reconciliation never reaches
         // the account's actual service manager; mailbox state is never seeded.
@@ -79,6 +83,7 @@ impl Environment {
                     "CLAUDE_",
                     "CODEX_",
                     "OPENCODE_",
+                    "GIT_",
                 ]
                 .iter()
                 .any(|prefix| name.starts_with(prefix))
@@ -86,6 +91,9 @@ impl Environment {
             .collect();
         for (name, value) in [
             ("HOME", home.clone().into_os_string()),
+            // The account's git reads only its own home: no operator signing
+            // key or hook arrives through the machine's configuration.
+            ("GIT_CONFIG_NOSYSTEM", "1".into()),
             ("SHELL", "/bin/zsh".into()),
             (
                 "PATH",
@@ -127,7 +135,7 @@ impl Environment {
         command
     }
 
-    fn set(&mut self, name: &str, value: impl Into<OsString>) {
+    pub fn set(&mut self, name: &str, value: impl Into<OsString>) {
         self.values.insert(name.into(), value.into());
     }
 }
@@ -139,7 +147,7 @@ pub fn quote(value: impl AsRef<OsStr>) -> String {
     )
 }
 
-fn capture(mut command: Command) -> Result<CapturedOutput> {
+pub fn capture(mut command: Command) -> Result<CapturedOutput> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -149,7 +157,7 @@ fn capture(mut command: Command) -> Result<CapturedOutput> {
         .map_err(|error| anyhow::anyhow!("private command capture: {error}"))
 }
 
-fn successful(command: Command) -> Result<Vec<u8>> {
+pub fn successful(command: Command) -> Result<Vec<u8>> {
     let answer = capture(command)?;
     ensure!(
         answer.status.success(),
@@ -198,7 +206,7 @@ fn helper_diagnostics(remote: &Environment) -> String {
     }
 }
 
-fn read(path: &Path) -> Result<Vec<u8>> {
+pub fn read(path: &Path) -> Result<Vec<u8>> {
     ensure!(
         fs::metadata(path)?.len() <= READ_CAP as u64,
         "private fixture read cap"
@@ -715,6 +723,16 @@ impl Fixture {
                 .then_some(()))
         })?;
         fixture.wait_bridge(1)?;
+        // The device's CLI is a new file, which macOS checks the first time
+        // it starts, and a journey's hook runs it inside its budget; start it
+        // once here (docs/TESTING.md, rule 8).
+        let cli = fixture.remote.environment.home.join("bin/hide");
+        wait_for("the device's installed CLI", || {
+            Ok(cli.is_file().then_some(()))
+        })?;
+        let mut version = fixture.remote.environment.command(&cli);
+        version.arg("--version");
+        successful(version)?;
         Ok(fixture)
     }
 

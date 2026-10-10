@@ -5,6 +5,7 @@ import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover";
 import { localDeviceId, type Checkout } from "./snapshot";
+import { screenDeviceId } from "./screenMachine";
 import { useShellStore } from "./store";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { WorkspaceView } from "./workspace";
@@ -26,8 +27,13 @@ export function RunningServers({ checkout, view, actions }: { checkout: Checkout
   const [open, setOpen] = useState(false);
   const [gone, setGone] = useState(false);
   const node = useShellStore((s) => localDeviceId(s.rest));
+  // The core reads its own machine's listeners and those of the machine this
+  // screen runs on when that is a node of the core's on another machine
+  // (docs/ARCHITECTURE.md, A core on another machine); the reading state is
+  // the core's own.
+  const screen = useShellStore((s) => screenDeviceId(s.rest));
   const ports = runningServers(checkout);
-  const unavailable = view.device_id !== node ? t("documents.serversUnavailable") : !live ? t("documents.serversWaiting") : discovery?.loading ? t("documents.serversReading") : discovery?.failure;
+  const unavailable = view.device_id !== node && view.device_id !== screen ? t("documents.serversUnavailable") : !live ? t("documents.serversWaiting") : view.device_id !== node ? undefined : discovery?.loading ? t("documents.serversReading") : discovery?.failure;
   // The name says how many listeners are known, so a screen reader can tell
   // whether the globe opens a page at once or the picker; an unknown count
   // is left out rather than said as zero.

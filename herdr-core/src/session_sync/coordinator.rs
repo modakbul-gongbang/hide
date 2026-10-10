@@ -121,15 +121,11 @@ fn run_coordinator(
     let mut usage_reader = usage_paths
         .zip(context.node().map(Arc::clone))
         .map(|(paths, node)| crate::usage::ProviderUsageReader::new(paths, node));
-    // A listening port is this machine's, so only the local coordinator looks.
+    // A listening port is its machine's: the local coordinator looks at this
+    // machine's, and a node that dials this core is asked for its own.
     let mut ports_reader = context
-        .is_local()
-        .then(|| {
-            context
-                .node()
-                .map(|node| crate::ports::PortsReader::new(Arc::clone(node)))
-        })
-        .flatten();
+        .machine()
+        .map(|node| crate::ports::PortsReader::new(Arc::clone(node)));
     // The three project-panel readers describe this machine's repositories:
     // its worktrees, its `gh` login's view of their pull requests, and one
     // checkout's size on this disk. All three run their subprocess on a worker
@@ -137,22 +133,16 @@ fn run_coordinator(
     let mut worktree_reader = context
         .node()
         .map(|node| crate::worktrees::WorktreeReader::new(Arc::clone(node)));
+    // `gh` runs here with the operator's login, for this machine's projects
+    // and, by repository name, for those of a node that dials this core.
     let mut github_reader = context
-        .is_local()
-        .then(|| {
-            context
-                .node()
-                .map(|node| crate::github::GithubReader::new(Arc::clone(node)))
-        })
-        .flatten();
+        .login()
+        .map(|node| crate::github::GithubReader::new(Arc::clone(node)));
+    // Sizes are measured on the machine the folders are on: this one's by
+    // its own node, a node that dials this core through its link.
     let mut disk_reader = context
-        .is_local()
-        .then(|| {
-            context
-                .node()
-                .map(|node| crate::disk::DiskReader::new(Arc::clone(node)))
-        })
-        .flatten();
+        .machine()
+        .map(|node| crate::disk::DiskReader::new(Arc::clone(node)));
     // The provider probe starts a `codex app-server` child and runs
     // `claude auth status`, so it is a reader like the three above and it
     // reads nothing at all while the Background AI group is off screen.
@@ -314,8 +304,17 @@ fn run_coordinator(
                 let changed = match runtime.lock() {
                     Ok(mut guard) => {
                         let changed = guard.tick_async_operations(now_unix_ms);
-                        // Agent sleep is this machine's alone (PRD agent-sleep).
-                        changed | (context.is_local() && guard.tick_agent_sleep(now_unix_ms))
+                        // Each machine decides its own agents' sleep: this
+                        // core's, or a node's that dials it.
+                        changed
+                            | match &context.target {
+                                SessionSyncTarget::Local { .. } => {
+                                    guard.tick_agent_sleep(now_unix_ms)
+                                }
+                                SessionSyncTarget::Remote { target_id, .. } => {
+                                    guard.tick_node_agent_sleep(target_id, now_unix_ms)
+                                }
+                            }
                     }
                     Err(_) => false,
                 };
@@ -1233,7 +1232,10 @@ fn publish_replica(
                 )
             }
             SessionSyncTarget::Remote { target_id, .. } => {
-                guard.observe_delivery(target_id, &payload, None, overlay.as_ref())
+                guard.observe_delivery(target_id, &payload, None, overlay.as_ref());
+                // Sleeping agents Herdr no longer lists are drawn from their
+                // records before the session is scoped to the device.
+                guard.settle_node_agent_sleep(target_id, &mut payload);
             }
         }
     }
@@ -1765,9 +1767,16 @@ fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::Gi
     let request = {
         let mut guard = runtime.lock().ok()?;
         let now = Instant::now();
-        guard.reread_pending_checks(now);
-        guard.reread_stale_github(now);
-        guard.github_request()
+        match &context.target {
+            SessionSyncTarget::Local { .. } => {
+                guard.reread_pending_checks(now);
+                guard.reread_stale_github(now);
+                guard.github_request()
+            }
+            SessionSyncTarget::Remote { target_id, .. } => {
+                guard.device_github_request(target_id, now)
+            }
+        }
     };
     drop(runtime);
     Some(request)
@@ -1775,7 +1784,12 @@ fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::Gi
 
 fn read_disk_request(context: &SessionSyncContext) -> Option<crate::disk::DiskRequest> {
     let runtime = context.runtime.upgrade()?;
-    let request = runtime.lock().ok()?.disk_request();
+    let request = match &context.target {
+        SessionSyncTarget::Local { .. } => runtime.lock().ok()?.disk_request(),
+        SessionSyncTarget::Remote { target_id, .. } => {
+            runtime.lock().ok()?.device_disk_request(target_id)
+        }
+    };
     drop(runtime);
     Some(request)
 }
@@ -1928,10 +1942,15 @@ fn publish_github(context: &SessionSyncContext, answer: crate::github::GithubAns
         return false;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) => {
-            let current = guard.github_request() == answer.request;
-            guard.ingest_github_answer(answer.snapshot, current)
-        }
+        Ok(mut guard) => match &context.target {
+            SessionSyncTarget::Local { .. } => {
+                let current = guard.github_request() == answer.request;
+                guard.ingest_github_answer(answer.snapshot, current)
+            }
+            SessionSyncTarget::Remote { target_id, .. } => {
+                guard.ingest_device_github(target_id, answer.snapshot)
+            }
+        },
         Err(_) => return false,
     };
     drop(runtime);
@@ -1949,7 +1968,12 @@ fn publish_disk_usage(
         return false;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_disk_usage(disk),
+        Ok(mut guard) => match &context.target {
+            SessionSyncTarget::Local { .. } => guard.ingest_disk_usage(disk),
+            SessionSyncTarget::Remote { target_id, .. } => {
+                guard.ingest_device_disk_usage(target_id, disk)
+            }
+        },
         Err(_) => return false,
     };
     drop(runtime);
@@ -1984,9 +2008,12 @@ fn publish_ports(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_listening_ports(ports),
-        Err(_) => return false,
+    let changed = match (runtime.lock(), &context.target) {
+        (Ok(mut guard), SessionSyncTarget::Local { .. }) => guard.ingest_listening_ports(ports),
+        (Ok(mut guard), SessionSyncTarget::Remote { target_id, .. }) => {
+            guard.ingest_device_listening_ports(target_id, ports)
+        }
+        (Err(_), _) => return false,
     };
     drop(runtime);
     if changed {

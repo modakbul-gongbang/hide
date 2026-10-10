@@ -164,7 +164,11 @@ fn device_runtime(herdr: &FakeHerdr, machine: &Machine) -> SharedRuntime {
         .push(crate::model::DeviceRegistration {
             id: DEVICE.to_owned(),
             label: "mini".to_owned(),
-            ..Default::default()
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: DEVICE.to_owned(),
+            },
+            herdr_socket_path: None,
+            host_consent: None,
         });
     runtime.device_hosts.insert(
         DEVICE.to_owned(),
@@ -172,7 +176,7 @@ fn device_runtime(herdr: &FakeHerdr, machine: &Machine) -> SharedRuntime {
             phase: hosts::HostPhase::Ready {
                 host: machine.helper(),
                 platform: "macos aarch64".to_owned(),
-                helper_path: "/fake/hided".to_owned(),
+                helper_path: Some("/fake/hided".to_owned()),
             },
             generation: 1,
         },
@@ -548,7 +552,7 @@ fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
         runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Ready {
             host: machine.helper(),
             platform: "macos aarch64".to_owned(),
-            helper_path: "/fake/hided".to_owned(),
+            helper_path: Some("/fake/hided".to_owned()),
         };
         runtime.home_helper_ready(DEVICE);
     }

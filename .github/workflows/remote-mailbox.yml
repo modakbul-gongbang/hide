@@ -7,7 +7,9 @@
 # serves SFTP from the system's own server. It also runs the one other hided
 # test that needs the pinned Herdr beside a real daemon and no SSH
 # (hided/tests/it/held_letter_notice.rs), because this is the lane that already
-# fetches the pinned binary for a change to `hided` or `herdr-core`.
+# fetches the pinned binary for a change to `hided` or `herdr-core`, and the
+# remote core journeys (hided/tests/it/remote_core.rs), which need the same
+# binaries, pinned Herdr and loopback SSH.
 name: remote mailbox lane
 
 on:
@@ -78,6 +80,14 @@ jobs:
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
         run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test it -E 'test(/^(remote_delivery|held_letter_notice)::/)' --run-ignored only
+      - name: A screen machine whose core runs on another machine
+        # hided/tests/it/remote_core.rs (PRD core-host-node-remote-core): a
+        # node-role hided attached over this lane's loopback SSH to a core
+        # hided, each with its own pinned Herdr.
+        timeout-minutes: 10
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test it -E 'test(/^remote_core::/)' --run-ignored only
       - name: Terminal attach children end with what started them
         # hided/tests/it/terminal_children.rs (PRD core-host-node-terminal B20):
         # a SIGKILLed hided and a dropped device link each leave no

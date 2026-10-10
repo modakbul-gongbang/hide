@@ -1,5 +1,10 @@
 //! Native Browser View routes into a consented SSH device. A route belongs
 //! to one core-owned View and load stamp; it never falls back to this Mac.
+//!
+//! The same registry serves a node whose core runs on another machine
+//! (`node_pages`): there the View's source comes from the core over the
+//! link, and a page of the core's machine reaches its loopback through the
+//! link's own SSH connection. [`PageSources`] is what each side supplies.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -16,9 +21,11 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use herdr_core::node_access::{self, NodeLink};
 use herdr_core::workspace_control::BrowserRouteSource;
-use hide_node::ssh::RemoteLocalForward;
+use hide_node::ssh::upstream::Upstream;
+use hide_node::ssh::{RemoteLocalForward, RusshRemoteClient};
+use hide_node_link::device::RemoteResult;
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify, Semaphore, oneshot, watch};
 
@@ -31,6 +38,90 @@ const MAX_ROUTES: usize = 12;
 const MAX_ROUTE_BUILDS: usize = 4;
 const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_FILE_REQUESTS: usize = 8;
+
+/// Where a registry's pages come from, on the machine it runs on. Both
+/// calls block, so the registry makes them off the async runtime.
+pub trait PageSources: Send + Sync + 'static {
+    /// The machine whose pages the desktop loads as they are.
+    fn own_node(&self) -> &str;
+    /// The page a core-owned View shows at `load`, or `None` when that View
+    /// or load is no longer current.
+    fn source(
+        &self,
+        device: &str,
+        checkout: &str,
+        view: &str,
+        load: u64,
+    ) -> Result<Option<BrowserRouteSource>, &'static str>;
+    /// The way to `device`'s loopback and files.
+    fn way(&self, device: &str) -> Result<Way, &'static str>;
+}
+
+/// How a page of another machine is reached from this one.
+pub enum Way {
+    /// A device this core reached over SSH: its loopback through that
+    /// connection, its files over its link.
+    Device {
+        client: Arc<RusshRemoteClient>,
+        files: Arc<dyn NodeLink>,
+    },
+    /// The core's machine, from a node whose core runs there: its loopback
+    /// through the link's SSH connection. Its files are not read from here,
+    /// so its `file:` pages are refused.
+    Core(Arc<Upstream>),
+}
+
+impl Way {
+    fn forward(
+        &self,
+        remote: SocketAddr,
+        alternate: Option<SocketAddr>,
+        preserve_numeric_host: bool,
+        canceled: oneshot::Receiver<()>,
+    ) -> RemoteResult<RemoteLocalForward> {
+        match self {
+            Self::Device { client, .. } => client.start_local_workspace_forward(
+                remote,
+                alternate,
+                preserve_numeric_host,
+                canceled,
+            ),
+            Self::Core(upstream) => {
+                upstream.page_forward(remote, alternate, preserve_numeric_host, canceled)
+            }
+        }
+    }
+}
+
+impl PageSources for CoreHandle {
+    fn own_node(&self) -> &str {
+        self.node().as_str()
+    }
+
+    fn source(
+        &self,
+        device: &str,
+        checkout: &str,
+        view: &str,
+        load: u64,
+    ) -> Result<Option<BrowserRouteSource>, &'static str> {
+        self.browser_route_source(device, checkout, view, load)
+            .map_err(|_| "core_unavailable")
+    }
+
+    fn way(&self, device: &str) -> Result<Way, &'static str> {
+        let route = self
+            .workspace_remote_routes()
+            .map_err(|_| "core_unavailable")?
+            .into_iter()
+            .find(|route| route.device_id == device)
+            .ok_or("host_unavailable")?;
+        Ok(Way::Device {
+            client: ssh_client(&route).ok_or("host_unavailable")?,
+            files: route.channel,
+        })
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct Key {
@@ -109,15 +200,15 @@ pub struct Resolved {
 }
 
 pub struct BrowserRoutes {
-    core: Arc<CoreHandle>,
+    pages: Arc<dyn PageSources>,
     routes: Mutex<HashMap<Key, RouteEntry>>,
     build_slots: Arc<Semaphore>,
 }
 
 impl BrowserRoutes {
-    pub fn new(core: Arc<CoreHandle>) -> Arc<Self> {
+    pub fn new(pages: Arc<dyn PageSources>) -> Arc<Self> {
         Arc::new(Self {
-            core,
+            pages,
             routes: Mutex::new(HashMap::new()),
             build_slots: Arc::new(Semaphore::new(MAX_ROUTE_BUILDS)),
         })
@@ -138,16 +229,15 @@ impl BrowserRoutes {
             checkout,
             view,
         };
-        let core = Arc::clone(&self.core);
+        let pages = Arc::clone(&self.pages);
         let query = key.clone();
         let source = tokio::task::spawn_blocking(move || {
-            core.browser_route_source(&query.device, &query.checkout, &query.view, load)
+            pages.source(&query.device, &query.checkout, &query.view, load)
         })
         .await
-        .map_err(|_| "core_unavailable")?
-        .map_err(|_| "core_unavailable")?
+        .map_err(|_| "core_unavailable")??
         .ok_or("view_unavailable")?;
-        if self.core.node() == &key.device {
+        if self.pages.own_node() == key.device {
             return Ok(Resolved {
                 url: source.url.clone(),
                 source_url: source.url,
@@ -216,18 +306,15 @@ impl BrowserRoutes {
         owner_started: u64,
         canceled: oneshot::Receiver<()>,
     ) -> Result<Option<Route>, &'static str> {
-        let core = Arc::clone(&self.core);
+        let pages = Arc::clone(&self.pages);
         let device = key.device.clone();
-        let route = tokio::task::spawn_blocking(move || {
-            core.workspace_remote_routes()
-                .ok()?
-                .into_iter()
-                .find(|route| route.device_id == device)
-        })
-        .await
-        .map_err(|_| "core_unavailable")?
-        .ok_or("host_unavailable")?;
+        let way = tokio::task::spawn_blocking(move || pages.way(&device))
+            .await
+            .map_err(|_| "core_unavailable")??;
         let (url, kind) = if crate::file_url::is_file_url(&source.url) {
+            let Way::Device { files, .. } = &way else {
+                return Err("file_page_unavailable");
+            };
             let (path, suffix) =
                 crate::file_url::file_path(&source.url).ok_or("invalid_file_url")?;
             // The device's paths in the wire spelling, related by names
@@ -246,11 +333,11 @@ impl BrowserRoutes {
                 .port();
             let secret = new_token();
             let state = FileRoute {
-                core: Arc::clone(&self.core),
+                pages: Arc::clone(&self.pages),
                 key: key.clone(),
                 owner_started,
                 source: source.clone(),
-                channel: route.channel,
+                channel: Arc::clone(files),
                 secret: secret.clone(),
                 entry: relative.clone(),
                 allowed: Arc::new(Mutex::new(HashMap::new())),
@@ -281,7 +368,6 @@ impl BrowserRoutes {
                 RouteKind::File(stop),
             )
         } else if let Some((scheme, remote_port, host, tail)) = loopback_target(&source.url) {
-            let client = ssh_client(&route).ok_or("host_unavailable")?;
             let remote_ip = crate::browser_cli::loopback_ip(&host).ok_or("invalid_loopback")?;
             let remote = SocketAddr::new(remote_ip, remote_port);
             let alternate = (host == "localhost").then_some(SocketAddr::new(
@@ -291,7 +377,7 @@ impl BrowserRoutes {
             let preserve_numeric_host =
                 scheme == "https" && host != "localhost" && host != "0.0.0.0";
             let forward = tokio::task::spawn_blocking(move || {
-                client.start_local_workspace_forward(remote, alternate, preserve_numeric_host, canceled)
+                way.forward(remote, alternate, preserve_numeric_host, canceled)
             })
             .await
             .map_err(|_| "route_failed")?
@@ -324,11 +410,12 @@ impl BrowserRoutes {
         built: Result<Option<Route>, &'static str>,
     ) {
         let current = if built.is_ok() && process_start(key.owner_pid) == Some(owner_started) {
-            let core = Arc::clone(&self.core);
+            let pages = Arc::clone(&self.pages);
             let query = key.clone();
             let load = source.load;
             tokio::task::spawn_blocking(move || {
-                core.browser_route_source(&query.device, &query.checkout, &query.view, load)
+                pages
+                    .source(&query.device, &query.checkout, &query.view, load)
                     .ok()
                     .flatten()
             })
@@ -424,11 +511,13 @@ impl BrowserRoutes {
         }
     }
 
+    /// Closes every route whose owner, View or desktop is gone, every 2 s
+    /// until `shutdown`; the caller may also end it by aborting the task.
     pub fn spawn_reaper(
         self: &Arc<Self>,
         desktop_renderers: Arc<AtomicUsize>,
         shutdown: Arc<Notify>,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         let routes = Arc::clone(self);
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(2));
@@ -450,18 +539,19 @@ impl BrowserRoutes {
                     {
                         true
                     } else {
-                        let core = Arc::clone(&routes.core);
+                        let pages = Arc::clone(&routes.pages);
                         let key_for_query = key.clone();
                         tokio::task::spawn_blocking(move || {
-                            core.browser_route_source(
-                                &key_for_query.device,
-                                &key_for_query.checkout,
-                                &key_for_query.view,
-                                source.load,
-                            )
-                            .ok()
-                            .flatten()
-                            .is_none()
+                            pages
+                                .source(
+                                    &key_for_query.device,
+                                    &key_for_query.checkout,
+                                    &key_for_query.view,
+                                    source.load,
+                                )
+                                .ok()
+                                .flatten()
+                                .is_none()
                         })
                         .await
                         .unwrap_or(true)
@@ -483,8 +573,77 @@ impl BrowserRoutes {
             for entry in remaining {
                 entry.close();
             }
-        });
+        })
     }
+}
+
+/// What the desktop host sends to resolve or release a View's route.
+#[derive(Deserialize)]
+pub(crate) struct RouteRequest {
+    device_id: String,
+    checkout_path: String,
+    id: String,
+    load: u64,
+    owner_pid: i32,
+}
+
+impl RouteRequest {
+    fn valid(&self) -> bool {
+        !self.device_id.is_empty()
+            && self.device_id.len() <= 256
+            && hide_platform::path::is_wire_absolute(&self.checkout_path)
+            && self.checkout_path.len() <= 8192
+            && !self.id.is_empty()
+            && self.id.len() <= 256
+            && self.owner_pid > 0
+    }
+}
+
+/// The answer to an authorized `POST /browser-route`.
+pub(crate) async fn resolve_answer(routes: &Arc<BrowserRoutes>, request: RouteRequest) -> Response {
+    if !request.valid() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match routes
+        .resolve(
+            request.device_id,
+            request.checkout_path,
+            request.id,
+            request.load,
+            request.owner_pid,
+        )
+        .await
+    {
+        Ok(route) => axum::Json(route).into_response(),
+        Err(reason) => {
+            eprintln!(
+                "{}",
+                serde_json::json!({"component":"browser_routes","kind":"resolve.refused","reason":reason})
+            );
+            (
+                StatusCode::CONFLICT,
+                axum::Json(serde_json::json!({"reason":reason})),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// The answer to an authorized `DELETE /browser-route`.
+pub(crate) async fn release_answer(routes: &BrowserRoutes, request: RouteRequest) -> Response {
+    if !request.valid() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    routes
+        .release(
+            &request.device_id,
+            &request.checkout_path,
+            &request.id,
+            request.load,
+            request.owner_pid,
+        )
+        .await;
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn wait_for_route(mut result: watch::Receiver<Option<RouteResult>>) -> RouteResult {
@@ -540,7 +699,7 @@ fn forwarded_url(scheme: &str, host: &str, local_addr: SocketAddr, tail: &str) -
 
 #[derive(Clone)]
 struct FileRoute {
-    core: Arc<CoreHandle>,
+    pages: Arc<dyn PageSources>,
     key: Key,
     owner_started: u64,
     source: BrowserRouteSource,
@@ -576,7 +735,7 @@ async fn serve_file(State(route): State<FileRoute>, uri: Uri) -> Response {
     let Ok(permit) = route.requests.clone().try_acquire_owned() else {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     };
-    let check = Arc::clone(&route.core);
+    let check = Arc::clone(&route.pages);
     let source = route.source.clone();
     let key = route.key.clone();
     let owner_started = route.owner_started;
@@ -589,7 +748,7 @@ async fn serve_file(State(route): State<FileRoute>, uri: Uri) -> Response {
             return Err("browser_owner_unavailable");
         }
         if check
-            .browser_route_source(&key.device, &key.checkout, &key.view, source.load)
+            .source(&key.device, &key.checkout, &key.view, source.load)
             .ok()
             .flatten()
             .is_none()

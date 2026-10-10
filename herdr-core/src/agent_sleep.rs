@@ -41,6 +41,43 @@ pub const SLEEPING_SYMBOL: &str = "\u{263e}";
 
 const REMOTE_PANE_ID_PREFIX: &str = "remote:";
 
+/// The machine an agent runs on, as sleep sees it. The core's own machine
+/// and a node that dials the core sleep alike (PRD core-host-node-remote-core
+/// B13); a device the core dials does not.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SleepMachine {
+    Core,
+    /// A node whose link reached this core: its screen is the operator's.
+    Node,
+    Device,
+}
+
+/// The panes of one machine's session: the core's own, or a device's under
+/// its `remote:<device>:pane:` prefix. A device session carries Herdr's own
+/// pane ids, which the store keeps under the prefix.
+#[derive(Clone, Copy, Debug)]
+pub enum SleepScope<'a> {
+    Core,
+    Device(&'a str),
+}
+
+impl SleepScope<'_> {
+    fn holds(self, pane_id: &str) -> bool {
+        match self {
+            Self::Core => !pane_id.starts_with(REMOTE_PANE_ID_PREFIX),
+            Self::Device(prefix) => pane_id.starts_with(prefix),
+        }
+    }
+
+    /// The pane id the machine's session names `pane_id` by.
+    fn session_id(self, pane_id: &str) -> &str {
+        match self {
+            Self::Core => pane_id,
+            Self::Device(prefix) => pane_id.strip_prefix(prefix).unwrap_or(pane_id),
+        }
+    }
+}
+
 pub fn valid_after_hours(hours: Option<u32>) -> bool {
     hours.is_none_or(|hours| SLEEP_AFTER_CHOICES_HOURS.contains(&hours))
 }
@@ -170,8 +207,14 @@ impl SleepRecord {
             phase: SleepPhase::Ending,
             kind: agent.agent_kind.clone(),
             session_id,
-            agent_name: (agent.id != agent.pane_id && !agent.id.trim().is_empty())
-                .then(|| agent.id.clone()),
+            // A device row's id is the core's own scoped one, never a name;
+            // its Herdr name, when someone gave one, is `herdr_name`.
+            agent_name: agent.herdr_name.clone().or_else(|| {
+                (!agent.pane_id.starts_with(REMOTE_PANE_ID_PREFIX)
+                    && agent.id != agent.pane_id
+                    && !agent.id.trim().is_empty())
+                .then(|| agent.id.clone())
+            }),
             identity_label: agent.identity_label.clone(),
             label_owner,
             progress: agent.progress.clone(),
@@ -207,7 +250,12 @@ impl SleepRecord {
     }
 
     /// The agent row Herdr no longer sends, drawn from what the record kept.
-    fn payload(&self, pane_id: &str, workspace_label: Option<String>) -> SessionAgentPayload {
+    fn payload(
+        &self,
+        pane_id: &str,
+        workspace_label: Option<String>,
+        scope: SleepScope<'_>,
+    ) -> SessionAgentPayload {
         // Only a label the core had proven for this session comes back.
         let label = self.label_owner.as_ref().map(|_| AgentLabel {
             task: Some(self.identity_label.clone()),
@@ -237,7 +285,10 @@ impl SleepRecord {
                 kind: "id".to_owned(),
                 value: self.session_id.clone(),
             }),
-            spawned_from_pane_id: self.parent_pane_id.clone(),
+            spawned_from_pane_id: self
+                .parent_pane_id
+                .as_deref()
+                .map(|parent| scope.session_id(parent).to_owned()),
             spawned_from_machine_id: None,
             declared_parent_session: self.parent_session.clone(),
             lineage_session: crate::wire::session_digest(&self.session_id),
@@ -287,10 +338,15 @@ impl AgentSleepStore {
         }
     }
 
-    /// Reconciles the records with this machine's session and adds a row for
-    /// each sleeping agent Herdr no longer lists. `payload` is the whole local
-    /// topology, so a record whose pane it does not hold is a closed pane.
-    pub fn settle_payload(&mut self, payload: &mut SessionSnapshotPayload) -> Vec<Settled> {
+    /// Reconciles the records of one machine with its session and adds a row
+    /// for each sleeping agent Herdr no longer lists. `payload` is that
+    /// machine's whole topology, so a record of the machine whose pane it
+    /// does not hold is a closed pane; another machine's records stay.
+    pub fn settle_payload(
+        &mut self,
+        payload: &mut SessionSnapshotPayload,
+        scope: SleepScope<'_>,
+    ) -> Vec<Settled> {
         let live = payload
             .layouts
             .iter()
@@ -304,7 +360,11 @@ impl AgentSleepStore {
         let mut settled = Vec::new();
         let mut woke = Vec::new();
         self.records.retain(|pane_id, record| {
-            if !live.contains_key(pane_id.as_str()) {
+            if !scope.holds(pane_id) {
+                return true;
+            }
+            let session_pane_id = scope.session_id(pane_id);
+            if !live.contains_key(session_pane_id) {
                 settled.push(Settled::Closed {
                     pane_id: pane_id.clone(),
                 });
@@ -318,7 +378,7 @@ impl AgentSleepStore {
             // moment with its old sequence, and a pane whose metadata a
             // plugin reports stays listed with no provider at all.
             let new_agent = payload.agents.iter().any(|agent| {
-                agent.pane_id.as_deref().or(agent.id.as_deref()) == Some(pane_id.as_str())
+                agent.pane_id.as_deref().or(agent.id.as_deref()) == Some(session_pane_id)
                     && agent
                         .agent
                         .as_deref()
@@ -340,7 +400,7 @@ impl AgentSleepStore {
             self.stamps.remove(pane_id);
         }
         self.stamps.retain(|pane_id, _| {
-            pane_id.starts_with(REMOTE_PANE_ID_PREFIX) || live.contains_key(pane_id.as_str())
+            !scope.holds(pane_id) || live.contains_key(scope.session_id(pane_id))
         });
         let workspace_labels = payload
             .workspaces
@@ -351,18 +411,19 @@ impl AgentSleepStore {
         // Herdr still lists for the pane.
         let mut rows = Vec::new();
         for (pane_id, record) in &self.records {
-            if record.phase == SleepPhase::Ending {
+            if record.phase == SleepPhase::Ending || !scope.holds(pane_id) {
                 continue;
             }
-            payload.agents.retain(|agent| {
-                agent.pane_id.as_deref().or(agent.id.as_deref()) != Some(pane_id.as_str())
-            });
+            let pane_id = scope.session_id(pane_id);
+            payload
+                .agents
+                .retain(|agent| agent.pane_id.as_deref().or(agent.id.as_deref()) != Some(pane_id));
             let workspace_label = live
-                .get(pane_id.as_str())
+                .get(pane_id)
                 .and_then(|layout| workspace_labels.get(layout.workspace_id.as_str()))
                 .filter(|label| !label.trim().is_empty())
                 .cloned();
-            rows.push(record.payload(pane_id, workspace_label));
+            rows.push(record.payload(pane_id, workspace_label, scope));
         }
         payload.agents.extend(rows);
         settled
@@ -378,14 +439,19 @@ impl AgentSleepStore {
         }
     }
 
-    /// Moves each awake local agent's change stamp when its state changed or
-    /// it appeared, and drops the stamps of panes that hold no agent now.
-    /// Returns whether anything moved.
-    pub fn stamp(&mut self, agents: &[SidebarAgentSnapshot], now_unix_ms: u64) -> bool {
+    /// Moves each awake agent's change stamp on one machine when its state
+    /// changed or it appeared, and drops the stamps of that machine's panes
+    /// that hold no agent now. Returns whether anything moved.
+    pub fn stamp(
+        &mut self,
+        agents: &[SidebarAgentSnapshot],
+        scope: SleepScope<'_>,
+        now_unix_ms: u64,
+    ) -> bool {
         let mut changed = false;
         let mut present = HashSet::new();
         for agent in agents {
-            if agent.pane_id.starts_with(REMOTE_PANE_ID_PREFIX) {
+            if !scope.holds(&agent.pane_id) {
                 continue;
             }
             present.insert(agent.pane_id.as_str());
@@ -415,7 +481,7 @@ impl AgentSleepStore {
         }
         let before = self.stamps.len();
         self.stamps.retain(|pane_id, _| {
-            pane_id.starts_with(REMOTE_PANE_ID_PREFIX)
+            !scope.holds(pane_id)
                 || present.contains(pane_id.as_str())
                 || self.records.contains_key(pane_id)
         });
@@ -444,6 +510,7 @@ impl AgentSleepStore {
     pub fn due(
         &self,
         agents: &[SidebarAgentSnapshot],
+        machine: SleepMachine,
         on_screen: &HashSet<String>,
         after_hours: Option<u32>,
         backoff_until: &HashMap<String, u64>,
@@ -455,7 +522,7 @@ impl AgentSleepStore {
         let after_ms = u64::from(hours) * 60 * 60 * 1000;
         agents
             .iter()
-            .filter(|agent| sleep_refusal(agent).is_none())
+            .filter(|agent| sleep_refusal(agent, machine).is_none())
             .filter(|agent| crate::agent_state::is_seen(agent))
             .filter(|agent| !on_screen.contains(&agent.pane_id))
             .filter(|agent| !self.records.contains_key(&agent.pane_id))
@@ -484,15 +551,27 @@ pub(crate) fn sleeps_kind(kind: &str) -> bool {
     hide_agent_adapter::adapter(kind).is_some_and(|row| row.sleep.is_some())
 }
 
+/// Whether this kind sleeps by closing its pane (Pi's dormant sleep).
+pub(crate) fn closes_pane_when_sleeping(kind: &str) -> bool {
+    hide_agent_adapter::adapter(kind)
+        .and_then(|adapter| adapter.sleep)
+        .is_some_and(|dialect| dialect.closes_pane_when_sleeping())
+}
+
 /// Why this agent cannot be put to sleep now, or `None` when it can (B5,
 /// B15). The time and the screen are the automatic decision's alone; a
 /// person asking from the pane menu has already looked.
-pub fn sleep_refusal(agent: &SidebarAgentSnapshot) -> Option<&'static str> {
-    if agent.pane_id.starts_with(REMOTE_PANE_ID_PREFIX) {
+pub fn sleep_refusal(agent: &SidebarAgentSnapshot, machine: SleepMachine) -> Option<&'static str> {
+    if machine == SleepMachine::Device {
         return Some("Agents on another device cannot sleep");
     }
     if !sleeps_kind(&agent.agent_kind) {
         return Some("This agent's reader does not support sleep");
+    }
+    // A sleep that closes the pane reopens it from the core's own catalog,
+    // which holds only the core machine's folders.
+    if machine == SleepMachine::Node && closes_pane_when_sleeping(&agent.agent_kind) {
+        return Some("This agent sleeps only on the machine Hide's core runs on");
     }
     if agent.sleep.is_some() {
         return Some("This agent is already asleep");
@@ -506,12 +585,15 @@ pub fn sleep_refusal(agent: &SidebarAgentSnapshot) -> Option<&'static str> {
     None
 }
 
-/// The pane menu's Sleep agent item for a local pane's agent.
-pub fn sleep_action(agent: &SidebarAgentSnapshot) -> Option<AgentSleepActionSnapshot> {
-    if agent.pane_id.starts_with(REMOTE_PANE_ID_PREFIX) || agent.sleep.is_some() {
+/// The pane menu's Sleep agent item for an agent on a machine that sleeps.
+pub fn sleep_action(
+    agent: &SidebarAgentSnapshot,
+    machine: SleepMachine,
+) -> Option<AgentSleepActionSnapshot> {
+    if machine == SleepMachine::Device || agent.sleep.is_some() {
         return None;
     }
-    let reason = sleep_refusal(agent);
+    let reason = sleep_refusal(agent, machine);
     Some(AgentSleepActionSnapshot {
         available: reason.is_none(),
         reason: reason.map(str::to_owned),
@@ -595,12 +677,19 @@ mod tests {
     /// A store that first saw `agents` at time zero.
     fn stamped(agents: &[SidebarAgentSnapshot]) -> AgentSleepStore {
         let mut store = AgentSleepStore::default();
-        store.stamp(agents, 0);
+        store.stamp(agents, SleepScope::Core, 0);
         store
     }
 
     fn due_at(store: &AgentSleepStore, agents: &[SidebarAgentSnapshot], now: u64) -> Vec<String> {
-        store.due(agents, &HashSet::new(), Some(24), &HashMap::new(), now)
+        store.due(
+            agents,
+            SleepMachine::Core,
+            &HashSet::new(),
+            Some(24),
+            &HashMap::new(),
+            now,
+        )
     }
 
     fn payload(agents: serde_json::Value, panes: &[&str]) -> SessionSnapshotPayload {
@@ -633,7 +722,14 @@ mod tests {
         assert_eq!(due_at(&store, &agents, 34 * HOUR), ["w1:p1"]);
         assert!(
             store
-                .due(&agents, &HashSet::new(), None, &HashMap::new(), 100 * HOUR)
+                .due(
+                    &agents,
+                    SleepMachine::Core,
+                    &HashSet::new(),
+                    None,
+                    &HashMap::new(),
+                    100 * HOUR,
+                )
                 .is_empty(),
             "Never sleeps nothing"
         );
@@ -644,7 +740,7 @@ mod tests {
         let mut agents = [agent("w1:p1")];
         let mut store = stamped(&agents);
         agents[0].completed = true;
-        assert!(store.stamp(&agents, 20 * HOUR));
+        assert!(store.stamp(&agents, SleepScope::Core, 20 * HOUR));
         assert!(due_at(&store, &agents, 24 * HOUR).is_empty());
         assert_eq!(due_at(&store, &agents, 44 * HOUR), ["w1:p1"]);
     }
@@ -700,6 +796,7 @@ mod tests {
         let store = stamped(&agents);
         let due = store.due(
             &agents,
+            SleepMachine::Core,
             &HashSet::from(["w1:p8".to_owned()]),
             Some(12),
             &HashMap::from([("w1:p9".to_owned(), 13 * HOUR)]),
@@ -726,7 +823,11 @@ mod tests {
             let mut store = AgentSleepStore::default();
             asleep(&mut store, child);
             let mut session = payload(serde_json::json!([]), &["w1:p1", "w1:p2"]);
-            assert!(store.settle_payload(&mut session).is_empty());
+            assert!(
+                store
+                    .settle_payload(&mut session, SleepScope::Core)
+                    .is_empty()
+            );
             let mut rows = vec![parent.clone()];
             rows.extend(crate::sidebar::project_agents(session).agents);
             crate::agent_state::apply_lineage(&mut rows, &[], &[]);
@@ -747,7 +848,11 @@ mod tests {
         let mut store = AgentSleepStore::default();
         asleep(&mut store, &parent);
         let mut session = payload(serde_json::json!([]), &["w1:p1", "w1:p2"]);
-        assert!(store.settle_payload(&mut session).is_empty());
+        assert!(
+            store
+                .settle_payload(&mut session, SleepScope::Core)
+                .is_empty()
+        );
         let rows = crate::sidebar::project_agents(session).agents;
         let mut rows = rows;
         store.annotate(&mut rows);
@@ -792,7 +897,9 @@ mod tests {
             "agent_status": "idle", "state_change_seq": 4}]);
         let mut session = payload(stale, &["w1:p1", "w1:p2"]);
         assert!(
-            store.settle_payload(&mut session).is_empty(),
+            store
+                .settle_payload(&mut session, SleepScope::Core)
+                .is_empty(),
             "the ended agent still reported"
         );
         assert_eq!(session.agents.len(), 2, "both drawn from their records");
@@ -807,7 +914,11 @@ mod tests {
         let labelled = serde_json::json!([{"pane_id": "w1:p1", "agent_status": "unknown",
             "state_change_seq": 7, "tokens": {"task": "Refactor the parser"}}]);
         let mut session = payload(labelled, &["w1:p1", "w1:p2"]);
-        assert!(store.settle_payload(&mut session).is_empty());
+        assert!(
+            store
+                .settle_payload(&mut session, SleepScope::Core)
+                .is_empty()
+        );
         assert_eq!(session.agents.len(), 2);
         assert!(
             session
@@ -820,7 +931,7 @@ mod tests {
             "agent_status": "idle", "state_change_seq": 9}]);
         let mut session = payload(fresh, &["w1:p1"]);
         assert_eq!(
-            store.settle_payload(&mut session),
+            store.settle_payload(&mut session, SleepScope::Core),
             [
                 Settled::Woke {
                     pane_id: "w1:p1".into(),
@@ -856,25 +967,80 @@ mod tests {
     }
 
     #[test]
+    fn a_nodes_sleeping_pane_is_settled_by_its_own_session_and_no_other() {
+        const NODE: &str = "remote:screen:pane:";
+        let mut store = AgentSleepStore::default();
+        let mut sleeper = agent("remote:screen:pane:w1:p1");
+        sleeper.spawned_from_pane_id = Some("remote:screen:pane:w1:p9".into());
+        asleep(&mut store, &sleeper);
+
+        let mut core = payload(serde_json::json!([]), &["w1:p1"]);
+        assert!(store.settle_payload(&mut core, SleepScope::Core).is_empty());
+        assert!(
+            core.agents.is_empty(),
+            "the core's own w1:p1 is another pane"
+        );
+
+        let mut node = payload(serde_json::json!([]), &["w1:p1"]);
+        assert!(
+            store
+                .settle_payload(&mut node, SleepScope::Device(NODE))
+                .is_empty()
+        );
+        assert_eq!(
+            node.agents
+                .iter()
+                .map(|row| (row.pane_id.as_deref(), row.spawned_from_pane_id.as_deref()))
+                .collect::<Vec<_>>(),
+            [(Some("w1:p1"), Some("w1:p9"))],
+            "the row names the pane as the node's Herdr does"
+        );
+
+        let mut gone = payload(serde_json::json!([]), &["w1:p2"]);
+        assert_eq!(
+            store.settle_payload(&mut gone, SleepScope::Device(NODE)),
+            [Settled::Closed {
+                pane_id: "remote:screen:pane:w1:p1".into()
+            }]
+        );
+    }
+
+    #[test]
     fn the_pane_menu_says_why_an_agent_cannot_sleep() {
         let mut working = agent("w1:p1");
         working.activity = "working".into();
         assert_eq!(
-            sleep_action(&working),
+            sleep_action(&working, SleepMachine::Core),
             Some(AgentSleepActionSnapshot {
                 available: false,
                 reason: Some("This agent is working".into()),
             })
         );
         assert_eq!(
-            sleep_action(&agent("w1:p2")),
+            sleep_action(&agent("w1:p2"), SleepMachine::Core),
             Some(AgentSleepActionSnapshot {
                 available: true,
                 reason: None
             })
         );
-        let mut remote = agent("remote:mini:w1:p1");
-        remote.pane_id = "remote:mini:w1:p1".into();
-        assert_eq!(sleep_action(&remote), None);
+        let mut remote = agent("remote:mini:pane:w1:p1");
+        remote.pane_id = "remote:mini:pane:w1:p1".into();
+        assert_eq!(sleep_action(&remote, SleepMachine::Device), None);
+        assert_eq!(
+            sleep_action(&remote, SleepMachine::Node),
+            Some(AgentSleepActionSnapshot {
+                available: true,
+                reason: None
+            })
+        );
+        let mut pi = remote.clone();
+        pi.agent_kind = "pi".into();
+        assert_eq!(
+            sleep_action(&pi, SleepMachine::Node),
+            Some(AgentSleepActionSnapshot {
+                available: false,
+                reason: Some("This agent sleeps only on the machine Hide's core runs on".into()),
+            })
+        );
     }
 }

@@ -39,6 +39,17 @@
 # anything dials. With
 # MEASURE_DEVICE_DRIVEN_SECONDS set, four more device panes print a line per
 # 8 ms while the key echo runs again (key-echo-device-driven.json).
+# `remote-core` (PRD core-host-node-remote-core B5-B7, B21) is the `keys`
+# shape with this machine's hided in the node role and its core on the
+# measured device: core-host.sh uploads MEASURE_CORE_BIN (the measured
+# hided by default) to MEASURE_CORE_PROGRAM in the device's private HOME
+# and starts it on the device's isolated Herdr with the node id
+# MEASURE_CORE_NODE, the placement record names it, and this machine's
+# node (node id MEASURE_SCREEN_NODE, default measure-screen) dials it over
+# the same guarded alias. The measured pane and its four splits are this
+# machine's panes as the core sees them; after them, the key echo and key
+# count run on the device's pane of the core's own fixture checkout
+# (MEASURE_CORE_FIXTURE), with the core stopped when the run ends.
 # MEASURE_HIDED_BIN measures another hided build, such as a baseline, with
 # the same fixture.
 # Needs: the pinned herdr (HERDR_BIN_PATH or PATH), Google Chrome,
@@ -61,11 +72,13 @@ measure_dir="$(cd "$(dirname "$0")" && pwd)"
 source "$measure_dir/isolated-env.sh"
 trap 'rmdir "$MEASURE_SOCKET_DIR"' EXIT
 scenario="${MEASURE_SCENARIO:-single}"
-case "$scenario" in single|multi|keys|device|areas2|areas3|topology) ;; *) echo "MEASURE_SCENARIO must be single, multi, keys, device, areas2, areas3 or topology" >&2; exit 2;; esac
+case "$scenario" in single|multi|keys|device|remote-core|areas2|areas3|topology) ;; *) echo "MEASURE_SCENARIO must be single, multi, keys, device, remote-core, areas2, areas3 or topology" >&2; exit 2;; esac
 scale="${MEASURE_SCALE:-none}"
 case "$scale" in none|operator|double) ;; *) echo "MEASURE_SCALE must be none, operator or double" >&2; exit 2;; esac
 [[ "$scale" == none || "$scenario" == topology ]] || { echo "MEASURE_SCALE needs MEASURE_SCENARIO=topology" >&2; exit 2; }
-[[ "$scenario" != device ]] || source "$measure_dir/device-guard.sh"
+[[ "$scenario" != device && "$scenario" != remote-core ]] || source "$measure_dir/device-guard.sh"
+screen_node="${MEASURE_SCREEN_NODE:-measure-screen}"
+core_started=false
 chrome_bin="${MEASURE_CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 hided_bin="${MEASURE_HIDED_BIN:-$MEASURE_WORKTREE/target/release/hided}"
 [[ -x "$hided_bin" ]] || { echo "build target/release/hided first: pnpm --dir web build, then the release build described in docs/BUILD.md" >&2; exit 1; }
@@ -95,6 +108,11 @@ cleanup() {
     rm -f "$HERDR_SOCKET_PATH" "$HERDR_SOCKET_PATH.agent" "${HERDR_SOCKET_PATH%.sock}-client.sock" "$HERDR_SOCKET_PATH.hide-label-generator.lock"
   fi
   for pid in "${pids[@]:-}"; do [[ -n "$pid" ]] && wait "$pid" 2>/dev/null; done
+  if $core_started; then
+    # A core left running on the device is said where the run is read.
+    bash "$measure_dir/core-host.sh" stop > "$MEASURE_RUN_DIR/core-stop.txt" 2>&1 \
+      || echo "the device's core was not stopped; see $MEASURE_RUN_DIR/core-stop.txt" >&2
+  fi
   rmdir "$MEASURE_SOCKET_DIR"
   {
     for pid in "${pids[@]:-}" "${server_pid:-}"; do
@@ -201,7 +219,11 @@ measure_workspace="$(printf %s "$created" | python3 -c 'import json,sys; print(j
 measure_tab="$(printf %s "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["tab"]["tab_id"])')"
 # The current checkout-owner contract requires an explicit owner before
 # Hide can reuse this fixture's existing workspace and cat pane.
-measure_owner="$(python3 -c 'import hashlib,os; print(hashlib.sha256(("local\0"+os.path.realpath(os.environ["MEASURE_FIXTURE"])).encode()).hexdigest()[:32])')"
+# With the core elsewhere this machine's checkout is a device's, and its
+# owner's mark names this machine's node.
+owner_device=local
+[[ "$scenario" != remote-core ]] || owner_device="$screen_node"
+measure_owner="$(OWNER_DEVICE="$owner_device" python3 -c 'import hashlib,os; print(hashlib.sha256((os.environ["OWNER_DEVICE"]+"\0"+os.path.realpath(os.environ["MEASURE_FIXTURE"])).encode()).hexdigest()[:32])')"
 "$HERDR_BIN_PATH" workspace report-metadata "$measure_workspace" --source performance-fixture --token "hide_owner=$measure_owner" --token purpose="Isolated performance fixture" >/dev/null
 wait_prompt() {
   # The pane shell has printed its fixed prompt before it takes a command.
@@ -215,7 +237,7 @@ wait_prompt "$MEASURE_PANE_ID"
 "$HERDR_BIN_PATH" pane run "$MEASURE_PANE_ID" 'stty -echo -icanon; cat' >/dev/null
 extra_panes=()
 extra_tabs=()
-if [[ "$scenario" == multi || "$scenario" == keys ]]; then
+if [[ "$scenario" == multi || "$scenario" == keys || "$scenario" == remote-core ]]; then
   # Four splits beside the measured pane, alternating direction so the tree
   # nests, and (multi) four more tabs; none of it takes focus from the
   # measured pane.
@@ -270,6 +292,33 @@ if [[ "$scenario" == device ]]; then
   echo "device_pane=$device_pane" >> "$MEASURE_RUN_DIR/identity.txt"
 fi
 
+if [[ "$scenario" == remote-core ]]; then
+  for name in MEASURE_CORE_FIXTURE; do
+    [[ -n "${!name:-}" ]] || { echo "the remote-core scenario needs $name" >&2; exit 2; }
+  done
+  mkdir -p "$MEASURE_PRIVATE/home/.ssh"
+  device_guard_config > "$MEASURE_PRIVATE/home/.ssh/config"
+  chmod 600 "$MEASURE_PRIVATE/home/.ssh/config"
+  cp "$MEASURE_DEVICE_KNOWN_HOSTS" "$MEASURE_PRIVATE/home/.ssh/known_hosts"
+  device_herdr() { bash "$measure_dir/device-herdr.sh" "$@"; }
+  note "remote-core: starting the core on $MEASURE_DEVICE_ALIAS as $MEASURE_CORE_NODE"
+  core_started=true
+  bash "$measure_dir/core-host.sh" start "${MEASURE_CORE_BIN:-$hided_bin}" > "$MEASURE_RUN_DIR/core-start.txt"
+  echo "core_bin=${MEASURE_CORE_BIN:-$hided_bin}" >> "$MEASURE_RUN_DIR/identity.txt"
+  echo "core_sha256=$(shasum -a 256 "${MEASURE_CORE_BIN:-$hided_bin}" | awk '{print $1}')" >> "$MEASURE_RUN_DIR/identity.txt"
+  # The placement record a move writes (layer 5), naming the core.
+  chmod 700 "$MEASURE_PRIVATE/hide-state"
+  MEASURE_SCREEN_STATE="$MEASURE_PRIVATE/hide-state" python3 -c '
+import json, os
+record = {"alias": os.environ["MEASURE_DEVICE_ALIAS"], "node": os.environ["MEASURE_CORE_NODE"],
+          "program": os.environ["MEASURE_CORE_PROGRAM"], "state_dir": os.environ["MEASURE_CORE_STATE"]}
+path = os.path.join(os.environ["MEASURE_SCREEN_STATE"], "core-placement.json")
+with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as file:
+    json.dump(record, file)
+'
+  hided_env=(HIDE_MACHINE_ID="$screen_node")
+fi
+
 # Product hided (release, embedded web/dist) on the private socket.
 spawn_owned hided env HOME="$MEASURE_PRIVATE/home" HIDE_STATE_DIR="$MEASURE_PRIVATE/hide-state" HIDE_KEEP_ALIVE=1 HIDE_PORT=0 ${hided_env[@]+"${hided_env[@]}"} "$hided_bin"
 hided_pid=$owned_pid
@@ -278,6 +327,9 @@ hided_port="$(python3 -c "import json;print(json.load(open('$MEASURE_PRIVATE/hid
 hided_token="$(python3 -c "import json;print(json.load(open('$MEASURE_PRIVATE/hide-state/hided.json'))['token'])")"
 wait_url "http://127.0.0.1:$hided_port/health"
 page_url="http://127.0.0.1:$hided_port/?probe=1#token=$hided_token"
+# A node-role hided's page names the machine it runs on, as `hide connect`
+# hands it to the window.
+[[ "$scenario" != remote-core ]] || page_url+="&node=$screen_node"
 
 port_file="$MEASURE_RUN_DIR/chrome-profile/DevToolsActivePort"
 [[ ! -e "$port_file" ]] || { echo 'stale CDP port file; use a new run directory' >&2; exit 2; }
@@ -296,8 +348,16 @@ wait_url "http://127.0.0.1:$MEASURE_CDP_PORT/json/list"
 printf '%s' "$page_url" | node "$measure_dir/navigate.mjs" "$MEASURE_CDP_PORT"
 # A first run opens on Main (PRD S6 D-11). Open the one fixture checkout
 # through the Projects sidebar once its checkout row appears.
+if [[ "$scenario" == remote-core ]]; then
+  export MEASURE_HIDED_PORT="$hided_port" MEASURE_HIDED_TOKEN="$hided_token" MEASURE_SCREEN_NODE="$screen_node"
+  note "remote-core: bringing this machine's checkout to the front on the core"
+  node "$measure_dir/core-front.mjs" screen > "$MEASURE_RUN_DIR/front-screen.txt"
+  screen_pane="remote:$screen_node:pane:$MEASURE_PANE_ID"
+  echo "screen_pane=$screen_pane" >> "$MEASURE_RUN_DIR/identity.txt"
+fi
 wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects && projects.getAttribute('aria-selected') !== 'true') { projects.click(); return false; } const checkout = document.querySelector('[data-checkout-kind=\"branch\"]:not([disabled])'); if (checkout) { if (!window.__measureCheckoutOpened) { window.__measureCheckoutOpened = true; checkout.click(); } return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
-wait_js "window.__hideProbe?.paneId() === '$MEASURE_PANE_ID'"
+echo_pane="${screen_pane:-$MEASURE_PANE_ID}"
+wait_js "window.__hideProbe?.paneId() === '$echo_pane'"
 sleep 2
 if [[ "$scenario" == areas* ]]; then
   for tab in "${extra_tabs[@]}"; do
@@ -316,9 +376,9 @@ if [[ "$scenario" == multi ]]; then
   wait_js "window.__hideProbe.attachedPanes().length >= 9"
   sleep 2
 fi
-if [[ "$scenario" == keys ]]; then
+if [[ "$scenario" == keys || "$scenario" == remote-core ]]; then
   for pane in "${extra_panes[@]}"; do wait_prompt "$pane"; done
-  wait_js "document.querySelectorAll('[data-pane-view]').length === 5 && window.__hideProbe.paneId() === '$MEASURE_PANE_ID'"
+  wait_js "document.querySelectorAll('[data-pane-view]').length === 5 && window.__hideProbe.paneId() === '$echo_pane'"
   wait_js "window.__hideProbe.attachedPanes().length >= 5"
   sleep 2
 fi
@@ -409,7 +469,7 @@ if [[ "$scenario" == device ]]; then
   exit 0
 fi
 
-if [[ "$scenario" == keys ]]; then
+if [[ "$scenario" == keys || "$scenario" == remote-core ]]; then
   all_panes=("$MEASURE_PANE_ID" "${extra_panes[@]}")
   # One line per 8 ms for the given seconds, beside the cat that echoes keys.
   printf '%s\n' 'import sys, time' 'end = time.monotonic() + float(sys.argv[1]); i = 0' \
@@ -431,7 +491,7 @@ if [[ "$scenario" == keys ]]; then
   note "keys: idle resources, $idle_seconds s, five attached panes"
   MEASURE_RESOURCE_SECONDS="$idle_seconds" python3 "$measure_dir/resources.py" "$hided_pid" "$server_pid" "$chrome_pid" > "$MEASURE_RUN_DIR/resources-idle.json"
   note "keys: screen key echo, idle (50 samples)"
-  MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/key-echo-idle.json"
+  MEASURE_PANE_ID="$echo_pane" MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/key-echo-idle.json"
   note "keys: driven, $driven_seconds s at one line per 8 ms per pane"
   drive_all $((driven_seconds + 120))
   export MEASURE_RESOURCE_SECONDS="$driven_seconds"
@@ -450,11 +510,11 @@ if [[ "$scenario" == keys ]]; then
   reset_pane "$MEASURE_PANE_ID"
   sleep 0.5
   note "keys: screen key echo, driven (50 samples, the other four panes printing)"
-  MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/key-echo-driven.json"
+  MEASURE_PANE_ID="$echo_pane" MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/key-echo-driven.json"
   quiet_all
   if (( ${MEASURE_KEY_COUNT:-0} > 0 )); then
     note "keys: $MEASURE_KEY_COUNT distinct keys counted back from the pane"
-    node "$measure_dir/key-count.mjs" > "$MEASURE_RUN_DIR/key-count.json"
+    MEASURE_SCREEN_PANE_ID="$echo_pane" node "$measure_dir/key-count.mjs" > "$MEASURE_RUN_DIR/key-count.json"
     cat "$MEASURE_RUN_DIR/key-count.json"
     quiet_all
   fi
@@ -467,7 +527,7 @@ if [[ "$scenario" == keys ]]; then
   drive_all $((windowless_seconds + 10))
   MEASURE_RESOURCE_SECONDS="$windowless_seconds" python3 "$measure_dir/resources.py" "$hided_pid" "$server_pid" 0 > "$MEASURE_RUN_DIR/resources-windowless.json"
   printf '%s' "$page_url" | node "$measure_dir/navigate.mjs" "$MEASURE_CDP_PORT"
-  wait_js "window.__hideProbe?.paneId() === '$MEASURE_PANE_ID' && document.querySelectorAll('[data-pane-view]').length === 5"
+  wait_js "window.__hideProbe?.paneId() === '$echo_pane' && document.querySelectorAll('[data-pane-view]').length === 5"
   sleep 5
   node -e "
 import('$measure_dir/cdp.mjs').then(async ({connectPage}) => { const p = await connectPage('$MEASURE_CDP_PORT'); const panes = JSON.parse(process.argv[1]); console.log(JSON.stringify(await p.evaluate('(' + JSON.stringify(panes) + ').map((id) => ({pane: id, text_chars: window.__hideProbe.paneText(id).trim().length}))'))); p.close(); })" "$(printf '%s\n' "${all_panes[@]}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))')" > "$MEASURE_RUN_DIR/reopen-panes.json"
@@ -482,6 +542,33 @@ import('$measure_dir/cdp.mjs').then(async ({connectPage}) => { const p = await c
     python3 "$measure_dir/summarize.py" resources "$MEASURE_RUN_DIR/resources-$name.json" > "$MEASURE_RUN_DIR/resources-$name-summary.json"
   done
   cat "$MEASURE_RUN_DIR"/key-echo-*-summary.json "$MEASURE_RUN_DIR"/resources-*-summary.json
+  if [[ "$scenario" == remote-core ]]; then
+    # The core machine's pane, seen from this machine's window.
+    quiet_all
+    core_pane="$(node "$measure_dir/core-front.mjs" core)"
+    echo "core_pane=$core_pane" >> "$MEASURE_RUN_DIR/identity.txt"
+    device_herdr pane send-keys "$core_pane" ctrl+c >/dev/null
+    sleep 0.3
+    device_herdr pane run "$core_pane" "printf '\033c'; stty -echo -icanon; cat" >/dev/null
+    wait_js "window.__hideProbe?.paneId() === '$core_pane' && window.__hideProbe.attachedPanes().includes('$core_pane')"
+    sleep 2
+    note "remote-core: screen key echo on the core machine's pane $core_pane (50 samples)"
+    MEASURE_PANE_ID="$core_pane" MEASURE_ECHO_REPEATS=50 node "$measure_dir/key-echo.mjs" > "$MEASURE_RUN_DIR/key-echo-core.json"
+    python3 "$measure_dir/summarize.py" echo "$MEASURE_RUN_DIR/key-echo-core.json" > "$MEASURE_RUN_DIR/key-echo-core-summary.json"
+    cat "$MEASURE_RUN_DIR/key-echo-core-summary.json"
+    if (( ${MEASURE_KEY_COUNT:-0} > 0 )); then
+      device_herdr pane send-keys "$core_pane" ctrl+c >/dev/null
+      sleep 0.3
+      device_herdr pane run "$core_pane" "printf '\033c'; stty -echo -icanon; cat" >/dev/null
+      sleep 0.5
+      note "remote-core: $MEASURE_KEY_COUNT distinct keys counted back from the core machine's pane"
+      MEASURE_PANE_ID="$core_pane" MEASURE_SCREEN_PANE_ID="$core_pane" \
+        MEASURE_PANE_READ="bash $(printf %q "$measure_dir/device-herdr.sh") pane read '$core_pane' --source recent-unwrapped --lines 4000" \
+        node "$measure_dir/key-count.mjs" > "$MEASURE_RUN_DIR/key-count-core.json"
+      cat "$MEASURE_RUN_DIR/key-count-core.json"
+    fi
+    device_herdr pane send-keys "$core_pane" ctrl+c >/dev/null
+  fi
   note 'measurement complete; cleaning up owned processes'
   exit 0
 fi

@@ -52,6 +52,7 @@ import { commandLabel } from "./shortcutLabels";
 import type { Digit } from "./shortcuts";
 import { contextAgents, contextAllWorkspaces, contextHome, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
+import { screenDeviceId } from "./screenMachine";
 import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type InactiveProjectGroup, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
@@ -1474,7 +1475,8 @@ const NO_PANES: ReadonlySet<string> = new Set();
 
 /** What a row's menu reads from the host when it opens: the OS file manager, and the new-tab chord the registry binds here. */
 function menuHost(): MenuHost {
-  return { reveal: revealHost(), newTabChord: commandLabel("new_tab"), node: localDeviceId(useShellStore.getState().rest) };
+  const rest = useShellStore.getState().rest;
+  return { reveal: revealHost(), newTabChord: commandLabel("new_tab"), node: localDeviceId(rest), screen: screenDeviceId(rest) };
 }
 
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {

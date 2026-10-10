@@ -20,6 +20,7 @@ import { PullRequestsView } from "./PullRequestsView";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import type { Workspace } from "./snapshot";
 import { useShellStore } from "./store";
+import { screenDeviceId } from "./screenMachine";
 import { ProjectSessions } from "./ProjectSessions";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
 import { toggledFold, useUiStore, type OverviewLens } from "./ui";
@@ -81,6 +82,14 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
     actions.measureProjectDisk(localId);
     actions.refreshProjectOverview(localId);
   }, [actions, localId]);
+  // A project of the machine this screen runs on, when the core runs on
+  // another, is measured there through the core (docs/ARCHITECTURE.md, A core
+  // on another machine).
+  const screen = useShellStore((state) => screenDeviceId(state.rest));
+  const screenProjectId = workspace !== null && workspace.is_git === true && workspace.remote_target_id && workspace.device_id === screen ? workspace.id : null;
+  useEffect(() => {
+    if (screenProjectId) actions.measureProjectDisk(screenProjectId);
+  }, [actions, screenProjectId]);
   const sessionsId = workspace?.id ?? null;
   const sessionsDevice = workspace?.device_id ?? null;
   useEffect(() => {

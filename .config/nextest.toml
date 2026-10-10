@@ -4,6 +4,12 @@
 # the JUnit report. A test that fails twice fails the lane. The default profile
 # retries nothing, so a flaky test fails where it is written.
 # docs/TESTING.md, "Flaky tests", owns the policy.
+#
+# A nextest older than 0.9.145 on macOS lets a test inherit the output pipe of
+# a test started beside it and reports the other as LEAK; CI installs the pin
+# in scripts/install-nextest.sh, and an older local nextest warns here.
+nextest-version = { recommended = "0.9.145" }
+
 [profile.ci]
 retries = 1
 # Run every test, so one run reports every flaky test and every failure.
@@ -28,4 +34,14 @@ path = "junit.xml"
 # step's 10-minute limit.
 [[profile.ci.overrides]]
 filter = 'binary_id(hided::it) & test(/^remote_delivery::/)'
+slow-timeout = { period = "60s", terminate-after = 4 }
+
+# The remote-core journeys (hided/tests/it/remote_core.rs) start two hided
+# and two Herdr servers over SSH; several wait out a 30 to 60 s bound of the
+# product on purpose (a node's link returning, a screen held while its core
+# is away), so the default guard would end a healthy journey at 120 s on a
+# loaded runner. They get the remote mailbox's 240 s, and two hung attempts
+# still end inside their step's 10-minute limit.
+[[profile.ci.overrides]]
+filter = 'binary_id(hided::it) & test(/^remote_core::/)'
 slow-timeout = { period = "60s", terminate-after = 4 }

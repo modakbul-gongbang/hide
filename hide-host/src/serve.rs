@@ -24,6 +24,12 @@ use hide_node_link::process::{LineInput, ProcessStart};
 /// many per device, so the helper never queues behind itself.
 pub const CONCURRENCY: usize = 4;
 
+/// Link control requests (`Call::is_control`: a greeting, a pane's proof
+/// answer or stream, a Herdr stream) the helper works on at once, on
+/// workers of their own, so they never wait behind machine calls; the core
+/// admits as many.
+pub const CONTROL_CONCURRENCY: usize = 4;
+
 /// Requests waiting for a worker. The core admits at most [`CONCURRENCY`]
 /// at once, so this fills only behind calls the core stopped waiting for; a
 /// request past it is answered busy, and the reader never waits, so a cancel
@@ -54,7 +60,7 @@ pub trait Terminals: Send + Sync {
 }
 
 pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
-    serve_in(input, output, Env::of_process(), None)
+    serve_in(input, output, Env::of_process(), Services::none())
 }
 
 /// [`serve`] with the node's terminal service.
@@ -63,31 +69,155 @@ pub fn serve_with_terminals(
     output: impl Write + Send,
     terminals: &dyn Terminals,
 ) -> io::Result<()> {
-    serve_in(input, output, Env::of_process(), Some(terminals))
+    serve_with(
+        input,
+        output,
+        Services {
+            terminals: Some(terminals),
+            herdr_socket: None,
+            heartbeat: false,
+            checkout_callers: false,
+            opened_roots: None,
+            browser: None,
+        },
+    )
+}
+
+/// What a node serves on its link besides its files and machine work.
+pub struct Services<'a> {
+    /// The node's terminal service.
+    pub terminals: Option<&'a dyn Terminals>,
+    /// The node's own Herdr socket, which its core reaches only through the
+    /// link: a node that dialed its core (PRD core-host-node-remote-core
+    /// D-18). A device its core dialed has none, and refuses Herdr streams.
+    pub herdr_socket: Option<PathBuf>,
+    /// Whether the node says it is alive every
+    /// [`hide_node_link::panes::HEARTBEAT`]: a node that dialed its core,
+    /// whose attach role ends a link that falls silent.
+    pub heartbeat: bool,
+    /// Whether a caller in no pane is proved by its working directory
+    /// instead, as the core's own machine proves one: the screen machine's
+    /// node, whose agents' tools may run outside any pane. A device the
+    /// core dialed proves pane callers only.
+    pub checkout_callers: bool,
+    /// Where the checkout roots the core opened on this node are kept: the
+    /// screen machine's node, whose own screens read files under them
+    /// without the core (PRD core-host-node-remote-core D-05).
+    pub opened_roots: Option<&'a OpenedRoots>,
+    /// The browser gateway of the node's desktop window, which its core
+    /// asks for capabilities and reaches the relay of through the link: a
+    /// node that dialed its core (PRD core-host-node-remote-core B4, B13,
+    /// B15). Every other node refuses both.
+    pub browser: Option<&'a dyn crate::link_bridge::BrowserGateway>,
+}
+
+/// The checkout roots a node's core opened on it over one link, which are
+/// the checkouts the core's catalog carries for this machine. Capped; past
+/// the cap a root is not kept, and the screen asks the core for its files.
+pub struct OpenedRoots {
+    roots: Mutex<Vec<String>>,
+    /// Whether a root past the cap was left out and logged.
+    full: std::sync::atomic::AtomicBool,
+    /// Told every roots list a newly kept root makes, in order.
+    changed: RootsChanged,
+}
+
+/// Hears the roots list each time a root is kept.
+type RootsChanged = Box<dyn Fn(&[String]) + Send + Sync>;
+
+impl OpenedRoots {
+    /// The most roots kept.
+    pub const CAP: usize = 256;
+
+    /// None opened yet; `changed` is told the list each time a root is
+    /// kept, under the list's lock, so it hears every list in order.
+    pub fn telling(changed: impl Fn(&[String]) + Send + Sync + 'static) -> Self {
+        Self {
+            roots: Mutex::new(Vec::new()),
+            full: std::sync::atomic::AtomicBool::new(false),
+            changed: Box::new(changed),
+        }
+    }
+
+    /// Keeps `root`, which the core opened on this link.
+    pub fn record(&self, root: &str) {
+        let mut roots = lock(&self.roots);
+        if roots.iter().any(|kept| kept == root) {
+            return;
+        }
+        if roots.len() < Self::CAP {
+            roots.push(root.to_owned());
+            (self.changed)(&roots);
+            return;
+        }
+        drop(roots);
+        if !self.full.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "node",
+                    "kind": "opened_roots.full",
+                    "cap": Self::CAP,
+                })
+            );
+        }
+    }
+}
+
+impl Services<'_> {
+    /// Files and machine work only.
+    pub fn none() -> Self {
+        Self {
+            terminals: None,
+            herdr_socket: None,
+            heartbeat: false,
+            checkout_callers: false,
+            opened_roots: None,
+            browser: None,
+        }
+    }
+}
+
+/// [`serve`] with what `services` names.
+pub fn serve_with(
+    input: impl BufRead,
+    output: impl Write + Send,
+    services: Services<'_>,
+) -> io::Result<()> {
+    serve_in(input, output, Env::of_process(), services)
 }
 
 fn serve_in(
     input: impl BufRead,
     output: impl Write + Send,
     env: Env,
-    terminals: Option<&dyn Terminals>,
+    services: Services<'_>,
 ) -> io::Result<()> {
+    let terminals = services.terminals;
+    let heartbeat = services.heartbeat;
+    let opened_roots = services.opened_roots;
+    // Ends the heartbeat when the input does.
+    let input_ended = (Mutex::new(false), std::sync::Condvar::new());
+    let link = crate::link_bridge::LinkBridge::new(services.herdr_socket, services.browser);
     let output = Mutex::new(output);
     // The calls handed to a worker and not yet answered, each with whether
     // it was asked to stop; the reader enters one before handing it over, so
     // a cancel that arrives first still reaches it.
     let running: Mutex<HashMap<u64, bool>> = Mutex::new(HashMap::new());
-    let panes = crate::panes::Panes::new();
+    let panes = crate::panes::Panes::new().with_checkout_callers(services.checkout_callers);
     // Where a pane's `hide` on this machine finds the node's bootstrap
     // socket; read once, so every start of the service agrees.
     let bridges = hide_platform::host::home_dir().map(|home| {
         hide_kit::layout::workspace_bridges(&hide_kit::layout::state_dir_from_process(&home))
     });
     let (sender, receiver) = mpsc::sync_channel::<Request>(QUEUED);
-    // Only the workers hold the receiver. A worker stops when its answer
+    let (control_sender, control_receiver) = mpsc::sync_channel::<Request>(QUEUED);
+    // Only the workers hold the receivers. A worker stops when its answer
     // cannot be written, which means the SSH channel is gone; once the last
-    // one has stopped, the next request's send fails and the helper exits.
+    // one of a lane has stopped, the next request's send fails and the
+    // helper exits.
     let receiver = Arc::new(Mutex::new(receiver));
+    let control_receiver = Arc::new(Mutex::new(control_receiver));
     let result = std::thread::scope(|scope| {
         if let Some(terminals) = terminals {
             let output = &output;
@@ -102,13 +232,16 @@ fn serve_in(
                 }
             });
         }
-        for _ in 0..CONCURRENCY {
-            let receiver = Arc::clone(&receiver);
+        let lanes = std::iter::repeat_n(&receiver, CONCURRENCY)
+            .chain(std::iter::repeat_n(&control_receiver, CONTROL_CONCURRENCY));
+        for receiver in lanes {
+            let receiver = Arc::clone(receiver);
             let output = &output;
             let panes = &panes;
             let bridges = &bridges;
             let env = &env;
             let running = &running;
+            let link = &link;
             scope.spawn(move || {
                 loop {
                     let request = match receiver.lock().map(|receiver| receiver.recv()) {
@@ -143,6 +276,60 @@ fn serve_in(
                         Call::PaneInspect { pane_id } => panes.inspect(&pane_id).and_then(to_value),
                         Call::StreamWrite { stream, data } => panes.write_stream(stream, &data),
                         Call::StreamClose { stream } => panes.close_stream(stream),
+                        Call::LinkOpen { stream, end } => link.open(scope, output, stream, end),
+                        Call::LinkWrite { stream, data } => link.write(stream, &data),
+                        Call::LinkClose { stream } => {
+                            link.close(stream);
+                            Ok(Value::Null)
+                        }
+                        // On a machine lane: it waits on the gateway's answer.
+                        Call::BrowserGateway { scope, relay } => match link.browser() {
+                            Some(browser) => browser
+                                .capability(&scope, relay)
+                                .map_err(|reason| HostError::new(ErrorCode::Unsupported, reason)),
+                            None => Err(crate::link_bridge::unreached(
+                                hide_node_link::protocol::LinkEnd::BrowserRelay,
+                            )),
+                        },
+                        // A core that names no server labels the one this
+                        // link's pane service serves.
+                        Call::LabelLock {
+                            herdr_socket,
+                            generator,
+                        } => label_socket(link.herdr_socket(), herdr_socket, panes).and_then(
+                            |herdr_socket| {
+                                handle_in(
+                                    Call::LabelLock {
+                                        herdr_socket,
+                                        generator,
+                                    },
+                                    env,
+                                )
+                            },
+                        ),
+                        Call::LabelUnlock {
+                            herdr_socket,
+                            generator,
+                        } => label_socket(link.herdr_socket(), herdr_socket, panes).and_then(
+                            |herdr_socket| {
+                                handle_in(
+                                    Call::LabelUnlock {
+                                        herdr_socket,
+                                        generator,
+                                    },
+                                    env,
+                                )
+                            },
+                        ),
+                        Call::RootOpen { root } => {
+                            let opened = handle_in(Call::RootOpen { root: root.clone() }, env);
+                            if opened.is_ok()
+                                && let Some(roots) = opened_roots
+                            {
+                                roots.record(&root);
+                            }
+                            opened
+                        }
                         call => handle_with_progress(call, env, &mut |report| {
                             write_line(
                                 output,
@@ -170,13 +357,44 @@ fn serve_in(
             });
         }
         drop(receiver);
-        let result = read_requests(input, &sender, &output, &running, terminals);
+        drop(control_receiver);
+        if heartbeat {
+            let output = &output;
+            let input_ended = &input_ended;
+            scope.spawn(move || {
+                let (ended, wake) = input_ended;
+                let mut ended = lock(ended);
+                loop {
+                    let (guard, _) = wake
+                        .wait_timeout(ended, hide_node_link::panes::HEARTBEAT)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    ended = guard;
+                    if *ended
+                        || write_line(output, &hide_node_link::panes::NodeEvent::Ping).is_err()
+                    {
+                        return;
+                    }
+                }
+            });
+        }
+        let result = read_requests(
+            input,
+            [&sender, &control_sender],
+            &output,
+            &running,
+            terminals,
+        );
+        *lock(&input_ended.0) = true;
+        input_ended.1.notify_all();
         drop(sender);
+        drop(control_sender);
         // The connection is gone: the terminal sessions end with it, so no
         // attach child outlives the link that asked for it (D-20, B20).
         if let Some(terminals) = terminals {
             terminals.stop();
         }
+        // Each link stream's reader ends with its connection.
+        link.stop();
         // The connection is gone: a kit step still running ends its child
         // rather than keep the helper alive after it, and the pane service
         // ends its listener and streams so the scope can close.
@@ -188,9 +406,41 @@ fn serve_in(
     result
 }
 
+/// Why a node asked for the label lock of no named server refuses: its
+/// pane service has not started, so it serves no Herdr server yet.
+fn no_labeled_server() -> HostError {
+    HostError::new(
+        ErrorCode::Unsupported,
+        "This node serves no Herdr server whose labels it could lock",
+    )
+}
+
+/// The Herdr server whose label lock a core asks for. A node that dialed
+/// its core (it bridges its own Herdr) locks only that server's, so a core
+/// cannot have it create a lock file anywhere else; a device locks the
+/// server its core names, or the one its pane service serves.
+fn label_socket(
+    bridged: Option<&Path>,
+    named: Option<String>,
+    panes: &crate::panes::Panes,
+) -> HostResult<Option<String>> {
+    let Some(bridged) = bridged else {
+        return Ok(named.or_else(|| panes.herdr_socket()));
+    };
+    let own = bridged.to_string_lossy().into_owned();
+    match named {
+        Some(named) if named != own => Err(HostError::new(
+            ErrorCode::InvalidRequest,
+            "A node that dialed its core locks only its own Herdr server's labels",
+        )),
+        _ => Ok(Some(own)),
+    }
+}
+
+/// Reads requests and hands each to its lane: `[machine, control]`.
 fn read_requests(
     mut input: impl BufRead,
-    sender: &mpsc::SyncSender<Request>,
+    [sender, control_sender]: [&mpsc::SyncSender<Request>; 2],
     output: &Mutex<impl Write>,
     running: &Mutex<HashMap<u64, bool>>,
     terminals: Option<&dyn Terminals>,
@@ -273,7 +523,12 @@ fn read_requests(
             continue;
         }
         lock(running).insert(id, false);
-        match sender.try_send(request) {
+        let lane = if request.call.is_control() {
+            control_sender
+        } else {
+            sender
+        };
+        match lane.try_send(request) {
             Ok(()) => {}
             Err(mpsc::TrySendError::Full(_)) => {
                 lock(running).remove(&id);
@@ -469,6 +724,9 @@ pub struct Env {
     /// The verify bundles this node runs for its core's Factory, ended when
     /// the last copy of the environment is dropped.
     pub factory: Arc<crate::factory::Verifies>,
+    /// The label generator locks this node's core took, released when the
+    /// last copy of the environment is dropped: with the link it served.
+    pub label_locks: Arc<crate::label_lock::LabelLocks>,
 }
 
 /// The AI backends a node answering for this process keeps, shared by every
@@ -502,6 +760,7 @@ impl Env {
             stop: crate::kit::process_stop(),
             ai: process_ai(),
             factory: Arc::default(),
+            label_locks: Arc::default(),
         }
     }
 
@@ -515,6 +774,7 @@ impl Env {
             stop: Arc::default(),
             ai: Arc::default(),
             factory: Arc::default(),
+            label_locks: Arc::default(),
         }
     }
 
@@ -565,6 +825,24 @@ pub fn handle_with_progress(
             },
             reader_features: Some(hide_node_link::sessions::ReaderFeatures::implemented()),
         }),
+        Call::LabelLock {
+            herdr_socket,
+            generator,
+        } => {
+            let socket = herdr_socket.ok_or_else(no_labeled_server)?;
+            env.label_locks
+                .take(Path::new(&socket), generator)
+                .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))
+                .and_then(to_value)
+        }
+        Call::LabelUnlock {
+            herdr_socket,
+            generator,
+        } => {
+            let socket = herdr_socket.ok_or_else(no_labeled_server)?;
+            env.label_locks.release(Path::new(&socket), generator);
+            to_value(())
+        }
         Call::RootOpen { root } => {
             let opened = Root::open(Path::new(&root))?;
             to_value(RootOpened {
@@ -843,10 +1121,14 @@ pub fn handle_with_progress(
                 }
             }))
         }
-        Call::Gh { cwd, args } => {
+        Call::Gh {
+            cwd,
+            args,
+            repository,
+        } => {
             let cwd = cwd.as_deref().map(absolute).transpose()?;
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
-            to_value(crate::gh::run(cwd.as_deref(), &args))
+            to_value(crate::gh::run(cwd.as_deref(), repository.as_deref(), &args))
         }
         Call::ListeningPorts => to_value(crate::ports::read()),
         Call::VolumeFree { path } => to_value(crate::disk::volume_free_bytes(&absolute(&path)?)),
@@ -1006,6 +1288,14 @@ pub fn handle_with_progress(
         | Call::StreamClose { .. } => Err(HostError::new(
             ErrorCode::Unsupported,
             "Only a device node's link carries its panes' credentials and commands",
+        )),
+        Call::LinkOpen { end, .. } => Err(crate::link_bridge::unreached(end)),
+        Call::LinkWrite { .. } | Call::LinkClose { .. } => Err(HostError::new(
+            ErrorCode::NotFound,
+            "This node holds no link streams",
+        )),
+        Call::BrowserGateway { .. } => Err(crate::link_bridge::unreached(
+            hide_node_link::protocol::LinkEnd::BrowserRelay,
         )),
         Call::SessionText { path, scope } => session_read(env, &path, scope.as_ref(), |path| {
             hide_session::read_bounded(path, hide_session::SESSION_READ_LIMIT_BYTES)
@@ -1443,7 +1733,7 @@ mod tests {
                 io::BufReader::new(theirs),
                 Lines(written),
                 env,
-                None,
+                Services::none(),
             ));
         });
         let mut text = String::new();
@@ -1467,8 +1757,11 @@ mod tests {
                 reported.insert(progress.progress);
             }
         }
+        // A machine call, so it queues behind the watches (a greeting is
+        // link control and runs in its own lane).
+        let machine = || Call::RealPaths { paths: Vec::new() };
         for id in 0..=QUEUED as u64 {
-            input.write_all(&line(100 + id, Call::Hello)).unwrap();
+            input.write_all(&line(100 + id, machine())).unwrap();
         }
         for request in 1..=CONCURRENCY as u64 {
             input
@@ -1510,6 +1803,85 @@ mod tests {
         }
     }
 
+    /// Every machine worker held by a call that reports until stopped: link
+    /// control (a greeting, a Herdr stream, a pane's proof answer) is still
+    /// answered at once, from its own lane.
+    #[cfg(unix)]
+    #[test]
+    fn link_control_is_answered_while_every_machine_worker_is_held() {
+        use std::os::unix::net::UnixStream;
+        struct Lines(mpsc::Sender<Vec<u8>>);
+        impl Write for Lines {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                let _ = self.0.send(bytes.to_vec());
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let common = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(common.path().join("refs/heads")).unwrap();
+        let line = |id: u64, call: Call| {
+            let mut line = serde_json::to_vec(&Request { id, call }).unwrap();
+            line.push(b'\n');
+            line
+        };
+        let (mut input, theirs) = UnixStream::pair().unwrap();
+        let (written, lines) = mpsc::channel();
+        std::thread::spawn(move || {
+            let env = Env {
+                stop: Arc::default(),
+                ..Env::of_process()
+            };
+            let _ = serve_in(
+                io::BufReader::new(theirs),
+                Lines(written),
+                env,
+                Services::none(),
+            );
+        });
+        for id in 1..=CONCURRENCY as u64 {
+            let watch = Call::GitWatch {
+                common_dirs: vec![common.path().to_string_lossy().into_owned()],
+            };
+            input.write_all(&line(id, watch)).unwrap();
+        }
+        let mut reported = std::collections::BTreeSet::new();
+        while reported.len() < CONCURRENCY {
+            let bytes = lines
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the helper went quiet");
+            for progress in std::str::from_utf8(&bytes)
+                .unwrap()
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Progress>(line).ok())
+            {
+                reported.insert(progress.progress);
+            }
+        }
+        input.write_all(&line(100, Call::Hello)).unwrap();
+        let answered = loop {
+            let bytes = lines
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the greeting waited behind the machine workers");
+            if let Some(answer) = std::str::from_utf8(&bytes)
+                .unwrap()
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Response>(line).ok())
+                .find(|answer| answer.id == 100)
+            {
+                break answer;
+            }
+        };
+        assert!(matches!(answered.outcome, Outcome::Ok(_)));
+        for request in 1..=CONCURRENCY as u64 {
+            input
+                .write_all(&line(200 + request, Call::Cancel { request }))
+                .unwrap();
+        }
+    }
+
     /// A request whose id is still running is refused, and the running one
     /// keeps its own cancel.
     #[cfg(unix)]
@@ -1535,7 +1907,12 @@ mod tests {
                 stop: Arc::default(),
                 ..Env::of_process()
             };
-            let _ = done.send(serve_in(io::BufReader::new(theirs), output, env, None));
+            let _ = done.send(serve_in(
+                io::BufReader::new(theirs),
+                output,
+                env,
+                Services::none(),
+            ));
         });
         input.write_all(&line(7, watch())).unwrap();
         input.write_all(&line(7, watch())).unwrap();

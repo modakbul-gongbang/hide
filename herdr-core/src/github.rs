@@ -45,6 +45,10 @@ pub struct GithubProjectRequest {
     pub links: Vec<crate::issues::IssueReference>,
     /// A path inside the repository.
     pub root: PathBuf,
+    /// The GitHub repository of a checkout on another machine, whose folder
+    /// this machine cannot read: `gh` is asked about it by name, and `root`
+    /// is that machine's path, reported as it is.
+    pub repository: Option<String>,
     /// Bumped on Git section opening and explicit header refresh.
     /// Each repository's generation coalesces repeated requests independently.
     pub generation: u64,
@@ -178,6 +182,7 @@ fn read(
                 node,
                 &authentication,
                 &project.root,
+                project.repository.as_deref(),
                 project.generation,
                 &project.links,
                 &known,
@@ -217,15 +222,25 @@ fn read_root(
     node: &dyn NodeLink,
     authentication: &Result<(), GhFailure>,
     root: &Path,
+    repository: Option<&str>,
     generation: u64,
     links: &[crate::issues::IssueReference],
     known: &KnownChecks,
 ) -> GithubProjectSnapshot {
     let started = Instant::now();
-    let Some(main) = main_worktree(node, root) else {
-        return GithubProjectSnapshot::default();
+    let (place, root_path) = match repository {
+        Some(repository) => (
+            Where::Repository(repository.to_owned()),
+            hide_platform::path::to_wire_lossy(root),
+        ),
+        None => {
+            let Some(main) = main_worktree(node, root) else {
+                return GithubProjectSnapshot::default();
+            };
+            let root_path = hide_platform::path::to_wire_lossy(&main);
+            (Where::Checkout(main), root_path)
+        }
     };
-    let root_path = hide_platform::path::to_wire_lossy(&main);
     let project = match authentication {
         Err(reason) => GithubProjectSnapshot {
             root_path,
@@ -237,7 +252,7 @@ fn read_root(
             },
             ..GithubProjectSnapshot::default()
         },
-        Ok(()) => read_project(node, &main, root_path, links, known),
+        Ok(()) => read_project(node, &place, root_path, links, known),
     };
     // A failure and an empty answer are both stated, separately: an empty
     // list with no reason is a repository with no pull requests.
@@ -267,22 +282,21 @@ fn authentication(node: &dyn NodeLink) -> Result<(), GhFailure> {
 
 fn read_project(
     node: &dyn NodeLink,
-    root: &Path,
+    root: &Where,
     root_path: String,
     links: &[crate::issues::IssueReference],
     known: &KnownChecks,
 ) -> GithubProjectSnapshot {
-    let pull_requests =
-        match list_pull_requests(&|arguments| gh(node, Some(root), arguments), known) {
-            Ok(value) => value,
-            Err(reason) => {
-                return GithubProjectSnapshot {
-                    root_path,
-                    status: failed(reason),
-                    ..GithubProjectSnapshot::default()
-                };
-            }
-        };
+    let pull_requests = match list_pull_requests(&|arguments| gh_at(node, root, arguments), known) {
+        Ok(value) => value,
+        Err(reason) => {
+            return GithubProjectSnapshot {
+                root_path,
+                status: failed(reason),
+                ..GithubProjectSnapshot::default()
+            };
+        }
+    };
     match read_issues(node, root, links) {
         Ok((issues, warning)) => GithubProjectSnapshot {
             root_path,
@@ -403,14 +417,10 @@ fn with_optional_projects<T>(
 
 fn read_issues(
     node: &dyn NodeLink,
-    root: &Path,
+    root: &Where,
     links: &[crate::issues::IssueReference],
 ) -> Result<(crate::issues::ProjectIssuesSnapshot, Option<GhFailure>), GhFailure> {
-    let repository_json = gh(
-        node,
-        Some(root),
-        &["repo", "view", "--json", "nameWithOwner,id"],
-    )?;
+    let repository_json = gh_at(node, root, &["repo", "view", "--json", "nameWithOwner,id"])?;
     let repository: serde_json::Value = serde_json::from_str(&repository_json)
         .map_err(|error| GhFailure::network(format!("GitHub repository response: {error}")))?;
     let repository_id = repository
@@ -425,10 +435,7 @@ fn read_issues(
     crate::issues::IssueReference::parse(&format!("{repository}#1"), None)
         .map_err(GhFailure::network)?;
     let (listed, mut warning) = with_optional_projects(|include_projects| {
-        list_issues(
-            &|arguments| gh(node, Some(root), arguments),
-            include_projects,
-        )
+        list_issues(&|arguments| gh_at(node, root, arguments), include_projects)
     })?;
     let mut overflow = listed.len() > crate::issues::ISSUE_LIMIT;
     let mut issues = Vec::new();
@@ -565,16 +572,16 @@ type Dependencies = std::collections::BTreeMap<crate::issues::IssueReference, Is
 /// is left out.
 fn read_dependencies(
     node: &dyn NodeLink,
-    root: &Path,
+    root: &Where,
     issues: &[crate::issues::IssueSnapshot],
 ) -> Result<Dependencies, GhFailure> {
     if issues.is_empty() {
         return Ok(Dependencies::new());
     }
     let query = dependency_query(issues)?;
-    let output = gh(
+    let output = gh_at(
         node,
-        Some(root),
+        root,
         &["api", "graphql", "-f", &format!("query={query}")],
     )?;
     parse_dependencies(&output)
@@ -707,7 +714,7 @@ pub(crate) fn read_linked_issue(
     root: &Path,
     reference: &crate::issues::IssueReference,
 ) -> Result<crate::issues::IssueSnapshot, String> {
-    read_linked_issues(node, root, &[reference])
+    read_linked_issues(node, &Where::Checkout(root.to_owned()), &[reference])
         .map_err(|error| error.reason)?
         .0
         .into_iter()
@@ -1223,14 +1230,14 @@ fn with_closing_line(body: &str, issue: u32) -> String {
 
 fn read_linked_issues(
     node: &dyn NodeLink,
-    root: &Path,
+    root: &Where,
     links: &[&crate::issues::IssueReference],
 ) -> Result<(Vec<crate::issues::IssueSnapshot>, Option<GhFailure>), GhFailure> {
     with_optional_projects(|include_projects| {
         let query = issue_query(links, include_projects)?;
-        let output = gh(
+        let output = gh_at(
             node,
-            Some(root),
+            root,
             &["api", "graphql", "-f", &format!("query={query}")],
         )?;
         parse_linked_issues(&output)
@@ -1767,13 +1774,38 @@ impl GhFailure {
     }
 }
 
+/// Where a `gh` command finds its repository: a checkout on the machine it
+/// runs on, or, for a checkout on another machine, the repository's name.
+#[derive(Clone, Debug)]
+pub(crate) enum Where {
+    Checkout(PathBuf),
+    Repository(String),
+}
+
+fn gh_at(node: &dyn NodeLink, place: &Where, arguments: &[&str]) -> Result<String, GhFailure> {
+    match place {
+        Where::Checkout(root) => gh(node, Some(root), arguments),
+        Where::Repository(repository) => run_gh_call(node, None, Some(repository), arguments),
+    }
+}
+
 fn gh(node: &dyn NodeLink, cwd: Option<&Path>, arguments: &[&str]) -> Result<String, GhFailure> {
+    run_gh_call(node, cwd, None, arguments)
+}
+
+fn run_gh_call(
+    node: &dyn NodeLink,
+    cwd: Option<&Path>,
+    repository: Option<&str>,
+    arguments: &[&str],
+) -> Result<String, GhFailure> {
     let call = Call::Gh {
         cwd: cwd.map(|cwd| cwd.to_string_lossy().into_owned()),
         args: arguments
             .iter()
             .map(|argument| (*argument).to_owned())
             .collect(),
+        repository: repository.map(str::to_owned),
     };
     match crate::node_access::call_as(node, call, GH_CALL_TIMEOUT) {
         Ok(GhAnswer::Output { stdout }) => Ok(stdout),

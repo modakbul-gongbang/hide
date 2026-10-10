@@ -101,8 +101,10 @@ export type MenuHost = {
   reveal: RevealHost;
   /** The new-tab chord on this host, or "" where it has none. */
   newTabChord: string;
-  /** The core's own node id; a checkout on any other device is not this computer's. */
+  /** The core's own node id, whose checkouts take a primary. */
   node: string;
+  /** The device this screen runs on, whose files the OS file manager shows (`screenMachine.ts`). */
+  screen: string;
 };
 
 /** The device a receipt names; the core's own node when it names none. */
@@ -119,7 +121,7 @@ export function primaryCheckout(workspace: Workspace): Checkout | null {
 }
 
 function revealItem(workspace: Workspace, host: MenuHost, t: TFunction<"translation">, separated: boolean): MenuItem[] {
-  return revealExternalEntry(host.reveal, workspace.device_id, host.node, t, null, separated);
+  return revealExternalEntry(host.reveal, workspace.device_id, host.screen, t, null, separated);
 }
 
 /**

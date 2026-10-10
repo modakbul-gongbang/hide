@@ -838,6 +838,57 @@ fn shutdown_from_another_thread_frees_a_blocked_read() {
     held.join().unwrap();
 }
 
+/// A peer that stops reading holds a writer once the stream's buffer is
+/// full; a shutdown from another thread ends that write with an error, the
+/// one bound a caller has on Windows, whose pipe takes no write timeout.
+#[test]
+fn shutdown_from_another_thread_frees_a_write_a_silent_peer_holds() {
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let (release, released) = mpsc::channel::<()>();
+    let held = thread::spawn(move || {
+        let stream = listener.accept().unwrap();
+        let _ = released.recv_timeout(Duration::from_secs(20));
+        drop(stream);
+    });
+    let client = LocalStream::connect(&path).unwrap();
+    let handle = client.shutdown_handle();
+    let (done, finished) = mpsc::channel();
+    let writer = thread::spawn(move || {
+        let mut client = client;
+        let chunk = vec![7_u8; 64 * 1024];
+        // Writes until the peer's silence blocks one: no buffer on any
+        // system holds a gigabyte.
+        let mut written = 0_usize;
+        let result = loop {
+            if let Err(error) = client.write_all(&chunk) {
+                break Err(error.kind());
+            }
+            written += chunk.len();
+            if written >= 1 << 30 {
+                break Ok(written);
+            }
+        };
+        let _ = done.send(result);
+    });
+    // The writer is blocked once it stops making progress; wait for that
+    // rather than for a time.
+    assert!(
+        finished.recv_timeout(Duration::from_secs(2)).is_err(),
+        "the write never blocked on the silent peer"
+    );
+    let started = Instant::now();
+    handle.shutdown();
+    let result = finished
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the blocked write was not freed");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(result.is_err(), "a freed write fails: {result:?}");
+    writer.join().unwrap();
+    drop(release);
+    held.join().unwrap();
+}
+
 /// As above, with a read timeout far longer than the test.
 #[test]
 #[allow(clippy::disallowed_methods)] // time for the other thread to block in the call it frees: no portable state says a thread is inside a system call
@@ -937,6 +988,21 @@ fn the_accepted_stream_names_the_connecting_process() {
         .expect("this system reports the peer's pid");
     assert_eq!(pid, peer.child.id());
     drop(release);
+    server.join().unwrap();
+}
+
+#[test]
+fn a_process_of_this_account_is_this_accounts_peer() {
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let (served, accepted) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let stream = listener.accept().unwrap();
+        let _ = served.send(stream.peer_is_this_account());
+    });
+    let _peer = spawn_role("connect", &path);
+    let same = accepted.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(same.expect("this system names the peer's account"));
     server.join().unwrap();
 }
 

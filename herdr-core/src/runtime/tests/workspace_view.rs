@@ -1082,7 +1082,11 @@ fn removing_a_device_forgets_its_workspace_views() {
         .push(crate::model::DeviceRegistration {
             id: "studio".to_owned(),
             label: "studio".to_owned(),
-            ..Default::default()
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: "studio".to_owned(),
+            },
+            herdr_socket_path: None,
+            host_consent: None,
         });
     let store = runtime.workspace_views.as_mut().unwrap();
     store.views.entry("studio", "/srv/app").views = true;

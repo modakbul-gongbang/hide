@@ -32,6 +32,7 @@ import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./setting
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { frontDeviceId, localDeviceId, railShown } from "./devices";
+import { screenDeviceId } from "./screenMachine";
 import { allAgents, projectEntryLens, pullRequestLens, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
@@ -2202,8 +2203,10 @@ export function createActions(send: DispatchFn) {
       const bridge = hostBridge();
       if (!bridge) return diagnostic("terminal link: this host cannot open a path");
       if (external) return bridge.openPath(found.real);
-      const checkouts = (rest()?.navigator?.workspaces ?? [])
-        .filter((workspace) => workspace.device_id === localDeviceId(rest()))
+      // The paths are this screen's machine's, which the desktop host probes.
+      const screen = screenDeviceId(rest());
+      const checkouts = catalogWorkspaces(rest())
+        .filter((workspace) => workspace.device_id === screen)
         .flatMap((workspace) => workspace.checkouts)
         .filter((checkout) => checkout.exists);
       void probePaths(checkouts.map((checkout) => checkout.path), (paths) => bridge.probePaths(paths)).then((roots) => {

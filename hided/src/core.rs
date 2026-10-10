@@ -71,6 +71,19 @@ enum Command {
         device_id: String,
         reply: Sender<Option<Arc<dyn hide_herdr_client::ApiConnector>>>,
     },
+    InboundRefusal {
+        node: String,
+        reply: Sender<Option<String>>,
+    },
+    LinkedNodes {
+        reply: Sender<Vec<String>>,
+    },
+    InboundNode {
+        node: String,
+        label: String,
+        arrived: herdr_core::remote::Arrived,
+        reply: Sender<Result<(), String>>,
+    },
     BrowserRouteSource {
         device_id: String,
         checkout_path: String,
@@ -122,6 +135,9 @@ pub struct CoreHandle {
     pub terminals: Arc<Router>,
     /// The output every node's terminals produce, as each screen reads it.
     pub hub: Arc<TerminalHub>,
+    /// What every pane's output reaches: the hub, and the terminals relay
+    /// of each linked node (`relay`).
+    pub outputs: Arc<crate::relay::ScreenOutputs>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -248,16 +264,17 @@ impl CoreHandle {
         let (reports, terminal_reports) = herdr_core::terminal_reports::terminal_reports();
         let reports: Arc<dyn ReportSink> = Arc::new(reports);
         let hub = TerminalHub::new();
+        let outputs = crate::relay::ScreenOutputs::new(Arc::clone(&hub));
         let local = Service::start(
             local_attacher(&options),
-            Arc::clone(&hub) as Arc<dyn OutputSink>,
+            Arc::clone(&outputs) as Arc<dyn OutputSink>,
             Arc::clone(&reports),
             RetryPolicy::Automatic,
         )
         .map_err(|error| format!("terminal service failed to start: {error}"))?;
         let terminals = Arc::new(Router::new(
             Arc::new(local),
-            Arc::clone(&hub) as Arc<dyn OutputSink>,
+            Arc::clone(&outputs) as Arc<dyn OutputSink>,
             reports,
         ));
         let routes = Arc::clone(&terminals);
@@ -283,6 +300,7 @@ impl CoreHandle {
             notify: notify_tx,
             terminals,
             hub,
+            outputs,
             thread: Mutex::new(Some(thread)),
         })
     }
@@ -333,6 +351,55 @@ impl CoreHandle {
             .map_err(|_| "core owner thread is gone".to_owned())?;
         rx.recv()
             .map_err(|_| "core owner thread dropped the device connection reply".to_owned())
+    }
+
+    /// The nodes that dialed this core and are connected now: the machines
+    /// the operator works at (PRD core-host-node-remote-core D-18).
+    pub fn linked_nodes(&self) -> Result<Vec<String>, String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::LinkedNodes { reply })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped the linked nodes".to_owned())
+    }
+
+    /// Why a node dialing this core would be refused, before its link is
+    /// started (PRD core-host-node-remote-core D-10).
+    pub fn inbound_refusal(&self, node: &str) -> Option<String> {
+        let (reply, rx) = mpsc::channel();
+        if self
+            .commands
+            .send(Command::InboundRefusal {
+                node: node.to_owned(),
+                reply,
+            })
+            .is_err()
+        {
+            return Some("core_unavailable".to_owned());
+        }
+        rx.recv()
+            .unwrap_or_else(|_| Some("core_unavailable".to_owned()))
+    }
+
+    /// Hands the core the link of a node that dialed it. A refusal drops
+    /// the arrived node, whose transport closes the link.
+    pub fn accept_inbound_node(
+        &self,
+        node: &str,
+        label: &str,
+        arrived: herdr_core::remote::Arrived,
+    ) -> Result<(), String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::InboundNode {
+                node: node.to_owned(),
+                label: label.to_owned(),
+                arrived,
+                reply,
+            })
+            .map_err(|_| "core_unavailable".to_owned())?;
+        rx.recv().map_err(|_| "core_unavailable".to_owned())?
     }
 
     pub fn browser_route_source(
@@ -670,6 +737,20 @@ fn owner_loop(
             }
             Command::RemoteHerdrApi { device_id, reply } => {
                 let _ = reply.send(core.remote_herdr_api(&device_id));
+            }
+            Command::InboundRefusal { node, reply } => {
+                let _ = reply.send(core.inbound_refusal(&node));
+            }
+            Command::LinkedNodes { reply } => {
+                let _ = reply.send(core.linked_nodes());
+            }
+            Command::InboundNode {
+                node,
+                label,
+                arrived,
+                reply,
+            } => {
+                let _ = reply.send(core.accept_inbound_node(&node, &label, arrived));
             }
             Command::BrowserRouteSource {
                 device_id,
