@@ -135,6 +135,52 @@ A token that is not a count is dropped rather than coerced.
 `Stop` sweeps `working` to zero, because the turn is over and a `SubagentStop` that never arrived cannot leave a count behind.
 A pane Herdr has stopped listing has its record swept on the next session bootstrap.
 
+### After Herdr hands off or restarts
+
+Herdr keeps a pane token only as long as the server that took it.
+A live handoff (what an update runs) and a restart both start the new server with no tokens, while the pane ids stay, so the pane's record is still there and the pane still has its name (measured on the pinned Herdr 0.9.3 in a private server, issue 799).
+The agent session Herdr reports for a pane (`agent_session`) survived the live handoff in the same measurement.
+Until the agent's next hook event, which for an idle session can be a long time, every instrumented pane then read as a session that predates Hide's setup, with a Reopen that restarted a healthy session.
+hided puts the tokens back, so the pane reads as it did before.
+
+A pane id alone does not say that the agent in the pane now is the one the record describes: a restart can leave the same id with another process in it.
+So each record names, besides its counts, who wrote it (`counters::Record`): the hook version of the helper, the adapter id of the runtime that reported, and the agent's own id of the session, read from the `session_id` of the hook's input when the helper read that input whole.
+Every pane that has reported has a record: an event that changes no count writes it when the pane has none or when it names another version, agent or session.
+An event that changes no count keeps the session the record names for the same agent, and any other event names its own, or none when its input named none.
+Grok and Cursor name their agent and no session, because their hook input is not read for one.
+The OpenCode and Pi plugins' count calls carry no session id today, so their records name none either (the helper records one it is given, after the same validity check).
+A record that names no session never has its counts put back; the version still is.
+
+The core's restorer (`herdr-core/src/coordination/hook_tokens.rs`) reads the agent list the coordinator already reads each second.
+For each listed agent that carries no `hide_hooks` token and that Hide has an adapter for, it reads that pane's record on a worker thread, under the shared side of the same lock, and sends the report the helper sends (`report::report_params`):
+
+| The record and what Herdr says now | What is put back |
+| --- | --- |
+| Names the agent Herdr detects, and the session Herdr reports | `hide_hooks` with the version the record names, and the counts |
+| Names the same agent, and Herdr reports no session or another one, or the record names none | `hide_hooks` only; the counts are left out, so they read as unknown and never as a zero |
+| Names another agent | nothing: the pane was taken over |
+| Is missing, or was written by an older helper (no version, no agent) | nothing; the pane waits for its next hook event, and no record is migrated |
+
+The version is put back for the same agent because a hook is installed in a runtime's configuration and not in a session.
+The counts are put back only for the same session, and nothing relies on `SessionStart` having reset the record: a session that started after the record was written and before the connection is the case the session id tells apart.
+What the counts can still be is the record's last word for that session: a subagent that ended with no `SubagentStop` reaching the helper still counts as working until the session's next `Stop`, exactly as it did before the loss.
+A record that changed while the report was on its way is sent again, as the helper does, so Herdr ends on the latest count.
+A report merges token by token, so when the second read finds the counts no longer vouched for (the session changed, or another agent's record replaced the file) the restorer clears the two count tokens with `null` instead of leaving the first report's values on the pane.
+
+What else it does not do:
+
+- A pane that already has its token is left alone, so a live helper's report is never raced.
+- The record sweep (`sweep_subagent_counters`, which drops the records of panes Herdr no longer lists) cannot take a record the restorer is about to read: both work from the same bootstrap snapshot, a pane the restorer asks about is listed in it, and the sweep keeps every listed pane's record.
+  After a server restart the first answer on the socket already lists every restored pane (measured on the pinned Herdr 0.9.3: five panes before a stop, the same five in the first snapshot after it), so a connect cannot see an empty pane list while the session is still being restored.
+  With a hided attached, a stop and start of the private Herdr left the pane's record in place after hided's reconnect.
+- A pane is asked once for each connection to Herdr, because every connect is a bootstrap and a handoff or a restart ends the connection.
+  A pane with no record, or one an older helper wrote, is not asked again: the helper's next event reports the token and writes the record in the same step.
+- It covers this machine's panes only.
+  A device's record is the device's file, and the core reaches a machine's files through its node, so a device's pane waits for its next hook event as before.
+
+The snapshot-rate work is a comparison of the tokens each listed agent already carries.
+The only file read and the only `pane.report_metadata` call are on the worker, at most 256 panes in one batch, one batch in flight and one waiting, a failed pane tried three times for a connection, and each failure is a `hook_tokens` diagnostic naming the pane (`restore.failed`, `restore.gave_up`, `restore.batch`, `restore.deferred`).
+
 The helper always exits zero and reads no more than its bounded standard-input prefix before writing applicable context.
 A producer that never closes stdin is released at the same absolute Memory deadline.
 A hook that fails must never be what breaks the operator's agent.

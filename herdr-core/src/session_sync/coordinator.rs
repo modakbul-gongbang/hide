@@ -117,6 +117,26 @@ fn run_coordinator(
     // Kept for the AI settings and the counter sweep below, which read this
     // machine's files themselves.
     let hook_home = context.is_local().then(|| home_path.clone()).flatten();
+    // Herdr loses a pane's hook tokens when its server is handed off or
+    // restarted; this puts back the ones this machine's hook files still hold
+    // (issue 799). A device's files are the device's, so only the local
+    // coordinator has one.
+    let mut hook_token_restorer = hook_home.clone().and_then(|home| {
+        match crate::coordination::hook_tokens::Restorer::new(
+            home,
+            Arc::clone(&context.api_connector),
+        ) {
+            Ok(restorer) => Some(restorer),
+            Err(message) => {
+                crate::diagnostic!(json!({
+                    "component": "hook_tokens",
+                    "kind": "start_failed",
+                    "message": message,
+                }));
+                None
+            }
+        }
+    });
     // The rows read the operator's logins, which are the core's own node's.
     let mut usage_reader = usage_paths
         .zip(context.node().map(Arc::clone))
@@ -236,6 +256,11 @@ fn run_coordinator(
                                 snapshot_started_at,
                             );
                         }
+                    }
+                    if let (Some(restorer), Some(current)) =
+                        (hook_token_restorer.as_mut(), replica.as_ref())
+                    {
+                        restorer.observe(&current.state.agents, true);
                     }
                     if replica
                         .as_ref()
@@ -774,6 +799,9 @@ fn run_coordinator(
                                 if let Some(state) = state {
                                     writer.observe(&state, &agents, native_changed, started_at);
                                 }
+                            }
+                            if let Some(restorer) = hook_token_restorer.as_mut() {
+                                restorer.observe(&agents, false);
                             }
                             if requested {
                                 current.replace_agents(agents);
