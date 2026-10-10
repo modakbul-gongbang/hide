@@ -25,7 +25,7 @@ const PROGRAM_WITHIN: Duration = Duration::from_secs(5);
 const LOGINS_ANSWER_WITHIN: Duration = Duration::from_secs(30);
 
 /// The programs the `gh`, session and power checks run: the system's, or a
-/// fixture's stand-ins (`env::fixture_preflight_programs`).
+/// fixture's stand-ins (`env::HIDE_PREFLIGHT_PROGRAMS`).
 pub struct Programs {
     /// `None` finds `gh` on this account's PATH.
     gh: Option<PathBuf>,
@@ -44,9 +44,32 @@ enum Logins {
 }
 
 impl Programs {
-    pub fn for_this_machine() -> Self {
-        if let Some(folder) = crate::env::fixture_preflight_programs() {
-            return Self {
+    pub fn for_this_machine() -> Result<Self, String> {
+        let home = hide_platform::host::home_dir()
+            .map_err(|error| format!("this account has no home folder: {error}"))?;
+        Self::chosen(
+            &home,
+            std::env::var_os(crate::env::HIDE_PREFLIGHT_PROGRAMS).as_deref(),
+        )
+    }
+
+    /// A fixture HOME's checks run its stand-ins in `stand_ins` and are
+    /// refused without them, since the system's would reach the account's
+    /// real launchd domain whatever HOME is; any other HOME runs the
+    /// system's and ignores the key.
+    fn chosen(home: &Path, stand_ins: Option<&std::ffi::OsStr>) -> Result<Self, String> {
+        if crate::env::fixture_home(home) {
+            let folder = stand_ins
+                .map(PathBuf::from)
+                .filter(|folder| folder.is_absolute())
+                .ok_or_else(|| {
+                    format!(
+                        "{} is a fixture HOME without an absolute {}: a move's checks never reach the account's own launchd",
+                        home.display(),
+                        crate::env::HIDE_PREFLIGHT_PROGRAMS
+                    )
+                })?;
+            return Ok(Self {
                 gh: Some(folder.join("gh")),
                 session: Some(hide_platform::user_agents::UserAgents::fixture(
                     folder.join("launchctl"),
@@ -54,10 +77,10 @@ impl Programs {
                 )),
                 pmset: Some(folder.join("pmset")),
                 logins: Logins::Here,
-            };
+            });
         }
         let macos = cfg!(target_os = "macos");
-        Self {
+        Ok(Self {
             gh: None,
             session: macos.then(hide_platform::user_agents::UserAgents::current),
             pmset: macos.then(|| "/usr/bin/pmset".into()),
@@ -66,7 +89,7 @@ impl Programs {
             } else {
                 Logins::Here
             },
-        }
+        })
     }
 }
 
@@ -229,7 +252,9 @@ fn run_logins_check(
             agents
                 .start_once(&agent, &folder.join("check.plist"), home, &stop)
                 .map_err(|error| format!("the job {label}: {error}"))?;
-            let waited = wait_for_answer(&answer);
+            let waited = wait_for_answer(&answer, &|| {
+                agents.last_exit(&label, home, &stop).ok().flatten()
+            });
             let unloaded = agents.unload(&label, home, &stop);
             waited?;
             unloaded.map_err(|error| format!("the job {label}: {error}"))?;
@@ -243,12 +268,22 @@ fn run_logins_check(
         .map_err(|error| format!("the check's answer is unreadable: {error}"))
 }
 
-/// Waits for the job's answer, which it writes once and whole.
+/// Waits for the job's answer, which it writes once and whole before it
+/// exits; a job that `exited` without one fails at once with its exit code.
 // The job is another process that announces nothing to this one.
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn wait_for_answer(answer: &Path) -> Result<(), String> {
+fn wait_for_answer(answer: &Path, exited: &dyn Fn() -> Option<String>) -> Result<(), String> {
     let deadline = std::time::Instant::now() + LOGINS_ANSWER_WITHIN;
+    let mut looks = 0_u32;
     while !answer.exists() {
+        // Every half second: each look runs `launchctl print`.
+        looks += 1;
+        if looks.is_multiple_of(5)
+            && let Some(code) = exited()
+            && !answer.exists()
+        {
+            return Err(format!("the check exited {code} without an answer"));
+        }
         if std::time::Instant::now() >= deadline {
             return Err(format!(
                 "no answer within {}s",
@@ -384,6 +419,21 @@ mod tests {
     use super::*;
 
     const LAPTOP: &str = "Battery Power:\n lidwake              1\n sleep                1\n displaysleep         2\nAC Power:\n lidwake              1\n sleep                0 (sleep prevented by sharingd)\n displaysleep         10\n";
+
+    /// A fixture HOME never runs the system's programs, which would reach
+    /// the account's real launchd domain: without its stand-ins, or with a
+    /// relative folder, its checks are refused.
+    #[cfg(unix)]
+    #[test]
+    fn a_fixture_home_without_its_stand_ins_is_refused() {
+        let home = tempfile::tempdir_in("/tmp").unwrap();
+        std::fs::write(home.path().join(crate::env::FIXTURE_HOME_MARKER), "").unwrap();
+        assert!(Programs::chosen(home.path(), None).is_err());
+        assert!(Programs::chosen(home.path(), Some("stand-ins".as_ref())).is_err());
+        let stand_ins = Programs::chosen(home.path(), Some(home.path().as_os_str())).unwrap();
+        assert!(matches!(stand_ins.logins, Logins::Here));
+        assert_eq!(stand_ins.pmset, Some(home.path().join("pmset")));
+    }
 
     #[test]
     fn only_the_power_section_s_sleep_counts() {

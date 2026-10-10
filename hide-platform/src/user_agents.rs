@@ -36,6 +36,16 @@ impl UserAgents {
         }
     }
 
+    /// A system with no login agents: nothing is installed or unloaded and
+    /// no command runs. A test fixture's HOME gets this, so nothing a test
+    /// runs reaches the account's real launchd domain.
+    pub fn none() -> Self {
+        Self {
+            command: None,
+            domain: String::new(),
+        }
+    }
+
     /// An explicit external-system fixture, never selected by an environment variable.
     pub fn fixture(command: PathBuf, domain: String) -> Self {
         Self {
@@ -133,6 +143,24 @@ impl UserAgents {
             )));
         }
         Ok(())
+    }
+
+    /// How the loaded job `label` last exited, once it is not running:
+    /// `None` while it runs or has never exited, or when it is not loaded.
+    pub fn last_exit(
+        &self,
+        label: &str,
+        home: &Path,
+        stop: &AtomicBool,
+    ) -> io::Result<Option<String>> {
+        if self.command.is_none() {
+            return Ok(None);
+        }
+        let result = self.run(&["print", &format!("{}/{label}", self.domain)], home, stop)?;
+        if result.code != Some(0) {
+            return Ok(None);
+        }
+        Ok(last_exit_of(&result.stdout))
     }
 
     pub fn is_loaded(&self, label: &str, home: &Path, stop: &AtomicBool) -> io::Result<bool> {
@@ -269,6 +297,23 @@ impl LoginAgent<'_> {
             log = log,
         )
     }
+}
+
+/// The exit `launchctl print` reports for a job that is not running and has
+/// exited: its `last exit code` line.
+pub fn last_exit_of(printed: &str) -> Option<String> {
+    let field = |name: &str| {
+        printed.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix(name)
+                .and_then(|rest| rest.trim_start().strip_prefix('='))
+                .map(|value| value.trim().to_owned())
+        })
+    };
+    if field("state")?.as_str() != "not running" {
+        return None;
+    }
+    field("last exit code").filter(|code| !code.starts_with('('))
 }
 
 fn escape(value: &str) -> String {

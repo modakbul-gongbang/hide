@@ -178,7 +178,7 @@ fn inspect(state_dir: &Path, ai: Option<&str>) -> Result<Value, Value> {
             socket: env.herdr_socket_path.as_deref(),
         },
         ai,
-        &super::preflight::Programs::for_this_machine(),
+        &super::preflight::Programs::for_this_machine().map_err(plain)?,
     );
     let ai = match herdr_core::stored_hide_ai_settings(&env.home) {
         Ok(settings) => json!({"settings": settings}),
@@ -205,7 +205,7 @@ fn check(ai: Option<&str>, answer: &Path) -> Result<Value, Value> {
     let failed = super::preflight::logins_failing(
         &env.home,
         ai,
-        &super::preflight::Programs::for_this_machine(),
+        &super::preflight::Programs::for_this_machine().map_err(plain)?,
     );
     let line = json!({"failed": failed});
     let bytes = serde_json::to_vec(&line).map_err(|error| plain(error.to_string()))?;

@@ -285,6 +285,18 @@ impl Fixture {
             let projects = fixture.projects()?;
             Ok((projects.len() == 2).then_some(()))
         })?;
+        // Saved too: a journey that kills the source gives its save thread
+        // no last write.
+        let saved = fixture.source.state.join("core-state.json");
+        wait_for("both machines' projects saved", || {
+            let state: Value = serde_json::from_slice(&read(&saved)?)?;
+            Ok((state
+                .pointer("/workspace_registrations")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                == Some(2))
+            .then_some(()))
+        })?;
         Ok(fixture)
     }
 

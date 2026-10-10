@@ -45,7 +45,7 @@ pub const HIDE_FIXTURE_CORE_STOP: &str = "HIDE_FIXTURE_CORE_STOP";
 pub const HIDE_PREFLIGHT_PROGRAMS: &str = "HIDE_PREFLIGHT_PROGRAMS";
 /// The file that declares a HOME a test fixture's, beside every test-only
 /// key's other conditions ([`fixture_home`]).
-pub const FIXTURE_HOME_MARKER: &str = ".hide-e2e-device-home";
+pub const FIXTURE_HOME_MARKER: &str = hide_kit::layout::FIXTURE_HOME_MARKER;
 
 pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
@@ -166,7 +166,7 @@ pub const REGISTRY: &[EnvKey] = &[
         key: HIDE_CORE_STARTER,
         required: false,
         format: "`fixture`; read only when HOME is a fixture HOME (under /tmp, carrying .hide-e2e-device-home, and not the account's own)",
-        absent_behavior: "A core move starts the core on the machine taking it through the account's login item (launchd); a fixture HOME with `fixture` starts it as a detached process instead, so no test reaches launchd",
+        absent_behavior: "A core move starts the core on the machine taking it through the account's login item (launchd); a fixture HOME with `fixture` starts it as a detached process instead, and a fixture HOME without it is refused, so no test reaches launchd",
     },
     EnvKey {
         key: HIDE_FIXTURE_CORE_STOP,
@@ -178,7 +178,7 @@ pub const REGISTRY: &[EnvKey] = &[
         key: HIDE_PREFLIGHT_PROGRAMS,
         required: false,
         format: "absolute path of a folder holding stand-in `gh`, `launchctl` and `pmset`; read only when HOME is a fixture HOME (under /tmp, carrying .hide-e2e-device-home, and not the account's own)",
-        absent_behavior: "A core move's checks on the machine taking the core run the account's `gh`, /bin/launchctl and /usr/bin/pmset; a fixture HOME names stand-ins, so a test passes or fails each check without the machine's own GitHub login, session and power settings",
+        absent_behavior: "A core move's checks on the machine taking the core run the account's `gh`, /bin/launchctl and /usr/bin/pmset; a fixture HOME names stand-ins, so a test passes or fails each check without the machine's own GitHub login, session and power settings, and a fixture HOME without it is refused rather than reaching the account's launchd",
     },
     EnvKey {
         key: HOME,
@@ -572,24 +572,7 @@ pub fn herdr_bin_error(env: &Env) -> Option<String> {
 /// fixture's, so it cannot tell). Anything else reads every test-only key as
 /// unset.
 pub fn fixture_home(home: &std::path::Path) -> bool {
-    let Ok(home) = hide_platform::fs::identity::canonical(home) else {
-        return false;
-    };
-    let temporary = ["/tmp", "/private/tmp"]
-        .iter()
-        .any(|root| home.starts_with(root));
-    let own = hide_platform::user_agents::account_home()
-        .and_then(|own| hide_platform::fs::identity::canonical(&own))
-        .is_ok_and(|own| own == home);
-    temporary && !own && home.join(FIXTURE_HOME_MARKER).is_file()
-}
-
-/// The stand-in programs a fixture gave a move's checks
-/// ([`HIDE_PREFLIGHT_PROGRAMS`]).
-pub fn fixture_preflight_programs() -> Option<PathBuf> {
-    let folder = PathBuf::from(std::env::var_os(HIDE_PREFLIGHT_PROGRAMS)?);
-    (folder.is_absolute() && hide_platform::host::home_dir().is_ok_and(|home| fixture_home(&home)))
-        .then_some(folder)
+    hide_kit::layout::fixture_home(home)
 }
 
 /// Whether a fixture asked the core role's stop never to return
@@ -603,16 +586,6 @@ pub fn fixture_core_stop_hangs() -> bool {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-
-    #[cfg(unix)]
-    #[test]
-    fn only_a_marked_home_under_tmp_is_a_fixture_home() {
-        let marked = tempfile::tempdir_in("/tmp").unwrap();
-        std::fs::write(marked.path().join(FIXTURE_HOME_MARKER), "").unwrap();
-        let unmarked = tempfile::tempdir_in("/tmp").unwrap();
-        assert!(fixture_home(marked.path()));
-        assert!(!fixture_home(unmarked.path()));
-    }
 
     fn from_map(pairs: &[(&str, &str)]) -> Result<Env, Vec<EnvError>> {
         let map: HashMap<String, String> = pairs

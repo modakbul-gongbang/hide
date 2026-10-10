@@ -233,6 +233,17 @@ impl KitReport {
     }
 }
 
+/// The login agents the kit uses for `home`: the account's own, and none
+/// for a fixture HOME (`layout::fixture_home`), so a test's kit never
+/// reaches the account's real launchd domain.
+pub fn login_agents(home: &Path) -> hide_platform::user_agents::UserAgents {
+    if layout::fixture_home(home) {
+        hide_platform::user_agents::UserAgents::none()
+    } else {
+        hide_platform::user_agents::UserAgents::current()
+    }
+}
+
 /// Where the kit acts on one machine.
 #[derive(Clone, Debug)]
 pub struct KitTarget {

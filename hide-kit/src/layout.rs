@@ -25,6 +25,26 @@ pub fn hide_home(home: &Path) -> PathBuf {
     home.join(HIDE_HOME)
 }
 
+/// The file that declares a HOME a test fixture's ([`fixture_home`]).
+pub const FIXTURE_HOME_MARKER: &str = ".hide-e2e-device-home";
+
+/// Whether `home` is a test fixture's: under `/tmp`, carrying
+/// [`FIXTURE_HOME_MARKER`], and not the account's own. Nothing run for a
+/// fixture HOME may reach the account's real launchd domain, which
+/// `gui/<uid>` is whatever HOME says.
+pub fn fixture_home(home: &Path) -> bool {
+    let Ok(home) = hide_platform::fs::identity::canonical(home) else {
+        return false;
+    };
+    let temporary = ["/tmp", "/private/tmp"]
+        .iter()
+        .any(|root| home.starts_with(root));
+    let own = hide_platform::user_agents::account_home()
+        .and_then(|own| hide_platform::fs::identity::canonical(&own))
+        .is_ok_and(|own| own == home);
+    temporary && !own && home.join(FIXTURE_HOME_MARKER).is_file()
+}
+
 /// The daemon's state folder when nothing relocates it (D-04).
 pub fn default_state_dir(home: &Path) -> PathBuf {
     hide_home(home).join("state")
@@ -224,5 +244,36 @@ mod tests {
         ] {
             assert!(path.starts_with("/home/me/.hide"), "{}", path.display());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_marked_home_under_tmp_is_a_fixture_home() {
+        let marked = tempfile::tempdir_in("/tmp").unwrap();
+        std::fs::write(marked.path().join(FIXTURE_HOME_MARKER), "").unwrap();
+        let unmarked = tempfile::tempdir_in("/tmp").unwrap();
+        assert!(fixture_home(marked.path()));
+        assert!(!fixture_home(unmarked.path()));
+    }
+
+    /// A fixture HOME's kit has no login agents, so nothing it unloads or
+    /// asks reaches the account's real launchd domain.
+    #[cfg(unix)]
+    #[test]
+    fn a_fixture_home_s_kit_never_reaches_launchd() {
+        use std::sync::atomic::AtomicBool;
+        let marked = tempfile::tempdir_in("/tmp").unwrap();
+        std::fs::write(marked.path().join(FIXTURE_HOME_MARKER), "").unwrap();
+        let agents = crate::login_agents(marked.path());
+        let stop = AtomicBool::new(false);
+        assert!(
+            !agents
+                .is_loaded("dev.withhide.core", marked.path(), &stop)
+                .unwrap()
+        );
+        assert!(agents.session_present(marked.path(), &stop).is_err());
+        agents
+            .unload("dev.withhide.core", marked.path(), &stop)
+            .unwrap();
     }
 }

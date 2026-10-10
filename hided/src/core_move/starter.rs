@@ -26,11 +26,17 @@ pub enum CoreStarter {
 impl CoreStarter {
     /// The starter for this account: the fixture only when
     /// `HIDE_CORE_STARTER=fixture` and HOME is a fixture HOME
-    /// (`env::fixture_home`), the login item otherwise.
+    /// (`env::fixture_home`), the login item otherwise. A fixture HOME that
+    /// does not ask for the fixture is refused, since the login item would
+    /// reach the account's real launchd domain whatever HOME is.
     pub fn for_account(home: &Path) -> Result<Self, String> {
-        let asked = std::env::var_os(HIDE_CORE_STARTER);
-        if asked.as_deref() == Some(std::ffi::OsStr::new("fixture")) {
-            if !crate::env::fixture_home(home) {
+        Self::chosen(home, std::env::var_os(HIDE_CORE_STARTER).as_deref())
+    }
+
+    fn chosen(home: &Path, asked: Option<&std::ffi::OsStr>) -> Result<Self, String> {
+        let fixture = crate::env::fixture_home(home);
+        if asked == Some(std::ffi::OsStr::new("fixture")) {
+            if !fixture {
                 return Err(format!(
                     "{HIDE_CORE_STARTER}=fixture is refused: {} is not a fixture HOME ({FIXTURE_HOME_MARKER} under /tmp)",
                     home.display()
@@ -39,6 +45,12 @@ impl CoreStarter {
             let program = std::env::current_exe()
                 .map_err(|error| format!("this hided has no path: {error}"))?;
             return Ok(Self::Fixture { program });
+        }
+        if fixture {
+            return Err(format!(
+                "{} is a fixture HOME without {HIDE_CORE_STARTER}=fixture: its core is never started by the account's login item",
+                home.display()
+            ));
         }
         Ok(Self::LoginItem {
             home: home.to_path_buf(),
@@ -169,4 +181,28 @@ fn stop_pid(pid: u32) -> Result<(), String> {
         std::thread::sleep(Duration::from_millis(50));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fixture HOME's core is never started by the account's login item,
+    /// which reaches the real launchd domain whatever HOME is.
+    #[cfg(unix)]
+    #[test]
+    fn a_fixture_home_that_does_not_ask_for_the_fixture_starter_is_refused() {
+        let home = tempfile::tempdir_in("/tmp").unwrap();
+        assert!(matches!(
+            CoreStarter::chosen(home.path(), None),
+            Ok(CoreStarter::LoginItem { .. })
+        ));
+        assert!(CoreStarter::chosen(home.path(), Some("fixture".as_ref())).is_err());
+        std::fs::write(home.path().join(FIXTURE_HOME_MARKER), "").unwrap();
+        assert!(CoreStarter::chosen(home.path(), None).is_err());
+        assert!(matches!(
+            CoreStarter::chosen(home.path(), Some("fixture".as_ref())),
+            Ok(CoreStarter::Fixture { .. })
+        ));
+    }
 }

@@ -1262,18 +1262,6 @@ fn what_each_machine_shows_survives_the_move_and_the_move_back() -> Result<()> {
 /// A label on the source's pane and a letter held for an agent on the
 /// target, in the stores' own shapes, before the source's core starts.
 fn seed_at_rest(fixture: &mut Fixture) -> Result<()> {
-    // The kill gives the save thread no last write, so both projects must be
-    // on disk before it.
-    let saved = fixture.source.state.join("core-state.json");
-    wait_for("both machines' projects saved", || {
-        let state: Value = serde_json::from_slice(&std::fs::read(&saved)?)?;
-        Ok((state
-            .pointer("/workspace_registrations")
-            .and_then(Value::as_array)
-            .map(Vec::len)
-            == Some(2))
-        .then_some(()))
-    })?;
     fixture.kill_source()?;
     write_record(
         &fixture.source.state.join("labels.json"),

@@ -1,4 +1,4 @@
-use hide_platform::user_agents::{UserAgents, account_home};
+use hide_platform::user_agents::{UserAgents, account_home, last_exit_of};
 use std::path::Path;
 
 #[test]
@@ -206,6 +206,20 @@ fn a_login_agent_restarts_after_a_kill_never_after_success_and_ends_when_removed
     assert!(!UserAgents::plist(home, &label).exists());
 }
 
+/// A job's exit is read only once it is not running and has exited.
+#[test]
+fn a_job_s_exit_is_read_only_once_it_ran_and_stopped() {
+    let job = |state: &str, code: &str| {
+        format!(
+            "gui/501/example.job = {{\n\tactive count = 0\n\tstate = {state}\n\truns = 1\n\tlast exit code = {code}\n}}\n"
+        )
+    };
+    assert_eq!(last_exit_of(&job("not running", "3")).as_deref(), Some("3"));
+    assert_eq!(last_exit_of(&job("running", "3")), None);
+    assert_eq!(last_exit_of(&job("not running", "(never exited)")), None);
+    assert_eq!(last_exit_of("gui/501/example.job = {\n}\n"), None);
+}
+
 /// A one-shot job is loaded from a list outside the login agents folder,
 /// so no later login loads it, and launchd never restarts it.
 #[cfg(unix)]
@@ -318,6 +332,10 @@ fn a_one_shot_job_runs_once_in_the_gui_session_even_when_it_fails() {
         #[allow(clippy::disallowed_methods)] // past launchd's ten-second throttle
         std::thread::sleep(Duration::from_secs(15));
         assert_eq!(starts(), 1, "launchd started a one-shot job again");
+        assert_eq!(
+            agents.last_exit(&label, home, &stop).unwrap().as_deref(),
+            Some("3")
+        );
     });
     let unloaded = agents.unload(&label, home, &stop);
     ran.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
