@@ -103,7 +103,7 @@ const ko: Messages = {
   "agentSessions.waited": "{{minutes}}분째 {{verb}} 대기",
   "agentSessions.pr.count": "PR {{count}}",
   "agentSessions.pr.failed": "CI 실패",
-  "agentSessions.pr.pending": "CI 도는 중이나 리뷰 대기",
+  "agentSessions.pr.pending": "CI 도는 중이거나 리뷰 대기",
   "agentSessions.pr.mergeable": "머지 가능",
   "agentSessions.pr.merged": "머지됨",
   "agentSessions.pr.draft": "초안",
