@@ -157,7 +157,19 @@ pub(super) async fn prepare_back(
             detail: inspected.node.clone(),
         });
     }
-    let previous = journal::read(&env.state_dir).ok().flatten();
+    // A journal that cannot be read fails the check rather than reading as
+    // no earlier move, which would lose the retry's intent and the forward
+    // move's ids.
+    let previous = match journal::read(&env.state_dir) {
+        Ok(previous) => previous,
+        Err(detail) => {
+            failed.push(FailedCheck {
+                check: CheckId::Connection,
+                detail,
+            });
+            return Err(failed);
+        }
+    };
     let forward_ids = back::forward_ids_reversed(previous.as_ref(), &placement.node);
     let retry = previous.filter(|journal| {
         journal.direction == Direction::Back
@@ -399,42 +411,29 @@ pub(super) async fn retire_and_commit(
         journal.phase = Phase::Retiring;
         journal::write(&env.state_dir, &journal)?;
     }
-    let mut last_failure = None;
-    loop {
-        let retired = blocking({
+    let retired = wait_on_peer(
+        &seat.moves,
+        "retire.failed",
+        &journal.intent,
+        Permanent::Ends,
+        {
             let (remote, journal) = (Arc::clone(&remote), journal.clone());
             move || back::retire(&remote, &journal)
-        })
-        .await?;
-        match retired {
-            Ok(()) => break,
-            Err(failure @ MoveFailure::Unreachable { .. }) => {
-                if last_failure.as_ref() != Some(&failure) {
-                    log(
-                        "retire.failed",
-                        json!({"intent": journal.intent, "failure": failure}),
-                    );
-                    last_failure = Some(failure.clone());
-                }
-                seat.moves.update(|view| {
-                    view.state = MoveState::Waiting;
-                    view.cause = Some(failure);
-                });
-                tokio::time::sleep(RETRY_EVERY).await;
-            }
-            Err(cause) => {
-                return back_rollback(
-                    env,
-                    seat,
-                    journal,
-                    &remote,
-                    screen,
-                    MoveStep::StartTarget,
-                    cause,
-                )
-                .await;
-            }
-        }
+        },
+        |_| false,
+    )
+    .await?;
+    if let Err(cause) = retired {
+        return back_rollback(
+            env,
+            seat,
+            journal,
+            &remote,
+            screen,
+            MoveStep::StartTarget,
+            cause,
+        )
+        .await;
     }
     log(
         "move.committed",
@@ -497,44 +496,44 @@ pub(super) async fn back_rollback(
         cause: Some(cause.clone()),
         ..MoveView::default()
     });
-    let mut last_failure = None;
-    loop {
-        let resumed = blocking({
+    let resumed = wait_on_peer(
+        &seat.moves,
+        "resume.failed",
+        &journal.intent,
+        Permanent::Ends,
+        {
             let (remote, journal) = (Arc::clone(remote), journal.clone());
             move || back::resume(&remote, &journal)
-        })
-        .await?;
-        match resumed {
-            Ok(Resumed::Running) => break,
-            Ok(Resumed::Retired) => {
-                log("rollback.found_retired", json!({"intent": journal.intent}));
-                if copy::brain_present(&env.state_dir).is_empty() {
-                    return Err(format!(
-                        "the move back {} committed on the core's machine with no copy placed here",
-                        journal.intent
-                    ));
-                }
-                return Box::pin(retire_and_commit(
-                    env,
-                    seat,
-                    journal,
-                    Arc::clone(remote),
-                    screen,
-                ))
-                .await;
+        },
+        |_| false,
+    )
+    .await?;
+    match resumed {
+        Ok(Resumed::Running) => {}
+        Ok(Resumed::Retired) => {
+            log("rollback.found_retired", json!({"intent": journal.intent}));
+            if copy::brain_present(&env.state_dir).is_empty() {
+                return Err(format!(
+                    "the move back {} committed on the core's machine with no copy placed here",
+                    journal.intent
+                ));
             }
-            Err(failure) => {
-                if last_failure.as_ref() != Some(&failure) {
-                    log(
-                        "resume.failed",
-                        json!({"intent": journal.intent, "failure": failure}),
-                    );
-                    last_failure = Some(failure.clone());
-                }
-                seat.moves.update(|view| view.state = MoveState::Waiting);
-                tokio::time::sleep(RETRY_EVERY).await;
-            }
+            return Box::pin(retire_and_commit(
+                env,
+                seat,
+                journal,
+                Arc::clone(remote),
+                screen,
+            ))
+            .await;
         }
+        // The core's machine answered, and asking again answers the same:
+        // this machine goes back to its node role, starting no core of its
+        // own, and the window names the failure.
+        Err(failure) => log(
+            "rollback.unclean",
+            json!({"intent": journal.intent, "peer": failure}),
+        ),
     }
     let undone = blocking({
         let (state_dir, settings, journal) = (

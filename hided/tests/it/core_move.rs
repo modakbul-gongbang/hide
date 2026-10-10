@@ -892,6 +892,120 @@ fn a_refused_first_link_rolls_back() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// The target stops its pending core for the rollback but cannot take the
+/// copy back out of its folder: it says so, and this machine, knowing no
+/// core of the move runs or starts there, starts its own core rather than
+/// asking again forever with no core on either machine.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_copy_the_target_cannot_take_back_still_restarts_the_old_core() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = visible(&fixture)?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        let placed = wait_for("the copy placed on the target", || {
+            Ok(fixture
+                .target
+                .record("core-handover.json")?
+                .filter(|record| record["state"]["state"] == "pending"))
+        })?;
+        // Held, the record refuses the link, so the move is undone.
+        let held = fixture.hold_target_handover()?;
+        fixture.logged(&fixture.source, "abort.failed")?;
+        let intent = placed["intent"].as_str().context("intent")?;
+        // The labels go back to a name a folder holds that cannot be
+        // emptied.
+        let blocked = fixture
+            .target
+            .state
+            .join("move-incoming")
+            .join(intent)
+            .join("labels.json");
+        std::fs::create_dir_all(blocked.join("kept"))?;
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o500))?;
+        drop(held);
+        let journal = fixture.journal_until("rolled_back");
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o700))?;
+        let journal = journal?;
+        ensure!(
+            journal["phase"]["cause"]["kind"] == "link_refused",
+            "{journal}"
+        );
+        let unclean = fixture.logged(&fixture.source, "rollback.unclean")?;
+        ensure!(
+            unclean["peer"]
+                .as_str()
+                .is_some_and(|peer| peer.contains("labels.json")),
+            "{unclean}"
+        );
+        wait_for("the source's core again", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        ensure!(
+            fixture.target_core()?.is_none(),
+            "a core runs on the target"
+        );
+        ensure!(visible(&fixture)? == before, "the window changed");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// The answer to the place is lost and the target cannot be asked to take
+/// the copy back: no core was started on it, so this machine starts its
+/// own core at once, and the retry's checks take the stranded copy back
+/// before the move goes on with the same intent.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_copy_stranded_by_a_lost_place_answer_is_taken_back_by_the_retry() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        let program = fixture.helper_program()?;
+        let allowed = std::path::PathBuf::from(format!("{}.abort-allowed", program.display()));
+        let lost = std::path::PathBuf::from(format!("{}.place-lost", program.display()));
+        // The first place runs and its answer is lost; the abort fails until
+        // it is allowed.
+        fixture.stand_in_peer(
+            &program,
+            &format!(
+                r#"case "$1 $2" in
+  "core-move place") if [ ! -e '{lost}' ]; then : > '{lost}'; "$0.real" "$@" > /dev/null; exit 0; fi ;;
+  "core-move abort") [ -e '{allowed}' ] || exit 1 ;;
+esac"#,
+                lost = lost.display(),
+                allowed = allowed.display()
+            ),
+        )?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        let first = fixture.journal_until("rolled_back")?;
+        ensure!(
+            first["phase"]["failed"] == "copy" && first["phase"]["cause"]["step"] == "place",
+            "{first}"
+        );
+        wait_for("the source's core again", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        let stranded = fixture
+            .target
+            .record("core-handover.json")?
+            .context("the stranded copy's record")?;
+        ensure!(stranded["state"]["state"] == "pending", "{stranded}");
+        ensure!(fixture.target.state.join("node.json").is_file());
+        std::fs::write(&allowed, b"")?;
+        fixture.device_ready()?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        wait_for("the retry started", || {
+            Ok((records(&fixture, "move.started")?.len() == 2).then_some(()))
+        })?;
+        let journal = fixture.journal_until("done")?;
+        ensure!(journal["intent"] == first["intent"], "{journal}");
+        ensure!(fixture.target_core()?.is_some(), "no core on the target");
+        fixture.logged(&fixture.source, "retry.aborted_stranded")?;
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// This machine cannot stage its copy after its core stopped: nothing
 /// reached the target, and the core starts again on its untouched folder.
 #[test]

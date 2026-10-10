@@ -322,6 +322,80 @@ fn log(kind: &str, fields: serde_json::Value) {
     herdr_core::diagnostic!(record);
 }
 
+/// What a wait on the peer does with a failure asking again cannot change.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Permanent {
+    /// The wait ends with it.
+    Ends,
+    /// It is asked again, ever more slowly: after the link that carries the
+    /// intent may have been sent only the peer's answer decides, and the
+    /// asking is a read, so repeating it repeats nothing (D-07).
+    AskedAgain,
+}
+
+/// Asks the peer with `ask` until it answers. A transient failure
+/// (`MoveFailure::transient`) is asked again every [`RETRY_EVERY`] unless
+/// `give_up` takes it; a permanent one is `permanent`'s to end or ask again
+/// after a wait that grows to a minute. The window shows Waiting with the
+/// failure meanwhile, and a failure is logged as `kind` when it changes.
+async fn wait_on_peer<T: Send + 'static>(
+    moves: &MoveControl,
+    kind: &str,
+    intent: &str,
+    permanent: Permanent,
+    ask: impl Fn() -> Result<T, MoveFailure> + Send + Sync + 'static,
+    mut give_up: impl FnMut(&MoveFailure) -> bool,
+) -> Result<Result<T, MoveFailure>, String> {
+    let ask = Arc::new(ask);
+    let mut last: Option<MoveFailure> = None;
+    let mut slower = crate::backoff::Backoff::default();
+    loop {
+        let asked = {
+            let ask = Arc::clone(&ask);
+            tokio::task::spawn_blocking(move || ask())
+                .await
+                .map_err(|error| error.to_string())?
+        };
+        let failure = match asked {
+            Ok(answer) => return Ok(Ok(answer)),
+            Err(failure) => failure,
+        };
+        if last.as_ref() != Some(&failure) {
+            log(kind, json!({"intent": intent, "failure": failure}));
+            last = Some(failure.clone());
+        }
+        let given_up = failure.transient() && give_up(&failure);
+        let Some(wait) = next_ask(&failure, permanent, given_up, &mut slower) else {
+            return Ok(Err(failure));
+        };
+        moves.update(|view| {
+            view.state = MoveState::Waiting;
+            view.cause = Some(failure.clone());
+        });
+        tokio::time::sleep(wait).await;
+    }
+}
+
+/// How long a wait on the peer waits before it asks again after `failure`;
+/// `None` ends the wait. Only a transient failure is asked again at once,
+/// unless the caller gave it up; a permanent one is asked again, ever more
+/// slowly, only where `permanent` says so.
+fn next_ask(
+    failure: &MoveFailure,
+    permanent: Permanent,
+    given_up: bool,
+    slower: &mut crate::backoff::Backoff,
+) -> Option<Duration> {
+    if failure.transient() {
+        slower.reset();
+        return (!given_up).then_some(RETRY_EVERY);
+    }
+    match permanent {
+        Permanent::Ends => None,
+        Permanent::AskedAgain => Some(slower.failed()),
+    }
+}
+
 fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -532,12 +606,43 @@ async fn prepare(
             return Err(failed);
         }
     };
+    // A journal that cannot be read fails the check rather than reading as
+    // no earlier try, which would lose the retry's intent and its copy.
+    let previous = match journal::read(&env.state_dir) {
+        Ok(previous) => previous,
+        Err(detail) => {
+            failed.push(FailedCheck {
+                check: CheckId::Connection,
+                detail,
+            });
+            return Err(failed);
+        }
+    };
+    let retry = previous.filter(|journal| {
+        journal.peer.device == device && matches!(journal.phase, Phase::RolledBack { .. })
+    });
     let home = env.home.clone();
     let (alias, program) = (source.ssh_alias.clone(), source.helper_path.clone());
     let own = build.clone();
+    let stranded = retry.clone();
     let inspected = tokio::task::spawn_blocking(move || {
         let remote = Remote::new(&home, &alias, &program, &own)?;
         let inspected = driver::inspect(&remote, &asks)?;
+        // A copy an earlier try placed there and could not take back (the
+        // device unreachable as it rolled back) is taken back first.
+        let inspected = match (&stranded, &inspected.handover) {
+            (Some(retry), Some(handover))
+                if handover.intent == retry.intent && handover.state == HandoverState::Pending =>
+            {
+                let aborted = driver::abort_target(&remote, retry)?;
+                log(
+                    "retry.aborted_stranded",
+                    json!({"intent": retry.intent, "aborted": format!("{aborted:?}")}),
+                );
+                driver::inspect(&remote, &asks)?
+            }
+            _ => inspected,
+        };
         Ok::<_, MoveFailure>((remote, inspected))
     })
     .await
@@ -575,12 +680,6 @@ async fn prepare(
         });
     }
 
-    let retry = journal::read(&env.state_dir)
-        .ok()
-        .flatten()
-        .filter(|journal| {
-            journal.peer.device == device && matches!(journal.phase, Phase::RolledBack { .. })
-        });
     // A core the device retired for a move back holds nothing there.
     let other_move = inspected.handover.as_ref().is_some_and(|handover| {
         handover.state != HandoverState::Retired
@@ -873,48 +972,51 @@ async fn resolve_unlinked(
     remote: Arc<Remote>,
     mut node: Option<RunningNode>,
 ) -> Result<Role, String> {
-    loop {
-        let asked = {
+    let said = wait_on_peer(
+        &seat.moves,
+        "status.failed",
+        &journal.intent,
+        Permanent::AskedAgain,
+        {
             let (remote, journal) = (Arc::clone(&remote), journal.clone());
-            tokio::task::spawn_blocking(move || driver::target_status(&remote, &journal))
-                .await
-                .map_err(|error| error.to_string())?
-        };
-        match asked {
-            Ok(TargetSays::Active) => {
-                let node = match node {
-                    Some(node) => node,
-                    None => crate::start_node_role(env.clone(), seat.parts()).await?,
-                };
-                commit(env, &seat.moves, journal, &remote).await;
-                return Ok(Role::Node(node));
+            move || driver::target_status(&remote, &journal)
+        },
+        |_| false,
+    )
+    .await?
+    .map_err(|failure| {
+        format!(
+            "the move {} stopped asking its peer: {failure:?}",
+            journal.intent
+        )
+    })?;
+    match said {
+        TargetSays::Active => {
+            let node = match node {
+                Some(node) => node,
+                None => crate::start_node_role(env.clone(), seat.parts()).await?,
+            };
+            commit(env, &seat.moves, journal, &remote).await;
+            Ok(Role::Node(node))
+        }
+        TargetSays::NotCommitted => {
+            // The node's link stops before the peer is asked to stop, so no
+            // link of it can commit the move meanwhile; the abort itself
+            // answers if one did.
+            if let Some(node) = node.take() {
+                let _ = tokio::task::spawn_blocking(move || drop(node)).await;
             }
-            Ok(TargetSays::NotCommitted) => {
-                // The node's link stops before the peer is asked to stop,
-                // so no link of it can commit the move meanwhile; the abort
-                // itself answers if one did.
-                if let Some(node) = node.take() {
-                    let _ = tokio::task::spawn_blocking(move || drop(node)).await;
-                }
-                return rollback(
-                    env,
-                    seat,
-                    journal,
-                    &remote,
-                    MoveStep::Reattach,
-                    MoveFailure::LinkRefused {
-                        reason: "the new core did not take this machine's link".to_owned(),
-                    },
-                )
-                .await;
-            }
-            Err(failure) => {
-                seat.moves.update(|view| {
-                    view.state = MoveState::Waiting;
-                    view.cause = Some(failure.clone());
-                });
-                tokio::time::sleep(RETRY_EVERY).await;
-            }
+            rollback(
+                env,
+                seat,
+                journal,
+                &remote,
+                MoveStep::Reattach,
+                MoveFailure::LinkRefused {
+                    reason: "the new core did not take this machine's link".to_owned(),
+                },
+            )
+            .await
         }
     }
 }
@@ -1014,56 +1116,53 @@ async fn rollback(
         Phase::Placed | Phase::TargetStarted | Phase::AttachSent
     );
     if placed {
-        let mut last_failure = None;
-        loop {
-            let asked = {
+        let attach_sent = journal.phase == Phase::AttachSent;
+        // Only a core that started holds a lease; a copy placed with no core
+        // on it is given back by the next try's checks.
+        let lease_until = journal
+            .target_started_unix_ms
+            .map(|started| started + (PENDING_LEASE + LEASE_MARGIN).as_millis() as u64);
+        let aborted = wait_on_peer(
+            &seat.moves,
+            "abort.failed",
+            &journal.intent,
+            if attach_sent {
+                Permanent::AskedAgain
+            } else {
+                Permanent::Ends
+            },
+            {
                 let (remote, journal) = (Arc::clone(remote), journal.clone());
-                tokio::task::spawn_blocking(move || driver::abort_target(&remote, &journal))
-                    .await
-                    .map_err(|error| error.to_string())?
-            };
-            match asked {
-                Ok(driver::Aborted::Undone) => break,
-                Ok(driver::Aborted::CopyLeft { reason }) => {
-                    // Nothing of the move runs or starts there; its copy is
-                    // named by that machine's next check.
-                    log(
-                        "rollback.unclean",
-                        json!({"intent": journal.intent, "peer": reason}),
-                    );
-                    break;
-                }
-                Ok(driver::Aborted::Active) => {
-                    // The link committed the move after all: go forward.
-                    drop(screen);
-                    let node = crate::start_node_role(env.clone(), seat.parts()).await?;
-                    commit(env, &seat.moves, journal, remote).await;
-                    return Ok(Role::Node(node));
-                }
-                Err(failure) => {
-                    if last_failure.as_ref() != Some(&failure) {
-                        log(
-                            "abort.failed",
-                            json!({"intent": journal.intent, "failure": failure}),
-                        );
-                        last_failure = Some(failure.clone());
-                    }
-                    let lease_over = journal.target_started_unix_ms.is_none_or(|started| {
-                        now_unix_ms() > started + (PENDING_LEASE + LEASE_MARGIN).as_millis() as u64
-                    });
-                    // Past the lease no link was sent: the peer's pending
-                    // core gave its copy back on its own.
-                    if lease_over && journal.phase != Phase::AttachSent {
-                        log(
-                            "abort.lease_over",
-                            json!({"intent": journal.intent, "failure": failure}),
-                        );
-                        break;
-                    }
-                    seat.moves.update(|view| view.state = MoveState::Waiting);
-                    tokio::time::sleep(RETRY_EVERY).await;
-                }
+                move || driver::abort_target(&remote, &journal)
+            },
+            |_| !attach_sent && lease_until.is_none_or(|until| now_unix_ms() > until),
+        )
+        .await?;
+        match aborted {
+            Ok(driver::Aborted::Undone) => {}
+            Ok(driver::Aborted::CopyLeft { reason }) => {
+                // Nothing of the move runs or starts there; its copy is
+                // named by that machine's next check.
+                log(
+                    "rollback.unclean",
+                    json!({"intent": journal.intent, "peer": reason}),
+                );
             }
+            Ok(driver::Aborted::Active) => {
+                // The link committed the move after all: go forward.
+                drop(screen);
+                let node = crate::start_node_role(env.clone(), seat.parts()).await?;
+                commit(env, &seat.moves, journal, remote).await;
+                return Ok(Role::Node(node));
+            }
+            // No link carrying the intent left this machine, so no core of
+            // the move can commit there: a pending one gives its copy back
+            // at its lease's end, and a copy with no core on it is given
+            // back by the next try's checks.
+            Err(failure) => log(
+                "abort.given_up",
+                json!({"intent": journal.intent, "failure": failure}),
+            ),
         }
     }
     let mut undone = placement::remove(&env.state_dir);
@@ -1099,4 +1198,48 @@ async fn rollback(
         ..MoveView::default()
     });
     Ok(Role::Core(running))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A failure asking again cannot change ends a wait before the link
+    /// that carries the intent was sent, rather than holding the core down
+    /// on both machines; after it, only the peer's answer decides, so it is
+    /// asked again, ever more slowly. A transient failure is asked again at
+    /// once unless the caller gave it up (a lease that ended).
+    #[test]
+    fn a_wait_asks_again_only_what_asking_again_can_change() {
+        let refused = MoveFailure::Refused {
+            step: "abort".to_owned(),
+            reason: "the record is unreadable".to_owned(),
+        };
+        let busy = MoveFailure::Busy {
+            step: "abort".to_owned(),
+            reason: "held".to_owned(),
+        };
+        let unreachable = MoveFailure::Unreachable {
+            reason: "down".to_owned(),
+        };
+        let mut slower = crate::backoff::Backoff::default();
+        assert_eq!(
+            next_ask(&refused, Permanent::Ends, false, &mut slower),
+            None
+        );
+        for transient in [&busy, &unreachable] {
+            assert_eq!(
+                next_ask(transient, Permanent::Ends, false, &mut slower),
+                Some(RETRY_EVERY)
+            );
+            assert_eq!(
+                next_ask(transient, Permanent::Ends, true, &mut slower),
+                None
+            );
+        }
+        let waits: Vec<_> = (0..3)
+            .map(|_| next_ask(&refused, Permanent::AskedAgain, false, &mut slower))
+            .collect();
+        assert_eq!(waits, [2, 4, 8].map(|secs| Some(Duration::from_secs(secs))));
+    }
 }
