@@ -64,12 +64,13 @@ impl CoreStarter {
     /// takes links.
     pub fn start(&self, state_dir: &Path, program: &Path) -> Result<u32, String> {
         let stale = std::fs::read(crate::attach::attach_record(state_dir)).ok();
-        let mut exited: Box<dyn FnMut() -> Option<String>> = Box::new(|| None);
-        match self {
+        let mut exited: Box<dyn FnMut() -> Option<String>> = match self {
             Self::Fixture => {
                 let log = log_file(state_dir)?;
                 let mut command = std::process::Command::new(program);
-                command.env("HIDE_STATE_DIR", state_dir);
+                // What the login item runs, so a fixture's core is a
+                // starter's core as the login item's is.
+                command.arg("core-login").env("HIDE_STATE_DIR", state_dir);
                 hide_platform::process::detach(&mut command)
                     .map_err(|error| format!("the core could not be detached: {error}"))?;
                 command
@@ -79,21 +80,24 @@ impl CoreStarter {
                 let mut child = command
                     .spawn()
                     .map_err(|error| format!("the core did not start: {error}"))?;
-                exited = Box::new(move || {
+                Box::new(move || {
                     child
                         .try_wait()
                         .ok()
                         .flatten()
                         .map(|status| format!("the core exited at its start: {status}"))
-                });
+                })
             }
-            Self::LoginItem { home } => crate::login_item::start(
-                &hide_platform::user_agents::UserAgents::current(),
-                home,
-                state_dir,
-                program,
-            )?,
-        }
+            Self::LoginItem { home } => {
+                let agents = hide_platform::user_agents::UserAgents::current();
+                crate::login_item::start(&agents, home, state_dir, program)?;
+                Box::new(crate::login_item::exited_at_start(
+                    agents,
+                    home.clone(),
+                    state_dir.to_path_buf(),
+                ))
+            }
+        };
         wait_for_core(state_dir, stale.as_deref(), &mut *exited)
     }
 

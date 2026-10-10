@@ -233,6 +233,10 @@ pub struct Env {
     /// executable; never read from the environment. A daemon started in
     /// process (tests) has none and reports none.
     pub build: Option<String>,
+    /// The program a core's starter runs, set by `hided core-login` from its
+    /// own executable (PRD core-host-node-move Q13); never read from the
+    /// environment. `None` for a daemon `hide connect` started.
+    pub starter_program: Option<PathBuf>,
     /// Optional test/operator-selected host opener, validated before serving.
     pub open_command: Option<PathBuf>,
     /// Where the device helper is installed on each SSH device; part of the
@@ -512,6 +516,7 @@ fn resolve(mut read: impl FnMut(&str) -> Option<String>) -> (Env, Vec<EnvError>)
         bind: SocketAddr::from(([127, 0, 0, 1], port)),
         idle_secs,
         build: None,
+        starter_program: None,
         open_command,
         host_helper_root,
         host_cli_dir,

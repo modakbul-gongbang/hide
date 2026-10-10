@@ -728,12 +728,6 @@ fn try_link(
     }
 }
 
-/// The most `hided core-update` may print.
-const UPDATE_OUTPUT_CAP: usize = 64 * 1024;
-/// How long the update on the core's machine may take: the old core's stop,
-/// the new one's 30 s to take links, and the same again for a rollback.
-const UPDATE_TIMEOUT: Duration = Duration::from_secs(150);
-
 /// Updates the core, which runs an older build, to this node's (PRD
 /// core-host-node-move B10): this build goes into a version folder beside
 /// the core's on its machine, and its own `hided core-update` replaces the
@@ -761,7 +755,7 @@ fn update_core(
     if set_phase(shared, Phase::Updating { core: core.clone() }) {
         return LinkFailure::Stopping;
     }
-    let intent = crate::core_move::new_intent().replacen("move-", "update-", 1);
+    let intent = crate::core_update::new_intent();
     let log = |kind: &str, fields: serde_json::Value| {
         let mut record = json!({
             "component": "node_role",
@@ -806,33 +800,20 @@ fn update_core(
             hide_node::ssh::shell_quote(state_dir)
         ));
     }
-    let output = match upstream.exec("core-update", &command, UPDATE_OUTPUT_CAP, UPDATE_TIMEOUT) {
+    let output = match upstream.exec(
+        "core-update",
+        &command,
+        crate::core_update::OUTPUT_CAP,
+        crate::core_update::WITHIN,
+    ) {
         Ok(output) => output,
         Err(error) => return failed(format!("core-update: {error}")),
     };
-    let answer = output
-        .stdout
-        .lines()
-        .last()
-        .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok());
-    let Some(answer) = answer else {
-        return failed(format!(
-            "core-update exited {}: {}",
-            output.exit_status,
-            output.stderr.trim().chars().take(512).collect::<String>()
-        ));
-    };
-    if answer.get("updated").is_none() {
-        let reason = answer
-            .pointer("/rolled_back/reason")
-            .map(|reason| format!("rolled_back: {}", reason.as_str().unwrap_or_default()))
-            .or_else(|| {
-                answer
-                    .pointer("/refused/reason")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned)
-            })
-            .unwrap_or_else(|| format!("core-update answered {answer}"));
+    if let Err(reason) = crate::core_update::outcome(
+        &output.stdout,
+        &output.exit_status.to_string(),
+        &output.stderr,
+    ) {
         return failed(reason);
     }
     // The node's record names the program its next dials run there.

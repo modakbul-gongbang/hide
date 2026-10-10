@@ -516,6 +516,10 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         keep_alive: env.keep_alive,
         idle_secs: env.idle_secs,
         build: env.build.as_deref().map(Arc::from),
+        starter_program: env
+            .starter_program
+            .as_deref()
+            .map(|program| Arc::from(program.to_string_lossy().as_ref())),
         renderer_transitions: Arc::new(Mutex::new(())),
         shutdown: Arc::clone(&shutdown),
         ui_dir: if server::has_embedded_ui() {

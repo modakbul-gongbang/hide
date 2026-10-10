@@ -147,6 +147,85 @@ fn a_window_older_than_its_core_asks_for_its_app_to_be_updated() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// An app newer than the core its machine runs under the core's starter
+/// updates that core through the same updater a node runs and attaches to
+/// it, and never stops it to start its own (Q13, B10).
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_newer_app_on_the_core_machine_updates_its_core() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.journal_until("done")?;
+        let before = fixture.target_core()?.context("no core on the target")?;
+        let previous = fixture.target.health()?["starter"]["program"]
+            .as_str()
+            .context("the moved core names no starter")?
+            .to_owned();
+        let newer = fixture.other_build("newer")?;
+        let newer_build =
+            hided::build_id::of_file(&newer.join("hided")).map_err(anyhow::Error::msg)?;
+        let app = fixture.bundle("newer", &newer)?;
+        let answer = fixture.connect_on_target(
+            &app,
+            &[(hided::env::HIDE_BUILD_VERSION_OVERRIDE, "999.0.0")],
+        )?;
+        ensure!(answer["ok"] == true, "hide connect answered {answer}");
+        let after = fixture.target_core()?.context("no core after the update")?;
+        let health = fixture.target.health()?;
+        ensure!(
+            after != before && answer["pid"] == after && health["build"] == newer_build.as_str(),
+            "the app attached to {answer} while the core runs {health}"
+        );
+        let program = health["starter"]["program"]
+            .as_str()
+            .context("the updated core names no starter")?;
+        let (builds, current) = builds_beside(program)?;
+        let mut expected = vec![version_of(&previous)?, version_of(program)?];
+        expected.sort();
+        ensure!(
+            builds == expected && current == version_of(program)?,
+            "the core machine keeps {builds:?} with current at {current}"
+        );
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// An app older than the core its machine runs under the core's starter is
+/// told to update with both builds, and the core goes on as it was (Q13,
+/// B11).
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn an_older_app_on_the_core_machine_leaves_its_core_running() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.journal_until("done")?;
+        let core = fixture.target_core()?.context("no core on the target")?;
+        let older = fixture.other_build("older")?;
+        let app = fixture.bundle("older", &older)?;
+        let answer = fixture
+            .connect_on_target(&app, &[(hided::env::HIDE_BUILD_VERSION_OVERRIDE, "0.0.1")])?;
+        ensure!(
+            answer["ok"] == false
+                && answer["reason"] == "core_newer"
+                && answer["app"] == "0.0.1"
+                && answer["core"]
+                    == hided::build_order::Release::of_this_build()
+                        .shown()
+                        .as_str(),
+            "hide connect answered {answer}"
+        );
+        ensure!(
+            fixture.target_core()? == Some(core),
+            "the core did not go on as it was"
+        );
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The program the source's placement names on the target.
 fn placed_program(fixture: &Fixture) -> Result<String> {
     Ok(fixture
@@ -1324,6 +1403,7 @@ fn a_pending_core_does_nothing_outside_until_its_link_commits() -> Result<()> {
             bind: "127.0.0.1:0".parse()?,
             idle_secs: 600,
             build: None,
+            starter_program: None,
             open_command: None,
             host_helper_root: None,
             host_cli_dir: None,

@@ -75,6 +75,11 @@ fn run() -> Result<(), String> {
         ));
     }
     env.build = Some(build);
+    if args.first().is_some_and(|arg| arg == "core-login") {
+        env.starter_program = Some(
+            std::env::current_exe().map_err(|error| format!("this hided has no path: {error}"))?,
+        );
+    }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("hided")

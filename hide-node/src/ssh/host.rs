@@ -1418,6 +1418,47 @@ pub(super) async fn install_build(
     place_payload(raw, &home, owner, &root, &payload).await
 }
 
+impl HelperPackages {
+    /// [`install_build`] on this machine: this build in its version folder
+    /// under `root`, the folder a remote install of it would name, for a
+    /// core update run where the core runs (PRD core-host-node-move Q13).
+    /// A file already there is kept only when its bytes are this build's;
+    /// any other is replaced whole. Answers where the build's `hided` is.
+    pub fn install_here(&self, root: &Path) -> Result<PathBuf, String> {
+        use hide_platform::fs::{Access, atomic, private};
+        let payload = self
+            .payload(std::env::consts::OS, std::env::consts::ARCH)
+            .map_err(|error| error.to_string())?;
+        if !payload.missing.is_empty() {
+            return Err(format!(
+                "This build cannot update a core without all of its parts: {}",
+                payload.missing.join("; ")
+            ));
+        }
+        let version_dir = root.join(&payload.version()[..16]);
+        private::create_dir_all(&version_dir).map_err(|error| {
+            format!(
+                "The build folder {} could not be made: {error}",
+                version_dir.display()
+            )
+        })?;
+        for file in &payload.files {
+            let path = version_dir.join(&file.relative);
+            if std::fs::read(&path).is_ok_and(|bytes| hex_digest(&bytes) == file.digest) {
+                continue;
+            }
+            let access = if file.executable {
+                Access::PrivateExecutable
+            } else {
+                Access::Private
+            };
+            atomic::write_file_durable(&path, &file.bytes, access)
+                .map_err(|error| format!("{} could not be written: {error}", path.display()))?;
+        }
+        Ok(version_dir.join(HELPER_NAME))
+    }
+}
+
 /// The account's home as SFTP reports it, its owner, and `helper_root`
 /// spelled under it, checked to be a plain path.
 async fn private_root_spelling(

@@ -971,7 +971,7 @@ pub enum ConnectError {
 
 /// The core's machine and the two builds `hide connect` names to the host,
 /// as the node's `/health` gives them (`builds`).
-#[derive(Debug, serde::Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
 pub struct CoreBuilds {
     /// The core machine's name.
     pub machine: String,
@@ -1171,6 +1171,10 @@ fn find_or_start(env: &Env) -> Result<Healthy, ConnectError> {
                 running.unwrap_or("unknown"),
             )));
         }
+        if let Some(program) = health["starter"]["program"].as_str() {
+            let program = std::path::PathBuf::from(program);
+            return update_started_core(env, (state, health), &build, &program);
+        }
         eprintln!(
             "{}",
             serde_json::json!({
@@ -1192,6 +1196,128 @@ fn find_or_start(env: &Env) -> Result<Healthy, ConnectError> {
     // The daemon outlives this command; nothing waits for it.
     std::mem::forget(daemon);
     started
+}
+
+/// How long an updated core has to answer `/health` once its update said
+/// it takes links.
+const UPDATED_CORE_ANSWERS_WITHIN: Duration = Duration::from_secs(10);
+
+/// A core of another build that its starter runs here, the core a move
+/// placed on this machine (PRD core-host-node-move Q13), is never stopped
+/// for this app's own: its login item would start that build again at the
+/// next login beside this one. This app, when newer, updates it through
+/// the updater a node runs (B10): this build goes into a version folder
+/// beside the core's, and its own `hided core-update` replaces the core
+/// through the starter, or goes back to the build it ran. Each connection
+/// is one attempt (B20). An older app is told to update; a build neither
+/// orders is refused as another build.
+fn update_started_core(
+    env: &Env,
+    (state, health): Healthy,
+    build: &str,
+    program: &Path,
+) -> Result<Healthy, ConnectError> {
+    use crate::build_order::{Release, Standing};
+    let core: Release = serde_json::from_value(health["release"].clone()).map_err(|error| {
+        ConnectError::StartFailed(format!("the core's health names no release: {error}"))
+    })?;
+    let running = health["build"]
+        .as_str()
+        .ok_or_else(|| ConnectError::StartFailed("the core's health names no build".to_owned()))?;
+    let ours = Release::of_this_build();
+    let builds = CoreBuilds {
+        machine: crate::host_name().ok_or_else(|| {
+            ConnectError::StartFailed("this machine would not say its name".to_owned())
+        })?,
+        core: core.shown(),
+        app: ours.shown(),
+    };
+    let log = |kind: &str, fields: serde_json::Value| {
+        let mut record = serde_json::json!({
+            "component": "hide", "kind": kind, "pid": state.pid,
+            "core": builds.core, "app": builds.app,
+        });
+        if let (Some(record), serde_json::Value::Object(fields)) = (record.as_object_mut(), fields)
+        {
+            record.extend(fields);
+        }
+        eprintln!("{record}");
+    };
+    match crate::build_order::standing((build, &ours), (running, &core)) {
+        Standing::Same => return Ok((state, health)),
+        Standing::Older => {
+            log("core.newer_refused", serde_json::json!({}));
+            return Err(ConnectError::CoreNewer(builds));
+        }
+        Standing::Unordered => {
+            log("core.other_build_refused", serde_json::json!({}));
+            return Err(ConnectError::OtherBuild(format!(
+                "the core its login item runs here is build {running}, which this app's build {build} neither updates nor replaces"
+            )));
+        }
+        Standing::Newer => {}
+    }
+    let intent = crate::core_update::new_intent();
+    log("core.update_started", serde_json::json!({"intent": intent}));
+    let failed = |reason: String| {
+        log(
+            "core.update_failed",
+            serde_json::json!({"intent": intent, "reason": reason}),
+        );
+        ConnectError::UpdateFailed(builds.clone())
+    };
+    let root = program
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| failed(format!("{} is not in a build folder", program.display())))?;
+    let packages = daemon_binary()
+        .map(|hided| {
+            hide_node::ssh::host::HelperPackages::new(hided.parent().map(Path::to_path_buf))
+        })
+        .map_err(failed)?;
+    let new = packages.install_here(root).map_err(failed)?;
+    let mut command = std::process::Command::new(&new);
+    command
+        .arg("core-update")
+        .arg("--state-dir")
+        .arg(&env.state_dir)
+        .arg("--previous")
+        .arg(program)
+        .args(["--intent", &intent]);
+    // Its own process group, so a host that gives up on this connect and
+    // kills it never cuts the update short.
+    let finished = hide_platform::process::run_to_end(
+        &mut command,
+        crate::core_update::WITHIN,
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .map_err(|error| failed(format!("core-update: {error:?}")))?;
+    let exit = finished
+        .code
+        .map_or_else(|| "on a signal".to_owned(), |code| code.to_string());
+    crate::core_update::outcome(&finished.stdout, &exit, &finished.stderr).map_err(failed)?;
+    log("core.updated", serde_json::json!({"intent": intent}));
+    wait_for_build(env, build)
+}
+
+/// The daemon of this state folder once it runs `build` and answers.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
+fn wait_for_build(env: &Env, build: &str) -> Result<Healthy, ConnectError> {
+    let deadline = std::time::Instant::now() + UPDATED_CORE_ANSWERS_WITHIN;
+    loop {
+        if let Some((state, health)) = healthy_daemon(env)
+            && health["build"] == build
+        {
+            return Ok((state, health));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(ConnectError::NoResponse(format!(
+                "the core updated to build {build} did not answer within {}s",
+                UPDATED_CORE_ANSWERS_WITHIN.as_secs()
+            )));
+        }
+        std::thread::sleep(HEALTH_PAUSE);
+    }
 }
 
 /// Moves the legacy default state folder into place before anything looks

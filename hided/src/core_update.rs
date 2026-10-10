@@ -26,6 +26,45 @@ use crate::core_move::starter::CoreStarter;
 
 const USAGE: &str = "usage: hided core-update --state-dir <dir> --previous <hided> --intent <id>";
 
+/// How long an update may take where it runs: the old core's stop, the new
+/// one's 30 s to take links, and the same again for a way back.
+pub const WITHIN: std::time::Duration = std::time::Duration::from_secs(150);
+/// The most an update's run may print that its caller reads.
+pub const OUTPUT_CAP: usize = 64 * 1024;
+
+/// A new update's intent id.
+pub fn new_intent() -> String {
+    crate::core_move::new_intent().replacen("move-", "update-", 1)
+}
+
+/// What an update's run said: `Ok` once the core runs the new build, the
+/// reason otherwise.
+pub fn outcome(stdout: &str, exit: &str, stderr: &str) -> Result<(), String> {
+    let Some(answer) = stdout
+        .lines()
+        .last()
+        .and_then(|line| serde_json::from_str::<Value>(line).ok())
+    else {
+        return Err(format!(
+            "core-update exited {exit}: {}",
+            stderr.trim().chars().take(512).collect::<String>()
+        ));
+    };
+    if answer.get("updated").is_some() {
+        return Ok(());
+    }
+    if let Some(reason) = answer
+        .pointer("/rolled_back/reason")
+        .and_then(Value::as_str)
+    {
+        return Err(format!("rolled_back: {reason}"));
+    }
+    if let Some(reason) = answer.pointer("/refused/reason").and_then(Value::as_str) {
+        return Err(reason.to_owned());
+    }
+    Err(format!("core-update answered {answer}"))
+}
+
 struct Args {
     state_dir: PathBuf,
     previous: PathBuf,

@@ -409,6 +409,41 @@ impl Fixture {
         })
     }
 
+    /// The builds in `cli` laid out as an app bundle's resources, which a
+    /// `hide` takes as the app's own.
+    pub fn bundle(&self, name: &str, cli: &Path) -> Result<PathBuf> {
+        let resources = self
+            .root
+            .join(format!("{name}.app"))
+            .join("Contents")
+            .join("Resources");
+        fs::create_dir_all(&resources)?;
+        for program in ["hide", "hided", "hide-agent-hooks"] {
+            fs::copy(cli.join(program), resources.join(program))?;
+        }
+        Ok(resources)
+    }
+
+    /// What `hide connect --json` answers on the target machine, where the
+    /// moved core runs, as the `hide` in `cli` asks it with `extra` in its
+    /// environment.
+    pub fn connect_on_target(&self, cli: &Path, extra: &[(&str, &str)]) -> Result<Value> {
+        let mut environment = self.target.herdr.environment.clone();
+        for (key, value) in extra {
+            environment.set(key, value);
+        }
+        let mut command = environment.command(cli.join("hide"));
+        command.args(["connect", "--json"]);
+        let output = command.output()?;
+        serde_json::from_slice(&output.stdout).with_context(|| {
+            format!(
+                "hide connect answered {:?} ({})",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })
+    }
+
     /// The source's window address: it stays the same through a move.
     pub fn window(&self) -> (u16, String) {
         (self.port, self.token.clone())

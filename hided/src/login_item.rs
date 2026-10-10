@@ -5,7 +5,7 @@
 //! The item names the Herdr binary and socket this machine's hided resolved
 //! when the move placed the core, so a login starts the same ones.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
@@ -57,6 +57,34 @@ pub fn start(
         .install(&agent, home, &stop)
         .and_then(|()| agents.kickstart(&label, home, &stop))
         .map_err(|error| format!("the login item {label}: {error}"))
+}
+
+/// How long [`exited_at_start`] waits between two looks at the job.
+const EXIT_LOOK_EVERY: Duration = Duration::from_secs(1);
+
+/// Asked while a core the login item started has not taken links yet:
+/// names how its job ended when launchd says it is not running and has
+/// exited, so a build that cannot start is known at once rather than at
+/// the starter's deadline (PRD core-host-node-move B10). launchd is asked
+/// at most once a second.
+pub fn exited_at_start(
+    agents: UserAgents,
+    home: PathBuf,
+    state_dir: PathBuf,
+) -> impl FnMut() -> Option<String> {
+    let label = hide_kit::layout::core_login_item(&home, &state_dir);
+    let mut looked: Option<Instant> = None;
+    move || {
+        if looked.is_some_and(|at| at.elapsed() < EXIT_LOOK_EVERY) {
+            return None;
+        }
+        looked = Some(Instant::now());
+        let code = agents
+            .last_exit(&label, &home, &AtomicBool::new(false))
+            .ok()
+            .flatten()?;
+        Some(format!("the core exited at its start: exit code {code}"))
+    }
 }
 
 /// What the core's login item runs it with: the account's home, the state

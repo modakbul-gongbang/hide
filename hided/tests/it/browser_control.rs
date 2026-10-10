@@ -53,6 +53,7 @@ async fn desktop_registration_requires_daemon_auth_and_local_origin() {
         bind: "127.0.0.1:0".parse().unwrap(),
         idle_secs: 600,
         build: None,
+        starter_program: None,
         open_command: None,
         host_helper_root: None,
         host_cli_dir: None,
