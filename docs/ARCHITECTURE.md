@@ -1233,6 +1233,12 @@ The human notice's Herdr toast goes to the first connected node that dialed in, 
 | Output of C's and other devices' panes, and keys into them, through the terminals relay | Bytes of files in M's checkouts under the roots C opened on M |
 | M's Herdr streams, pane and checkout proofs, input facts and the label lock, inside the link | M's screens' tokens and the desktop host's discovery (`hide connect`) |
 | M's panes' output, only while a screen of C looks at them | |
+| A core move's steps, over SSH from the machine giving the core: the checks (`hided core-move inspect`), the receive, verify, place and start on the machine taking it, the retirement; and the first link, whose hello carries the move's intent and commits it (`hided/src/core_move/`) | The move's record (`core-move.json`) and its staging copy, on the machine that drives it |
+| The brain state's copy, once: staged, its owner changed, sent by SFTP into the taking machine's `move-incoming/` and checked against the sent hashes before it is placed (`node_migration::copy`) | What a machine held before its core moved away (`moved-out/`), on that machine |
+| A core update's build, uploaded by SSH from the newer node or app into a version folder beside the core's, and `hided core-update` run there (`Upstream::install_build`) | |
+| Project Memory read and written by an agent hook on M: the `memory` request through M's node to the one store C keeps, and the receipts C's label reads find in M's sessions (`herdr_core::memory_hook`, `Runtime::memory_node`) | M's session files, which M's node reads for C (`ProjectSessions`, `SessionChunk`, `SessionText`) |
+| A held letter: C keeps it while M is not linked and its wait counts only while M is (`delivery.md`), and hands it to M's agent through M's node when the agent's hook pulls | |
+| The login item: installed, started and removed by `hided core-move` on the machine taking or giving the core, in that account's GUI session (`hided::login_item`, `UserAgents`) | |
 
 ### Moving the core
 
