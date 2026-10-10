@@ -155,11 +155,13 @@ it("a reconnect names the core its revision came from", async () => {
 });
 
 // PRD core-host-node-move, Window handoff: a window goes through a move
-// without a reload. The move's screen sends only the move, so the window
-// waits as `moving` and sends nothing; the screen closes when the role after
-// the move takes over, and the window reconnects to that role, which draws
-// it. The finished move names the node the window became, and the page
-// writes it into its own address.
+// without a reload. Once the move is under way the role the window draws
+// from stops and closes its socket, so the window is held as `moving` from
+// that frame, through the close and the reconnect, and sends nothing (W1);
+// the move's screen sends only the move; the screen closes when the role
+// after the move takes over, and the window reconnects to that role, which
+// draws it. The finished move names the node the window became, and the
+// page writes it into its own address.
 it("a move holds the window as moving, sends nothing, and the role after it draws the window at the node's address", async () => {
   const states: ConnectionState[] = [];
   const stop = useShellStore.subscribe((state) => states.push(state.connection));
@@ -167,9 +169,12 @@ it("a move holds the window as moving, sends nothing, and the role after it draw
   const first = made(0);
   first.open();
   first.frame({ type: "snapshot", payload: { revision: 3, rest: {} } });
-  first.frame({ type: "core_move", payload: { state: "stopping", direction: "forward", device: "mini", node: "mbp", sent: 0, total: 0, failed: [], step: "stop_core", cause: null, intent: "i" } });
+  first.frame({ type: "core_move", payload: { state: "checking", direction: "forward", device: "mini", node: "mbp", sent: 0, total: 0, failed: [], step: "check", cause: null, intent: "i" } });
   expect(useShellStore.getState().connection).toBe("live");
-  first.closeWith(1006, "");
+  first.frame({ type: "core_move", payload: { state: "stopping", direction: "forward", device: "mini", node: "mbp", sent: 0, total: 0, failed: [], step: "stop_core", cause: null, intent: "i" } });
+  expect(useShellStore.getState().connection).toBe("moving");
+  expect(shell.dispatch({ schema_version: 2, kind: "pane_input", payload: {} })).toBe(false);
+  first.closeWith(1012, "role_ended");
   await Promise.resolve();
   await vi.runOnlyPendingTimersAsync();
 
@@ -192,7 +197,10 @@ it("a move holds the window as moving, sends nothing, and the role after it draw
   node.open();
   node.frame({ type: "snapshot", payload: { revision: 1, rest: {} } });
   expect(useShellStore.getState().connection).toBe("live");
-  expect(states.indexOf("moving")).toBeLessThan(states.lastIndexOf("reconnecting"));
+  // Held from the stopping frame until the node draws: no reconnect between.
+  const from = states.indexOf("moving");
+  expect(states.slice(from, states.lastIndexOf("moving") + 1).every((state) => state === "moving")).toBe(true);
+  expect(states.slice(from)).not.toContain("reconnecting");
   expect(states).not.toContain("gone");
   stop();
   shell.close();
@@ -205,4 +213,21 @@ it("a move back removes the node from the address, and an unfinished move leaves
   expect(addressAfterMove("#token=t", view("done", "forward", "mbp"))).toBe("#token=t&node=mbp");
   expect(addressAfterMove("#token=t", view("rolled_back", "forward", "mbp"))).toBeNull();
   expect(addressAfterMove("#token=t&node=mbp", view("done", "forward", "mbp"))).toBeNull();
+});
+
+// A move that is not under way leaves the window alone: a dropped socket
+// shows reconnecting, and a drawn window a frame held goes back to live when
+// the move turns out not to go ahead.
+it("a window no move holds reconnects as reconnecting, and a move that stops short releases it", async () => {
+  const shell = connectShell({ onChunks: () => {} });
+  const first = made(0);
+  first.open();
+  first.frame({ type: "snapshot", payload: { revision: 3, rest: {} } });
+  first.frame({ type: "core_move", payload: { state: "waiting", direction: "forward", device: "mini", node: null, sent: 0, total: 0, failed: [], step: "check", cause: null, intent: "i" } });
+  expect(useShellStore.getState().connection).toBe("moving");
+  first.frame({ type: "core_move", payload: { state: "rolled_back", direction: "forward", device: "mini", node: null, sent: 0, total: 0, failed: [], step: "check", cause: { kind: "refused" }, intent: "i" } });
+  expect(useShellStore.getState().connection).toBe("live");
+  first.closeWith(1006, "");
+  expect(useShellStore.getState().connection).toBe("reconnecting");
+  shell.close();
 });

@@ -1,6 +1,6 @@
 import { configureAttachments, receiveAttachmentRefusal } from "./attachments";
 import { connectionAfterHealthFails, nextBackoff } from "./connection";
-import type { MoveView } from "./coreMove";
+import { moveUnderWay, type MoveView } from "./coreMove";
 import { clearPending, receiveBytes, receiveBytesError, receiveBytesRefusal } from "./fileBytes";
 import { isOperatorFocus, numbered } from "./operatorFocus";
 import { noteArrival, probeEnabled } from "./probe";
@@ -103,6 +103,15 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
     socket.send(bytes);
   };
 
+  // A window a move holds stays held through the close of the role the
+  // move ends (1012 `role_ended`, `core_moved`) and the reconnect after it,
+  // until the role after the move draws it, so the strip names the move's
+  // step rather than a reconnect (W1).
+  const held = () => {
+    const { connection, coreMove } = useShellStore.getState();
+    return connection === "moving" || (coreMove !== null && moveUnderWay(coreMove.state));
+  };
+
   const open = () => {
     if (closed) return;
     const token = tokenFromLocation();
@@ -110,7 +119,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       useShellStore.getState().setConnection("gone");
       return;
     }
-    useShellStore.getState().setConnection(socket ? "reconnecting" : "connecting");
+    useShellStore.getState().setConnection(socket ? (held() ? "moving" : "reconnecting") : "connecting");
     const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
     // File bytes arrive as binary frames on this same socket; the header and
     // payload are split by the file-bytes reader, not by the snapshot store.
@@ -161,7 +170,10 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
         const view = frame.payload as unknown as MoveView;
         const address = addressAfterMove(window.location.hash, view);
         if (address !== null) history.replaceState(history.state, "", address);
-        if (!drawn) useShellStore.getState().setConnection("moving");
+        // A drawn window is held from the moment the move is under way: the
+        // role it draws from is about to stop.
+        if (!drawn || moveUnderWay(view.state)) useShellStore.getState().setConnection("moving");
+        else if (useShellStore.getState().connection === "moving") useShellStore.getState().setConnection("live");
         return;
       }
       if (frame.type === "file_bytes_error") {
@@ -210,7 +222,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
   };
 
   const scheduleReconnect = async () => {
-    useShellStore.getState().setConnection("reconnecting");
+    useShellStore.getState().setConnection(held() ? "moving" : "reconnecting");
     const ok = await healthOk();
     healthFails = ok ? 0 : healthFails + 1;
     const next = connectionAfterHealthFails(healthFails);
