@@ -15,9 +15,10 @@ export type SidebarTreeLine =
 /**
  * Past five children of one parent the rest, with their subtrees, wait
  * behind one "N more" line at their depth, until `shownAll` names the parent.
- * Roots are never limited: the checkout row above folds them.
+ * Roots are never limited: the checkout row above folds them. `place` draws
+ * the rails; Sessions passes one that stops indenting (`cappedPlaces`).
  */
-export function sidebarTreeLines(rows: readonly BoardRow[], shownAll: ReadonlySet<string>): SidebarTreeLine[] {
+export function sidebarTreeLines(rows: readonly BoardRow[], shownAll: ReadonlySet<string>, place: (depths: readonly number[]) => TreePlace[] = treePlaces): SidebarTreeLine[] {
   type Pending = Omit<SidebarTreeLine, "place"> & ({ kind: "agent"; row: BoardRow } | { kind: "more"; parent: string; depth: number; count: number });
   const out: Pending[] = [];
   // Per depth: the parent above, how many of its children were seen, and the open "more" line.
@@ -44,6 +45,6 @@ export function sidebarTreeLines(rows: readonly BoardRow[], shownAll: ReadonlySe
     out.push({ kind: "agent", row });
     parents[row.depth] = { pane: row.agent.pane_id, seen: 0, more: null };
   }
-  const places = treePlaces(out.map((line) => (line.kind === "agent" ? line.row.depth : line.depth)));
+  const places = place(out.map((line) => (line.kind === "agent" ? line.row.depth : line.depth)));
   return out.map((line, index) => ({ ...line, place: places[index]! }) as SidebarTreeLine);
 }

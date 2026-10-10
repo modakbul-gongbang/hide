@@ -240,8 +240,18 @@ export function DescendantMark({ agent }: { agent: AgentRow }) {
   );
 }
 
-/** Where a drawn tree row sits: its depth and, per level above it, whether a rail runs past it. */
-export type TreePlace = { depth: number; last: boolean; rails: boolean[] };
+/**
+ * Where a drawn tree row sits: its depth and, per level above it, whether a
+ * rail runs past it. `chain` marks a row below an indent limit (`cappedPlaces`).
+ */
+export type TreePlace = { depth: number; last: boolean; rails: boolean[]; chain?: TreeChain };
+
+/**
+ * A row below the indent limit keeps the limit's column: `pass` says whether
+ * the rail of its ancestor at the limit runs on past it, and its chevron lane
+ * takes its parent's rail from above and hands it on down when `on`.
+ */
+export type TreeChain = { pass: boolean; on: boolean };
 
 /**
  * The rails of a flattened tree in display order: each row is the last of
@@ -266,6 +276,20 @@ export function treePlaces(depths: readonly number[]): TreePlace[] {
 }
 
 /**
+ * `treePlaces` for a panel too narrow for every level: a row deeper than
+ * `limit` stands in the limit's column and hangs from its parent's chevron
+ * lane, so the levels below the limit read as one rail running down.
+ */
+export function cappedPlaces(depths: readonly number[], limit: number): TreePlace[] {
+  return treePlaces(depths).map((place, index) => place.depth <= limit ? place : {
+    depth: limit,
+    last: place.last,
+    rails: place.rails.slice(0, limit - 1),
+    chain: { pass: place.rails[limit - 1] ?? false, on: (depths[index + 1] ?? 0) > limit },
+  });
+}
+
+/**
  * The rails left of a tree row (D-38): a rail down each level whose ancestor
  * has a later sibling, then this row's elbow from its parent's chevron lane.
  * No tint is laid behind an opened subtree.
@@ -279,10 +303,16 @@ export function TreeRails({ place }: { place: TreePlace }) {
           {rail ? <span className="absolute inset-y-0 left-(--size-lineage-rail-x) w-(--size-hairline) bg-lineage-rail" /> : null}
         </span>
       ))}
-      <span className="relative w-(--size-lineage-indent) shrink-0" data-tree-elbow={place.last ? "last" : "middle"}>
-        <span className={cn("absolute top-0 left-(--size-lineage-rail-x) w-(--size-hairline) bg-lineage-rail", place.last ? "h-(--size-lineage-elbow-y)" : "bottom-0")} />
-        <span className="absolute top-(--size-lineage-elbow-y) right-0 left-(--size-lineage-rail-x) h-(--size-hairline) bg-lineage-rail" />
-      </span>
+      {place.chain ? (
+        <span className="relative w-(--size-lineage-indent) shrink-0" data-tree-pass={place.chain.pass ? "rail" : "none"}>
+          {place.chain.pass ? <span className="absolute inset-y-0 left-(--size-lineage-rail-x) w-(--size-hairline) bg-lineage-rail" /> : null}
+        </span>
+      ) : (
+        <span className="relative w-(--size-lineage-indent) shrink-0" data-tree-elbow={place.last ? "last" : "middle"}>
+          <span className={cn("absolute top-0 left-(--size-lineage-rail-x) w-(--size-hairline) bg-lineage-rail", place.last ? "h-(--size-lineage-elbow-y)" : "bottom-0")} />
+          <span className="absolute top-(--size-lineage-elbow-y) right-0 left-(--size-lineage-rail-x) h-(--size-hairline) bg-lineage-rail" />
+        </span>
+      )}
     </span>
   );
 }
@@ -292,20 +322,25 @@ export function TreeRails({ place }: { place: TreePlace }) {
  * children, and while it is open a rail leaving it down to the children.
  * A row with none keeps the lane, crossed by its elbow when it hangs from a parent.
  */
-export function TreeChevron({ name, open, onToggle, hangs, disabled = false, popup = false, ...data }: { name: string; open: boolean | null; onToggle?: () => void; hangs: boolean; disabled?: boolean; popup?: boolean } & Record<`data-${string}`, string>) {
+export function TreeChevron({ name, open, onToggle, hangs, chain, disabled = false, popup = false, ...data }: { name: string; open: boolean | null; onToggle?: () => void; hangs: boolean; chain?: TreeChain; disabled?: boolean; popup?: boolean } & Record<`data-${string}`, string>) {
   // The lane spans the row; its chevron sits on line one, below the row's top padding.
   const { t } = useInterfaceTranslation();
   if (open === null || !onToggle) {
     return (
       <span aria-hidden="true" className="relative w-(--size-lineage-chevron) shrink-0 self-stretch">
-        {hangs ? <span className="absolute top-(--size-lineage-elbow-y) right-xxs left-none h-(--size-hairline) bg-lineage-rail" /> : null}
+        {chain ? <>
+          {/* Below the indent limit the parent's rail comes down this lane and turns to the mark. */}
+          <span className={cn("absolute top-0 left-(--size-lineage-rail-x) w-(--size-hairline) bg-lineage-rail", chain.on ? "bottom-0" : "h-(--size-lineage-elbow-y)")} />
+          <span className="absolute top-(--size-lineage-elbow-y) right-xxs left-(--size-lineage-rail-x) h-(--size-hairline) bg-lineage-rail" />
+        </> : hangs ? <span className="absolute top-(--size-lineage-elbow-y) right-xxs left-none h-(--size-hairline) bg-lineage-rail" /> : null}
       </span>
     );
   }
   const label = t(open ? "agentSessions.tree.collapse" : "agentSessions.tree.expand", { name });
   return (
     <span className="relative w-(--size-lineage-chevron) shrink-0 self-stretch">
-      {open ? <span aria-hidden="true" className="absolute top-(--size-lineage-departure-y) bottom-0 left-(--size-lineage-rail-x) w-(--size-hairline) bg-lineage-rail" /> : null}
+      {chain ? <span aria-hidden="true" className="absolute top-0 left-(--size-lineage-rail-x) h-xs w-(--size-hairline) bg-lineage-rail" /> : null}
+      {open || chain?.on ? <span aria-hidden="true" className="absolute top-(--size-lineage-departure-y) bottom-0 left-(--size-lineage-rail-x) w-(--size-hairline) bg-lineage-rail" /> : null}
       <button
         type="button"
         tabIndex={-1}
