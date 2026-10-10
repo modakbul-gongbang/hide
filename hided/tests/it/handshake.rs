@@ -459,14 +459,18 @@ async fn a_revision_from_another_core_is_answered_with_a_whole_snapshot() {
         panic!("expected the daemon frame");
     };
     let daemon: Value = serde_json::from_str(&daemon).unwrap();
-    let own = daemon["payload"]["core_instance"].as_str().unwrap().to_owned();
+    let own = daemon["payload"]["core_instance"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     assert_eq!(own.len(), 16);
     let mut cursor = first_frame(&mut fresh).await["payload"]["revision"]
         .as_u64()
         .unwrap();
-    let mut resume = async |core: &str, cursor: u64| {
+    let resume = async |core: &str, cursor: u64| {
         let mut socket = connect(running.port, None).await;
-        let mut handshake = json!({"token": running.token, "schema_version": 2, "have_revision": cursor});
+        let mut handshake =
+            json!({"token": running.token, "schema_version": 2, "have_revision": cursor});
         handshake["have_core"] = json!(core);
         socket
             .send(Message::Text(handshake.to_string().into()))

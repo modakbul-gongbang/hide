@@ -1,0 +1,485 @@
+//! The brain state's files as a core move carries them (PRD
+//! core-host-node-move Q8, Q9): a quiesced copy beside the source folder, a
+//! manifest of every file's digest, the check that the machine taking the
+//! core can load the copy, placing it, and setting a folder's brain state
+//! aside once the core has left it.
+//!
+//! Only stores [`MOVES_WITH_CORE`] names are copied; SQLite stores are
+//! copied with `VACUUM INTO` after the core stopped, so the copy is one
+//! consistent file whatever its write-ahead log held. The source folder is
+//! only ever read.
+
+use std::collections::BTreeMap;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use super::{MARKER_FILE, MOVES_WITH_CORE, Refusal};
+
+/// The most files a copy may hold (the Factory's files folder is the only
+/// one that grows with use); a folder past it is refused, not truncated.
+const MAX_FILES: usize = 100_000;
+
+/// Every file of a copy, by its `/`-separated path under the copy.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Manifest {
+    pub files: BTreeMap<String, FileDigest>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FileDigest {
+    pub size: u64,
+    pub sha256: String,
+}
+
+impl Manifest {
+    pub fn total_bytes(&self) -> u64 {
+        self.files.values().map(|file| file.size).sum()
+    }
+
+    /// The files `other` holds differently from this manifest or lacks.
+    pub fn differs(&self, other: &Manifest) -> Vec<String> {
+        self.files
+            .iter()
+            .filter(|(path, digest)| other.files.get(*path) != Some(*digest))
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+}
+
+fn refuse(file: &Path, reason: impl std::fmt::Display) -> Refusal {
+    Refusal {
+        file: file.to_path_buf(),
+        reason: reason.to_string(),
+    }
+}
+
+/// Copies the brain state of `state_dir` into the empty or absent folder
+/// `staging`, and answers the copy's manifest. Run only while no core
+/// writes `state_dir`.
+pub fn stage(state_dir: &Path, staging: &Path) -> Result<Manifest, Refusal> {
+    if staging.exists() {
+        std::fs::remove_dir_all(staging).map_err(|error| refuse(staging, error))?;
+    }
+    hide_platform::fs::private::create_dir_all(staging).map_err(|error| refuse(staging, error))?;
+    for name in MOVES_WITH_CORE {
+        let from = state_dir.join(name);
+        let to = staging.join(name);
+        let metadata = match std::fs::symlink_metadata(&from) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(refuse(&from, error)),
+        };
+        if metadata.is_dir() {
+            copy_folder(&from, &to)?;
+        } else if !metadata.is_file() {
+            return Err(refuse(&from, "is neither a file nor a folder"));
+        } else if name.ends_with(".sqlite3") {
+            vacuum_into(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to).map_err(|error| refuse(&from, error))?;
+            hide_platform::fs::private::restrict_to_owner(&to)
+                .map_err(|error| refuse(&to, error))?;
+        }
+    }
+    digest(staging)
+}
+
+/// A store's consistent copy, its write-ahead log folded in.
+fn vacuum_into(from: &Path, to: &Path) -> Result<(), Refusal> {
+    let connection = rusqlite::Connection::open_with_flags(
+        from,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| refuse(from, error))?;
+    connection
+        .execute("VACUUM INTO ?1", [to.to_string_lossy().as_ref()])
+        .map_err(|error| refuse(from, error))?;
+    hide_platform::fs::private::restrict_to_owner(to).map_err(|error| refuse(to, error))
+}
+
+fn copy_folder(from: &Path, to: &Path) -> Result<(), Refusal> {
+    hide_platform::fs::private::create_dir_all(to).map_err(|error| refuse(to, error))?;
+    for entry in std::fs::read_dir(from).map_err(|error| refuse(from, error))? {
+        let entry = entry.map_err(|error| refuse(from, error))?;
+        let kind = entry
+            .file_type()
+            .map_err(|error| refuse(&entry.path(), error))?;
+        let target = to.join(entry.file_name());
+        if kind.is_dir() {
+            copy_folder(&entry.path(), &target)?;
+        } else if kind.is_file() {
+            std::fs::copy(entry.path(), &target).map_err(|error| refuse(&entry.path(), error))?;
+            hide_platform::fs::private::restrict_to_owner(&target)
+                .map_err(|error| refuse(&target, error))?;
+        } else {
+            return Err(refuse(&entry.path(), "is neither a file nor a folder"));
+        }
+    }
+    Ok(())
+}
+
+/// The manifest of every file under `root`.
+pub fn digest(root: &Path) -> Result<Manifest, Refusal> {
+    let mut manifest = Manifest::default();
+    let mut folders = vec![PathBuf::new()];
+    while let Some(relative) = folders.pop() {
+        let folder = root.join(&relative);
+        for entry in std::fs::read_dir(&folder).map_err(|error| refuse(&folder, error))? {
+            let entry = entry.map_err(|error| refuse(&folder, error))?;
+            let kind = entry
+                .file_type()
+                .map_err(|error| refuse(&entry.path(), error))?;
+            let name = relative.join(entry.file_name());
+            if kind.is_dir() {
+                folders.push(name);
+                continue;
+            }
+            if !kind.is_file() {
+                return Err(refuse(&entry.path(), "is neither a file nor a folder"));
+            }
+            if manifest.files.len() == MAX_FILES {
+                return Err(refuse(root, format!("holds more than {MAX_FILES} files")));
+            }
+            let path = hide_platform::path::relative(root, &entry.path())
+                .map_err(|error| refuse(&entry.path(), error))?;
+            manifest
+                .files
+                .insert(path.into_string(), file_digest(&entry.path())?);
+        }
+    }
+    Ok(manifest)
+}
+
+fn file_digest(path: &Path) -> Result<FileDigest, Refusal> {
+    let mut file = std::fs::File::open(path).map_err(|error| refuse(path, error))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1024];
+    let mut size = 0_u64;
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| refuse(path, error))?;
+        if read == 0 {
+            break;
+        }
+        size += read as u64;
+        hasher.update(&buffer[..read]);
+    }
+    Ok(FileDigest {
+        size,
+        sha256: hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    })
+}
+
+/// Whether this build can load the copy at `dir`: the UI state reads as a
+/// state this build keeps, every other JSON store is a JSON object, and every
+/// SQLite store passes its integrity check. The first store that does not
+/// is named.
+pub fn check_loadable(dir: &Path) -> Result<(), Refusal> {
+    for name in MOVES_WITH_CORE {
+        let path = dir.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        if *name == super::CORE_STATE {
+            let (_, _, disposition) = crate::persistence::load(&path);
+            if disposition == crate::persistence::LoadDisposition::Corrupt {
+                return Err(refuse(&path, "is not a UI state this build reads"));
+            }
+        } else if name.ends_with(".json") {
+            let bytes = std::fs::read(&path).map_err(|error| refuse(&path, error))?;
+            let value: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|error| refuse(&path, error))?;
+            if !value.is_object() {
+                return Err(refuse(&path, "is not a JSON object"));
+            }
+        } else if name.ends_with(".sqlite3") {
+            let connection = rusqlite::Connection::open_with_flags(
+                &path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .map_err(|error| refuse(&path, error))?;
+            let answer: String = connection
+                .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+                .map_err(|error| refuse(&path, error))?;
+            if answer != "ok" {
+                return Err(refuse(
+                    &path,
+                    format!("failed its integrity check: {answer}"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The brain stores `state_dir` already holds, which a move never replaces
+/// or merges (PRD core-host-node-move Q6).
+pub fn brain_present(state_dir: &Path) -> Vec<String> {
+    MOVES_WITH_CORE
+        .iter()
+        .chain(super::REBUILT_AFTER_MOVE)
+        .filter(|name| {
+            !matches!(**name, "mobile.json" | "phones.json")
+                && std::fs::symlink_metadata(state_dir.join(name)).is_ok()
+        })
+        .map(|name| (*name).to_owned())
+        .collect()
+}
+
+/// Moves the copy at `incoming` into `state_dir`, `node.json` last, and
+/// answers what it placed. A folder that already holds brain state is
+/// refused before anything moves.
+pub fn place(incoming: &Path, state_dir: &Path) -> Result<Vec<String>, Refusal> {
+    let present = brain_present(state_dir);
+    if !present.is_empty() {
+        return Err(refuse(
+            state_dir,
+            format!("already holds brain state: {}", present.join(", ")),
+        ));
+    }
+    if !incoming.join(MARKER_FILE).is_file() {
+        return Err(refuse(incoming, "holds no node.json"));
+    }
+    let mut placed = Vec::new();
+    for name in MOVES_WITH_CORE.iter().filter(|name| **name != MARKER_FILE) {
+        if place_one(incoming, state_dir, name)? {
+            placed.push((*name).to_owned());
+        }
+    }
+    place_one(incoming, state_dir, MARKER_FILE)?;
+    placed.push(MARKER_FILE.to_owned());
+    Ok(placed)
+}
+
+fn place_one(incoming: &Path, state_dir: &Path, name: &str) -> Result<bool, Refusal> {
+    let from = incoming.join(name);
+    if std::fs::symlink_metadata(&from).is_err() {
+        return Ok(false);
+    }
+    let to = state_dir.join(name);
+    // A phone pairing or Mobile setting the target kept for itself is
+    // replaced by the core's; every brain store was refused above.
+    if matches!(name, "mobile.json" | "phones.json") && to.exists() {
+        std::fs::remove_file(&to).map_err(|error| refuse(&to, error))?;
+    }
+    hide_platform::fs::atomic::rename_no_replace_path(&from, &to)
+        .map_err(|error| refuse(&to, error))?;
+    Ok(true)
+}
+
+/// Undoes [`place`] after the core started on the copy has stopped: every
+/// store goes back into `incoming`, where a retry finds it by digest, and
+/// what that core rebuilt is removed, so the folder holds no brain state.
+pub fn unplace(state_dir: &Path, incoming: &Path) -> Result<Vec<String>, Refusal> {
+    hide_platform::fs::private::create_dir_all(incoming)
+        .map_err(|error| refuse(incoming, error))?;
+    let mut moved = Vec::new();
+    for name in MOVES_WITH_CORE.iter().filter(|name| **name != MARKER_FILE) {
+        if unplace_one(state_dir, incoming, name)? {
+            moved.push((*name).to_owned());
+        }
+    }
+    // The marker last, so a folder never holds a marker over stores that
+    // are gone.
+    if unplace_one(state_dir, incoming, MARKER_FILE)? {
+        moved.push(MARKER_FILE.to_owned());
+    }
+    for name in super::REBUILT_AFTER_MOVE {
+        for suffix in ["", "-wal", "-shm"] {
+            let path = state_dir.join(format!("{name}{suffix}"));
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(refuse(&path, error)),
+            }
+        }
+    }
+    Ok(moved)
+}
+
+fn unplace_one(state_dir: &Path, incoming: &Path, name: &str) -> Result<bool, Refusal> {
+    let from = state_dir.join(name);
+    if std::fs::symlink_metadata(&from).is_err() {
+        return Ok(false);
+    }
+    let to = incoming.join(name);
+    match std::fs::symlink_metadata(&to) {
+        Ok(found) if found.is_dir() => {
+            std::fs::remove_dir_all(&to).map_err(|error| refuse(&to, error))?;
+        }
+        Ok(_) => std::fs::remove_file(&to).map_err(|error| refuse(&to, error))?,
+        Err(_) => {}
+    }
+    std::fs::rename(&from, &to).map_err(|error| refuse(&from, error))?;
+    // A store's log beside it is folded in when its connection closed; one
+    // left behind belongs to the copy that went back.
+    for suffix in ["-wal", "-shm"] {
+        let _ = std::fs::remove_file(state_dir.join(format!("{name}{suffix}")));
+    }
+    Ok(true)
+}
+
+/// Moves every brain store of `state_dir` into `moved-out/<intent>`,
+/// replacing an earlier move's (Q9), and answers what it moved.
+pub fn set_aside(state_dir: &Path, intent: &str) -> Result<Vec<String>, Refusal> {
+    let root = hide_kit::layout::moved_out(state_dir);
+    let target = root.join(intent);
+    if root.exists() {
+        for entry in std::fs::read_dir(&root).map_err(|error| refuse(&root, error))? {
+            let entry = entry.map_err(|error| refuse(&root, error))?;
+            if entry.file_name() != intent {
+                std::fs::remove_dir_all(entry.path())
+                    .map_err(|error| refuse(&entry.path(), error))?;
+            }
+        }
+    }
+    hide_platform::fs::private::create_dir_all(&target).map_err(|error| refuse(&target, error))?;
+    let mut moved = Vec::new();
+    // The marker first: a folder with stores and no marker is converted as
+    // a pre-node folder, one with a marker and no stores starts empty.
+    let names = std::iter::once(MARKER_FILE)
+        .chain(
+            MOVES_WITH_CORE
+                .iter()
+                .copied()
+                .filter(|name| *name != MARKER_FILE),
+        )
+        .chain(super::REBUILT_AFTER_MOVE.iter().copied())
+        .filter(|name| !matches!(*name, "mobile.json" | "phones.json"));
+    for name in names {
+        for suffix in ["", "-wal", "-shm"] {
+            let file = format!("{name}{suffix}");
+            let from = state_dir.join(&file);
+            if std::fs::symlink_metadata(&from).is_err() {
+                continue;
+            }
+            let to = target.join(&file);
+            if std::fs::symlink_metadata(&to).is_ok() {
+                return Err(refuse(&to, "is already set aside"));
+            }
+            std::fs::rename(&from, &to).map_err(|error| refuse(&from, error))?;
+            moved.push(file);
+        }
+    }
+    Ok(moved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn folder() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(MARKER_FILE), r#"{"version":1,"node":"n"}"#).unwrap();
+        std::fs::write(
+            dir.path().join("labels.json"),
+            r#"{"version":1,"targets":{}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir(dir.path().join("factory-files")).unwrap();
+        std::fs::write(dir.path().join("factory-files/a.prd"), "prd").unwrap();
+        let store = rusqlite::Connection::open(dir.path().join("links.sqlite3")).unwrap();
+        store
+            .execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE t(x); INSERT INTO t VALUES (1);")
+            .unwrap();
+        // Left open: its last write is still in the log, which a plain copy
+        // of the file would miss.
+        std::mem::forget(store);
+        std::fs::write(dir.path().join("hided.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("session-search.sqlite3"), "index").unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_staging_copy_holds_the_brain_state_and_only_it() {
+        let source = folder();
+        let staging = source.path().join("move-staging/i1");
+        let manifest = stage(source.path(), &staging).unwrap();
+        let names: Vec<&str> = manifest.files.keys().map(String::as_str).collect();
+        assert_eq!(
+            names,
+            [
+                "factory-files/a.prd",
+                "labels.json",
+                "links.sqlite3",
+                "node.json"
+            ]
+        );
+        let copy = rusqlite::Connection::open(staging.join("links.sqlite3")).unwrap();
+        let rows: i64 = copy
+            .query_row("SELECT count(*) FROM t", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 1, "the log's last write is in the copy");
+        assert_eq!(digest(&staging).unwrap(), manifest);
+        check_loadable(&staging).unwrap();
+    }
+
+    #[test]
+    fn a_damaged_store_is_named_by_the_load_check() {
+        let source = folder();
+        let staging = source.path().join("move-staging/i1");
+        stage(source.path(), &staging).unwrap();
+        std::fs::write(staging.join("labels.json"), "[1]").unwrap();
+        let refusal = check_loadable(&staging).unwrap_err();
+        assert_eq!(refusal.file, staging.join("labels.json"));
+        std::fs::write(staging.join("labels.json"), "{}").unwrap();
+        std::fs::write(staging.join("links.sqlite3"), "not a database").unwrap();
+        assert_eq!(
+            check_loadable(&staging).unwrap_err().file,
+            staging.join("links.sqlite3")
+        );
+    }
+
+    #[test]
+    fn placing_refuses_a_folder_with_brain_state_and_puts_the_marker_last() {
+        let source = folder();
+        let staging = source.path().join("move-staging/i1");
+        stage(source.path(), &staging).unwrap();
+        let target = tempfile::tempdir().unwrap();
+        std::fs::write(target.path().join("core-state.json"), "{}").unwrap();
+        let refusal = place(&staging, target.path()).unwrap_err();
+        assert!(refusal.reason.contains("core-state.json"), "{refusal}");
+        assert!(staging.join(MARKER_FILE).exists(), "nothing moved");
+        std::fs::remove_file(target.path().join("core-state.json")).unwrap();
+        let placed = place(&staging, target.path()).unwrap();
+        assert_eq!(placed.last().map(String::as_str), Some(MARKER_FILE));
+        assert!(target.path().join("factory-files/a.prd").is_file());
+    }
+
+    #[test]
+    fn unplacing_leaves_no_brain_state_and_returns_the_copy_for_a_retry() {
+        let source = folder();
+        let staging = source.path().join("move-staging/i1");
+        let manifest = stage(source.path(), &staging).unwrap();
+        let target = tempfile::tempdir().unwrap();
+        place(&staging, target.path()).unwrap();
+        // What the core started on the copy rebuilt.
+        std::fs::write(target.path().join("session-search.sqlite3"), "index").unwrap();
+        unplace(target.path(), &staging).unwrap();
+        assert!(brain_present(target.path()).is_empty());
+        assert_eq!(digest(&staging).unwrap(), manifest);
+    }
+
+    #[test]
+    fn setting_aside_keeps_only_the_latest_move_and_leaves_the_rest() {
+        let source = folder();
+        set_aside(source.path(), "i1").unwrap();
+        let moved_out = hide_kit::layout::moved_out(source.path());
+        assert!(moved_out.join("i1/links.sqlite3").is_file());
+        assert!(moved_out.join("i1/session-search.sqlite3").is_file());
+        assert!(source.path().join("hided.json").is_file());
+        assert!(brain_present(source.path()).is_empty());
+        std::fs::write(source.path().join(MARKER_FILE), "{}").unwrap();
+        set_aside(source.path(), "i2").unwrap();
+        assert!(!moved_out.join("i1").exists());
+        assert!(moved_out.join("i2").join(MARKER_FILE).is_file());
+    }
+}

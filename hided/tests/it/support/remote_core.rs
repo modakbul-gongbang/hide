@@ -282,6 +282,7 @@ impl Fixture {
             node: CORE_NODE.to_owned(),
             program: self.hided.display().to_string(),
             state_dir: Some(self.core_state.display().to_string()),
+            move_intent: None,
         }
     }
 

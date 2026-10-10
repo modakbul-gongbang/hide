@@ -250,6 +250,114 @@ impl Upstream {
         })
     }
 
+    /// Runs `command` on the machine on a new exec channel of the same
+    /// connection and answers its exit status and output. Output past `cap`
+    /// bytes on either stream, or a command still running at `timeout`, is a
+    /// failure: the channel is closed and the command is not waited for.
+    pub fn exec(
+        &self,
+        operation: &'static str,
+        command: &str,
+        cap: usize,
+        timeout: Duration,
+    ) -> RemoteResult<super::RemoteCommandOutput> {
+        let client = &self.client;
+        let target = client.host.host_id.clone();
+        client.runtime.block_on(async {
+            let _permit = client.session_channel(operation, RemoteStage::Ssh).await?;
+            let session = client.shared_session().await?;
+            let failed = |error: String| {
+                remote_error(operation, &target, RemoteStage::Ssh, error, true, false)
+            };
+            let run = async {
+                let mut channel = super::bounded_ssh_operation(session.channel_open_session())
+                    .await
+                    .map_err(|error| failed(error.to_string()))?;
+                super::bounded_ssh_operation(channel.exec(true, command))
+                    .await
+                    .map_err(|error| failed(error.to_string()))?;
+                let (mut stdout, mut stderr, mut exit_status) = (Vec::new(), Vec::new(), None);
+                while let Some(message) = channel.wait().await {
+                    let (kept, data) = match message {
+                        ChannelMsg::Data { data } => (&mut stdout, data),
+                        ChannelMsg::ExtendedData { data, .. } => (&mut stderr, data),
+                        ChannelMsg::ExitStatus {
+                            exit_status: status,
+                        } => {
+                            exit_status = Some(status);
+                            continue;
+                        }
+                        ChannelMsg::Close => break,
+                        _ => continue,
+                    };
+                    if kept.len() + data.len() > cap {
+                        let _ = channel.close().await;
+                        return Err(failed(format!("the command wrote more than {cap} bytes")));
+                    }
+                    kept.extend_from_slice(&data);
+                }
+                Ok(super::RemoteCommandOutput {
+                    stdout: String::from_utf8_lossy(&stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                    exit_status: exit_status.ok_or_else(|| {
+                        failed("the command closed without an exit status".to_owned())
+                    })?,
+                })
+            };
+            tokio::time::timeout(timeout, run)
+                .await
+                .map_err(|_| failed(format!("the command did not finish in {timeout:?}")))?
+        })
+    }
+
+    /// Copies `files` to the machine over one SFTP channel of the same
+    /// connection, one after another, each streamed and renamed into place
+    /// whole (`transfer::upload_file`); `sent` hears the bytes as each
+    /// chunk is answered. The first failure stops the copy; the files
+    /// already placed stay.
+    pub fn upload(
+        &self,
+        files: &[super::transfer::FileUpload],
+        sent: &(dyn Fn(u64) + Sync),
+    ) -> Result<(), super::transfer::UploadError> {
+        use super::transfer::UploadError;
+        let client = &self.client;
+        client.runtime.block_on(async {
+            let remote = |error: String| UploadError::Remote(error);
+            let _permit = client
+                .session_channel("core-move-upload", RemoteStage::Sftp)
+                .await
+                .map_err(|error| remote(error.to_string()))?;
+            let session = client
+                .shared_session()
+                .await
+                .map_err(|error| remote(error.to_string()))?;
+            let channel = super::bounded_ssh_operation(session.channel_open_session())
+                .await
+                .map_err(|error| {
+                    remote(format!("the SFTP channel could not be opened: {error}"))
+                })?;
+            channel
+                .request_subsystem(true, "sftp")
+                .await
+                .map_err(|error| remote(format!("SFTP is not available: {error}")))?;
+            let raw = russh_sftp::client::RawSftpSession::new(channel.into_stream());
+            raw.set_timeout(30);
+            let copied = async {
+                raw.init()
+                    .await
+                    .map_err(|error| remote(format!("SFTP did not start: {error}")))?;
+                for file in files {
+                    super::transfer::upload_file(&raw, file, sent).await?;
+                }
+                Ok(())
+            }
+            .await;
+            let _ = raw.close_session();
+            copied
+        })
+    }
+
     /// A loopback port on this machine whose connections reach `port` on
     /// the core machine's loopback, over the same connection.
     pub fn forward(&self, port: u16) -> RemoteResult<RemoteLocalForward> {

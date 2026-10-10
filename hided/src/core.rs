@@ -22,6 +22,9 @@ pub struct SnapshotReply {
     pub bytes: Vec<u8>,
 }
 
+type MoveSourceAnswer =
+    Result<(herdr_core::MoveSource, serde_json::Value), herdr_core::MoveSourceRefusal>;
+
 enum Command {
     FactoryQuestionGuard {
         device_id: String,
@@ -77,6 +80,10 @@ enum Command {
     },
     LinkedNodes {
         reply: Sender<Vec<String>>,
+    },
+    MoveSource {
+        device: String,
+        reply: Sender<MoveSourceAnswer>,
     },
     InboundNode {
         node: String,
@@ -362,6 +369,20 @@ impl CoreHandle {
             .map_err(|_| "core owner thread is gone".to_owned())?;
         rx.recv()
             .map_err(|_| "core owner thread dropped the linked nodes".to_owned())
+    }
+
+    /// What a move of the core to `device` is made from, and the device's
+    /// label records (PRD core-host-node-move B4).
+    pub fn move_source(&self, device: &str) -> Result<MoveSourceAnswer, String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::MoveSource {
+                device: device.to_owned(),
+                reply,
+            })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped the move source".to_owned())
     }
 
     /// Why a node dialing this core would be refused, before its link is
@@ -743,6 +764,9 @@ fn owner_loop(
             }
             Command::LinkedNodes { reply } => {
                 let _ = reply.send(core.linked_nodes());
+            }
+            Command::MoveSource { device, reply } => {
+                let _ = reply.send(core.move_source(&device));
             }
             Command::InboundNode {
                 node,

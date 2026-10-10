@@ -38,6 +38,7 @@ mod attachments;
 mod device;
 pub mod host;
 pub mod hosts;
+pub mod transfer;
 pub mod upstream;
 
 pub use device::{Connector, SshDevice};
@@ -2200,7 +2201,8 @@ impl Drop for RemoteLocalForward {
     }
 }
 
-fn shell_quote(value: &str) -> String {
+/// `value` as one word of a POSIX shell command line.
+pub fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 

@@ -370,6 +370,12 @@ impl LabelStore {
         self.lock().targets.get(key).cloned().unwrap_or_default()
     }
 
+    /// A target's records as `labels.json` stores them, for a core move to
+    /// carry the records only memory holds (PRD core-host-node-move Q18).
+    pub(crate) fn export(&self, key: &str) -> Result<serde_json::Value, String> {
+        serde_json::to_value(self.target(key)).map_err(|error| error.to_string())
+    }
+
     /// Replaces a worker's records. Only this machine's records reach disk;
     /// a device's conversation stays available to its worker in memory.
     pub(crate) fn save_target(&self, key: &str, records: &BTreeMap<String, PaneRecord>) {

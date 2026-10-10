@@ -38,6 +38,10 @@ fn run() -> Result<(), String> {
     if args.first().is_some_and(|arg| arg == "attach") {
         return hided::attach::run(&args[1..]);
     }
+    // A step of a core move run here over SSH by the machine driving it.
+    if args.first().is_some_and(|arg| arg == "core-move") {
+        return hided::core_move::target::run(&args[1..]);
+    }
     if args.first().is_some_and(|arg| arg == "--open-helper") {
         // Only Unix supervises a file opener through this mode.
         #[cfg(unix)]

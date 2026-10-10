@@ -35,6 +35,11 @@ pub const HERDR_PANE_ID: &str = "HERDR_PANE_ID";
 pub const HIDE_CAP_REF: &str = "HIDE_CAP_REF";
 pub const HIDE_TAILSCALE_BIN: &str = "HIDE_TAILSCALE_BIN";
 pub const HIDE_MACHINE_ID: &str = host::MACHINE_ID_VARIABLE;
+/// Test-only: how a core move starts the core on the machine taking it.
+pub const HIDE_CORE_STARTER: &str = "HIDE_CORE_STARTER";
+/// The file that declares a HOME a test fixture's, beside every test-only
+/// key's other conditions ([`fixture_home`]).
+pub const FIXTURE_HOME_MARKER: &str = ".hide-e2e-device-home";
 
 pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
@@ -150,6 +155,12 @@ pub const REGISTRY: &[EnvKey] = &[
         required: false,
         format: "a node id: lowercase letters, digits and '-'; only a test fixture sets it, so one host runs a node and the core it dials as two machines",
         absent_behavior: "The machine id the system reports (IOPlatformUUID on macOS, /etc/machine-id on Linux, MachineGuid on Windows) names this node",
+    },
+    EnvKey {
+        key: HIDE_CORE_STARTER,
+        required: false,
+        format: "`fixture`; read only when HOME is a fixture HOME (under /tmp, carrying .hide-e2e-device-home, and not the account's own)",
+        absent_behavior: "A core move starts the core on the machine taking it through the account's login item (launchd); a fixture HOME with `fixture` starts it as a detached process instead, so no test reaches launchd",
     },
     EnvKey {
         key: HOME,
@@ -535,6 +546,28 @@ pub fn herdr_bin_error(env: &Env) -> Option<String> {
             path.display()
         )
     })
+}
+
+/// Whether `home` is a test fixture's HOME, where a test-only key is read:
+/// under the system's temporary folder, carrying [`FIXTURE_HOME_MARKER`],
+/// and not this account's own home by the environment or the account
+/// database. Anything else reads every test-only key as unset.
+pub fn fixture_home(home: &std::path::Path) -> bool {
+    let Ok(home) = hide_platform::fs::identity::canonical(home) else {
+        return false;
+    };
+    let temporary = ["/tmp", "/private/tmp"]
+        .iter()
+        .any(|root| home.starts_with(root));
+    let own = [
+        host::home_dir().ok(),
+        hide_platform::user_agents::account_home().ok(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|own| hide_platform::fs::identity::canonical(&own).ok())
+    .any(|own| own == home);
+    temporary && !own && home.join(FIXTURE_HOME_MARKER).is_file()
 }
 
 #[cfg(test)]

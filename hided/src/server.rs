@@ -797,7 +797,10 @@ async fn screen_loop(
     // A reconnecting client resumes from the cursor it last applied, so the
     // first frame carries only what changed while it was away; a fresh client
     // (cursor 0) gets the whole state.
-    let own_core = state.daemon_info.get("core_instance").and_then(Value::as_str);
+    let own_core = state
+        .daemon_info
+        .get("core_instance")
+        .and_then(Value::as_str);
     let mut have_revision = match handshake.have_core.as_deref() {
         Some(core) if Some(core) != own_core => 0,
         _ => handshake.have_revision.unwrap_or(0),

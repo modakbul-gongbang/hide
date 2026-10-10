@@ -12,6 +12,7 @@ mod agents;
 mod attachments;
 mod clone;
 mod control_lane;
+pub(crate) mod core_move;
 pub(crate) mod delivery;
 mod device_catalog;
 mod devices;

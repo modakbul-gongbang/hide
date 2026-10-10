@@ -1514,13 +1514,7 @@ async fn install(
 /// name.
 static NEXT_UPLOAD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// How much of a file one SFTP request carries, and how many requests an
-/// upload or a read-back keeps in flight. One request at a time made each
-/// 32 KiB wait a round trip, so a 41 MB helper took about two minutes at a
-/// 78 ms link and never finished inside `INSTALL_TIMEOUT`; sixteen in flight
-/// is 512 KiB per round trip.
-const TRANSFER_CHUNK: usize = 32 * 1024;
-const TRANSFERS_IN_FLIGHT: usize = 16;
+use super::transfer::{TRANSFER_CHUNK, TRANSFERS_IN_FLIGHT};
 
 /// Staging names this process made whose upload ended before it removed
 /// them: an install that times out drops its upload mid-write, where no
@@ -1617,22 +1611,11 @@ async fn place_file(
         .await
         .map_err(|error| sftp_failure(&format!("The {what} could not be uploaded"), error))?
         .handle;
-    // Each write names its own offset, so the order they land in does not
-    // matter; every one's answer is checked, and the read-back below checks
-    // the whole file.
-    let written = stream::iter(package.bytes.chunks(TRANSFER_CHUNK).enumerate())
-        .map(|(index, chunk)| {
-            let handle = handle.clone();
-            async move {
-                raw.write(handle, (index * TRANSFER_CHUNK) as u64, chunk.to_vec())
-                    .await
-                    .map(|_| ())
-                    .map_err(|error| sftp_failure(&format!("The {what} upload failed"), error))
-            }
-        })
-        .buffer_unordered(TRANSFERS_IN_FLIGHT)
-        .try_collect::<()>()
-        .await;
+    // The read-back below checks the whole file.
+    let written = super::transfer::write_bytes(raw, &handle, &package.bytes, |error| {
+        sftp_failure(&format!("The {what} upload failed"), error)
+    })
+    .await;
     let closed = raw.close(handle).await;
     let verified = match (written, closed) {
         (Ok(()), Ok(_)) => match remote_digest(raw, &staging, package.bytes.len(), what).await {

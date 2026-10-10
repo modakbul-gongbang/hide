@@ -39,13 +39,13 @@ pub struct OwnerChange {
     pub new_owner: String,
     /// The id the folder gives the new owner before the move.
     pub new_owner_was: String,
-    /// The registration the result keeps for the old owner, in the stored
-    /// form `core-state.json` uses.
-    pub old_owner_registration: Value,
+    /// The registration the result keeps for the old owner.
+    pub old_owner_registration: crate::model::DeviceRegistration,
     /// Each machine's Herdr socket, which names it in the ledger's host
-    /// scopes while it owns the core.
-    pub old_owner_herdr_socket: Option<String>,
-    pub new_owner_herdr_socket: Option<String>,
+    /// scopes while it owns the core. Both are required: a scope naming a
+    /// machine whose socket is unknown would keep its old id unnoticed.
+    pub old_owner_herdr_socket: String,
+    pub new_owner_herdr_socket: String,
 }
 
 impl OwnerChange {
@@ -133,6 +133,9 @@ pub struct ReownOutcome {
     /// Fold and recent entries naming a checkout or project neither machine
     /// still has, dropped because no id can be made for them.
     pub pruned: usize,
+    /// Why the link record could not be opened, when it could not: it moves
+    /// as it is and the new core's link worker rebuilds it, as after layer 1.
+    pub links_unopened: Option<String>,
 }
 
 /// Changes the owner of the copy at `staging` from `change.old_owner` to
@@ -209,8 +212,12 @@ pub fn reown(staging: &Path, change: &OwnerChange, ids: &IdTable) -> Result<Reow
     }
 
     let links = staging.join(LINKS);
-    if links.is_file() && reown_links(&links, change).map_err(|reason| refuse(&links, reason))? {
-        outcome.files.push(LINKS.to_owned());
+    if links.is_file() {
+        match reown_links(&links, change).map_err(|reason| refuse(&links, reason))? {
+            Links::Changed => outcome.files.push(LINKS.to_owned()),
+            Links::Unchanged => {}
+            Links::Unopened(reason) => outcome.links_unopened = Some(reason),
+        }
     }
 
     let marker = serde_json::to_vec(&Marker {
@@ -348,16 +355,12 @@ impl Mapper<'_> {
                 for agent in each(value, "agents") {
                     let scope = agent.get("host_scope").and_then(Value::as_str);
                     let mapped = match scope {
-                        Some(scope)
-                            if Some(scope) == self.change.old_owner_herdr_socket.as_deref() =>
-                        {
+                        Some(scope) if scope == self.change.old_owner_herdr_socket => {
                             Some(Value::String(self.change.old_owner_as.clone()))
                         }
-                        Some(scope) if scope == self.change.new_owner_was => self
-                            .change
-                            .new_owner_herdr_socket
-                            .clone()
-                            .map(Value::String),
+                        Some(scope) if scope == self.change.new_owner_was => {
+                            Some(Value::String(self.change.new_owner_herdr_socket.clone()))
+                        }
                         _ => None,
                     };
                     if let Some(mapped) = mapped {
@@ -412,7 +415,8 @@ impl Mapper<'_> {
             id != Some(self.change.new_owner_was.as_str())
                 && id != Some(self.change.old_owner_as.as_str())
         });
-        let registration = self.change.old_owner_registration.clone();
+        let registration = serde_json::to_value(&self.change.old_owner_registration)
+            .map_err(|error| error.to_string())?;
         match at {
             Some(at) if at <= rows.len() => rows.insert(at, registration),
             _ => rows.push(registration),
@@ -522,7 +526,7 @@ fn is_empty(value: &Value) -> bool {
 /// memory, because a record holds the conversation it was made from
 /// (`labels/store.rs`). The old owner's records therefore travel one hop as
 /// `moved`, which the new core takes into memory for that machine and drops
-/// from disk on its next save; the new owner's, which the source core held
+/// from disk by the save its open makes at once; the new owner's, which the source core held
 /// in memory and wrote to `moved` when it stopped, become its own.
 fn reown_labels(value: &mut Value, change: &OwnerChange) -> Result<(), String> {
     let Some(object) = value.as_object_mut() else {
@@ -567,9 +571,16 @@ fn reown_labels(value: &mut Value, change: &OwnerChange) -> Result<(), String> {
 
 /// The link record's device column and its listing stamps: the new owner's
 /// rows become the owner's, the old owner's keep or take its new id.
-fn reown_links(path: &Path, change: &OwnerChange) -> Result<bool, String> {
-    let Ok((mut store, _)) = crate::links::store::LinkStore::open(path) else {
-        return Ok(false);
+enum Links {
+    Changed,
+    Unchanged,
+    Unopened(String),
+}
+
+fn reown_links(path: &Path, change: &OwnerChange) -> Result<Links, String> {
+    let mut store = match crate::links::store::LinkStore::open(path) {
+        Ok((store, _)) => store,
+        Err(error) => return Ok(Links::Unopened(error.to_string())),
     };
     let mut changed = false;
     let listed = |device: &str| format!("{}:{device}", crate::links::worker::LISTED_AT);
@@ -593,7 +604,11 @@ fn reown_links(path: &Path, change: &OwnerChange) -> Result<bool, String> {
         store.delete_meta(&listed(&change.new_owner_was))?;
         changed = true;
     }
-    Ok(changed)
+    Ok(if changed {
+        Links::Changed
+    } else {
+        Links::Unchanged
+    })
 }
 
 /// What a pattern reaches: a value, or the object whose keys it names.
@@ -767,9 +782,12 @@ mod tests {
             old_owner_as: M.into(),
             new_owner: C.into(),
             new_owner_was: ALIAS.into(),
-            old_owner_registration: json!({"id": M, "label": "MacBook", "inbound": true}),
-            old_owner_herdr_socket: Some(M_SOCKET.into()),
-            new_owner_herdr_socket: Some(C_SOCKET.into()),
+            old_owner_registration: serde_json::from_value(
+                json!({"id": M, "label": "MacBook", "inbound": true}),
+            )
+            .unwrap(),
+            old_owner_herdr_socket: M_SOCKET.into(),
+            new_owner_herdr_socket: C_SOCKET.into(),
         }
     }
 
@@ -779,9 +797,9 @@ mod tests {
             old_owner_as: ALIAS.into(),
             new_owner: M.into(),
             new_owner_was: M.into(),
-            old_owner_registration: mini_registration(),
-            old_owner_herdr_socket: Some(C_SOCKET.into()),
-            new_owner_herdr_socket: Some(M_SOCKET.into()),
+            old_owner_registration: serde_json::from_value(mini_registration()).unwrap(),
+            old_owner_herdr_socket: C_SOCKET.into(),
+            new_owner_herdr_socket: M_SOCKET.into(),
         }
     }
 
@@ -1157,9 +1175,16 @@ mod tests {
             json!({M: {M_ROOT: "main"}, X: {X_ROOT: "dev"}})
         );
         assert_eq!(core["project_issue_sources"], json!({C_ROOT: "local"}));
+        // As the core reads them: the stored form spells absent fields as
+        // null where the runtime writes them.
+        let registrations = |value: Value| -> Vec<crate::model::DeviceRegistration> {
+            serde_json::from_value(value).unwrap()
+        };
         assert_eq!(
-            core["device_registrations"],
-            json!([{"id": M, "label": "MacBook", "inbound": true}, {"id": X, "label": "Studio", "ssh_alias": "studio"}])
+            registrations(core["device_registrations"].clone()),
+            registrations(
+                json!([{"id": M, "label": "MacBook", "inbound": true}, {"id": X, "label": "Studio", "ssh_alias": "studio"}])
+            )
         );
         let views = read(&state.join(WORKSPACE_VIEWS));
         let mac = &views["workspaces"][0]["agent_layout"];

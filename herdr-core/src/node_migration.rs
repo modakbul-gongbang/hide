@@ -26,6 +26,7 @@ use serde_json::Value;
 
 use crate::node::{LEGACY_LOCAL_DEVICE_ID as LEGACY, NodeId};
 
+pub mod copy;
 mod reown;
 pub use reown::{IdTable, KnownProject, OwnerChange, ReownOutcome, id_table, reown, staging_dir};
 
@@ -41,8 +42,34 @@ const PROJECT_MEMORY: &str = hide_memory::DATABASE_FILE;
 const SESSION_SEARCH: &str = "session-search.sqlite3";
 const LINKS: &str = "links.sqlite3";
 const LOCAL_ISSUES: &str = "local-issues.json";
-/// Where a move keeps its staging copies (`reown::staging_dir`).
+/// Where a move keeps its staging copies (`reown::staging_dir`); the
+/// move's other files, which `hide_kit::layout` names, are `UNBOUND`.
 pub const MOVE_STAGING: &str = "move-staging";
+
+/// The brain state a core move copies to the core's new machine (PRD
+/// core-host-node-move Q8): each store `KEYS` names, except what the new
+/// machine rebuilds ([`REBUILT_AFTER_MOVE`]), and the stores that name no
+/// machine but belong to the core (the Factory, phone pairing). `node.json`
+/// is last: a folder holds a marker only once everything it names is there.
+pub const MOVES_WITH_CORE: &[&str] = &[
+    CORE_STATE,
+    WORKSPACE_VIEWS,
+    LABELS,
+    DELIVERY_LEDGER,
+    LINKS,
+    LOCAL_ISSUES,
+    PROJECT_MEMORY,
+    "factory.sqlite3",
+    "factory.v1.sqlite3",
+    "factory-files",
+    "mobile.json",
+    "phones.json",
+    MARKER_FILE,
+];
+
+/// Stores the new core rebuilds from what its nodes report rather than
+/// copies: the session search index and the GitHub snapshot.
+pub const REBUILT_AFTER_MOVE: &[&str] = &[SESSION_SEARCH, "github-snapshot.json"];
 
 /// How one machine-bound key is kept pointing at the right machine.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -610,6 +637,14 @@ pub const UNBOUND: &[&str] = &[
     "Logs",
     MARKER_FILE,
     BACKUP_DIR,
+    // A core move's own files (`hide_kit::layout`).
+    MOVE_STAGING,
+    "move-incoming",
+    "moved-out",
+    "core-move.json",
+    "core-handover.json",
+    "core-handover.lock",
+    "core-placement.json",
 ];
 
 /// `node.json`: the node that owns every unqualified key in this folder,

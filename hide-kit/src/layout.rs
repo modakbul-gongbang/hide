@@ -98,6 +98,43 @@ pub fn factory_files(state_dir: &Path) -> PathBuf {
     state_dir.join("factory-files")
 }
 
+/// Where this machine's core runs when it is not here: present only on a
+/// node whose core a move placed on another machine; its owner is the
+/// daemon's start (`hided::placement`).
+pub fn core_placement(state_dir: &Path) -> PathBuf {
+    state_dir.join("core-placement.json")
+}
+
+/// The record of a core move this machine drives, written before each step
+/// that cannot be undone; its owner is the move driver
+/// (`hided::core_move::journal`).
+pub fn core_move_journal(state_dir: &Path) -> PathBuf {
+    state_dir.join("core-move.json")
+}
+
+/// The record on a machine taking or giving the core in a move: a core
+/// waiting for its first link, active, stopped for the move, or retired;
+/// its owner is `hided core-move` (`hided::core_move::handover`).
+pub fn core_handover(state_dir: &Path) -> PathBuf {
+    state_dir.join("core-handover.json")
+}
+
+/// Copies a move makes of this machine's brain state, one folder per move.
+pub fn move_staging(state_dir: &Path) -> PathBuf {
+    state_dir.join("move-staging")
+}
+
+/// Where the machine taking the core receives a move's copy.
+pub fn move_incoming(state_dir: &Path) -> PathBuf {
+    state_dir.join("move-incoming")
+}
+
+/// The brain state a machine held before its core moved away, the latest
+/// move's only.
+pub fn moved_out(state_dir: &Path) -> PathBuf {
+    state_dir.join("moved-out")
+}
+
 /// `~/rest` of a helper root spelling under `home`; an absolute spelling as
 /// it is.
 pub fn expand_home(spelling: &str, home: &Path) -> PathBuf {
