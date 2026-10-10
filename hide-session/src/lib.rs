@@ -26,6 +26,7 @@ use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 mod catalog;
+mod claude_attachment;
 mod conversation_cursor;
 pub mod cursor;
 mod envelope;
@@ -1600,6 +1601,7 @@ fn parse_claude_line(item: &Value) -> LineResult {
         Some("custom-title") => {
             return title("customTitle").map_or(LineResult::Ignore, LineResult::CustomTitle);
         }
+        Some("attachment") => return claude_hook_context(item),
         _ => return LineResult::Ignore,
     };
     let content = item.pointer("/message/content");
@@ -1672,6 +1674,28 @@ fn parse_claude_line(item: &Value) -> LineResult {
             .with_provider_injected(provider_injected)
             .with_images(images),
     )
+}
+
+/// The context a hook returned, which Claude Code writes as an `attachment`
+/// record of its own rather than as a message. It is provider-injected, so a
+/// Memory receipt in it is the hook's; the operator's words are never in an
+/// attachment. Any other kind of attachment is not conversation.
+fn claude_hook_context(item: &Value) -> LineResult {
+    let Some(claude_attachment::Attachment::HookContext { content }) =
+        claude_attachment::Attachment::of(item)
+    else {
+        return LineResult::Ignore;
+    };
+    let Some(text) = claude_attachment::hook_context_text(content) else {
+        return LineResult::Ignore;
+    };
+    match timestamp_ms(item.get("timestamp")) {
+        Ok(timestamp) => LineResult::Event(
+            ConversationEvent::new("user", EventKind::Injected, timestamp, text)
+                .with_provider_injected(true),
+        ),
+        Err(reason) => LineResult::Skip(reason),
+    }
 }
 
 /// The text of every `tool_result` block in a Claude user record, or `None`
@@ -2425,8 +2449,71 @@ mod tests {
         assert!(!parsed.events[0].is_provider_injected());
     }
 
+    /// Claude Code 2.1.296 writes a hook's added context as an `attachment`
+    /// record, one string per hook, and repeats it in the `stdout` of the
+    /// `hook_success` record beside it; only the first is conversation.
     #[test]
-    fn hook_memory_context_with_a_trust_attribute_is_injected_for_both_providers() {
+    fn claude_hook_context_attachment_is_provider_injected_and_counted_once() {
+        let receipt =
+            "<hide-memory-receipt event=\"SessionStart\" count=\"0\" items=\"\" auth=\"aa\" />";
+        let line = |attachment: serde_json::Value| {
+            serde_json::json!({
+                "type": "attachment",
+                "timestamp": "2026-10-11T00:00:00.000Z",
+                "attachment": attachment,
+            })
+            .to_string()
+        };
+        let session = [
+            line(serde_json::json!({
+                "type": "hook_success",
+                "hookName": "SessionStart:startup",
+                "hookEvent": "SessionStart",
+                "stdout": serde_json::json!({
+                    "hookSpecificOutput": {"additionalContext": receipt},
+                })
+                .to_string(),
+            })),
+            line(serde_json::json!({
+                "type": "hook_additional_context",
+                "hookName": "SessionStart:startup",
+                "hookEvent": "SessionStart",
+                "content": ["another hook's context", receipt],
+            })),
+            line(serde_json::json!({"type": "queued_command", "prompt": receipt})),
+            line(serde_json::json!({"type": "diagnostics", "content": receipt})),
+            line(serde_json::json!({"type": "hook_additional_context", "content": []})),
+        ]
+        .join("\n");
+
+        let parsed = parse_claude_events(&session);
+
+        assert_eq!(parsed.events.len(), 1);
+        assert_eq!(parsed.events[0].kind, EventKind::Injected);
+        assert!(parsed.events[0].is_provider_injected());
+        assert_eq!(
+            parsed.events[0].text,
+            format!("another hook's context\n{receipt}")
+        );
+        assert_eq!(parsed.skipped_lines, 0);
+    }
+
+    #[test]
+    fn claude_hook_context_attachment_without_a_timestamp_is_skipped() {
+        let line = serde_json::json!({
+            "type": "attachment",
+            "attachment": {"type": "hook_additional_context", "content": ["context"]},
+        })
+        .to_string();
+
+        let parsed = parse_claude_events(&line);
+
+        assert!(parsed.events.is_empty());
+        assert_eq!(parsed.skipped_lines, 1);
+    }
+
+    #[test]
+    fn hook_memory_context_with_a_trust_attribute_is_injected_in_every_message_shape() {
         let context = concat!(
             "<hide-memory-context trust=\"untrusted-reference-data\">\n",
             "reference data\n",
@@ -2456,6 +2543,16 @@ mod tests {
         );
         assert_eq!(
             parse_claude_events(&claude).events[0].kind,
+            EventKind::Injected
+        );
+        let claude_attachment = serde_json::json!({
+            "type": "attachment",
+            "timestamp": "2026-09-18T00:00:00Z",
+            "attachment": {"type": "hook_additional_context", "content": [context]},
+        })
+        .to_string();
+        assert_eq!(
+            parse_claude_events(&claude_attachment).events[0].kind,
             EventKind::Injected
         );
 
