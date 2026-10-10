@@ -83,15 +83,16 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     ]);
   }
 
-  // A pane: its header (the ancestor path, the marks and title, the own PR
-  // chip and the tree button, then menu, zoom and close) over its terminal,
+  // A pane: its header (the ancestor path, the marks and title, the fork mark of
+  // a pane Fork agent made, the own PR chip and the tree button, then menu, zoom and close) over its terminal,
   // with the one band a pane carries overlaid at the top (D-14, D-43; B20, B21).
-  function pane(id, {path = [], mark = '○', tone = '$--agent-working', provider: kind = 'codex', title, pr, children, band, terminal}) {
+  function pane(id, {path = [], mark = '○', tone = '$--agent-working', provider: kind = 'codex', title, forked, pr, children, band, terminal}) {
     const header = frame(`${id}-header`, 'Header', {width:'fill_container',height:28,layout:'horizontal',gap:6,alignItems:'center',padding:[0,8],fill:'$--card'}, [
       ...path.flatMap((name, index) => [caption(`${id}-path-${index}`, name, '$--muted-foreground'), caption(`${id}-sep-${index}`, '›', '$--muted-foreground')]),
       caption(`${id}-mark`, mark, tone, {mono:true,weight:'600'}),
       provider(`${id}-provider`, kind),
       caption(`${id}-title`, title, '$--foreground'),
+      ...(forked ? [icon(`${id}-fork`, 'git-fork', {size:12,fill:'$--subtle-foreground'})] : []),
       ...(pr ? [prChip(`${id}-pr`, pr)] : []),
       ...(children ? [themedXref(`${id}-tree`, 'ath-tree-button', 'Tree button', {}, {'ath-tb-n': {content: String(children)}})] : []),
       frame(`${id}-sp`, 'Spacer', {width:'fill_container',height:1}, []),
@@ -128,6 +129,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       labeled('root','Root pane, a descendant raised: band with 외 1건 (B4, B6)',[pane(`${id}-root`,{mark:'!',tone:'$--warning',provider:'claude',title:'hide 에이전트 지원 PR 묶음 머지 조율',pr:{number:812,state:'mergeable'},children:8,band:{verb:'승인',what:'e2e 테스트 돌리던 중',who:['codex','테스트 작성'],age:'12m',more:1},terminal:'› 에이전트 지원 PR 다섯 개의 머지 순서를 맞추는 중'})]),
       labeled('child','Child pane: path back to the root, its own PR and its children after the title (B20, B21)',[pane(`${id}-child`,{path:[root],title:'P8 읽기 전용 준비',pr:{number:811,state:'failed'},children:2})]),
       labeled('grand','Grandchild pane: two ancestors, no PR and no children (B20)',[pane(`${id}-grand`,{path:[root,'P8 읽기 전용 준비'],mark:'!',tone:'$--warning',title:'테스트 작성',terminal:'Allow bash: pnpm --dir web e2e ? (y/n)'})]),
+      labeled('fork','Forked pane: the fork mark after the title, whose tooltip says which pane it was forked from (issue 916)',[pane(`${id}-fork`,{path:[root],provider:'claude',title:'P8 읽기 전용 준비',forked:true})]),
       labeled('two','Two own PRs: PR 2 ×1 (B22)',[pane(`${id}-two`,{path:[root],mark:'✓',tone:'$--success',provider:'claude',title:'P6 OpenCode 세션 리더',pr:{count:2,state:'failed',worst:1}})]),
       labeled('bands','Band per cause (B3)',bands.map(([key,band])=>pane(`${id}-band-${key}`,{path:[root],title:'P8 읽기 전용 준비',band}))),
       caption(`${id}-rule`,'승인은 label 줄이 없으면 "권한 요청에서 멈춤". 답변의 대기는 부모가 못 받은 시간. 초안은 초안이 걸린 부모를 연다. 띠는 PTY 크기를 바꾸지 않는다.'),

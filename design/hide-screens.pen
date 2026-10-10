@@ -77147,6 +77147,188 @@
                 },
                 {
                   "type": "frame",
+                  "id": "sfu-ph-board-l-sec-fork",
+                  "name": "Forked pane: the fork mark after the title, whose tooltip says which pane it was forked from (issue 916)",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "sfu-ph-board-l-sec-fork-label",
+                      "name": "Forked pane: the fork mark a",
+                      "content": "Forked pane: the fork mark after the title, whose tooltip says which pane it was forked from (issue 916)",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sfu-ph-board-l-fork",
+                      "name": "Pane",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "sfu-ph-board-l-fork-header",
+                          "name": "Header",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "sfu-ph-board-l-fork-path-0",
+                              "name": "hide 에이전트 지원 PR 묶…",
+                              "content": "hide 에이전트 지원 PR 묶…",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "sfu-ph-board-l-fork-sep-0",
+                              "name": "›",
+                              "content": "›",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "sfu-ph-board-l-fork-mark",
+                              "name": "○",
+                              "content": "○",
+                              "fill": "$--agent-working",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-ph-board-l-fork-provider",
+                              "name": "Provider",
+                              "children": [],
+                              "width": 14,
+                              "height": 14,
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "contain"
+                              }
+                            },
+                            {
+                              "type": "text",
+                              "id": "sfu-ph-board-l-fork-title",
+                              "name": "P8 읽기 전용 준비",
+                              "content": "P8 읽기 전용 준비",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "sfu-ph-board-l-fork-fork",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "git-fork",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-ph-board-l-fork-sp",
+                              "name": "Spacer",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "icon",
+                              "id": "sfu-ph-board-l-fork-zoom",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "maximize-2",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "sfu-ph-board-l-fork-menu",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "ellipsis",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "sfu-ph-board-l-fork-close",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            }
+                          ],
+                          "width": "fill_container",
+                          "height": 28,
+                          "layout": "horizontal",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            8
+                          ],
+                          "fill": "$--card"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sfu-ph-board-l-fork-terminal",
+                          "name": "Terminal",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "sfu-ph-board-l-fork-terminal-text",
+                              "name": "› 테스트 작성 결과를 기다리는 중",
+                              "content": "› 테스트 작성 결과를 기다리는 중",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "padding": [
+                            8,
+                            12
+                          ]
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 120,
+                      "layout": "vertical",
+                      "gap": 0,
+                      "clip": true,
+                      "fill": "$--background",
+                      "stroke": "$--border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8
+                },
+                {
+                  "type": "frame",
                   "id": "sfu-ph-board-l-sec-two",
                   "name": "Two own PRs: PR 2 ×1 (B22)",
                   "children": [
@@ -96857,6 +97039,188 @@
                               "id": "sfu-ph-board-d-grand-terminal-text",
                               "name": "Allow bash: pnpm --dir web e",
                               "content": "Allow bash: pnpm --dir web e2e ? (y/n)",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "padding": [
+                            8,
+                            12
+                          ]
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 120,
+                      "layout": "vertical",
+                      "gap": 0,
+                      "clip": true,
+                      "fill": "$--background",
+                      "stroke": "$--border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8
+                },
+                {
+                  "type": "frame",
+                  "id": "sfu-ph-board-d-sec-fork",
+                  "name": "Forked pane: the fork mark after the title, whose tooltip says which pane it was forked from (issue 916)",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "sfu-ph-board-d-sec-fork-label",
+                      "name": "Forked pane: the fork mark a",
+                      "content": "Forked pane: the fork mark after the title, whose tooltip says which pane it was forked from (issue 916)",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sfu-ph-board-d-fork",
+                      "name": "Pane",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "sfu-ph-board-d-fork-header",
+                          "name": "Header",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "sfu-ph-board-d-fork-path-0",
+                              "name": "hide 에이전트 지원 PR 묶…",
+                              "content": "hide 에이전트 지원 PR 묶…",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "sfu-ph-board-d-fork-sep-0",
+                              "name": "›",
+                              "content": "›",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "sfu-ph-board-d-fork-mark",
+                              "name": "○",
+                              "content": "○",
+                              "fill": "$--agent-working",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-ph-board-d-fork-provider",
+                              "name": "Provider",
+                              "children": [],
+                              "width": 14,
+                              "height": 14,
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "contain"
+                              }
+                            },
+                            {
+                              "type": "text",
+                              "id": "sfu-ph-board-d-fork-title",
+                              "name": "P8 읽기 전용 준비",
+                              "content": "P8 읽기 전용 준비",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "sfu-ph-board-d-fork-fork",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "git-fork",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-ph-board-d-fork-sp",
+                              "name": "Spacer",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "icon",
+                              "id": "sfu-ph-board-d-fork-zoom",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "maximize-2",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "sfu-ph-board-d-fork-menu",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "ellipsis",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "sfu-ph-board-d-fork-close",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            }
+                          ],
+                          "width": "fill_container",
+                          "height": 28,
+                          "layout": "horizontal",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            8
+                          ],
+                          "fill": "$--card"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sfu-ph-board-d-fork-terminal",
+                          "name": "Terminal",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "sfu-ph-board-d-fork-terminal-text",
+                              "name": "› 테스트 작성 결과를 기다리는 중",
+                              "content": "› 테스트 작성 결과를 기다리는 중",
                               "fill": "$--muted-foreground",
                               "fontFamily": "$--font-mono",
                               "fontSize": "$--text-caption",

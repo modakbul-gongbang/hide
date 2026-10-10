@@ -932,6 +932,11 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "agent_sleep", payload: { pane_id: paneId } });
     },
 
+    /** Fork agent from the pane menu: a new execution of this agent's conversation in its own tab. */
+    forkPane(paneId: string) {
+      dispatch({ schema_version: 2, kind: "fork_pane", payload: { pane_id: paneId } });
+    },
+
     /** Wake agent and Retry resume the conversation; Start new session is `fresh` (B12, B14). */
     wakeAgent(paneId: string, fresh = false) {
       dispatch({ schema_version: 2, kind: "agent_wake", payload: { pane_id: paneId, fresh } });

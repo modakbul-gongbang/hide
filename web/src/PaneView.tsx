@@ -7,7 +7,7 @@ import { AgentMark } from "./AgentMark";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
-import { PaneHeaderBand, PanePrChip, PaneTreeButton } from "./PaneHeaderBand";
+import { PaneForkMark, PaneHeaderBand, PanePrChip, PaneTreeButton } from "./PaneHeaderBand";
 import { PaneConnectionChip } from "./PaneConnection";
 import { AncestorPath, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
 import { chordLabel, commandLabel } from "./shortcutLabels";
@@ -301,6 +301,7 @@ export const PaneView = memo(function PaneView({
           {title}
         </span>
         </Hint>
+        {agentKind ? <PaneForkMark pane={pane} /> : null}
         {agentKind ? <PanePrChip paneId={paneId} actions={actions} /> : null}
         {agentKind ? <PaneTreeButton paneId={paneId} actions={actions} /> : null}
         <span className="flex-1" />

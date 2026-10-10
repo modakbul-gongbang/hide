@@ -174,7 +174,7 @@ Workspace is `Screen / Workspace`.
 It draws docked Agent Views, File Views and Tools beneath one full-width toolbar, using the Workspace columns, toolbar, toggle and divider masters in the library.
 The toolbar's right edge carries Open server, File Views and Tools, with independent pressed states, a count when open File Views are hidden, and per-control tooltip and keyboard-focus states.
 The columns start with their own tab strips; File Views carries its document header and Tools carries Sessions, Explorer and History, with Sessions first and the selection saved per Workspace.
-The pane header's ancestor path, own PR chip, tree button and ask band follow the approved agent-hierarchy round 2 reference, the pane header board on this sheet, in both themes, and `design/review-targets.json` names it as the `pane-header` target.
+The pane header's ancestor path, fork mark, own PR chip, tree button and ask band follow the approved agent-hierarchy round 2 reference, the pane header board on this sheet, in both themes (the fork mark is the issue 916 addition, chosen by the operator as a small icon after the title and drawn in the board's Forked pane section), and `design/review-targets.json` names it as the `pane-header` target.
 The reference includes the full layout, both narrow-window fallbacks and explicit column calls, Tools without File Views, saved widths, and the divider at rest, under the pointer, focused and being dragged.
 Light and Dark frames carry Korean text and long paths, including the one-line shortened document path and its full-path tooltip.
 The server-picker comparison retains its distinct reachable endpoints, and the area-focus comparison retains two View areas with one keyboard owner and independently readable selections.
