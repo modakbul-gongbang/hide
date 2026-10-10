@@ -922,3 +922,117 @@ fn real_project_replacement_clears_search_delta_and_rejects_late_old_answer() {
         workspace_id(&f.alpha)
     );
 }
+
+/// `unix_ms` as the `YYYY-MM-DDTHH:MM:SSZ` a session record carries.
+fn rfc3339(unix_ms: u64) -> String {
+    let seconds = unix_ms / 1000;
+    let days = (seconds / 86_400) as i64 + 719_468;
+    let era = days.div_euclid(146_097);
+    let day_of_era = days.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    let second_of_day = seconds % 86_400;
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        second_of_day / 3600,
+        second_of_day % 3600 / 60,
+        second_of_day % 60
+    )
+}
+
+/// Another Project's copies fill the index's 25,000 messages (#915): the
+/// Project the screen names still gets its newest session searched, the oldest
+/// sessions of the other Project make the room, and no failure reaches the
+/// screen.
+#[test]
+fn a_full_search_index_makes_room_for_the_named_projects_newest_session() {
+    use crate::runtime::session_search::{SearchPayload, SearchWorker};
+    use hide_session::search::{IndexStep, IndexedMessage, SearchIndex};
+    let fixture = fixture();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    fs::write(
+        fixture.home.join(".claude/projects/p/claude-fresh.jsonl"),
+        claude_line(&fixture.alpha, &rfc3339(now), "user", "fresh-marker request") + "\n",
+    )
+    .unwrap();
+    let shared = shared(&fixture);
+    let database = fixture.home.join("session-search.sqlite3");
+    shared.lock().unwrap().state_path = fixture.home.join("state.json");
+    let mut index = SearchIndex::open(&database).unwrap();
+    let month_ago = now - 30 * 86_400_000;
+    for session in 0..5u64 {
+        for chunk in 0..10u64 {
+            let messages = (0..500u64)
+                .map(|i| IndexedMessage {
+                    offset: chunk * 500 + i,
+                    role: "user".into(),
+                    at_unix_ms: month_ago + session * 1_000_000 + chunk * 500 + i,
+                    text: format!("other project body {session} {chunk} {i}"),
+                })
+                .collect();
+            index
+                .apply(
+                    "other-project",
+                    &format!("other-{session}"),
+                    "/gone",
+                    0,
+                    IndexStep::Read {
+                        reset: false,
+                        messages,
+                        cursor: "c".into(),
+                        stamp: "s".into(),
+                        witness: "w".into(),
+                        more: false,
+                    },
+                )
+                .unwrap();
+        }
+    }
+    drop(index);
+    dispatch(
+        &shared,
+        "sessions_refresh",
+        serde_json::json!({"workspace_id": workspace_id(&fixture.alpha)}),
+    );
+    settled(&shared);
+    let worker = SearchWorker::spawn(shared.weak(), ChangeNotifier::noop()).unwrap();
+    worker.install(&mut shared.lock().unwrap());
+    shared
+        .lock()
+        .unwrap()
+        .request_session_search(SearchPayload {
+            workspace_id: workspace_id(&fixture.alpha),
+            device_id: crate::node::TEST_NODE.into(),
+            query: "fresh-marker".into(),
+            provider: "all".into(),
+            clear: false,
+            days: None,
+        });
+    wait(&shared, "the fresh session to be searched", |runtime| {
+        let search = runtime.snapshot.session_search.as_ref().unwrap();
+        !search.loading && (!search.page.hits.is_empty() || search.failure.is_some())
+    });
+    let search = shared
+        .lock()
+        .unwrap()
+        .snapshot
+        .session_search
+        .clone()
+        .unwrap();
+    assert_eq!(search.failure, None);
+    assert_eq!(search.page.hits.len(), 1);
+    assert_eq!(search.page.hits[0].session_id, "claude-fresh");
+    drop(worker);
+}

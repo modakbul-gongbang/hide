@@ -154,11 +154,7 @@ impl SearchIndex {
         Ok((moved, dropped))
     }
     fn budget(&self) {
-        let started = Instant::now();
-        self.db.progress_handler(
-            1000,
-            Some(move || started.elapsed() > Duration::from_millis(500)),
-        );
+        limit_work(&self.db);
     }
     pub fn days(&self, project: &str) -> Result<u16, String> {
         self.db
@@ -331,16 +327,28 @@ impl SearchIndex {
                 if reset {
                     erase(&tx, project, Some(session), None)?;
                 }
+                let kept = messages.iter().filter(|m| m.at_unix_ms >= cutoff);
+                if kept.clone().any(|m| m.text.len() > BODY_LIMIT) {
+                    return Err("A message is over the 64 KiB the search index copies.".into());
+                }
+                let incoming = kept.clone().count();
+                let newest = kept.map(|m| m.at_unix_ms).max().unwrap_or(0);
                 let count: usize = tx
                     .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
                     .map_err(|e| e.to_string())?;
+                if count + incoming > MESSAGE_LIMIT {
+                    make_room(
+                        &tx,
+                        project,
+                        session,
+                        count + incoming - MESSAGE_LIMIT,
+                        newest,
+                    )?;
+                }
                 let mut added = 0;
                 for message in messages {
                     if message.at_unix_ms < cutoff {
                         continue;
-                    }
-                    if message.text.len() > BODY_LIMIT || count + added >= MESSAGE_LIMIT {
-                        return Err("Search index capacity reached (25,000 messages, 64 KiB per message). Reduce retention or clear the index.".into());
                     }
                     let folded = message.text.to_lowercase();
                     tx.execute("INSERT OR IGNORE INTO messages(project,session,offset,role,at,body,folded) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![project,session,message.offset,message.role,message.at_unix_ms,message.text,folded]).map_err(|e| e.to_string())?;
@@ -350,7 +358,6 @@ impl SearchIndex {
                             params![tx.last_insert_rowid(), grams(&folded)],
                         )
                         .map_err(|e| e.to_string())?;
-                        added += 1;
                     }
                 }
                 tx.execute("INSERT INTO files VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(project,session) DO UPDATE SET path=excluded.path,cursor=excluded.cursor,stamp=excluded.stamp,witness=excluded.witness", params![project,session,path,cursor,stamp,witness]).map_err(|e| e.to_string())?;
@@ -455,6 +462,70 @@ impl SearchIndex {
         self.db.progress_handler(0, None::<fn() -> bool>);
         result
     }
+}
+/// Stops the statements that follow after half a second.
+fn limit_work(db: &Connection) {
+    let started = Instant::now();
+    db.progress_handler(
+        1000,
+        Some(move || started.elapsed() > Duration::from_millis(500)),
+    );
+}
+/// Frees `needed` messages for a read of `project`'s `session` whose newest
+/// message is at `newest`, by dropping whole sessions, each with its saved
+/// cursor so it is read again from the start when its Project is next
+/// indexed, never half-copied. Other Projects' sessions go first, least
+/// recently active first, so the Project being searched wins the room; then
+/// this Project's own sessions that are older than the incoming read, so a
+/// session never displaces newer content. Nothing is dropped unless the room
+/// can be made in full.
+fn make_room(
+    tx: &rusqlite::Transaction<'_>,
+    project: &str,
+    session: &str,
+    needed: usize,
+    newest: u64,
+) -> Result<(), String> {
+    let mut victims = Vec::new();
+    let mut freed = 0;
+    {
+        let mut stmt = tx
+            .prepare(
+                "SELECT project,session,count(*) FROM messages WHERE NOT (project=?1 AND session=?2)
+                 GROUP BY project,session HAVING project<>?1 OR max(at)<?3
+                 ORDER BY project=?1,max(at),project,session",
+            )
+            .map_err(|e| e.to_string())?;
+        let mut rows = stmt
+            .query(params![project, session, newest])
+            .map_err(|e| e.to_string())?;
+        while freed < needed {
+            let Some(row) = rows.next().map_err(|e| e.to_string())? else {
+                break;
+            };
+            let count: usize = row.get(2).map_err(|e| e.to_string())?;
+            victims.push((
+                row.get::<_, String>(0).map_err(|e| e.to_string())?,
+                row.get::<_, String>(1).map_err(|e| e.to_string())?,
+            ));
+            freed += count;
+        }
+    }
+    if freed < needed {
+        return Err(
+            "This Project's recent conversations are more than the search index holds (25,000 messages). A shorter Copied history period keeps the newest."
+                .into(),
+        );
+    }
+    for (victim_project, victim_session) in victims {
+        erase(tx, &victim_project, Some(&victim_session), None)?;
+        tx.execute(
+            "DELETE FROM files WHERE project=?1 AND session=?2",
+            params![victim_project, victim_session],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 fn erase(
     tx: &rusqlite::Transaction<'_>,

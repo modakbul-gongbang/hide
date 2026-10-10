@@ -644,3 +644,172 @@ fn rekeying_onto_a_project_indexed_since_keeps_the_newer_rows_and_drops_the_old_
     );
     assert_eq!(index.days("project-new").unwrap(), 30);
 }
+
+// The index holds 25,000 copied messages in all. These tests fill it with
+// synthetic reads (`IndexStep::Read`) so no session file is needed, and read
+// the count from the database the way the search worker's limit does.
+mod capacity {
+    use hide_session::search::{IndexStep, IndexedMessage, SearchIndex};
+    use std::path::Path;
+    use tempfile::tempdir;
+
+    const CAP: usize = 25_000;
+
+    fn read(messages: Vec<IndexedMessage>) -> IndexStep {
+        IndexStep::Read {
+            reset: false,
+            messages,
+            cursor: "c".into(),
+            stamp: "s".into(),
+            witness: "w".into(),
+            more: false,
+        }
+    }
+    /// `count` messages of `session`, the newest at `newest` ms.
+    fn messages(session: &str, count: usize, newest: u64) -> Vec<IndexedMessage> {
+        (0..count)
+            .map(|i| IndexedMessage {
+                offset: i as u64,
+                role: "user".into(),
+                at_unix_ms: newest - (count - 1 - i) as u64,
+                text: format!("needle {session} message {i}"),
+            })
+            .collect()
+    }
+    fn index_session(
+        index: &mut SearchIndex,
+        project: &str,
+        session: &str,
+        count: usize,
+        newest: u64,
+    ) -> Result<(), String> {
+        // A read is at most 1 MiB of a file, so a big session arrives in many.
+        for chunk in messages(session, count, newest).chunks(500) {
+            index.apply(project, session, session, 0, read(chunk.to_vec()))?;
+        }
+        Ok(())
+    }
+    fn stored(database: &Path) -> usize {
+        rusqlite::Connection::open(database)
+            .unwrap()
+            .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+            .unwrap()
+    }
+    /// The sessions of `project` the search finds a hit in.
+    fn found(index: &SearchIndex, project: &str) -> Vec<String> {
+        let mut sessions = index
+            .search_scoped(project, "needle", 0, None, &mut |paths| {
+                Ok(paths.iter().map(|_| Some("s".to_owned())).collect())
+            })
+            .unwrap()
+            .hits
+            .into_iter()
+            .map(|hit| hit.session_id)
+            .collect::<Vec<_>>();
+        sessions.sort();
+        sessions
+    }
+    fn full_of_another_project(index: &mut SearchIndex) {
+        for k in 0..5 {
+            index_session(index, "other", &format!("o{k}"), 5_000, 10_000 + k * 10_000).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_index_holds_exactly_the_documented_number_of_messages() {
+        let tmp = tempdir().unwrap();
+        let database = tmp.path().join("index.db");
+        let mut index = SearchIndex::open(&database).unwrap();
+        full_of_another_project(&mut index);
+        assert_eq!(stored(&database), CAP);
+    }
+
+    #[test]
+    fn a_new_project_session_displaces_the_oldest_sessions_of_another_project() {
+        let tmp = tempdir().unwrap();
+        let database = tmp.path().join("index.db");
+        let mut index = SearchIndex::open(&database).unwrap();
+        full_of_another_project(&mut index);
+        assert_eq!(found(&index, "other").len(), 5);
+
+        index_session(&mut index, "viewed", "fresh", 3, 900_000).unwrap();
+
+        assert_eq!(found(&index, "viewed"), ["fresh"]);
+        assert_eq!(stored(&database), CAP - 5_000 + 3);
+        // The oldest session went whole, with its saved cursor, so it is read
+        // again from the start rather than searched half-copied.
+        assert_eq!(found(&index, "other"), ["o1", "o2", "o3", "o4"]);
+        assert!(index.saved("other", "o0").unwrap().is_none());
+        assert!(index.saved("other", "o1").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_session_that_does_not_fit_leaves_every_other_session_in_place() {
+        let tmp = tempdir().unwrap();
+        let database = tmp.path().join("index.db");
+        let mut index = SearchIndex::open(&database).unwrap();
+        index_session(&mut index, "viewed", "huge", CAP, 5_000_000).unwrap();
+
+        // A second session of the viewed Project, older than "huge": nothing
+        // of its own newer content may be displaced for it.
+        let error = index_session(&mut index, "viewed", "older", 10, 1_000).unwrap_err();
+
+        assert!(error.contains("Copied history"), "{error}");
+        assert!(!error.contains("clear the index"), "{error}");
+        assert_eq!(stored(&database), CAP);
+        assert_eq!(found(&index, "viewed"), ["huge"]);
+    }
+
+    #[test]
+    fn a_newer_session_displaces_the_older_sessions_of_its_own_project() {
+        let tmp = tempdir().unwrap();
+        let database = tmp.path().join("index.db");
+        let mut index = SearchIndex::open(&database).unwrap();
+        for k in 0..5 {
+            index_session(
+                &mut index,
+                "viewed",
+                &format!("v{k}"),
+                5_000,
+                10_000 + k * 10_000,
+            )
+            .unwrap();
+        }
+
+        index_session(&mut index, "viewed", "new", 10, 900_000).unwrap();
+
+        assert_eq!(found(&index, "viewed"), ["new", "v1", "v2", "v3", "v4"]);
+        assert_eq!(stored(&database), CAP - 5_000 + 10);
+        assert!(index.saved("viewed", "v0").unwrap().is_none());
+    }
+
+    #[test]
+    fn the_session_being_read_is_never_its_own_victim() {
+        let tmp = tempdir().unwrap();
+        let database = tmp.path().join("index.db");
+        let mut index = SearchIndex::open(&database).unwrap();
+        index_session(&mut index, "viewed", "s", CAP - 5, 1_000_000).unwrap();
+        // The same session grows by 10 messages past the cap.
+        let step = IndexStep::Read {
+            reset: false,
+            messages: (0..10)
+                .map(|i| IndexedMessage {
+                    offset: 10_000_000 + i,
+                    role: "assistant".into(),
+                    at_unix_ms: 2_000_000 + i,
+                    text: format!("needle grown {i}"),
+                })
+                .collect(),
+            cursor: "c2".into(),
+            stamp: "s".into(),
+            witness: "w".into(),
+            more: false,
+        };
+
+        let error = index.apply("viewed", "s", "s", 0, step).unwrap_err();
+
+        assert!(error.contains("Copied history"), "{error}");
+        assert_eq!(stored(&database), CAP - 5);
+        assert_eq!(found(&index, "viewed"), ["s"]);
+    }
+}

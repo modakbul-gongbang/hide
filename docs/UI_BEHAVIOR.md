@@ -442,6 +442,8 @@ Metadata rows stay useful while content search prepares or indexes, and an incom
 `Copied history` selects Off, 30, 90 or 365 days, initially 90 days after the policy loads.
 Off erases this Project’s local copied bodies and pauses indexing while metadata remains available; Rebuild index clears the copy and starts a fresh bounded pass under the selected retention.
 Expired copies from inactive Projects are also removed, and originals remain intact.
+The copied bodies of all Projects share one bound of 25,000 messages; a Project being searched takes room from other Projects' least recently active sessions, which are copied again when their own Project is next searched, so this screen never asks the operator to clear room another Project holds.
+When this Project's own newest sessions are more than the bound, the status line says so and names a shorter `Copied history` period, which keeps the newest.
 Searching and these controls never schedule Memory analysis, provider calls, embeddings or injection.
 The open session's row is the list's one Tab stop; the arrows, Home, and End move between rows, ArrowDown from the search lands on that row, and Escape in the search clears it, so only an Escape in an empty search leaves the Overview.
 The provider choice is one Tab stop whose arrows choose the neighbouring provider.
