@@ -964,7 +964,12 @@ fn a_full_search_index_makes_room_for_the_named_projects_newest_session() {
         .as_millis() as u64;
     fs::write(
         fixture.home.join(".claude/projects/p/claude-fresh.jsonl"),
-        claude_line(&fixture.alpha, &rfc3339(now), "user", "fresh-marker request") + "\n",
+        claude_line(
+            &fixture.alpha,
+            &rfc3339(now),
+            "user",
+            "fresh-marker request",
+        ) + "\n",
     )
     .unwrap();
     let shared = shared(&fixture);
