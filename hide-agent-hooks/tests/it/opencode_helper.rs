@@ -232,7 +232,12 @@ fn subagent_counts_are_stored_as_sent_and_a_failed_report_is_recorded() {
         &std::fs::read(machine.home.join(".hide/agent-hooks/panes/w1_p1.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(stored, json!({"working": 2, "done": 1}));
+    // The counts as sent, and the hook version that stored them, which is
+    // what puts them back after Herdr loses the tokens.
+    assert_eq!(
+        stored,
+        json!({"working": 2, "done": 1, "version": hide_agent_hooks::HOOK_VERSION})
+    );
     let failure = hide_agent_hooks::report::last_failure(&machine.home).unwrap();
     assert_eq!(failure.pane_id, PANE);
     assert_eq!(failure.event, "subagent count");
