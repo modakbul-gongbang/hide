@@ -2507,3 +2507,244 @@ fn a_codex_session_not_found_is_not_known_until_a_later_state_reads_it() {
         (Some(Waiting::PlanApproval), Some(true))
     );
 }
+
+/// A Claude Code session whose process started and whose turn launched a
+/// background command, as Claude writes it (`attachment`, `tool_result`).
+fn claude_background_session(harness: &Harness, name: &str, id: &str) -> PathBuf {
+    let path = harness.session(name, id, &[("user", "빌드를 돌려줘")]);
+    let records = [
+        json!({"type":"attachment","timestamp":"2026-10-01T00:00:01Z",
+            "attachment":{"type":"hook_success","hookName":"SessionStart:startup"}}),
+        json!({"type":"user","sessionId":id,"timestamp":"2026-10-01T00:00:02Z",
+            "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1",
+                "content":"Command running in background with ID: bg1. Output is being written to: /x"}]}}),
+    ];
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    use std::io::Write;
+    for record in records {
+        writeln!(file, "{record}").unwrap();
+    }
+    path
+}
+
+/// The row's activity for the agent as Herdr lists it now, after the overlay
+/// is laid on it: what every group, mark and notification is decided from.
+fn activity_shown(worker: &LabelWorker, agent: &ObservedAgent) -> String {
+    let (kind, value) = agent.reference.clone().unwrap();
+    let mut payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents": [{
+        "pane_id": agent.pane_id, "agent": agent.agent, "agent_status": agent.status,
+        "state_change_seq": agent.state_change_seq,
+        "agent_session": {"kind": kind, "value": value},
+    }]}))
+    .unwrap();
+    worker.overlay().apply(&mut payload);
+    crate::sidebar::project_agents(payload)
+        .agents
+        .remove(0)
+        .activity
+}
+
+/// #902: the turn ends, Herdr reports the stop, and the read of the session
+/// that says whether a background task will wake the agent has not landed.
+/// Until it does the row is not a stop: nothing yet says it has finished, and
+/// a Done announced in that gap is taken back when the read lands.
+#[test]
+fn a_turn_end_is_not_a_stop_until_its_session_read_lands() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let path =
+        claude_background_session(&harness, "turn-end", "c0000000-0000-4000-8000-000000000001");
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    assert_eq!(activity_shown(&worker, &working), "working");
+
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working.clone()
+    };
+    observe(&mut worker, &done);
+    assert_eq!(
+        activity_shown(&worker, &done),
+        "working",
+        "the read of the turn end has not landed"
+    );
+    settle(&mut worker, &woken);
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+    assert_eq!(shown_facts(&worker, &done).unwrap().wake_devices, 1);
+}
+
+/// Takes the worker's results until it settles and says whether any of them
+/// changed what a row shows, which is what the coordinator publishes on.
+fn settle_publishing(worker: &mut LabelWorker, woken: &Receiver<()>) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut published = false;
+    while !worker.settled() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        assert!(!left.is_zero(), "the worker did not settle");
+        let _ = woken.recv_timeout(left.min(Duration::from_millis(200)));
+        published |= worker.drain(Instant::now(), unix_now_ms());
+    }
+    published
+}
+
+/// A session reader that can be made to fail.
+struct Switched {
+    inner: NodeTranscripts,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+impl TranscriptSource for Switched {
+    fn read(&self, request: &LabelTranscriptRequest) -> Result<LabelTranscript, ReadFailure> {
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(ReadFailure::Unavailable("fixture_unreadable".to_owned()));
+        }
+        self.inner.read(request)
+    }
+}
+
+fn switched_worker(harness: &Harness) -> (LabelWorker, Receiver<()>, Arc<Switched>) {
+    let node: Arc<dyn crate::node_access::NodeLink> = Arc::new(hide_node::Local::new(Some(
+        harness.home.path().to_path_buf(),
+    )));
+    let source = Arc::new(Switched {
+        inner: NodeTranscripts::new(Box::new(move || Ok(Arc::clone(&node)))),
+        fail: false.into(),
+    });
+    let (worker, woken) =
+        harness.spawn(harness.store(), LOCAL_TARGET, "local.sock", source.clone());
+    (worker, woken, source)
+}
+
+/// #902: the hold on a turn end ends on every path of the read. One that
+/// landed says nothing new when no task wakes the agent, and the row must
+/// still be published as a stop.
+#[test]
+fn a_read_that_finds_no_task_releases_the_turn_end_and_publishes_it() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let path = harness.session(
+        "quiet",
+        "c0000000-0000-4000-8000-000000000002",
+        &[("user", "고쳐줘")],
+    );
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working.clone()
+    };
+    observe(&mut worker, &done);
+    assert_eq!(activity_shown(&worker, &done), "working");
+    assert!(
+        settle_publishing(&mut worker, &woken),
+        "the release reaches the projection"
+    );
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+    assert_eq!(shown_facts(&worker, &done).unwrap().wake_devices, 0);
+}
+
+#[test]
+fn a_read_that_fails_releases_the_turn_end_and_says_so() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = switched_worker(&harness);
+    worker.set_summaries(false, Instant::now());
+    let path =
+        claude_background_session(&harness, "failing", "c0000000-0000-4000-8000-000000000003");
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+
+    source.fail.store(true, Ordering::SeqCst);
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working.clone()
+    };
+    observe(&mut worker, &done);
+    assert_eq!(activity_shown(&worker, &done), "working");
+    let (published, diagnostics) =
+        crate::diagnostics::capture(|| settle_publishing(&mut worker, &woken));
+    assert!(published);
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+    let unread: Vec<_> = diagnostics
+        .iter()
+        .filter(|record| record["kind"] == "turn_end.unread")
+        .collect();
+    assert_eq!(unread.len(), 1, "{diagnostics:?}");
+    assert_eq!(unread[0]["state_change_seq"], 5);
+}
+
+/// A stop that is not a turn just ended owes no read: Herdr marking a finished
+/// row seen, a daemon that restarts and finds its record read, and an agent
+/// whose session cannot report background tasks.
+#[test]
+fn a_stop_that_is_not_a_turn_just_ended_is_not_held() {
+    let harness = Harness::new();
+    let store = harness.store();
+    let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+    worker.set_summaries(false, Instant::now());
+    let path = claude_background_session(&harness, "seen", "c0000000-0000-4000-8000-000000000004");
+    let working = agent(&path, "working", 4);
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working.clone()
+    };
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+    observe(&mut worker, &done);
+    settle(&mut worker, &woken);
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+
+    let seen = ObservedAgent {
+        status: Some("idle".to_owned()),
+        state_change_seq: 6,
+        ..done.clone()
+    };
+    observe(&mut worker, &seen);
+    assert_eq!(
+        activity_shown(&worker, &seen),
+        "stopped",
+        "Herdr marking the row seen is no turn end"
+    );
+    settle(&mut worker, &woken);
+
+    drop(worker);
+    let (mut restarted, woken, _) = harness.worker(Arc::clone(&store));
+    observe(&mut restarted, &seen);
+    assert_eq!(
+        activity_shown(&restarted, &seen),
+        "stopped",
+        "a restart finds the row read"
+    );
+    settle(&mut restarted, &woken);
+
+    let other = Harness::new();
+    let (mut worker, woken, _) = other.worker(other.store());
+    worker.set_summaries(false, Instant::now());
+    let (_, codex_done) = codex_plan_session(&other, "done", 5);
+    let codex_working = ObservedAgent {
+        status: Some("working".to_owned()),
+        state_change_seq: 4,
+        ..codex_done.clone()
+    };
+    observe(&mut worker, &codex_working);
+    settle(&mut worker, &woken);
+    observe(&mut worker, &codex_done);
+    assert_eq!(
+        activity_shown(&worker, &codex_done),
+        "stopped",
+        "an agent that reports no background task is a stop at once"
+    );
+    settle(&mut worker, &woken);
+}

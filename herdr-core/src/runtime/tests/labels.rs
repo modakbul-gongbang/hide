@@ -710,3 +710,108 @@ fn a_proven_background_task_keeps_a_stopped_claude_row_waiting() {
     runtime.ingest_session(Ok(claude_projection("done", 4)));
     assert_eq!(row(&runtime)["wait"], "background");
 }
+
+/// The overlay a label worker publishes at the moment Herdr reports a Claude
+/// Code turn's end under state `seq`, before the read of it has landed: the
+/// read made under the state before it is what the record holds.
+fn turn_end_owed_overlay(seq: u64) -> LabelOverlay {
+    use hide_session::turns::{TurnMark, TurnTracker, WakeMark};
+    let mut turns = TurnTracker::default();
+    turns.fold(0, &TurnMark::Wake(vec![WakeMark::Boot]));
+    let record = PaneRecord {
+        owner: hide_session::label_reference_token("claude", "id", SESSION),
+        facts: operator_asked("빌드를 돌려줘"),
+        turns: Some(turns),
+        turns_seq: Some(seq - 1),
+        turn_end_owed: Some(seq),
+        ..PaneRecord::default()
+    };
+    LabelOverlay::of_records([(&PANE.to_owned(), &record)], true, false)
+}
+
+/// #902: a Claude Code turn ends with a background task running. The phone
+/// is told Done by the group the row has, so the row must not be in Done at
+/// any look before the read that proves the task lands and puts it in the
+/// waiting ring.
+#[test]
+fn a_turn_ending_with_a_background_task_is_never_announced_done() {
+    use crate::agent_state::push::{NoticeState, Transitions};
+    use hide_session::turns::WakeMark;
+    let mut runtime = runtime();
+    let mut transitions = Transitions::default();
+    let mut look = |runtime: &Runtime| {
+        let rest = serde_json::json!({"navigator": {
+            "agents": serde_json::to_value(&runtime.snapshot().navigator.agents).unwrap(),
+            "workspaces": []}});
+        let notices = transitions
+            .observe(&crate::agent_state::phone::project(&rest, "local"))
+            .0;
+        (row(runtime)["group"].clone(), notices)
+    };
+
+    runtime.ingest_session(Ok(claude_projection("working", 4)));
+    assert_eq!(look(&runtime).0, "working");
+
+    // Herdr reports the stop; the read of it is owed and has not landed.
+    runtime.set_label_overlay(turn_end_owed_overlay(5));
+    runtime.ingest_session(Ok(claude_projection("done", 5)));
+    let (group, notices) = look(&runtime);
+    assert_eq!((group, notices.len()), ("working".into(), 0));
+
+    // The read lands and proves the task: the row waits, and was never Done.
+    runtime.set_label_overlay(wake_overlay(
+        5,
+        &[
+            WakeMark::Boot,
+            WakeMark::Started {
+                id: "bg1".into(),
+                expires_at_unix_ms: None,
+            },
+        ],
+    ));
+    runtime.ingest_session(Ok(claude_projection("done", 5)));
+    let (group, notices) = look(&runtime);
+    assert_eq!((group, notices.len()), ("working".into(), 0));
+    assert_eq!(row(&runtime)["wait"], "background");
+
+    // The same turn end with no task is a finish, announced once the read says
+    // nothing will wake the agent.
+    let mut runtime = super::runtime();
+    let mut transitions = Transitions::default();
+    runtime.ingest_session(Ok(claude_projection("working", 4)));
+    let rest = |runtime: &Runtime| {
+        serde_json::json!({"navigator": {
+            "agents": serde_json::to_value(&runtime.snapshot().navigator.agents).unwrap(),
+            "workspaces": []}})
+    };
+    transitions.observe(&crate::agent_state::phone::project(
+        &rest(&runtime),
+        "local",
+    ));
+    runtime.set_label_overlay(turn_end_owed_overlay(5));
+    runtime.ingest_session(Ok(claude_projection("done", 5)));
+    assert!(
+        transitions
+            .observe(&crate::agent_state::phone::project(
+                &rest(&runtime),
+                "local"
+            ))
+            .0
+            .is_empty()
+    );
+    runtime.set_label_overlay(wake_overlay(5, &[WakeMark::Boot]));
+    runtime.ingest_session(Ok(claude_projection("done", 5)));
+    let announced = transitions
+        .observe(&crate::agent_state::phone::project(
+            &rest(&runtime),
+            "local",
+        ))
+        .0;
+    assert_eq!(
+        announced
+            .iter()
+            .map(|notice| notice.state)
+            .collect::<Vec<_>>(),
+        [NoticeState::Done]
+    );
+}

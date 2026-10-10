@@ -311,6 +311,7 @@ impl LabelWorker {
             }
             let seq_moved = record.state_change_seq != observed.state_change_seq;
             let was_stopped = matches!(record.agent_status.as_deref(), Some("idle" | "done"));
+            let was_working = record.agent_status.as_deref() == Some("working");
             if seq_moved {
                 record.state_change_seq = observed.state_change_seq;
                 record.changed_unix_ms = now_unix_ms;
@@ -353,6 +354,22 @@ impl LabelWorker {
                 .reference
                 .as_ref()
                 .and_then(|(kind, value)| label_reference_token(agent.as_str(), kind, value));
+            // A turn that just ended is not a stop until its session read lands
+            // (#902): the read is owed from the moment Herdr reports the stop
+            // until it lands, fails or the agent runs again. A state first
+            // seen here, or one a read already settled, owes nothing.
+            record.turn_end_owed = if !agent.reports_wake_devices()
+                || !matches!(status.as_str(), "idle" | "done")
+                || reference_token.is_none()
+                || !self.generator.held()
+                || record.turns_seq == Some(observed.state_change_seq)
+            {
+                None
+            } else if seq_moved {
+                (was_working || record.turn_end_owed.is_some()).then_some(observed.state_change_seq)
+            } else {
+                record.turn_end_owed
+            };
             match self.panes.get_mut(&observed.pane_id) {
                 None => {
                     // A restart resumes where it stopped: an unchanged pane
@@ -682,6 +699,9 @@ impl LabelWorker {
         if self.panes.remove(pane_id).is_some() {
             self.waiting.retain(|id| id != pane_id);
         }
+        if let Some(record) = self.records.get_mut(pane_id) {
+            record.turn_end_owed = None;
+        }
     }
 
     fn persist(&mut self) {
@@ -894,6 +914,11 @@ impl LabelWorker {
         record.turns = transcript.turns.clone();
         record.turns_seq = asked_seq.filter(|_| !transcript.has_more);
         changed |= (record.turn_read(), record.user_turn(), record.wake_read()) != waited;
+        // The read the turn's end was owed landed. The read moved `turns_seq`
+        // to the state it was owed for, so the release is published with it.
+        if record.turn_end_owed.is_some() && record.turn_end_owed == record.turns_seq {
+            record.turn_end_owed = None;
+        }
         let lost_now = record
             .turns
             .as_ref()
@@ -992,6 +1017,34 @@ impl LabelWorker {
     /// A failed reread cannot certify the previous native wait for this state.
     /// Keep its bounded tracker/checkpoint for a later successful continuation.
     fn invalidate_turn_read(&mut self, pane_id: &str) -> bool {
+        let released = self.release_turn_end(pane_id);
+        self.revoke_turn_read(pane_id) || released
+    }
+
+    /// A read that failed cannot say whether a task will wake the agent, and
+    /// never will for this state, so the row goes back to what Herdr reports.
+    /// The hold ends on every path of the read, not on a timer: the read has
+    /// its own bound (`DEVICE_READ_TIMEOUT`).
+    fn release_turn_end(&mut self, pane_id: &str) -> bool {
+        let Some(owed) = self
+            .records
+            .get_mut(pane_id)
+            .and_then(|record| record.turn_end_owed.take())
+        else {
+            return false;
+        };
+        crate::diagnostic!(json!({
+            "component": "labels",
+            "kind": "turn_end.unread",
+            "target": self.target,
+            "pane_id": pane_id,
+            "state_change_seq": owed,
+            "message": "The session read for a turn that just ended failed; the row is shown as Herdr reports it",
+        }));
+        true
+    }
+
+    fn revoke_turn_read(&mut self, pane_id: &str) -> bool {
         if self
             .panes
             .get(pane_id)
