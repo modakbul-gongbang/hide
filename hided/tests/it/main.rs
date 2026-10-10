@@ -6,6 +6,7 @@
 mod browser_control;
 mod connect_build;
 mod connect_stop;
+mod core_move;
 mod handshake;
 mod held_letter_notice;
 mod mobile;

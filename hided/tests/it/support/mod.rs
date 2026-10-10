@@ -2,6 +2,7 @@
 //! `node_contract` modules share; declared once, so the binary compiles each
 //! once.
 
+pub mod core_move;
 pub mod remote_core;
 pub mod remote_delivery;
 pub mod ssh_server;

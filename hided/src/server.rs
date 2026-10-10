@@ -828,6 +828,15 @@ async fn screen_loop(
         client_gone(&state, connection, renderer, desktop);
         return;
     }
+    // A move of the core is the process's, beside the core's state.
+    let mut move_frames = state.seat.moves.subscribe();
+    if renderer && relay.is_none() {
+        let frame = crate::core_move::control::frame(&move_frames.borrow_and_update());
+        if socket.send(Message::Text(frame.into())).await.is_err() {
+            client_gone(&state, connection, renderer, desktop);
+            return;
+        }
+    }
     // Settings > Mobile reads one `mobile` frame, sent now and on each change.
     let mut mobile_frames = state.mobile.subscribe_frame();
     if renderer {
@@ -943,6 +952,15 @@ async fn screen_loop(
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
                 }
             }
+            changed = move_frames.changed(), if renderer && relay.is_none() => {
+                if changed.is_err() {
+                    break;
+                }
+                let frame = crate::core_move::control::frame(&move_frames.borrow_and_update());
+                if socket.send(Message::Text(frame.into())).await.is_err() {
+                    break;
+                }
+            }
             changed = mobile_frames.changed(), if renderer => {
                 if changed.is_err() {
                     break;
@@ -1005,6 +1023,21 @@ async fn screen_loop(
                                     }
                                 } else if send_file_bytes(&mut socket, &state.boundary, &state.roots, &event).await.is_err() {
                                     break;
+                                }
+                            }
+                            Ok(ClientAction::CoreMove(event)) => {
+                                // A node's window moves the core from its own
+                                // machine's hided, never through this one.
+                                let answer = if relay.is_some() {
+                                    Err("move_not_here")
+                                } else {
+                                    request_core_move(&state, &event)
+                                };
+                                if let Err(reason) = answer {
+                                    let frame = json!({"type": "error", "payload": {"kind": "core_move", "reason": reason}, "message": reason});
+                                    if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                                        break;
+                                    }
                                 }
                             }
                             Ok(ClientAction::DeviceListing(event)) => {
@@ -1672,6 +1705,8 @@ pub(crate) fn token_matches(offered: &str, expected: &str) -> bool {
 /// binary frames of a `file_bytes` read.
 enum ClientAction {
     FileBytes(Value),
+    /// A move of the core, which this process's supervisor takes.
+    CoreMove(Value),
     /// A `file_list` for a checkout on an SSH device, answered by its helper.
     DeviceListing(Value),
     Replies(Vec<Message>),
@@ -1704,6 +1739,18 @@ fn event_device(boundary: &Boundary, event: &Value) -> Option<String> {
     (!boundary.names_this_node(device)).then(|| device.unwrap_or_default().to_owned())
 }
 
+/// Hands a window's `core_move` event to the supervisor.
+fn request_core_move(state: &AppState, event: &Value) -> Result<(), &'static str> {
+    let request: crate::core_move::control::MoveRequest =
+        serde_json::from_value(event.get("payload").cloned().unwrap_or(Value::Null))
+            .map_err(|_| "move_malformed")?;
+    state
+        .seat
+        .moves
+        .request(request)
+        .map_err(crate::core_move::control::RequestRefusal::code)
+}
+
 fn handle_client_text(
     state: &AppState,
     text: &str,
@@ -1718,6 +1765,9 @@ fn handle_client_text(
     };
     if event.get("kind").and_then(Value::as_str) == Some("file_bytes") {
         return Ok(ClientAction::FileBytes(event));
+    }
+    if event.get("kind").and_then(Value::as_str) == Some("core_move") {
+        return Ok(ClientAction::CoreMove(event));
     }
     if event.get("kind").and_then(Value::as_str) == Some("file_index") {
         return Ok(ClientAction::Replies(handle_file_index(state, &event)));

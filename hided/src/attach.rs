@@ -120,6 +120,10 @@ pub struct NodeHello {
     pub label: String,
     pub build: String,
     pub herdr_socket: String,
+    /// The core move whose commit this link is, while the node's placement
+    /// names one (PRD core-host-node-move amendment 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_intent: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -324,6 +328,8 @@ pub struct AttachService {
     pub terminals: Arc<dyn DeviceSink>,
     pub grants: Arc<RelayGrants>,
     pub attaching: Attaching,
+    /// Closed while a move's copy waits for its commit.
+    pub move_gate: Arc<crate::core_move::gate::MoveGate>,
 }
 
 /// The nodes whose link is between the core's admission and its taking the
@@ -540,6 +546,17 @@ fn take_link(stream: LocalStream, service: &AttachService) {
         refuse(&mut writer, "grants_full");
         return;
     };
+    // The commit of a pending move, recorded before the node hears it: a
+    // node that never reads the answer finds the move committed when it
+    // asks.
+    if let Err(reason) = service
+        .move_gate
+        .admit(&node.node, node.move_intent.as_deref())
+    {
+        service.grants.revoke(&relay_token);
+        refuse(&mut writer, reason);
+        return;
+    }
     let accepted = Line::Accepted(Accepted {
         port: service.port,
         relay_token: relay_token.clone(),

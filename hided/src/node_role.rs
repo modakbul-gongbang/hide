@@ -736,6 +736,7 @@ fn serve_link(
             label: identity.label.clone(),
             build: identity.build.clone(),
             herdr_socket: identity.herdr_socket.display().to_string(),
+            move_intent: placement.move_intent.clone(),
         }),
     )
     .map_err(LinkFailure::Transport)?;

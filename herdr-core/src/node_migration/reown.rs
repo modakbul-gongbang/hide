@@ -478,7 +478,8 @@ pub const OWN_PATHS: &[(&str, &str)] = &[
 
 /// The old owner's `own` value moves under `devices[old_owner_as]`, and the
 /// new owner's entry in `devices` becomes `own`; the rest of `devices`
-/// changes only its keys.
+/// changes only its keys. A new owner with no entry keeps `own` as an empty
+/// value of its shape, because the reader requires some of these fields.
 fn swap_own(
     value: &mut Value,
     own: &str,
@@ -488,7 +489,13 @@ fn swap_own(
     let Some(object) = value.as_object_mut() else {
         return Ok(());
     };
-    let mine = object.remove(own).filter(|value| !value.is_null());
+    let mine = object.remove(own);
+    let emptied = mine.as_ref().map(|value| match value {
+        Value::Array(_) => Value::Array(Vec::new()),
+        Value::Object(_) => Value::Object(Map::new()),
+        _ => Value::Null,
+    });
+    let mine = mine.filter(|value| !value.is_null());
     let mut map = match object.remove(devices) {
         Some(Value::Object(map)) => map,
         None | Some(Value::Null) => Map::new(),
@@ -504,8 +511,8 @@ fn swap_own(
     if let Some(mine) = mine.filter(|value| !is_empty(value)) {
         map.insert(change.old_owner_as.clone(), mine);
     }
-    if let Some(theirs) = theirs {
-        object.insert(own.to_owned(), theirs);
+    if let Some(own_value) = theirs.or(emptied) {
+        object.insert(own.to_owned(), own_value);
     }
     if !map.is_empty() {
         object.insert(devices.to_owned(), Value::Object(map));
@@ -1279,6 +1286,26 @@ mod tests {
         );
         assert!(!links.has_device(C).unwrap());
         assert!(links.has_device(ALIAS).unwrap() && links.has_device(M).unwrap());
+    }
+
+    #[test]
+    fn the_core_state_a_move_writes_is_one_the_core_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CORE_STATE);
+        crate::persistence::save(
+            &path,
+            &crate::model::UiStateSnapshot::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(MARKER_FILE),
+            serde_json::to_vec(&json!({"version": 1, "node": M})).unwrap(),
+        )
+        .unwrap();
+        reown(dir.path(), &forward(), &IdTable::default()).unwrap();
+        let (_, _, disposition) = crate::persistence::load(&path);
+        assert_eq!(disposition, crate::persistence::LoadDisposition::Loaded);
     }
 
     #[test]

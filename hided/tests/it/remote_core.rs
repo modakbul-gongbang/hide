@@ -756,6 +756,7 @@ fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<
                     label: "screen-fixture".to_owned(),
                     build: core.build,
                     herdr_socket: fixture.screen.socket.display().to_string(),
+                    move_intent: None,
                 }),
             )
             .map_err(anyhow::Error::msg)?;

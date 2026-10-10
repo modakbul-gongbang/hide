@@ -108,7 +108,7 @@ pub fn run(args: &[OsString]) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn incoming(state_dir: &Path, intent: &str) -> PathBuf {
+pub(crate) fn incoming(state_dir: &Path, intent: &str) -> PathBuf {
     hide_kit::layout::move_incoming(state_dir).join(intent)
 }
 

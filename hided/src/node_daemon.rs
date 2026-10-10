@@ -218,6 +218,11 @@ impl NodeDaemon {
     pub fn role(&self) -> &NodeRole {
         &self.role
     }
+
+    /// The link's phase, for a caller that waits on it off this task.
+    pub fn role_handle(&self) -> Arc<NodeRole> {
+        Arc::clone(&self.role)
+    }
 }
 
 impl Drop for NodeDaemon {

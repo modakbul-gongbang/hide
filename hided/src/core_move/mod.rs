@@ -8,9 +8,12 @@
 //! the commit point (`handover`). Every step before it is undone by
 //! restarting the old core from its untouched folder.
 
+pub mod control;
 pub mod driver;
+pub mod gate;
 pub mod handover;
 pub mod journal;
+pub mod screen;
 pub mod starter;
 pub mod target;
 

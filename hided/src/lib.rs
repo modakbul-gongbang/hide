@@ -43,6 +43,7 @@ pub mod state_file;
 // The old folder is this Mac's history; no Windows build ever wrote it.
 #[cfg(unix)]
 pub mod state_move;
+mod supervisor;
 pub mod terminal_hub;
 pub mod watch;
 pub mod workspace_cli;
@@ -68,7 +69,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The name of the machine this daemon runs on, which Settings names as the
 /// owner of every value the daemon stores (PRD S5.5 B35); `None` when the
 /// system will not say, which the page shows as unavailable rather than a guess.
-fn host_name() -> Option<String> {
+pub(crate) fn host_name() -> Option<String> {
     hide_platform::host::name().ok()
 }
 
@@ -81,7 +82,7 @@ fn core_instance() -> String {
     hex::encode(instance)
 }
 
-fn find_ui_dir() -> Option<std::path::PathBuf> {
+pub(crate) fn find_ui_dir() -> Option<std::path::PathBuf> {
     if let Ok(dir) = std::env::var("HIDED_UI_DIR") {
         let path = std::path::PathBuf::from(dir);
         if path.join("index.html").is_file() {
@@ -127,6 +128,8 @@ pub struct RunningDaemon {
     /// layout and state saves are on disk before another daemon can start,
     /// and before whoever owns the state folder can remove it.
     core: Arc<CoreHandle>,
+    /// Closed while this core runs on a move's copy that has not committed.
+    pub move_gate: Arc<core_move::gate::MoveGate>,
     /// The server and instance lock of a daemon started on its own
     /// (`start_daemon`); a process's supervisor keeps them otherwise.
     own: Option<OwnSeat>,
@@ -208,44 +211,7 @@ impl Drop for RunningNode {
 /// The process's supervisor: it holds the seat (port, token, instance lock)
 /// for the process's life and runs the role the state folder names in it.
 pub async fn run_daemon(env: Env) -> Result<(), String> {
-    let state_dir = env.state_dir.clone();
-    if let Some(error) = env::herdr_bin_error(&env) {
-        return Err(error);
-    }
-    let lock = acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
-    let seat = seat::Seat::serve(server::bind(env.bind).await?, new_token())?;
-    // A machine whose core runs elsewhere starts no core of its own.
-    let node = herdr_core::node::NodeId::of_this_machine()?;
-    if placement::read(&env.state_dir, node.as_str())?.is_some() {
-        let running = start_node_role(env, seat.parts()).await?;
-        tokio::select! {
-            _ = running.shutdown.notified() => {}
-            () = stop_requested() => running.shutdown.notify_waiters(),
-        }
-        drop(running);
-    } else {
-        let running = start_core_role(env, seat.parts()).await?;
-        wait_shutdown_or_signal(&running).await;
-        // A graceful stop takes hide's `tailscale serve` entry with it; a
-        // crash leaves it to the next start's reconcile (PRD D-07).
-        running.mobile.shutdown().await;
-        drop(running);
-    }
-    seat.close().await;
-    // Its own state only, before the instance lock is released: a daemon
-    // started after it writes its own.
-    forget_daemon(&state_dir, std::process::id());
-    drop(lock);
-    Ok(())
-}
-
-/// Waits for the daemon's own shutdown (idle) or for a stop request, and
-/// turns either into the same graceful stop.
-async fn wait_shutdown_or_signal(running: &RunningDaemon) {
-    tokio::select! {
-        _ = running.shutdown.notified() => {}
-        () = stop_requested() => running.shutdown.notify_waiters(),
-    }
+    supervisor::run(env).await
 }
 
 /// Returns when the process is asked to stop: SIGTERM, which `hide stop`
@@ -253,7 +219,7 @@ async fn wait_shutdown_or_signal(running: &RunningDaemon) {
 /// Windows. Where a handler cannot be installed it never returns, and the
 /// daemon stops only on its own shutdown.
 #[cfg(unix)]
-async fn stop_requested() {
+pub(crate) async fn stop_requested() {
     use tokio::signal::unix::{SignalKind, signal};
     let (Ok(mut terminate), Ok(mut interrupt)) = (
         signal(SignalKind::terminate()),
@@ -268,7 +234,7 @@ async fn stop_requested() {
 }
 
 #[cfg(windows)]
-async fn stop_requested() {
+pub(crate) async fn stop_requested() {
     use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close};
     let (Ok(mut interrupt), Ok(mut break_key), Ok(mut close)) =
         (ctrl_c(), ctrl_break(), ctrl_close())
@@ -314,6 +280,9 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
             "the core runs on another machine: this state folder starts the node role".to_owned(),
         );
     }
+    // A core on a move's copy waits for the move's own link; a folder whose
+    // core left it in a move starts none (PRD core-host-node-move B8).
+    let move_gate = core_move::gate::MoveGate::for_start(&env.state_dir)?;
     // Stored state from before node ids is converted once, before the core
     // reads it; a store that cannot be converted stops the start and names
     // the file (PRD core-host-node B2).
@@ -570,6 +539,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
                 as Arc<dyn hide_node::terminal::device::DeviceSink>,
             grants: Arc::clone(&relay_grants),
             attaching: attach::Attaching::default(),
+            move_gate: Arc::clone(&move_gate),
         }),
         Arc::clone(&shutdown),
     ));
@@ -586,6 +556,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         node_attach_record: attach::attach_record(&env.state_dir),
         mobile,
         core,
+        move_gate,
         own: None,
     })
 }

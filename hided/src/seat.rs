@@ -18,12 +18,14 @@ use axum::Router;
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
 use hyper::service::Service as _;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 
 /// One process's server, with the role router it forwards to.
 pub struct Seat {
     pub port: u16,
     pub token: String,
+    /// A move of the core, which outlives the role that took its request.
+    pub moves: Arc<crate::core_move::control::MoveControl>,
     mounted: Arc<Mounted>,
     stopping: Arc<Notify>,
     served: Option<tokio::task::JoinHandle<()>>,
@@ -35,6 +37,10 @@ struct Mounted {
     /// remembers it (the desktop host's browser control) knows to register
     /// again.
     instance: AtomicU64,
+    /// Told on every mount, so a request that came before the first one
+    /// waits for it, as a connection waited in the listener's backlog before
+    /// seats.
+    mounts: watch::Sender<u64>,
 }
 
 /// What a role needs from the seat it runs on.
@@ -42,6 +48,7 @@ struct Mounted {
 pub struct SeatParts {
     pub port: u16,
     pub token: String,
+    pub moves: Arc<crate::core_move::control::MoveControl>,
     mounted: Arc<Mounted>,
 }
 
@@ -53,7 +60,8 @@ impl SeatParts {
             .router
             .write()
             .unwrap_or_else(|error| error.into_inner()) = router;
-        self.mounted.instance.fetch_add(1, Ordering::SeqCst);
+        let instance = self.mounted.instance.fetch_add(1, Ordering::SeqCst) + 1;
+        self.mounted.mounts.send_replace(instance);
     }
 
     /// The mounted role's number, which `/health` reports.
@@ -63,16 +71,17 @@ impl SeatParts {
 }
 
 impl Seat {
-    /// Serves `listener` with `token` until the seat is dropped. Until a
-    /// role mounts, every request answers 503.
+    /// Serves `listener` with `token` until the seat is dropped. A request
+    /// that arrives before the first role mounts waits for it.
     pub fn serve(listener: tokio::net::TcpListener, token: String) -> Result<Self, String> {
         let port = listener
             .local_addr()
             .map_err(|error| error.to_string())?
             .port();
         let mounted = Arc::new(Mounted {
-            router: RwLock::new(Router::new().fallback(not_yet)),
+            router: RwLock::new(Router::new()),
             instance: AtomicU64::new(0),
+            mounts: watch::Sender::new(0),
         });
         let stopping = Arc::new(Notify::new());
         let app = Router::new()
@@ -93,6 +102,7 @@ impl Seat {
         Ok(Self {
             port,
             token,
+            moves: Arc::default(),
             mounted,
             stopping,
             served: Some(served),
@@ -115,6 +125,7 @@ impl Seat {
         SeatParts {
             port: self.port,
             token: self.token.clone(),
+            moves: Arc::clone(&self.moves),
             mounted: Arc::clone(&self.mounted),
         }
     }
@@ -135,6 +146,10 @@ impl Drop for Seat {
 }
 
 async fn forward(State(mounted): State<Arc<Mounted>>, request: Request) -> Response {
+    let mut mounts = mounted.mounts.subscribe();
+    if mounts.wait_for(|instance| *instance > 0).await.is_err() {
+        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     let router = mounted
         .router
         .read()
@@ -147,8 +162,4 @@ async fn forward(State(mounted): State<Arc<Mounted>>, request: Request) -> Respo
         Ok(response) => response,
         Err(never) => match never {},
     }
-}
-
-async fn not_yet() -> Response {
-    axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()
 }

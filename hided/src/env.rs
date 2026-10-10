@@ -550,8 +550,9 @@ pub fn herdr_bin_error(env: &Env) -> Option<String> {
 
 /// Whether `home` is a test fixture's HOME, where a test-only key is read:
 /// under the system's temporary folder, carrying [`FIXTURE_HOME_MARKER`],
-/// and not this account's own home by the environment or the account
-/// database. Anything else reads every test-only key as unset.
+/// and not this account's own home by the account database (`HOME` is the
+/// fixture's, so it cannot tell). Anything else reads every test-only key as
+/// unset.
 pub fn fixture_home(home: &std::path::Path) -> bool {
     let Ok(home) = hide_platform::fs::identity::canonical(home) else {
         return false;
@@ -559,14 +560,9 @@ pub fn fixture_home(home: &std::path::Path) -> bool {
     let temporary = ["/tmp", "/private/tmp"]
         .iter()
         .any(|root| home.starts_with(root));
-    let own = [
-        host::home_dir().ok(),
-        hide_platform::user_agents::account_home().ok(),
-    ]
-    .into_iter()
-    .flatten()
-    .filter_map(|own| hide_platform::fs::identity::canonical(&own).ok())
-    .any(|own| own == home);
+    let own = hide_platform::user_agents::account_home()
+        .and_then(|own| hide_platform::fs::identity::canonical(&own))
+        .is_ok_and(|own| own == home);
     temporary && !own && home.join(FIXTURE_HOME_MARKER).is_file()
 }
 
@@ -574,6 +570,16 @@ pub fn fixture_home(home: &std::path::Path) -> bool {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_marked_home_under_tmp_is_a_fixture_home() {
+        let marked = tempfile::tempdir_in("/tmp").unwrap();
+        std::fs::write(marked.path().join(FIXTURE_HOME_MARKER), "").unwrap();
+        let unmarked = tempfile::tempdir_in("/tmp").unwrap();
+        assert!(fixture_home(marked.path()));
+        assert!(!fixture_home(unmarked.path()));
+    }
 
     fn from_map(pairs: &[(&str, &str)]) -> Result<Env, Vec<EnvError>> {
         let map: HashMap<String, String> = pairs

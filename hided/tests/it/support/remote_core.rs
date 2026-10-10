@@ -41,7 +41,7 @@ impl Herdr {
         Ok(())
     }
 
-    fn start(
+    pub fn start(
         root: &Path,
         environment: Environment,
         socket: PathBuf,
@@ -103,7 +103,7 @@ impl Herdr {
             .to_owned())
     }
 
-    fn stop(&mut self) -> Result<()> {
+    pub fn stop(&mut self) -> Result<()> {
         if let Some(mut server) = self.server.take() {
             let mut command = self.environment.command(&self.binary);
             command.args(["server", "stop"]);
