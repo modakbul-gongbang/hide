@@ -1246,7 +1246,7 @@ No device is dialed and no device helper started, and no agent is put to sleep.
 Mobile holds as well: it serves no phone, pushes nothing and runs no `tailscale`, and a pending core that stops removes no serve entry, since the one recorded is the previous core's.
 Session sync, the catalog, the attach role and reads that change nothing run, so the link can be proven.
 The gate's commit releases the hold once (`Core::release_effects`, called when the gate opens): the doorbell and the watches act on their next pass, the Factory's thread opens its engine, every registered device is dialed and Mobile starts.
-A turn that ended while the core was pending gets no label, as with the agent-summary switch turned back on; a pending core lives for seconds.
+Labels after the release are the same as after a restart: the release reads to the label worker as the summary switch turning on, so each pane's latest turn that ended while the core was pending is labelled and the turns before it are not.
 
 ### The terminal path
 
