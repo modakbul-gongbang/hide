@@ -858,13 +858,14 @@ fn the_core_links_only_its_own_build_and_tells_an_older_node_it_is_newer() -> Re
                 "a node at {version} was answered {other:?}"
             );
         }
-        let logged = fixture.core_log("node_link", "attach.refused")?;
-        ensure!(
-            logged.iter().any(|row| row["reason"] == "core_newer"
+        let older_logged = |row: &Value| {
+            row["reason"] == "core_newer"
                 && row["node_release"]["version"] == "0.0.1"
-                && row["core_release"]["version"] == core.version.as_str()),
-            "the core logged no older node: {logged:?}"
-        );
+                && row["core_release"]["version"] == core.version.as_str()
+        };
+        fixture.core_log_until("node_link", "attach.refused", |rows| {
+            rows.iter().any(older_logged)
+        })?;
         Ok(())
     })();
     match journey {
