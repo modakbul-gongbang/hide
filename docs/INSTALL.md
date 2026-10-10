@@ -254,7 +254,7 @@ Everything Hide owns on a machine is under `~/.hide`:
 | --- | --- |
 | `~/.hide/state` | The daemon's state: registered projects, screen layout, labels, phone pairing, the session search index (`session-search.sqlite3`), the link record (`links.sqlite3`) and Project Memory (`project-memory.sqlite3`, which the agent hooks read from the default folder), logs (`HIDE_STATE_DIR` or a set `XDG_STATE_HOME` choose another folder) |
 | `~/.hide/kit` | The kit record and one-release retirement receipt |
-| `~/.hide/agent-hooks` | The hook helper's per-pane counters and last report, the spawn guard's refusal log (`spawn-guard.log`, capped, one older copy) and the lock beside it |
+| `~/.hide/agent-hooks` | The hook helper's per-pane counters, each with the hook version that wrote it (hided reads them to put a pane's tokens back after a Herdr handoff or restart), the last report, the spawn guard's refusal log (`spawn-guard.log`, capped, one older copy) and the lock beside it |
 | `~/.hide/host-helper` | On a device: the `hided` builds that serve it as a node |
 
 Outside it stay only what another program reads at a place it chose: Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, and the `hide` link in `~/.local/bin`.
