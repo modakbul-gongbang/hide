@@ -2748,3 +2748,143 @@ fn a_stop_that_is_not_a_turn_just_ended_is_not_held() {
     );
     settle(&mut worker, &woken);
 }
+
+/// A turn end held for its read, with the read not yet taken: the agent
+/// `working` settled, then `done` observed.
+fn held_turn_end(
+    harness: &Harness,
+    worker: &mut LabelWorker,
+    woken: &Receiver<()>,
+    name: &str,
+) -> (PathBuf, ObservedAgent) {
+    let path = claude_background_session(harness, name, "c0000000-0000-4000-8000-0000000000a1");
+    let working = agent(&path, "working", 4);
+    observe(worker, &working);
+    settle(worker, woken);
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working
+    };
+    observe(worker, &done);
+    assert_eq!(activity_shown(worker, &done), "working");
+    (path, done)
+}
+
+/// #902: the hold ends with the pane it is owed for. An agent that Herdr stops
+/// listing (a sleep, a close of its process) and a pane that is gone leave no
+/// hold behind for a pane or session that returns.
+#[test]
+fn a_hold_on_a_turn_end_ends_with_the_agent_and_the_pane() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let (_, done) = held_turn_end(&harness, &mut worker, &woken, "gone");
+
+    // Herdr no longer lists the agent, though the pane is still there.
+    let live = HashSet::from([done.pane_id.clone()]);
+    worker.observe(&[], Some(&live), Instant::now(), 2_000);
+    // It is listed again in the same state: nothing is owed for it any more.
+    worker.observe(
+        std::slice::from_ref(&done),
+        Some(&live),
+        Instant::now(),
+        3_000,
+    );
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+    settle(&mut worker, &woken);
+
+    // One worker holds a server's generator role at a time.
+    drop(worker);
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let (_, done) = held_turn_end(&harness, &mut worker, &woken, "closed");
+    // The pane is closed: its record goes with it.
+    worker.observe(&[], Some(&HashSet::new()), Instant::now(), 2_000);
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+    settle(&mut worker, &woken);
+}
+
+/// A session file that cannot be read fails the read at once, and the row is a
+/// stop as Herdr reports it.
+#[test]
+fn a_session_file_that_cannot_be_read_releases_the_turn_end() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let path =
+        claude_background_session(&harness, "vanished", "c0000000-0000-4000-8000-0000000000a2");
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+
+    std::fs::remove_file(&path).unwrap();
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working
+    };
+    observe(&mut worker, &done);
+    assert_eq!(activity_shown(&worker, &done), "working");
+    let (published, diagnostics) =
+        crate::diagnostics::capture(|| settle_publishing(&mut worker, &woken));
+    assert!(published);
+    assert_eq!(activity_shown(&worker, &done), "stopped");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|record| record["kind"] == "turn_end.unread"),
+        "{diagnostics:?}"
+    );
+}
+
+/// A backlog longer than one read takes is read in several, and the row is
+/// held through all of them: only the read that completes the backlog says
+/// what wakes the agent.
+#[test]
+fn a_backlog_read_in_several_polls_holds_the_turn_end_until_the_last() {
+    let harness = Harness::new();
+    let (mut worker, woken, source) = harness.worker(harness.store());
+    worker.set_summaries(false, Instant::now());
+    let path =
+        claude_background_session(&harness, "backlog", "c0000000-0000-4000-8000-0000000000a3");
+    let working = agent(&path, "working", 4);
+    observe(&mut worker, &working);
+    settle(&mut worker, &woken);
+
+    let reads_before = source.reads.load(Ordering::SeqCst);
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    use std::io::Write;
+    let filler = "x".repeat(60_000);
+    for index in 0..40 {
+        let record = json!({"type":"assistant","sessionId":"c0000000-0000-4000-8000-0000000000a3",
+            "timestamp":"2026-10-01T00:01:00Z",
+            "message":{"role":"assistant","content":[{"type":"text","text":format!("{index} {filler}")}]}});
+        writeln!(file, "{record}").unwrap();
+    }
+    let done = ObservedAgent {
+        status: Some("done".to_owned()),
+        state_change_seq: 5,
+        ..working
+    };
+    observe(&mut worker, &done);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let _ = woken.recv_timeout(Duration::from_millis(200));
+        worker.drain(Instant::now(), unix_now_ms());
+        let shown = activity_shown(&worker, &done);
+        if worker.settled() {
+            assert_eq!(shown, "stopped");
+            break;
+        }
+        assert_eq!(shown, "working", "a read of the backlog is still owed");
+        assert!(Instant::now() < deadline, "the worker did not settle");
+    }
+    assert!(
+        source.reads.load(Ordering::SeqCst) - reads_before >= 2,
+        "the backlog took more than one read"
+    );
+}
