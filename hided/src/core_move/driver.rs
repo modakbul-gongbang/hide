@@ -20,7 +20,7 @@ use super::journal::{Journal, MoveFailure, Peer};
 const STEP_OUTPUT_CAP: usize = 64 * 1024;
 /// How long one step on the other machine may take; starting its core
 /// waits up to 30 s for it to take links.
-pub(crate) const STEP_TIMEOUT: Duration = Duration::from_secs(60);
+const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The other machine, reached over one SSH connection for the move.
 pub struct Remote {

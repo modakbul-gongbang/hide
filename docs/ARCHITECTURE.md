@@ -1281,8 +1281,9 @@ No device is dialed and no device helper started, and no agent is put to sleep.
 Mobile holds as well: it serves no phone, pushes nothing and runs no `tailscale`, and a pending core that stops removes no serve entry, since the one recorded is the previous core's.
 Session sync, the catalog, the attach role and reads that change nothing run, so the link can be proven.
 The gate's commit releases the hold once (`Core::release_effects`, called when the gate opens): the doorbell and the watches act on their next pass, the Factory's thread opens its engine, every registered device is dialed and Mobile starts.
-The pending lease is a deadline the place records in the handover on the target's clock (`HandoverState::Pending`, 60 s), which no request to the pending core moves; at it the gate's `expire` and the link's `admit` decide under one lock, so either the move commits or the core gives its copy back, never both, and only the node the move came from (the record's `source`) commits it.
-The driver learns how long the lease has left from the start step's answer, a span its own clock can count, and before giving up on a target it cannot reach waits that out plus 30 s; with that answer lost it waits the step's bound plus a full lease.
+The pending lease is a deadline the place records in the handover on the target's clock (`HandoverState::Pending`), which no request to the pending core moves; at it the gate's `expire` and the link's `admit` decide under one lock, so either the move commits or the core gives its copy back, never both, and only the node the move came from (the record's `source`) commits it.
+The place records the start's bound (30 s) plus 60 s, and the start is given only what leaves 60 s after it, so a core that started has a full 60 s for its link however long its start took.
+The driver learns how long the lease has left from the start step's answer, a span its own clock can count, and before giving up on a target it cannot reach waits that out plus 30 s; with that answer lost it waits the place's full span plus 30 s from the place's answer.
 Labels after the release are the same as after a restart: the release reads to the label worker as the summary switch turning on, so each pane's latest turn that ended while the core was pending is labelled and the turns before it are not.
 
 ### Updating the core

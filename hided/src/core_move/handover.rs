@@ -22,9 +22,13 @@ const VERSION: u32 = 1;
 const RECORD_CAP: u64 = 16 * 1024;
 /// How long a change waits for the record's lock.
 const LOCK_WAIT: Duration = Duration::from_secs(5);
-/// How long a pending core waits for the link that carries its move, from
-/// the place its core starts on right after.
+/// How long a started pending core waits at least for the link that
+/// carries its move.
 pub const PENDING_LEASE: Duration = Duration::from_secs(60);
+/// How long a place's lease runs: the start that follows has
+/// [`STARTED_WITHIN`](super::starter::STARTED_WITHIN), and the core it
+/// started still waits [`PENDING_LEASE`] whatever the start took.
+pub const PLACED_LEASE: Duration = super::starter::STARTED_WITHIN.saturating_add(PENDING_LEASE);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Handover {
@@ -56,10 +60,10 @@ pub enum HandoverState {
 }
 
 impl HandoverState {
-    /// A pending handover whose lease runs [`PENDING_LEASE`] from now.
+    /// A pending handover whose lease runs [`PLACED_LEASE`] from now.
     pub fn pending_from_now() -> Self {
         Self::Pending {
-            lease_until_unix_ms: now_unix_ms() + PENDING_LEASE.as_millis() as u64,
+            lease_until_unix_ms: now_unix_ms() + PLACED_LEASE.as_millis() as u64,
         }
     }
 

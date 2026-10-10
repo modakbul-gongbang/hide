@@ -340,14 +340,27 @@ fn start(state_dir: &Path, intent: &str) -> Answered {
         }) if placed == intent => lease_until_unix_ms,
         _ => return Err(plain("no copy of this move is placed here")),
     };
+    let Some(within) = time_to_start(lease_until_unix_ms, handover::now_unix_ms()) else {
+        return Err(plain("the move's lease leaves its core no time to start"));
+    };
     let home = hide_platform::host::home_dir().map_err(|error| plain(error.to_string()))?;
     let starter = CoreStarter::for_account(&home).map_err(plain)?;
     let program = super::starter::this_program().map_err(plain)?;
-    let pid = starter.start(state_dir, &program).map_err(plain)?;
+    let pid = starter
+        .start_within(state_dir, &program, within)
+        .map_err(plain)?;
     Ok(StepAnswer::Started {
         pid,
         lease_left_ms: lease_until_unix_ms.saturating_sub(handover::now_unix_ms()),
     })
+}
+
+/// How long a start may take so that the core it started still has the
+/// full pending lease for its link; none when the lease leaves no time.
+fn time_to_start(lease_until_unix_ms: u64, now_unix_ms: u64) -> Option<std::time::Duration> {
+    let within = std::time::Duration::from_millis(lease_until_unix_ms.saturating_sub(now_unix_ms))
+        .saturating_sub(handover::PENDING_LEASE);
+    (!within.is_zero()).then_some(within)
 }
 
 fn status(state_dir: &Path, intent: &str) -> Answered {
@@ -566,4 +579,22 @@ fn acquire_instance(state_dir: &Path) -> Result<std::fs::File, StepAnswer> {
             "a core of this folder is still starting or running: {error}"
         ))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A start is given only what the lease leaves beyond a full pending
+    /// lease, so a core that started always has that lease for its link.
+    #[test]
+    fn a_start_is_given_only_what_leaves_a_full_lease() {
+        let lease = handover::PENDING_LEASE.as_millis() as u64;
+        assert_eq!(
+            time_to_start(10_000 + lease + 2_500, 10_000),
+            Some(std::time::Duration::from_millis(2_500))
+        );
+        assert_eq!(time_to_start(10_000 + lease, 10_000), None);
+        assert_eq!(time_to_start(10_000, 20_000), None);
+    }
 }

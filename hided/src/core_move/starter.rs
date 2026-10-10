@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use crate::env::{FIXTURE_HOME_MARKER, HIDE_CORE_STARTER};
 
 /// How long a started core has to bind its attach socket.
-const STARTED_WITHIN: Duration = Duration::from_secs(30);
+pub(crate) const STARTED_WITHIN: Duration = Duration::from_secs(30);
 /// How long a stopped core has to end after it was asked, before it is
 /// killed.
 const STOPPED_WITHIN: Duration = Duration::from_secs(5);
@@ -63,6 +63,17 @@ impl CoreStarter {
     /// Starts `program` as the core on `state_dir` and waits until it
     /// takes links.
     pub fn start(&self, state_dir: &Path, program: &Path) -> Result<u32, String> {
+        self.start_within(state_dir, program, STARTED_WITHIN)
+    }
+
+    /// [`Self::start`], given up `within` from now.
+    pub fn start_within(
+        &self,
+        state_dir: &Path,
+        program: &Path,
+        within: Duration,
+    ) -> Result<u32, String> {
+        let deadline = Instant::now() + within;
         let stale = std::fs::read(crate::attach::attach_record(state_dir)).ok();
         let mut exited: Box<dyn FnMut() -> Option<String>> = match self {
             Self::Fixture => {
@@ -98,7 +109,7 @@ impl CoreStarter {
                 ))
             }
         };
-        wait_for_core(state_dir, stale.as_deref(), &mut *exited)
+        wait_for_core(state_dir, stale.as_deref(), &mut *exited, deadline)
     }
 
     /// Replaces the core running on `state_dir` with `program`'s and waits
@@ -154,8 +165,8 @@ fn wait_for_core(
     state_dir: &Path,
     stale: Option<&[u8]>,
     exited: &mut dyn FnMut() -> Option<String>,
+    deadline: Instant,
 ) -> Result<u32, String> {
-    let deadline = Instant::now() + STARTED_WITHIN;
     loop {
         if let Some(exit) = exited() {
             return Err(exit);
@@ -169,10 +180,7 @@ fn wait_for_core(
             return Ok(running.pid);
         }
         if Instant::now() >= deadline {
-            return Err(format!(
-                "the core did not take links within {}s",
-                STARTED_WITHIN.as_secs()
-            ));
+            return Err("the core did not take links in the time it was given".to_owned());
         }
         std::thread::sleep(Duration::from_millis(100));
     }

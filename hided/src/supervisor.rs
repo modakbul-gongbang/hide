@@ -858,10 +858,11 @@ fn copy_and_start(
     {
         return Err((Box::new(journal), MoveStep::Copy, cause));
     }
+    let placed = std::time::Instant::now();
     moves.update(|view| view.state = MoveState::Starting);
-    // Should the answer be lost, the start may have run as late as the
-    // step's bound, and its lease runs a full lease from there.
-    let unanswered = driver::STEP_TIMEOUT + handover::PENDING_LEASE + LEASE_MARGIN;
+    // Should the answer be lost, the lease the place recorded runs at most
+    // its full span from the place's answer.
+    let unanswered = handover::PLACED_LEASE + LEASE_MARGIN;
     journal.target_lease_until_unix_ms = Some(now_unix_ms() + unanswered.as_millis() as u64);
     let lease_left = match record(&mut journal, Phase::Forward(ForwardPhase::TargetStarted))
         .and_then(|()| driver::start_target(remote, &journal))
@@ -869,6 +870,15 @@ fn copy_and_start(
         Ok(lease_left) => lease_left,
         Err(cause) => return Err((Box::new(journal), MoveStep::StartTarget, cause)),
     };
+    // What the start took of the lease, which the place's span bounds.
+    log(
+        "target.started",
+        json!({
+            "intent": journal.intent,
+            "start_ms": placed.elapsed().as_millis() as u64,
+            "lease_left_ms": lease_left.as_millis() as u64,
+        }),
+    );
     journal.target_lease_until_unix_ms =
         Some(now_unix_ms() + (lease_left + LEASE_MARGIN).as_millis() as u64);
     if let Err(cause) = journal::write(state_dir, &journal) {
