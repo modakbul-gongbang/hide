@@ -2,6 +2,7 @@ import type { StoredBuffer } from "./buffers";
 import type { TerminalFrame } from "./generated/hided-ws";
 import { create } from "zustand";
 import type { ConnectionState } from "./connection";
+import type { CoreLink, MoveView } from "./coreMove";
 import { frontDeviceId, localDeviceId } from "./devices";
 import { appliedAfter } from "./operatorFocus";
 import { remoteContext, remoteView } from "./remote";
@@ -128,6 +129,12 @@ type Store = {
   daemon: DaemonInfo | null;
   /** Settings > Mobile as the daemon reports it (`mobile` frame); null until the first one. */
   mobile: MobileState | null;
+  /** The core move as the process's supervisor reports it (`core_move` frame); null until the first one. */
+  coreMove: MoveView | null;
+  /** Why the last `core_move` event was refused (`move_busy`, ...); cleared by the next frame of the move. */
+  coreMoveRefusal: string | null;
+  /** Where this node's link to its core stands while its screen waits (`core_link` frame); null once the core draws it. */
+  coreLink: CoreLink | null;
   revision: number;
   /** The hub's cursor after the last `terminal` frame; null after a whole snapshot until the hub names the new one. */
   terminalSequence: number | null;
@@ -292,6 +299,9 @@ export const useShellStore = create<Store>((set, get) => ({
   connection: "connecting",
   daemon: null,
   mobile: null,
+  coreMove: null,
+  coreMoveRefusal: null,
+  coreLink: null,
   revision: 0,
   terminalSequence: null,
   terminalEpoch: null,
@@ -389,6 +399,8 @@ export const useShellStore = create<Store>((set, get) => ({
     // answers a listing or a refusal with an early return.
     if (frame.type === "snapshot") {
       set({
+        // The core draws this screen again: the node's wait is over.
+        coreLink: null,
         editor: payload.editor ?? null,
         changes: payload.changes ?? null,
         documents: payload.documents ? mergeDocuments(NO_DOCUMENTS, payload.documents) : NO_DOCUMENTS,
@@ -511,6 +523,14 @@ export const useShellStore = create<Store>((set, get) => ({
       set({ mobile: frame.payload as unknown as MobileState });
       return [];
     }
+    if (frame.type === "core_move") {
+      set({ coreMove: frame.payload as unknown as MoveView, coreMoveRefusal: null });
+      return [];
+    }
+    if (frame.type === "core_link") {
+      set({ coreLink: frame.payload as unknown as CoreLink });
+      return [];
+    }
     if (frame.type === "file_index_result") {
       set({
         fileIndex: {
@@ -526,6 +546,8 @@ export const useShellStore = create<Store>((set, get) => ({
       return [];
     }
     if (frame.type === "error") {
+      const refused = frame.payload as { kind?: string; reason?: string } | undefined;
+      if (refused?.kind === "core_move" && refused.reason) set({ coreMoveRefusal: refused.reason });
       get().noteDiagnostic(`hided error: ${frame.message ?? "unknown"}`);
       return [];
     }

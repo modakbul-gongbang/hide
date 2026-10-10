@@ -75,7 +75,7 @@ function sessionsFact(links: LinkSummaries | null, entry: SearchEntry, t: TFunct
 
 export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: number, t: TFunction<"translation">, language: InterfaceLanguage, links: LinkSummaries | null = null): Detail {
   const relations = relationsFor(rest, entry, t);
-  const device = entry.chip?.label ?? searchDevices(rest ?? ({} as SnapshotRest)).find((scope) => scope.device.id === entry.deviceId)?.device.label;
+  const device = entry.chip?.label ?? searchDevices(rest ?? ({} as SnapshotRest)).find((scope) => scope.device.id === entry.deviceId)?.name;
   const base = { relations, tags: [] as string[], pills: [] as EntryStatus[] };
   switch (entry.kind) {
     case "agent": {

@@ -16,6 +16,7 @@ import { lensHandlers } from "./OverviewLenses";
 import { scopeAgents } from "./overviewLens";
 import { allProjectsStats, boardLabels, buildTasks, NO_FILTER, type AllProjectsStats, type IssueFilter, type SourceState, type TaskCard } from "./projectBoard";
 import { frontDeviceId } from "./devices";
+import { machineName } from "./screenMachine";
 import { frontCheckout, type Device } from "./snapshot";
 import { useShellStore } from "./store";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
@@ -277,10 +278,11 @@ function Facts({ stats, source }: { stats: AllProjectsStats; source: SourceState
 function DeviceProjects({ section, actions }: { section: DeviceSection; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const { device, availability } = section;
+  const name = useShellStore((s) => machineName(s.rest?.navigator?.devices, device.id, t));
   return (
-    <section aria-label={t("overview.projectsOnDevice", { device: device.label })} data-main-device={device.id} data-device-availability={availability.state}>
+    <section aria-label={t("overview.projectsOnDevice", { device: name })} data-main-device={device.id} data-device-availability={availability.state}>
       <h2 className="flex items-center gap-sm pb-xs text-micro uppercase text-muted-foreground">
-        <span>{device.label}</span>
+        <span>{name}</span>
         {availability.state === "loading" ? (
           <span role="status" className="normal-case" data-device-loading="true">
             {availability.text}

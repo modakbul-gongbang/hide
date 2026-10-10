@@ -7,14 +7,18 @@
 
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
+import { machineName, windowDeviceId, windowFirst } from "./screenMachine";
 import type { Device, WorkspaceRegistration } from "./snapshot";
 
 export type Host = { id: string; label: string };
 
-/** This Mac (the core's own node) first, then every registered device, as the Host selector lists them. */
+/** This window's machine first as This Mac, then every other device, as the Host selector lists them (PRD core-host-node-move N1). */
 export function addProjectHosts(devices: readonly Device[] | undefined, t: TFunction<"translation">): Host[] {
-  const local = devices?.find((device) => device.kind !== "remote");
-  return [{ id: local?.id ?? "", label: local?.label ?? t("common.thisMac") }, ...(devices ?? []).filter((device) => device !== local).map((device) => ({ id: device.id, label: device.label }))];
+  const own = windowDeviceId(devices);
+  const rows = windowFirst(devices);
+  const hosts = rows.map((device) => ({ id: device.id, label: machineName(devices, device.id, t) }));
+  // Before the snapshot names this machine, it is the core's own node by the empty id.
+  return rows.some((device) => device.id === own) ? hosts : [{ id: own, label: t("common.thisMac") }, ...hosts];
 }
 
 /** The host the dialog opens on: the focused device while it is still listed, this Mac otherwise. */

@@ -1,5 +1,6 @@
 import { configureAttachments, receiveAttachmentRefusal } from "./attachments";
 import { connectionAfterHealthFails, nextBackoff } from "./connection";
+import type { MoveView } from "./coreMove";
 import { clearPending, receiveBytes, receiveBytesError, receiveBytesRefusal } from "./fileBytes";
 import { isOperatorFocus, numbered } from "./operatorFocus";
 import { noteArrival, probeEnabled } from "./probe";
@@ -19,6 +20,23 @@ type Handlers = {
 function tokenFromLocation(): string | null {
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   return hash.get("token");
+}
+
+/**
+ * A move that finished names the node this window became, or none after a
+ * move back (PRD core-host-node-move, Window handoff): the page writes it
+ * into its own address, so a reload or the host's next attach opens the
+ * screen of the machine it is on.
+ */
+export function addressAfterMove(hash: string, view: MoveView): string | null {
+  if (view.state !== "done") return null;
+  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  const before = params.get("node");
+  const node = view.direction === "back" ? null : view.node;
+  if (before === node) return null;
+  if (node) params.set("node", node);
+  else params.delete("node");
+  return `#${params.toString()}`;
 }
 
 async function healthOk(): Promise<boolean> {
@@ -50,6 +68,12 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
   const probing = probeEnabled();
 
   const dispatch: DispatchFn = (event) => {
+    // A move holds the window until the machine that takes the core draws
+    // it; its screen refuses events, so none is sent (W1).
+    if (useShellStore.getState().connection === "moving") {
+      useShellStore.getState().noteDiagnostic(`dispatch dropped: ${event.kind} while the core moves`);
+      return false;
+    }
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       // A key typed while reconnecting is lost, not queued; the badge shows
       // the state and the log keeps the fact.
@@ -92,6 +116,9 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
     // payload are split by the file-bytes reader, not by the snapshot store.
     ws.binaryType = "arraybuffer";
     socket = ws;
+    // Whether this socket has drawn the core's state: a move's screen sends
+    // only the move, and a node's held screen only where its link stands.
+    let drawn = false;
     ws.addEventListener("open", () => {
       useShellStore.getState().releaseOperatorFocus();
       ws.send(
@@ -125,8 +152,16 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       if (frame.type === "daemon") {
         announcedCore = (frame.payload as { core_instance?: string } | undefined)?.core_instance ?? null;
       }
-      if (frame.type === "daemon" || frame.type === "mobile") {
+      if (frame.type === "daemon" || frame.type === "mobile" || frame.type === "core_link") {
         useShellStore.getState().applyFrame(frame);
+        return;
+      }
+      if (frame.type === "core_move") {
+        useShellStore.getState().applyFrame(frame);
+        const view = frame.payload as unknown as MoveView;
+        const address = addressAfterMove(window.location.hash, view);
+        if (address !== null) history.replaceState(history.state, "", address);
+        if (!drawn) useShellStore.getState().setConnection("moving");
         return;
       }
       if (frame.type === "file_bytes_error") {
@@ -150,6 +185,10 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       terminalSequence = useShellStore.getState().terminalSequence;
       terminalEpoch = useShellStore.getState().terminalEpoch;
       handlers.onChunks(chunks, frame.type === "snapshot");
+      if (frame.type === "snapshot" || frame.type === "delta") drawn = true;
+      // A refusal before anything was drawn (a move's screen refusing an
+      // event) leaves the window where it is.
+      if (frame.type === "error" && !drawn) return;
       useShellStore.getState().setConnection("live");
       backoff = 500;
       healthFails = 0;

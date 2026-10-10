@@ -129,3 +129,80 @@ it("opens Add device from one button above the list, and shows the Add dialog on
   expect(document.body.querySelector("[data-add-device-dialog]")).not.toBeNull();
   await unmount();
 });
+
+/** Opens a row's ⋯ the way a keyboard does: Radix opens the menu on Enter at its trigger. */
+async function openMenu(q: (selector: string) => HTMLElement | null, id: string) {
+  await act(async () => {
+    q(`[data-device-menu="${id}"]`)?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  });
+}
+
+const frame = (over: Record<string, unknown>) => ({ state: "idle", direction: "forward", device: "mini", intent: "i", sent: 0, total: 0, failed: [], step: null, cause: null, node: null, ...over });
+
+it("crowns the core's machine and offers the core to a connected device it dials, dimmed with why otherwise (PRD core-host-node-move B2)", async () => {
+  const next = state([remote("mini"), remote("studio")]);
+  next.rest.status.remote[1]!.state = "stale";
+  const { q, events, unmount } = await mount(next);
+  expect(q('[data-device-core="local"]')?.textContent).toBe("core");
+  expect(q('[data-device-core="mini"]')).toBeNull();
+  await openMenu(q, "studio");
+  const dimmed = document.querySelector('[data-device-move="studio"]') as HTMLElement;
+  expect(dimmed.hasAttribute("data-disabled")).toBe(true);
+  expect(dimmed.textContent).toBe("Move the core to this device…Not connected");
+  await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  await openMenu(q, "mini");
+  await act(async () => { (document.querySelector('[data-device-move="mini"]') as HTMLElement).click(); });
+  expect(sent(events, "core_move").map((event) => event.payload)).toEqual([{ action: "check", device: "mini" }]);
+  expect(document.querySelector("[data-core-move-dialog]")?.getAttribute("data-core-move-dialog")).toBe("checking");
+  await unmount();
+});
+
+it("walks the move dialog through the supervisor's frames: failing checks with their fixes, confirm, steps, the result (B3 to B5)", async () => {
+  const { q, events, unmount } = await mount(state([remote("mini")]));
+  await openMenu(q, "mini");
+  await act(async () => { (document.querySelector('[data-device-move="mini"]') as HTMLElement).click(); });
+  const dialog = () => document.querySelector("[data-core-move-dialog]") as HTMLElement;
+  await act(async () => { useShellStore.setState({ coreMove: frame({ state: "checking" }) as never }); });
+  await act(async () => { useShellStore.setState({ coreMove: frame({ state: "checks_failed", checked: 6, failed: [{ check: "gh", detail: "not logged in" }, { check: "gui_session", detail: "no session" }] }) as never }); });
+  expect(dialog().getAttribute("data-core-move-dialog")).toBe("checks_failed");
+  expect(dialog().querySelector("[data-core-move-count]")?.textContent).toBe("2 to fix · 4 passed");
+  expect(dialog().querySelector('[data-core-move-command="gh"]')?.textContent).toBe("gh auth login");
+  expect(dialog().querySelector('[data-core-move-check="gui_session"]')?.textContent).toBe("× Desktop loginLog in on Mac mini");
+  await act(async () => { useShellStore.setState({ coreMove: frame({ state: "ready" }) as never }); });
+  expect(dialog().getAttribute("data-core-move-dialog")).toBe("confirm");
+  await act(async () => { (dialog().querySelector("[data-core-move-start]") as HTMLElement).click(); });
+  expect(sent(events, "core_move").at(-1)?.payload).toEqual({ action: "start", device: "mini" });
+  await act(async () => { useShellStore.setState({ coreMove: frame({ state: "copying", step: "copy" }) as never }); });
+  expect(dialog().getAttribute("data-core-move-dialog")).toBe("moving");
+  expect([...dialog().querySelectorAll("[data-core-move-mark]")].map((row) => row.getAttribute("data-core-move-mark"))).toEqual(["done", "done", "run", "todo", "todo"]);
+  await act(async () => { useShellStore.setState({ coreMove: frame({ state: "rolled_back", step: "start_target" }) as never }); });
+  expect(dialog().querySelector("[data-core-move-failed]")?.textContent).toBe("× The core did not start on Mac mini");
+  await act(async () => { useShellStore.setState({ coreMove: frame({ state: "done", step: "reattach", node: "local" }) as never }); });
+  expect(dialog().getAttribute("data-core-move-dialog")).toBe("done");
+  await act(async () => { (dialog().querySelector("[data-core-move-undo]") as HTMLElement).click(); });
+  expect(sent(events, "core_move").at(-1)?.payload).toEqual({ action: "check_back" });
+  expect(dialog().getAttribute("data-core-move-direction")).toBe("back");
+  await unmount();
+});
+
+it("puts a node's own machine first as This Mac, with the core back and the end of its link in its menu and no SSH test (B2, B16)", async () => {
+  window.location.hash = "#token=t&node=mbp";
+  const node = remote("mbp", { label: "MacBook Pro", dials_in: true, ssh_alias: null });
+  const next = state([remote("mini"), node]);
+  (next.rest.navigator.devices[0] as Record<string, unknown>).machine_name = "Mac Studio";
+  const { q, events, unmount } = await mount(next);
+  const names = [...document.querySelectorAll("[data-device-name]")].map((row) => row.textContent);
+  expect(names).toEqual(["This Mac", "Mac Studio", "Mac mini"]);
+  expect(q('[data-device-core="local"]')).not.toBeNull();
+  expect(q('[data-device-test="mbp"]')).toBeNull();
+  await openMenu(q, "mbp");
+  expect(document.querySelector('[data-device-remove="mbp"]')).toBeNull();
+  expect(document.querySelector('[data-device-core-disconnect="mbp"]')?.textContent).toBe("Disconnect from the Mac Studio core…");
+  await act(async () => { (document.querySelector('[data-device-move-back="mbp"]') as HTMLElement).click(); });
+  expect(sent(events, "core_move").map((event) => event.payload)).toEqual([{ action: "check_back" }]);
+  await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  await openMenu(q, "mini");
+  expect(document.querySelector('[data-device-move="mini"]')).toBeNull();
+  window.location.hash = "";
+  await unmount();
+});

@@ -1,15 +1,17 @@
-import { LaptopIcon, PlusIcon, XIcon } from "lucide-react";
+import { CrownIcon, LaptopIcon, PlusIcon, XIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { Actions } from "../actions";
 import { useInterfaceTranslation } from "../i18n/client";
 import { badgeText, deviceConnected, frontDeviceId, tileCounts, tileHint, tileMonogram, tileName, type TileCounts } from "../devices";
 import { cn } from "../lib/utils";
+import { coreShared, isCoreMachine, machineName, windowDeviceId, windowFirst } from "../screenMachine";
 import { useShellStore } from "../store";
 import { EntryContextMenu } from "./entry-menu";
 import { Hint } from "./ui/tooltip";
 
-export type Tile = { id: string; label: string; icon: "local" | "remote" };
+/** `core` marks the machine the core runs on, set only while the core works with another machine (Q11). */
+export type Tile = { id: string; label: string; icon: "local" | "remote"; core: boolean };
 
 /** The rounded square every tile is, the add tile included; a tile's marks hang off its corners, and the focus outline stands outside the selected ring. */
 const TILE = "relative flex size-(--size-icon-button-standard) shrink-0 items-center justify-center rounded-md outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring";
@@ -20,7 +22,8 @@ const CUTOUT = "ring-2 ring-sidebar";
 /**
  * The rail on the sidebar's left (PRD home-device-rail D-09, reworked by quick
  * device-rail-badges and quick device-rail-slack): a column the sidebar's full
- * height with This Mac, each registered device in the core's order, and `+`
+ * height with the window's own machine first as This Mac (PRD
+ * core-host-node-move N1), each other device in the core's order, and `+`
  * directly under the last one, which is Add device. Each tile is a square with
  * no name under it; its hint is the name with its counts. It is shown with one device alone,
  * and a right-click on it offers Hide rail. One tile is selected, ringed.
@@ -33,12 +36,17 @@ export function DeviceRail({ actions }: { actions: Actions }) {
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const front = useShellStore((s) => frontDeviceId(s.rest));
   const tiles = useMemo<Tile[]>(() => {
-    const list = devices ?? [];
-    const local = list.find((device) => device.kind !== "remote");
-    return [
-      { id: local?.id ?? "", label: local?.label ?? t("common.thisMac"), icon: "local" },
-      ...list.filter((device) => device.kind === "remote").map((device): Tile => ({ id: device.id, label: device.label, icon: "remote" })),
-    ];
+    const own = windowDeviceId(devices);
+    const shared = coreShared(devices);
+    const rows = windowFirst(devices);
+    // Before the snapshot names a device, the window's machine is the core's own, by the id it has then.
+    const listed = rows.length > 0 ? rows : [{ id: own }];
+    return listed.map((device): Tile => ({
+      id: device.id,
+      label: machineName(devices, device.id, t),
+      icon: device.id === own ? "local" : "remote",
+      core: shared && isCoreMachine(devices, device.id),
+    }));
   }, [devices, t]);
   return (
     <EntryContextMenu
@@ -87,18 +95,21 @@ const RailTile = memo(function RailTile({ tile, selected, actions }: { tile: Til
  * while it has unseen Done; Working has no mark, and the hint carries every
  * count. A device that is not connected dims its glyph and wears a cross at
  * the bottom-right instead, with no mark, since what it last reported is not
- * current (B3, B8, B41).
+ * current (B3, B8, B41). The core's machine wears a crown notched into the
+ * bottom-left corner, the one corner the other marks leave free (PRD
+ * core-host-node-move N1).
  */
 export function RailTileView({ tile, selected, counts, connected, onSelect }: { tile: Tile; selected: boolean; counts: TileCounts; connected: boolean; onSelect: () => void }) {
   const { t } = useInterfaceTranslation();
   return (
-    <Hint label={tileHint(tile.label, connected, counts, t)} side="right">
+    <Hint label={tileHint(tile.label, connected, counts, t, tile.core)} side="right">
       <button
         type="button"
-        aria-label={tileName(tile.label, connected, counts, t)}
+        aria-label={tileName(tile.label, connected, counts, t, tile.core)}
         aria-pressed={selected}
         data-rail-tile={tile.id}
         data-rail-connected={connected ? "true" : "false"}
+        data-rail-core={tile.core ? "true" : undefined}
         className={cn(
           TILE,
           "bg-secondary text-body font-semibold hover:text-foreground",
@@ -123,6 +134,11 @@ export function RailTileView({ tile, selected, counts, connected, onSelect }: { 
           </span>
         ) : counts.done > 0 ? (
           <span aria-hidden="true" data-rail-badge="done" className={cn("absolute -top-xxs -right-xxs size-(--size-rail-mark) rounded-full bg-success", CUTOUT)} />
+        ) : null}
+        {tile.core ? (
+          <span aria-hidden="true" data-rail-crown="true" className={cn("absolute -bottom-xs -left-xs flex size-(--size-rail-badge) items-center justify-center rounded-full bg-card text-subtle-foreground", CUTOUT)}>
+            <CrownIcon className="size-(--size-rail-crown)" />
+          </span>
         ) : null}
         {connected ? null : (
           <span aria-hidden="true" data-rail-off="true" className={cn("absolute -right-xs -bottom-xs flex size-(--size-rail-badge) items-center justify-center rounded-full bg-card text-muted-foreground", CUTOUT)}>

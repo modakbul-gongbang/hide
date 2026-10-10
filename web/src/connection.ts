@@ -1,6 +1,8 @@
 import type { TFunction } from "i18next";
+import { movingStripText, type CoreLink, type MoveMachines, type MoveView } from "./coreMove";
 
-export type ConnectionState = "connecting" | "live" | "reconnecting" | "gone";
+/** `moving`: a move holds the window until the machine that takes the core draws it; input is refused meanwhile. */
+export type ConnectionState = "connecting" | "live" | "reconnecting" | "gone" | "moving";
 
 export const BACKOFF_START_MS = 500;
 export const BACKOFF_MAX_MS = 30_000;
@@ -19,10 +21,37 @@ export function badgeText(state: ConnectionState, refused: boolean, t: TFunction
     case "connecting":
       return t("shell.connection.connecting");
     case "live":
+    case "moving":
       return "";
     case "reconnecting":
       return t("shell.connection.reconnecting");
     case "gone":
       return refused ? t("shell.connection.refused") : t("shell.connection.gone");
   }
+}
+
+/** The strip above the window, in the place and size the connection badge always had (D-08). */
+export type WindowStrip = { kind: ConnectionState | "updating" | "unreachable"; text: string; mark: "pending" | "warn" | null };
+
+/**
+ * What the strip says (PRD core-host-node-move W1 to W3): the move's step
+ * while it holds the window, the node's update of its core or its failed
+ * link while its screen waits for the core, else the connection badge.
+ * `coreMachine` is the core's machine as the window last knew it, for a
+ * node whose link has not named it yet.
+ */
+export function windowStrip(
+  input: { connection: ConnectionState; refused: boolean; move: MoveView | null; link: CoreLink | null; machines: MoveMachines | null; coreMachine: string },
+  t: TFunction<"translation">,
+): WindowStrip | null {
+  const { connection, move, link } = input;
+  if (connection === "moving" && move && input.machines) return { kind: "moving", text: movingStripText(move, input.machines, t), mark: "pending" };
+  if (connection !== "live" && link && link.phase !== "connecting") {
+    const machine = link.machine ?? input.coreMachine;
+    return link.phase === "updating"
+      ? { kind: "updating", text: t("coreMove.strip.updating", { machine }), mark: "pending" }
+      : { kind: "unreachable", text: t("coreMove.strip.unreachable", { machine }), mark: "warn" };
+  }
+  const text = badgeText(connection, input.refused, t);
+  return text ? { kind: connection, text, mark: null } : null;
 }

@@ -5,7 +5,7 @@ import { Disclosure, Group, Note, Row } from "../components/settings-rows";
 import { Button } from "../components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import { useInterfaceTranslation } from "../i18n/client";
-import { localDeviceId } from "../snapshot";
+import { machineName, screenDeviceId } from "../screenMachine";
 import { useShellStore } from "../store";
 import { agentMachines, checkFailedReason, type AgentMachine } from "./agentRows";
 import { AgentRow, NotInstalledRow } from "./AgentRow";
@@ -25,7 +25,7 @@ export function AgentsTab({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const remote = useShellStore((s) => s.rest?.status?.remote);
-  const own = useShellStore((s) => localDeviceId(s.rest));
+  const own = useShellStore((s) => screenDeviceId(s.rest));
   const [selected, setSelected] = useState<string | null>(null);
   useAgentsDemand(actions, true);
   const machines = agentMachines(devices ?? [], remote);
@@ -44,7 +44,7 @@ export function AgentsTab({ actions }: { actions: Actions }) {
         >
           {machines.map((row) => (
             <ToggleGroupItem key={row.device.id} value={row.device.id} data-agents-machine={row.device.id}>
-              {row.device.kind !== "remote" ? t("common.thisMac") : row.device.label}
+              {machineName(devices, row.device.id, t)}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
@@ -58,6 +58,7 @@ export function AgentsTab({ actions }: { actions: Actions }) {
 
 function MachineAgents({ machine, actions }: { machine: AgentMachine; actions: Actions }) {
   const { t } = useInterfaceTranslation();
+  const name = useShellStore((s) => machineName(s.rest?.navigator?.devices, machine.device.id, t));
   const { device } = machine;
   const [actedAt, setActedAt] = useState<number | null>(null);
   // A refused switch or Reinstall: the core's `kit.` error after the press.
@@ -69,14 +70,14 @@ function MachineAgents({ machine, actions }: { machine: AgentMachine; actions: A
   if (machine.blocked === "connecting" || machine.blocked === "disabled") {
     return (
       <Group>
-        <Row label={<Note data-agents-blocked={`${machine.blocked}:${device.id}`}>{t(machine.blocked === "connecting" ? "agents.connecting" : "agents.disabled", { device: device.label })}</Note>} />
+        <Row label={<Note data-agents-blocked={`${machine.blocked}:${device.id}`}>{t(machine.blocked === "connecting" ? "agents.connecting" : "agents.disabled", { device: name })}</Note>} />
       </Group>
     );
   }
   if (machine.blocked === "unreachable") {
     return (
       <Group>
-        <Row label={<Note data-agents-unreachable={device.id}>{t("agents.unreachable", { device: device.label })}</Note>}>
+        <Row label={<Note data-agents-unreachable={device.id}>{t("agents.unreachable", { device: name })}</Note>}>
           <Button variant="secondary" size="sm" onClick={() => actions.retryDevice(device.id)} data-agents-retry={device.id}>
             {t("agents.retry")}
           </Button>

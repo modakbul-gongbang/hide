@@ -7,6 +7,7 @@
 
 import type { TFunction } from "i18next";
 import { deviceScope } from "./agentScope";
+import { machineName, windowDeviceId } from "./screenMachine";
 import { localDeviceId, type AgentRow, type Device, type SnapshotRest, type Workspace } from "./snapshot";
 
 /** The rail is shown unless the operator hid it; the choice is the core's `ui_state.device_rail_visible`. */
@@ -77,14 +78,18 @@ function tileFacts(connected: boolean, counts: TileCounts, t: TFunction<"transla
   return [counts.needs_you > 0 ? t("devices.rail.needsYou", { count: counts.needs_you }) : null, counts.done > 0 ? t("devices.rail.done", { count: counts.done }) : null].filter((fact) => fact !== null);
 }
 
-/** What a tile is called for assistive technology: the name, then its connection or its counts (B4). */
-export function tileName(label: string, connected: boolean, counts: TileCounts, t: TFunction<"translation">): string {
-  return [label, ...tileFacts(connected, counts, t)].join(", ");
+/** What a tile is called for assistive technology: the name, `core` on the core's machine, then its connection or its counts (B4). */
+export function tileName(label: string, connected: boolean, counts: TileCounts, t: TFunction<"translation">, core = false): string {
+  return [label, ...(core ? [t("coreMove.railCore")] : []), ...tileFacts(connected, counts, t)].join(", ");
 }
 
-/** A tile's hint, the only place its name is written: the name, then its connection or its counts (`mini · Needs You 12 · Done 1`). */
-export function tileHint(label: string, connected: boolean, counts: TileCounts, t: TFunction<"translation">): string {
-  return [label, ...tileFacts(connected, counts, t)].join(" · ");
+/**
+ * A tile's hint, the only place its name is written: the name, `core` on the
+ * machine the core runs on while it is marked (PRD core-host-node-move N1),
+ * then its connection or its counts (`Mac mini · core · Needs You 3`).
+ */
+export function tileHint(label: string, connected: boolean, counts: TileCounts, t: TFunction<"translation">, core = false): string {
+  return [label, ...(core ? [t("coreMove.railCore")] : []), ...tileFacts(connected, counts, t)].join(" · ");
 }
 
 /** How many projects a device has registered, without its Home (D-04, B16): a count from the registrations, not from any folder. */
@@ -98,10 +103,11 @@ export function homeOf(rest: SnapshotRest | null, deviceId: string): Workspace |
   return workspaces?.find((row) => row.is_home) ?? null;
 }
 
-/** The name on the sidebar's top line and the smaller word after it: the device in front. */
+/** The name on the sidebar's top line and the smaller word after it: the device in front, named as this window calls it. */
 export function frontTitle(devices: readonly Device[] | undefined, frontId: string | null | undefined, t: TFunction<"translation">): { name: string; note: string | null } {
-  const device = frontId ? devices?.find((row) => row.id === frontId) : devices?.find((row) => row.kind !== "remote");
-  return { name: device?.label ?? t("common.thisMac"), note: device?.kind === "remote" ? t("devices.remote") : null };
+  const own = windowDeviceId(devices);
+  const id = (frontId ? devices?.find((row) => row.id === frontId)?.id : undefined) ?? devices?.find((row) => row.kind !== "remote")?.id ?? own;
+  return { name: machineName(devices, id, t), note: id !== own ? t("devices.remote") : null };
 }
 
 /** What the sidebar's list shows: the front device's Projects or Agents tab, or the way to reconnect a device that cannot be read. */

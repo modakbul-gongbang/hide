@@ -13,6 +13,7 @@ import { statusText } from "./agentStatus";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import { herdrPaneId, projectsOf } from "./remote";
+import { machineName, windowDeviceId, windowFirst } from "./screenMachine";
 import type { AgentRow, Checkout, Device, GithubSearchResult, PullRequest, SnapshotRest, Task, Workspace } from "./snapshot";
 
 /** The header an entry is drawn under: one per kind of thing; `label` is the catalog key the palette translates where it draws the header. */
@@ -157,29 +158,32 @@ export function openUrlEntry(query: string, unavailable: string | null, t: TFunc
 }
 
 
-/** What ⌘K reads from one device: its label, its agents and its projects (not its Home, which the device entry stands for). */
-export type SearchDevice = { agentScope: AgentScope | undefined; device: Device; agents: AgentRow[]; workspaces: Workspace[]; allWorkspaces: Workspace[]; local: boolean };
+/** What ⌘K reads from one device: its name as this window calls it, its agents and its projects (not its Home, which the device entry stands for). `own` is this window's machine. */
+export type SearchDevice = { agentScope: AgentScope | undefined; device: Device; name: string; own: boolean; agents: AgentRow[]; workspaces: Workspace[]; allWorkspaces: Workspace[]; local: boolean };
 
 /** This machine and each connected device, in the rail's order; a device that is not connected has no current agents or projects to find. */
 export function searchDevices(rest: SnapshotRest): SearchDevice[] {
   const rows: SearchDevice[] = [];
   // A snapshot that names no device is the core's own node alone, by the id it has before the snapshot names it.
-  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [{ id: localDeviceId(rest), label: translate("common.thisMac"), kind: "local" } as Device];
+  const listed = rest.navigator?.devices;
+  const devices = listed?.length ? windowFirst(listed) : [{ id: localDeviceId(rest), label: translate("common.thisMac"), kind: "local" } as Device];
+  const own = windowDeviceId(listed);
   for (const device of devices) {
+    const named = { name: machineName(listed, device.id, translate), own: device.id === own };
     if (device.id === localDeviceId(rest)) {
       const all = rest.navigator?.workspaces ?? [];
-      rows.push({ agentScope: rest.navigator?.devices?.find((d) => d.id === device.id)?.agent_scope ?? rest.navigator?.agent_scope, device, agents: rest.navigator?.agents ?? [], workspaces: projectsOf(all), allWorkspaces: all, local: true });
+      rows.push({ agentScope: rest.navigator?.devices?.find((d) => d.id === device.id)?.agent_scope ?? rest.navigator?.agent_scope, device, ...named, agents: rest.navigator?.agents ?? [], workspaces: projectsOf(all), allWorkspaces: all, local: true });
       continue;
     }
     const status = rest.status?.remote?.find((row) => row.target_id === device.id);
     const session = status?.state === "connected" ? status.session : null;
-    rows.push({ agentScope: device.agent_scope, device, agents: session?.agents ?? [], workspaces: projectsOf(session?.workspaces ?? []), allWorkspaces: session?.workspaces ?? [], local: false });
+    rows.push({ agentScope: device.agent_scope, device, ...named, agents: session?.agents ?? [], workspaces: projectsOf(session?.workspaces ?? []), allWorkspaces: session?.workspaces ?? [], local: false });
   }
   return rows;
 }
 
-function deviceChip(device: Device, front: string): SearchEntry["chip"] {
-  return device.id === front ? undefined : { label: device.label, local: device.kind !== "remote" };
+function deviceChip(scope: SearchDevice, front: string): SearchEntry["chip"] {
+  return scope.device.id === front ? undefined : { label: scope.name, local: scope.own };
 }
 
 /** An agent's state as the sidebar colours it (`chipTone`'s rules, as tones). */
@@ -206,7 +210,7 @@ export function agentEntry(scope: SearchDevice, agent: AgentRow, place: string |
     agentKind: agent.agent_kind,
     paneId: agent.pane_id,
     deviceId: scope.device.id,
-    chip: deviceChip(scope.device, front),
+    chip: deviceChip(scope, front),
     agent,
     status: agentStatus(agent, t),
   };
@@ -221,7 +225,7 @@ function projectEntry(scope: SearchDevice, workspace: Workspace, front: string):
     group: PROJECTS_GROUP,
     workspaceId: workspace.id,
     deviceId: scope.device.id,
-    chip: deviceChip(scope.device, front),
+    chip: deviceChip(scope, front),
     workspace,
   };
 }
@@ -237,7 +241,7 @@ export function checkoutEntry(scope: SearchDevice, workspace: Workspace, checkou
     workspaceId: workspace.id,
     checkoutId: checkout.id,
     deviceId: scope.device.id,
-    chip: deviceChip(scope.device, front),
+    chip: deviceChip(scope, front),
     workspace,
     checkout,
   };
@@ -312,7 +316,7 @@ export function pullRequestEntry(scope: SearchDevice, workspace: Workspace, pr: 
     group: PULL_REQUESTS_GROUP,
     workspaceId: workspace.id,
     deviceId: scope.device.id,
-    chip: deviceChip(scope.device, front),
+    chip: deviceChip(scope, front),
     number: pr.number,
     url: pr.url,
     workspace,
@@ -331,7 +335,7 @@ export function issueEntry(scope: SearchDevice, workspace: Workspace, task: Task
     group: ISSUES_GROUP,
     workspaceId: workspace.id,
     deviceId: scope.device.id,
-    chip: deviceChip(scope.device, front),
+    chip: deviceChip(scope, front),
     number: taskNumber(task),
     taskKey: task.key,
     url: task.url,
@@ -407,11 +411,11 @@ export function searchEntries(rest: SnapshotRest | null, t: TFunction<"translati
     }
   }
   // With this Mac alone there is no device to move to, so no device rows.
-  for (const { device } of devices.length > 1 ? devices : []) {
+  for (const { device, name, own } of devices.length > 1 ? devices : []) {
     entries.push({
       id: `device:${device.id}`,
-      title: device.label,
-      subtitle: device.kind === "remote" ? t("search.remoteDevice") : t("common.thisDevice"),
+      title: name,
+      subtitle: own ? t("common.thisDevice") : t("search.remoteDevice"),
       kind: "device",
       group: DEVICES_GROUP,
       deviceId: device.id,

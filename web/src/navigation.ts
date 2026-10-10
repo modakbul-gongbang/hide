@@ -12,6 +12,7 @@ import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import type { BoardProject } from "./projectBoard";
 import { projectsOf } from "./remote";
+import { machineName } from "./screenMachine";
 import { entryBox } from "./agentGraph";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, localDeviceId, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 import { entryLens, useUiStore, type OverviewLens } from "./ui";
@@ -91,18 +92,19 @@ export type ListedAgent = { agent: AgentRow; device: string | null };
  * gave them. A device that is not connected lists nothing, since what it
  * last reported is not current.
  */
-export function allAgents(remote: RemoteStatus[] | undefined, localAgents: AgentRow[], scope: AgentScope | null | undefined): ListedAgent[] {
+export function allAgents(remote: RemoteStatus[] | undefined, localAgents: AgentRow[], scope: AgentScope | null | undefined, devices?: readonly Device[]): ListedAgent[] {
   return (scope?.listed ?? []).map((entry) => {
     const agent = entry.remote ? remote?.find((r) => r.target_id === entry.device_id)?.session?.agents[entry.index] : localAgents[entry.index];
     if (!agent || agent.pane_id !== entry.pane_id) throw new Error(`Missing listed agent: ${entry.pane_id}`);
-    const label = entry.device_label ?? translate("common.thisMac");
+    // Each machine as this window calls it (PRD core-host-node-move B2); the core's own word before devices are listed.
+    const label = devices ? machineName(devices, entry.device_id, translate) : (entry.device_label ?? translate("common.thisMac"));
     return { agent: { ...agent, device_id: entry.device_id, device_label: label }, device: entry.remote ? label : null };
   });
 }
 
 /** One device's core-projected current rows, in their published order. */
 export function deviceListedAgents(remote: RemoteStatus[] | undefined, devices: Device[] | undefined, localAgents: AgentRow[], deviceId: string): ListedAgent[] {
-  return allAgents(remote, localAgents, devices?.find((d) => d.id === deviceId)?.agent_scope);
+  return allAgents(remote, localAgents, devices?.find((d) => d.id === deviceId)?.agent_scope, devices);
 }
 
 function deviceLabel(devices: Device[] | undefined, targetId: string): string {

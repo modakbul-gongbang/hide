@@ -7,12 +7,15 @@ import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTi
 import { Group, Note, Row } from "../components/settings-rows";
 import { latestDraft } from "../editor/draft";
 import { useInterfaceTranslation } from "../i18n/client";
-import { frontDeviceId } from "../devices";
+import { deviceConnected, frontDeviceId } from "../devices";
+import type { MoveView } from "../coreMove";
+import { coreMachineName, isCoreMachine, machineName, windowDeviceId, windowFirst } from "../screenMachine";
 import { deviceRemovalLines, draftExported, kitRemovalLine, unstoredDeviceDrafts } from "../settings";
 import type { Device } from "../snapshot";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
 import { AddDevice } from "./AddDevice";
+import { askMove, CoreMoveDialog, type MoveRequest } from "./CoreMoveDialog";
 import { DeviceDetails } from "./DeviceDetails";
 import { DeviceRow, type DeviceRowHandlers } from "./DeviceRow";
 import { KitTerms } from "./MachineKit";
@@ -27,6 +30,9 @@ export function DevicesTab({ actions }: { actions: Actions }) {
   const [allowing, setAllowing] = useState<Device | null>(null);
   const [revoking, setRevoking] = useState<Device | null>(null);
   const [details, setDetails] = useState<Device | null>(null);
+  // The move the operator opened, and the frame it was asked beside (B3 to B5).
+  const [move, setMove] = useState<{ request: MoveRequest; asked: MoveView | null } | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
   // The device count when the Add dialog opened: a new row means the device was added, which closes it.
   const [adding, setAdding] = useState<number | null>(null);
   // The removal waits for the device's drafts to be stored (B26, B44).
@@ -39,7 +45,11 @@ export function DevicesTab({ actions }: { actions: Actions }) {
   useEffect(() => {
     if (live) actions.checkKit();
   }, [actions, live]);
-  const rows = devices ?? [];
+  const rows = windowFirst(devices);
+  const own = windowDeviceId(devices);
+  const windowIsNode = !isCoreMachine(devices, own);
+  const coreName = coreMachineName(devices, t);
+  const connectedIds = useShellStore((s) => (s.rest?.navigator?.devices ?? []).filter((device) => deviceConnected(s.rest, device.id)).map((device) => device.id).join("\n"));
   const localHost = rows.find((device) => device.kind !== "remote")?.host ?? null;
   const localRoot = localHost?.helper_root ?? null;
   const localCliDir = localHost?.cli_dir ?? null;
@@ -70,6 +80,15 @@ export function DevicesTab({ actions }: { actions: Actions }) {
     onAllow: setAllowing,
     onRevoke: setRevoking,
     onRemove: setRemoving,
+    onMove: (device) => {
+      const request: MoveRequest = { direction: "forward", device: device.id };
+      setMove({ request, asked: askMove(actions, request, false) });
+    },
+    onMoveBack: () => {
+      const request: MoveRequest = { direction: "back" };
+      setMove({ request, asked: askMove(actions, request, false) });
+    },
+    onDisconnect: () => setDisconnecting(true),
   };
   return (
     <>
@@ -83,7 +102,22 @@ export function DevicesTab({ actions }: { actions: Actions }) {
         }
       >
         {rows.map((device) => (
-          <DeviceRow key={device.id} device={device} status={remote?.find((row) => row.target_id === device.id)} focused={focused === device.id} actions={actions} handlers={handlers} />
+          <DeviceRow
+            key={device.id}
+            device={device}
+            status={remote?.find((row) => row.target_id === device.id)}
+            focused={focused === device.id}
+            place={{
+              name: machineName(devices, device.id, t),
+              core: isCoreMachine(devices, device.id),
+              own: device.id === own,
+              windowIsNode,
+              connected: connectedIds.split("\n").includes(device.id),
+              coreName,
+            }}
+            actions={actions}
+            handlers={handlers}
+          />
         ))}
         {remoteRows.length === 0 ? <Row label={<Note>{t("devices.noRemote")}</Note>} /> : null}
         {deviceError ? <Row label={<Note tone="error" data-device-error="true">{deviceError}</Note>} /> : null}
@@ -99,6 +133,31 @@ export function DevicesTab({ actions }: { actions: Actions }) {
             </DialogBody>
           </DialogContent>
         </Dialog>
+      ) : null}
+      {move ? (
+        <CoreMoveDialog
+          request={move.request}
+          asked={move.asked}
+          actions={actions}
+          onClose={() => setMove(null)}
+          onRequest={(request) => setMove((current) => (current ? { ...current, request } : current))}
+        />
+      ) : null}
+      {disconnecting ? (
+        <AlertDialog open onOpenChange={(next) => { if (!next) setDisconnecting(false); }}>
+          <AlertDialogContent data-core-disconnect-confirm="true">
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("coreMove.disconnectTitle", { machine: coreName })}</AlertDialogTitle>
+              <AlertDialogDescription>{t("coreMove.disconnectDescription", { machine: coreName })}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+              <AlertDialogAction data-core-disconnect-go="true" onClick={() => actions.coreLink("disconnect")}>
+                {t("coreMove.disconnectGo")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       ) : null}
       {details ? <DeviceDetails device={rows.find((device) => device.id === details.id) ?? details} onClose={() => setDetails(null)} /> : null}
       {allowing ? (

@@ -10,11 +10,11 @@ const device = (id: string, label: string, kind = "remote") => ({ id, label, kin
 const registration = (path: string, device_id = "local") => ({ id: path, label: path, path, device_id, pinned: false }) as WorkspaceRegistration;
 
 describe("Add a project", () => {
-  it("lists this Mac first, then every registered device", () => {
+  it("lists this window's machine first as This Mac, then every registered device (PRD core-host-node-move B2)", () => {
     expect(addProjectHosts(undefined, t)).toEqual([{ id: "", label: "This Mac" }]);
     expect(addProjectHosts(undefined, ko)).toEqual([{ id: "", label: "이 Mac" }]);
     expect(addProjectHosts([device("mini", "Mini"), device("local", "Studio", "local")], t)).toEqual([
-      { id: "local", label: "Studio" },
+      { id: "local", label: "This Mac" },
       { id: "mini", label: "Mini" },
     ]);
   });

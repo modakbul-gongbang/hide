@@ -323,7 +323,7 @@ export function createActions(send: DispatchFn) {
   };
 
   /** Every current agent row, this machine's and each connected device's, as the lists draw them. */
-  const everyAgent = (): AgentRow[] => allAgents(rest()?.status?.remote, useShellStore.getState().agents, rest()?.navigator?.agent_scope).map((row) => row.agent);
+  const everyAgent = (): AgentRow[] => allAgents(rest()?.status?.remote, useShellStore.getState().agents, rest()?.navigator?.agent_scope, rest()?.navigator?.devices).map((row) => row.agent);
 
   const sendClose = (kind: "pane" | "tab", id: string, targetId: string | null, confirmed: boolean) => {
     if (targetId) {
@@ -1086,6 +1086,22 @@ export function createActions(send: DispatchFn) {
 
     retryDevice(deviceId: string) {
       dispatch({ schema_version: 2, kind: "retry_connect", payload: { target_id: deviceId } });
+    },
+
+    /**
+     * Asks the process's supervisor about the core move (PRD
+     * core-host-node-move B3 to B5): run the checks toward a device or back
+     * to this machine, or start the move once they passed. The answer is the
+     * `core_move` frame, or a refusal naming why.
+     */
+    coreMove(request: { action: "check" | "start"; device: string } | { action: "check_back" | "back" }) {
+      useShellStore.setState({ coreMoveRefusal: null });
+      dispatch({ schema_version: 2, kind: "core_move", payload: request });
+    },
+
+    /** A node's window ends or restores its link to the core on another machine (B16); the node's own daemon answers. */
+    coreLink(action: "disconnect" | "reconnect") {
+      dispatch({ schema_version: 2, kind: "core_link", payload: { action } });
     },
 
     /**

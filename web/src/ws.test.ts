@@ -153,3 +153,56 @@ it("a reconnect names the core its revision came from", async () => {
   expect(JSON.parse(fourth.sent[0] ?? "{}")).toMatchObject({ have_revision: 2, have_core: "bbbbbbbbbbbbbbbb" });
   shell.close();
 });
+
+// PRD core-host-node-move, Window handoff: a window goes through a move
+// without a reload. The move's screen sends only the move, so the window
+// waits as `moving` and sends nothing; the screen closes when the role after
+// the move takes over, and the window reconnects to that role, which draws
+// it. The finished move names the node the window became, and the page
+// writes it into its own address.
+it("a move holds the window as moving, sends nothing, and the role after it draws the window at the node's address", async () => {
+  const states: ConnectionState[] = [];
+  const stop = useShellStore.subscribe((state) => states.push(state.connection));
+  const shell = connectShell({ onChunks: () => {} });
+  const first = made(0);
+  first.open();
+  first.frame({ type: "snapshot", payload: { revision: 3, rest: {} } });
+  first.frame({ type: "core_move", payload: { state: "stopping", direction: "forward", device: "mini", node: "mbp", sent: 0, total: 0, failed: [], step: "stop_core", cause: null, intent: "i" } });
+  expect(useShellStore.getState().connection).toBe("live");
+  first.closeWith(1006, "");
+  await Promise.resolve();
+  await vi.runOnlyPendingTimersAsync();
+
+  const moving = made(1);
+  moving.open();
+  moving.frame({ type: "core_move", payload: { state: "copying", direction: "forward", device: "mini", node: "mbp", sent: 1, total: 2, failed: [], step: "copy", cause: null, intent: "i" } });
+  expect(useShellStore.getState().connection).toBe("moving");
+  expect(shell.dispatch({ schema_version: 2, kind: "pane_input", payload: {} })).toBe(false);
+  expect(moving.sent).toHaveLength(1);
+  moving.frame({ type: "error", payload: { kind: "core_move", reason: "moving" }, message: "moving" });
+  expect(useShellStore.getState().connection).toBe("moving");
+  moving.frame({ type: "core_move", payload: { state: "done", direction: "forward", device: "mini", node: "mbp", sent: 2, total: 2, failed: [], step: "reattach", cause: null, intent: "i" } });
+  expect(new URLSearchParams(window.location.hash.slice(1)).get("node")).toBe("mbp");
+  expect(new URLSearchParams(window.location.hash.slice(1)).get("token")).toBe("t");
+  moving.closeWith(1012, "core_moved");
+  await Promise.resolve();
+  await vi.runOnlyPendingTimersAsync();
+
+  const node = made(2);
+  node.open();
+  node.frame({ type: "snapshot", payload: { revision: 1, rest: {} } });
+  expect(useShellStore.getState().connection).toBe("live");
+  expect(states.indexOf("moving")).toBeLessThan(states.lastIndexOf("reconnecting"));
+  expect(states).not.toContain("gone");
+  stop();
+  shell.close();
+});
+
+it("a move back removes the node from the address, and an unfinished move leaves it", async () => {
+  const { addressAfterMove } = await import("./ws");
+  const view = (state: string, direction: "forward" | "back", node: string | null) => ({ state, direction, node, device: "mini", sent: 0, total: 0, failed: [], step: null, cause: null, intent: "i" }) as never;
+  expect(addressAfterMove("#token=t&node=mbp", view("done", "back", null))).toBe("#token=t");
+  expect(addressAfterMove("#token=t", view("done", "forward", "mbp"))).toBe("#token=t&node=mbp");
+  expect(addressAfterMove("#token=t", view("rolled_back", "forward", "mbp"))).toBeNull();
+  expect(addressAfterMove("#token=t&node=mbp", view("done", "forward", "mbp"))).toBeNull();
+});
