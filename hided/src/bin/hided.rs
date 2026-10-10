@@ -38,6 +38,11 @@ fn run() -> Result<(), String> {
     if args.first().is_some_and(|arg| arg == "attach") {
         return hided::attach::run(&args[1..]);
     }
+    // What the login item of a core moved here runs: Herdr first, then the
+    // daemon below.
+    if args.first().is_some_and(|arg| arg == "core-login") {
+        hided::login_item::before_core_at_login();
+    }
     // A step of a core move run here over SSH by the machine driving it.
     if args.first().is_some_and(|arg| arg == "core-move") {
         return hided::core_move::target::run(&args[1..]);

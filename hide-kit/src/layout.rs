@@ -119,6 +119,27 @@ pub fn core_handover(state_dir: &Path) -> PathBuf {
     state_dir.join("core-handover.json")
 }
 
+/// The login item that runs the core on `state_dir` after a move placed it
+/// on this machine (`hided::login_item`): one per state folder, so a folder
+/// other than the account's default never takes the default's item.
+pub fn core_login_item(home: &Path, state_dir: &Path) -> String {
+    const LABEL: &str = "dev.withhide.core";
+    if state_dir == default_state_dir(home) {
+        return LABEL.to_owned();
+    }
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(state_dir.to_string_lossy().as_bytes());
+    format!("{LABEL}.{}", hex_prefix(&digest))
+}
+
+fn hex_prefix(digest: &[u8]) -> String {
+    digest
+        .iter()
+        .take(6)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// Copies a move makes of this machine's brain state, one folder per move.
 pub fn move_staging(state_dir: &Path) -> PathBuf {
     state_dir.join("move-staging")
@@ -174,6 +195,22 @@ mod tests {
         assert_eq!(
             state_dir(home, Some("/isolated"), Some("/xdg")),
             PathBuf::from("/isolated")
+        );
+    }
+
+    #[test]
+    fn a_state_folder_other_than_the_default_has_a_login_item_of_its_own() {
+        let home = Path::new("/Users/op");
+        let default = core_login_item(home, &default_state_dir(home));
+        let other = core_login_item(home, Path::new("/private/tmp/seat/state"));
+        assert_eq!(default, "dev.withhide.core");
+        assert!(
+            other.starts_with("dev.withhide.core.") && other != default,
+            "{other}"
+        );
+        assert_eq!(
+            other,
+            core_login_item(home, Path::new("/private/tmp/seat/state"))
         );
     }
 

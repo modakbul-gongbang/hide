@@ -71,7 +71,11 @@ impl CoreStarter {
                         .map(|status| format!("the core exited at its start: {status}"))
                 });
             }
-            Self::LoginItem { home } => crate::login_item::start(home, state_dir)?,
+            Self::LoginItem { home } => crate::login_item::start(
+                &hide_platform::user_agents::UserAgents::current(),
+                home,
+                state_dir,
+            )?,
         }
         wait_for_core(state_dir, stale.as_deref(), &mut *exited)
     }
@@ -80,7 +84,11 @@ impl CoreStarter {
     /// only once no core of that folder runs.
     pub fn stop(&self, state_dir: &Path) -> Result<(), String> {
         if let Self::LoginItem { home } = self {
-            crate::login_item::remove(home)?;
+            crate::login_item::remove(
+                &hide_platform::user_agents::UserAgents::current(),
+                home,
+                state_dir,
+            )?;
         }
         let Some(running) = crate::state_file::read_state(state_dir)
             .map_err(|error| format!("the core's state could not be read: {error}"))?
