@@ -3690,19 +3690,28 @@ fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
 /// first row.
 #[test]
 fn a_restored_selection_of_another_machine_opens_where_herdr_has_the_keyboard() {
-    for saved_pane in [Some("remote:old-core:pane:w1:p1"), None] {
-        restored_selection_opens_on_herdrs_focus(saved_pane);
+    let checkout = Some("remote:old-core:checkout:feature");
+    for (saved_pane, saved_checkout, moved) in [
+        (Some("remote:old-core:pane:w1:p1"), checkout, false),
+        (None, checkout, false),
+        // The other core saved nothing of this machine; its rekey says so.
+        (None, None, true),
+    ] {
+        restored_selection_opens_on_herdrs_focus(saved_pane, saved_checkout, moved);
     }
 }
 
-fn restored_selection_opens_on_herdrs_focus(saved_pane: Option<&str>) {
+fn restored_selection_opens_on_herdrs_focus(
+    saved_pane: Option<&str>,
+    saved_checkout: Option<&str>,
+    moved: bool,
+) {
     let (mut runtime, first_checkout, repository, worktree) =
         split_workspace_checkouts("restore-elsewhere");
-    runtime.snapshot.ui_state.focused_checkout_id =
-        Some("remote:old-core:checkout:feature".to_owned());
-    runtime.snapshot.navigator.focused_checkout_id =
-        Some("remote:old-core:checkout:feature".to_owned());
+    runtime.snapshot.ui_state.focused_checkout_id = saved_checkout.map(str::to_owned);
+    runtime.snapshot.navigator.focused_checkout_id = saved_checkout.map(str::to_owned);
     runtime.snapshot.ui_state.selected_pane_id = saved_pane.map(str::to_owned);
+    runtime.snapshot.ui_state.focus_from_herdr = moved;
     let repository = repository.to_string_lossy().into_owned();
     let worktree = worktree.to_string_lossy().into_owned();
     let mut payload = split_workspace_payload(
@@ -3719,7 +3728,7 @@ fn restored_selection_opens_on_herdrs_focus(saved_pane: Option<&str>) {
     assert_ne!(
         focused.as_deref(),
         Some(first_checkout.as_str()),
-        "saved pane {saved_pane:?}"
+        "saved pane {saved_pane:?}, checkout {saved_checkout:?}, moved {moved}"
     );
     let worktree_checkout = runtime
         .snapshot()
@@ -3735,6 +3744,7 @@ fn restored_selection_opens_on_herdrs_focus(saved_pane: Option<&str>) {
         Some("w-order:t5:p")
     );
     assert_eq!(runtime.snapshot().status.last_error, None);
+    assert!(!runtime.snapshot.ui_state.focus_from_herdr, "taken once");
 }
 
 #[test]

@@ -2027,9 +2027,9 @@ impl Runtime {
             return;
         }
         self.restore_hint_pending = false;
-        // A saved selection this session does not hold was this machine's
-        // under another core (a core move names it as that core's device,
-        // and that core saved no pane of this machine), or it is gone.
+        // A saved selection this session does not hold is gone, or was this
+        // machine's under another core, which saved it as its device's and
+        // so never at all (a core move's rekey says so, `focus_from_herdr`).
         // Either way Herdr's own focus is where Hide left the keyboard last,
         // since Hide tells Herdr every focus it takes, so the window opens on
         // Herdr's pane and its checkout; with nothing saved, the catalog's
@@ -2064,8 +2064,9 @@ impl Runtime {
                     .flat_map(|workspace| workspace.checkouts.iter())
                     .any(|checkout| checkout.id == checkout_id)
             });
-        let restore_missed = (self.snapshot.ui_state.selected_pane_id.is_some()
-            && !restored_pane_exists)
+        let moved = std::mem::take(&mut self.snapshot.ui_state.focus_from_herdr);
+        let restore_missed = moved
+            || (self.snapshot.ui_state.selected_pane_id.is_some() && !restored_pane_exists)
             || (self.snapshot.ui_state.focused_checkout_id.is_some() && !restored_checkout_exists);
         if !restored_pane_exists {
             self.snapshot.ui_state.selected_pane_id =

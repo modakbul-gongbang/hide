@@ -65,6 +65,10 @@ struct StoredUiState {
     sessions_expanded_agent_pane_ids: Vec<String>,
     selected_path: Option<String>,
     selected_pane_id: Option<String>,
+    /// Written only by a core move's rekey and left out once taken, so an
+    /// ordinary store never carries it and an older build ignores it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    focus_from_herdr: bool,
     #[serde(default)]
     shortcut_bindings: BTreeMap<String, String>,
     /// Absent in a store written before the shortcut import existed, which loads
@@ -341,6 +345,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             sessions_expanded_agent_pane_ids: stored.sessions_expanded_agent_pane_ids,
             selected_path: stored.selected_path,
             selected_pane_id: stored.selected_pane_id,
+            focus_from_herdr: stored.focus_from_herdr,
             shortcut_bindings: stored.shortcut_bindings,
             shortcut_bindings_imported: stored.shortcut_bindings_imported,
             browser_shortcut_bindings: stored.browser_shortcut_bindings,
@@ -446,6 +451,7 @@ pub fn save(
         sessions_expanded_agent_pane_ids: state.sessions_expanded_agent_pane_ids.clone(),
         selected_path: state.selected_path.clone(),
         selected_pane_id: state.selected_pane_id.clone(),
+        focus_from_herdr: state.focus_from_herdr,
         shortcut_bindings: state.shortcut_bindings.clone(),
         shortcut_bindings_imported: state.shortcut_bindings_imported,
         browser_shortcut_bindings: state.browser_shortcut_bindings.clone(),
@@ -765,6 +771,32 @@ mod tests {
         assert!(state.pet_visible, "a pre-pet store still shows the pet");
         assert_eq!(state.pet_origin, None);
         assert_eq!(state.pet_shortcut, None);
+    }
+
+    /// A moved store's hint stays until a session takes it, and an ordinary
+    /// store never carries the key.
+    #[test]
+    fn a_moved_stores_focus_hint_is_kept_until_taken_and_never_written_otherwise() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("state.json");
+        let moved = UiStateSnapshot {
+            focus_from_herdr: true,
+            ..UiStateSnapshot::default()
+        };
+        save(&path, &moved, &PaneTerminalSizes::new()).unwrap();
+        assert!(load(&path).0.focus_from_herdr);
+        save(
+            &path,
+            &UiStateSnapshot::default(),
+            &PaneTerminalSizes::new(),
+        )
+        .unwrap();
+        assert!(
+            !String::from_utf8(fs::read(&path).unwrap())
+                .unwrap()
+                .contains("focus_from_herdr")
+        );
+        assert!(!load(&path).0.focus_from_herdr);
     }
 
     #[test]

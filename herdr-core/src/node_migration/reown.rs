@@ -340,6 +340,10 @@ impl Mapper<'_> {
                 for (own, devices) in OWN_PATHS {
                     swap_own(value, own, devices, self.change)?;
                 }
+                // The old core held the new owner as a device, whose
+                // selection is that machine's own Herdr focus and is never
+                // saved, so the new core opens there.
+                value["focus_from_herdr"] = Value::Bool(true);
                 // A recent entry is its checkout: one whose checkout neither
                 // machine still has goes, as a fold's does (its id was
                 // counted as it was cleared).
@@ -1167,6 +1171,11 @@ mod tests {
         }
 
         let core = read(&state.join(CORE_STATE));
+        assert_eq!(
+            core["focus_from_herdr"],
+            json!(true),
+            "the new core opens on its own Herdr's focus"
+        );
         assert_eq!(core["expanded_paths"], json!([C_ROOT]));
         assert_eq!(
             core["device_expanded_paths"],
@@ -1265,8 +1274,18 @@ mod tests {
             .unwrap();
         labels["moved"] = json!({format!("device:{M}"): mac});
         std::fs::write(state.join(LABELS), serde_json::to_vec(&labels).unwrap()).unwrap();
+        // Its first session takes the focus hint the rekey left, and its
+        // next save drops the key; the move back leaves it again.
+        let take_hint = || {
+            let mut core = read(&state.join(CORE_STATE));
+            let hint = core.as_object_mut().unwrap().remove("focus_from_herdr");
+            std::fs::write(state.join(CORE_STATE), serde_json::to_vec(&core).unwrap()).unwrap();
+            hint
+        };
+        assert_eq!(take_hint(), Some(json!(true)));
 
         reown(state, &back(), &back_ids()).unwrap();
+        assert_eq!(take_hint(), Some(json!(true)));
         for (file, original) in files.iter().zip(&original) {
             assert_eq!(
                 normalized(&read(&state.join(file))),

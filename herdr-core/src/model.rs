@@ -2760,6 +2760,13 @@ pub struct UiStateSnapshot {
     pub sessions_expanded_agent_pane_ids: Vec<String>,
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
+    /// Set by a core move's rekey (`node_migration::reown`): the machine the
+    /// core now runs on kept its selection only in its own Herdr while the
+    /// other core ran, so the first local session opens on Herdr's focus
+    /// (`consume_restore_hint`). Core only, and kept in the store until that
+    /// session takes it.
+    #[serde(skip)]
+    pub focus_from_herdr: bool,
     pub shortcut_bindings: BTreeMap<String, String>,
     /// Whether `shortcut_bindings` was already brought across from the removed
     /// native app's state. Persisted, never on the wire: once the import ran, an
@@ -3274,6 +3281,7 @@ impl Default for UiStateSnapshot {
             sessions_expanded_agent_pane_ids: Vec::new(),
             selected_path: None,
             selected_pane_id: None,
+            focus_from_herdr: false,
             shortcut_bindings: BTreeMap::new(),
             shortcut_bindings_imported: false,
             browser_shortcut_bindings: BTreeMap::new(),

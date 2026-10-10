@@ -3559,6 +3559,7 @@ impl Runtime {
                     // shell's last copy of them, which a newer choice can
                     // already have overtaken, so it moves none of them.
                     selected_pane_id: current.selected_pane_id,
+                    focus_from_herdr: current.focus_from_herdr,
                     shortcut_bindings: if bindings_fit(&payload.shortcut_bindings) {
                         payload.shortcut_bindings
                     } else {
