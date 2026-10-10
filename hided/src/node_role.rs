@@ -9,11 +9,14 @@
 //! seconds after the first failure and doubling to a minute; a link that
 //! lived a while starts the wait over. A watch thread looks every two
 //! seconds for what makes the wait wrong (D-09): when the machine slept or
-//! its network addresses changed, a waiting node tries at once and a live
-//! link must answer an SSH ping within three seconds or is dropped and
-//! dialed again; while the core's machine is unreachable, its SSH port is
-//! probed and the node tries at once when the port answers again. Dropping
-//! the role ends the link, the SSH connection and both threads.
+//! its network addresses changed, a node waiting on what a move may change
+//! (the core's machine unreachable, a connection that failed on the way, a
+//! link that was lost) tries at once, a node the core refused or that has
+//! something to fix keeps its wait, and a live link must answer an SSH ping
+//! within three seconds or is dropped and dialed again; while the core's
+//! machine is unreachable, its SSH port is probed and the node tries at once
+//! when the port answers again. Dropping the role ends the link, the SSH
+//! connection and both threads.
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader};
@@ -47,8 +50,8 @@ const WATCH_EVERY: Duration = Duration::from_secs(2);
 const SLEPT: Duration = Duration::from_secs(5);
 /// How long a live link's connection has to answer a ping after a wake.
 const ANSWER_WITHIN: Duration = Duration::from_secs(3);
-/// How long the core machine's SSH port has to take a probe's connection,
-/// and then to greet it.
+/// How long one probe of the core machine's SSH port may take in all:
+/// resolving its name, taking the connection and greeting it.
 const PROBE_WITHIN: Duration = Duration::from_secs(1);
 
 /// Who this node is, as it tells its core.
@@ -376,7 +379,7 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
 /// machine's SSH port coming back, until the role stops.
 fn watch(shared: &Shared) {
     let mut look = Look::new(SystemTime::now(), Instant::now(), network_addresses());
-    let mut port = PortWatch::default();
+    let mut port = PortProbe::default();
     loop {
         {
             let state = lock(&shared.state);
@@ -392,7 +395,7 @@ fn watch(shared: &Shared) {
         let phase = lock(&shared.state).phase.clone();
         let upstream = lock(&shared.upstream).clone();
         if let Some(moved) = moved {
-            port = PortWatch::default();
+            port.moved();
             let answered = match (&phase, &upstream) {
                 (Phase::Live(_), Some(upstream)) => Some(upstream.alive(ANSWER_WITHIN)),
                 _ => None,
@@ -408,17 +411,16 @@ fn watch(shared: &Shared) {
             }
             continue;
         }
-        match &upstream {
-            Some(upstream) if probes_port(&phase, &port) => {
-                if port.came_back(upstream.reachable(PROBE_WITHIN)) {
-                    herdr_core::diagnostic!(json!({
-                        "component": "node_role",
-                        "kind": "core.reachable_again",
-                    }));
-                    wake(shared);
-                }
-            }
-            _ => port = PortWatch::default(),
+        let came_back = match &upstream {
+            Some(upstream) => port.look(&phase, || upstream.reachable(PROBE_WITHIN)),
+            None => port.look(&phase, || false),
+        };
+        if came_back {
+            herdr_core::diagnostic!(json!({
+                "component": "node_role",
+                "kind": "core.reachable_again",
+            }));
+            wake(shared);
         }
     }
 }
@@ -435,9 +437,10 @@ fn wakes_on_move(phase: &Phase, answered: Option<bool>) -> bool {
 }
 
 /// Whether the watch probes the core machine's SSH port: only while the
-/// node waits after a dial that could not reach the machine, and only until
-/// the port answers. Past that the dial failed on something else (a key, a
-/// host key, the account), and the wait's own retry tries it again.
+/// node waits after a dial that could not reach the machine, and not again
+/// in that wait once the port answered. A port that answers while the dial
+/// still fails says the failure is past the port, and the wait's own retry
+/// tries it again.
 fn probes_port(phase: &Phase, port: &PortWatch) -> bool {
     matches!(
         phase,
@@ -512,6 +515,33 @@ fn routable(addresses: BTreeSet<IpAddr>) -> BTreeSet<IpAddr> {
             IpAddr::V6(v6) => !v6.is_unicast_link_local(),
         })
         .collect()
+}
+
+/// The watch's probes of the core machine's SSH port, look by look. What
+/// the port said holds for the phase it was probed in: it starts over only
+/// when the phase changes or the machine moves, so a port that answers is
+/// probed once per wait, not every other look.
+#[derive(Default)]
+struct PortProbe {
+    phase: Option<Phase>,
+    port: PortWatch,
+}
+
+impl PortProbe {
+    /// One look in `phase`: probes when [`probes_port`] says so, and answers
+    /// whether the port came back.
+    fn look(&mut self, phase: &Phase, probe: impl FnOnce() -> bool) -> bool {
+        if self.phase.as_ref() != Some(phase) {
+            self.phase = Some(phase.clone());
+            self.port = PortWatch::default();
+        }
+        probes_port(phase, &self.port) && self.port.came_back(probe())
+    }
+
+    /// A sleep or a network move: what the port said before says nothing now.
+    fn moved(&mut self) {
+        self.port = PortWatch::default();
+    }
 }
 
 /// The core machine's SSH port across the probes of one unreachable wait.
@@ -1058,6 +1088,48 @@ mod tests {
         assert_eq!(
             look.moved(wall + step * 2, monotonic + step * 2, with(&[routable])),
             Some("network")
+        );
+    }
+
+    /// Through the watch's looks: a port that answers during an unreachable
+    /// wait is probed once and then left alone until the phase changes or
+    /// the machine moves; a silent port is probed each look and wakes the
+    /// node once when it answers.
+    #[test]
+    fn the_watch_probes_an_answering_port_once_per_wait() {
+        let unreachable = Phase::Waiting {
+            reason: LinkFailure::Unreachable("connection reset".to_owned()),
+        };
+        let mut port = PortProbe::default();
+        let mut probes = 0;
+        for _ in 0..10 {
+            assert!(!port.look(&unreachable, || {
+                probes += 1;
+                true
+            }));
+        }
+        assert_eq!(probes, 1, "an answering port is probed once per wait");
+
+        port.moved();
+        let mut probes = 0;
+        for _ in 0..3 {
+            port.look(&unreachable, || {
+                probes += 1;
+                true
+            });
+        }
+        assert_eq!(probes, 1, "a move starts the probes over");
+
+        let connecting = Phase::Connecting;
+        assert!(!port.look(&connecting, || unreachable!("not probed while connecting")));
+        let mut answers = [false, false, true, true].into_iter();
+        let woke: Vec<bool> = (0..4)
+            .map(|_| port.look(&unreachable, || answers.next().unwrap()))
+            .collect();
+        assert_eq!(
+            woke,
+            [false, false, true, false],
+            "a new wait, a port that comes back"
         );
     }
 
