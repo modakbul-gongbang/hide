@@ -252,13 +252,13 @@ Everything Hide owns on a machine is under `~/.hide`:
 
 | Folder | What it holds |
 | --- | --- |
-| `~/.hide/state` | The daemon's state: registered projects, screen layout, labels, phone pairing, the session search index (`session-search.sqlite3`) and the link record (`links.sqlite3`), logs (`HIDE_STATE_DIR` or a set `XDG_STATE_HOME` choose another folder) |
+| `~/.hide/state` | The daemon's state: registered projects, screen layout, labels, phone pairing, the session search index (`session-search.sqlite3`), the link record (`links.sqlite3`) and Project Memory (`project-memory.sqlite3`, which the agent hooks read from the default folder), logs (`HIDE_STATE_DIR` or a set `XDG_STATE_HOME` choose another folder) |
 | `~/.hide/kit` | The kit record and one-release retirement receipt |
 | `~/.hide/agent-hooks` | The hook helper's per-pane counters and last report, the spawn guard's refusal log (`spawn-guard.log`, capped, one older copy) and the lock beside it |
 | `~/.hide/host-helper` | On a device: the `hided` builds that serve it as a node |
 
 Outside it stay only what another program reads at a place it chose: Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, and the `hide` link in `~/.local/bin`.
-macOS's own places (`~/Library/Application Support/hide-desktop`, `~/Library/Application Support/hide` with the AI settings and Project Memory), the Home folder `~/hide`, and the label generator lock beside the Herdr socket are not moved.
+macOS's own places (`~/Library/Application Support/hide-desktop`, `~/Library/Application Support/hide` with the AI settings), the Home folder `~/hide`, and the label generator lock beside the Herdr socket are not moved.
 
 A build from before this layout kept the same files in `~/.local/state/hide`, `~/.local/share/hide`; the retired coordination folders are handled by the stage above.
 The first launch of a newer app moves them once:
@@ -267,7 +267,7 @@ The first launch of a newer app moves them once:
 - `~/.local/state/hide-plugin-upgrade`, `~/.local/share/hide/agent-context-labels`, and then `~/.local/share/hide` if it is empty, are removed; `~/.local/state` and `~/.local/share` stay.
 
 A build that names this machine by its own id rather than `local` converts the state folder once, when its daemon first starts (see [ARCHITECTURE.md](ARCHITECTURE.md#the-cores-node-id)).
-The files it rewrites are copied first to `~/.hide/state/node-migration-backup/<time>/`, the Project Memory under `~/Library/Application Support/hide` among them, except the session search index, which is rebuilt from the session files; `~/.hide/state/node.json` records the machine the folder belongs to.
+The files it rewrites are copied first to `~/.hide/state/node-migration-backup/<time>/`, the Project Memory among them, except the session search index, which is rebuilt from the session files; `~/.hide/state/node.json` records the machine the folder belongs to.
 An older app started on a converted folder reads this Mac's projects as another device's; to go back, stop the daemon and copy the backup's files over the converted ones.
 A state folder whose `node.json` names another machine is not started, nor is one with a store that cannot be converted: the daemon stops, the app's window names the file, and the log records the reason with both machines.
 A Mac whose machine id changed (a new Mac set up from this one, or a reinstall that changes it) reads its own old folder as another machine's; until a core can read another node's state, start it with a fresh state folder and keep the old one.

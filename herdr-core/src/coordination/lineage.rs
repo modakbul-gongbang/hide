@@ -49,7 +49,9 @@ pub(crate) struct Writer {
     completed: mpsc::Receiver<Completion>,
     // Registration identities are append-only. Ending one changes no token
     // identity, so unrelated delivery writes cannot trigger reconciliation.
-    observed_registrations: Option<usize>,
+    // A wake that continues a registration moves it to another pane, which
+    // does: the placement is part of what was reconciled.
+    observed_registrations: Option<(usize, u64)>,
     stopping: Arc<AtomicBool>,
     pending_retry: bool,
 }
@@ -126,12 +128,12 @@ impl Writer {
             && !failed
             && !self.pending_retry
             && self.acknowledged.is_empty()
-            && self.observed_registrations == Some(ledger.agents.len())
+            && self.observed_registrations == Some(placements(ledger))
         {
             return;
         }
         self.pending_retry = false;
-        self.observed_registrations = Some(ledger.agents.len());
+        self.observed_registrations = Some(placements(ledger));
         let patches = plan(ledger, &self.device, agents);
         let current = patches.iter().map(signature).collect::<HashSet<_>>();
         self.in_flight
@@ -184,6 +186,15 @@ impl Drop for Writer {
             let _ = worker.join();
         }
     }
+}
+/// How many registrations the ledger holds and where each one's pane is.
+fn placements(ledger: &Ledger) -> (usize, u64) {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for record in &ledger.agents {
+        (&record.id, &record.pane).hash(&mut hasher);
+    }
+    (ledger.agents.len(), hasher.finish())
 }
 fn signature(patch: &Patch) -> String {
     format!("{}:{:?}", patch.pane, patch.tokens)
@@ -597,6 +608,36 @@ mod tests {
         writer.observe(&ledger, &missing, false, observed);
         assert!(batches.try_recv().is_err());
         assert_eq!(writer.in_flight.len(), 1);
+    }
+    #[test]
+    fn a_registration_that_moves_to_a_woken_pane_has_its_tokens_written_there() {
+        let (mut writer, batches, done, ledger, missing) = writer_fixture();
+        let observed = Instant::now();
+        writer.observe(&ledger, &missing, true, observed);
+        let first = batches.try_recv().unwrap();
+        done.try_send(completion(&first, true, observed)).unwrap();
+        let mut matched = missing.clone();
+        matched[0].tokens = first.patches[0].tokens.clone();
+        writer.observe(&ledger, &matched, true, observed);
+        writer.observe(&ledger, &matched, false, observed);
+        assert!(batches.try_recv().is_err());
+        // The core hands the registration to the pane that woke it. Nothing
+        // else in the ledger changed and no native snapshot is newly
+        // changed, yet the new pane has no tokens.
+        let mut moved = (*ledger).clone();
+        let child = moved.agents.iter_mut().find(|r| r.id == "agent-2").unwrap();
+        child.pane = "w3:p1".into();
+        child.actor.pane_id = "w3:p1".into();
+        let mut woken = agent(child, BTreeMap::new());
+        woken.pane_id = "w3:p1".into();
+        writer.observe(&Arc::new(moved), &[woken], false, observed);
+        let patch = batches.try_recv().unwrap().patches;
+        assert_eq!(patch.len(), 1);
+        assert_eq!(patch[0].pane, "w3:p1");
+        assert_eq!(
+            patch[0].tokens["parent_pane"],
+            Value::String("w1:p1".into())
+        );
     }
     #[test]
     fn a_registered_child_after_unregistered_native_prefix_receives_all_four_tokens() {

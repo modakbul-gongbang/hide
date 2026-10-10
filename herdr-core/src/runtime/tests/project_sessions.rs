@@ -922,3 +922,17 @@ fn real_project_replacement_clears_search_delta_and_rejects_late_old_answer() {
         workspace_id(&f.alpha)
     );
 }
+
+#[test]
+fn the_core_writes_the_memory_store_the_hooks_read_for_the_same_home() {
+    let f = fixture();
+    let shared = shared(&f);
+    let written = {
+        let mut runtime = shared.lock().unwrap();
+        // The state folder a daemon started on this home uses (no override).
+        runtime.state_path = hide_kit::layout::default_state_dir(&f.home).join("core-state.json");
+        runtime.memory_database_path()
+    };
+    // No test override: the hook resolves from the home alone, as installed.
+    assert_eq!(written, hide_agent_hooks::memory::database_path(&f.home));
+}

@@ -1049,6 +1049,10 @@ pub struct Runtime {
     /// store to end; an entry leaves once the published ledger shows it
     /// ended.
     registrations_gone: std::collections::BTreeMap<String, crate::coordination::PaneGone>,
+    /// Registrations a sleeping session's wake continues, for the delivery
+    /// store to point at the woken pane; an entry leaves once the published
+    /// ledger shows the registration moved.
+    registration_rebinds: std::collections::BTreeMap<String, crate::coordination::Rebind>,
     /// The machine this core runs on. Device labels are mutable
     /// presentation, while lineage and every key naming this machine use
     /// this operating-system id.
@@ -1855,6 +1859,7 @@ impl Runtime {
             delivery_connected: HashSet::new(),
             delivery_panes: HashMap::new(),
             registrations_gone: std::collections::BTreeMap::new(),
+            registration_rebinds: std::collections::BTreeMap::new(),
             node: options.node_id.clone(),
             device_machine_ids: HashMap::new(),
             unresolved_machine_lineage: HashSet::new(),

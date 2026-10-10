@@ -22,6 +22,15 @@ pub use store::{
     SessionCursorRecord, SessionSourceRecord, StoreMode,
 };
 
+/// The Memory store's file name inside a state folder.
+pub const DATABASE_FILE: &str = "project-memory.sqlite3";
+
+/// The one place the store's location is spelled: the core writes it and the
+/// hooks read it, each from the state folder it resolves.
+pub fn database_path(state_dir: &std::path::Path) -> std::path::PathBuf {
+    state_dir.join(DATABASE_FILE)
+}
+
 pub const ACTIVE_MEMORY_LIMIT: usize = 10_000;
 pub const MEMORY_BODY_LIMIT_CHARS: usize = 4_000;
 pub const ANALYSIS_INPUT_LIMIT_BYTES: usize = 64 * 1024;

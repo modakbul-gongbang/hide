@@ -102,6 +102,7 @@ This delivery path has its own bounded private diagnostics and does not extend M
 [delivery.md](delivery.md#safe-intake-and-manual-fallback) owns these intake, failure and confirmation rules.
 
 The Memory lookup itself performs no provider or embedding call, transcript scan, child-process launch, or database write.
+It opens the store the core writes, `~/.hide/state/project-memory.sqlite3` ([ARCHITECTURE.md: Project sessions and Memory](ARCHITECTURE.md#project-sessions-and-memory) says why a relocated state folder is not followed), from the home alone; a test that points a hook at another file does so through the testing override, which a production hook ignores.
 Missing, locked, corrupt, stale, over-limit, unresolved-Project, and over-deadline stores return no Memory context and still exit zero.
 The caller-visible deadline is 100 ms from process launch, including stdin collection and SQLite work, and candidate, item, and token counts are hard bounded.
 The helper gives its in-process work 75 ms so process startup, scheduling, stdout flush, and teardown stay inside that caller-visible limit.

@@ -89,6 +89,18 @@ impl DormantPhase {
     }
 }
 
+/// The delivery registration a sleeping session held when its pane closed.
+/// The wake that continues this conversation continues the registration:
+/// the core started the wake, so it knows which registration the new pane
+/// takes over, and nothing is guessed from a name or a session later.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DormantRegistration {
+    pub id: String,
+    /// The execution that held it: the pane, name and native session the
+    /// registration, its letters and its watch address.
+    pub actor: crate::delivery::Actor,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DormantRecord {
     pub phase: DormantPhase,
@@ -123,6 +135,9 @@ pub struct DormantRecord {
     pub transition_started_unix_ms: u64,
     #[serde(default)]
     pub reason: Option<String>,
+    /// The registration the wake continues; none for a session that held none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration: Option<DormantRegistration>,
 }
 
 impl DormantRecord {
@@ -190,6 +205,9 @@ impl DormantRecord {
                 .as_ref()
                 .is_some_and(|value| value.len() > 128)
             || self.reason.as_ref().is_some_and(|value| value.len() > 4096)
+            || self.registration.as_ref().is_some_and(|registration| {
+                !crate::delivery::valid_key(&registration.id) || !registration.actor.valid()
+            })
         {
             return Err("Sleeping-session identity or context is invalid or exceeds its capacity");
         }
@@ -391,47 +409,51 @@ pub struct SleepingSessionSnapshot {
     pub checking: bool,
 }
 
+/// A sleeping record for tests that need one without a runtime.
+#[cfg(test)]
+pub(crate) fn fixture_record(pane: &str) -> DormantRecord {
+    DormantRecord {
+        source_reference: None,
+        phase: DormantPhase::SavingClose,
+        revision: 1,
+        node_id: "fixture-node".into(),
+        connection_generation: 7,
+        old_pane_id: pane.into(),
+        old_state_change_seq: Some(3),
+        kind: "claude".into(),
+        native_session_id: "native-one".into(),
+        label_owner: hide_session::label_reference_token("claude", "id", "native-one").unwrap(),
+        identity_label: "Parser task".into(),
+        cwd: "/fixture/repo".into(),
+        context: ClosedContext {
+            workspace_id: "w1".into(),
+            workspace_label: "Fixture".into(),
+            workspace_ids_before_close: vec!["w1".into()],
+            tab_ids_before_close: vec!["t1".into()],
+            pane_ids_before_close: vec![pane.into()],
+            checkout_id: "checkout".into(),
+            checkout_path: "/fixture/repo".into(),
+            tab_id: "t1".into(),
+            tab_label: "Tab".into(),
+            tab_index: 0,
+            agent_area: None,
+            replacement_shell: false,
+        },
+        close_key: None,
+        closed: false,
+        wake_pane_id: None,
+        wake_tab_id: None,
+        since_unix_ms: 1,
+        transition_started_unix_ms: 1,
+        reason: None,
+        registration: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::fixture_record as record;
     use super::*;
-
-    fn record(pane: &str) -> DormantRecord {
-        DormantRecord {
-            source_reference: None,
-            phase: DormantPhase::SavingClose,
-            revision: 1,
-            node_id: "fixture-node".into(),
-            connection_generation: 7,
-            old_pane_id: pane.into(),
-            old_state_change_seq: Some(3),
-            kind: "claude".into(),
-            native_session_id: "native-one".into(),
-            label_owner: hide_session::label_reference_token("claude", "id", "native-one").unwrap(),
-            identity_label: "Parser task".into(),
-            cwd: "/fixture/repo".into(),
-            context: ClosedContext {
-                workspace_id: "w1".into(),
-                workspace_label: "Fixture".into(),
-                workspace_ids_before_close: vec!["w1".into()],
-                tab_ids_before_close: vec!["t1".into()],
-                pane_ids_before_close: vec![pane.into()],
-                checkout_id: "checkout".into(),
-                checkout_path: "/fixture/repo".into(),
-                tab_id: "t1".into(),
-                tab_label: "Tab".into(),
-                tab_index: 0,
-                agent_area: None,
-                replacement_shell: false,
-            },
-            close_key: None,
-            closed: false,
-            wake_pane_id: None,
-            wake_tab_id: None,
-            since_unix_ms: 1,
-            transition_started_unix_ms: 1,
-            reason: None,
-        }
-    }
 
     #[test]
     fn restored_native_flags_never_become_dormant_resume_authority() {

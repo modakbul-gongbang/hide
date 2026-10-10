@@ -211,6 +211,7 @@ pub(crate) fn start_agent(
         &request.pane_id,
         params,
         Duration::from_millis(AGENT_START_TIMEOUT_MS + 5_000),
+        &|| Ok(()),
     ) {
         Ok(value) => match wire::started_agent(value) {
             Ok(_) => WakeOutcome::Started,
