@@ -566,6 +566,7 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             shortcut_import_path: None,
             local_issues_path: None,
             effects_held: false,
+            machine_name: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
@@ -975,6 +976,7 @@ fn official_remote_session_coordinator_probe() {
             shortcut_import_path: None,
             local_issues_path: None,
             effects_held: false,
+            machine_name: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),

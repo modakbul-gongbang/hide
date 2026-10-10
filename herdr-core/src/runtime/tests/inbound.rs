@@ -96,6 +96,55 @@ fn a_node_s_first_link_registers_it_as_a_device_that_dials_in() {
     drop(release);
 }
 
+/// The core's row names the core's machine, which a window on a node shows
+/// in place of "This Mac", and only a node that dials in says so; a device
+/// the core dials does not (PRD core-host-node-move B2).
+#[test]
+fn the_core_row_names_its_machine_and_only_a_node_row_dials_in() {
+    let shared = shared_runtime();
+    shared.lock().unwrap().machine_name = Some("Mac mini".to_owned());
+    let event = serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "register_device",
+        "payload": {"id": "studio", "label": "studio", "ssh_alias": "studio-host"},
+    });
+    shared
+        .lock()
+        .unwrap()
+        .dispatch_json(&serde_json::to_vec(&event).unwrap());
+    let (link, release) = held_link();
+    shared
+        .lock()
+        .unwrap()
+        .accept_inbound_node(NODE, "MacBook", link)
+        .expect("the link is taken");
+    let runtime = shared.lock().unwrap();
+    let own = runtime.node.as_str().to_owned();
+    let rows = runtime
+        .snapshot()
+        .navigator
+        .devices
+        .iter()
+        .map(|device| {
+            (
+                device.id.clone(),
+                device.machine_name.clone(),
+                device.dials_in,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows,
+        [
+            (own, Some("Mac mini".to_owned()), false),
+            ("studio".to_owned(), None, false),
+            (NODE.to_owned(), None, true),
+        ]
+    );
+    drop(runtime);
+    drop(release);
+}
+
 /// A node is refused when it names this core's own machine, a device this
 /// core dials, or a node whose earlier link still stands (D-10, amendment
 /// 2), and a refusal registers nothing.

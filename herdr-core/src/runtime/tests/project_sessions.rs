@@ -279,7 +279,7 @@ fn a_project_on_a_device_names_the_device_and_reads_no_local_session() {
     let fixture = fixture();
     let shared = shared(&fixture);
     shared.lock().unwrap().snapshot.navigator.devices = vec![
-        workspace::local_device(&crate::node::test_node()),
+        workspace::local_device(&crate::node::test_node(), None),
         DeviceSnapshot {
             id: "ssh-build".to_owned(),
             label: "build-box".to_owned(),
@@ -287,7 +287,7 @@ fn a_project_on_a_device_names_the_device_and_reads_no_local_session() {
             state: "ready".to_owned(),
             message: None,
             problem: None,
-            ..workspace::local_device(&crate::node::test_node())
+            ..workspace::local_device(&crate::node::test_node(), None)
         },
     ];
 

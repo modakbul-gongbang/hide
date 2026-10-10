@@ -927,6 +927,7 @@ impl CoreHandle {
                 shortcut_import_path: None,
                 local_issues_path: None,
                 effects_held: false,
+                machine_name: None,
             },
             Default::default(),
         )

@@ -727,8 +727,11 @@ impl Runtime {
         );
         crate::project_context::sort_projects(&mut workspaces, &projected_agents);
         self.snapshot.navigator.workspaces = workspaces;
-        self.snapshot.navigator.devices =
-            workspace::devices(&self.node, &self.snapshot.ui_state.device_registrations);
+        self.snapshot.navigator.devices = workspace::devices(
+            &self.node,
+            self.machine_name.as_deref(),
+            &self.snapshot.ui_state.device_registrations,
+        );
         self.refresh_device_snapshots();
         // An agent belongs to the device whose project holds its pane. The
         // project label is no longer Herdr's workspace label once a
@@ -5165,8 +5168,11 @@ impl Runtime {
             &self.snapshot.navigator.agents,
         );
         self.snapshot.navigator.workspaces = workspaces;
-        self.snapshot.navigator.devices =
-            workspace::devices(&self.node, &self.snapshot.ui_state.device_registrations);
+        self.snapshot.navigator.devices = workspace::devices(
+            &self.node,
+            self.machine_name.as_deref(),
+            &self.snapshot.ui_state.device_registrations,
+        );
         self.refresh_device_snapshots();
         self.resync_navigator_focus();
     }

@@ -24,8 +24,9 @@ use crate::node::NodeId;
 use crate::node_access::{NodeLink, call_as};
 
 /// The row for the machine the core runs on. Its id is the node id; its
-/// `kind` stays `local`, the role "the core's own machine", not a name.
-pub fn local_device(node: &NodeId) -> DeviceSnapshot {
+/// `kind` stays `local`, the role "the core's own machine", not a name, and
+/// `machine_name` is what that machine calls itself.
+pub fn local_device(node: &NodeId, machine_name: Option<&str>) -> DeviceSnapshot {
     DeviceSnapshot {
         agent_scope: Default::default(),
         id: node.to_string(),
@@ -49,14 +50,20 @@ pub fn local_device(node: &NodeId) -> DeviceSnapshot {
             ..Default::default()
         },
         kit: crate::model::KitSnapshot::default(),
+        machine_name: machine_name.map(str::to_owned),
+        dials_in: false,
     }
 }
 
 /// This Mac, then each device the operator registered. A remote device
 /// starts `unavailable`; `Runtime::refresh_device_snapshots` reads its state
 /// off the remote status once the connection has reported.
-pub fn devices(node: &NodeId, registrations: &[DeviceRegistration]) -> Vec<DeviceSnapshot> {
-    let mut result = vec![local_device(node)];
+pub fn devices(
+    node: &NodeId,
+    machine_name: Option<&str>,
+    registrations: &[DeviceRegistration],
+) -> Vec<DeviceSnapshot> {
+    let mut result = vec![local_device(node, machine_name)];
     let mut seen = HashSet::from([node.to_string()]);
 
     for registration in registrations {
@@ -75,6 +82,8 @@ pub fn devices(node: &NodeId, registrations: &[DeviceRegistration]) -> Vec<Devic
                 test: None,
                 host: crate::model::DeviceHostSnapshot::default(),
                 kit: crate::model::KitSnapshot::default(),
+                machine_name: None,
+                dials_in: registration.origin == crate::model::LinkOrigin::Inbound,
             });
         }
     }

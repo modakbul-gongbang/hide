@@ -1098,6 +1098,7 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
             shortcut_import_path: None,
             local_issues_path: None,
             effects_held: false,
+            machine_name: None,
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),

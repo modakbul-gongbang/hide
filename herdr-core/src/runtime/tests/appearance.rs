@@ -17,6 +17,7 @@ fn runtime_at(path: &std::path::Path) -> Runtime {
             shortcut_import_path: None,
             local_issues_path: None,
             effects_held: false,
+            machine_name: None,
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),

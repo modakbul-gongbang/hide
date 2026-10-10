@@ -421,6 +421,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         // until the move's link commits it (PRD core-host-node-move
         // amendment 3).
         effects_held: !move_gate.is_open(),
+        machine_name: host_name(),
     };
     let effects_held = options.effects_held;
     let boundary = Arc::new(boundary::Boundary::for_node(&env.home, node)?);

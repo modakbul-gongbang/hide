@@ -52,6 +52,11 @@ pub struct CoreOptions {
     /// `Core::release_effects` (`effects.rs`).
     #[serde(default)]
     pub effects_held: bool,
+    /// What the machine this core runs on calls itself, which a window on
+    /// another machine shows for the core's row (PRD core-host-node-move
+    /// B2); absent where the system names none.
+    #[serde(default)]
+    pub machine_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -633,6 +638,14 @@ pub struct DeviceSnapshot {
     /// B7): the same parts, in the same order, on This Mac and on every
     /// device.
     pub kit: KitSnapshot,
+    /// On the core's row only: what its machine calls itself, which a window
+    /// on another machine shows in place of "This Mac" (PRD
+    /// core-host-node-move B2).
+    pub machine_name: Option<String>,
+    /// A node that dials this core, which the core never dials: it has no
+    /// SSH alias, connection test or helper consent here (PRD
+    /// core-host-node-remote-core D-04).
+    pub dials_in: bool,
 }
 
 /// One machine's install kit as Settings shows it (PRD device-parity B7, B8).
@@ -4545,7 +4558,10 @@ impl Snapshot {
                 focused_device_id: None,
                 focused_workspace_id: None,
                 focused_checkout_id: None,
-                devices: vec![crate::workspace::local_device(&options.node_id)],
+                devices: vec![crate::workspace::local_device(
+                    &options.node_id,
+                    options.machine_name.as_deref(),
+                )],
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
                 agents: Vec::new(),

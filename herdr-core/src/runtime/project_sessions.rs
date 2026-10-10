@@ -175,7 +175,7 @@ impl Runtime {
             .iter()
             .find(|device| device.id == self.node.as_str())
             .map(|device| device.label.clone())
-            .unwrap_or_else(|| workspace::local_device(&self.node).label);
+            .unwrap_or_else(|| workspace::local_device(&self.node, None).label);
         format!(
             "Sessions on {device} are not available here. Hide reads Codex and Claude Code sessions only on {here}."
         )

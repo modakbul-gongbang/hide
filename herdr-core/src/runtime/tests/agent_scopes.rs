@@ -101,7 +101,7 @@ fn graph_cross_project_chips_preserve_order_counts_and_stable_device_context() {
         ["Builder", "Spec"]
     );
 
-    let mut remote_device = crate::workspace::local_device(&crate::node::test_node());
+    let mut remote_device = crate::workspace::local_device(&crate::node::test_node(), None);
     remote_device.id = "other-device".into();
     remote_device.label = "mini".into();
     remote_device.kind = "remote".into();
@@ -420,7 +420,7 @@ fn disconnected_devices_zero_the_physical_tile_but_keep_overview_members_from_th
     let mut runtime = runtime();
     runtime.snapshot.navigator.agents.clear();
     runtime.snapshot.navigator.workspaces.clear();
-    let mut device = crate::workspace::local_device(&crate::node::test_node());
+    let mut device = crate::workspace::local_device(&crate::node::test_node(), None);
     device.id = "mini".into();
     device.kind = "remote".into();
     runtime.snapshot.navigator.devices.push(device);

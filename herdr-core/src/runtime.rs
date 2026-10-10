@@ -1067,6 +1067,9 @@ pub struct Runtime {
     /// presentation, while lineage and every key naming this machine use
     /// this operating-system id.
     node: crate::node::NodeId,
+    /// What this machine calls itself (`CoreOptions::machine_name`), on its
+    /// device row.
+    machine_name: Option<String>,
     device_machine_ids: HashMap<String, String>,
     unresolved_machine_lineage: HashSet<String>,
     file_roots: Option<crate::files::FileRoots>,
@@ -1749,8 +1752,11 @@ impl Runtime {
             .shortcut_import_path
             .as_deref()
             .is_some_and(|source| import_native_app_shortcuts(&mut snapshot, Path::new(source)));
-        snapshot.navigator.devices =
-            workspace::devices(&options.node_id, &snapshot.ui_state.device_registrations);
+        snapshot.navigator.devices = workspace::devices(
+            &options.node_id,
+            options.machine_name.as_deref(),
+            &snapshot.ui_state.device_registrations,
+        );
         // This machine's row names the root a device consent would name, so
         // the add form can show it before the first device exists.
         if let Some(local) = snapshot
@@ -1898,6 +1904,7 @@ impl Runtime {
             registrations_gone: std::collections::BTreeMap::new(),
             registration_rebinds: std::collections::BTreeMap::new(),
             node: options.node_id.clone(),
+            machine_name: options.machine_name.clone(),
             device_machine_ids: HashMap::new(),
             unresolved_machine_lineage: HashSet::new(),
             file_roots: None,
