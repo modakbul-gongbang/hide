@@ -147,7 +147,9 @@ A pane id alone does not say that the agent in the pane now is the one the recor
 So each record names, besides its counts, who wrote it (`counters::Record`): the hook version of the helper, the adapter id of the runtime that reported, and the agent's own id of the session, read from the `session_id` of the hook's input when the helper read that input whole.
 Every pane that has reported has a record: an event that changes no count writes it when the pane has none or when it names another version, agent or session.
 An event that changes no count keeps the session the record names for the same agent, and any other event names its own, or none when its input named none.
-Grok, Cursor and the OpenCode and Pi plugins name their agent and no session, because their hook input is not read for one, so their counts are never put back.
+Grok and Cursor name their agent and no session, because their hook input is not read for one.
+The OpenCode and Pi plugins' count calls carry no session id today, so their records name none either (the helper records one it is given, after the same validity check).
+A record that names no session never has its counts put back; the version still is.
 
 The core's restorer (`herdr-core/src/coordination/hook_tokens.rs`) reads the agent list the coordinator already reads each second.
 For each listed agent that carries no `hide_hooks` token and that Hide has an adapter for, it reads that pane's record on a worker thread, under the shared side of the same lock, and sends the report the helper sends (`report::report_params`):
@@ -162,11 +164,15 @@ For each listed agent that carries no `hide_hooks` token and that Hide has an ad
 The version is put back for the same agent because a hook is installed in a runtime's configuration and not in a session.
 The counts are put back only for the same session, and nothing relies on `SessionStart` having reset the record: a session that started after the record was written and before the connection is the case the session id tells apart.
 What the counts can still be is the record's last word for that session: a subagent that ended with no `SubagentStop` reaching the helper still counts as working until the session's next `Stop`, exactly as it did before the loss.
-A record that changed while the report was on its way is sent again, as the helper does, so Herdr ends on the latest count, and the second report drops the counts if the session changed in between.
+A record that changed while the report was on its way is sent again, as the helper does, so Herdr ends on the latest count.
+A report merges token by token, so when the second read finds the counts no longer vouched for (the session changed, or another agent's record replaced the file) the restorer clears the two count tokens with `null` instead of leaving the first report's values on the pane.
 
 What else it does not do:
 
 - A pane that already has its token is left alone, so a live helper's report is never raced.
+- The record sweep (`sweep_subagent_counters`, which drops the records of panes Herdr no longer lists) cannot take a record the restorer is about to read: both work from the same bootstrap snapshot, a pane the restorer asks about is listed in it, and the sweep keeps every listed pane's record.
+  After a server restart the first answer on the socket already lists every restored pane (measured on the pinned Herdr 0.9.3: five panes before a stop, the same five in the first snapshot after it), so a connect cannot see an empty pane list while the session is still being restored.
+  With a hided attached, a stop and start of the private Herdr left the pane's record in place after hided's reconnect.
 - A pane is asked once for each connection to Herdr, because every connect is a bootstrap and a handoff or a restart ends the connection.
   A pane with no record, or one an older helper wrote, is not asked again: the helper's next event reports the token and writes the record in the same step.
 - It covers this machine's panes only.

@@ -154,9 +154,9 @@ test("a pane the hook connected stays connected across a Herdr live handoff with
     runHook(daemon, herdr, pane, "SessionStart");
     runHook(daemon, herdr, pane, "SubagentStart");
     await expect(chip).toHaveCount(0, { timeout: 30_000 });
-    await expect.poll(working, { message: "the snapshot's working count before the handoff", timeout: 20_000 }).toBe(1);
     const before = paneRow(herdr, pane);
     expect(before.tokens).toMatchObject({ hide_sub_working: "1", hide_sub_done: "0" });
+    await expect.poll(working, { message: "the snapshot's working count before the handoff", timeout: 20_000 }).toBe(1);
 
     liveHandoff(herdr);
     // The pane is the same pane in another terminal: Herdr started a new server, and that server took no tokens.
