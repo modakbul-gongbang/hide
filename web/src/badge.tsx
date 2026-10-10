@@ -27,6 +27,7 @@ export function ConnectionBadge({ actions }: { actions: Actions }) {
         </span>
       ) : null}
       <span className="min-w-0 truncate">{strip.text}</span>
+      {strip.action === "reconnect" ? <span aria-hidden="true">·</span> : null}
       {strip.action === "reconnect" ? (
         <Button variant="link" size="sm" className="h-auto shrink-0 p-0 text-caption" data-core-reconnect="true" onClick={() => actions.coreLink("reconnect")}>
           {t("coreMove.reconnect")}

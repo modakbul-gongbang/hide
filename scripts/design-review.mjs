@@ -303,12 +303,13 @@ async function enterState(page, state, target) {
   if (state === 'children') await page.locator('[data-session-chevron], [data-pane-tree]').first().click();
   if (state === 'resolved') await page.locator('[data-session-group=resolved] [data-session-focus=group]').click();
   if (state === 'server-picker') await page.getByRole('button', {name:'Open server', exact:true}).click();
-  // The Factory screen's other views, and the states a target's scene sets up from its address.
+  // The Factory screen's other views, and the states a target's scene sets up from its address;
+  // `ready` names what the scene draws once that state is in place.
   if (['board', 'graph', 'sizes', ...(target.urlStates ?? [])].includes(state)) {
     const url = new URL(page.url());
     url.searchParams.set('state', state);
     await page.goto(url.href);
-    await page.locator('[data-factory-screen]').waitFor();
+    await page.locator(target.ready ?? target.selector).waitFor();
     await page.evaluate(() => document.fonts.ready);
   }
   // The Observer frames that show a disclosure or a menu open.

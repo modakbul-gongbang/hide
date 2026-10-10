@@ -1552,7 +1552,7 @@ When another registered device reaches the same account on that machine, such as
 The page has no per-device agents line, no coordination retirement row and no Codex per pane row: the kit no longer turns Codex's shared daemon off, and a machine's agents are on the Agents tab.
 
 The rows put the window's own machine first, named This Mac, and name the core's machine by the name it gives itself on a window of another machine (PRD core-host-node-move B2, `web/src/screenMachine.ts`).
-The row of the machine that runs the core wears a `core` badge with the hint `core 실행 중`, under the same rule as the rail's crown.
+The row of the machine that runs the core always wears a `core` badge with the hint `core 실행 중`, a one-Mac setup included, unlike the rail's crown (Q11 of the plan; B1 keeps the one-Mac rail unchanged).
 Test and Retry are offered for a device this core dials, never for a machine that dials in, which has no SSH alias here.
 A connected device this core dials offers `core를 이 기기로 옮기기…` in its ⋯ menu, dimmed with `연결 안 됨` while it is not connected; a window of a machine whose core runs elsewhere offers it on no row.
 That window's own row offers instead `core를 이 Mac으로 되돌리기…` and `Mac mini core와 연결 끊기…`, and its menu has no Remove…, since a machine does not remove itself.

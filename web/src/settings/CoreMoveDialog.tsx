@@ -54,11 +54,12 @@ export function askMove(actions: Actions, request: MoveRequest, start: boolean):
   return asked;
 }
 
-const MARK: Record<StepMark, { glyph: string; className: string }> = {
-  done: { glyph: "✓", className: "text-success" },
-  run: { glyph: "…", className: "font-semibold text-foreground" },
-  todo: { glyph: "-", className: "text-muted-foreground" },
-  fail: { glyph: "✕", className: "text-destructive" },
+// A step's line and its mark: only a done step's ✓ is green, its words stay the body's.
+const MARK: Record<StepMark, { glyph: string; line: string; mark: string }> = {
+  done: { glyph: "✓", line: "text-foreground", mark: "text-success" },
+  run: { glyph: "…", line: "font-semibold text-foreground", mark: "text-foreground" },
+  todo: { glyph: "-", line: "text-muted-foreground", mark: "" },
+  fail: { glyph: "✕", line: "text-destructive", mark: "" },
 };
 
 /**
@@ -104,7 +105,8 @@ export function CoreMoveDialog({ request, asked: first, actions, onClose, onRequ
   const peer = back ? machines.from : machines.to;
   return (
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent showCloseButton data-core-move-dialog={form} data-core-move-direction={request.direction}>
+      {/* The move stops the core: no button is the default, whichever form opens (design 6). */}
+      <DialogContent showCloseButton initialFocus="container" data-core-move-dialog={form} data-core-move-direction={request.direction}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {why && (form === "checking" || form === "checks_failed" || form === "confirm") ? <DialogDescription>{why}</DialogDescription> : null}
@@ -141,8 +143,8 @@ export function CoreMoveDialog({ request, asked: first, actions, onClose, onRequ
             <>
               <ol className="space-y-xs" data-core-move-steps="true">
                 {stepMarks(view).map(({ step, mark }) => (
-                  <li key={step} className={cn("flex items-baseline gap-sm text-body", MARK[mark].className)} data-core-move-step={step} data-core-move-mark={mark}>
-                    <span aria-hidden="true" className="w-(--size-icon) shrink-0 text-center">{MARK[mark].glyph}</span>
+                  <li key={step} className={cn("flex items-baseline gap-sm text-body", MARK[mark].line)} data-core-move-step={step} data-core-move-mark={mark}>
+                    <span aria-hidden="true" className={cn("w-(--size-icon) shrink-0 text-center", MARK[mark].mark)}>{MARK[mark].glyph}</span>
                     <span>{t(`coreMove.step.${step}`, values)}</span>
                   </li>
                 ))}
@@ -164,8 +166,10 @@ export function CoreMoveDialog({ request, asked: first, actions, onClose, onRequ
           ) : null}
           {form === "done" ? <p className="text-body text-subtle-foreground">{t("coreMove.rescan", values)}</p> : null}
         </DialogBody>
+        {/* While it moves the dialog only reports; its header's × closes it. */}
+        {form === "moving" ? null : (
         <DialogFooter>
-          {form === "checking" || form === "moving" ? (
+          {form === "checking" ? (
             <Button variant="secondary" onClick={onClose}>{t("common.close")}</Button>
           ) : null}
           {form === "checks_failed" ? (
@@ -207,6 +211,7 @@ export function CoreMoveDialog({ request, asked: first, actions, onClose, onRequ
             </>
           ) : null}
         </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );

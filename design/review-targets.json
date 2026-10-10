@@ -420,7 +420,8 @@
       "Does each 결정 필요 item read as one decision: the sentence, what stopped, the choices with their results and 추천, 다른 답, the default line, and the folded 근거?",
       "Is the warning band on the person's rows the only colour that says whose turn it is, on the 라인, the board and the graph?",
       "Long Korean titles and the long issue number: is a title still recognizable where the row cuts it, and does nothing overlap?"
-    ]
+    ],
+    "ready": "[data-factory-screen]"
   },
   "factory-board": {
     "description": "The Factory board by movement and the one card at three sizes (PRD factory-board-cards): the board window, the graph with small cards, and every kind of card at the small, normal and wide widths.",
@@ -507,7 +508,8 @@
       "Is 멈춤 the one lane to look at, with 나를 기다림 above 다른 걸 기다림, and do the narrow 시작 전 and 완료 lanes read as quiet?",
       "Does the hatched current cell read as stopped at that stage without a word, in Light and Dark?",
       "Long Korean titles and long English identifiers: does each size cut them at its line count without overlap, breaking Korean between words rather than inside one?"
-    ]
+    ],
+    "ready": "[data-factory-screen]"
   },
   "factory-observer": {
     "description": "The Factory with Factory AI as Observer (PRD factory-observer): the settings in each mode, all projects, picking the worker, and the cards the Observer changes. Its 내 차례, paused and quiet Task page frames were replaced by the 라인 and Task page of the factory target (PRD factory-human-loop).",
@@ -668,6 +670,370 @@
       "Do the three mode cards and the table say who answers each kind of decision without reading a paragraph?",
       "With Hide AI off or the day's use full, is it plain that every decision comes to the person?",
       "On the worker pick, is Factory AI's pick and its reason one quiet line under what it explains?"
+    ],
+    "ready": "[data-factory-screen]"
+  },
+  "core-move-devices": {
+    "description": "Settings > Devices with the core's badge and the move's entry, and the move dialog over Settings in its five forms (PRD core-host-node-move B2 to B5, D-06; the operator's flow B).",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-core-move",
+    "scene": "core-move",
+    "selector": "[data-gallery-scene=\"core-move\"]",
+    "measurement": "web/e2e/core-move-geometry.mjs",
+    "ready": "[data-core-move-scene-ready]",
+    "frames": [
+      {
+        "node": "cm-devices-l",
+        "theme": "light",
+        "width": 720,
+        "scale": 1,
+        "content": "reference",
+        "state": "devices",
+        "referenceNode": "PcMBJ"
+      },
+      {
+        "node": "cm-devices-d",
+        "theme": "dark",
+        "width": 720,
+        "scale": 1,
+        "content": "reference",
+        "state": "devices",
+        "referenceNode": "q86Jhk"
+      },
+      {
+        "node": "cm-devices-menu-l",
+        "theme": "light",
+        "width": 760,
+        "scale": 1,
+        "content": "reference",
+        "state": "devices-menu",
+        "referenceNode": "qcXpX"
+      },
+      {
+        "node": "cm-devices-menu-d",
+        "theme": "dark",
+        "width": 760,
+        "scale": 1,
+        "content": "reference",
+        "state": "devices-menu",
+        "referenceNode": "Oik6Z"
+      },
+      {
+        "node": "cm-devices-offline-l",
+        "theme": "light",
+        "width": 760,
+        "scale": 1,
+        "content": "reference",
+        "state": "devices-offline",
+        "referenceNode": "MDhnB"
+      },
+      {
+        "node": "cm-devices-offline-d",
+        "theme": "dark",
+        "width": 760,
+        "scale": 1,
+        "content": "reference",
+        "state": "devices-offline",
+        "referenceNode": "H9Qc8"
+      },
+      {
+        "node": "cm-node-menu-l",
+        "theme": "light",
+        "width": 760,
+        "scale": 1,
+        "content": "reference",
+        "state": "node-menu",
+        "referenceNode": "cj1PK"
+      },
+      {
+        "node": "cm-node-menu-d",
+        "theme": "dark",
+        "width": 760,
+        "scale": 1,
+        "content": "reference",
+        "state": "node-menu",
+        "referenceNode": "F8JC9H"
+      },
+      {
+        "node": "cm-checks-l",
+        "theme": "light",
+        "width": 720,
+        "scale": 1,
+        "content": "reference",
+        "state": "checks-failed",
+        "referenceNode": "hiSo7"
+      },
+      {
+        "node": "cm-checks-d",
+        "theme": "dark",
+        "width": 720,
+        "scale": 1,
+        "content": "reference",
+        "state": "checks-failed",
+        "referenceNode": "ly3e2"
+      },
+      {
+        "node": "cm-confirm-l",
+        "theme": "light",
+        "width": 720,
+        "scale": 1,
+        "content": "reference",
+        "state": "confirm",
+        "referenceNode": "D6Q9N"
+      },
+      {
+        "node": "cm-confirm-d",
+        "theme": "dark",
+        "width": 720,
+        "scale": 1,
+        "content": "reference",
+        "state": "confirm",
+        "referenceNode": "HpEYD"
+      },
+      {
+        "node": "cm-moving-l",
+        "theme": "light",
+        "width": 720,
+        "scale": 1,
+        "content": "reference",
+        "state": "moving",
+        "referenceNode": "Hbdkm"
+      },
+      {
+        "node": "cm-moving-d",
+        "theme": "dark",
+        "width": 720,
+        "scale": 1,
+        "content": "reference",
+        "state": "moving",
+        "referenceNode": "V8VBQO"
+      },
+      {
+        "node": "cm-failed-l",
+        "theme": "light",
+        "width": 720,
+        "scale": 1,
+        "content": "reference",
+        "state": "failed",
+        "referenceNode": "agFf5"
+      },
+      {
+        "node": "cm-failed-d",
+        "theme": "dark",
+        "width": 720,
+        "scale": 1,
+        "content": "reference",
+        "state": "failed",
+        "referenceNode": "i8ETI"
+      },
+      {
+        "node": "cm-done-l",
+        "theme": "light",
+        "width": 720,
+        "scale": 1,
+        "content": "reference",
+        "state": "done",
+        "referenceNode": "NeYDM"
+      },
+      {
+        "node": "cm-done-d",
+        "theme": "dark",
+        "width": 720,
+        "scale": 1,
+        "content": "reference",
+        "state": "done",
+        "referenceNode": "jQBPb"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        720,
+        760
+      ],
+      "contents": [
+        "reference"
+      ],
+      "scales": [
+        1
+      ]
+    },
+    "urlStates": [
+      "devices",
+      "devices-menu",
+      "devices-offline",
+      "node-menu",
+      "checks-failed",
+      "confirm",
+      "moving",
+      "failed",
+      "done"
+    ],
+    "states": {
+      "devices": "This Mac runs the core: its row wears the core badge, Mac mini and build-box are SSH devices this core dials.",
+      "devices-menu": "Mac mini's ⋯ menu open with core를 이 기기로 옮기기… between the helper items and 제거….",
+      "devices-offline": "build-box is not connected: its ⋯ menu shows the move entry dimmed with 연결 안 됨.",
+      "node-menu": "The core runs on Mac mini and this window is the MacBook's: this Mac's ⋯ menu offers 연결 정보…, core를 이 Mac으로 되돌리기… and Mac mini core와 연결 끊기…, and Mac mini's row wears the badge with its hint.",
+      "checks-failed": "The dialog's checks found two things to fix, each with its one command or what to do, and 다시 점검.",
+      "confirm": "Every check passed: what happens, that it can be undone, and Mac mini로 옮기기.",
+      "moving": "The five steps with the current one running.",
+      "failed": "The step that failed, that this Mac's core is unchanged, and Retry.",
+      "done": "Moved: the phone's QR line and 되돌리기."
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Is the core badge on This Mac quiet beside the name, and does the move's entry sit in the ⋯ menu where the bundle puts it?",
+      "Does each dialog form name the reason first and keep one primary action?",
+      "Korean particles after the machine's name (로/으로, 는/은): do they read as Korean reads the name?",
+      "The Dark frames are set against the Light ones: does Dark use the tokens as Light does?"
+    ]
+  },
+  "core-move-window": {
+    "description": "A window whose core runs on another machine: the rail with the core machine's crown (N1) and the strip that names the move, the core's update, an unreachable core and a link the operator ended (PRD core-host-node-move B2, W1 to W3, B10, B16).",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-core-move",
+    "scene": "core-move-window",
+    "selector": "[data-gallery-scene=\"core-move-window\"]",
+    "measurement": "web/e2e/core-move-geometry.mjs",
+    "ready": "[data-core-move-scene-ready]",
+    "frames": [
+      {
+        "node": "cm-rail-node-l",
+        "theme": "light",
+        "width": 488,
+        "scale": 1,
+        "content": "reference",
+        "state": "rail-node",
+        "referenceNode": "UoUyn"
+      },
+      {
+        "node": "cm-rail-node-d",
+        "theme": "dark",
+        "width": 488,
+        "scale": 1,
+        "content": "reference",
+        "state": "rail-node",
+        "referenceNode": "vJVYJ"
+      },
+      {
+        "node": "cm-rail-core-l",
+        "theme": "light",
+        "width": 488,
+        "scale": 1,
+        "content": "reference",
+        "state": "rail-core",
+        "referenceNode": "c5IZ7N"
+      },
+      {
+        "node": "cm-rail-core-d",
+        "theme": "dark",
+        "width": 488,
+        "scale": 1,
+        "content": "reference",
+        "state": "rail-core",
+        "referenceNode": "HzBUP"
+      },
+      {
+        "node": "cm-window-moving-l",
+        "theme": "light",
+        "width": 900,
+        "scale": 1,
+        "content": "reference",
+        "state": "window-moving",
+        "referenceNode": "t73YD"
+      },
+      {
+        "node": "cm-window-moving-d",
+        "theme": "dark",
+        "width": 900,
+        "scale": 1,
+        "content": "reference",
+        "state": "window-moving",
+        "referenceNode": "ot35M"
+      },
+      {
+        "node": "cm-window-updating-l",
+        "theme": "light",
+        "width": 900,
+        "scale": 1,
+        "content": "reference",
+        "state": "window-updating",
+        "referenceNode": "cOo8a"
+      },
+      {
+        "node": "cm-window-updating-d",
+        "theme": "dark",
+        "width": 900,
+        "scale": 1,
+        "content": "reference",
+        "state": "window-updating",
+        "referenceNode": "D7Nud"
+      },
+      {
+        "node": "cm-window-unreachable-l",
+        "theme": "light",
+        "width": 900,
+        "scale": 1,
+        "content": "reference",
+        "state": "window-unreachable",
+        "referenceNode": "pHtrJ"
+      },
+      {
+        "node": "cm-window-unreachable-d",
+        "theme": "dark",
+        "width": 900,
+        "scale": 1,
+        "content": "reference",
+        "state": "window-unreachable",
+        "referenceNode": "Zw6Jt"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        488,
+        900
+      ],
+      "contents": [
+        "reference"
+      ],
+      "scales": [
+        1
+      ]
+    },
+    "urlStates": [
+      "rail-node",
+      "rail-core",
+      "window-moving",
+      "window-updating",
+      "window-unreachable",
+      "window-disconnected"
+    ],
+    "states": {
+      "rail-node": "The MacBook's window, core on Mac mini: This Mac first with the laptop glyph, then Mac mini with the crown in its bottom-left corner and a Needs You mark, then build-box not connected.",
+      "rail-core": "Mac mini's own window: This Mac first wearing the crown, then the MacBook that dials in.",
+      "window-moving": "W1: the strip names the move's step of five while the window takes no input.",
+      "window-updating": "W2: the strip says the core is being updated to this app's build and agents keep running.",
+      "window-unreachable": "W3: the strip says the core cannot be reached and the window reconnects.",
+      "window-disconnected": "B16, drawn by analogy with W3 (not in the approved bundle): the operator ended the link here and the strip offers 다시 연결."
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Is the crown readable at 9 px in the tile's bottom-left notch without fighting the Needs You mark or the ×?",
+      "Does each strip state read in one line in the badge's place, with … for waiting and ! for a problem?",
+      "The disconnected strip has no approved frame: does it read as the same family as W3, with 다시 연결 as the only action?"
     ]
   }
 }
