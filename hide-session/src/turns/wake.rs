@@ -28,9 +28,11 @@ const TASK_STOP: &str = "TaskStop";
 
 /// Whether a call to the tool `name` may return the start of background work:
 /// a shell command that runs on or moves to the background, a monitor, a
-/// launched agent. The result of any other tool is not read for a start.
+/// launched agent (`Task` is the name an older Claude Code gave `Agent`). The
+/// result of any other tool is not read for a start by a record too large to
+/// keep; a record that is kept is read for a start whatever tool wrote it.
 pub(crate) fn starts_work(name: &str) -> bool {
-    matches!(name, "Bash" | "Monitor" | "Agent")
+    matches!(name, "Bash" | "Monitor" | "Agent" | "Task")
 }
 
 /// Whether a call to the tool `name` asks to stop a task.
@@ -441,7 +443,7 @@ mod tests {
 
     #[test]
     fn a_call_to_a_tool_that_can_start_work_names_its_call() {
-        for name in ["Bash", "Monitor", "Agent"] {
+        for name in ["Bash", "Monitor", "Agent", "Task"] {
             assert_eq!(
                 marks(call(name, json!("toolu_1"))),
                 [WakeMark::Call {
@@ -456,6 +458,7 @@ mod tests {
         assert!(marks(call("Read", json!("toolu_1"))).is_empty());
         assert!(marks(call("mcp__x__screenshot", json!("toolu_1"))).is_empty());
         assert_eq!(marks(call("Bash", json!(null))), [WakeMark::Lost]);
+        assert_eq!(marks(call("Bash", json!(""))), [WakeMark::Lost]);
         assert_eq!(
             marks(call("Bash", json!("x".repeat(NATIVE_ID_LIMIT_BYTES + 1)))),
             [WakeMark::Lost]

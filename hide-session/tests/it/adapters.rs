@@ -730,6 +730,9 @@ mod wake_devices {
                 "message": {"role": "user", "content": [{"type": "tool_result", "content": "out\n"}]}}),
             "/message/content/0/content",
         );
+        // An empty id names no call either, whichever half of the pair holds it.
+        let empty_call = oversized(call("Bash", ""), "/message/content/0/input/command");
+        let empty_result = oversized(result_of("", "out\n"), "/message/content/0/content");
         let queued = oversized(
             json!({"type": "attachment", "timestamp": "2026-10-03T01:30:00.000Z",
                 "attachment": {"type": "queued_command", "prompt": "<task-notification>\n<task-id>bg1</task-id>\n<status>killed</status>\n</task-notification>\n"}}),
@@ -743,6 +746,8 @@ mod wake_devices {
                 "the output of a call that can start work",
             ),
             (vec![unpaired], "a result that names no call"),
+            (vec![empty_call], "a call with an empty id"),
+            (vec![empty_result], "a result with an empty id"),
             (vec![stopping], "a TaskStop call"),
             (vec![booting], "a process start"),
         ] {

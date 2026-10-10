@@ -931,7 +931,7 @@ impl LargeRecord {
         let id = frame
             .call
             .as_ref()
-            .filter(|id| id.len() <= NATIVE_ID_LIMIT_BYTES);
+            .filter(|id| !id.is_empty() && id.len() <= NATIVE_ID_LIMIT_BYTES);
         if frame.block_use && frame.block_start {
             match id {
                 Some(id) if self.wake_calls.len() < TOOL_MARK_LIMIT => {

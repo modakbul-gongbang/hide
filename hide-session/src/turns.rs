@@ -410,6 +410,12 @@ impl TurnTracker {
         self.wake_calls.clear();
     }
 
+    /// What is tracked now: the devices and the calls waiting for a result
+    /// share [`WAKE_DEVICE_LIMIT`].
+    fn tracked(&self) -> usize {
+        self.wake.len() + self.wake_calls.len()
+    }
+
     /// A call to wait for the result of. Nothing is waited for before the
     /// process began or after devices were lost: there is none to lose.
     fn open_call(&mut self, call: &str, stop: Option<&String>) {
@@ -419,7 +425,7 @@ impl TurnTracker {
         {
             return;
         }
-        if self.wake_calls.len() >= WAKE_DEVICE_LIMIT {
+        if self.tracked() >= WAKE_DEVICE_LIMIT {
             self.lose_wake(WakeLoss::Capacity);
         } else {
             self.wake_calls.push(WakeCall {
@@ -456,7 +462,7 @@ impl TurnTracker {
                     self.wake_vanished = false;
                     if let Some(known) = self.wake.iter_mut().find(|device| device.id == *id) {
                         known.expires_at_unix_ms = *expires_at_unix_ms;
-                    } else if self.wake.len() >= WAKE_DEVICE_LIMIT {
+                    } else if self.tracked() >= WAKE_DEVICE_LIMIT {
                         self.lose_wake(WakeLoss::Capacity);
                     } else {
                         self.wake.push(WakeDevice {
@@ -946,5 +952,54 @@ mod tests {
             .collect();
         tracker.fold(10, &TurnMark::Wake(calls));
         assert_eq!(tracker.wake_loss(), Some(WakeLoss::Capacity));
+    }
+
+    /// Devices and the calls waiting for a result share one limit, so what is
+    /// kept stays under it whichever of the two fills it.
+    #[test]
+    fn devices_and_open_calls_share_one_limit() {
+        let calls = |count: usize| {
+            (0..count).map(|index| WakeMark::Call {
+                call: format!("c{index}"),
+            })
+        };
+        let devices = |count: usize| (0..count).map(|index| started(&format!("bg{index}")));
+        let loss = |marks: Vec<WakeMark>| {
+            let mut all = vec![WakeMark::Boot];
+            all.extend(marks);
+            wake(&all).wake_loss()
+        };
+        let half = WAKE_DEVICE_LIMIT / 2;
+        // Exactly the limit between them is kept, one more is not, in either order.
+        assert_eq!(
+            loss(
+                calls(half)
+                    .chain(devices(WAKE_DEVICE_LIMIT - half))
+                    .collect()
+            ),
+            None
+        );
+        assert_eq!(
+            loss(
+                devices(WAKE_DEVICE_LIMIT - half)
+                    .chain(calls(half))
+                    .collect()
+            ),
+            None
+        );
+        assert_eq!(
+            loss(calls(20).chain(devices(13)).collect()),
+            Some(WakeLoss::Capacity)
+        );
+        assert_eq!(
+            loss(devices(13).chain(calls(20)).collect()),
+            Some(WakeLoss::Capacity)
+        );
+        // A result frees its call's place before the start it carries takes one.
+        let mut all: Vec<_> = devices(WAKE_DEVICE_LIMIT - 1).collect();
+        all.push(WakeMark::Call { call: "c".into() });
+        all.push(answered("c", StopOutcome::Succeeded));
+        all.push(started("last"));
+        assert_eq!(loss(all), None);
     }
 }
