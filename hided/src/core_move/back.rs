@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 
 use super::answer::StepAnswer;
 use super::driver::Remote;
-use super::journal::{Journal, MoveFailure, Peer};
+use super::journal::{BackPhase, ForwardPhase, Journal, MoveFailure, Peer, Phase};
 
 const EXPORT_VERSION: u32 = 1;
 const EXPORT_CAP: u64 = 16 * 1024 * 1024;
@@ -195,9 +195,7 @@ pub fn kept_registration(state_dir: &Path, device: &str) -> Option<herdr_core::D
 pub fn forward_ids_reversed(previous: Option<&Journal>, peer_node: &str) -> IdTable {
     let mut reversed = IdTable::default();
     let Some(forward) = previous.filter(|journal| {
-        journal.direction == super::journal::Direction::Forward
-            && journal.peer.node == peer_node
-            && journal.phase == super::journal::Phase::Done
+        journal.peer.node == peer_node && journal.phase == Phase::Forward(ForwardPhase::Done)
     }) else {
         return reversed;
     };
@@ -374,7 +372,7 @@ pub fn unplace_here(state_dir: &Path, ai_settings: &Path, journal: &Journal) -> 
     // here is this machine's own.
     if matches!(
         journal.phase,
-        super::journal::Phase::PlacedHere | super::journal::Phase::Retiring
+        Phase::Back(BackPhase::PlacedHere | BackPhase::Retiring)
     ) && !copy::brain_present(state_dir).is_empty()
     {
         copy::unplace(state_dir, &staging, ai_settings).map_err(|refusal| refusal.to_string())?;

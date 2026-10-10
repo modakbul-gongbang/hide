@@ -172,9 +172,9 @@ pub(super) async fn prepare_back(
     };
     let forward_ids = back::forward_ids_reversed(previous.as_ref(), &placement.node);
     let retry = previous.filter(|journal| {
-        journal.direction == Direction::Back
+        journal.phase.direction() == Direction::Back
             && journal.peer.node == placement.node
-            && matches!(journal.phase, Phase::RolledBack { .. })
+            && journal.phase.is_rolled_back()
     });
     let other_move = inspected.handover.as_ref().is_some_and(|handover| {
         handover.state != HandoverState::Retired
@@ -263,8 +263,7 @@ pub(super) async fn prepare_back(
     let intent = retry
         .map(|journal| journal.intent)
         .unwrap_or_else(crate::core_move::new_intent);
-    let mut journal = Journal::new(intent, Direction::Back, peer, change, ids);
-    journal.phase = Phase::Releasing;
+    let journal = Journal::new(intent, Phase::Back(BackPhase::Releasing), peer, change, ids);
     Ok(BackPrepared { journal, remote })
 }
 
@@ -337,7 +336,7 @@ pub(super) async fn back(
             .await;
         }
     }
-    journal.phase = Phase::Released;
+    journal.phase = Phase::Back(BackPhase::Released);
     if let Err(reason) = journal::write(&env.state_dir, &journal) {
         let cause = MoveFailure::Local { reason };
         return back_rollback(env, seat, journal, &remote, screen, MoveStep::Copy, cause).await;
@@ -363,13 +362,13 @@ pub(super) async fn back(
             journal.ids = back::rekey(&state_dir, &journal)?;
             // Recorded first: a placement whose end is not seen is taken
             // back out all the same.
-            journal.phase = Phase::PlacedHere;
+            journal.phase = Phase::Back(BackPhase::PlacedHere);
             journal::write(&state_dir, &journal).map_err(|reason| MoveFailure::Local { reason })?;
             if let Err(not_placed) = back::place_here(&state_dir, &settings, &journal) {
                 // Nothing of the copy is in the folder, so what it holds is
                 // this machine's own and the rollback takes none of it.
                 if not_placed.left.is_empty() {
-                    journal.phase = Phase::Released;
+                    journal.phase = Phase::Back(BackPhase::Released);
                     journal::write(&state_dir, &journal)
                         .map_err(|reason| MoveFailure::Local { reason })?;
                 }
@@ -407,8 +406,8 @@ pub(super) async fn retire_and_commit(
         view.direction = Some(Direction::Back);
         view.intent = Some(journal.intent.clone());
     });
-    if journal.phase != Phase::Retiring {
-        journal.phase = Phase::Retiring;
+    if journal.phase != Phase::Back(BackPhase::Retiring) {
+        journal.phase = Phase::Back(BackPhase::Retiring);
         journal::write(&env.state_dir, &journal)?;
     }
     let retired = wait_on_peer(
@@ -451,7 +450,7 @@ pub(super) async fn retire_and_commit(
             json!({"intent": journal.intent, "reason": reason}),
         );
     }
-    journal.phase = Phase::Done;
+    journal.phase = Phase::Back(BackPhase::Done);
     journal::write(&env.state_dir, &journal)?;
     drop(screen);
     let running = crate::start_core_role(env.clone(), seat.parts()).await?;
@@ -552,10 +551,10 @@ pub(super) async fn back_rollback(
             json!({"intent": journal.intent, "reason": reason}),
         );
     }
-    journal.phase = Phase::RolledBack {
+    journal.phase = Phase::Back(BackPhase::RolledBack {
         failed: step,
         cause: cause.clone(),
-    };
+    });
     journal::write(&env.state_dir, &journal)?;
     drop(screen);
     let node = crate::start_node_role(env.clone(), seat.parts()).await?;

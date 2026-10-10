@@ -20,7 +20,6 @@ const RECORD_CAP: u64 = 4 * 1024 * 1024;
 pub struct Journal {
     pub version: u32,
     pub intent: String,
-    pub direction: Direction,
     /// The other machine, as this one reaches it.
     pub peer: Peer,
     /// The copy's owner change and the ids it maps.
@@ -62,9 +61,20 @@ pub struct Peer {
     pub state_dir: String,
 }
 
+/// Where a move is, in the direction it goes; each direction has only its
+/// own steps.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "direction")]
+pub enum Phase {
+    /// This machine's core goes to the peer.
+    Forward(ForwardPhase),
+    /// The peer's core comes back to this machine.
+    Back(BackPhase),
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "phase")]
-pub enum Phase {
+pub enum ForwardPhase {
     /// The core is stopping or stopped; nothing has left this machine.
     Stopping,
     /// The copy is on the peer and verified.
@@ -78,18 +88,8 @@ pub enum Phase {
     AttachSent,
     /// The peer's core took the link: the move only goes forward.
     Committed,
-    /// A move back: the peer's core may have been asked to stop for it.
-    Releasing,
-    /// A move back: the peer's core stopped for it and its copy is staged
-    /// there; the peer starts no core of its own until it is resumed.
-    Released,
-    /// A move back: the copy is placed in this machine's folder.
-    PlacedHere,
-    /// A move back: the peer may be retiring its core, which is the commit;
-    /// from here only the peer's handover says whether it is.
-    Retiring,
     /// This machine's brain state is set aside and the peer's records are
-    /// cleared; after a move back, this machine's core runs.
+    /// cleared.
     Done,
     /// The move was undone; this machine's core runs on its folder again.
     RolledBack {
@@ -98,21 +98,74 @@ pub enum Phase {
     },
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "phase")]
+pub enum BackPhase {
+    /// The peer's core may have been asked to stop for the move.
+    Releasing,
+    /// The peer's core stopped for the move and its copy is staged there;
+    /// the peer starts no core of its own until it is resumed.
+    Released,
+    /// The copy is placed in this machine's folder.
+    PlacedHere,
+    /// The peer may be retiring its core, which is the commit; from here
+    /// only the peer's handover says whether it is.
+    Retiring,
+    /// The peer's core retired and this machine's core runs.
+    Done,
+    /// The move was undone; the peer's core runs again and this machine is
+    /// its node.
+    RolledBack {
+        failed: MoveStep,
+        cause: MoveFailure,
+    },
+}
+
 impl Phase {
+    pub fn direction(&self) -> Direction {
+        match self {
+            Self::Forward(_) => Direction::Forward,
+            Self::Back(_) => Direction::Back,
+        }
+    }
+
+    pub fn is_rolled_back(&self) -> bool {
+        matches!(
+            self,
+            Self::Forward(ForwardPhase::RolledBack { .. })
+                | Self::Back(BackPhase::RolledBack { .. })
+        )
+    }
+
     /// Whether a start finding this phase must not start a core of its own
     /// before the move is resolved.
     pub fn holds_the_core(&self) -> bool {
-        !matches!(self, Self::Done | Self::RolledBack { .. })
+        !self.is_rolled_back()
+            && !matches!(
+                self,
+                Self::Forward(ForwardPhase::Done) | Self::Back(BackPhase::Done)
+            )
     }
 
     /// The step a move interrupted in this phase was at.
     pub fn step(&self) -> MoveStep {
         match self {
-            Self::Stopping | Self::Releasing => MoveStep::StopCore,
-            Self::Sent | Self::Placed | Self::Released | Self::PlacedHere => MoveStep::Copy,
-            Self::TargetStarted | Self::Retiring => MoveStep::StartTarget,
-            Self::AttachSent | Self::Committed | Self::Done => MoveStep::Reattach,
-            Self::RolledBack { failed, .. } => *failed,
+            Self::Forward(phase) => match phase {
+                ForwardPhase::Stopping => MoveStep::StopCore,
+                ForwardPhase::Sent | ForwardPhase::Placed => MoveStep::Copy,
+                ForwardPhase::TargetStarted => MoveStep::StartTarget,
+                ForwardPhase::AttachSent | ForwardPhase::Committed | ForwardPhase::Done => {
+                    MoveStep::Reattach
+                }
+                ForwardPhase::RolledBack { failed, .. } => *failed,
+            },
+            Self::Back(phase) => match phase {
+                BackPhase::Releasing => MoveStep::StopCore,
+                BackPhase::Released | BackPhase::PlacedHere => MoveStep::Copy,
+                BackPhase::Retiring => MoveStep::StartTarget,
+                BackPhase::Done => MoveStep::Reattach,
+                BackPhase::RolledBack { failed, .. } => *failed,
+            },
         }
     }
 }
@@ -204,9 +257,10 @@ pub fn write(state_dir: &Path, journal: &Journal) -> Result<(), String> {
 }
 
 impl Journal {
+    /// A move starting at `phase`, whose direction it carries.
     pub fn new(
         intent: String,
-        direction: Direction,
+        phase: Phase,
         peer: Peer,
         change: OwnerChange,
         ids: IdTable,
@@ -214,12 +268,38 @@ impl Journal {
         Self {
             version: VERSION,
             intent,
-            direction,
             peer,
             change,
             ids,
-            phase: Phase::Stopping,
+            phase,
             target_lease_until_unix_ms: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A phase is written with its direction beside it, and a phase of one
+    /// direction is not read as the other's.
+    #[test]
+    fn a_phase_reads_back_only_in_its_own_direction() {
+        let phase = Phase::Back(BackPhase::RolledBack {
+            failed: MoveStep::Copy,
+            cause: MoveFailure::Local {
+                reason: "no".to_owned(),
+            },
+        });
+        let written = serde_json::to_value(&phase).unwrap();
+        assert_eq!(written["direction"], "back");
+        assert_eq!(written["phase"], "rolled_back");
+        assert_eq!(serde_json::from_value::<Phase>(written).unwrap(), phase);
+        assert!(
+            serde_json::from_value::<Phase>(
+                serde_json::json!({"direction": "forward", "phase": "retiring"})
+            )
+            .is_err()
+        );
     }
 }

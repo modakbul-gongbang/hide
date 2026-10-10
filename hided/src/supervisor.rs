@@ -18,7 +18,9 @@ use crate::core_move::control::{
 };
 use crate::core_move::driver::{self, Remote, TargetSays};
 use crate::core_move::handover::{self, Handover, HandoverState};
-use crate::core_move::journal::{self, Direction, Journal, MoveFailure, MoveStep, Phase};
+use crate::core_move::journal::{
+    self, BackPhase, Direction, ForwardPhase, Journal, MoveFailure, MoveStep, Phase,
+};
 use crate::core_move::screen::MoveScreen;
 use crate::env::Env;
 use crate::placement::{self, Placement};
@@ -424,7 +426,7 @@ async fn resume(env: &Env, seat: &seat::Seat) -> Result<Option<Role>, String> {
     }
     if let Some(journal) = journal::read(&env.state_dir)?
         && journal.phase.holds_the_core()
-        && journal.direction == Direction::Back
+        && journal.phase.direction() == Direction::Back
     {
         log(
             "move.resumed",
@@ -438,7 +440,7 @@ async fn resume(env: &Env, seat: &seat::Seat) -> Result<Option<Role>, String> {
         })?);
         let screen = MoveScreen::mount(&seat.parts(), env.vite_origin.as_deref());
         let step = journal.phase.step();
-        let role = if journal.phase == Phase::Retiring {
+        let role = if journal.phase == Phase::Back(BackPhase::Retiring) {
             retire_and_commit(env, seat, journal, remote, screen).await?
         } else {
             back_rollback(
@@ -474,12 +476,12 @@ async fn resume_forward(env: &Env, seat: &seat::Seat) -> Result<Role, String> {
             )
         })?);
         return match journal.phase {
-            Phase::Committed => {
+            Phase::Forward(ForwardPhase::Committed) => {
                 let node = crate::start_node_role(env.clone(), seat.parts()).await?;
                 commit(env, &seat.moves, journal, &remote).await;
                 Ok(Role::Node(node))
             }
-            Phase::AttachSent => {
+            Phase::Forward(ForwardPhase::AttachSent) => {
                 let node = crate::start_node_role(env.clone(), seat.parts()).await?;
                 link_outcome(env, seat, journal, remote, node).await
             }
@@ -619,9 +621,8 @@ async fn prepare(
             return Err(failed);
         }
     };
-    let retry = previous.filter(|journal| {
-        journal.peer.device == device && matches!(journal.phase, Phase::RolledBack { .. })
-    });
+    let retry =
+        previous.filter(|journal| journal.peer.device == device && journal.phase.is_rolled_back());
     let home = env.home.clone();
     let (alias, program) = (source.ssh_alias.clone(), source.helper_path.clone());
     let own = build.clone();
@@ -738,7 +739,7 @@ async fn prepare(
         .unwrap_or_else(crate::core_move::new_intent);
     let journal = Journal::new(
         intent,
-        Direction::Forward,
+        Phase::Forward(ForwardPhase::Stopping),
         driver::peer(&source, &inspected),
         change,
         ids,
@@ -847,13 +848,13 @@ fn copy_and_start(
         journal.phase = phase;
         journal::write(state_dir, journal).map_err(|reason| MoveFailure::Local { reason })
     };
-    if let Err(cause) = record(&mut journal, Phase::Sent) {
+    if let Err(cause) = record(&mut journal, Phase::Forward(ForwardPhase::Sent)) {
         return Err((Box::new(journal), MoveStep::Copy, cause));
     }
     // Recorded first: a placement whose answer is lost is undone all the
     // same.
-    if let Err(cause) =
-        record(&mut journal, Phase::Placed).and_then(|()| driver::place(remote, &journal))
+    if let Err(cause) = record(&mut journal, Phase::Forward(ForwardPhase::Placed))
+        .and_then(|()| driver::place(remote, &journal))
     {
         return Err((Box::new(journal), MoveStep::Copy, cause));
     }
@@ -862,7 +863,7 @@ fn copy_and_start(
     // step's bound, and its lease runs a full lease from there.
     let unanswered = driver::STEP_TIMEOUT + handover::PENDING_LEASE + LEASE_MARGIN;
     journal.target_lease_until_unix_ms = Some(now_unix_ms() + unanswered.as_millis() as u64);
-    let lease_left = match record(&mut journal, Phase::TargetStarted)
+    let lease_left = match record(&mut journal, Phase::Forward(ForwardPhase::TargetStarted))
         .and_then(|()| driver::start_target(remote, &journal))
     {
         Ok(lease_left) => lease_left,
@@ -913,7 +914,7 @@ async fn link(
         )
         .await;
     }
-    journal.phase = Phase::AttachSent;
+    journal.phase = Phase::Forward(ForwardPhase::AttachSent);
     if let Err(reason) = journal::write(&env.state_dir, &journal) {
         drop(screen);
         return rollback(
@@ -1039,7 +1040,7 @@ async fn resolve_unlinked(
 /// peer's records of the move are cleared; a step that fails here is done
 /// on the next start, since the journal stays `Committed`.
 async fn commit(env: &Env, moves: &MoveControl, mut journal: Journal, remote: &Arc<Remote>) {
-    journal.phase = Phase::Committed;
+    journal.phase = Phase::Forward(ForwardPhase::Committed);
     if let Err(reason) = journal::write(&env.state_dir, &journal) {
         log(
             "commit.unrecorded",
@@ -1077,7 +1078,7 @@ async fn commit(env: &Env, moves: &MoveControl, mut journal: Journal, remote: &A
     };
     match finished {
         Ok(()) => {
-            journal.phase = Phase::Done;
+            journal.phase = Phase::Forward(ForwardPhase::Done);
             if let Err(reason) = journal::write(&env.state_dir, &journal) {
                 log(
                     "done.unrecorded",
@@ -1127,10 +1128,12 @@ async fn rollback(
     let screen = MoveScreen::mount(&seat.parts(), env.vite_origin.as_deref());
     let placed = matches!(
         journal.phase,
-        Phase::Placed | Phase::TargetStarted | Phase::AttachSent
+        Phase::Forward(
+            ForwardPhase::Placed | ForwardPhase::TargetStarted | ForwardPhase::AttachSent
+        )
     );
     if placed {
-        let attach_sent = journal.phase == Phase::AttachSent;
+        let attach_sent = journal.phase == Phase::Forward(ForwardPhase::AttachSent);
         // Only a core that started holds a lease; a copy placed with no core
         // on it is given back by the next try's checks.
         let lease_until = journal.target_lease_until_unix_ms;
@@ -1190,10 +1193,10 @@ async fn rollback(
             json!({"intent": journal.intent, "reason": reason}),
         );
     }
-    journal.phase = Phase::RolledBack {
+    journal.phase = Phase::Forward(ForwardPhase::RolledBack {
         failed: step,
         cause: cause.clone(),
-    };
+    });
     journal::write(&env.state_dir, &journal)?;
     drop(screen);
     let running = crate::start_core_role(env.clone(), seat.parts()).await?;

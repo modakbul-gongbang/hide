@@ -716,7 +716,7 @@ fn a_source_killed_while_its_core_stops_starts_it_again() -> Result<()> {
         fixture.kill_source()?;
         // What a kill while the core stops leaves: the journal at stopping,
         // written before the stop, and nothing staged or sent.
-        journal["phase"] = json!({"phase": "stopping"});
+        journal["phase"] = json!({"direction": "forward", "phase": "stopping"});
         write_record(&fixture.source.state.join("core-move.json"), &journal)?;
         fixture.start_source()?;
         let journal = fixture.journal_until("rolled_back")?;
@@ -807,7 +807,7 @@ fn a_lost_link_answer_after_the_target_took_the_move_goes_forward() -> Result<()
         // The state a lost answer leaves: the source recorded the link as
         // sent, the target recorded the move as active.
         let intent = journal["intent"].as_str().context("intent")?.to_owned();
-        journal["phase"] = json!({"phase": "attach_sent"});
+        journal["phase"] = json!({"direction": "forward", "phase": "attach_sent"});
         write_record(&fixture.source.state.join("core-move.json"), &journal)?;
         let mut placement = fixture
             .source
@@ -1322,13 +1322,13 @@ fn the_core_moves_back_and_the_window_shows_what_it_showed_before() -> Result<()
         let journal = wait_for("the move back done", || {
             let journal = fixture.source.record("core-move.json")?;
             if let Some(journal) = &journal
-                && journal["direction"] == "back"
+                && journal["phase"]["direction"] == "back"
                 && journal["phase"]["phase"] == "rolled_back"
             {
                 bail!("the move back rolled back: {journal}");
             }
             Ok(journal.filter(|journal| {
-                journal["direction"] == "back" && journal["phase"]["phase"] == "done"
+                journal["phase"]["direction"] == "back" && journal["phase"]["phase"] == "done"
             }))
         })?;
         ensure!(journal["intent"] != forward["intent"], "{journal}");
@@ -1402,10 +1402,9 @@ fn moved_forward(fixture: &Fixture) -> Result<Value> {
 /// The source's move-back journal once it reaches `phase`.
 fn back_journal_until(fixture: &Fixture, phase: &str) -> Result<Value> {
     wait_for(&format!("the move back at {phase}"), || {
-        Ok(fixture
-            .source
-            .record("core-move.json")?
-            .filter(|journal| journal["direction"] == "back" && journal["phase"]["phase"] == phase))
+        Ok(fixture.source.record("core-move.json")?.filter(|journal| {
+            journal["phase"]["direction"] == "back" && journal["phase"]["phase"] == phase
+        }))
     })
 }
 
@@ -1443,7 +1442,7 @@ fn a_failing_move_back_check_changes_nothing() -> Result<()> {
             .source
             .record("core-move.json")?
             .context("journal")?;
-        ensure!(journal["direction"] == "forward", "{journal}");
+        ensure!(journal["phase"]["direction"] == "forward", "{journal}");
         Ok(())
     })();
     finish(fixture, journey)
@@ -1656,7 +1655,7 @@ fn a_driver_killed_after_the_retirement_finishes_the_move_back() -> Result<()> {
         // What a kill between the retirement and its record leaves: the
         // journal at retiring and the placement still naming the core's
         // machine.
-        journal["phase"] = json!({"phase": "retiring"});
+        journal["phase"] = json!({"direction": "back", "phase": "retiring"});
         write_record(&fixture.source.state.join("core-move.json"), &journal)?;
         write_record(
             &fixture.source.state.join("core-placement.json"),
@@ -1688,11 +1687,14 @@ fn a_driver_killed_after_the_retirement_finishes_the_move_back() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// The names in `dir`, without its log folder or a running core's write in
+/// flight (the `.<file>.hide-<pid>-<n>` an atomic replacement renames over
+/// its file).
 fn listing(dir: &std::path::Path) -> Result<Vec<String>> {
     let mut names: Vec<String> = std::fs::read_dir(dir)?
         .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
         .collect::<Result<_>>()?;
-    names.retain(|name| name != "Logs");
+    names.retain(|name| name != "Logs" && !(name.starts_with('.') && name.contains(".hide-")));
     names.sort();
     Ok(names)
 }
