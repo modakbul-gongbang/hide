@@ -914,12 +914,16 @@ int main(int argc, char **argv) {
         if (child == 0) { execl("/bin/sh", "sh", line + 4, NULL); _exit(127); }
         if (child > 0) { int status; waitpid(child, &status, 0); }
         clock_gettime(CLOCK_MONOTONIC, &ended);
-        char timing[8192];
+        /* The test takes the timing file's existence as the command's end, so
+           it appears whole: fopen would show it empty before the write. */
+        char timing[8192], staged[8200];
         snprintf(timing, sizeof timing, "%s.ms", line + 4);
-        FILE *out = fopen(timing, "w");
+        snprintf(staged, sizeof staged, "%s.tmp", timing);
+        FILE *out = fopen(staged, "w");
         if (out) {
           fprintf(out, "%lld", (long long)(ended.tv_sec - started.tv_sec) * 1000LL + (ended.tv_nsec - started.tv_nsec) / 1000000LL);
           fclose(out);
+          rename(staged, timing);
         }
       }
       size = 0;
