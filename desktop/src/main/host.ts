@@ -562,19 +562,34 @@ export class DesktopHost {
 
   private startHealthWatch(): void {
     let misses = 0;
+    // The role the daemon's seat mounts (`/health` instance): a move or an update swaps it on the same port and
+    // token, and the browser gateway this window registered went with the role before (PRD core-host-node-move).
+    let instance: unknown;
     const tick = async () => {
       const current = this.state;
       if (current.kind !== "attached" || this.quitting) return;
       let healthy = false;
       let failure: ReturnType<typeof healthFailure> = null;
+      let mounted: unknown;
       try {
         const answer = await fetch(`${current.origin}/health`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
         healthy = answer.ok;
-        if (healthy) failure = healthFailure(await answer.json().catch(() => null));
+        if (healthy) {
+          const health: unknown = await answer.json().catch(() => null);
+          failure = healthFailure(health);
+          mounted = (health as { instance?: unknown } | null)?.instance;
+        }
       } catch {
         healthy = false;
       }
       if (this.state !== current) return;
+      if (mounted !== undefined) {
+        if (instance !== undefined && mounted !== instance) {
+          this.log.event("daemon.role_changed", { port: current.port });
+          this.browserControlChanged();
+        }
+        instance = mounted;
+      }
       // A node whose core is newer than this app, or whose update of its core failed, leaves its shell for the
       // status page; Retry is the next connection, with its one attempt (PRD core-host-node-move B10, B20).
       if (failure) return this.fail(this.attempts, failure.reason, "the node's core link", { builds: failure.builds });
