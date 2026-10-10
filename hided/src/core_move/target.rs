@@ -242,6 +242,14 @@ fn abort(state_dir: &Path, intent: &str) -> Result<Value, Value> {
     CoreStarter::for_account(&home)
         .and_then(|starter| starter.stop(state_dir))
         .map_err(plain)?;
+    // A core still starting holds no record yet, but it holds the instance
+    // lock; holding it here keeps one from starting on the copy while it is
+    // taken back.
+    let _instance = crate::state_file::acquire_lock(state_dir).map_err(|error| {
+        plain(format!(
+            "a core of this folder is still starting or running: {error}"
+        ))
+    })?;
     copy::unplace(state_dir, &incoming(state_dir, intent)).map_err(refusal)?;
     held.remove().map_err(plain)?;
     Ok(json!({"state": "aborted"}))

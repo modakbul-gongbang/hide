@@ -217,8 +217,22 @@ impl Fixture {
             "register_device",
             json!({"id": ALIAS, "label": "Target fixture", "ssh_alias": ALIAS, "herdr_socket_path": target_socket, "host_consent": true}),
         )?;
+        fixture.device_ready()?;
+        fixture.event(
+            "create_workspace",
+            json!({"device_id": ALIAS, "path": fixture.target.project(), "label": "Target fixture", "initialize_git": false}),
+        )?;
+        wait_for("both machines' projects registered", || {
+            let projects = fixture.projects()?;
+            Ok((projects.len() == 2).then_some(()))
+        })?;
+        Ok(fixture)
+    }
+
+    /// Waits until the source's core holds a ready link to the target.
+    pub fn device_ready(&self) -> Result<()> {
         wait_for("the target's helper ready", || {
-            let snapshot = fixture.snapshot()?;
+            let snapshot = self.snapshot()?;
             let host = snapshot
                 .pointer("/navigator/devices")
                 .and_then(Value::as_array)
@@ -236,16 +250,7 @@ impl Fixture {
             Ok(host
                 .is_some_and(|host| host["state"] == "ready")
                 .then_some(()))
-        })?;
-        fixture.event(
-            "create_workspace",
-            json!({"device_id": ALIAS, "path": fixture.target.project(), "label": "Target fixture", "initialize_git": false}),
-        )?;
-        wait_for("both machines' projects registered", || {
-            let projects = fixture.projects()?;
-            Ok((projects.len() == 2).then_some(()))
-        })?;
-        Ok(fixture)
+        })
     }
 
     /// Starts the source machine's hided, which runs its core.
@@ -331,6 +336,40 @@ impl Fixture {
                 bail!("the move rolled back: {journal}");
             }
             Ok(journal.filter(|journal| journal["phase"]["phase"] == phase))
+        })
+    }
+
+    /// Ends the source's hided at once, as a crash or a power cut would.
+    pub fn kill_source(&mut self) -> Result<()> {
+        let mut daemon = self
+            .daemon
+            .take()
+            .context("the source's hided is not running")?;
+        daemon.kill_tree()?;
+        wait_for("the source's hided confirmed exit", || {
+            Ok(daemon.try_wait()?.map(|_| ()))
+        })
+    }
+
+    /// The role the source's window reaches: `core`, `node` or `moving`.
+    pub fn role(&self) -> Result<String> {
+        Ok(self.health()?["role"]
+            .as_str()
+            .context("health role")?
+            .to_owned())
+    }
+
+    /// Waits until `machine`'s core logs a record of `kind`, and answers it.
+    pub fn logged(&self, machine: &Machine, kind: &str) -> Result<Value> {
+        let path = machine.state.join("Logs/core.jsonl");
+        wait_for(&format!("a {kind} record"), || {
+            let Ok(bytes) = read(&path) else {
+                return Ok(None);
+            };
+            Ok(String::from_utf8_lossy(&bytes)
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .find(|record| record["kind"] == kind))
         })
     }
 

@@ -91,6 +91,17 @@ impl Phase {
     pub fn holds_the_core(&self) -> bool {
         !matches!(self, Self::Done | Self::RolledBack { .. })
     }
+
+    /// The step a move interrupted in this phase was at.
+    pub fn step(&self) -> MoveStep {
+        match self {
+            Self::Stopping => MoveStep::StopCore,
+            Self::Sent | Self::Placed => MoveStep::Copy,
+            Self::TargetStarted => MoveStep::StartTarget,
+            Self::AttachSent | Self::Committed | Self::Done => MoveStep::Reattach,
+            Self::RolledBack { failed, .. } => *failed,
+        }
+    }
 }
 
 /// The five steps the move's window names.
@@ -123,8 +134,8 @@ pub enum MoveFailure {
     Load { file: String, reason: String },
     /// The peer refused a step.
     Refused { step: String, reason: String },
-    /// The peer's core did not start or take links in time.
-    StartTimeout { reason: String },
+    /// The peer's core exited at its start or did not take links in time.
+    NotStarted { reason: String },
     /// The peer's core refused this machine's first link.
     LinkRefused { reason: String },
     /// Something on this machine failed.

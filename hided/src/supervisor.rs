@@ -43,6 +43,14 @@ pub async fn run(env: Env) -> Result<(), String> {
         return Err(error);
     }
     let lock = state_file::acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
+    // The process's records go beside its state from its start, so a move
+    // resumed before any role runs is logged where its roles log.
+    if let Err(error) = herdr_core::diagnostics::install(&env.state_dir.join("core-state.json")) {
+        eprintln!(
+            "{}",
+            json!({"kind": "diagnostics.open_failed", "message": error.to_string()})
+        );
+    }
     let seat = seat::Seat::serve(server::bind(env.bind).await?, state_file::new_token())?;
     let mut requests = seat
         .moves
@@ -241,12 +249,13 @@ async fn resume(env: &Env, seat: &seat::Seat) -> Result<Role, String> {
                 link_outcome(env, seat, journal, remote, node).await
             }
             _ => {
+                let step = journal.phase.step();
                 rollback(
                     env,
                     seat,
                     journal,
                     &remote,
-                    MoveStep::Copy,
+                    step,
                     MoveFailure::Local {
                         reason: "the move was interrupted".to_owned(),
                     },

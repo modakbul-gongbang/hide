@@ -330,10 +330,20 @@ pub fn send(
     let total = manifest.total_bytes();
     let sent = std::sync::atomic::AtomicU64::new(0);
     let mut wanted = differing(remote, journal)?;
+    let held = manifest.files.len() - wanted.len();
+    let mut uploaded: Vec<String> = Vec::new();
     for attempt in 0..2 {
         if wanted.is_empty() {
+            herdr_core::diagnostic!(json!({
+                "component": "core_move",
+                "kind": "copy.sent",
+                "intent": journal.intent,
+                "held": held,
+                "uploaded": uploaded,
+            }));
             return Ok(());
         }
+        uploaded.extend(wanted.iter().cloned());
         let files: Vec<FileUpload> = wanted
             .iter()
             .map(|path| FileUpload {
@@ -409,7 +419,7 @@ pub fn start_target(remote: &Remote, journal: &Journal) -> Result<(), MoveFailur
         .step("start", &[("intent", &journal.intent)])
         .map(|_| ())
         .map_err(|failure| match failure {
-            MoveFailure::Refused { reason, .. } => MoveFailure::StartTimeout { reason },
+            MoveFailure::Refused { reason, .. } => MoveFailure::NotStarted { reason },
             other => other,
         })
 }

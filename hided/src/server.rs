@@ -437,6 +437,7 @@ fn idle_remaining_secs(state: &AppState) -> Option<u64> {
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     axum::Json(json!({
         "pid": std::process::id(),
+        "role": "core",
         "version": state.version,
         "build": state.build.as_deref(),
         "schema_version": SCHEMA_VERSION,

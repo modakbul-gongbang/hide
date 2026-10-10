@@ -48,6 +48,7 @@ impl CoreStarter {
     /// Starts the core on `state_dir` and waits until it takes links.
     pub fn start(&self, state_dir: &Path) -> Result<u32, String> {
         let stale = std::fs::read(crate::attach::attach_record(state_dir)).ok();
+        let mut exited: Box<dyn FnMut() -> Option<String>> = Box::new(|| None);
         match self {
             Self::Fixture { program } => {
                 let log = log_file(state_dir)?;
@@ -59,13 +60,20 @@ impl CoreStarter {
                     .stdin(std::process::Stdio::null())
                     .stdout(log.try_clone().map_err(|error| error.to_string())?)
                     .stderr(log);
-                command
+                let mut child = command
                     .spawn()
                     .map_err(|error| format!("the core did not start: {error}"))?;
+                exited = Box::new(move || {
+                    child
+                        .try_wait()
+                        .ok()
+                        .flatten()
+                        .map(|status| format!("the core exited at its start: {status}"))
+                });
             }
             Self::LoginItem { home } => crate::login_item::start(home, state_dir)?,
         }
-        wait_for_core(state_dir, stale.as_deref())
+        wait_for_core(state_dir, stale.as_deref(), &mut *exited)
     }
 
     /// Stops the core on `state_dir` and removes its starter, and answers
@@ -94,13 +102,21 @@ fn log_file(state_dir: &Path) -> Result<std::fs::File, String> {
 }
 
 /// Waits until the core in `state_dir` records an attach socket other than
-/// `stale` and answers on it, and answers its pid.
+/// `stale` and answers on it, and answers its pid; `exited` names a core
+/// that ended before that.
 // Another process's start and end announce nothing to this one: its pid and
 // its records are read until they say so.
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn wait_for_core(state_dir: &Path, stale: Option<&[u8]>) -> Result<u32, String> {
+fn wait_for_core(
+    state_dir: &Path,
+    stale: Option<&[u8]>,
+    exited: &mut dyn FnMut() -> Option<String>,
+) -> Result<u32, String> {
     let deadline = Instant::now() + STARTED_WITHIN;
     loop {
+        if let Some(exit) = exited() {
+            return Err(exit);
+        }
         let record = std::fs::read(crate::attach::attach_record(state_dir)).ok();
         if record.is_some()
             && record.as_deref() != stale

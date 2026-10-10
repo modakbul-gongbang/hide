@@ -201,9 +201,11 @@ pub fn check_loadable(dir: &Path) -> Result<(), Refusal> {
                 return Err(refuse(&path, "is not a JSON object"));
             }
         } else if name.ends_with(".sqlite3") {
+            // Immutable, so the check writes no log or index beside a copy
+            // whose files must stay as they were sent.
             let connection = rusqlite::Connection::open_with_flags(
-                &path,
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                immutable_uri(&path),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
             )
             .map_err(|error| refuse(&path, error))?;
             let answer: String = connection
@@ -220,18 +222,48 @@ pub fn check_loadable(dir: &Path) -> Result<(), Refusal> {
     Ok(())
 }
 
+/// `path` as an SQLite URI that opens it immutable.
+fn immutable_uri(path: &Path) -> String {
+    let mut uri = String::from("file:");
+    for byte in path.to_string_lossy().bytes() {
+        match byte {
+            b'%' | b'?' | b'#' => uri.push_str(&format!("%{byte:02X}")),
+            _ => uri.push(char::from(byte)),
+        }
+    }
+    uri.push_str("?immutable=1");
+    uri
+}
+
+/// A store's write-ahead log and index, which SQLite replays into a store
+/// of the same name.
+fn sidecars(name: &str) -> impl Iterator<Item = String> + '_ {
+    let store = name.ends_with(".sqlite3");
+    ["-wal", "-shm"]
+        .into_iter()
+        .filter(move |_| store)
+        .map(move |suffix| format!("{name}{suffix}"))
+}
+
 /// The brain stores `state_dir` already holds, which a move never replaces
-/// or merges (PRD core-host-node-move Q6).
+/// or merges (PRD core-host-node-move Q6); a store's log counts, since it
+/// would replay into the store placed beside it.
 pub fn brain_present(state_dir: &Path) -> Vec<String> {
     MOVES_WITH_CORE
         .iter()
         .chain(super::REBUILT_AFTER_MOVE)
-        .filter(|name| {
-            !matches!(**name, "mobile.json" | "phones.json")
-                && std::fs::symlink_metadata(state_dir.join(name)).is_ok()
-        })
-        .map(|name| (*name).to_owned())
+        .filter(|name| !matches!(**name, "mobile.json" | "phones.json"))
+        .flat_map(|name| std::iter::once((*name).to_owned()).chain(sidecars(name)))
+        .filter(|name| std::fs::symlink_metadata(state_dir.join(name)).is_ok())
         .collect()
+}
+
+fn remove_if_present(path: &Path) -> Result<(), Refusal> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(refuse(path, error)),
+    }
 }
 
 /// Moves the copy at `incoming` into `state_dir`, `node.json` last, and
@@ -293,13 +325,8 @@ pub fn unplace(state_dir: &Path, incoming: &Path) -> Result<Vec<String>, Refusal
         moved.push(MARKER_FILE.to_owned());
     }
     for name in super::REBUILT_AFTER_MOVE {
-        for suffix in ["", "-wal", "-shm"] {
-            let path = state_dir.join(format!("{name}{suffix}"));
-            match std::fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(refuse(&path, error)),
-            }
+        for file in std::iter::once((*name).to_owned()).chain(sidecars(name)) {
+            remove_if_present(&state_dir.join(file))?;
         }
     }
     Ok(moved)
@@ -318,11 +345,14 @@ fn unplace_one(state_dir: &Path, incoming: &Path, name: &str) -> Result<bool, Re
         Ok(_) => std::fs::remove_file(&to).map_err(|error| refuse(&to, error))?,
         Err(_) => {}
     }
+    // The copy goes back as it was sent: a log the core started on it left
+    // holds that core's writes, and one beside the copy a reader's.
+    for sidecar in sidecars(name) {
+        remove_if_present(&to.with_file_name(&sidecar))?;
+    }
     std::fs::rename(&from, &to).map_err(|error| refuse(&from, error))?;
-    // A store's log beside it is folded in when its connection closed; one
-    // left behind belongs to the copy that went back.
-    for suffix in ["-wal", "-shm"] {
-        let _ = std::fs::remove_file(state_dir.join(format!("{name}{suffix}")));
+    for sidecar in sidecars(name) {
+        remove_if_present(&state_dir.join(sidecar))?;
     }
     Ok(true)
 }
@@ -436,6 +466,50 @@ mod tests {
             check_loadable(&staging).unwrap_err().file,
             staging.join("links.sqlite3")
         );
+    }
+
+    #[test]
+    fn the_load_check_leaves_the_copy_as_it_was_sent() {
+        let source = folder();
+        let staging = source.path().join("move-staging/i1");
+        stage(source.path(), &staging).unwrap();
+        // The owner change opens the copied store as the core does, which
+        // leaves it in WAL mode.
+        rusqlite::Connection::open(staging.join("links.sqlite3"))
+            .unwrap()
+            .execute_batch("PRAGMA journal_mode=WAL;")
+            .unwrap();
+        let manifest = digest(&staging).unwrap();
+        let names = |dir: &Path| {
+            let mut names: Vec<_> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            names.sort();
+            names
+        };
+        let before = names(&staging);
+        check_loadable(&staging).unwrap();
+        assert_eq!(names(&staging), before);
+        assert_eq!(digest(&staging).unwrap(), manifest);
+    }
+
+    #[test]
+    fn a_database_log_without_its_store_is_brain_state_and_never_returns_with_a_copy() {
+        let source = folder();
+        let staging = source.path().join("move-staging/i1");
+        stage(source.path(), &staging).unwrap();
+        let target = tempfile::tempdir().unwrap();
+        std::fs::write(target.path().join("links.sqlite3-wal"), "stale").unwrap();
+        assert_eq!(brain_present(target.path()), vec!["links.sqlite3-wal"]);
+        std::fs::remove_file(target.path().join("links.sqlite3-wal")).unwrap();
+        place(&staging, target.path()).unwrap();
+        // The core started on the copy opened its stores.
+        std::fs::write(target.path().join("links.sqlite3-wal"), "pending").unwrap();
+        std::fs::write(staging.join("links.sqlite3-shm"), "a reader's").unwrap();
+        unplace(target.path(), &staging).unwrap();
+        assert!(brain_present(target.path()).is_empty());
+        assert!(!staging.join("links.sqlite3-shm").exists());
     }
 
     #[test]
