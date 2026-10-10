@@ -288,6 +288,55 @@ fn a_lost_link_answer_after_the_target_took_the_move_goes_forward() -> Result<()
     finish(fixture, journey)
 }
 
+/// The new core refuses this machine's first link (here it cannot record
+/// the commit while another change holds its record): this machine runs no
+/// core until that machine's pending core is stopped and its copy taken
+/// back, then starts its own unchanged.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_refused_first_link_rolls_back() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = visible(&fixture)?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        wait_for("the copy placed on the target", || {
+            Ok(fixture
+                .target
+                .record("core-handover.json")?
+                .filter(|record| record["state"]["state"] == "pending"))
+        })?;
+        let held = fixture.hold_target_handover()?;
+        let refused = fixture.logged(&fixture.target, "attach.refused")?;
+        ensure!(
+            refused["node"] == SOURCE_NODE && refused["reason"] == "move_unavailable",
+            "{refused}"
+        );
+        fixture.logged(&fixture.source, "abort.failed")?;
+        // Never two cores: the target's core may still take a link, so
+        // this machine runs none.
+        ensure!(fixture.role()? == "moving");
+        let pending = fixture.target_core()?.context("the target's pending core")?;
+        drop(held);
+        let journal = fixture.journal_until("rolled_back")?;
+        ensure!(journal["phase"]["failed"] == "reattach", "{journal}");
+        ensure!(
+            journal["phase"]["cause"]["kind"] == "link_refused",
+            "{journal}"
+        );
+        wait_for("the source's core again", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        ensure!(!hide_platform::process::is_alive(pending));
+        ensure!(fixture.target_core()?.is_none());
+        ensure!(visible(&fixture)? == before, "the window changed");
+        ensure!(!fixture.source.state.join("core-placement.json").exists());
+        ensure!(!fixture.target.state.join("core-state.json").exists());
+        ensure!(fixture.target.record("core-handover.json")?.is_none());
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// B6: from the node's window the core comes back to its machine; the
 /// window keeps its address and shows what it showed before the core left,
 /// and the other machine is a device again with no core of its own.
@@ -529,6 +578,63 @@ fn a_source_unreachable_after_its_stop_is_waited_for() -> Result<()> {
         wait_for("the projects through the restarted core", || {
             Ok((fixture.projects()?.len() == 2).then_some(()))
         })?;
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// This machine was killed after the core's machine retired its core,
+/// before it recorded the move back done: at its next start it finishes
+/// the move and runs the core. The retired machine's hided, started again
+/// as its login item would, ends at once and successfully, so keep-alive
+/// does not restart it, and starts no core.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_driver_killed_after_the_retirement_finishes_the_move_back() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = visible(&fixture)?;
+        moved_forward(&fixture)?;
+        let placement = fixture
+            .source
+            .record("core-placement.json")?
+            .context("placement")?;
+        fixture.event("core_move", json!({"action": "back"}))?;
+        let mut journal = back_journal_until(&fixture, "done")?;
+        wait_for("this machine's core", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        fixture.kill_source()?;
+        // What a kill between the retirement and its record leaves: the
+        // journal at retiring and the placement still naming the core's
+        // machine.
+        journal["phase"] = json!({"phase": "retiring"});
+        write_record(&fixture.source.state.join("core-move.json"), &journal)?;
+        write_record(
+            &fixture.source.state.join("core-placement.json"),
+            &placement,
+        )?;
+        fixture.start_source()?;
+        back_journal_until(&fixture, "done")?;
+        fixture.logged(&fixture.source, "move.resumed")?;
+        wait_for("this machine's core", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        ensure!(!fixture.source.state.join("core-placement.json").exists());
+        ensure!(fixture.target_core()?.is_none());
+
+        let ended = fixture.start_target_hided()?;
+        ensure!(ended.success(), "the retired machine's hided: {ended}");
+        fixture.logged(&fixture.target, "start.held")?;
+        ensure!(fixture.target_core()?.is_none(), "a retired core started");
+        ensure!(!fixture.target.state.join("core-state.json").exists());
+
+        fixture.device_ready()?;
+        let after = wait_for("the projects of both machines again", || {
+            let now = visible(&fixture)?;
+            Ok((now["projects"].as_array().map(Vec::len) == Some(2)).then_some(now))
+        })?;
+        ensure!(after == before, "before: {before}\nafter: {after}");
         Ok(())
     })();
     finish(fixture, journey)

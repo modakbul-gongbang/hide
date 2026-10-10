@@ -381,6 +381,44 @@ impl Fixture {
         }))
     }
 
+    /// Holds the target's handover record lock, as another change of it
+    /// would: every step and core that changes the record waits for it.
+    pub fn hold_target_handover(&self) -> Result<hide_platform::fs::lock::Lock> {
+        let file = hide_platform::fs::private::open_or_create_file(
+            &self.target.state.join("core-handover.lock"),
+        )?;
+        match hide_platform::fs::lock::lock_file(
+            file,
+            hide_platform::fs::lock::Mode::Exclusive,
+            std::time::Duration::from_secs(5),
+            &|| false,
+        )? {
+            hide_platform::fs::lock::Waited::Locked(lock) => Ok(lock),
+            _ => bail!("the target's handover lock stayed held"),
+        }
+    }
+
+    /// Runs the target's hided as its login item would after a login or a
+    /// keep-alive restart, and answers how it ended.
+    pub fn start_target_hided(&self) -> Result<std::process::ExitStatus> {
+        let log = File::options()
+            .create(true)
+            .append(true)
+            .open(self.root.join("target-hided.log"))?;
+        let mut command = self
+            .target
+            .herdr
+            .environment
+            .command(self.cli.join("hided"));
+        command
+            .arg("core-login")
+            .stdin(Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log);
+        let mut child = OwnedChild::spawn(&mut command)?;
+        wait_for("the target's hided ended", || Ok(child.try_wait()?))
+    }
+
     /// The core logged on `machine`, for a failure's message.
     pub fn log_tail(&self, machine: &Machine) -> String {
         let path = machine.state.join("Logs/core.jsonl");
