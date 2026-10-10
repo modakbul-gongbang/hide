@@ -1,7 +1,8 @@
 // The Sessions panel and pane header (PRD agent-hierarchy-screens D-14 to
 // D-24, D-37 to D-43; the approved Pen round 2, D-44). Controls are refs of the
 // existing System masters supplied by pen-screens, and the verb, descendant
-// mark and tree button are refs of Component / Agent tree parts.
+// mark, tree button and PR mark are refs of Component / Agent tree parts.
+import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
 export function sessionScreens(tokens, {frame, text, icon, themedXref, screenButton, screenBadge, screenIconButton}) {
   const caption = (id, value, fill = '$--muted-foreground', extra = {}) => text(id, value, {size:'$--text-caption', fill, ...extra});
   const verb = (id, word) => themedXref(id, 'ath-verb', word, {}, {'ath-verb-t': {content: word}});
@@ -10,16 +11,14 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     'ath-mark-n': {content: String(count), fill: kind === 'raised' ? '$--warning' : '$--agent-working'},
   });
   const provider = (id, kind = 'claude') => frame(id, 'Provider', {width:14,height:14,fill:{type:'image',enabled:true,url:`../web/src/assets/agent-${kind}.png`,mode:'contain'}}, []);
-  // The PR chip: one PR is its number and state glyph; several are `PR n` with the worst glyph and its count (B22).
-  const GLYPH = {failed:['×','$--destructive'], pending:['◷','$--muted-foreground'], mergeable:['✓','$--success'], merged:['⇥','$--pr-merged']};
-  const prChip = (id, {number, state, count, worst}) => frame(id, 'PR chip', {layout:'horizontal',gap:2,alignItems:'center',height:16,padding:[0,4],cornerRadius:'$--radius-xs',stroke:'$--border',strokeWidth:1,strokeAlignment:'inner'}, [
-    caption(`${id}-n`, count ? `PR ${count}` : `#${number}`, '$--subtle-foreground', {mono:true}),
-    caption(`${id}-g`, GLYPH[state][0], GLYPH[state][1], {mono:true,weight:'600'}),
-    ...(count ? [caption(`${id}-c`, String(worst), GLYPH[state][1], {mono:true})] : []),
-  ]);
+  // The PR mark (web/src/components/pr-mark.tsx), a ref of Component / Agent tree parts: the state's icon and colour, the number, and `+N` for several (B22).
+  const prChip = (id, {number, state, more = 0}) => {
+    const [, glyph, fill] = PR_STATES.find(([key]) => key === state);
+    return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: `#${number}`}, 'ath-pr-more': more ? {enabled: true, content: `+${more}`} : {enabled: false}});
+  };
   const chevron = (id, open) => frame(id, 'Chevron lane', {width:16,height:20,layout:'horizontal',justifyContent:'center',alignItems:'center'}, open === null ? [] : [icon(`${id}-g`, open ? 'chevron-down' : 'chevron-right', {size:12,fill:'$--muted-foreground'})]);
 
-  // A Sessions row (B30, B31): mark, provider, title, own PR chip, the folded
+  // A Sessions row (B30, B31): mark, provider, title, own PR mark, the folded
   // descendant mark and the age; the second line is the ask for Needs You and
   // otherwise the label line, absent when there is none. A child row steps one
   // indent per level down to the third (`rails` says which ancestor levels run
@@ -157,7 +156,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       labeled('root','Root pane, a descendant raised: band with 외 1건 (B4, B6)',[pane(`${id}-root`,{mark:'!',tone:'$--warning',provider:'claude',title:'hide 에이전트 지원 PR 묶음 머지 조율',pr:{number:812,state:'mergeable'},children:8,band:{verb:'승인',what:'e2e 테스트 돌리던 중',who:['codex','테스트 작성'],age:'12m',more:1},terminal:'› 에이전트 지원 PR 다섯 개의 머지 순서를 맞추는 중'})]),
       labeled('child','Child pane: path back to the root, its own PR and its children after the title (B20, B21)',[pane(`${id}-child`,{path:[root],title:'P8 읽기 전용 준비',pr:{number:811,state:'failed'},children:2})]),
       labeled('grand','Grandchild pane: two ancestors, no PR and no children (B20)',[pane(`${id}-grand`,{path:[root,'P8 읽기 전용 준비'],mark:'!',tone:'$--warning',title:'테스트 작성',terminal:'Allow bash: pnpm --dir web e2e ? (y/n)'})]),
-      labeled('two','Two own PRs: PR 2 ×1 (B22)',[pane(`${id}-two`,{path:[root],mark:'✓',tone:'$--success',provider:'claude',title:'P6 OpenCode 세션 리더',pr:{count:2,state:'failed',worst:1}})]),
+      labeled('two','Two own PRs: PR 2 ×1 (B22)',[pane(`${id}-two`,{path:[root],mark:'✓',tone:'$--success',provider:'claude',title:'P6 OpenCode 세션 리더',pr:{number:811,state:'failed',more:1}})]),
       labeled('bands','Band per cause (B3)',bands.map(([key,band])=>pane(`${id}-band-${key}`,{path:[root],title:'P8 읽기 전용 준비',band}))),
       caption(`${id}-rule`,'승인은 label 줄이 없으면 "권한 요청에서 멈춤". 답변의 대기는 부모가 못 받은 시간. 초안은 초안이 걸린 부모를 연다. 띠는 PTY 크기를 바꾸지 않는다.'),
     ]);
