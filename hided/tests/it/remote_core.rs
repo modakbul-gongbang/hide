@@ -1550,8 +1550,15 @@ fn a_page_an_agent_of_the_core_opens_shows_on_the_node_and_reaches_the_cores_loo
         runtime.block_on(async {
             node_link(port, "live", LINK_BOUND).await?;
             // No window anywhere: the agent is told there is none to show
-            // the page in.
-            let answer = tokio::task::block_in_place(|| open(&fixture))?;
+            // the page in. The core registers the new checkout from Herdr's
+            // events on its own time, and until it has, an open answers
+            // checkout_not_registered (#912).
+            let answer = tokio::task::block_in_place(|| {
+                wait_for("the core registered the site's checkout", || {
+                    let answer = open(&fixture)?;
+                    Ok((answer["reason"] != "checkout_not_registered").then_some(answer))
+                })
+            })?;
             ensure!(
                 answer["ok"] == false && answer["reason"] == "renderer_unavailable",
                 "a page opened with no window: {answer}"
