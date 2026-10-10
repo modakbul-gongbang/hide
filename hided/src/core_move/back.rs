@@ -358,21 +358,22 @@ pub fn rekey(state_dir: &Path, journal: &Journal) -> Result<IdTable, MoveFailure
 }
 
 /// Places the pulled copy in this machine's state folder.
-pub fn place_here(state_dir: &Path, journal: &Journal) -> Result<(), MoveFailure> {
+pub fn place_here(state_dir: &Path, journal: &Journal) -> Result<(), copy::NotPlaced> {
     let staging = node_migration::staging_dir(state_dir, &journal.intent);
-    copy::place(&staging, state_dir)
-        .map(|_| ())
-        .map_err(|refusal| MoveFailure::Staging {
-            file: refusal.file.display().to_string(),
-            reason: refusal.reason,
-        })
+    copy::place(&staging, state_dir).map(|_| ())
 }
 
 /// Takes a placed copy back out of this machine's state folder and removes
 /// the staging folder, leaving the folder as the node role had it.
 pub fn unplace_here(state_dir: &Path, journal: &Journal) -> Result<(), String> {
     let staging = node_migration::staging_dir(state_dir, &journal.intent);
-    if !copy::brain_present(state_dir).is_empty() {
+    // Before `PlacedHere` nothing of the copy was placed, and brain state
+    // here is this machine's own.
+    if matches!(
+        journal.phase,
+        super::journal::Phase::PlacedHere | super::journal::Phase::Retiring
+    ) && !copy::brain_present(state_dir).is_empty()
+    {
         copy::unplace(state_dir, &staging).map_err(|refusal| refusal.to_string())?;
     }
     remove_staging(state_dir, &journal.intent)

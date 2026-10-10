@@ -270,28 +270,57 @@ fn remove_if_present(path: &Path) -> Result<(), Refusal> {
     }
 }
 
+/// A [`place`] that did not finish: why, and the names of the copy it
+/// moved in and could not take back out (none when the folder is as
+/// `place` found it).
+#[derive(Debug)]
+pub struct NotPlaced {
+    pub refusal: Refusal,
+    pub left: Vec<String>,
+}
+
 /// Moves the copy at `incoming` into `state_dir`, `node.json` last, and
-/// answers what it placed. A folder that already holds brain state is
-/// refused before anything moves.
-pub fn place(incoming: &Path, state_dir: &Path) -> Result<Vec<String>, Refusal> {
+/// answers what it placed. All or nothing: a folder that already holds
+/// brain state is refused before anything moves, and a move that fails
+/// partway takes back what it moved, so a refused place leaves only the
+/// folder's own files there, which its caller must never take as the
+/// copy's.
+pub fn place(incoming: &Path, state_dir: &Path) -> Result<Vec<String>, NotPlaced> {
+    let refused = |refusal: Refusal| NotPlaced {
+        refusal,
+        left: Vec::new(),
+    };
     let present = brain_present(state_dir);
     if !present.is_empty() {
-        return Err(refuse(
+        return Err(refused(refuse(
             state_dir,
             format!("already holds brain state: {}", present.join(", ")),
-        ));
+        )));
     }
     if !incoming.join(MARKER_FILE).is_file() {
-        return Err(refuse(incoming, "holds no node.json"));
+        return Err(refused(refuse(incoming, "holds no node.json")));
     }
-    let mut placed = Vec::new();
-    for name in MOVES_WITH_CORE.iter().filter(|name| **name != MARKER_FILE) {
-        if place_one(incoming, state_dir, name)? {
-            placed.push((*name).to_owned());
+    let mut placed: Vec<String> = Vec::new();
+    let names = MOVES_WITH_CORE
+        .iter()
+        .filter(|name| **name != MARKER_FILE)
+        .chain(std::iter::once(&MARKER_FILE));
+    for name in names {
+        match place_one(incoming, state_dir, name) {
+            Ok(true) => placed.push((*name).to_owned()),
+            Ok(false) => {}
+            Err(refusal) => {
+                let left = placed
+                    .into_iter()
+                    .rev()
+                    .filter(|name| {
+                        std::fs::rename(state_dir.join(name), incoming.join(name)).is_err()
+                    })
+                    .collect();
+                return Err(NotPlaced { refusal, left });
+            }
         }
     }
-    place_one(incoming, state_dir, MARKER_FILE)?;
-    placed.push(MARKER_FILE.to_owned());
     Ok(placed)
 }
 
@@ -433,6 +462,28 @@ mod tests {
     }
 
     #[test]
+    fn a_place_refused_partway_takes_back_what_it_moved_and_nothing_else() {
+        let incoming = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        for name in ["labels.json", "mobile.json", MARKER_FILE] {
+            std::fs::write(incoming.path().join(name), name).unwrap();
+        }
+        // The folder's own Mobile setting, which a place replaces, cannot
+        // be removed: the place stops after it moved the labels in.
+        std::fs::create_dir(state.path().join("mobile.json")).unwrap();
+        std::fs::write(state.path().join("mobile.json/kept"), "own").unwrap();
+        let not_placed = place(incoming.path(), state.path()).unwrap_err();
+        assert_eq!(not_placed.refusal.file, state.path().join("mobile.json"));
+        assert!(not_placed.left.is_empty());
+        assert!(!state.path().join("labels.json").exists());
+        assert_eq!(
+            std::fs::read_to_string(incoming.path().join("labels.json")).unwrap(),
+            "labels.json"
+        );
+        assert!(state.path().join("mobile.json/kept").is_file());
+    }
+
+    #[test]
     fn a_staging_copy_holds_the_brain_state_and_only_it() {
         let source = folder();
         let staging = source.path().join("move-staging/i1");
@@ -523,7 +574,7 @@ mod tests {
         stage(source.path(), &staging).unwrap();
         let target = tempfile::tempdir().unwrap();
         std::fs::write(target.path().join("core-state.json"), "{}").unwrap();
-        let refusal = place(&staging, target.path()).unwrap_err();
+        let refusal = place(&staging, target.path()).unwrap_err().refusal;
         assert!(refusal.reason.contains("core-state.json"), "{refusal}");
         assert!(staging.join(MARKER_FILE).exists(), "nothing moved");
         std::fs::remove_file(target.path().join("core-state.json")).unwrap();

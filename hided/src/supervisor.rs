@@ -38,6 +38,10 @@ const LEASE_MARGIN: Duration = Duration::from_secs(30);
 const LINK_WITHIN: Duration = Duration::from_secs(30);
 /// How often a driver that cannot reach the other machine tries again.
 const RETRY_EVERY: Duration = Duration::from_secs(2);
+/// How long the core role has to stop before its process ends instead.
+const CORE_STOP_WITHIN: Duration = Duration::from_secs(20);
+/// The exit of a process whose core did not stop in time.
+const STOP_UNCONFIRMED_EXIT: i32 = 3;
 
 enum Role {
     Core(RunningDaemon),
@@ -264,16 +268,31 @@ fn give_back_pending(state_dir: &Path, intent: Option<&str>) {
     );
 }
 
-/// Stops the core role and waits until its last saves are on disk.
+/// Stops the core role and waits until its last saves are on disk. A core
+/// that has not stopped within [`CORE_STOP_WITHIN`] cannot be ended apart
+/// from this process, so the process ends, unsuccessfully: its next start
+/// (a login item's keep-alive, or the window's `hide connect`) resolves
+/// the move its journal records, and a move that stopped nothing yet is
+/// undone.
 async fn stop_core(running: RunningDaemon) {
-    // A graceful stop takes hide's `tailscale serve` entry with it; a crash
-    // leaves it to the next start's reconcile (PRD D-07).
-    running.mobile.shutdown().await;
-    if tokio::task::spawn_blocking(move || drop(running))
-        .await
-        .is_err()
-    {
-        log("core.stop_failed", json!({}));
+    // On a thread of its own, so a stop that never returns is never
+    // dropped on this one.
+    let stopping = tokio::task::spawn_blocking(move || {
+        // A graceful stop takes hide's `tailscale serve` entry with it; a
+        // crash leaves it to the next start's reconcile (PRD D-07).
+        tokio::runtime::Handle::current().block_on(running.mobile.shutdown());
+        drop(running);
+    });
+    match tokio::time::timeout(CORE_STOP_WITHIN, stopping).await {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => log("core.stop_failed", json!({})),
+        Err(_) => {
+            log(
+                "core.stop_unconfirmed",
+                json!({"within_ms": CORE_STOP_WITHIN.as_millis() as u64}),
+            );
+            std::process::exit(STOP_UNCONFIRMED_EXIT);
+        }
     }
 }
 

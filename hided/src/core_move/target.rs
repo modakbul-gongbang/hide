@@ -204,13 +204,14 @@ fn place(state_dir: &Path, intent: &str, source: &str, target: &str) -> Result<V
     let placed = copy::place(&incoming(state_dir, intent), state_dir);
     match placed {
         Ok(placed) => Ok(json!({"placed": placed, "handover": record})),
-        Err(error) => {
-            // Nothing of a half-placed copy stays as brain state.
-            let undone = copy::unplace(state_dir, &incoming(state_dir, intent));
-            if undone.is_ok() {
+        Err(not_placed) => {
+            // What the folder holds now is its own, unless part of the copy
+            // could not be taken back: that stays pending, for the driver's
+            // abort to take back.
+            if not_placed.left.is_empty() {
                 held.remove().map_err(plain)?;
             }
-            Err(refusal(error))
+            Err(refusal(not_placed.refusal))
         }
     }
 }

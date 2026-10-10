@@ -312,7 +312,19 @@ pub(super) async fn back(
             // back out all the same.
             journal.phase = Phase::PlacedHere;
             journal::write(&state_dir, &journal).map_err(|reason| MoveFailure::Local { reason })?;
-            back::place_here(&state_dir, &journal)?;
+            if let Err(not_placed) = back::place_here(&state_dir, &journal) {
+                // Nothing of the copy is in the folder, so what it holds is
+                // this machine's own and the rollback takes none of it.
+                if not_placed.left.is_empty() {
+                    journal.phase = Phase::Released;
+                    journal::write(&state_dir, &journal)
+                        .map_err(|reason| MoveFailure::Local { reason })?;
+                }
+                return Err(MoveFailure::Staging {
+                    file: not_placed.refusal.file.display().to_string(),
+                    reason: not_placed.refusal.reason,
+                });
+            }
             Ok(journal)
         }
     })
