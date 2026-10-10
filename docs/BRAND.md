@@ -45,7 +45,9 @@ The mobile web icons in `web/public/m/` are size derivatives of the full square 
 
 ## Third-party agent marks
 
-The first-run agent choice, the Agents tab and Hide AI's agent selects and Add menu are the only places that draw other vendors' marks (`web/src/components/agent-logo.tsx`), each on a fixed light plate (`--logo-plate`) so a dark-filled mark stays legible in both themes.
+The first-run agent choice, the Agents tab and Hide AI's agent selects and Add menu draw an agent's mark on a fixed light plate (`--logo-plate`), so a dark-filled mark stays legible in both themes (`web/src/components/agent-logo.tsx`).
+Everywhere else the shell shows which agent a pane, tab or row is, `AgentMark` (`web/src/AgentMark.tsx`) draws the same logo at the compact badge size for each of the seven supported agents, and a plain shell or a kind Hide does not support keeps the neutral `>_`; `agentMarkOf` in `web/src/agentLogos.ts` is the one place that picks the logo, from the adapter's `logo_id`.
+There the plate is only for a mark that would vanish on the dark theme: the manifest entry of a mark drawn dark on a transparent ground (Grok, Cursor) says `"plate": true`, and the others sit on the screen as published, since a plate behind every mark would turn the dark theme into a row of white tiles.
 `web/src/assets/agents/manifest.json` is the only list: a bundled file names its source URL, licence, any modification and the date it was taken, and an agent without an official source mark is a monogram with the reason written beside it.
 `scripts/check-agent-logos.mjs` (run by `check-design-contract`) fails a bundled file the manifest does not list, an adapter with no entry, an entry whose id is neither a kit adapter nor a Hide AI provider's agent (`hide-ai/src/registry.rs`), and an entry without its source and licence.
 A mark can outlive its agent's row in the kit while Hide AI still offers that agent: Gemini CLI's stays for the Hide AI provider.

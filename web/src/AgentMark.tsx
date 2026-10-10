@@ -1,24 +1,21 @@
-import claudeMark from "./assets/agent-claude.png";
-import codexMark from "./assets/agent-codex.png";
-import { knownProvider } from "./workspace";
+import { agentMarkOf } from "./agentLogos";
 
-// The agent's own mark (PRD S6 D-09, B17): the provider artwork the macOS
-// shell bundles for the providers Hide knows, and a neutral terminal mark for
-// any other agent or a tab of plain shells. The mark never carries the name
-// alone; every caller also gives the full identity in its tooltip and label.
-
-const MARKS = { claude: claudeMark, codex: codexMark } as const;
+// The agent's own mark: the logo of each supported agent (agentLogos.ts picks it
+// from the adapter, the one rule every surface shares) and a neutral terminal
+// mark for a tab of plain shells or an agent Hide does not know. The mark never
+// carries the name alone; every caller also gives the full identity in its
+// tooltip and label.
 
 export function AgentMark({ kind, className = "" }: { kind: string | null | undefined; className?: string }) {
-  const provider = knownProvider(kind);
-  if (provider) {
+  const mark = agentMarkOf(kind);
+  if (mark) {
     return (
       <img
-        src={MARKS[provider]}
+        src={mark.logo}
         alt=""
         aria-hidden="true"
-        data-agent-mark={provider}
-        className={`h-[var(--size-agent-badge-compact)] w-[var(--size-agent-badge-compact)] shrink-0 rounded-xs ${className}`}
+        data-agent-mark={mark.id}
+        className={`h-[var(--size-agent-badge-compact)] w-[var(--size-agent-badge-compact)] shrink-0 rounded-xs object-contain ${mark.plated ? "bg-(--logo-plate) p-xxs" : ""} ${className}`}
       />
     );
   }

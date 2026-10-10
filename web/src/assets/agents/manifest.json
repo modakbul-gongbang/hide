@@ -15,6 +15,7 @@
       "source_url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/cursor.svg",
       "license": "simple-icons file, CC0; data source is the vendor's brand page https://cursor.com/brand; trademark rights stay with Cursor",
       "modification": "as published",
+      "plate": true,
       "retrieved": "2026-10-06"
     },
     {
@@ -32,6 +33,7 @@
       "source_url": "https://data.x.ai/logos/SpaceXAI_Grok_Assets.zip",
       "license": "xAI brand terms (https://x.ai/legal/brand-guidelines): a logo is used only as provided in this archive, without any alteration or adjustment, and only to refer to Grok; the permission can be withdrawn; no open-source licence",
       "modification": "as published: the archive member SpaceXAI_Grok_Assets/Grok_Logomark_Dark.svg byte for byte, saved as grok.svg",
+      "plate": true,
       "retrieved": "2026-10-06"
     },
     {

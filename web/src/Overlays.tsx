@@ -23,9 +23,9 @@ import type { SurfaceKind } from "./recent";
 import { commandLabel } from "./shortcutLabels";
 import { displayMark } from "./ViewAreas";
 import { AgentMark } from "./AgentMark";
+import { agentMarkOf } from "./agentLogos";
 import { closeScope, closeSheet, stopWorkCopy, subtreeTitle, type StopWork, type Subtree } from "./close";
 import { RowMark, SubtreeList } from "./components/subtree-list";
-import { knownProvider } from "./workspace";
 
 const CYCLE_TITLE: Record<Cycle["kind"], MessageKey> = {
   area: "shell.recentViewTabs",
@@ -113,7 +113,7 @@ export function CycleOverlay() {
  */
 function CycleMarks({ item, title }: { item: CycleItem; title: string }) {
   return (
-    <span className="flex shrink-0 items-center gap-xs" data-cycle-marks={item.agent ? (knownProvider(item.agent.agent_kind) ?? "neutral") : item.kind}>
+    <span className="flex shrink-0 items-center gap-xs" data-cycle-marks={item.agent ? (agentMarkOf(item.agent.agent_kind)?.id ?? "neutral") : item.kind}>
       <span className="flex w-(--size-agent-mark) shrink-0 justify-center">
         {item.agent ? <StatusMark symbol={item.agent.symbol} className={markTone(item.agent)} data-cycle-status={item.agent.status_code} /> : null}
       </span>

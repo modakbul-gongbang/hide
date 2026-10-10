@@ -40,7 +40,7 @@ List an enum here, with a Rust-side pin and a reading-side check for it, in the 
 
 # Agent adapters
 
-`agent-adapters.json` is the web projection of `hide-agent-adapter`'s static declarations: support order, canonical ids and aliases, labels, Herdr kinds, Docs and Install links, logo ids, branded marks and start/resume eligibility.
+`agent-adapters.json` is the web projection of `hide-agent-adapter`'s static declarations: support order, canonical ids and aliases, labels, Herdr kinds, Docs and Install links, logo ids and start/resume eligibility.
 `web/src/agentAdapters.ts` is the shell's normalized reader; Settings, onboarding, desktop and phone pickers, resume requests and logo lookup derive their answers from it.
 The Rust contract test compares the committed file with the current projection and checks its source links, logo manifest entries and support fixtures.
 Do not maintain another web support table or edit this generated file by hand.

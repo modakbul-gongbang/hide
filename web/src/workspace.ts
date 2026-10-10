@@ -7,7 +7,6 @@
 // `viewLayout.ts`.
 
 import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
-import { agentAdapter } from "./agentAdapters";
 
 /** The Tools column's one tool, separate from Memory's `sessions` reader. */
 export type Tool = "agent_sessions" | "explorer" | "changes";
@@ -177,14 +176,6 @@ export function workspaceViewOf(rest: SnapshotRest | null): WorkspaceView | null
 /** Herdr tabs: the Agent area's strip, in the core's order. */
 export function agentEntries(checkout: Checkout): StripTab[] {
   return checkout.strip.filter((entry) => entry.kind === "herdr");
-}
-
-/** The agent kinds whose own mark Hide ships; any other agent is drawn with the neutral mark (D-09). */
-export type Provider = "claude" | "codex";
-
-export function knownProvider(kind: string | null | undefined): Provider | null {
-  // The generated SidebarMark enum selects the artwork; this type names the assets.
-  return (agentAdapter(kind ?? "")?.sidebar_mark as Provider | null | undefined) ?? null;
 }
 
 /** What the page has read of the core's File Views calls. */

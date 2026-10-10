@@ -16,7 +16,6 @@ pub struct WebAdapter {
     pub efforts: &'static [&'static str],
     /// Whether the start command takes a model.
     pub can_pick_model: bool,
-    pub sidebar_mark: Option<super::SidebarMark>,
     /// What Settings calls the agent's hook piece: a hook entry, a plugin
     /// file or an extension file; absent for an agent Hide writes no hook for.
     pub hook_kind: Option<HookKind>,
@@ -46,7 +45,6 @@ pub fn web_contract() -> impl Iterator<Item = WebAdapter> {
         can_pick_model: row
             .start
             .is_some_and(|start| !start.options().model.is_empty()),
-        sidebar_mark: row.sidebar_mark,
         hook_kind: match row.hook {
             super::HookInstall::Runtime(_) | super::HookInstall::Guidance(_) => {
                 Some(HookKind::Hook)

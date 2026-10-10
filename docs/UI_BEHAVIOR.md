@@ -311,6 +311,9 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 
 A pane header is a quiet identity row: the ancestor path, provider, title, the fork mark, the pane's own PR mark, the tree button, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
 A plain shell keeps its terminal mark.
+Every place that draws an agent's mark (the pane header, the Agent tabs, the sidebar and Sessions rows, ⌘K and the recent-pane list, the link sessions, the Agents graph, the Overview lenses, the start picker and the footer's usage chips) draws the logo of that agent, for each of the seven supported agents: Claude Code, Codex, Grok, OpenCode, Pi, omp and Cursor, the same logo Settings and the first-run choice draw.
+Only a plain shell and an agent Hide does not support draw the neutral `>_`.
+A logo drawn dark on a transparent ground (Grok, Cursor) sits on the light plate so it stays visible on the dark theme; the others are drawn as published ([BRAND.md](BRAND.md#third-party-agent-marks)).
 A child pane's ancestor path names each ancestor from the root to its parent, `›` between them, and each name opens that pane; a root has none.
 The names drop before current identity or actions when the pane narrows, leaving `›` with its accessible name.
 The PR mark shows the pane's own PRs only, as Sessions draws them (below); a descendant's PRs stay on its own rows.
