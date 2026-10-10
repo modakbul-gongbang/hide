@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn a_state_folder_other_than_the_default_has_a_login_item_of_its_own() {
-        let home = Path::new("/Users/op");
+        let home = Path::new("/Users/alice");
         let default = core_login_item(home, &default_state_dir(home));
         let other = core_login_item(home, Path::new("/private/tmp/seat/state"));
         assert_eq!(default, "dev.withhide.core");

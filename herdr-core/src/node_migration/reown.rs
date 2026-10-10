@@ -778,12 +778,12 @@ mod tests {
     const C: &str = "2b7e9f10-1111-4a2b-9c3d-5e6f7a8b9c0d";
     const ALIAS: &str = "mini";
     const X: &str = "studio";
-    const M_ROOT: &str = "/Users/op/alpha";
-    const M_WORKTREE: &str = "/Users/op/alpha-review";
-    const C_ROOT: &str = "/Users/grab/beta";
+    const M_ROOT: &str = "/Users/alice/alpha";
+    const M_WORKTREE: &str = "/Users/alice/alpha-review";
+    const C_ROOT: &str = "/Users/remote/beta";
     const X_ROOT: &str = "/srv/gamma";
-    const M_SOCKET: &str = "/Users/op/.config/herdr/herdr.sock";
-    const C_SOCKET: &str = "/Users/grab/.config/herdr/herdr.sock";
+    const M_SOCKET: &str = "/Users/alice/.config/herdr/herdr.sock";
+    const C_SOCKET: &str = "/Users/remote/.config/herdr/herdr.sock";
 
     fn mini_registration() -> Value {
         json!({"id": ALIAS, "label": "Mac mini", "ssh_alias": "mini", "herdr_socket_path": C_SOCKET})
@@ -1372,8 +1372,10 @@ mod tests {
         let dir = macbook_folder();
         let state = dir.path();
         let mut core = read(&state.join(CORE_STATE));
-        let gone =
-            crate::workspace::checkout_id_for_path(&own_workspace(), Path::new("/Users/op/gone"));
+        let gone = crate::workspace::checkout_id_for_path(
+            &own_workspace(),
+            Path::new("/Users/alice/gone"),
+        );
         core["collapsed_checkout_ids"]
             .as_array_mut()
             .unwrap()
