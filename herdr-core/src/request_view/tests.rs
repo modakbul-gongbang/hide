@@ -188,7 +188,7 @@ fn a_rows_verb_follows_its_demand_its_activity_and_its_pull_requests() {
 
 #[test]
 fn own_pr_summary_counts_only_live_duty_prs_worst_first_and_never_a_closed_one() {
-    use crate::agent_state::sessions::PrState;
+    use crate::model::PrState;
     let mut rows = rows(&[("maker", "idle"), ("other", "idle")]);
     rows[0].row_facts.as_mut().unwrap().created_prs = vec![
         ("acme/app".into(), 1, 1),
@@ -233,41 +233,51 @@ fn own_pr_summary_counts_only_live_duty_prs_worst_first_and_never_a_closed_one()
 }
 
 #[test]
-fn a_pr_is_mergeable_only_after_passing_checks_and_an_acceptable_review() {
-    use crate::agent_state::sessions::PrState;
-    for (checks, review, expected) in [
-        (PullRequestChecks::Passing, None, PrState::Mergeable),
+fn a_pr_reads_draft_then_failed_or_changes_requested_then_mergeable_then_pending() {
+    use crate::model::PrState;
+    for (draft, checks, review, expected) in [
+        (false, PullRequestChecks::Passing, None, PrState::Mergeable),
         (
+            false,
             PullRequestChecks::Passing,
             Some(ReviewDecision::Approved),
             PrState::Mergeable,
         ),
         (
+            false,
             PullRequestChecks::Passing,
             Some(ReviewDecision::ReviewRequired),
             PrState::Pending,
         ),
+        // A reviewer asking for changes is something to fix, like a failed check.
         (
+            false,
             PullRequestChecks::Passing,
             Some(ReviewDecision::ChangesRequested),
-            PrState::Pending,
+            PrState::Failed,
         ),
         (
+            false,
             PullRequestChecks::Unknown,
             Some(ReviewDecision::Approved),
             PrState::Pending,
         ),
-        (PullRequestChecks::Pending, None, PrState::Pending),
-        (PullRequestChecks::Failed, None, PrState::Failed),
+        (false, PullRequestChecks::None, None, PrState::Pending),
+        (false, PullRequestChecks::Pending, None, PrState::Pending),
+        (false, PullRequestChecks::Failed, None, PrState::Failed),
+        // A draft is grey whatever its checks say.
+        (true, PullRequestChecks::Failed, None, PrState::Draft),
+        (true, PullRequestChecks::Passing, None, PrState::Draft),
     ] {
         let mut rows = rows(&[("agent", "idle")]);
         let mut pull = pull_request(1, "feature", PullRequestBadge::Open, checks);
         pull.review = review;
+        pull.is_draft = draft;
         run(&mut rows, &[("agent", "feature")], &github(vec![pull]));
         assert_eq!(
             rows[0].state.pr.as_ref().map(|pr| pr.worst),
             Some(expected),
-            "{checks:?} {review:?}"
+            "{draft} {checks:?} {review:?}"
         );
     }
 }

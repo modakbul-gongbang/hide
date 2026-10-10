@@ -257,6 +257,7 @@ fn pane_pr_band_targets_its_duty_instead_of_another_link_with_higher_sort_priori
             badge: p.badge,
             checks: p.checks,
             review: p.review,
+            is_draft: p.is_draft,
             head_branch: p.head_branch.clone(),
             closing_issues: vec![],
             live: true,

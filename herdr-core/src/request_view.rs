@@ -99,6 +99,7 @@ pub struct AgentPullRequestSnapshot {
     pub badge: PullRequestBadge,
     pub checks: PullRequestChecks,
     pub review: Option<ReviewDecision>,
+    pub is_draft: bool,
     pub head_branch: String,
     pub closing_issues: Vec<IssueReference>,
     /// Drawn as the row's chip or counted in its `+N` (D-43): open, or

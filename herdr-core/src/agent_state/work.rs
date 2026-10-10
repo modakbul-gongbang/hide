@@ -149,6 +149,7 @@ pub(crate) fn shown_pull_requests(
                     badge: pull_request.badge,
                     checks: pull_request.checks,
                     review: pull_request.review,
+                    is_draft: pull_request.is_draft,
                     head_branch: pull_request.head_branch.clone(),
                     closing_issues: pull_request.closing_issues.clone(),
                     live,
