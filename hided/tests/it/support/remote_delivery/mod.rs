@@ -171,7 +171,7 @@ pub fn wait_for<T>(what: &str, observe: impl FnMut() -> Result<Option<T>>) -> Re
     wait_within(what, READY_BOUND, observe)
 }
 
-fn wait_within<T>(
+pub fn wait_within<T>(
     what: &str,
     bound: Duration,
     mut observe: impl FnMut() -> Result<Option<T>>,

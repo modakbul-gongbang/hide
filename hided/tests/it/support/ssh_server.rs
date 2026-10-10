@@ -47,6 +47,9 @@ struct Shared {
     /// Connections accepted since the server started.
     accepted: AtomicUsize,
     client_key: russh::keys::PublicKey,
+    /// The file opens SFTP sessions may still receive before every
+    /// connection is cut, as a network that drops mid-upload would.
+    sftp_opens_left: Mutex<Option<usize>>,
 }
 
 impl Shared {
@@ -100,6 +103,7 @@ impl Ssh {
             socket,
             accepted: AtomicUsize::new(0),
             client_key,
+            sftp_opens_left: Mutex::new(None),
         });
         let kept = Arc::clone(&shared);
         let (controls, receiver) = tokio::sync::mpsc::channel(4);
@@ -144,6 +148,13 @@ impl Ssh {
             .lock()
             .expect("SSH connections")
             .len()
+    }
+
+    /// Cuts every connection as the `nth` file open from now reaches an
+    /// SFTP session, before the server sees it; the server stays online, so
+    /// a client can dial again.
+    pub fn cut_sftp_at_open(&self, nth: usize) {
+        *self.shared.sftp_opens_left.lock().expect("SFTP cut") = Some(nth);
     }
 
     pub fn online(&self, value: bool) -> Result<()> {
@@ -397,7 +408,8 @@ impl server::Handler for Handler {
             .context("system SFTP server unavailable")?;
         let mut command = self.shared.environment.command(OsStr::new(program));
         command.args(["-d"]).arg(self.shared.environment.home());
-        self.start_process(id, command, session)
+        let shared = Arc::clone(&self.shared);
+        self.start_process_within(id, command, session, Some(shared))
     }
 }
 
@@ -405,8 +417,20 @@ impl Handler {
     fn start_process(
         &mut self,
         id: ChannelId,
+        command: Command,
+        session: &mut Session,
+    ) -> Result<()> {
+        self.start_process_within(id, command, session, None)
+    }
+
+    /// Starts `command` on the channel; with `cut`, the file opens the
+    /// channel carries to it count toward the SFTP cut.
+    fn start_process_within(
+        &mut self,
+        id: ChannelId,
         mut command: Command,
         session: &mut Session,
+        cut: Option<Arc<Shared>>,
     ) -> Result<()> {
         let channel = self
             .channels
@@ -422,7 +446,7 @@ impl Handler {
         let cancelled = self.cancelled.clone();
         let shared = Arc::clone(&self.shared);
         self.shared.job(async move {
-            if let Err(error) = process(child, channel, handle, cancelled).await {
+            if let Err(error) = process(child, channel, handle, cancelled, cut).await {
                 let mut failures = shared.failures.lock().expect("SSH failures");
                 if failures.len() < 16 {
                     failures.push(error.to_string());
@@ -485,6 +509,7 @@ async fn process(
     channel: Channel<Msg>,
     handle: server::Handle,
     mut stop: watch::Receiver<bool>,
+    cut: Option<Arc<Shared>>,
 ) -> Result<()> {
     let stdin = pipe(child.take_stdin().context("SSH child stdin")?)?;
     let stdout = pipe(child.take_stdout().context("SSH child stdout")?)?;
@@ -494,7 +519,14 @@ async fn process(
     let mut pumps = Pumps(Vec::with_capacity(3));
     pumps.0.push(tokio::spawn(async move {
         let mut buffer = [0; 16 * 1024];
+        let mut opens = SftpOpens::default();
         while let Ok(size) = reader.read(&mut buffer).await {
+            if let Some(shared) = &cut
+                && opens.reach_cut(&buffer[..size], shared)
+            {
+                disconnect(shared).await;
+                break;
+            }
             if size == 0 || write_pipe(&stdin, &buffer[..size]).await.is_err() {
                 break;
             }
@@ -558,6 +590,51 @@ async fn process(
     let _ = handle.eof(id).await;
     let _ = handle.close(id).await;
     Ok(())
+}
+
+/// The SFTP requests a client sends, framed as the protocol frames them
+/// (a 4-byte length, then the type), counted for the fixture's cut.
+#[derive(Default)]
+struct SftpOpens {
+    pending: Vec<u8>,
+}
+
+impl SftpOpens {
+    const OPEN: u8 = 3;
+
+    /// Whether `bytes` carry the file open the cut waits for; the count is
+    /// shared by every session.
+    fn reach_cut(&mut self, bytes: &[u8], shared: &Shared) -> bool {
+        self.pending.extend_from_slice(bytes);
+        let mut opens = 0;
+        while self.pending.len() >= 5 {
+            let length = u32::from_be_bytes([
+                self.pending[0],
+                self.pending[1],
+                self.pending[2],
+                self.pending[3],
+            ]) as usize;
+            if self.pending.len() < 4 + length {
+                break;
+            }
+            if self.pending[4] == Self::OPEN {
+                opens += 1;
+            }
+            self.pending.drain(..4 + length);
+        }
+        let mut left = shared.sftp_opens_left.lock().expect("SFTP cut");
+        match left.as_mut() {
+            Some(count) if opens >= *count => {
+                *left = None;
+                true
+            }
+            Some(count) => {
+                *count -= opens;
+                false
+            }
+            None => false,
+        }
+    }
 }
 
 /// Errors also cancel every pipe pump; the normal path awaits all three.

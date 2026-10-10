@@ -3,11 +3,13 @@
 //! connection that only the source opens.
 #![cfg(unix)]
 
+use std::os::unix::fs::PermissionsExt;
+
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
 use crate::support::core_move::{ALIAS, Fixture, SOURCE_NODE, TARGET_NODE};
-use crate::support::remote_delivery::wait_for;
+use crate::support::remote_delivery::{wait_for, wait_within};
 
 /// B4: the move stops the source's core, places its brain state on the
 /// target and starts the core there, and the source's window, at the same
@@ -237,6 +239,48 @@ fn a_source_killed_mid_move_rolls_back_on_its_next_start() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// A source killed while its core stopped for a move, before anything was
+/// sent, finds the move in its journal at its next start and starts its
+/// core again on its untouched folder; the target was never touched.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_source_killed_while_its_core_stops_starts_it_again() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = visible(&fixture)?;
+        let target_before = listing(&fixture.target.state)?;
+        // A move's journal, from a move that stopped at its staging.
+        let planted = fixture.source.state.join("move-staging");
+        std::fs::write(&planted, b"")?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        let mut journal = fixture.journal_until("rolled_back")?;
+        wait_for("the source's core again", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        std::fs::remove_file(&planted)?;
+        fixture.kill_source()?;
+        // What a kill while the core stops leaves: the journal at stopping,
+        // written before the stop, and nothing staged or sent.
+        journal["phase"] = json!({"phase": "stopping"});
+        write_record(&fixture.source.state.join("core-move.json"), &journal)?;
+        fixture.start_source()?;
+        let journal = fixture.journal_until("rolled_back")?;
+        ensure!(journal["phase"]["failed"] == "stop_core", "{journal}");
+        fixture.logged(&fixture.source, "move.resumed")?;
+        wait_for("the source's core again", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        fixture.device_ready()?;
+        ensure!(visible(&fixture)? == before, "the window changed");
+        ensure!(
+            listing(&fixture.target.state)? == target_before,
+            "the target changed"
+        );
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The new core took the link but the source never heard it: at its next
 /// start the source reads the target's handover and goes forward.
 #[test]
@@ -315,7 +359,9 @@ fn a_refused_first_link_rolls_back() -> Result<()> {
         // Never two cores: the target's core may still take a link, so
         // this machine runs none.
         ensure!(fixture.role()? == "moving");
-        let pending = fixture.target_core()?.context("the target's pending core")?;
+        let pending = fixture
+            .target_core()?
+            .context("the target's pending core")?;
         drop(held);
         let journal = fixture.journal_until("rolled_back")?;
         ensure!(journal["phase"]["failed"] == "reattach", "{journal}");
@@ -332,6 +378,210 @@ fn a_refused_first_link_rolls_back() -> Result<()> {
         ensure!(!fixture.source.state.join("core-placement.json").exists());
         ensure!(!fixture.target.state.join("core-state.json").exists());
         ensure!(fixture.target.record("core-handover.json")?.is_none());
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// This machine cannot stage its copy after its core stopped: nothing
+/// reached the target, and the core starts again on its untouched folder.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_staging_failure_restarts_the_old_core() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = visible(&fixture)?;
+        let target_before = listing(&fixture.target.state)?;
+        // This machine cannot make its staging folder.
+        std::fs::write(fixture.source.state.join("move-staging"), b"")?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        let journal = fixture.journal_until("rolled_back")?;
+        ensure!(journal["phase"]["failed"] == "copy", "{journal}");
+        ensure!(journal["phase"]["cause"]["kind"] == "staging", "{journal}");
+        wait_for("the source's core again", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        ensure!(visible(&fixture)? == before, "the window changed");
+        ensure!(!fixture.source.state.join("core-placement.json").exists());
+        ensure!(
+            listing(&fixture.target.state)? == target_before,
+            "the target changed"
+        );
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// The connection drops partway through the upload: the core starts again
+/// unchanged, and the retry keeps the move's intent and sends again only
+/// what the target does not already hold whole.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn an_upload_cut_midway_resumes_by_digest() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = visible(&fixture)?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        // Armed once the core is stopping, so only the move's own upload
+        // counts: the manifest, then the copy's files in name order. The
+        // cut comes as the fourth of them opens, three already whole.
+        fixture.journal_until("stopping")?;
+        fixture.ssh.cut_sftp_at_open(5);
+        let journal = wait_within(
+            "the cut move rolled back",
+            std::time::Duration::from_secs(60),
+            || {
+                Ok(fixture
+                    .source
+                    .record("core-move.json")?
+                    .filter(|journal| journal["phase"]["phase"] == "rolled_back"))
+            },
+        )?;
+        ensure!(journal["phase"]["failed"] == "copy", "{journal}");
+        let intent = journal["intent"].as_str().context("intent")?.to_owned();
+        wait_for("the source's core again", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        ensure!(visible(&fixture)? == before, "the window changed");
+        ensure!(!fixture.target.state.join("core-state.json").exists());
+        ensure!(fixture.target.record("core-handover.json")?.is_none());
+        let incoming = fixture.target.state.join("move-incoming").join(&intent);
+        ensure!(incoming.is_dir(), "nothing of the copy reached the target");
+        let whole: Vec<String> = listing(&incoming)?
+            .into_iter()
+            .filter(|name| !name.ends_with(".part"))
+            .collect();
+        ensure!(whole.len() == 3, "the cut came elsewhere: {whole:?}");
+
+        fixture.device_ready()?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        wait_for("the retry started", || {
+            Ok((records(&fixture, "move.started")?.len() == 2).then_some(()))
+        })?;
+        let journal = fixture.journal_until("done")?;
+        ensure!(
+            journal["intent"] == intent.as_str(),
+            "the retry took a new intent"
+        );
+        let sent = records(&fixture, "copy.sent")?;
+        ensure!(
+            sent.len() == 1,
+            "the cut try reported a whole copy: {sent:?}"
+        );
+        // The source's core ran between the tries, so its state store is
+        // sent again; the two small files before the cut are held.
+        let held = sent[0]["held"].as_u64().context("held")?;
+        let uploaded = sent[0]["uploaded"].as_array().context("uploaded")?;
+        ensure!(
+            held >= 1 && held as usize + uploaded.len() == 7,
+            "the retry sent the copy again: {sent:?}"
+        );
+        ensure!(fixture.target_core()?.is_some(), "no core on the target");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// The target refuses to place the copy, here because its folder gained
+/// brain state of its own after the checks: that state stays its own and
+/// in place, the copy waits in `move-incoming` for a retry, and this
+/// machine's core starts again unchanged.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_place_failure_leaves_no_brain_state_on_the_target() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = visible(&fixture)?;
+        // The place waits for the record's lock, so the folder changes
+        // after the checks and before the place reads it.
+        let held = fixture.hold_target_handover()?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        let journal = fixture.journal_until("placed")?;
+        let intent = journal["intent"].as_str().context("intent")?.to_owned();
+        let own = fixture.target.state.join("labels.json");
+        std::fs::write(&own, b"{\"own\":true}")?;
+        drop(held);
+        let journal = fixture.journal_until("rolled_back")?;
+        ensure!(journal["phase"]["failed"] == "copy", "{journal}");
+        ensure!(
+            journal["phase"]["cause"]["kind"] == "refused"
+                && journal["phase"]["cause"]["step"] == "place",
+            "{journal}"
+        );
+        wait_for("the source's core again", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        ensure!(visible(&fixture)? == before, "the window changed");
+        ensure!(
+            std::fs::read(&own)? == b"{\"own\":true}",
+            "the target's own state changed"
+        );
+        ensure!(!fixture.target.state.join("core-state.json").exists());
+        ensure!(!fixture.target.state.join("node.json").exists());
+        ensure!(fixture.target.record("core-handover.json")?.is_none());
+        ensure!(fixture.target_core()?.is_none());
+        let incoming = fixture.target.state.join("move-incoming").join(&intent);
+        ensure!(
+            incoming.join("node.json").is_file(),
+            "the copy was not kept"
+        );
+        ensure!(
+            std::fs::read(incoming.join("labels.json"))? != b"{\"own\":true}",
+            "the target's own state went into the copy"
+        );
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// The target's core cannot be confirmed stopped when the move is undone
+/// (here its record cannot be read; a login item that cannot be removed
+/// fails the same step): this machine waits and runs no core, and rolls
+/// back once that machine answers that its core is gone.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_target_core_that_cannot_be_stopped_is_waited_for() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = visible(&fixture)?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        wait_for("the copy placed on the target", || {
+            Ok(fixture
+                .target
+                .record("core-handover.json")?
+                .filter(|record| record["state"]["state"] == "pending"))
+        })?;
+        // The first link is refused, as in `a_refused_first_link_rolls_back`,
+        // so the move is undone with the target's core running.
+        let held = fixture.hold_target_handover()?;
+        fixture.logged(&fixture.source, "abort.failed")?;
+        let pending = fixture
+            .target_core()?
+            .context("the target's pending core")?;
+        let record = fixture.target.state.join("hided.json");
+        let readable = std::fs::metadata(&record)?.permissions();
+        std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o000))?;
+        drop(held);
+        wait_for("the stop refused", || {
+            Ok(records(&fixture, "abort.failed")?
+                .into_iter()
+                .find(|record| {
+                    record["failure"]["reason"]
+                        .as_str()
+                        .is_some_and(|reason| reason.contains("the core's state could not be read"))
+                }))
+        })?;
+        ensure!(fixture.role()? == "moving", "this machine started a core");
+        ensure!(hide_platform::process::is_alive(pending));
+        std::fs::set_permissions(&record, readable)?;
+        let journal = fixture.journal_until("rolled_back")?;
+        ensure!(journal["phase"]["failed"] == "reattach", "{journal}");
+        wait_for("the source's core again", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        ensure!(!hide_platform::process::is_alive(pending));
+        ensure!(visible(&fixture)? == before, "the window changed");
+        ensure!(!fixture.target.state.join("core-state.json").exists());
         Ok(())
     })();
     finish(fixture, journey)
