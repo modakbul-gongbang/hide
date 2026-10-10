@@ -31,6 +31,11 @@ mod reown;
 pub use reown::{IdTable, KnownProject, OwnerChange, ReownOutcome, id_table, reown, staging_dir};
 
 pub const MARKER_FILE: &str = "node.json";
+/// The Hide AI settings' name in a move's copy. They move with the core
+/// (PRD core-host-node-move Q7) but live outside the state folder
+/// (`hide_ai::settings::settings_path`), so the copy's functions are told
+/// where each machine keeps them.
+pub const AI_SETTINGS: &str = "ai.json";
 pub const BACKUP_DIR: &str = "node-migration-backup";
 pub(crate) const MARKER_VERSION: u32 = 1;
 

@@ -127,11 +127,20 @@ fn a_failing_check_changes_nothing() -> Result<()> {
     let journey = (|| {
         let planted = fixture.target.state.join("core-state.json");
         std::fs::write(&planted, b"{\"schema_version\":0}")?;
+        // Settings of the target's own, never merged with the core's.
+        let theirs = fixture.target.ai_settings();
+        std::fs::create_dir_all(theirs.parent().context("settings folder")?)?;
+        std::fs::write(&theirs, r#"{"provider":"codex"}"#)?;
         let target_before = listing(&fixture.target.state)?;
         let before = visible(&fixture)?;
         fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
         let failed = fixture.logged(&fixture.source, "checks.failed")?;
         ensure!(failed["checks"] == json!(["target_state"]), "{failed}");
+        let detail = failed["failed"][0]["detail"].as_str().unwrap_or_default();
+        ensure!(
+            detail.contains("core-state.json") && detail.contains("Hide AI settings"),
+            "{failed}"
+        );
         ensure!(fixture.role()? == "core");
         ensure!(visible(&fixture)? == before, "the window changed");
         for name in ["core-move.json", "core-placement.json", "move-staging"] {
@@ -145,6 +154,7 @@ fn a_failing_check_changes_nothing() -> Result<()> {
             "the target changed"
         );
         ensure!(std::fs::read(&planted)? == b"{\"schema_version\":0}");
+        ensure!(std::fs::read_to_string(&theirs)? == r#"{"provider":"codex"}"#);
         Ok(())
     })();
     finish(fixture, journey)
@@ -228,10 +238,11 @@ fn a_target_core_that_cannot_start_is_rolled_back_and_the_retry_reuses_the_copy(
         ensure!(sent.len() == 2, "{sent:?}");
         // The source's core ran between the two tries, so a store it wrote
         // since is sent again; the rest the target already held.
+        let files = sent[0]["uploaded"].as_array().context("first try")?.len();
         let held = sent[1]["held"].as_u64().context("held")?;
         let uploaded = sent[1]["uploaded"].as_array().context("uploaded")?;
         ensure!(
-            held >= 5 && held as usize + uploaded.len() == 7,
+            held >= 5 && held as usize + uploaded.len() == files,
             "the retry sent the copy again: {sent:?}"
         );
         ensure!(fixture.target_core()?.is_some(), "no core on the target");
@@ -539,6 +550,14 @@ fn an_upload_cut_midway_resumes_by_digest() -> Result<()> {
             .filter(|name| !name.ends_with(".part"))
             .collect();
         ensure!(whole.len() == 3, "the cut came elsewhere: {whole:?}");
+        let manifest: Value = serde_json::from_slice(&std::fs::read(
+            fixture
+                .target
+                .state
+                .join("move-incoming")
+                .join(format!("{intent}.manifest.json")),
+        )?)?;
+        let files = manifest["files"].as_object().context("manifest")?.len();
 
         fixture.device_ready()?;
         fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
@@ -560,7 +579,7 @@ fn an_upload_cut_midway_resumes_by_digest() -> Result<()> {
         let held = sent[0]["held"].as_u64().context("held")?;
         let uploaded = sent[0]["uploaded"].as_array().context("uploaded")?;
         ensure!(
-            held >= 1 && held as usize + uploaded.len() == 7,
+            held >= 1 && held as usize + uploaded.len() == files,
             "the retry sent the copy again: {sent:?}"
         );
         ensure!(fixture.target_core()?.is_some(), "no core on the target");
@@ -683,6 +702,7 @@ fn the_core_moves_back_and_the_window_shows_what_it_showed_before() -> Result<()
     let fixture = Fixture::start()?;
     let journey = (|| {
         let before = visible(&fixture)?;
+        let settings = std::fs::read_to_string(fixture.source.ai_settings())?;
         let window = fixture.window();
         fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
         let forward = fixture.journal_until("done")?;
@@ -690,6 +710,20 @@ fn the_core_moves_back_and_the_window_shows_what_it_showed_before() -> Result<()
             Ok((fixture.projects()?.len() == 2).then_some(()))
         })?;
         ensure!(fixture.role()? == "node");
+        ensure!(
+            std::fs::read_to_string(fixture.target.ai_settings())? == settings,
+            "the target holds other settings"
+        );
+        ensure!(!fixture.source.ai_settings().exists());
+        ensure!(
+            fixture
+                .source
+                .state
+                .join("moved-out")
+                .join(forward["intent"].as_str().context("intent")?)
+                .join("ai.json")
+                .is_file()
+        );
 
         fixture.event("core_move", json!({"action": "back"}))?;
         let journal = wait_for("the move back done", || {
@@ -706,6 +740,21 @@ fn the_core_moves_back_and_the_window_shows_what_it_showed_before() -> Result<()
         })?;
         ensure!(journal["intent"] != forward["intent"], "{journal}");
         let intent = journal["intent"].as_str().context("intent")?;
+        // Hide AI's settings went with the core and came back with it.
+        ensure!(
+            std::fs::read_to_string(fixture.source.ai_settings())? == settings,
+            "the settings did not come back"
+        );
+        ensure!(!fixture.target.ai_settings().exists());
+        ensure!(
+            fixture
+                .target
+                .state
+                .join("moved-out")
+                .join(intent)
+                .join("ai.json")
+                .is_file()
+        );
         wait_for("this machine's core", || {
             Ok((fixture.role()? == "core").then_some(()))
         })?;

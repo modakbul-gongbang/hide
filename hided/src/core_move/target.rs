@@ -133,6 +133,13 @@ pub(super) fn manifest_path(state_dir: &Path, intent: &str) -> PathBuf {
     hide_kit::layout::move_incoming(state_dir).join(format!("{intent}.manifest.json"))
 }
 
+/// Where this account keeps Hide AI's settings, which move with the core.
+fn ai_settings() -> Result<PathBuf, Value> {
+    hide_platform::host::home_dir()
+        .map(|home| herdr_core::hide_ai_settings_path(&home))
+        .map_err(|error| plain(error.to_string()))
+}
+
 fn refusal(error: herdr_core::node_migration::Refusal) -> Value {
     json!({"file": error.file.display().to_string(), "reason": error.reason})
 }
@@ -232,7 +239,7 @@ fn place(state_dir: &Path, intent: &str, source: &str, target: &str) -> Result<V
     }
     let record = Handover::new(intent, source, target, HandoverState::Pending);
     held.write(&record).map_err(plain)?;
-    let placed = copy::place(&incoming(state_dir, intent), state_dir);
+    let placed = copy::place(&incoming(state_dir, intent), state_dir, &ai_settings()?);
     match placed {
         Ok(placed) => Ok(json!({"placed": placed, "handover": record})),
         Err(not_placed) => {
@@ -292,7 +299,7 @@ fn abort(state_dir: &Path, intent: &str) -> Result<Value, Value> {
     // lock; holding it here keeps one from starting on the copy while it is
     // taken back.
     let _instance = acquire_instance(state_dir)?;
-    copy::unplace(state_dir, &incoming(state_dir, intent)).map_err(refusal)?;
+    copy::unplace(state_dir, &incoming(state_dir, intent), &ai_settings()?).map_err(refusal)?;
     held.remove().map_err(plain)?;
     Ok(json!({"state": "aborted"}))
 }
@@ -368,7 +375,7 @@ fn release(state_dir: &Path, intent: &str, target: &str) -> Result<Value, Value>
     let _instance = acquire_instance(state_dir)?;
     let export = super::back::read_export(state_dir, intent).map_err(plain)?;
     let staging = herdr_core::node_migration::staging_dir(state_dir, intent);
-    copy::stage(state_dir, &staging).map_err(refusal)?;
+    copy::stage(state_dir, &staging, &ai_settings()?).map_err(refusal)?;
     super::driver::carry_labels(&staging, target, &export.labels).map_err(plain)?;
     let manifest = copy::digest(&staging).map_err(refusal)?;
     let bytes = serde_json::to_vec(&manifest).map_err(|error| plain(error.to_string()))?;
@@ -435,7 +442,7 @@ fn retire(state_dir: &Path, intent: &str) -> Result<Value, Value> {
         }
         _ => return Err(plain("this machine's core is not stopped for this move")),
     }
-    copy::set_aside(state_dir, intent).map_err(refusal)?;
+    copy::set_aside(state_dir, intent, &ai_settings()?).map_err(refusal)?;
     super::back::remove_staging(state_dir, intent).map_err(plain)?;
     Ok(json!({"state": "retired"}))
 }

@@ -65,6 +65,12 @@ impl Machine {
         self.home().join("project")
     }
 
+    /// Where this machine keeps Hide AI's settings, outside its state
+    /// folder.
+    pub fn ai_settings(&self) -> PathBuf {
+        hide_platform::host::state_dir_under(self.home()).join("hide/ai.json")
+    }
+
     /// The daemon of this machine's state folder, as it recorded itself.
     pub fn daemon(&self) -> Result<Option<Value>> {
         let path = self.state.join("hided.json");

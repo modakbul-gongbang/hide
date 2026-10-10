@@ -136,6 +136,7 @@ Grok's `--tools ""` giving a tool-free run, where the validated object sits in G
 
 Which agent answers, and which of its models, is a setting.
 It lives in `~/Library/Application Support/hide/ai.json`, a sibling of Hide's own `state.json`, and `hide-ai/src/settings.rs` owns the path, the schema and the rule that turns a choice into a `RouterConfig`.
+The file belongs to the machine that runs the core: a core move carries it in its copy and places it where the machine taking the core keeps it, keeping that machine's own file when it chooses the same and refusing one that chooses otherwise, and once the move commits the file the core left is set aside in `moved-out/<intent>` with the rest of its state (`herdr-core/src/node_migration/copy.rs`; `ARCHITECTURE.md`, Moving the core).
 
 Hide writes it: the Settings Hide AI tab (`web/src/settings/HideAiTab.tsx`, rules in `web/src/hideAi.ts`) dispatches one `ai_settings` event per intent, the core applies it to the snapshot at once and queues the write, and the session-sync coordinator performs the write off the runtime mutex.
 The core reads the file once, when this Mac's session-sync coordinator starts, and from then on holds the choice in the runtime, so a file edited by hand while `hided` runs is read at the next start.

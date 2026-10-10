@@ -257,7 +257,19 @@ pub fn hide_ai_ready_here(asks: &[(String, String)]) -> Result<(), String> {
 pub fn stored_hide_ai_settings(
     home: &std::path::Path,
 ) -> Result<Option<serde_json::Value>, String> {
-    hide_ai::settings::load_choice(home)
+    hide_ai_settings_at(&hide_ai_settings_path(home))
+}
+
+/// Where Hide AI keeps its settings under `home`.
+pub fn hide_ai_settings_path(home: &std::path::Path) -> std::path::PathBuf {
+    hide_ai::settings::settings_path(home)
+}
+
+/// [`stored_hide_ai_settings`] of the settings file at `path`.
+pub(crate) fn hide_ai_settings_at(
+    path: &std::path::Path,
+) -> Result<Option<serde_json::Value>, String> {
+    hide_ai::settings::load_choice_at(path)
         .map_err(|error| format!("the Hide AI settings could not be read: {error}"))?
         .map(|settings| serde_json::to_value(settings).map_err(|error| error.to_string()))
         .transpose()

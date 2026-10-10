@@ -277,10 +277,12 @@ pub fn project_roots(
         .collect()
 }
 
-/// Copies this machine's brain state into its staging folder with the
-/// device's label records beside it, and changes the copy's owner.
+/// Copies this machine's brain state and the Hide AI settings at
+/// `ai_settings` into its staging folder with the device's label records
+/// beside it, and changes the copy's owner.
 pub fn stage(
     state_dir: &Path,
+    ai_settings: &Path,
     journal: &Journal,
     device_labels: &Value,
 ) -> Result<copy::Manifest, MoveFailure> {
@@ -289,7 +291,7 @@ pub fn stage(
         file: refusal.file.display().to_string(),
         reason: refusal.reason,
     };
-    copy::stage(state_dir, &staging).map_err(failed)?;
+    copy::stage(state_dir, &staging, ai_settings).map_err(failed)?;
     carry_labels(&staging, &journal.change.new_owner_was, device_labels).map_err(|reason| {
         MoveFailure::Staging {
             file: staging.join("labels.json").display().to_string(),

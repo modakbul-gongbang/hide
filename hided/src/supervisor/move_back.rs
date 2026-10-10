@@ -172,6 +172,40 @@ pub(super) async fn prepare_back(
             detail: inspected.state_dir.clone(),
         });
     }
+    // The core's settings come back with it and are never merged with
+    // settings this machine kept.
+    match &inspected.ai {
+        Ok(Some(_)) => {}
+        Ok(None) => failed.push(FailedCheck {
+            check: CheckId::Ai,
+            detail: "the core's machine holds no Hide AI settings".to_owned(),
+        }),
+        Err(reason) => failed.push(FailedCheck {
+            check: CheckId::Ai,
+            detail: reason.clone(),
+        }),
+    }
+    let unlike = match (
+        &inspected.ai,
+        herdr_core::stored_hide_ai_settings(&env.home),
+    ) {
+        (_, Ok(None)) => None,
+        (Ok(Some(theirs)), Ok(Some(ours))) if *theirs == ours => None,
+        (_, Ok(Some(_))) => Some("Hide AI settings unlike the core's".to_owned()),
+        (_, Err(reason)) => Some(reason),
+    };
+    if let Some(unlike) = unlike {
+        match failed
+            .iter_mut()
+            .find(|check| check.check == CheckId::OwnState)
+        {
+            Some(check) => check.detail = format!("{}, {unlike}", check.detail),
+            None => failed.push(FailedCheck {
+                check: CheckId::OwnState,
+                detail: unlike,
+            }),
+        }
+    }
     let (Some(peer_socket), Some(own_socket)) = (inspected.herdr_socket.clone(), own_socket) else {
         if inspected.herdr_socket.is_none() {
             failed.push(FailedCheck {
@@ -292,8 +326,9 @@ pub(super) async fn back(
     }
     moves.set(view(MoveState::Copying));
     let copied = blocking({
-        let (state_dir, remote, journal, moves) = (
+        let (state_dir, settings, remote, journal, moves) = (
             env.state_dir.clone(),
+            herdr_core::hide_ai_settings_path(&env.home),
             Arc::clone(&remote),
             journal.clone(),
             Arc::clone(&moves),
@@ -312,7 +347,7 @@ pub(super) async fn back(
             // back out all the same.
             journal.phase = Phase::PlacedHere;
             journal::write(&state_dir, &journal).map_err(|reason| MoveFailure::Local { reason })?;
-            if let Err(not_placed) = back::place_here(&state_dir, &journal) {
+            if let Err(not_placed) = back::place_here(&state_dir, &settings, &journal) {
                 // Nothing of the copy is in the folder, so what it holds is
                 // this machine's own and the rollback takes none of it.
                 if not_placed.left.is_empty() {
@@ -496,8 +531,12 @@ pub(super) async fn back_rollback(
         }
     }
     let undone = blocking({
-        let (state_dir, journal) = (env.state_dir.clone(), journal.clone());
-        move || back::unplace_here(&state_dir, &journal)
+        let (state_dir, settings, journal) = (
+            env.state_dir.clone(),
+            herdr_core::hide_ai_settings_path(&env.home),
+            journal.clone(),
+        );
+        move || back::unplace_here(&state_dir, &settings, &journal)
     })
     .await?;
     if let Err(reason) = undone {

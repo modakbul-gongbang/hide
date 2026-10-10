@@ -166,7 +166,7 @@ async fn core_turn(
         Event::LeaseEnded => {
             let intent = gate.pending_intent();
             stop_core(&env.state_dir, running).await;
-            give_back_pending(&env.state_dir, intent.as_deref());
+            give_back_pending(&env.state_dir, &env.home, intent.as_deref());
             Ok(None)
         }
     }
@@ -245,7 +245,7 @@ async fn lease_end(gate: &crate::core_move::gate::MoveGate) {
 /// A pending core whose move never linked gives its copy back to
 /// `move-incoming`, where the driver's retry finds it, and leaves the
 /// folder with no brain state.
-fn give_back_pending(state_dir: &Path, intent: Option<&str>) {
+fn give_back_pending(state_dir: &Path, home: &Path, intent: Option<&str>) {
     let Some(intent) = intent else { return };
     let given = (|| -> Result<(), String> {
         let held = crate::core_move::handover::hold(state_dir)?;
@@ -258,6 +258,7 @@ fn give_back_pending(state_dir: &Path, intent: Option<&str>) {
         copy::unplace(
             state_dir,
             &crate::core_move::target::incoming(state_dir, intent),
+            &herdr_core::hide_ai_settings_path(home),
         )
         .map_err(|refusal| refusal.to_string())?;
         held.remove()
@@ -673,13 +674,14 @@ async fn forward(
     moves.set(view(MoveState::Copying));
     let remote = Arc::new(remote);
     let steps = {
-        let (state_dir, remote, moves) = (
+        let (state_dir, settings, remote, moves) = (
             env.state_dir.clone(),
+            herdr_core::hide_ai_settings_path(&env.home),
             Arc::clone(&remote),
             Arc::clone(&moves),
         );
         tokio::task::spawn_blocking(move || {
-            copy_and_start(&state_dir, journal, &labels, &remote, &moves)
+            copy_and_start(&state_dir, &settings, journal, &labels, &remote, &moves)
         })
     };
     let journal = match steps.await {
@@ -698,12 +700,13 @@ type StepFailure = (Box<Journal>, MoveStep, MoveFailure);
 /// Stages, sends, places and starts the copy, recording each phase.
 fn copy_and_start(
     state_dir: &Path,
+    ai_settings: &Path,
     mut journal: Journal,
     labels: &serde_json::Value,
     remote: &Remote,
     moves: &MoveControl,
 ) -> Result<Journal, StepFailure> {
-    let manifest = match driver::stage(state_dir, &journal, labels) {
+    let manifest = match driver::stage(state_dir, ai_settings, &journal, labels) {
         Ok(manifest) => manifest,
         Err(cause) => return Err((Box::new(journal), MoveStep::Copy, cause)),
     };
@@ -907,10 +910,15 @@ async fn commit(env: &Env, moves: &MoveControl, mut journal: Journal, remote: &A
         json!({"intent": journal.intent, "target": journal.peer.node}),
     );
     let finished = {
-        let (state_dir, remote, journal) =
-            (env.state_dir.clone(), Arc::clone(remote), journal.clone());
+        let (state_dir, settings, remote, journal) = (
+            env.state_dir.clone(),
+            herdr_core::hide_ai_settings_path(&env.home),
+            Arc::clone(remote),
+            journal.clone(),
+        );
         tokio::task::spawn_blocking(move || -> Result<(), String> {
-            copy::set_aside(&state_dir, &journal.intent).map_err(|refusal| refusal.to_string())?;
+            copy::set_aside(&state_dir, &journal.intent, &settings)
+                .map_err(|refusal| refusal.to_string())?;
             let staging = node_migration::staging_dir(&state_dir, &journal.intent);
             if staging.exists() {
                 std::fs::remove_dir_all(&staging).map_err(|error| error.to_string())?;

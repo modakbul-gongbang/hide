@@ -357,15 +357,20 @@ pub fn rekey(state_dir: &Path, journal: &Journal) -> Result<IdTable, MoveFailure
     Ok(ids)
 }
 
-/// Places the pulled copy in this machine's state folder.
-pub fn place_here(state_dir: &Path, journal: &Journal) -> Result<(), copy::NotPlaced> {
+/// Places the pulled copy in this machine's state folder, its Hide AI
+/// settings at `ai_settings`.
+pub fn place_here(
+    state_dir: &Path,
+    ai_settings: &Path,
+    journal: &Journal,
+) -> Result<(), copy::NotPlaced> {
     let staging = node_migration::staging_dir(state_dir, &journal.intent);
-    copy::place(&staging, state_dir).map(|_| ())
+    copy::place(&staging, state_dir, ai_settings).map(|_| ())
 }
 
 /// Takes a placed copy back out of this machine's state folder and removes
 /// the staging folder, leaving the folder as the node role had it.
-pub fn unplace_here(state_dir: &Path, journal: &Journal) -> Result<(), String> {
+pub fn unplace_here(state_dir: &Path, ai_settings: &Path, journal: &Journal) -> Result<(), String> {
     let staging = node_migration::staging_dir(state_dir, &journal.intent);
     // Before `PlacedHere` nothing of the copy was placed, and brain state
     // here is this machine's own.
@@ -374,7 +379,7 @@ pub fn unplace_here(state_dir: &Path, journal: &Journal) -> Result<(), String> {
         super::journal::Phase::PlacedHere | super::journal::Phase::Retiring
     ) && !copy::brain_present(state_dir).is_empty()
     {
-        copy::unplace(state_dir, &staging).map_err(|refusal| refusal.to_string())?;
+        copy::unplace(state_dir, &staging, ai_settings).map_err(|refusal| refusal.to_string())?;
     }
     remove_staging(state_dir, &journal.intent)
 }

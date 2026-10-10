@@ -4,10 +4,16 @@
 //! core can load the copy, placing it, and setting a folder's brain state
 //! aside once the core has left it.
 //!
-//! Only stores [`MOVES_WITH_CORE`] names are copied; SQLite stores are
-//! copied with `VACUUM INTO` after the core stopped, so the copy is one
-//! consistent file whatever its write-ahead log held. The source folder is
-//! only ever read.
+//! Only stores [`MOVES_WITH_CORE`] names are copied, with Hide AI's
+//! settings as [`AI_SETTINGS`]; SQLite stores are copied with `VACUUM INTO`
+//! after the core stopped, so the copy is one consistent file whatever its
+//! write-ahead log held. The source folder is only ever read.
+//!
+//! A core's machine always holds Hide AI's settings, since the move checks
+//! them, so a copy always carries them. A machine taking the core that holds
+//! settings choosing the same keeps its own file, and the copy's stays in
+//! the folder it was placed from: that is how [`unplace`] knows the file at
+//! `ai_settings` is not the copy's.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -16,7 +22,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{MARKER_FILE, MOVES_WITH_CORE, Refusal};
+use super::{AI_SETTINGS, MARKER_FILE, MOVES_WITH_CORE, Refusal};
 
 /// The most files a copy may hold (the Factory's files folder is the only
 /// one that grows with use); a folder past it is refused, not truncated.
@@ -56,10 +62,10 @@ fn refuse(file: &Path, reason: impl std::fmt::Display) -> Refusal {
     }
 }
 
-/// Copies the brain state of `state_dir` into the empty or absent folder
-/// `staging`, and answers the copy's manifest. Run only while no core
-/// writes `state_dir`.
-pub fn stage(state_dir: &Path, staging: &Path) -> Result<Manifest, Refusal> {
+/// Copies the brain state of `state_dir` and the settings at `ai_settings`
+/// into the empty or absent folder `staging`, and answers the copy's
+/// manifest. Run only while no core writes `state_dir`.
+pub fn stage(state_dir: &Path, staging: &Path, ai_settings: &Path) -> Result<Manifest, Refusal> {
     if staging.exists() {
         std::fs::remove_dir_all(staging).map_err(|error| refuse(staging, error))?;
     }
@@ -83,6 +89,19 @@ pub fn stage(state_dir: &Path, staging: &Path) -> Result<Manifest, Refusal> {
             hide_platform::fs::private::restrict_to_owner(&to)
                 .map_err(|error| refuse(&to, error))?;
         }
+    }
+    let settings = staging.join(AI_SETTINGS);
+    match std::fs::symlink_metadata(ai_settings) {
+        Ok(metadata) if metadata.is_file() => {
+            std::fs::copy(ai_settings, &settings).map_err(|error| refuse(ai_settings, error))?;
+            hide_platform::fs::private::restrict_to_owner(&settings)
+                .map_err(|error| refuse(&settings, error))?;
+        }
+        Ok(_) => return Err(refuse(ai_settings, "is not a file")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(refuse(ai_settings, "is not there: Hide AI is not set up"));
+        }
+        Err(error) => return Err(refuse(ai_settings, error)),
     }
     digest(staging)
 }
@@ -183,6 +202,12 @@ fn file_digest(path: &Path) -> Result<FileDigest, Refusal> {
 /// SQLite store passes its integrity check. The first store that does not
 /// is named.
 pub fn check_loadable(dir: &Path) -> Result<(), Refusal> {
+    let settings = dir.join(AI_SETTINGS);
+    match crate::ai::hide_ai_settings_at(&settings) {
+        Ok(Some(_)) => {}
+        Ok(None) => return Err(refuse(&settings, "is not in the copy")),
+        Err(reason) => return Err(refuse(&settings, reason)),
+    }
     for name in MOVES_WITH_CORE {
         let path = dir.join(name);
         if !path.is_file() {
@@ -279,13 +304,18 @@ pub struct NotPlaced {
     pub left: Vec<String>,
 }
 
-/// Moves the copy at `incoming` into `state_dir`, `node.json` last, and
-/// answers what it placed. All or nothing: a folder that already holds
-/// brain state is refused before anything moves, and a move that fails
-/// partway takes back what it moved, so a refused place leaves only the
-/// folder's own files there, which its caller must never take as the
-/// copy's.
-pub fn place(incoming: &Path, state_dir: &Path) -> Result<Vec<String>, NotPlaced> {
+/// Moves the copy at `incoming` into `state_dir`, its Hide AI settings to
+/// `ai_settings`, `node.json` last, and answers what it placed. All or
+/// nothing: a folder that already holds brain state, or settings choosing
+/// otherwise than the copy's, is refused before anything moves, and a move
+/// that fails partway takes back what it moved, so a refused place leaves
+/// only the machine's own files there, which its caller must never take as
+/// the copy's.
+pub fn place(
+    incoming: &Path,
+    state_dir: &Path,
+    ai_settings: &Path,
+) -> Result<Vec<String>, NotPlaced> {
     let refused = |refusal: Refusal| NotPlaced {
         refusal,
         left: Vec::new(),
@@ -300,28 +330,66 @@ pub fn place(incoming: &Path, state_dir: &Path) -> Result<Vec<String>, NotPlaced
     if !incoming.join(MARKER_FILE).is_file() {
         return Err(refused(refuse(incoming, "holds no node.json")));
     }
+    let settings = incoming.join(AI_SETTINGS);
+    let keep_own = match (
+        crate::ai::hide_ai_settings_at(&settings),
+        crate::ai::hide_ai_settings_at(ai_settings),
+    ) {
+        (Ok(Some(_)), Ok(None)) => false,
+        (Ok(Some(copy)), Ok(Some(own))) if copy == own => true,
+        (Ok(Some(_)), Ok(Some(_))) => {
+            return Err(refused(refuse(
+                ai_settings,
+                "holds Hide AI settings unlike the copy's",
+            )));
+        }
+        (Ok(None), _) => return Err(refused(refuse(&settings, "is not in the copy"))),
+        (Err(reason), _) => return Err(refused(refuse(&settings, reason))),
+        (_, Err(reason)) => return Err(refused(refuse(ai_settings, reason))),
+    };
+    let at = |name: &str| {
+        if name == AI_SETTINGS {
+            ai_settings.to_path_buf()
+        } else {
+            state_dir.join(name)
+        }
+    };
     let mut placed: Vec<String> = Vec::new();
     let names = MOVES_WITH_CORE
         .iter()
-        .filter(|name| **name != MARKER_FILE)
-        .chain(std::iter::once(&MARKER_FILE));
+        .copied()
+        .filter(|name| *name != MARKER_FILE)
+        .chain((!keep_own).then_some(AI_SETTINGS))
+        .chain(std::iter::once(MARKER_FILE));
     for name in names {
-        match place_one(incoming, state_dir, name) {
-            Ok(true) => placed.push((*name).to_owned()),
+        let one = if name == AI_SETTINGS {
+            place_settings(&settings, ai_settings)
+        } else {
+            place_one(incoming, state_dir, name)
+        };
+        match one {
+            Ok(true) => placed.push(name.to_owned()),
             Ok(false) => {}
             Err(refusal) => {
                 let left = placed
                     .into_iter()
                     .rev()
-                    .filter(|name| {
-                        std::fs::rename(state_dir.join(name), incoming.join(name)).is_err()
-                    })
+                    .filter(|name| std::fs::rename(at(name), incoming.join(name)).is_err())
                     .collect();
                 return Err(NotPlaced { refusal, left });
             }
         }
     }
     Ok(placed)
+}
+
+fn place_settings(from: &Path, to: &Path) -> Result<bool, Refusal> {
+    if let Some(folder) = to.parent() {
+        std::fs::create_dir_all(folder).map_err(|error| refuse(folder, error))?;
+    }
+    hide_platform::fs::atomic::rename_no_replace_path(from, to)
+        .map_err(|error| refuse(to, error))?;
+    Ok(true)
 }
 
 fn place_one(incoming: &Path, state_dir: &Path, name: &str) -> Result<bool, Refusal> {
@@ -341,9 +409,17 @@ fn place_one(incoming: &Path, state_dir: &Path, name: &str) -> Result<bool, Refu
 }
 
 /// Undoes [`place`] after the core started on the copy has stopped: every
-/// store goes back into `incoming`, where a retry finds it by digest, and
-/// what that core rebuilt is removed, so the folder holds no brain state.
-pub fn unplace(state_dir: &Path, incoming: &Path) -> Result<Vec<String>, Refusal> {
+/// store and the settings it placed go back into `incoming`, where a retry
+/// finds them by digest, and what that core rebuilt is removed, so the
+/// folder holds no brain state.
+pub fn unplace(
+    state_dir: &Path,
+    incoming: &Path,
+    ai_settings: &Path,
+) -> Result<Vec<String>, Refusal> {
+    // With no copy here at all, settings at `ai_settings` are the machine's
+    // own: only a copy that lacks its settings had them placed.
+    let copy_here = incoming.is_dir();
     hide_platform::fs::private::create_dir_all(incoming)
         .map_err(|error| refuse(incoming, error))?;
     let mut moved = Vec::new();
@@ -351,6 +427,14 @@ pub fn unplace(state_dir: &Path, incoming: &Path) -> Result<Vec<String>, Refusal
         if unplace_one(state_dir, incoming, name)? {
             moved.push((*name).to_owned());
         }
+    }
+    let settings = incoming.join(AI_SETTINGS);
+    if copy_here
+        && std::fs::symlink_metadata(&settings).is_err()
+        && std::fs::symlink_metadata(ai_settings).is_ok()
+    {
+        std::fs::rename(ai_settings, &settings).map_err(|error| refuse(ai_settings, error))?;
+        moved.push(AI_SETTINGS.to_owned());
     }
     // The marker last, so a folder never holds a marker over stores that
     // are gone.
@@ -390,9 +474,14 @@ fn unplace_one(state_dir: &Path, incoming: &Path, name: &str) -> Result<bool, Re
     Ok(true)
 }
 
-/// Moves every brain store of `state_dir` into `moved-out/<intent>`,
-/// replacing an earlier move's (Q9), and answers what it moved.
-pub fn set_aside(state_dir: &Path, intent: &str) -> Result<Vec<String>, Refusal> {
+/// Moves every brain store of `state_dir` and the settings at
+/// `ai_settings` into `moved-out/<intent>`, replacing an earlier move's
+/// (Q9), and answers what it moved.
+pub fn set_aside(
+    state_dir: &Path,
+    intent: &str,
+    ai_settings: &Path,
+) -> Result<Vec<String>, Refusal> {
     let root = hide_kit::layout::moved_out(state_dir);
     let target = root.join(intent);
     if root.exists() {
@@ -432,6 +521,14 @@ pub fn set_aside(state_dir: &Path, intent: &str) -> Result<Vec<String>, Refusal>
             moved.push(file);
         }
     }
+    if std::fs::symlink_metadata(ai_settings).is_ok() {
+        let to = target.join(AI_SETTINGS);
+        if std::fs::symlink_metadata(&to).is_ok() {
+            return Err(refuse(&to, "is already set aside"));
+        }
+        std::fs::rename(ai_settings, &to).map_err(|error| refuse(ai_settings, error))?;
+        moved.push(AI_SETTINGS.to_owned());
+    }
     Ok(moved)
 }
 
@@ -439,8 +536,18 @@ pub fn set_aside(state_dir: &Path, intent: &str) -> Result<Vec<String>, Refusal>
 mod tests {
     use super::*;
 
+    const SETTINGS: &str = r#"{"provider":"claude"}"#;
+
+    /// Where a machine whose state folder is `dir` keeps Hide AI's
+    /// settings: outside that folder.
+    fn settings(dir: &Path) -> PathBuf {
+        dir.join("account/hide/ai.json")
+    }
+
     fn folder() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(settings(dir.path()).parent().unwrap()).unwrap();
+        std::fs::write(settings(dir.path()), SETTINGS).unwrap();
         std::fs::write(dir.path().join(MARKER_FILE), r#"{"version":1,"node":"n"}"#).unwrap();
         std::fs::write(
             dir.path().join("labels.json"),
@@ -468,11 +575,12 @@ mod tests {
         for name in ["labels.json", "mobile.json", MARKER_FILE] {
             std::fs::write(incoming.path().join(name), name).unwrap();
         }
+        std::fs::write(incoming.path().join(AI_SETTINGS), SETTINGS).unwrap();
         // The folder's own Mobile setting, which a place replaces, cannot
         // be removed: the place stops after it moved the labels in.
         std::fs::create_dir(state.path().join("mobile.json")).unwrap();
         std::fs::write(state.path().join("mobile.json/kept"), "own").unwrap();
-        let not_placed = place(incoming.path(), state.path()).unwrap_err();
+        let not_placed = place(incoming.path(), state.path(), &settings(state.path())).unwrap_err();
         assert_eq!(not_placed.refusal.file, state.path().join("mobile.json"));
         assert!(not_placed.left.is_empty());
         assert!(!state.path().join("labels.json").exists());
@@ -481,17 +589,19 @@ mod tests {
             "labels.json"
         );
         assert!(state.path().join("mobile.json/kept").is_file());
+        assert!(!settings(state.path()).exists());
     }
 
     #[test]
     fn a_staging_copy_holds_the_brain_state_and_only_it() {
         let source = folder();
         let staging = source.path().join("move-staging/i1");
-        let manifest = stage(source.path(), &staging).unwrap();
+        let manifest = stage(source.path(), &staging, &settings(source.path())).unwrap();
         let names: Vec<&str> = manifest.files.keys().map(String::as_str).collect();
         assert_eq!(
             names,
             [
+                AI_SETTINGS,
                 "factory-files/a.prd",
                 "labels.json",
                 "links.sqlite3",
@@ -505,13 +615,21 @@ mod tests {
         assert_eq!(rows, 1, "the log's last write is in the copy");
         assert_eq!(digest(&staging).unwrap(), manifest);
         check_loadable(&staging).unwrap();
+
+        std::fs::remove_file(settings(source.path())).unwrap();
+        let refusal = stage(source.path(), &staging, &settings(source.path())).unwrap_err();
+        assert_eq!(
+            refusal.file,
+            settings(source.path()),
+            "a core always holds them"
+        );
     }
 
     #[test]
     fn a_damaged_store_is_named_by_the_load_check() {
         let source = folder();
         let staging = source.path().join("move-staging/i1");
-        stage(source.path(), &staging).unwrap();
+        stage(source.path(), &staging, &settings(source.path())).unwrap();
         std::fs::write(staging.join("labels.json"), "[1]").unwrap();
         let refusal = check_loadable(&staging).unwrap_err();
         assert_eq!(refusal.file, staging.join("labels.json"));
@@ -527,7 +645,7 @@ mod tests {
     fn the_load_check_leaves_the_copy_as_it_was_sent() {
         let source = folder();
         let staging = source.path().join("move-staging/i1");
-        stage(source.path(), &staging).unwrap();
+        stage(source.path(), &staging, &settings(source.path())).unwrap();
         // The owner change opens the copied store as the core does, which
         // leaves it in WAL mode.
         rusqlite::Connection::open(staging.join("links.sqlite3"))
@@ -553,16 +671,16 @@ mod tests {
     fn a_database_log_without_its_store_is_brain_state_and_never_returns_with_a_copy() {
         let source = folder();
         let staging = source.path().join("move-staging/i1");
-        stage(source.path(), &staging).unwrap();
+        stage(source.path(), &staging, &settings(source.path())).unwrap();
         let target = tempfile::tempdir().unwrap();
         std::fs::write(target.path().join("links.sqlite3-wal"), "stale").unwrap();
         assert_eq!(brain_present(target.path()), vec!["links.sqlite3-wal"]);
         std::fs::remove_file(target.path().join("links.sqlite3-wal")).unwrap();
-        place(&staging, target.path()).unwrap();
+        place(&staging, target.path(), &settings(target.path())).unwrap();
         // The core started on the copy opened its stores.
         std::fs::write(target.path().join("links.sqlite3-wal"), "pending").unwrap();
         std::fs::write(staging.join("links.sqlite3-shm"), "a reader's").unwrap();
-        unplace(target.path(), &staging).unwrap();
+        unplace(target.path(), &staging, &settings(target.path())).unwrap();
         assert!(brain_present(target.path()).is_empty());
         assert!(!staging.join("links.sqlite3-shm").exists());
     }
@@ -571,14 +689,16 @@ mod tests {
     fn placing_refuses_a_folder_with_brain_state_and_puts_the_marker_last() {
         let source = folder();
         let staging = source.path().join("move-staging/i1");
-        stage(source.path(), &staging).unwrap();
+        stage(source.path(), &staging, &settings(source.path())).unwrap();
         let target = tempfile::tempdir().unwrap();
         std::fs::write(target.path().join("core-state.json"), "{}").unwrap();
-        let refusal = place(&staging, target.path()).unwrap_err().refusal;
+        let refusal = place(&staging, target.path(), &settings(target.path()))
+            .unwrap_err()
+            .refusal;
         assert!(refusal.reason.contains("core-state.json"), "{refusal}");
         assert!(staging.join(MARKER_FILE).exists(), "nothing moved");
         std::fs::remove_file(target.path().join("core-state.json")).unwrap();
-        let placed = place(&staging, target.path()).unwrap();
+        let placed = place(&staging, target.path(), &settings(target.path())).unwrap();
         assert_eq!(placed.last().map(String::as_str), Some(MARKER_FILE));
         assert!(target.path().join("factory-files/a.prd").is_file());
     }
@@ -587,27 +707,65 @@ mod tests {
     fn unplacing_leaves_no_brain_state_and_returns_the_copy_for_a_retry() {
         let source = folder();
         let staging = source.path().join("move-staging/i1");
-        let manifest = stage(source.path(), &staging).unwrap();
+        let manifest = stage(source.path(), &staging, &settings(source.path())).unwrap();
         let target = tempfile::tempdir().unwrap();
-        place(&staging, target.path()).unwrap();
+        place(&staging, target.path(), &settings(target.path())).unwrap();
         // What the core started on the copy rebuilt.
         std::fs::write(target.path().join("session-search.sqlite3"), "index").unwrap();
-        unplace(target.path(), &staging).unwrap();
+        unplace(target.path(), &staging, &settings(target.path())).unwrap();
         assert!(brain_present(target.path()).is_empty());
+        assert_eq!(digest(&staging).unwrap(), manifest);
+    }
+
+    /// Q7, Q6: the settings go where the machine taking the core keeps
+    /// them and come back to the copy on an unplace; settings of its own
+    /// that choose the same stay, and other settings are never replaced.
+    #[test]
+    fn hide_ai_settings_move_with_the_copy_and_never_replace_other_settings() {
+        let source = folder();
+        let staging = source.path().join("move-staging/i1");
+        let manifest = stage(source.path(), &staging, &settings(source.path())).unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let theirs = settings(target.path());
+
+        let placed = place(&staging, target.path(), &theirs).unwrap();
+        assert!(placed.contains(&AI_SETTINGS.to_owned()));
+        assert_eq!(std::fs::read_to_string(&theirs).unwrap(), SETTINGS);
+        unplace(target.path(), &staging, &theirs).unwrap();
+        assert!(!theirs.exists());
+        assert_eq!(digest(&staging).unwrap(), manifest);
+
+        // Their own file, spelled differently, choosing the same.
+        let own = r#"{ "provider": "claude" }"#;
+        std::fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        std::fs::write(&theirs, own).unwrap();
+        let placed = place(&staging, target.path(), &theirs).unwrap();
+        assert!(!placed.contains(&AI_SETTINGS.to_owned()));
+        unplace(target.path(), &staging, &theirs).unwrap();
+        assert_eq!(std::fs::read_to_string(&theirs).unwrap(), own);
+        assert_eq!(digest(&staging).unwrap(), manifest);
+
+        std::fs::write(&theirs, r#"{"provider":"codex"}"#).unwrap();
+        let refusal = place(&staging, target.path(), &theirs).unwrap_err();
+        assert_eq!(refusal.refusal.file, theirs);
+        assert!(refusal.left.is_empty());
+        assert!(brain_present(target.path()).is_empty(), "nothing moved");
         assert_eq!(digest(&staging).unwrap(), manifest);
     }
 
     #[test]
     fn setting_aside_keeps_only_the_latest_move_and_leaves_the_rest() {
         let source = folder();
-        set_aside(source.path(), "i1").unwrap();
+        set_aside(source.path(), "i1", &settings(source.path())).unwrap();
         let moved_out = hide_kit::layout::moved_out(source.path());
         assert!(moved_out.join("i1/links.sqlite3").is_file());
+        assert!(moved_out.join("i1").join(AI_SETTINGS).is_file());
+        assert!(!settings(source.path()).exists());
         assert!(moved_out.join("i1/session-search.sqlite3").is_file());
         assert!(source.path().join("hided.json").is_file());
         assert!(brain_present(source.path()).is_empty());
         std::fs::write(source.path().join(MARKER_FILE), "{}").unwrap();
-        set_aside(source.path(), "i2").unwrap();
+        set_aside(source.path(), "i2", &settings(source.path())).unwrap();
         assert!(!moved_out.join("i1").exists());
         assert!(moved_out.join("i2").join(MARKER_FILE).is_file());
     }
