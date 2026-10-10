@@ -107,7 +107,13 @@ fn a_cursor_launch_is_refused_in_cursors_shape_and_every_other_path_answers_allo
         reason.contains("hide agent spawn --parent here"),
         "{reason}"
     );
-    assert_eq!(answer.as_object().unwrap().len(), 2, "{answer}");
+    // Cursor's local tool path shows `user_message` and passes
+    // `additional_context` to the agent; the server-asked path passes
+    // `agent_message`. The reason is on all three.
+    for field in ["user_message", "additional_context"] {
+        assert_eq!(answer[field].as_str(), Some(reason), "{field}");
+    }
+    assert_eq!(answer.as_object().unwrap().len(), 4, "{answer}");
 
     let allow = json!({ "permission": "allow" });
     for (payload, pane) in [

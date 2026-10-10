@@ -297,10 +297,13 @@ test("the installed Grok and Cursor commands refuse a direct agent start in each
     // B2, Cursor: its own deny shape, and `allow` on the call that is not refused.
     const cursorCall = (command: string) => ({ ...sample("cursor-pre-tool-use.json"), cwd: path.join(herdr.root, "fixture"), tool_input: { command, working_directory: path.join(herdr.root, "fixture") } });
     const denied = runHook(stack, cursor, installed.cursor(home, "PreToolUse"), cursorCall(`herdr agent start worker --kind claude --pane ${cursor}`), CURSOR_ENV);
-    const deny = JSON.parse(denied.stdout) as { permission: string; agent_message: string };
+    const deny = JSON.parse(denied.stdout) as { permission: string; user_message: string; agent_message: string; additional_context: string };
     expect(deny.permission).toBe("deny");
     expect(deny.agent_message).toContain("hide agent spawn");
-    expect(Object.keys(deny)).toHaveLength(2);
+    // Cursor's local tool path shows `user_message` and hands `additional_context` to the agent (issue 910).
+    expect(deny.user_message).toBe(deny.agent_message);
+    expect(deny.additional_context).toBe(deny.agent_message);
+    expect(Object.keys(deny)).toHaveLength(4);
     expect(JSON.parse(runHook(stack, cursor, installed.cursor(home, "PreToolUse"), cursorCall("cargo test"), CURSOR_ENV).stdout)).toEqual({ permission: "allow" });
     expect(refusals(home)).toEqual(["grok", "cursor"]);
   } finally {
