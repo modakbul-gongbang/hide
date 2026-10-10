@@ -667,10 +667,13 @@ impl Call {
     }
 
     /// Whether this request is link control rather than machine work: a
-    /// greeting, a pane's proof answer or stream, or a Herdr stream. Each
-    /// finishes at once on the node, so both ends run them in a lane of
-    /// their own, and four slow machine calls (a port scan, a disk walk)
-    /// never hold a pane's reply or a Herdr write behind them.
+    /// greeting, a pane's proof answer or stream, or a Herdr stream. Each is
+    /// short on the node, so both ends run them in a lane of their own, and
+    /// four slow machine calls (a port scan, a disk walk) never hold a pane's
+    /// reply or a Herdr write behind them. One may still wait: a link write
+    /// to an end that stops reading holds its worker until the write
+    /// deadline (`hide_host::link_bridge`, 5 s) and then ends that stream,
+    /// so four such streams can hold the lane for one such window.
     pub fn is_control(&self) -> bool {
         matches!(
             self,

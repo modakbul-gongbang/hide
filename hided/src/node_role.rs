@@ -654,6 +654,18 @@ fn attach_failure(error: hide_node_link::device::RemoteError) -> LinkFailure {
     }
 }
 
+/// Why the screens' forward over the link could not be set up: what a move
+/// may change (the connection, a local port) is a transport failure, what
+/// the operator must fix is not.
+fn forward_failure(error: hide_node_link::device::RemoteError) -> LinkFailure {
+    let reason = format!("relay_forward: {error}");
+    if error.a_move_can_change() {
+        LinkFailure::Transport(reason)
+    } else {
+        LinkFailure::Ended(reason)
+    }
+}
+
 /// Why the handshake on the attach channel failed: cut off or unanswered is
 /// the connection's failure, an unreadable line is not.
 fn handshake_failure(error: attach::HandshakeError) -> LinkFailure {
@@ -739,9 +751,7 @@ fn serve_link(
     }));
     // The screens' way to the core: held for the link's life, and ended
     // with it.
-    let forward = upstream
-        .forward(accepted.port)
-        .map_err(|error| LinkFailure::Transport(format!("relay_forward: {error}")))?;
+    let forward = upstream.forward(accepted.port).map_err(forward_failure)?;
     let terminals = Arc::new(NodeTerminals::for_screen(
         Arc::clone(&shared.screen),
         identity.herdr_bin.clone(),
@@ -1014,6 +1024,32 @@ mod tests {
                 false,
             ),
         ]
+    }
+
+    /// The screens' forward is judged as the dial is: a connection or port
+    /// failure wakes on a move, a forward the operator must fix does not.
+    #[test]
+    fn a_forward_that_must_be_fixed_does_not_wake_on_a_move() {
+        use hide_node_link::device::{RemoteError, RemoteStage};
+        let forward = |reason: &str, retryable, action_required| {
+            forward_failure(RemoteError::new(
+                "workspace-browser-forward",
+                "core",
+                RemoteStage::Tunnel,
+                reason,
+                retryable,
+                action_required,
+            ))
+        };
+        let waiting = |reason| Phase::Waiting { reason };
+        assert!(wakes_on_move(
+            &waiting(forward("could not reserve a port", true, false)),
+            None
+        ));
+        assert!(!wakes_on_move(
+            &waiting(forward("remote endpoint must be loopback", false, true)),
+            None
+        ));
     }
 
     /// A move wakes a wait on what the network may have caused, and never
