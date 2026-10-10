@@ -32,13 +32,25 @@ it.each([
   expect(resumeProvider(kind)).toBe(canonical);
 });
 
-it.each(["future-agent"])("keeps %s neutral and ineligible for resume", (kind) => {
-  expect(renderToStaticMarkup(<AgentMark kind={kind} />)).toContain('data-agent-mark="neutral"');
+it.each(AGENT_ADAPTERS.map((row) => [row.id, row.herdr_kind]))("draws the logo of %s, never the neutral mark", (id, herdrKind) => {
+  const markup = renderToStaticMarkup(<AgentMark kind={herdrKind} />);
+  expect(markup).toContain(`data-agent-mark="${herdrKind}"`);
+  expect(markup).toContain("<img");
+  expect(renderToStaticMarkup(<AgentMark kind={` ${id.toUpperCase()} `} />)).toContain(`data-agent-mark="${herdrKind}"`);
+});
+
+// A plain shell has no kind, and a bundled logo that no adapter lists (Gemini CLI's, kept for Hide AI) names no agent Hide supports.
+it.each(["future-agent", "gemini-cli", "", null, undefined])("keeps %s neutral", (kind) => {
+  const markup = renderToStaticMarkup(<AgentMark kind={kind} />);
+  expect(markup).toContain('data-agent-mark="neutral"');
+  expect(markup).not.toContain("<img");
+});
+
+it.each(["future-agent"])("keeps %s ineligible for resume", (kind) => {
   expect(resumeProvider(kind)).toBeNull();
 });
 
-it.each(["grok", "pi", "omp", "cursor"])("keeps %s neutral while enabling its completed exact resume reader", (kind) => {
-  expect(renderToStaticMarkup(<AgentMark kind={kind} />)).toContain('data-agent-mark="neutral"');
+it.each(["grok", "pi", "omp", "cursor"])("enables the completed exact resume reader of %s", (kind) => {
   expect(resumeProvider(` ${kind.toUpperCase()} `)).toBe(kind);
 });
 

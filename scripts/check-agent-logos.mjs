@@ -31,6 +31,8 @@ for (const logo of manifest.logos) {
   if (!logo.modification?.trim()) problems.push(`${logo.id}: no modification note`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(logo.retrieved ?? '')) problems.push(`${logo.id}: no retrieved date`);
   if (!fs.existsSync(path.join(dir, logo.file))) problems.push(`${logo.id}: ${logo.file} is missing`);
+  // web/src/agentLogos.ts seats a logo on the plate (--logo-plate) only when it says so; any other value would silently mean no.
+  if ('plate' in logo && logo.plate !== true) problems.push(`${logo.id}: plate is either true or absent`);
   // web/src/agentLogos.ts maps a bundled logo to its agent by file name, and globs only these formats.
   if (!LOGO_FORMATS.some(format => logo.file === `${logo.id}.${format}`)) problems.push(`${logo.id}: ${logo.file} must be named ${LOGO_FORMATS.map(format => `${logo.id}.${format}`).join(' or ')}, the names agentLogos.ts reads the agent from`);
 }
