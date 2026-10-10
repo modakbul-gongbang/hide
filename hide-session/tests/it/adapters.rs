@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use hide_session::label_transcript::{
     LabelEventKind, LabelTranscript, LabelTranscriptRequest, read,
 };
-use hide_session::turns::Waiting;
+use hide_session::turns::{Waiting, WakeLoss};
 use hide_session::{Agent, PrSighting};
 
 /// 2026-10-03T01:00:00Z, when every fixture's conversation starts.
@@ -513,7 +513,10 @@ mod wake_devices {
         append(&path, &many);
         let answer = read_whole(home.path(), Agent::Claude);
         assert_eq!(live(&answer), []);
-        assert!(answer.turns.as_ref().unwrap().wake_overflowed());
+        assert_eq!(
+            answer.turns.as_ref().unwrap().wake_loss(),
+            Some(WakeLoss::Capacity)
+        );
         append(
             &path,
             &[
@@ -523,7 +526,354 @@ mod wake_devices {
         );
         let answer = read_whole(home.path(), Agent::Claude);
         assert_eq!(live(&answer), [None]);
-        assert!(!answer.turns.as_ref().unwrap().wake_overflowed());
+        assert_eq!(answer.turns.as_ref().unwrap().wake_loss(), None);
+    }
+
+    /// What Claude Code writes for a `TaskStop` call, and for the result of
+    /// one (`is_error` only on a failure), as found in real sessions.
+    fn stop_call(call: &str, task: &str) -> serde_json::Value {
+        json!({"type": "assistant", "timestamp": "2026-10-03T01:11:00.000Z",
+            "message": {"role": "assistant", "content": [{"type": "tool_use", "id": call,
+                "name": "TaskStop", "input": {"task_id": task}}]}})
+    }
+
+    fn stopped(call: &str, task: &str) -> serde_json::Value {
+        stop_result(
+            call,
+            &format!(
+                "{{\"message\":\"Successfully stopped task: {task} (sleep 600)\",\"task_id\":\"{task}\",\"task_type\":\"local_bash\"}}"
+            ),
+            false,
+        )
+    }
+
+    fn stop_refused(call: &str, task: &str) -> serde_json::Value {
+        stop_result(
+            call,
+            &format!(
+                "<tool_use_error>Task {task} is not running (status: completed)</tool_use_error>"
+            ),
+            true,
+        )
+    }
+
+    fn stop_result(call: &str, text: &str, is_error: bool) -> serde_json::Value {
+        let mut block = json!({"type": "tool_result", "tool_use_id": call, "content": text});
+        if is_error {
+            block["is_error"] = json!(true);
+        }
+        json!({"type": "user", "timestamp": "2026-10-03T01:11:05.000Z",
+            "message": {"role": "user", "content": [block]}})
+    }
+
+    /// PRD agent-blocked-state B18: a `TaskStop` call ends a device only when
+    /// its own result says it stopped the task, found by `tool_use_id`, or when
+    /// the task's notification says it ended (#906). Until a result arrives
+    /// the task is still running as far as the records show.
+    #[test]
+    fn a_task_stop_ends_a_device_only_when_its_result_says_it_stopped() {
+        let home = home(Agent::Claude);
+        let path = session_file(home.path(), Agent::Claude);
+        append(
+            &path,
+            &[
+                boot("SessionStart:startup"),
+                started("Command running in background with ID: bg1"),
+                started("Command running in background with ID: bg2"),
+                stop_call("toolu_s1", "bg1"),
+            ],
+        );
+        assert_eq!(
+            live(&read_whole(home.path(), Agent::Claude)).len(),
+            2,
+            "a stop with no result yet has stopped nothing"
+        );
+
+        append(&path, &[stop_refused("toolu_s1", "bg1")]);
+        assert_eq!(
+            live(&read_whole(home.path(), Agent::Claude)).len(),
+            2,
+            "a stop the tool refused has stopped nothing"
+        );
+
+        append(
+            &path,
+            &[stop_call("toolu_s2", "bg1"), stopped("toolu_s2", "bg1")],
+        );
+        assert_eq!(
+            live(&read_whole(home.path(), Agent::Claude)).len(),
+            1,
+            "a stop that succeeded ends its task and no other"
+        );
+
+        append(&path, &[stopped("toolu_unrelated", "bg2")]);
+        assert_eq!(
+            live(&read_whole(home.path(), Agent::Claude)).len(),
+            1,
+            "a result of a call that was no stop of bg2 ends nothing"
+        );
+
+        append(&path, &[ended("bg2")]);
+        assert_eq!(live(&read_whole(home.path(), Agent::Claude)), []);
+    }
+
+    #[test]
+    fn a_task_stop_answered_in_a_later_read_ends_the_device_it_named() {
+        let home = home(Agent::Claude);
+        let path = session_file(home.path(), Agent::Claude);
+        append(
+            &path,
+            &[
+                boot("SessionStart:startup"),
+                started("Command running in background with ID: bg1"),
+                stop_call("toolu_s1", "bg1"),
+            ],
+        );
+        let first = read_whole(home.path(), Agent::Claude);
+        assert_eq!(live(&first), [None]);
+
+        append(&path, &[stopped("toolu_s1", "bg1")]);
+        let mut request = request(Agent::Claude);
+        request.checkpoint = Some(first.checkpoint.clone());
+        request.turns = first.turns.clone();
+        let second = read(home.path(), &request).unwrap();
+        assert_eq!(
+            live(&second),
+            [],
+            "the tracker remembers the call it waits on"
+        );
+    }
+
+    #[test]
+    fn a_stop_nobody_answers_before_the_next_process_ends_with_that_process() {
+        let home = home(Agent::Claude);
+        let path = session_file(home.path(), Agent::Claude);
+        append(
+            &path,
+            &[
+                boot("SessionStart:startup"),
+                started("Command running in background with ID: bg1"),
+                stop_call("toolu_s1", "bg1"),
+                boot("SessionStart:resume"),
+                started("Command running in background with ID: bg1"),
+            ],
+        );
+        // The call belonged to the process before; its result, if one is ever
+        // written, does not stop the task the new process started.
+        append(&path, &[stopped("toolu_s1", "bg1")]);
+        assert_eq!(live(&read_whole(home.path(), Agent::Claude)), [None]);
+    }
+
+    /// A call to the tool `name`, and the result of a call, as Claude Code
+    /// writes them.
+    fn call(name: &str, id: &str) -> serde_json::Value {
+        json!({"type": "assistant", "timestamp": "2026-10-03T01:11:00.000Z",
+            "message": {"role": "assistant", "content": [{"type": "tool_use", "id": id,
+                "name": name, "input": {"command": "sleep 600"}}]}})
+    }
+
+    fn result_of(id: &str, text: &str) -> serde_json::Value {
+        stop_result(id, text, false)
+    }
+
+    /// A line over `SESSION_LINE_LIMIT_BYTES`, in the shape of `record` with
+    /// the string at `pointer` padded.
+    fn oversized(mut record: serde_json::Value, pointer: &str) -> serde_json::Value {
+        let slot = record.pointer_mut(pointer).unwrap();
+        let text = slot.as_str().unwrap().to_owned();
+        *slot = json!(format!(
+            "{text}{}",
+            "x".repeat(hide_session::SESSION_LINE_LIMIT_BYTES)
+        ));
+        record
+    }
+
+    /// PRD agent-blocked-state B18: a record too large to keep is read by its
+    /// structure alone, so what it said about a device is known only by which
+    /// kind of record it is and which call it names (#904). One that may have
+    /// started, ended or stopped a device, or begun a process, proves no
+    /// device until the next process starts, as a record the reader cannot
+    /// follow does.
+    #[test]
+    fn a_record_too_large_to_keep_that_may_carry_a_device_proves_none() {
+        let ending = oversized(
+            json!({"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-10-03T01:20:00.000Z",
+                "content": "<task-notification>\n<task-id>bg1</task-id>\n<status>completed</status>\n</task-notification>\n"}),
+            "/content",
+        );
+        // The answer to a call that can start work, whose output is longer
+        // than the reader keeps: it may be the start of a task.
+        let starting = [
+            call("Bash", "toolu_big"),
+            oversized(
+                result_of(
+                    "toolu_big",
+                    "Command did not complete within its 600s timeout and was moved to the background (ID: big1). Output:\n",
+                ),
+                "/message/content/0/content",
+            ),
+        ];
+        let stopping = json!({"type": "assistant", "timestamp": "2026-10-03T01:11:00.000Z",
+            "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_w", "name": "Write",
+                    "input": {"file_path": "/x", "content": "y".repeat(hide_session::SESSION_LINE_LIMIT_BYTES)}},
+                {"type": "tool_use", "id": "toolu_s", "name": "TaskStop", "input": {"task_id": "bg1"}}]}});
+        let booting = oversized(
+            json!({"type": "attachment", "timestamp": "2026-10-03T01:30:00.000Z",
+                "attachment": {"type": "hook_success", "hookName": "SessionStart:resume", "content": "ctx\n"}}),
+            "/attachment/content",
+        );
+        // A result that names no call cannot be paired with one, so nothing
+        // says it is not the answer to a command.
+        let unpaired = oversized(
+            json!({"type": "user", "timestamp": "2026-10-03T01:12:00.000Z",
+                "message": {"role": "user", "content": [{"type": "tool_result", "content": "out\n"}]}}),
+            "/message/content/0/content",
+        );
+        let queued = oversized(
+            json!({"type": "attachment", "timestamp": "2026-10-03T01:30:00.000Z",
+                "attachment": {"type": "queued_command", "prompt": "<task-notification>\n<task-id>bg1</task-id>\n<status>killed</status>\n</task-notification>\n"}}),
+            "/attachment/prompt",
+        );
+        for (records, what) in [
+            (vec![ending], "an end in a queued notification"),
+            (vec![queued], "an end in a queued command"),
+            (
+                starting.to_vec(),
+                "the output of a call that can start work",
+            ),
+            (vec![unpaired], "a result that names no call"),
+            (vec![stopping], "a TaskStop call"),
+            (vec![booting], "a process start"),
+        ] {
+            let home = home(Agent::Claude);
+            let path = session_file(home.path(), Agent::Claude);
+            append(
+                &path,
+                &[
+                    boot("SessionStart:startup"),
+                    started("Command running in background with ID: bg1"),
+                ],
+            );
+            assert_eq!(live(&read_whole(home.path(), Agent::Claude)), [None]);
+
+            append(&path, &records);
+            let answer = read_whole(home.path(), Agent::Claude);
+            assert_eq!(live(&answer), [], "{what} the reader could not keep");
+            assert_eq!(
+                answer.turns.as_ref().unwrap().wake_loss(),
+                Some(WakeLoss::Lost),
+                "{what} the reader could not keep is a loss, not a quiet session"
+            );
+        }
+    }
+
+    /// Real sessions write a screenshot inline: of 2,545 records over the
+    /// limit in 1.55 million lines of one operator's sessions, 2,544 were
+    /// user records and 2,407 of them the result of a file read (a picture),
+    /// none the result of a command, a monitor or an agent. A record whose
+    /// structure says it can carry none of a device's words changes nothing,
+    /// whatever its text says.
+    #[test]
+    fn a_record_too_large_to_keep_that_cannot_carry_a_device_changes_nothing() {
+        let image = || {
+            json!([{"type": "text", "text": "Command running in background with ID: quoted"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                    "data": "A".repeat(hide_session::SESSION_LINE_LIMIT_BYTES + 1024)}}])
+        };
+        let screenshot = |id: &str| {
+            json!({"type": "user", "timestamp": "2026-10-03T01:12:00.000Z",
+                "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": id,
+                    "content": image()}]}})
+        };
+        let pasted = json!({"type": "user", "timestamp": "2026-10-03T01:13:00.000Z", "origin": {"kind": "human"},
+            "message": {"role": "user", "content": [
+                {"type": "text", "text": "look at this"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                    "data": "A".repeat(hide_session::SESSION_LINE_LIMIT_BYTES + 1024)}}]}});
+        let long_write = json!({"type": "assistant", "timestamp": "2026-10-03T01:14:00.000Z",
+            "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_w", "name": "Write",
+                "input": {"file_path": "/x", "content": "y".repeat(hide_session::SESSION_LINE_LIMIT_BYTES)}}]}});
+        let snapshot = json!({"type": "file-history-snapshot", "messageId": "m1",
+            "snapshot": {"trackedFileBackups": {"a": "z".repeat(hide_session::SESSION_LINE_LIMIT_BYTES)}}});
+        for (records, what) in [
+            (
+                vec![call("Read", "toolu_shot"), screenshot("toolu_shot")],
+                "the picture a file read returned",
+            ),
+            (
+                vec![screenshot("toolu_unseen")],
+                "a picture whose call is not in this read",
+            ),
+            (vec![pasted], "a pasted image"),
+            (vec![long_write], "a long Write"),
+            (vec![snapshot], "a record of a kind that carries no mark"),
+        ] {
+            let home = home(Agent::Claude);
+            let path = session_file(home.path(), Agent::Claude);
+            append(
+                &path,
+                &[
+                    boot("SessionStart:startup"),
+                    started("Command running in background with ID: bg1"),
+                ],
+            );
+            append(&path, &records);
+            let answer = read_whole(home.path(), Agent::Claude);
+            assert_eq!(live(&answer), [None], "{what}");
+            assert_eq!(answer.turns.as_ref().unwrap().wake_loss(), None, "{what}");
+        }
+    }
+
+    /// A call too large to keep still names the result that answers it: a
+    /// result that is kept starts its task as any other does, and one that is
+    /// not may have.
+    #[test]
+    fn a_call_too_large_to_keep_is_still_paired_with_its_result() {
+        let long_command = || {
+            oversized(
+                call("Bash", "toolu_long"),
+                "/message/content/0/input/command",
+            )
+        };
+        let home = home(Agent::Claude);
+        let path = session_file(home.path(), Agent::Claude);
+        append(
+            &path,
+            &[
+                boot("SessionStart:startup"),
+                started("Command running in background with ID: bg1"),
+                long_command(),
+                result_of(
+                    "toolu_long",
+                    "Command running in background with ID: bg2. Output is being written to: /x",
+                ),
+            ],
+        );
+        let answer = read_whole(home.path(), Agent::Claude);
+        assert_eq!(live(&answer).len(), 2);
+        assert_eq!(answer.turns.as_ref().unwrap().wake_loss(), None);
+
+        let home = super::home(Agent::Claude);
+        let path = session_file(home.path(), Agent::Claude);
+        append(
+            &path,
+            &[
+                boot("SessionStart:startup"),
+                started("Command running in background with ID: bg1"),
+                long_command(),
+                oversized(
+                    result_of("toolu_long", "out\n"),
+                    "/message/content/0/content",
+                ),
+            ],
+        );
+        let answer = read_whole(home.path(), Agent::Claude);
+        assert_eq!(live(&answer), []);
+        assert_eq!(
+            answer.turns.as_ref().unwrap().wake_loss(),
+            Some(WakeLoss::Lost)
+        );
     }
 
     /// The survey in `agents/runs/agent-blocked-state/wake-device-survey.md`

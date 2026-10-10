@@ -1,5 +1,8 @@
 use crate::turns::native::TOOL_MARK_LIMIT;
-use crate::turns::{NATIVE_ID_LIMIT_BYTES, ToolTurnMark, TurnMark, TurnMode};
+use crate::turns::wake::{Record, starts_work, stops_work};
+use crate::turns::{
+    NATIVE_ID_LIMIT_BYTES, StopOutcome, ToolTurnMark, TurnMark, TurnMode, WakeMark,
+};
 use crate::{
     Agent, AppendedBytes, ParsedSession, Result, SESSION_LINE_LIMIT_BYTES, SessionCursor,
     SessionError, SkipReason, parse_events_into,
@@ -174,10 +177,11 @@ impl ConversationCursor {
     pub fn restore(checkpoint: ConversationCheckpoint) -> Self {
         let mut cursor = SessionCursor::restore(checkpoint.cursor);
         let (discarded_bytes, classifier) = match checkpoint.classifier {
-            // A scan an older build checkpointed kept no native ids, so it
-            // cannot say which call the record answered. Reread that record
+            // A scan an older build checkpointed kept no native ids, or none of
+            // what the wake reader needs, so it cannot say which call the record
+            // answered or whether it held a device's words. Reread that record
             // from its start rather than refuse it on every later read.
-            Some(scan) if !scan.native_ids => {
+            Some(scan) if !scan.native_ids || !scan.wake_aware => {
                 cursor.offset = cursor.offset.saturating_sub(checkpoint.discarded_bytes);
                 (0, None)
             }
@@ -341,6 +345,7 @@ impl ConversationCursor {
                     let mut scan = LargeRecord {
                         native_ids: true,
                         grok: (agent == Agent::Grok).then(Default::default),
+                        wake_aware: true,
                         ..LargeRecord::default()
                     };
                     scan.feed(&pending);
@@ -374,6 +379,7 @@ impl ConversationCursor {
                         continue;
                     }
                 } else {
+                    let wake = LargeRecord::wake_mark(scan.as_deref(), agent);
                     let (reason, turn) =
                         scan.map_or_else(LargeRecord::unreadable, |scan| (*scan).discard(agent));
                     parsed.skipped(reason);
@@ -381,6 +387,9 @@ impl ConversationCursor {
                         Ok(Some(mark)) => parsed.turn_marks.push((line_start, mark)),
                         Ok(None) => {}
                         Err(reason) => parsed.skipped(reason),
+                    }
+                    if let Some(mark) = wake {
+                        parsed.turn_marks.push((line_start, mark));
                     }
                     continue;
                 }
@@ -628,6 +637,21 @@ struct LargeRecord {
     /// Grok's oversized records are read without their bodies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     grok: Option<Box<crate::grok::LargeLine>>,
+    /// Scanned by a build that keeps what the wake reader needs (the two
+    /// fields below). A checkpoint without it is reread from the record's
+    /// start (`ConversationCursor::restore`).
+    #[serde(default)]
+    wake_aware: bool,
+    /// The ids of the calls in the record to a tool that can start background
+    /// work (`wake::starts_work`), bounded like a parsed record's marks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    wake_calls: Vec<String>,
+    /// The record holds a call or a result the wake reader cannot pair with
+    /// its other half: a `TaskStop` (whose task is in a field the scan does
+    /// not keep), a call or result with no id it can keep, or more calls than
+    /// the bound.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    wake_lost: bool,
 }
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -658,6 +682,12 @@ struct JsonFrame {
     block_use: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     block_question: bool,
+    /// The block's `name` is a tool that can start background work.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    block_start: bool,
+    /// The block's `name` is the tool that stops a task.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    block_stop: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     block_result: bool,
     /// A block's `id` or `tool_use_id`.
@@ -783,6 +813,8 @@ impl LargeRecord {
                             Scope::Block => {
                                 if let Some(frame) = self.frames.last_mut() {
                                     frame.block_question = token.value == "AskUserQuestion";
+                                    frame.block_start = starts_work(&token.value);
+                                    frame.block_stop = stops_work(&token.value);
                                 }
                             }
                             _ => (),
@@ -842,6 +874,8 @@ impl LargeRecord {
                         block_kind: false,
                         block_use: false,
                         block_question: false,
+                        block_start: false,
+                        block_stop: false,
                         block_result: false,
                         call: None,
                         plan_item,
@@ -854,6 +888,7 @@ impl LargeRecord {
                         self.invalid |= frame.object != (byte == b'}');
                         if frame.scope == Scope::Block {
                             self.conversation |= !frame.block_kind;
+                            self.wake_block(&frame);
                             let tool = if frame.block_use && frame.block_question {
                                 Some(LargeTool::Question(frame.call))
                             } else if frame.block_result {
@@ -884,6 +919,76 @@ impl LargeRecord {
         }
     }
 
+    /// Whether the scan certifies the record's structure.
+    fn certified(&self) -> bool {
+        self.native_ids && !self.invalid && self.frames.is_empty() && self.token.is_none()
+    }
+
+    /// What a closed block says about background work. A call is kept by the
+    /// id its result names it by; one the wake reader cannot pair with its
+    /// result is lost.
+    fn wake_block(&mut self, frame: &JsonFrame) {
+        let id = frame
+            .call
+            .as_ref()
+            .filter(|id| id.len() <= NATIVE_ID_LIMIT_BYTES);
+        if frame.block_use && frame.block_start {
+            match id {
+                Some(id) if self.wake_calls.len() < TOOL_MARK_LIMIT => {
+                    self.wake_calls.push(id.clone())
+                }
+                _ => self.wake_lost = true,
+            }
+        } else if (frame.block_use && frame.block_stop) || (frame.block_result && id.is_none()) {
+            self.wake_lost = true;
+        }
+    }
+
+    /// What a discarded record leaves of the background work its agent waits
+    /// on (PRD agent-blocked-state B18), told by the record's structure and
+    /// never by its words: nothing for a format that reports none or a kind of
+    /// record the wake reader takes no mark from; that the record may have
+    /// said something, so no device is proven until the process starts again,
+    /// for the kinds that carry a task's words (a notification, a hook) and
+    /// for a record this scan cannot follow; the calls it names to tools that
+    /// can start work; and the answers it gives to the calls it names, which
+    /// the tracker knows to be unreadable (a screenshot answers a call that
+    /// started nothing, a command's output may have been the start of a
+    /// task).
+    fn wake_mark(scan: Option<&Self>, agent: Agent) -> Option<TurnMark> {
+        if !agent.reports_wake_devices() {
+            return None;
+        }
+        let lost = || Some(TurnMark::Wake(vec![WakeMark::Lost]));
+        let Some(scan) = scan.filter(|scan| scan.certified() && scan.wake_aware) else {
+            return lost();
+        };
+        let marks: Vec<_> = match Record::of(&scan.root_kind) {
+            // A record with no kind is one whose kind is not known.
+            None if scan.root_kind.is_empty() => return lost(),
+            None => return None,
+            Some(Record::Attachment | Record::QueueOperation) => return lost(),
+            _ if scan.wake_lost || scan.tool_capacity => return lost(),
+            Some(Record::Assistant) => scan
+                .wake_calls
+                .iter()
+                .map(|call| WakeMark::Call { call: call.clone() })
+                .collect(),
+            Some(Record::User) => scan
+                .tools
+                .iter()
+                .filter_map(|tool| match tool {
+                    LargeTool::Result(call) => Some(WakeMark::Answered {
+                        call: call.clone(),
+                        outcome: StopOutcome::Unreadable,
+                    }),
+                    LargeTool::Question(_) => None,
+                })
+                .collect(),
+        };
+        (!marks.is_empty()).then_some(TurnMark::Wake(marks))
+    }
+
     /// A record whose structure no bounded scan certifies: what its turn
     /// waits for is not known until the next turn starts or a person writes.
     fn unreadable() -> (SkipReason, Discard) {
@@ -901,7 +1006,7 @@ impl LargeRecord {
     /// into a menu. Any other record is unreadable rather than a read
     /// failure, so one record never stops every later read of the session.
     fn discard(self, agent: Agent) -> (SkipReason, Discard) {
-        if !self.native_ids || self.invalid || !self.frames.is_empty() || self.token.is_some() {
+        if !self.certified() {
             return Self::unreadable();
         }
         let turn = match agent {
