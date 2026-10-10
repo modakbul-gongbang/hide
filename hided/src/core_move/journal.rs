@@ -144,12 +144,27 @@ pub enum MoveFailure {
     Load { file: String, reason: String },
     /// The peer refused a step.
     Refused { step: String, reason: String },
+    /// The peer cannot act on a step yet: a lock another change holds, or
+    /// a core there still starting or not yet confirmed stopped.
+    Busy { step: String, reason: String },
+    /// The peer's `hided` is another build than this machine's, so its
+    /// answers are not read.
+    OtherBuild { build: String },
     /// The peer's core exited at its start or did not take links in time.
     NotStarted { reason: String },
     /// The peer's core refused this machine's first link.
     LinkRefused { reason: String },
     /// Something on this machine failed.
     Local { reason: String },
+}
+
+impl MoveFailure {
+    /// Whether asking the peer again may answer: it could not be reached,
+    /// or it said it cannot act yet. Every other failure answers the same
+    /// when asked again.
+    pub fn transient(&self) -> bool {
+        matches!(self, Self::Unreachable { .. } | Self::Busy { .. })
+    }
 }
 
 pub fn path(state_dir: &Path) -> PathBuf {

@@ -15,8 +15,9 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use herdr_core::node_migration::copy;
-use serde_json::{Value, json};
+use serde_json::json;
 
+use super::answer::{Inspection, StepAnswer, StepLine};
 use super::handover::{self, Handover, HandoverState};
 use super::starter::CoreStarter;
 
@@ -94,7 +95,7 @@ fn parse(args: &[OsString]) -> Result<Args, String> {
 
 pub fn run(args: &[OsString]) -> Result<(), String> {
     let args = parse(args)?;
-    let answer = match args.step.as_str() {
+    let answered = match args.step.as_str() {
         "inspect" => inspect(&args.state_dir, args.ai.as_deref()),
         "check" => check(args.ai.as_deref(), args.answer.as_deref().ok_or(USAGE)?),
         step => {
@@ -126,20 +127,26 @@ pub fn run(args: &[OsString]) -> Result<(), String> {
             }
         }
     };
-    let line = match answer {
-        Ok(value) => value,
-        Err(refusal) => json!({"refused": refusal}),
+    let line = StepLine {
+        build: crate::build_id::of_current_exe()?,
+        answer: answered.unwrap_or_else(|refused| refused),
     };
     herdr_core::diagnostic!(json!({
         "component": "core_move",
         "kind": "target.step",
         "step": args.step,
         "intent": args.intent,
-        "answer": line,
+        "answer": line.answer,
     }));
-    println!("{line}");
+    println!(
+        "{}",
+        serde_json::to_string(&line).map_err(|error| error.to_string())?
+    );
     Ok(())
 }
+
+/// A step's answer, or the refusal or busy answer it stopped with.
+type Answered = Result<StepAnswer, StepAnswer>;
 
 pub(crate) fn incoming(state_dir: &Path, intent: &str) -> PathBuf {
     hide_kit::layout::move_incoming(state_dir).join(intent)
@@ -150,25 +157,42 @@ pub(super) fn manifest_path(state_dir: &Path, intent: &str) -> PathBuf {
 }
 
 /// Where this account keeps Hide AI's settings, which move with the core.
-fn ai_settings() -> Result<PathBuf, Value> {
+fn ai_settings() -> Result<PathBuf, StepAnswer> {
     hide_platform::host::home_dir()
         .map(|home| herdr_core::hide_ai_settings_path(&home))
         .map_err(|error| plain(error.to_string()))
 }
 
-fn refusal(error: herdr_core::node_migration::Refusal) -> Value {
-    json!({"file": error.file.display().to_string(), "reason": error.reason})
+fn refusal(error: herdr_core::node_migration::Refusal) -> StepAnswer {
+    StepAnswer::Refused {
+        file: Some(error.file.display().to_string()),
+        reason: error.reason,
+    }
 }
 
-fn plain(reason: impl Into<String>) -> Value {
-    json!({"reason": reason.into()})
+fn plain(reason: impl Into<String>) -> StepAnswer {
+    StepAnswer::refused(reason)
+}
+
+fn busy(reason: impl Into<String>) -> StepAnswer {
+    StepAnswer::Busy {
+        reason: reason.into(),
+    }
+}
+
+/// The handover record's lock; one another change holds is busy.
+fn hold(state_dir: &Path) -> Result<handover::Held, StepAnswer> {
+    handover::hold(state_dir).map_err(|error| match error {
+        handover::HoldError::Busy(reason) => busy(reason),
+        handover::HoldError::Failed(reason) => plain(reason),
+    })
 }
 
 /// This machine's node, state folder, what brain state the folder holds,
-/// the move touching it, its build and Hide AI settings, and each of the
-/// move's checks that fails here (`preflight`), Hide AI's agents in `ai`
-/// among them.
-fn inspect(state_dir: &Path, ai: Option<&str>) -> Result<Value, Value> {
+/// the move touching it, its Hide AI settings, and each of the move's
+/// checks that fails here (`preflight`), Hide AI's agents in `ai` among
+/// them.
+fn inspect(state_dir: &Path, ai: Option<&str>) -> Answered {
     let node = herdr_core::node::NodeId::of_this_machine().map_err(plain)?;
     let handover = handover::read(state_dir).map_err(plain)?;
     // The Herdr this machine's core would own, as its daemon resolves it.
@@ -184,26 +208,22 @@ fn inspect(state_dir: &Path, ai: Option<&str>) -> Result<Value, Value> {
         ai,
         &super::preflight::Programs::for_this_machine().map_err(plain)?,
     );
-    let ai = match herdr_core::stored_hide_ai_settings(&env.home) {
-        Ok(settings) => json!({"settings": settings}),
-        Err(error) => json!({"unreadable": error}),
-    };
-    Ok(json!({
-        "herdr_socket": env.herdr_socket_path,
-        "node": node.as_str(),
-        "state_dir": hide_platform::path::to_wire(state_dir).map_err(|error| plain(error.to_string()))?,
-        "brain": copy::brain_present(state_dir),
-        "handover": handover,
-        "build": crate::build_id::of_current_exe().map_err(plain)?,
-        "ai": ai,
-        "failed": failed,
-    }))
+    Ok(StepAnswer::Inspected(Box::new(Inspection {
+        node: node.as_str().to_owned(),
+        state_dir: hide_platform::path::to_wire(state_dir)
+            .map_err(|error| plain(error.to_string()))?,
+        brain: copy::brain_present(state_dir),
+        handover,
+        herdr_socket: env.herdr_socket_path,
+        ai: herdr_core::stored_hide_ai_settings(&env.home),
+        failed,
+    })))
 }
 
-/// The checks of this account's logins, run where the core will run, and
-/// answered in `answer` as well as on standard output, since a job's output
-/// goes to its log.
-fn check(ai: Option<&str>, answer: &Path) -> Result<Value, Value> {
+/// The checks of the account's logins, run as a one-shot job in its GUI
+/// session (`preflight`): answered in `answer` as well as on standard
+/// output, since a job's output goes to its log.
+fn check(ai: Option<&str>, answer: &Path) -> Answered {
     let env = crate::env::load()
         .map_err(|errors| plain(format!("{} environment errors", errors.len())))?;
     let failed = super::preflight::logins_failing(
@@ -211,16 +231,20 @@ fn check(ai: Option<&str>, answer: &Path) -> Result<Value, Value> {
         ai,
         &super::preflight::Programs::for_this_machine().map_err(plain)?,
     );
-    let line = json!({"failed": failed});
+    let checked = StepAnswer::Checked { failed };
+    let line = StepLine {
+        build: crate::build_id::of_current_exe().map_err(plain)?,
+        answer: checked.clone(),
+    };
     let bytes = serde_json::to_vec(&line).map_err(|error| plain(error.to_string()))?;
     hide_platform::fs::atomic::write_file(answer, &bytes, hide_platform::fs::Access::Private)
         .map_err(|error| plain(format!("{}: {error}", answer.display())))?;
-    Ok(line)
+    Ok(checked)
 }
 
-/// Answers this machine's node when it is `target`, the node the move's
-/// copy was made for.
-fn this_node_is(target: &str) -> Result<(), Value> {
+/// Refuses unless this machine is `target`, the node the move's copy was
+/// made for.
+fn this_node_is(target: &str) -> Result<(), StepAnswer> {
     let node = herdr_core::node::NodeId::of_this_machine().map_err(plain)?;
     if node.as_str() != target {
         return Err(plain(format!(
@@ -233,7 +257,7 @@ fn this_node_is(target: &str) -> Result<(), Value> {
 /// Compares the received copy with the manifest sent beside it; a copy
 /// that matches, made for this machine, is loaded with this build's
 /// readers.
-fn verify(state_dir: &Path, intent: &str, target: &str) -> Result<Value, Value> {
+fn verify(state_dir: &Path, intent: &str, target: &str) -> Answered {
     this_node_is(target)?;
     let path = manifest_path(state_dir, intent);
     let bytes =
@@ -247,24 +271,24 @@ fn verify(state_dir: &Path, intent: &str, target: &str) -> Result<Value, Value> 
         copy::Manifest::default()
     };
     let differs = manifest.differs(&received);
-    let extra: Vec<&String> = received
+    let extra: Vec<String> = received
         .files
-        .keys()
-        .filter(|path| !manifest.files.contains_key(*path))
+        .into_keys()
+        .filter(|path| !manifest.files.contains_key(path))
         .collect();
     if !differs.is_empty() || !extra.is_empty() {
-        return Ok(json!({"differs": differs, "extra": extra}));
+        return Ok(StepAnswer::Differs { differs, extra });
     }
     copy::owned_by(&dir, target).map_err(refusal)?;
     copy::check_loadable(&dir).map_err(refusal)?;
-    Ok(json!({"loadable": true}))
+    Ok(StepAnswer::Loadable)
 }
 
 /// Places the received copy, under a pending handover for `intent`.
-fn place(state_dir: &Path, intent: &str, source: &str, target: &str) -> Result<Value, Value> {
+fn place(state_dir: &Path, intent: &str, source: &str, target: &str) -> Answered {
     this_node_is(target)?;
     copy::owned_by(&incoming(state_dir, intent), target).map_err(refusal)?;
-    let held = handover::hold(state_dir).map_err(plain)?;
+    let held = hold(state_dir)?;
     match held.read().map_err(plain)? {
         // A core this machine retired for a move back holds nothing.
         Some(record) if record.state == HandoverState::Retired => {}
@@ -276,7 +300,10 @@ fn place(state_dir: &Path, intent: &str, source: &str, target: &str) -> Result<V
         }
         Some(record) => {
             // Placed already, by an earlier run of this step.
-            return Ok(json!({"handover": record}));
+            return Ok(StepAnswer::Placed {
+                placed: Vec::new(),
+                handover: record,
+            });
         }
         None => {}
     }
@@ -284,7 +311,10 @@ fn place(state_dir: &Path, intent: &str, source: &str, target: &str) -> Result<V
     held.write(&record).map_err(plain)?;
     let placed = copy::place(&incoming(state_dir, intent), state_dir, &ai_settings()?);
     match placed {
-        Ok(placed) => Ok(json!({"placed": placed, "handover": record})),
+        Ok(placed) => Ok(StepAnswer::Placed {
+            placed,
+            handover: record,
+        }),
         Err(not_placed) => {
             // What the folder holds now is its own, unless part of the copy
             // could not be taken back: that stays pending, for the driver's
@@ -297,7 +327,7 @@ fn place(state_dir: &Path, intent: &str, source: &str, target: &str) -> Result<V
     }
 }
 
-fn start(state_dir: &Path, intent: &str) -> Result<Value, Value> {
+fn start(state_dir: &Path, intent: &str) -> Answered {
     match handover::read(state_dir).map_err(plain)? {
         Some(record) if record.intent == intent => {}
         _ => return Err(plain("no copy of this move is placed here")),
@@ -306,52 +336,60 @@ fn start(state_dir: &Path, intent: &str) -> Result<Value, Value> {
     let starter = CoreStarter::for_account(&home).map_err(plain)?;
     let program = super::starter::this_program().map_err(plain)?;
     let pid = starter.start(state_dir, &program).map_err(plain)?;
-    Ok(json!({"pid": pid}))
+    Ok(StepAnswer::Started { pid })
 }
 
-fn status(state_dir: &Path, intent: &str) -> Result<Value, Value> {
+fn status(state_dir: &Path, intent: &str) -> Answered {
     let record = handover::read(state_dir).map_err(plain)?;
     Ok(match record {
-        Some(record) if record.intent == intent => json!({"handover": record}),
-        Some(record) => json!({"other": record.intent}),
-        None => json!({"handover": null}),
+        Some(record) if record.intent == intent => StepAnswer::Status {
+            handover: Some(record),
+        },
+        Some(record) => StepAnswer::OtherMove {
+            intent: record.intent,
+        },
+        None => StepAnswer::Status { handover: None },
     })
 }
 
 /// Stops a pending core and returns its copy to `move-incoming`; an active
-/// core is the move committed and is left running.
-fn abort(state_dir: &Path, intent: &str) -> Result<Value, Value> {
-    let held = handover::hold(state_dir).map_err(plain)?;
+/// core is the move committed and is left running. A core that cannot be
+/// confirmed stopped is busy: nothing of it is taken back while it may run.
+fn abort(state_dir: &Path, intent: &str) -> Answered {
+    let held = hold(state_dir)?;
     match held.read().map_err(plain)? {
-        None => return Ok(json!({"state": "aborted"})),
+        None => return Ok(StepAnswer::Aborted),
         Some(record) if record.intent != intent => {
-            return Err(plain(format!(
-                "another move ({}) holds this machine",
-                record.intent
-            )));
+            return Ok(StepAnswer::OtherMove {
+                intent: record.intent,
+            });
         }
         Some(record) if record.state == HandoverState::Active => {
-            return Ok(json!({"state": "active"}));
+            return Ok(StepAnswer::Active);
         }
         Some(_) => {}
     }
     let home = hide_platform::host::home_dir().map_err(|error| plain(error.to_string()))?;
     CoreStarter::for_account(&home)
         .and_then(|starter| starter.stop(state_dir))
-        .map_err(plain)?;
+        .map_err(busy)?;
     // A core still starting holds no record yet, but it holds the instance
     // lock; holding it here keeps one from starting on the copy while it is
     // taken back.
     let _instance = acquire_instance(state_dir)?;
-    copy::unplace(state_dir, &incoming(state_dir, intent), &ai_settings()?).map_err(refusal)?;
+    if let Err(refused) = copy::unplace(state_dir, &incoming(state_dir, intent), &ai_settings()?) {
+        return Ok(StepAnswer::StoppedNotReturned {
+            reason: refused.to_string(),
+        });
+    }
     held.remove().map_err(plain)?;
-    Ok(json!({"state": "aborted"}))
+    Ok(StepAnswer::Aborted)
 }
 
 /// Ends the move's records once it committed: the handover and the copy it
 /// was placed from.
-fn finish(state_dir: &Path, intent: &str) -> Result<Value, Value> {
-    let held = handover::hold(state_dir).map_err(plain)?;
+fn finish(state_dir: &Path, intent: &str) -> Answered {
+    let held = hold(state_dir)?;
     match held.read().map_err(plain)? {
         Some(record) if record.intent == intent && record.state == HandoverState::Active => {
             held.remove().map_err(plain)?;
@@ -376,17 +414,17 @@ fn finish(state_dir: &Path, intent: &str) -> Result<Value, Value> {
             Err(error) => return Err(plain(format!("{}: {error}", path.display()))),
         }
     }
-    Ok(json!({"state": "done"}))
+    Ok(StepAnswer::Finished)
 }
 
 /// Has this machine's core stop for the move back `intent` to `target` and
 /// stages its copy: the core checks the move, records the stop and its
 /// export, answers, and ends; the copy is made once it has ended, under the
 /// instance lock so no core starts on the folder meanwhile.
-fn release(state_dir: &Path, intent: &str, target: &str) -> Result<Value, Value> {
+fn release(state_dir: &Path, intent: &str, target: &str) -> Answered {
     match handover::read(state_dir).map_err(plain)? {
         Some(record) if record.intent == intent && record.state == HandoverState::Retired => {
-            return Ok(json!({"state": "retired"}));
+            return Ok(StepAnswer::Retired);
         }
         // Stopped already, by an earlier run of this step.
         Some(record) if record.intent == intent && record.state == HandoverState::StoppedFor => {}
@@ -430,16 +468,18 @@ fn release(state_dir: &Path, intent: &str, target: &str) -> Result<Value, Value>
         hide_platform::fs::Access::Private,
     )
     .map_err(|error| plain(format!("{}: {error}", path.display())))?;
-    Ok(json!({"state": "staged", "files": manifest.files.len()}))
+    Ok(StepAnswer::Staged {
+        files: manifest.files.len(),
+    })
 }
 
 /// Undoes a release: the staged copy goes and this machine's core starts on
 /// its folder again. A core retired for the move stays retired.
-fn resume(state_dir: &Path, intent: &str) -> Result<Value, Value> {
-    let held = handover::hold(state_dir).map_err(plain)?;
+fn resume(state_dir: &Path, intent: &str) -> Answered {
+    let held = hold(state_dir)?;
     match held.read().map_err(plain)? {
         Some(record) if record.intent == intent && record.state == HandoverState::Retired => {
-            return Ok(json!({"state": "retired"}));
+            return Ok(StepAnswer::Retired);
         }
         Some(record) if record.intent == intent && record.state == HandoverState::StoppedFor => {
             super::back::remove_staging(state_dir, intent).map_err(plain)?;
@@ -458,19 +498,19 @@ fn resume(state_dir: &Path, intent: &str) -> Result<Value, Value> {
     if let Ok(Some(running)) = crate::state_file::read_state(state_dir)
         && hide_platform::process::is_alive(running.pid)
     {
-        return Ok(json!({"state": "running", "pid": running.pid}));
+        return Ok(StepAnswer::Running { pid: running.pid });
     }
     let home = hide_platform::host::home_dir().map_err(|error| plain(error.to_string()))?;
     let pid = CoreStarter::for_account(&home)
         .and_then(|starter| starter.start(state_dir, &super::starter::this_program()?))
         .map_err(plain)?;
-    Ok(json!({"state": "running", "pid": pid}))
+    Ok(StepAnswer::Running { pid })
 }
 
 /// The commit of a move back: this machine's starter is removed, so no
 /// core of its starts again, and its brain state is set aside.
-fn retire(state_dir: &Path, intent: &str) -> Result<Value, Value> {
-    let held = handover::hold(state_dir).map_err(plain)?;
+fn retire(state_dir: &Path, intent: &str) -> Answered {
+    let held = hold(state_dir)?;
     match held.read().map_err(plain)? {
         Some(record) if record.intent == intent && record.state == HandoverState::Retired => {}
         Some(mut record)
@@ -479,7 +519,7 @@ fn retire(state_dir: &Path, intent: &str) -> Result<Value, Value> {
             let home = hide_platform::host::home_dir().map_err(|error| plain(error.to_string()))?;
             CoreStarter::for_account(&home)
                 .and_then(|starter| starter.stop(state_dir))
-                .map_err(plain)?;
+                .map_err(busy)?;
             let _instance = acquire_instance(state_dir)?;
             record.state = HandoverState::Retired;
             held.write(&record).map_err(plain)?;
@@ -488,16 +528,17 @@ fn retire(state_dir: &Path, intent: &str) -> Result<Value, Value> {
     }
     copy::set_aside(state_dir, intent, &ai_settings()?).map_err(refusal)?;
     super::back::remove_staging(state_dir, intent).map_err(plain)?;
-    Ok(json!({"state": "retired"}))
+    Ok(StepAnswer::Retired)
 }
 
-/// Waits until `pid` has ended.
+/// Waits until `pid` has ended; one that has not is busy, since it may
+/// still end.
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn wait_until_gone(pid: u32) -> Result<(), Value> {
+fn wait_until_gone(pid: u32) -> Result<(), StepAnswer> {
     let deadline = std::time::Instant::now() + RELEASED_WITHIN;
     while hide_platform::process::is_alive(pid) {
         if std::time::Instant::now() >= deadline {
-            return Err(plain(format!(
+            return Err(busy(format!(
                 "the core {pid} did not end after its release"
             )));
         }
@@ -506,10 +547,11 @@ fn wait_until_gone(pid: u32) -> Result<(), Value> {
     Ok(())
 }
 
-/// The folder's instance lock, which no core holds once this has it.
-fn acquire_instance(state_dir: &Path) -> Result<std::fs::File, Value> {
+/// The folder's instance lock, which no core holds once this has it; a
+/// core that still holds it is busy.
+fn acquire_instance(state_dir: &Path) -> Result<std::fs::File, StepAnswer> {
     crate::state_file::acquire_lock(state_dir).map_err(|error| {
-        plain(format!(
+        busy(format!(
             "a core of this folder is still starting or running: {error}"
         ))
     })

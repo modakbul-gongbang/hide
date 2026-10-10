@@ -19,6 +19,7 @@ use hide_node::ssh::transfer::FileCopy;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::answer::StepAnswer;
 use super::driver::Remote;
 use super::journal::{Journal, MoveFailure, Peer};
 
@@ -223,15 +224,14 @@ pub fn release(
     journal: &Journal,
     own_node: &str,
 ) -> Result<Released, MoveFailure> {
-    let answer = remote.step(
+    match remote.step(
         "release",
         &[("intent", &journal.intent), ("target", own_node)],
-    )?;
-    Ok(if answer["state"] == "retired" {
-        Released::Retired
-    } else {
-        Released::Staged
-    })
+    )? {
+        StepAnswer::Staged { .. } => Ok(Released::Staged),
+        StepAnswer::Retired => Ok(Released::Retired),
+        other => Err(super::driver::unexpected("release", &other)),
+    }
 }
 
 /// Pulls the staged copy and the records beside it into this machine's
@@ -383,9 +383,10 @@ pub fn unplace_here(state_dir: &Path, ai_settings: &Path, journal: &Journal) -> 
 }
 
 pub fn retire(remote: &Remote, journal: &Journal) -> Result<(), MoveFailure> {
-    remote
-        .step("retire", &[("intent", &journal.intent)])
-        .map(|_| ())
+    match remote.step("retire", &[("intent", &journal.intent)])? {
+        StepAnswer::Retired => Ok(()),
+        other => Err(super::driver::unexpected("retire", &other)),
+    }
 }
 
 /// What the core's machine answered a resume.
@@ -398,10 +399,9 @@ pub enum Resumed {
 }
 
 pub fn resume(remote: &Remote, journal: &Journal) -> Result<Resumed, MoveFailure> {
-    let answer = remote.step("resume", &[("intent", &journal.intent)])?;
-    Ok(if answer["state"] == "retired" {
-        Resumed::Retired
-    } else {
-        Resumed::Running
-    })
+    match remote.step("resume", &[("intent", &journal.intent)])? {
+        StepAnswer::Running { .. } => Ok(Resumed::Running),
+        StepAnswer::Retired => Ok(Resumed::Retired),
+        other => Err(super::driver::unexpected("resume", &other)),
+    }
 }

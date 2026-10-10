@@ -436,10 +436,21 @@ async fn resume_forward(env: &Env, seat: &seat::Seat) -> Result<Role, String> {
 }
 
 fn remote_for(env: &Env, journal: &Journal) -> Result<Remote, MoveFailure> {
-    Ok(
-        Remote::new(&env.home, &journal.peer.alias, &journal.peer.program)?
-            .with_state_dir(&journal.peer.state_dir),
-    )
+    let build = own_build(env).map_err(|reason| MoveFailure::Local { reason })?;
+    Ok(Remote::new(
+        &env.home,
+        &journal.peer.alias,
+        &journal.peer.program,
+        &build,
+    )?
+    .with_state_dir(&journal.peer.state_dir))
+}
+
+/// This daemon's build, the only one whose move answers it reads.
+fn own_build(env: &Env) -> Result<String, String> {
+    env.build
+        .clone()
+        .map_or_else(crate::build_id::of_current_exe, Ok)
 }
 
 /// What a move is made from, once every check passed.
@@ -511,10 +522,21 @@ async fn prepare(
             Vec::new()
         }
     };
+    let build = match own_build(env) {
+        Ok(build) => build,
+        Err(reason) => {
+            failed.push(FailedCheck {
+                check: CheckId::Build,
+                detail: reason,
+            });
+            return Err(failed);
+        }
+    };
     let home = env.home.clone();
     let (alias, program) = (source.ssh_alias.clone(), source.helper_path.clone());
+    let own = build.clone();
     let inspected = tokio::task::spawn_blocking(move || {
-        let remote = Remote::new(&home, &alias, &program)?;
+        let remote = Remote::new(&home, &alias, &program, &own)?;
         let inspected = driver::inspect(&remote, &asks)?;
         Ok::<_, MoveFailure>((remote, inspected))
     })
@@ -522,6 +544,15 @@ async fn prepare(
     .map_err(|error| fail(CheckId::Connection, error.to_string()))?;
     let (remote, inspected) = match inspected {
         Ok(found) => found,
+        // Another build's answers are not read: its build is the one check
+        // it can fail.
+        Err(MoveFailure::OtherBuild { build: theirs }) => {
+            failed.push(FailedCheck {
+                check: CheckId::Build,
+                detail: format!("the device runs {theirs}, this machine {build}"),
+            });
+            return Err(failed);
+        }
         Err(failure) => {
             failed.push(FailedCheck {
                 check: CheckId::Connection,
@@ -535,21 +566,6 @@ async fn prepare(
             check: CheckId::Identity,
             detail: inspected.node.clone(),
         });
-    }
-    match env
-        .build
-        .clone()
-        .map_or_else(crate::build_id::of_current_exe, Ok)
-    {
-        Ok(own) if own == inspected.build => {}
-        Ok(own) => failed.push(FailedCheck {
-            check: CheckId::Build,
-            detail: format!("the device runs {}, this machine {own}", inspected.build),
-        }),
-        Err(reason) => failed.push(FailedCheck {
-            check: CheckId::Build,
-            detail: reason,
-        }),
     }
     failed.extend(inspected.failed.iter().cloned());
     if !source.dormant.is_empty() {
@@ -1007,8 +1023,17 @@ async fn rollback(
                     .map_err(|error| error.to_string())?
             };
             match asked {
-                Ok(TargetSays::NotCommitted) => break,
-                Ok(TargetSays::Active) => {
+                Ok(driver::Aborted::Undone) => break,
+                Ok(driver::Aborted::CopyLeft { reason }) => {
+                    // Nothing of the move runs or starts there; its copy is
+                    // named by that machine's next check.
+                    log(
+                        "rollback.unclean",
+                        json!({"intent": journal.intent, "peer": reason}),
+                    );
+                    break;
+                }
+                Ok(driver::Aborted::Active) => {
                     // The link committed the move after all: go forward.
                     drop(screen);
                     let node = crate::start_node_role(env.clone(), seat.parts()).await?;

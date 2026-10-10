@@ -19,6 +19,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::core_move::handover;
@@ -37,32 +38,45 @@ pub fn new_intent() -> String {
     crate::core_move::new_intent().replacen("move-", "update-", 1)
 }
 
+/// What an update's run prints, its one line on standard output. The
+/// node that runs it uploaded this build, so both ends read one shape.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Outcome {
+    /// The core runs this build.
+    Updated {
+        pid: u32,
+        program: PathBuf,
+    },
+    /// This build did not start, and the previous build's core runs again.
+    RolledBack {
+        pid: u32,
+        reason: String,
+    },
+    Refused {
+        reason: String,
+    },
+}
+
 /// What an update's run said: `Ok` once the core runs the new build, the
-/// reason otherwise.
+/// reason otherwise. A line that is not an outcome is named by the run's
+/// exit, never read as one.
 pub fn outcome(stdout: &str, exit: &str, stderr: &str) -> Result<(), String> {
-    let Some(answer) = stdout
+    let Some(outcome) = stdout
         .lines()
         .last()
-        .and_then(|line| serde_json::from_str::<Value>(line).ok())
+        .and_then(|line| serde_json::from_str::<Outcome>(line).ok())
     else {
         return Err(format!(
             "core-update exited {exit}: {}",
             stderr.trim().chars().take(512).collect::<String>()
         ));
     };
-    if answer.get("updated").is_some() {
-        return Ok(());
+    match outcome {
+        Outcome::Updated { .. } => Ok(()),
+        Outcome::RolledBack { reason, .. } => Err(format!("rolled_back: {reason}")),
+        Outcome::Refused { reason } => Err(reason),
     }
-    if let Some(reason) = answer
-        .pointer("/rolled_back/reason")
-        .and_then(Value::as_str)
-    {
-        return Err(format!("rolled_back: {reason}"));
-    }
-    if let Some(reason) = answer.pointer("/refused/reason").and_then(Value::as_str) {
-        return Err(reason.to_owned());
-    }
-    Err(format!("core-update answered {answer}"))
 }
 
 struct Args {
@@ -102,17 +116,17 @@ fn parse(args: &[OsString]) -> Result<Args, String> {
 
 pub fn run(args: &[OsString]) -> Result<(), String> {
     let args = parse(args)?;
-    let line = match update(&args) {
-        Ok(answer) => answer,
-        Err(reason) => json!({"refused": {"reason": reason}}),
-    };
+    let outcome = update(&args).unwrap_or_else(|reason| Outcome::Refused { reason });
     herdr_core::diagnostic!(json!({
         "component": "core_update",
         "kind": "update.answered",
         "intent": args.intent,
-        "answer": line,
+        "answer": outcome,
     }));
-    println!("{line}");
+    println!(
+        "{}",
+        serde_json::to_string(&outcome).map_err(|error| error.to_string())?
+    );
     Ok(())
 }
 
@@ -146,7 +160,7 @@ fn build_of(program: &Path) -> Result<Build, String> {
     })
 }
 
-fn update(args: &Args) -> Result<Value, String> {
+fn update(args: &Args) -> Result<Outcome, String> {
     let program =
         std::env::current_exe().map_err(|error| format!("this hided has no path: {error}"))?;
     let new = build_of(&program)?;
@@ -178,7 +192,7 @@ fn update(args: &Args) -> Result<Value, String> {
         Ok(pid) => {
             adopt(&new, &previous.version);
             log(&args.intent, "update.done", json!({"pid": pid}));
-            Ok(json!({"updated": {"pid": pid, "program": program}}))
+            Ok(Outcome::Updated { pid, program })
         }
         Err(reason) => {
             log(&args.intent, "update.failed", json!({"reason": reason}));
@@ -190,7 +204,7 @@ fn update(args: &Args) -> Result<Value, String> {
                 })?;
             adopt(&previous, &new.version);
             log(&args.intent, "rollback.done", json!({"pid": pid}));
-            Ok(json!({"rolled_back": {"pid": pid, "reason": reason}}))
+            Ok(Outcome::RolledBack { pid, reason })
         }
     }
 }
@@ -218,6 +232,33 @@ fn log(intent: &str, kind: &str, fields: Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The node reads only an outcome: a line of any other shape is named
+    /// by the run's exit, not read as an update.
+    #[test]
+    fn an_update_is_read_only_from_its_outcome() {
+        let line = |outcome: &Outcome| serde_json::to_string(outcome).unwrap();
+        let updated = Outcome::Updated {
+            pid: 7,
+            program: PathBuf::from("/h/b/hided"),
+        };
+        assert_eq!(outcome(&line(&updated), "0", ""), Ok(()));
+        assert_eq!(
+            outcome(
+                &line(&Outcome::RolledBack {
+                    pid: 8,
+                    reason: "no links".to_owned()
+                }),
+                "0",
+                ""
+            ),
+            Err("rolled_back: no links".to_owned())
+        );
+        assert_eq!(
+            outcome(r#"{"updated":{"pid":7}}"#, "0", "old"),
+            Err("core-update exited 0: old".to_owned())
+        );
+    }
 
     #[test]
     fn only_a_build_folder_s_hided_is_a_build() {

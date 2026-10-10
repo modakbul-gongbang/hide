@@ -12,6 +12,8 @@ use hide_node::ssh::upstream::Upstream;
 use hide_node::ssh::{SshAlias, shell_quote};
 use serde_json::{Value, json};
 
+use super::answer::{StepAnswer, StepLine};
+use super::handover::{Handover, HandoverState};
 use super::journal::{Journal, MoveFailure, Peer};
 
 /// The most a step on the other machine may print.
@@ -25,11 +27,13 @@ pub struct Remote {
     upstream: Upstream,
     program: String,
     state_dir: Option<String>,
+    /// This machine's build: the only build whose answers it reads.
+    build: String,
 }
 
 impl Remote {
     /// Dials nothing yet: the first step does.
-    pub fn new(home: &Path, alias: &str, program: &str) -> Result<Self, MoveFailure> {
+    pub fn new(home: &Path, alias: &str, program: &str, build: &str) -> Result<Self, MoveFailure> {
         let alias =
             SshAlias::from_config_file(&home.join(".ssh/config"), alias).map_err(|error| {
                 MoveFailure::Unreachable {
@@ -43,6 +47,7 @@ impl Remote {
             upstream,
             program: program.to_owned(),
             state_dir: None,
+            build: build.to_owned(),
         })
     }
 
@@ -51,9 +56,10 @@ impl Remote {
         self
     }
 
-    /// Runs `hided core-move <step>` there and answers its JSON line; a
-    /// refusal is `Refused`.
-    pub fn step(&self, step: &str, args: &[(&str, &str)]) -> Result<Value, MoveFailure> {
+    /// Runs `hided core-move <step>` there and answers its line. A line of
+    /// another build is `OtherBuild`, a refusal `Refused` (`Load` for a
+    /// file the verify could not load), and a busy answer `Busy`.
+    pub fn step(&self, step: &str, args: &[(&str, &str)]) -> Result<StepAnswer, MoveFailure> {
         let mut command = format!("{} core-move {step}", shell_quote(&self.program));
         if let Some(state_dir) = &self.state_dir {
             command.push_str(&format!(" --state-dir {}", shell_quote(state_dir)));
@@ -77,27 +83,16 @@ impl Remote {
                 }
             })?;
         let line = output.stdout.lines().last().unwrap_or_default();
-        let answer: Value = serde_json::from_str(line).map_err(|_| MoveFailure::Refused {
-            step: step.to_owned(),
-            reason: format!(
-                "exit {}: {}",
-                output.exit_status,
-                output.stderr.trim().chars().take(512).collect::<String>()
-            ),
-        })?;
-        if let Some(refused) = answer.get("refused") {
-            return Err(match refused.get("file").and_then(Value::as_str) {
-                Some(file) if step == "verify" => MoveFailure::Load {
-                    file: file.to_owned(),
-                    reason: text(refused, "reason"),
-                },
-                _ => MoveFailure::Refused {
-                    step: step.to_owned(),
-                    reason: text(refused, "reason"),
-                },
-            });
-        }
-        Ok(answer)
+        read_line(step, line, &self.build).map_err(|unread| {
+            unread.unwrap_or_else(|| MoveFailure::Refused {
+                step: step.to_owned(),
+                reason: format!(
+                    "exit {}: {}",
+                    output.exit_status,
+                    output.stderr.trim().chars().take(512).collect::<String>()
+                ),
+            })
+        })
     }
 
     pub fn upload(
@@ -131,30 +126,53 @@ impl Remote {
     }
 }
 
-fn text(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned()
+/// A step's answer from its line. A line that is not one answers `None`,
+/// for the caller to name by the step's exit; one written by another build
+/// is not read past its build.
+fn read_line(step: &str, line: &str, build: &str) -> Result<StepAnswer, Option<MoveFailure>> {
+    let read: StepLine = match serde_json::from_str(line) {
+        Ok(read) => read,
+        Err(_) => {
+            // Another build's line may have another shape; its build is
+            // where every build writes it.
+            let theirs = serde_json::from_str::<Value>(line)
+                .ok()
+                .and_then(|line| line.get("build")?.as_str().map(str::to_owned));
+            return Err(theirs
+                .filter(|theirs| theirs != build)
+                .map(|build| MoveFailure::OtherBuild { build }));
+        }
+    };
+    if read.build != build {
+        return Err(Some(MoveFailure::OtherBuild { build: read.build }));
+    }
+    match read.answer {
+        StepAnswer::Refused {
+            file: Some(file),
+            reason,
+        } if step == "verify" => Err(Some(MoveFailure::Load { file, reason })),
+        StepAnswer::Refused { reason, .. } => Err(Some(MoveFailure::Refused {
+            step: step.to_owned(),
+            reason,
+        })),
+        StepAnswer::Busy { reason } => Err(Some(MoveFailure::Busy {
+            step: step.to_owned(),
+            reason,
+        })),
+        answer => Ok(answer),
+    }
+}
+
+/// An answer `step` does not give: refused, never read as one it does.
+pub(super) fn unexpected(step: &str, answer: &StepAnswer) -> MoveFailure {
+    MoveFailure::Refused {
+        step: step.to_owned(),
+        reason: format!("an answer this step does not give: {answer:?}"),
+    }
 }
 
 /// What the other machine says of itself before anything moves.
-pub struct Inspected {
-    pub node: String,
-    pub state_dir: String,
-    pub brain: Vec<String>,
-    pub handover: Option<super::handover::Handover>,
-    /// The Herdr socket its core would own; none when it finds no Herdr.
-    pub herdr_socket: Option<String>,
-    /// The build of the `hided` that answered.
-    pub build: String,
-    /// Its Hide AI settings as stored there, `Ok(None)` when none are, and
-    /// `Err` when they could not be read.
-    pub ai: Result<Option<serde_json::Value>, String>,
-    /// Each of the move's checks that fails there (`preflight`).
-    pub failed: Vec<super::control::FailedCheck>,
-}
+pub type Inspected = super::answer::Inspection;
 
 /// Asks the other machine what it says of itself; `ai` names the agents
 /// Hide AI asks, which it checks with its own logins.
@@ -163,40 +181,10 @@ pub fn inspect(remote: &Remote, ai: &[(String, String)]) -> Result<Inspected, Mo
         reason: error.to_string(),
     })?;
     let args: &[(&str, &str)] = if ai.is_empty() { &[] } else { &[("ai", &asks)] };
-    let answer = remote.step("inspect", args)?;
-    let refused = |reason: &str| MoveFailure::Refused {
-        step: "inspect".to_owned(),
-        reason: reason.to_owned(),
-    };
-    Ok(Inspected {
-        node: answer["node"]
-            .as_str()
-            .ok_or_else(|| refused("no node"))?
-            .to_owned(),
-        state_dir: answer["state_dir"]
-            .as_str()
-            .ok_or_else(|| refused("no state folder"))?
-            .to_owned(),
-        brain: serde_json::from_value(answer["brain"].clone())
-            .map_err(|_| refused("no brain list"))?,
-        handover: serde_json::from_value(answer["handover"].clone())
-            .map_err(|_| refused("an unreadable handover"))?,
-        herdr_socket: answer["herdr_socket"].as_str().map(str::to_owned),
-        build: answer["build"]
-            .as_str()
-            .ok_or_else(|| refused("no build"))?
-            .to_owned(),
-        ai: match (
-            answer["ai"].get("settings"),
-            answer["ai"]["unreadable"].as_str(),
-        ) {
-            (Some(settings), _) => Ok((!settings.is_null()).then(|| settings.clone())),
-            (None, Some(reason)) => Err(reason.to_owned()),
-            (None, None) => return Err(refused("no Hide AI settings answer")),
-        },
-        failed: serde_json::from_value(answer["failed"].clone())
-            .map_err(|_| refused("no check list"))?,
-    })
+    match remote.step("inspect", args)? {
+        StepAnswer::Inspected(inspected) => Ok(*inspected),
+        other => Err(unexpected("inspect", &other)),
+    }
 }
 
 /// The owner change of a forward move from this machine to the device
@@ -458,21 +446,18 @@ fn differing(
             ("target", &journal.change.new_owner),
         ],
     )?;
-    differs_of(&answer, manifest)
+    differs_of(answer, manifest)
 }
 
 /// The files a peer's verify answer says it lacks or holds differently.
 /// Only files `manifest` names can be sent: an answer that names another
 /// is refused, never read as a file of this machine's to send.
-fn differs_of(answer: &Value, manifest: &copy::Manifest) -> Result<Vec<String>, MoveFailure> {
-    if answer["loadable"] == true {
-        return Ok(Vec::new());
-    }
-    let differs: Vec<String> =
-        serde_json::from_value(answer["differs"].clone()).map_err(|_| MoveFailure::Refused {
-            step: "verify".to_owned(),
-            reason: "an unreadable answer".to_owned(),
-        })?;
+fn differs_of(answer: StepAnswer, manifest: &copy::Manifest) -> Result<Vec<String>, MoveFailure> {
+    let (differs, extra) = match answer {
+        StepAnswer::Loadable => return Ok(Vec::new()),
+        StepAnswer::Differs { differs, extra } => (differs, extra),
+        other => return Err(unexpected("verify", &other)),
+    };
     let unsent: Vec<&String> = differs
         .iter()
         .filter(|path| !manifest.files.contains_key(*path))
@@ -488,36 +473,33 @@ fn differs_of(answer: &Value, manifest: &copy::Manifest) -> Result<Vec<String>, 
         // and the peer would place them.
         return Err(MoveFailure::Refused {
             step: "verify".to_owned(),
-            reason: format!(
-                "the copy holds files the move did not send: {}",
-                answer["extra"]
-            ),
+            reason: format!("the copy holds files the move did not send: {extra:?}"),
         });
     }
     Ok(differs)
 }
 
 pub fn place(remote: &Remote, journal: &Journal) -> Result<(), MoveFailure> {
-    remote
-        .step(
-            "place",
-            &[
-                ("intent", &journal.intent),
-                ("source", &journal.change.old_owner),
-                ("target", &journal.change.new_owner),
-            ],
-        )
-        .map(|_| ())
+    match remote.step(
+        "place",
+        &[
+            ("intent", &journal.intent),
+            ("source", &journal.change.old_owner),
+            ("target", &journal.change.new_owner),
+        ],
+    )? {
+        StepAnswer::Placed { .. } => Ok(()),
+        other => Err(unexpected("place", &other)),
+    }
 }
 
 pub fn start_target(remote: &Remote, journal: &Journal) -> Result<(), MoveFailure> {
-    remote
-        .step("start", &[("intent", &journal.intent)])
-        .map(|_| ())
-        .map_err(|failure| match failure {
-            MoveFailure::Refused { reason, .. } => MoveFailure::NotStarted { reason },
-            other => other,
-        })
+    match remote.step("start", &[("intent", &journal.intent)]) {
+        Ok(StepAnswer::Started { .. }) => Ok(()),
+        Ok(other) => Err(unexpected("start", &other)),
+        Err(MoveFailure::Refused { reason, .. }) => Err(MoveFailure::NotStarted { reason }),
+        Err(other) => Err(other),
+    }
 }
 
 /// What the peer's handover says of the move once the link that carries
@@ -525,38 +507,73 @@ pub fn start_target(remote: &Remote, journal: &Journal) -> Result<(), MoveFailur
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TargetSays {
     Active,
-    /// Pending, or no record: the move did not commit there.
+    /// Pending, no record, or another move's: the move did not commit
+    /// there.
     NotCommitted,
 }
 
 pub fn target_status(remote: &Remote, journal: &Journal) -> Result<TargetSays, MoveFailure> {
-    let answer = remote.step("status", &[("intent", &journal.intent)])?;
-    Ok(
-        match answer["handover"]["state"]["state"]
-            .as_str()
-            .or(answer["handover"]["state"].as_str())
-        {
-            Some("active") => TargetSays::Active,
-            _ => TargetSays::NotCommitted,
-        },
-    )
+    status_of(remote.step("status", &[("intent", &journal.intent)])?)
+}
+
+/// What a status answer says of the move; one it does not give is refused,
+/// never read as not committed, which would start a core here while one
+/// may run there.
+fn status_of(answer: StepAnswer) -> Result<TargetSays, MoveFailure> {
+    match answer {
+        StepAnswer::Status {
+            handover:
+                Some(Handover {
+                    state: HandoverState::Active,
+                    ..
+                }),
+        } => Ok(TargetSays::Active),
+        StepAnswer::Status {
+            handover:
+                None
+                | Some(Handover {
+                    state: HandoverState::Pending,
+                    ..
+                }),
+        }
+        | StepAnswer::OtherMove { .. } => Ok(TargetSays::NotCommitted),
+        other => Err(unexpected("status", &other)),
+    }
+}
+
+/// What the peer's abort left there.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Aborted {
+    /// The move committed there after all.
+    Active,
+    /// No core of this move runs there and its copy is back in
+    /// `move-incoming`, or another move holds the machine.
+    Undone,
+    /// No core of this move runs or starts there, but its copy is still in
+    /// the state folder.
+    CopyLeft { reason: String },
 }
 
 /// Stops the peer's pending core and takes its copy back into
-/// `move-incoming`; answers whether the peer had committed after all.
-pub fn abort_target(remote: &Remote, journal: &Journal) -> Result<TargetSays, MoveFailure> {
-    let answer = remote.step("abort", &[("intent", &journal.intent)])?;
-    Ok(if answer["state"] == "active" {
-        TargetSays::Active
-    } else {
-        TargetSays::NotCommitted
-    })
+/// `move-incoming`.
+pub fn abort_target(remote: &Remote, journal: &Journal) -> Result<Aborted, MoveFailure> {
+    aborted_of(remote.step("abort", &[("intent", &journal.intent)])?)
+}
+
+fn aborted_of(answer: StepAnswer) -> Result<Aborted, MoveFailure> {
+    match answer {
+        StepAnswer::Active => Ok(Aborted::Active),
+        StepAnswer::Aborted | StepAnswer::OtherMove { .. } => Ok(Aborted::Undone),
+        StepAnswer::StoppedNotReturned { reason } => Ok(Aborted::CopyLeft { reason }),
+        other => Err(unexpected("abort", &other)),
+    }
 }
 
 pub fn finish_target(remote: &Remote, journal: &Journal) -> Result<(), MoveFailure> {
-    remote
-        .step("finish", &[("intent", &journal.intent)])
-        .map(|_| ())
+    match remote.step("finish", &[("intent", &journal.intent)])? {
+        StepAnswer::Finished => Ok(()),
+        other => Err(unexpected("finish", &other)),
+    }
 }
 
 /// The peer this machine moves its core to, from the core's facts and the
@@ -595,8 +612,12 @@ mod tests {
     #[test]
     fn a_verify_answer_naming_a_file_the_copy_does_not_hold_is_refused() {
         let manifest = manifest(&["labels.json", "factory-files/a.prd"]);
+        let differs = |paths: &[&str]| StepAnswer::Differs {
+            differs: paths.iter().map(|path| (*path).to_owned()).collect(),
+            extra: Vec::new(),
+        };
         assert_eq!(
-            differs_of(&json!({"differs": ["labels.json"], "extra": []}), &manifest).unwrap(),
+            differs_of(differs(&["labels.json"]), &manifest).unwrap(),
             vec!["labels.json".to_owned()]
         );
         for path in [
@@ -604,7 +625,7 @@ mod tests {
             "../labels.json",
             "mobile.json",
         ] {
-            match differs_of(&json!({"differs": ["labels.json", path]}), &manifest) {
+            match differs_of(differs(&["labels.json", path]), &manifest) {
                 Err(MoveFailure::Refused { step, reason }) => {
                     assert_eq!(step, "verify");
                     assert!(reason.contains(path), "{reason}");
@@ -612,6 +633,112 @@ mod tests {
                 other => panic!("{path}: {other:?}"),
             }
         }
+    }
+
+    fn line(build: &str, answer: StepAnswer) -> String {
+        serde_json::to_string(&StepLine {
+            build: build.to_owned(),
+            answer,
+        })
+        .unwrap()
+    }
+
+    /// Both ends run one build, so a line of another build is not read
+    /// past its build, whatever its shape; a refusal and a busy answer are
+    /// failures of the step that gave them.
+    #[test]
+    fn a_step_line_is_read_only_from_this_build() {
+        assert_eq!(
+            read_line("status", &line("b1", StepAnswer::Aborted), "b1"),
+            Ok(StepAnswer::Aborted)
+        );
+        assert_eq!(
+            read_line("status", &line("b0", StepAnswer::Aborted), "b1"),
+            Err(Some(MoveFailure::OtherBuild {
+                build: "b0".to_owned()
+            }))
+        );
+        assert_eq!(
+            read_line("status", r#"{"build":"b0","state":"active"}"#, "b1"),
+            Err(Some(MoveFailure::OtherBuild {
+                build: "b0".to_owned()
+            }))
+        );
+        assert_eq!(read_line("status", "usage: hided", "b1"), Err(None));
+        let refused = |file: Option<&str>| StepAnswer::Refused {
+            file: file.map(str::to_owned),
+            reason: "no".to_owned(),
+        };
+        assert_eq!(
+            read_line("verify", &line("b1", refused(Some("labels.json"))), "b1"),
+            Err(Some(MoveFailure::Load {
+                file: "labels.json".to_owned(),
+                reason: "no".to_owned()
+            }))
+        );
+        assert_eq!(
+            read_line("place", &line("b1", refused(Some("labels.json"))), "b1"),
+            Err(Some(MoveFailure::Refused {
+                step: "place".to_owned(),
+                reason: "no".to_owned()
+            }))
+        );
+        let busy = read_line(
+            "abort",
+            &line(
+                "b1",
+                StepAnswer::Busy {
+                    reason: "held".to_owned(),
+                },
+            ),
+            "b1",
+        );
+        assert!(
+            matches!(&busy, Err(Some(failure)) if failure.transient()),
+            "{busy:?}"
+        );
+    }
+
+    /// Only a handover that says active commits the move, and only a
+    /// pending one, none, or another move's says it did not: any other
+    /// answer is refused rather than read as either.
+    #[test]
+    fn a_status_or_abort_answer_the_step_does_not_give_is_refused() {
+        let handover = |state| Some(Handover::new("move-1", "a", "b", state));
+        assert_eq!(
+            status_of(StepAnswer::Status {
+                handover: handover(HandoverState::Active)
+            }),
+            Ok(TargetSays::Active)
+        );
+        for answer in [
+            StepAnswer::Status {
+                handover: handover(HandoverState::Pending),
+            },
+            StepAnswer::Status { handover: None },
+            StepAnswer::OtherMove {
+                intent: "move-2".to_owned(),
+            },
+        ] {
+            assert_eq!(status_of(answer), Ok(TargetSays::NotCommitted));
+        }
+        for answer in [
+            StepAnswer::Aborted,
+            StepAnswer::Status {
+                handover: handover(HandoverState::StoppedFor),
+            },
+            StepAnswer::Finished,
+        ] {
+            assert!(
+                matches!(status_of(answer.clone()), Err(MoveFailure::Refused { .. })),
+                "{answer:?}"
+            );
+        }
+        assert_eq!(aborted_of(StepAnswer::Active), Ok(Aborted::Active));
+        assert!(matches!(
+            aborted_of(StepAnswer::Loadable),
+            Err(MoveFailure::Refused { .. })
+        ));
     }
 
     #[test]

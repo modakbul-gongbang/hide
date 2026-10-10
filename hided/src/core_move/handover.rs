@@ -120,22 +120,46 @@ impl Held {
     }
 }
 
+/// Why the record's lock was not taken.
+#[derive(Debug)]
+pub enum HoldError {
+    /// Another change held it past the wait: a later try may take it.
+    Busy(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for HoldError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Busy(reason) | Self::Failed(reason) => formatter.write_str(reason),
+        }
+    }
+}
+
+impl From<HoldError> for String {
+    fn from(error: HoldError) -> Self {
+        error.to_string()
+    }
+}
+
 /// Takes the record's lock (a file beside it), waiting a few seconds for
 /// another change to finish.
-pub fn hold(state_dir: &Path) -> Result<Held, String> {
+pub fn hold(state_dir: &Path) -> Result<Held, HoldError> {
     let lock_path = state_dir.join("core-handover.lock");
-    let file = hide_platform::fs::private::open_or_create_file(&lock_path)
-        .map_err(|error| format!("{}: {error}", lock_path.display()))?;
+    let failed =
+        |error: std::io::Error| HoldError::Failed(format!("{}: {error}", lock_path.display()));
+    let file = hide_platform::fs::private::open_or_create_file(&lock_path).map_err(failed)?;
     match hide_platform::fs::lock::lock_file(file, Mode::Exclusive, LOCK_WAIT, &|| false)
-        .map_err(|error| format!("{}: {error}", lock_path.display()))?
+        .map_err(failed)?
     {
         Waited::Locked(lock) => Ok(Held {
             state_dir: state_dir.to_path_buf(),
             _lock: lock,
         }),
-        Waited::TimedOut | Waited::Cancelled => {
-            Err(format!("{} is held by another change", lock_path.display()))
-        }
+        Waited::TimedOut | Waited::Cancelled => Err(HoldError::Busy(format!(
+            "{} is held by another change",
+            lock_path.display()
+        ))),
     }
 }
 

@@ -262,10 +262,13 @@ fn run_logins_check(
     }
     let bytes =
         std::fs::read(&answer).map_err(|error| format!("the check left no answer: {error}"))?;
-    let answer: serde_json::Value = serde_json::from_slice(&bytes)
+    // The job runs this program, so its line is this build's.
+    let line: super::answer::StepLine = serde_json::from_slice(&bytes)
         .map_err(|error| format!("the check's answer is unreadable: {error}"))?;
-    serde_json::from_value(answer["failed"].clone())
-        .map_err(|error| format!("the check's answer is unreadable: {error}"))
+    match line.answer {
+        super::answer::StepAnswer::Checked { failed } => Ok(failed),
+        other => Err(format!("the check answered {other:?}")),
+    }
 }
 
 /// Waits for the job's answer, which it writes once and whole before it

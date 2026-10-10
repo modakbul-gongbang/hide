@@ -130,8 +130,9 @@ pub(super) async fn prepare_back(
         placement.program.clone(),
     );
     let state_dir = placement.state_dir.clone();
+    let build = own_build(env).map_err(|reason| fail(CheckId::Connection, reason))?;
     let inspected = tokio::task::spawn_blocking(move || {
-        let mut remote = Remote::new(&home, &alias, &program)?;
+        let mut remote = Remote::new(&home, &alias, &program, &build)?;
         if let Some(state_dir) = &state_dir {
             remote = remote.with_state_dir(state_dir);
         }

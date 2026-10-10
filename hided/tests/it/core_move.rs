@@ -1066,11 +1066,19 @@ fn a_target_that_asks_for_a_file_outside_the_copy_is_refused() -> Result<()> {
         let own = fixture.source.home().join("outside-the-copy");
         std::fs::write(&own, b"this machine's own")?;
         let own_path = own.to_str().context("path")?;
+        let program = fixture.helper_program()?;
+        // Answered as the target's own build would, so only its content is
+        // hostile.
+        let build = hided::build_id::of_file(&program).map_err(anyhow::Error::msg)?;
+        let answer = serde_json::to_string(&json!({
+            "build": build,
+            "answer": {"kind": "differs", "differs": [own_path], "extra": []},
+        }))?;
         fixture.stand_in_peer(
-            &fixture.helper_program()?,
+            &program,
             &format!(
                 r#"if [ "$1 $2" = "core-move verify" ]; then
-  printf '{{"differs":["%s"],"extra":[]}}\n' '{own_path}'
+  printf '%s\n' '{answer}'
   exit 0
 fi"#
             ),

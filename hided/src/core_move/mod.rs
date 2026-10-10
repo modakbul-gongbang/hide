@@ -9,6 +9,7 @@
 //! restarting the old core from its untouched folder. A move back is its
 //! own sequence, driven by the node (`back`).
 
+pub mod answer;
 pub mod back;
 pub mod control;
 pub mod driver;
