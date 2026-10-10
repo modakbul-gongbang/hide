@@ -2,6 +2,7 @@
 //! store is the sole writer; native I/O is performed by request workers.
 
 mod executor;
+pub(crate) mod hook_tokens;
 pub(crate) mod lineage;
 
 use crate::delivery::answer::{AgentView, Connection, RegisterCheck, Runtime};
