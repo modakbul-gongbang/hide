@@ -172,19 +172,45 @@ struct HeldLines {
 struct HeldLine {
     text: String,
     connection: u64,
+    /// A key or a paste, which its screen is told of when it is not sent.
+    /// A redraw is not: the screen's next view asks again.
+    input: bool,
     at: Instant,
 }
 
+impl HeldLine {
+    /// The screen to tell when this line is not sent: its typist's, for
+    /// input only.
+    fn teller(&self) -> Option<u64> {
+        self.input.then_some(self.connection)
+    }
+
+    /// Drops this line for `cause`: an input line's screen is told, a
+    /// redraw is only logged.
+    fn drop_for(self, cause: Unsent, unsent: &UnsentNotices) {
+        match self.teller() {
+            Some(connection) => not_sent(connection, cause, unsent),
+            None => herdr_core::diagnostic!(json!({
+                "component": "node_daemon",
+                "kind": "terminals.redraw_dropped",
+                "connection": self.connection,
+                "cause": format!("{cause:?}"),
+            })),
+        }
+    }
+}
+
 impl HeldLines {
-    /// The next line still in time and the screen connection that typed
-    /// it, telling the screen of each that is not.
-    fn next(&mut self, now: Instant, unsent: &UnsentNotices) -> Option<(String, u64)> {
+    /// The next line still in time and the screen to tell if it is not
+    /// sent (none for a redraw), dropping each line that is not in time.
+    fn next(&mut self, now: Instant, unsent: &UnsentNotices) -> Option<(String, Option<u64>)> {
         while let Some(line) = self.lines.pop_front() {
             self.bytes -= line.text.len();
             if now.duration_since(line.at) <= HELD_FOR {
-                return Some((line.text, line.connection));
+                let teller = line.teller();
+                return Some((line.text, teller));
             }
-            not_sent(line.connection, Unsent::WaitedTooLong, unsent);
+            line.drop_for(Unsent::WaitedTooLong, unsent);
         }
         None
     }
@@ -198,7 +224,7 @@ impl HeldLines {
         {
             if let Some(line) = self.lines.pop_front() {
                 self.bytes -= line.text.len();
-                not_sent(line.connection, Unsent::WaitedTooLong, unsent);
+                line.drop_for(Unsent::WaitedTooLong, unsent);
             }
         }
     }
@@ -206,15 +232,15 @@ impl HeldLines {
     /// Drops every line: the link they were typed for ended.
     fn clear(&mut self, unsent: &UnsentNotices) {
         for line in self.lines.drain(..) {
-            not_sent(line.connection, Unsent::LinkEnded, unsent);
+            line.drop_for(Unsent::LinkEnded, unsent);
         }
         self.bytes = 0;
     }
 }
 
-/// A held line taken for the relay: its screen is told it was not sent
-/// unless the write finished, so a write that failed or was cut off with
-/// its relay loses no key unsaid.
+/// A held line taken for the relay: an input line's screen is told it was
+/// not sent unless the write finished, so a write that failed or was cut off
+/// with its relay loses no key unsaid. A redraw's `connection` is `None`.
 struct InFlight<'a> {
     connection: Option<u64>,
     unsent: &'a UnsentNotices,
@@ -260,6 +286,7 @@ impl ScreenTerminals {
     /// it; refused past [`HELD_BYTES`]. One line is always held, however
     /// large, so a paste goes up as it would on the core's own screen.
     fn up(&self, line: TerminalDown, connection: u64) -> Result<(), String> {
+        let input = matches!(line, TerminalDown::Key { .. });
         let text = serde_json::to_string(&TerminalLine { terminal: line })
             .map_err(|error| error.to_string())?;
         let mut held = lock(&self.held);
@@ -279,6 +306,7 @@ impl ScreenTerminals {
         held.lines.push_back(HeldLine {
             text,
             connection,
+            input,
             at: Instant::now(),
         });
         drop(held);
@@ -482,12 +510,12 @@ where
 {
     loop {
         let next = lock(&terminals.held).next(Instant::now(), &terminals.unsent);
-        let Some((line, connection)) = next else {
+        let Some((line, teller)) = next else {
             terminals.ready.notified().await;
             continue;
         };
         let mut in_flight = InFlight {
-            connection: Some(connection),
+            connection: teller,
             unsent: &terminals.unsent,
         };
         if sink
@@ -550,7 +578,7 @@ mod tests {
         let mut held = lock(&terminals.held);
         let (first, typed_by) = held.next(now, &terminals.unsent).expect("the first key");
         assert!(first.contains("core-pane-a"), "{first}");
-        assert_eq!(typed_by, 1);
+        assert_eq!(typed_by, Some(1));
         // The second waited too long: dropped, and its screen told.
         let late = now + HELD_FOR + Duration::from_millis(1);
         assert_eq!(held.next(late, &terminals.unsent), None);
@@ -615,6 +643,39 @@ mod tests {
         let _ = writer.await;
         let told = second_screen.take().expect("the cut-off write is told");
         assert!(told.contains("cut off"), "{told}");
+    }
+
+    /// A redraw held beside keys is no key: when it expires, is cleared
+    /// with its link or is cut off, the screen hears nothing of it (its next
+    /// view asks again), and the key beside it is still told.
+    #[tokio::test]
+    async fn a_dropped_redraw_is_never_told_as_an_unsent_key() {
+        let terminals = Arc::new(ScreenTerminals::new(
+            "remote:screen:pane:".to_owned(),
+            watch::channel(None).1,
+        ));
+        let screen = terminals.unsent.watch(1);
+        let key = KeyTarget::Pane("core-pane".to_owned());
+        terminals.redraw(1, "core-pane");
+        terminals.key(1, key.clone(), b"a".to_vec(), 1).unwrap();
+        let late = Instant::now() + HELD_FOR + Duration::from_millis(1);
+        lock(&terminals.held).expire(late, &terminals.unsent);
+        assert_eq!(
+            screen.take().as_deref(),
+            Some("A key for one of the core's panes was not sent: they waited too long")
+        );
+
+        terminals.redraw(1, "core-pane");
+        lock(&terminals.held).clear(&terminals.unsent);
+        assert_eq!(screen.take(), None, "a cleared redraw");
+
+        terminals.redraw(1, "core-pane");
+        let failing = Box::pin(futures_util::sink::unfold(
+            (),
+            |(), _: tungstenite::Message| async { Err::<(), ()>(()) },
+        ));
+        write_held(Arc::clone(&terminals), failing).await;
+        assert_eq!(screen.take(), None, "a redraw whose write failed");
     }
 
     /// A burst of lost keys, more than any queue of notices held, reaches
