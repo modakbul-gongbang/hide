@@ -127,7 +127,7 @@ async fn core_turn(
             }
             // The stop is recorded: this process runs no role after it, and
             // its next start runs none until the move resumes it.
-            stop_core(running).await;
+            stop_core(&env.state_dir, running).await;
             Ok(None)
         }
         Event::Request(MoveRequest::CheckBack | MoveRequest::Back) => {
@@ -143,7 +143,7 @@ async fn core_turn(
             Ok(Some(Role::Core(running)))
         }
         Event::Stop => {
-            stop_core(running).await;
+            stop_core(&env.state_dir, running).await;
             Ok(None)
         }
         Event::Request(MoveRequest::Check { device }) => {
@@ -165,7 +165,7 @@ async fn core_turn(
         }
         Event::LeaseEnded => {
             let intent = gate.pending_intent();
-            stop_core(running).await;
+            stop_core(&env.state_dir, running).await;
             give_back_pending(&env.state_dir, intent.as_deref());
             Ok(None)
         }
@@ -269,31 +269,45 @@ fn give_back_pending(state_dir: &Path, intent: Option<&str>) {
 }
 
 /// Stops the core role and waits until its last saves are on disk. A core
-/// that has not stopped within [`CORE_STOP_WITHIN`] cannot be ended apart
-/// from this process, so the process ends, unsuccessfully: its next start
+/// that has not stopped within [`CORE_STOP_WITHIN`], or whose stop
+/// panicked, cannot be ended apart from this process, so the process ends,
+/// unsuccessfully: its next start
 /// (a login item's keep-alive, or the window's `hide connect`) resolves
 /// the move its journal records, and a move that stopped nothing yet is
 /// undone.
-async fn stop_core(running: RunningDaemon) {
+async fn stop_core(state_dir: &Path, running: RunningDaemon) {
     // On a thread of its own, so a stop that never returns is never
     // dropped on this one.
     let stopping = tokio::task::spawn_blocking(move || {
+        if crate::env::fixture_core_stop_hangs() {
+            loop {
+                std::thread::park();
+            }
+        }
         // A graceful stop takes hide's `tailscale serve` entry with it; a
         // crash leaves it to the next start's reconcile (PRD D-07).
         tokio::runtime::Handle::current().block_on(running.mobile.shutdown());
         drop(running);
     });
-    match tokio::time::timeout(CORE_STOP_WITHIN, stopping).await {
-        Ok(Ok(())) => {}
-        Ok(Err(_)) => log("core.stop_failed", json!({})),
-        Err(_) => {
-            log(
-                "core.stop_unconfirmed",
-                json!({"within_ms": CORE_STOP_WITHIN.as_millis() as u64}),
-            );
-            std::process::exit(STOP_UNCONFIRMED_EXIT);
-        }
+    let unconfirmed = match tokio::time::timeout(CORE_STOP_WITHIN, stopping).await {
+        Ok(Ok(())) => return,
+        // A stop that panicked may have left its last saves unwritten, so
+        // nothing is made from the folder in this process either.
+        Ok(Err(error)) => json!({"cause": "panicked", "message": error.to_string()}),
+        Err(_) => json!({"cause": "timed_out", "within_ms": CORE_STOP_WITHIN.as_millis() as u64}),
+    };
+    let mut record = json!({"component": "core_move", "kind": "core.stop_unconfirmed"});
+    if let (Some(record), Some(fields)) = (record.as_object_mut(), unconfirmed.as_object()) {
+        record.extend(fields.clone());
     }
+    // Written at once: the queued sink's records end with the process.
+    if let Err(error) = herdr_core::diagnostics::record_now(
+        &state_dir.join(herdr_core::node_migration::CORE_STATE),
+        record,
+    ) {
+        eprintln!("the unconfirmed stop could not be logged: {error}");
+    }
+    std::process::exit(STOP_UNCONFIRMED_EXIT);
 }
 
 fn log(kind: &str, fields: serde_json::Value) {
@@ -601,7 +615,7 @@ async fn forward(
         ..MoveView::default()
     };
     moves.set(view(MoveState::Stopping));
-    stop_core(running).await;
+    stop_core(&env.state_dir, running).await;
     let screen = MoveScreen::mount(&seat.parts(), env.vite_origin.as_deref());
     moves.set(view(MoveState::Copying));
     let remote = Arc::new(remote);

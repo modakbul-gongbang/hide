@@ -281,6 +281,60 @@ fn a_source_killed_while_its_core_stops_starts_it_again() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// The source's core does not stop for the move (a fixture makes its stop
+/// hang): past the stop's bound the process ends unsuccessfully, which a
+/// login item restarts, and its next start undoes the move and runs the core
+/// on its folder; the target was never touched.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_core_that_will_not_stop_is_restarted_unchanged() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = visible(&fixture)?;
+        let target_before = listing(&fixture.target.state)?;
+        fixture.kill_source()?;
+        fixture
+            .source
+            .herdr
+            .environment
+            .set(hided::env::HIDE_FIXTURE_CORE_STOP, "hang");
+        fixture.start_source()?;
+        fixture.device_ready()?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        // Past the stop's 20 s bound, and before a stop with none would
+        // ever end.
+        let ended = fixture.source_ended_within(std::time::Duration::from_secs(40))?;
+        ensure!(ended.code() == Some(3), "the source's hided: {ended}");
+        let unconfirmed = fixture.logged(&fixture.source, "core.stop_unconfirmed")?;
+        ensure!(unconfirmed["cause"] == "timed_out", "{unconfirmed}");
+        let journal = fixture
+            .source
+            .record("core-move.json")?
+            .context("journal")?;
+        ensure!(journal["phase"]["phase"] == "stopping", "{journal}");
+
+        fixture
+            .source
+            .herdr
+            .environment
+            .unset(hided::env::HIDE_FIXTURE_CORE_STOP);
+        fixture.start_source()?;
+        let journal = fixture.journal_until("rolled_back")?;
+        ensure!(journal["phase"]["failed"] == "stop_core", "{journal}");
+        wait_for("the source's core again", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        fixture.device_ready()?;
+        ensure!(visible(&fixture)? == before, "the window changed");
+        ensure!(
+            listing(&fixture.target.state)? == target_before,
+            "the target changed"
+        );
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The new core took the link but the source never heard it: at its next
 /// start the source reads the target's handover and goes forward.
 #[test]

@@ -138,6 +138,10 @@ impl Environment {
     pub fn set(&mut self, name: &str, value: impl Into<OsString>) {
         self.values.insert(name.into(), value.into());
     }
+
+    pub fn unset(&mut self, name: &str) {
+        self.values.remove(OsStr::new(name));
+    }
 }
 
 pub fn quote(value: impl AsRef<OsStr>) -> String {

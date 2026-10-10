@@ -37,6 +37,9 @@ pub const HIDE_TAILSCALE_BIN: &str = "HIDE_TAILSCALE_BIN";
 pub const HIDE_MACHINE_ID: &str = host::MACHINE_ID_VARIABLE;
 /// Test-only: how a core move starts the core on the machine taking it.
 pub const HIDE_CORE_STARTER: &str = "HIDE_CORE_STARTER";
+/// Test-only: `hang` makes the core role's stop never return, so a journey
+/// proves the stop's bound.
+pub const HIDE_FIXTURE_CORE_STOP: &str = "HIDE_FIXTURE_CORE_STOP";
 /// The file that declares a HOME a test fixture's, beside every test-only
 /// key's other conditions ([`fixture_home`]).
 pub const FIXTURE_HOME_MARKER: &str = ".hide-e2e-device-home";
@@ -161,6 +164,12 @@ pub const REGISTRY: &[EnvKey] = &[
         required: false,
         format: "`fixture`; read only when HOME is a fixture HOME (under /tmp, carrying .hide-e2e-device-home, and not the account's own)",
         absent_behavior: "A core move starts the core on the machine taking it through the account's login item (launchd); a fixture HOME with `fixture` starts it as a detached process instead, so no test reaches launchd",
+    },
+    EnvKey {
+        key: HIDE_FIXTURE_CORE_STOP,
+        required: false,
+        format: "`hang`; read only when HOME is a fixture HOME (under /tmp, carrying .hide-e2e-device-home, and not the account's own)",
+        absent_behavior: "The core role stops when asked; a fixture HOME with `hang` makes that stop never return, so the process ends itself past its bound",
     },
     EnvKey {
         key: HOME,
@@ -564,6 +573,13 @@ pub fn fixture_home(home: &std::path::Path) -> bool {
         .and_then(|own| hide_platform::fs::identity::canonical(&own))
         .is_ok_and(|own| own == home);
     temporary && !own && home.join(FIXTURE_HOME_MARKER).is_file()
+}
+
+/// Whether a fixture asked the core role's stop never to return
+/// ([`HIDE_FIXTURE_CORE_STOP`]).
+pub fn fixture_core_stop_hangs() -> bool {
+    std::env::var_os(HIDE_FIXTURE_CORE_STOP).as_deref() == Some(std::ffi::OsStr::new("hang"))
+        && hide_platform::host::home_dir().is_ok_and(|home| fixture_home(&home))
 }
 
 #[cfg(test)]

@@ -351,6 +351,24 @@ impl Fixture {
         })
     }
 
+    /// Waits until the source's hided ends on its own, within `bound`, and
+    /// answers how it ended.
+    pub fn source_ended_within(
+        &mut self,
+        bound: std::time::Duration,
+    ) -> Result<std::process::ExitStatus> {
+        let daemon = self
+            .daemon
+            .as_mut()
+            .context("the source's hided is not running")?;
+        let status =
+            super::remote_delivery::wait_within("the source's hided ended", bound, || {
+                Ok(daemon.try_wait()?)
+            })?;
+        self.daemon = None;
+        Ok(status)
+    }
+
     /// The role the source's window reaches: `core`, `node` or `moving`.
     pub fn role(&self) -> Result<String> {
         Ok(self.health()?["role"]
