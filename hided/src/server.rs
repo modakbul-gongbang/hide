@@ -101,6 +101,11 @@ pub struct AppState {
     /// told the opposite of the final count.
     pub renderer_transitions: Arc<Mutex<()>>,
     pub shutdown: Arc<Notify>,
+    /// Turns true once, when this role ends (`RunningDaemon` dropped): every
+    /// socket of the role is closed with 1012 `role_ended`, so a window
+    /// reconnects to the role mounted next on the same seat rather than wait
+    /// on a core that has stopped (PRD core-host-node-move B4).
+    pub role_ended: tokio::sync::watch::Receiver<bool>,
     pub ui_dir: Option<PathBuf>,
     pub version: &'static str,
     /// The seat this role is mounted on; `/health` names its instance, so a
@@ -173,6 +178,14 @@ impl CloseReason {
             Self::SchemaMismatch => "schema_mismatch",
             Self::ClientLimit => "client_limit",
         }
+    }
+}
+
+/// The close a socket gets when its role ends; the page reconnects on it.
+fn role_ended_frame() -> CloseFrame {
+    CloseFrame {
+        code: 1012,
+        reason: "role_ended".into(),
     }
 }
 
@@ -709,6 +722,13 @@ async fn client_loop(
         refuse(&mut socket, CloseReason::OriginNotAllowed, None).await;
         return;
     }
+    // A window that reconnects after the role ended, before the next role is
+    // mounted, is sent on at once.
+    let ended = *state.role_ended.borrow();
+    if ended {
+        let _ = socket.send(Message::Close(Some(role_ended_frame()))).await;
+        return;
+    }
     let connection = state.connections.fetch_add(1, Ordering::SeqCst);
     let first = match tokio::time::timeout(FIRST_FRAME_TIMEOUT, socket.recv()).await {
         Ok(Some(Ok(Message::Text(text)))) => text,
@@ -882,8 +902,14 @@ async fn screen_loop(
         )
     });
     let link = relay.as_ref().map(|relay| relay.link.clone());
+    let mut role_ended = state.role_ended.clone();
+    let mut ended_with_role = false;
     loop {
         tokio::select! {
+            () = async { let _ = role_ended.wait_for(|ended| *ended).await; } => {
+                ended_with_role = true;
+                break;
+            }
             changed = notify.recv() => {
                 match changed {
                     Ok(()) => {}
@@ -1094,6 +1120,9 @@ async fn screen_loop(
     }
     for read in device_reads {
         read.task.abort();
+    }
+    if ended_with_role {
+        let _ = socket.send(Message::Close(Some(role_ended_frame()))).await;
     }
     client_gone(&state, connection, renderer, desktop);
 }

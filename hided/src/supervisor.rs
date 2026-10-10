@@ -672,8 +672,10 @@ async fn forward(
         ..MoveView::default()
     };
     moves.set(view(MoveState::Stopping));
-    stop_core(&env.state_dir, running).await;
+    // Mounted before the core stops: a window whose socket the stopping core
+    // closes reconnects to the move's screen and hears the move (W1).
     let screen = MoveScreen::mount(&seat.parts(), env.vite_origin.as_deref());
+    stop_core(&env.state_dir, running).await;
     moves.set(view(MoveState::Copying));
     let remote = Arc::new(remote);
     let steps = {

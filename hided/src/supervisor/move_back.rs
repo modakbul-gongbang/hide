@@ -292,10 +292,12 @@ pub(super) async fn back(
         ..MoveView::default()
     };
     moves.set(view(MoveState::Stopping));
-    // The node's link ends before the core it links to stops, so no window
-    // of this machine is held on a link that will not come back.
-    stop_node(running).await;
+    // The move's screen is mounted first, so a window the node's end closes
+    // reconnects to it and hears the move (W1). The node's link ends before
+    // the core it links to stops, so no window of this machine is held on a
+    // link that will not come back.
     let screen = MoveScreen::mount(&seat.parts(), env.vite_origin.as_deref());
+    stop_node(running).await;
     let remote = Arc::new(remote);
     let own = herdr_core::node::NodeId::of_this_machine()?;
     let released = blocking({

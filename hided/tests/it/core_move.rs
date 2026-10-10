@@ -39,7 +39,24 @@ fn the_core_moves_to_the_device_and_the_window_follows_it() -> Result<()> {
         );
         let window = fixture.window();
         let instance = fixture.health()?["instance"].as_u64().context("instance")?;
+        // A window open on the core when the move starts.
+        let mut open = Renderer::connect(window.0, &window.1)?;
         fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+
+        // Its socket is closed as the core stops, and what answers at its
+        // address by then is the move's screen (or the node after it), so
+        // the window's reconnect hears the move rather than wait on a core
+        // that is gone (W1).
+        let (code, reason) = open.closed_within(std::time::Duration::from_secs(10))?;
+        ensure!(
+            (code, reason.as_str()) == (1012, "role_ended"),
+            "the open window was closed as {code} {reason}"
+        );
+        let answering = fixture.health()?;
+        ensure!(
+            matches!(answering["role"].as_str(), Some("moving" | "node")),
+            "the window's address answered {answering} once its socket closed"
+        );
         let journal = fixture.journal_until("done")?;
         let intent = journal["intent"].as_str().context("intent")?.to_owned();
 
@@ -1121,7 +1138,20 @@ fn the_core_moves_back_and_the_window_shows_what_it_showed_before() -> Result<()
                 .is_file()
         );
 
+        // A window open on the node when the move back starts is closed as
+        // the node stops, and its reconnect hears the move (W1).
+        let mut open = Renderer::connect(window.0, &window.1)?;
         fixture.event("core_move", json!({"action": "back"}))?;
+        let (code, reason) = open.closed_within(std::time::Duration::from_secs(10))?;
+        ensure!(
+            code == 1012,
+            "the open window was closed as {code} {reason}"
+        );
+        let answering = fixture.health()?;
+        ensure!(
+            matches!(answering["role"].as_str(), Some("moving" | "core")),
+            "the window's address answered {answering} once its socket closed"
+        );
         let journal = wait_for("the move back done", || {
             let journal = fixture.source.record("core-move.json")?;
             if let Some(journal) = &journal

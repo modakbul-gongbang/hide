@@ -132,6 +132,9 @@ pub struct RunningDaemon {
     core: Arc<CoreHandle>,
     /// Closed while this core runs on a move's copy that has not committed.
     pub move_gate: Arc<core_move::gate::MoveGate>,
+    /// Told when the role ends, before the core stops, so the role's sockets
+    /// close (`AppState::role_ended`).
+    role_ended: tokio::sync::watch::Sender<bool>,
     /// The server and instance lock of a daemon started on its own
     /// (`start_daemon`); a process's supervisor keeps them otherwise.
     own: Option<OwnSeat>,
@@ -174,6 +177,7 @@ impl RunningDaemon {
 
 impl Drop for RunningDaemon {
     fn drop(&mut self) {
+        self.role_ended.send_replace(true);
         self.shutdown.notify_waiters();
         self.idle.abort();
         self.pane_capabilities.revoke_all();
@@ -458,6 +462,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
     let index = Arc::new(IndexService::new());
     let attachments = Arc::new(Attachments::new(&env.state_dir));
     let shutdown = Arc::new(Notify::new());
+    let (role_ended, _) = tokio::sync::watch::channel(false);
     let supervisor_exe = std::env::current_exe()
         .map_err(|error| format!("cannot resolve opener supervisor executable: {error}"))?;
     let opener = hide_node::opener::OpenHandler::new(
@@ -522,6 +527,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
             .map(|program| Arc::from(program.to_string_lossy().as_ref())),
         renderer_transitions: Arc::new(Mutex::new(())),
         shutdown: Arc::clone(&shutdown),
+        role_ended: role_ended.subscribe(),
         ui_dir: if server::has_embedded_ui() {
             None
         } else {
@@ -604,6 +610,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         mobile,
         core,
         move_gate,
+        role_ended,
         own: None,
     })
 }

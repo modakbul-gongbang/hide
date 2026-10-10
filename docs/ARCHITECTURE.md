@@ -1257,6 +1257,10 @@ Nothing on the node link changed shape for the move, so its protocol stays; the 
 A failing check says what it found and hide changes none of it: it does not sign in, start a session or change power settings.
 Hide AI's settings move with the core: the copy carries `ai.json`, which lives outside the state folder, and `herdr-core/src/node_migration/copy.rs` places it, takes it back on a rollback and sets it aside after the commit with the brain stores, never merging it with settings the other machine kept; a move back compares the two machines' settings the same way.
 
+A window keeps its address through a move and reattaches by the web shell's ordinary reconnect (B4, W1).
+The supervisor mounts the move's screen on the seat before the core or node it replaces stops (`hided/src/core_move/screen.rs`), and the role that ends closes each of its sockets with 1012 (`role_ended` from the core, through `AppState::role_ended`), so the window reconnects to the move's screen, which answers `/health` with `role: "moving"` and sends the move's `core_move` frames; once the next role is mounted the move's screen closes its sockets with 1012 `core_moved` and the window reconnects to that role.
+The core's sockets close with the role, not with the core's change notifier, because each socket's own state holds the core and so kept the notifier open: a window left on a core that had stopped heard the move through `done` and nothing after it.
+
 A core started on a move's copy is pending until the link that carries the move's intent commits it (PRD core-host-node-move amendment 3).
 Until then the move may still be rolled back, and the core it replaced starts again on the folder the copy came from, so anything the pending core did outside its machine would be done twice or lost.
 `hided` starts it with `CoreOptions::effects_held` while its `core-handover.json` says pending (`hided/src/core_move/gate.rs`), and the core holds every outside effect behind one `EffectHold` (`herdr-core/src/effects.rs`).

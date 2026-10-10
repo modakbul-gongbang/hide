@@ -104,6 +104,34 @@ impl Renderer {
         bail!("private renderer event receipt frame cap")
     }
 
+    /// Reads this window's frames until the daemon closes its socket within
+    /// `bound`, and answers the close's code and reason; pings are answered
+    /// and every other frame is skipped.
+    pub fn closed_within(&mut self, bound: Duration) -> Result<(u16, String)> {
+        let deadline = std::time::Instant::now() + bound;
+        loop {
+            let left = deadline
+                .checked_duration_since(std::time::Instant::now())
+                .filter(|left| !left.is_zero())
+                .context("the window's socket was not closed")?;
+            self.stream.get_ref().set_read_timeout(Some(left))?;
+            let (opcode, data) = self
+                .read_frame()
+                .context("the window's socket was not closed")?;
+            match opcode {
+                8 => {
+                    ensure!(data.len() >= 2, "the window's socket closed with no code");
+                    return Ok((
+                        u16::from_be_bytes([data[0], data[1]]),
+                        String::from_utf8_lossy(&data[2..]).into_owned(),
+                    ));
+                }
+                9 => self.send(10, &data)?,
+                _ => {}
+            }
+        }
+    }
+
     fn send(&mut self, opcode: u8, bytes: &[u8]) -> Result<()> {
         ensure!(bytes.len() <= 64 * 1024, "private renderer output cap");
         let mask = [31_u8, 17, 89, 203];

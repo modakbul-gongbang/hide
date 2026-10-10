@@ -1,9 +1,10 @@
-//! The role a process mounts while its core is stopped for a move and no
-//! other role has started yet (PRD core-host-node-move Q12): `/health`
-//! answers with `role: "moving"`, so the desktop host never reads the
-//! daemon as lost, and a window's socket hears the move's `core_move`
-//! frames. Ending the role closes every socket with 1012, and the page
-//! reconnects to the role mounted next.
+//! The role a process mounts as its core or node stops for a move, until
+//! the next role starts (PRD core-host-node-move Q12): `/health` answers
+//! with `role: "moving"`, so the desktop host never reads the daemon as
+//! lost, and a window's socket hears the move's `core_move` frames. It is
+//! mounted before the role it replaces stops, so a window whose socket that
+//! role closes (1012 `role_ended`) reconnects here. Ending this role closes
+//! every socket with 1012, and the page reconnects to the role mounted next.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
