@@ -75,16 +75,28 @@ pub fn metadata_source() -> &'static str {
 /// asserted without a Herdr server (engineering rule 12). `version` is the
 /// hook version the report speaks for: the running helper's own, or the one
 /// a pane's file recorded when hided puts the tokens back after Herdr lost
-/// them (`counters::restore_of`).
-pub fn report_params(pane_id: &str, version: u32, counters: PaneCounters) -> serde_json::Value {
+/// them (`counters::restore_of`). Counts of `None` leave the two count tokens
+/// out, so a reader sees them as unknown and not as a zero: hided does that
+/// when it cannot tell that the file's counts belong to the session now in
+/// the pane.
+pub fn report_params(
+    pane_id: &str,
+    version: u32,
+    counters: Option<PaneCounters>,
+) -> serde_json::Value {
+    let mut tokens = serde_json::Map::new();
+    tokens.insert(INSTRUMENTED_TOKEN.to_owned(), json!(version.to_string()));
+    if let Some(counters) = counters {
+        tokens.insert(
+            WORKING_TOKEN.to_owned(),
+            json!(counters.working.to_string()),
+        );
+        tokens.insert(DONE_TOKEN.to_owned(), json!(counters.done.to_string()));
+    }
     json!({
         "pane_id": pane_id,
         "source": metadata_source(),
-        "tokens": {
-            INSTRUMENTED_TOKEN: version.to_string(),
-            WORKING_TOKEN: counters.working.to_string(),
-            DONE_TOKEN: counters.done.to_string(),
-        },
+        "tokens": tokens,
     })
 }
 
@@ -93,7 +105,7 @@ pub fn report(socket_path: &Path, pane_id: &str, counters: PaneCounters) -> Resu
     request_with_timeout(
         socket_path,
         "pane.report_metadata",
-        report_params(pane_id, HOOK_VERSION, counters),
+        report_params(pane_id, HOOK_VERSION, Some(counters)),
         REPORT_TIMEOUT,
     )
     .map(|_| ())
@@ -203,10 +215,19 @@ mod tests {
 
     #[test]
     fn a_restored_report_carries_the_version_the_file_recorded() {
-        let params = report_params("w7B:pM", HOOK_VERSION - 1, PaneCounters::default());
+        let params = report_params("w7B:pM", HOOK_VERSION - 1, Some(PaneCounters::default()));
         assert_eq!(
             params["tokens"]["hide_hooks"],
             (HOOK_VERSION - 1).to_string()
+        );
+    }
+
+    #[test]
+    fn a_report_without_counts_names_only_the_version() {
+        let params = report_params("w7B:pM", HOOK_VERSION, None);
+        assert_eq!(
+            params["tokens"],
+            json!({"hide_hooks": HOOK_VERSION.to_string()})
         );
     }
 
@@ -215,10 +236,10 @@ mod tests {
         let params = report_params(
             "w7B:pM",
             HOOK_VERSION,
-            PaneCounters {
+            Some(PaneCounters {
                 working: 2,
                 done: 5,
-            },
+            }),
         );
         assert_eq!(params["pane_id"], "w7B:pM");
         assert_eq!(params["source"], "hide-subagents");
