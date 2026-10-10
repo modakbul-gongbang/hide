@@ -1,4 +1,4 @@
-use hide_session::turns::{ToolTurnMark, TurnMark, TurnMode};
+use hide_session::turns::{ToolTurnMark, TurnMark, TurnMode, TurnTracker, WakeLoss, WakeMark};
 use hide_session::{
     Agent, ConversationCursor, EventKind, RescanReason, SESSION_LINE_LIMIT_BYTES, SkipReason,
 };
@@ -407,4 +407,135 @@ fn claude_progress_does_not_hide_its_title_or_human_turn() {
     assert_eq!(parsed.title.as_deref(), Some("설치 문제 확인"));
     assert_eq!(parsed.events[0].text, "계속 확인해줘");
     assert_eq!(parsed.event_offsets, [(ignored.len() + title.len()) as u64]);
+}
+
+/// A Claude Code `tool_use` block for `name` with `padding` after the name and
+/// id, so a record is over the line cap while those two arrive last.
+fn claude_call(name: &str, id: &str, padding: usize) -> String {
+    format!(
+        "{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"input\":{{\"command\":\"{}\"}},\"name\":\"{name}\",\"type\":\"tool_use\",\"id\":\"{id}\"}}]}}}}\n",
+        "x".repeat(padding)
+    )
+}
+
+/// Reads `path` to its end, saving the checkpoint as JSON and restoring it
+/// between polls the way the label store does, and returns every mark in order
+/// with the number of polls it took.
+fn read_through_restores(path: &std::path::Path) -> (Vec<(u64, TurnMark)>, usize) {
+    let mut reader = ConversationCursor::new();
+    let mut marks = Vec::new();
+    let mut polls = 0;
+    loop {
+        marks.extend(reader.read(Agent::Claude, path).unwrap().turn_marks);
+        polls += 1;
+        let saved = serde_json::to_value(reader.checkpoint()).unwrap();
+        let more = reader.has_more();
+        reader = ConversationCursor::restore(serde_json::from_value(saved).unwrap());
+        if !more {
+            return (marks, polls);
+        }
+    }
+}
+
+/// A checkpoint made by a build that did not keep what the wake reader needs
+/// (`wake_aware`) cannot say which call a torn record named, so the record is
+/// read again from its start, as one that kept no native ids is.
+#[test]
+fn a_scan_checkpointed_before_the_wake_reader_is_reread_from_its_record_start() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.jsonl");
+    let complete = claude_call("Bash", "toolu_long", SESSION_LINE_LIMIT_BYTES + 1);
+    // Both the tool's name and its id arrive after the discarded body.
+    let split = complete.find("\"name\"").unwrap();
+    fs::write(&path, &complete[..split]).unwrap();
+    let mut reader = ConversationCursor::new();
+    assert!(
+        reader
+            .read(Agent::Claude, &path)
+            .unwrap()
+            .turn_marks
+            .is_empty()
+    );
+    let checkpoint = serde_json::to_value(reader.checkpoint()).unwrap();
+    fs::write(&path, &complete).unwrap();
+    let called = TurnMark::Wake(vec![WakeMark::Call {
+        call: "toolu_long".into(),
+    }]);
+    for older_scan in [false, true] {
+        let mut checkpoint = checkpoint.clone();
+        if older_scan {
+            let classifier = checkpoint["classifier"].as_object_mut().unwrap();
+            assert_eq!(classifier.remove("wake_aware"), Some(json!(true)));
+        }
+        let mut restored = ConversationCursor::restore(serde_json::from_value(checkpoint).unwrap());
+        let mut marks = Vec::new();
+        while {
+            marks.extend(restored.read(Agent::Claude, &path).unwrap().turn_marks);
+            restored.has_more()
+        } {}
+        assert_eq!(marks, [(0, called.clone())], "older scan: {older_scan}");
+        assert_eq!(restored.checkpoint().offset(), complete.len() as u64);
+    }
+}
+
+/// The result of a command, longer than the poll budget, is read over several
+/// polls and a restore between each; the call it answers is remembered by the
+/// tracker, so the loss is the same as for a result read in one go.
+#[test]
+fn a_result_longer_than_a_poll_budget_still_loses_the_devices_of_its_open_call() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.jsonl");
+    let record = |value: serde_json::Value| format!("{value}\n");
+    let boot = record(
+        json!({"type": "attachment", "attachment": {"type": "hook_success",
+        "hookName": "SessionStart:startup"}}),
+    );
+    let started = record(
+        json!({"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "toolu_start",
+            "content": "Command running in background with ID: bg1"}]}}),
+    );
+    let result = record(
+        json!({"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "toolu_long",
+            "content": "x".repeat(hide_session::SESSION_INCREMENT_READ_LIMIT_BYTES as usize * 5 / 2)}]}}),
+    );
+    fs::write(
+        &path,
+        format!(
+            "{boot}{started}{}{result}",
+            claude_call("Bash", "toolu_long", 0)
+        ),
+    )
+    .unwrap();
+    let (marks, polls) = read_through_restores(&path);
+    assert!(polls >= 3, "the record spans polls: {polls}");
+    let mut tracker = TurnTracker::default();
+    for (offset, mark) in &marks {
+        tracker.fold(*offset, mark);
+    }
+    assert_eq!(tracker.wake_loss(), Some(WakeLoss::Lost));
+    assert!(tracker.wake_expiries().is_empty());
+
+    // The same session with a short result of that call loses nothing, so the
+    // loss above is the long result's.
+    fs::write(
+        &path,
+        format!(
+            "{boot}{started}{}{}",
+            claude_call("Bash", "toolu_long", 0),
+            record(
+                json!({"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_long", "content": "done"}]}})
+            )
+        ),
+    )
+    .unwrap();
+    let (marks, _) = read_through_restores(&path);
+    let mut tracker = TurnTracker::default();
+    for (offset, mark) in &marks {
+        tracker.fold(*offset, mark);
+    }
+    assert_eq!(tracker.wake_loss(), None);
+    assert_eq!(tracker.wake_expiries().len(), 1);
 }

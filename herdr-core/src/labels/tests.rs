@@ -1550,6 +1550,80 @@ fn tool_session(harness: &Harness, name: &str, outputs: &[(String, u64)]) -> Pat
     path
 }
 
+/// A Claude session whose request is followed by `records`, then a reply.
+fn wake_session(harness: &Harness, name: &str, records: &[serde_json::Value]) -> PathBuf {
+    let project = harness.home.path().join(".claude/projects/-project");
+    std::fs::create_dir_all(&project).unwrap();
+    let path = project.join(format!("{name}.jsonl"));
+    let mut lines = vec![json!({"type":"user","sessionId":name,"timestamp":1_000,
+        "origin":{"kind":"human"},"message":{"role":"user","content":"서버 띄워줘"}})];
+    lines.extend(records.iter().cloned());
+    lines.push(
+        json!({"type":"assistant","sessionId":name,"timestamp":9_000,
+        "message":{"role":"assistant","content":[{"type":"text","text":"띄웠습니다"}]}}),
+    );
+    let lines: String = lines.iter().map(|record| format!("{record}\n")).collect();
+    std::fs::write(&path, lines).unwrap();
+    path
+}
+
+fn started_record(id: &str) -> serde_json::Value {
+    json!({"type":"user","timestamp":2_000,"message":{"role":"user","content":[{"type":"tool_result",
+        "tool_use_id":"toolu_start",
+        "content":format!("Command running in background with ID: {id}. Output is being written to: /x")}]}})
+}
+
+fn boot_record() -> serde_json::Value {
+    json!({"type":"attachment","timestamp":1_500,
+        "attachment":{"type":"hook_success","hookName":"SessionStart:startup"}})
+}
+
+/// The wake diagnostics one read of `records` writes, by kind.
+fn wake_diagnostics(records: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let path = wake_session(&harness, "native-wake", records);
+    harness.backend.answer("서버 띄우기 작업", "done", "");
+    observe(&mut worker, &agent(&path, "idle", 3));
+    let ((), diagnostics) = crate::diagnostics::capture(|| settle(&mut worker, &woken));
+    diagnostics
+        .into_iter()
+        .filter(|record| {
+            record["kind"]
+                .as_str()
+                .is_some_and(|kind| kind.starts_with("wake_devices."))
+        })
+        .collect()
+}
+
+#[test]
+fn more_background_tasks_than_are_tracked_is_logged_as_a_capacity() {
+    let mut records = vec![boot_record()];
+    records.extend(
+        (0..=hide_session::turns::WAKE_DEVICE_LIMIT)
+            .map(|index| started_record(&format!("t{index}"))),
+    );
+    let logged = wake_diagnostics(&records);
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert_eq!(logged[0]["kind"], "wake_devices.capacity");
+    assert_eq!(
+        logged[0]["limit"],
+        hide_session::turns::WAKE_DEVICE_LIMIT as u64
+    );
+}
+
+#[test]
+fn a_record_the_reader_could_not_follow_is_logged_as_lost_not_as_a_capacity() {
+    // A task id too long to keep: one record, one task, far below the limit.
+    let logged = wake_diagnostics(&[boot_record(), started_record(&"a".repeat(300))]);
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert_eq!(logged[0]["kind"], "wake_devices.lost");
+    assert!(
+        logged[0].get("limit").is_none(),
+        "a limit is no cause of a lost record: {logged:?}"
+    );
+}
+
 fn addresses(sighted: &[super::worker::SightedPullRequest]) -> Vec<(&str, &str, u64)> {
     sighted
         .iter()

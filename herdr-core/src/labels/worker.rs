@@ -887,26 +887,21 @@ impl LabelWorker {
         // The wait is bound to the state the read was asked under, and known
         // only once the backlog is read (D-06).
         let waited = (record.turn_read(), record.user_turn(), record.wake_read());
-        let overflowed = record
+        let lost_before = record
             .turns
             .as_ref()
-            .is_some_and(hide_session::turns::TurnTracker::wake_overflowed);
+            .and_then(hide_session::turns::TurnTracker::wake_loss);
         record.turns = transcript.turns.clone();
         record.turns_seq = asked_seq.filter(|_| !transcript.has_more);
         changed |= (record.turn_read(), record.user_turn(), record.wake_read()) != waited;
-        if !overflowed
-            && record
-                .turns
-                .as_ref()
-                .is_some_and(hide_session::turns::TurnTracker::wake_overflowed)
+        let lost_now = record
+            .turns
+            .as_ref()
+            .and_then(hide_session::turns::TurnTracker::wake_loss);
+        if lost_before.is_none()
+            && let Some(cause) = lost_now
         {
-            crate::diagnostic!(json!({
-                "component": "labels",
-                "kind": "wake_devices.capacity",
-                "pane_id": pane_id,
-                "limit": hide_session::turns::WAKE_DEVICE_LIMIT,
-                "message": "More background tasks ran at once than are tracked; the row does not wait on them",
-            }));
+            crate::diagnostic!(wake_loss_diagnostic(pane_id, cause));
         }
         self.dirty = true;
         let pane = self.panes.get_mut(pane_id).expect("checked above");
@@ -1288,6 +1283,29 @@ impl LabelWorker {
                 cleared
             }
         }
+    }
+}
+
+/// The record of the moment a session's read stopped proving background work
+/// (status-model.md, A quiet row that waits). The two causes call for
+/// different action, so each has a kind of its own: one is a limit to raise,
+/// the other a record this reader could not follow.
+fn wake_loss_diagnostic(pane_id: &str, cause: hide_session::turns::WakeLoss) -> serde_json::Value {
+    use hide_session::turns::WakeLoss;
+    match cause {
+        WakeLoss::Capacity => json!({
+            "component": "labels",
+            "kind": "wake_devices.capacity",
+            "pane_id": pane_id,
+            "limit": hide_session::turns::WAKE_DEVICE_LIMIT,
+            "message": "More background tasks, or calls waiting for their result, were open at once than are tracked; the row does not wait on them",
+        }),
+        WakeLoss::Lost => json!({
+            "component": "labels",
+            "kind": "wake_devices.lost",
+            "pane_id": pane_id,
+            "message": "A session record that may have started or ended a background task could not be followed (too large to keep, or in a form this reader does not know); the row does not wait on tasks until the agent's next start",
+        }),
     }
 }
 
