@@ -4623,22 +4623,34 @@
                               "name": "Chevron lane",
                               "children": [
                                 {
-                                  "type": "icon",
-                                  "id": "sfu-panel-l-needs-0-chev-g",
-                                  "name": "Glyph",
-                                  "enabled": true,
-                                  "width": 12,
-                                  "height": 12,
-                                  "icon": "chevron-right",
-                                  "library": "lucide",
-                                  "fill": "$--muted-foreground"
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-needs-0-btn",
+                                  "name": "Chevron",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "sfu-panel-l-needs-0-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-right",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "x": 0,
+                                  "y": 4,
+                                  "width": 16,
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
                                 }
                               ],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -4741,9 +4753,9 @@
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -4752,11 +4764,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         }
                       ],
                       "width": "fill_container",
@@ -4814,11 +4827,9 @@
                               "id": "sfu-panel-l-working-0-chev",
                               "name": "Chevron lane",
                               "children": [],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -4923,23 +4934,34 @@
                                   "alignItems": "center"
                                 },
                                 {
-                                  "type": "text",
-                                  "id": "sfu-panel-l-working-0-line",
-                                  "name": "sealed verify 다시 돌리는 중",
-                                  "content": "sealed verify 다시 돌리는 중",
-                                  "fill": "$--subtle-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-0-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-0-line",
+                                      "name": "sealed verify 다시 돌리는 중",
+                                      "content": "sealed verify 다시 돌리는 중",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -4948,11 +4970,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
@@ -4965,22 +4988,45 @@
                               "name": "Chevron lane",
                               "children": [
                                 {
-                                  "type": "icon",
-                                  "id": "sfu-panel-l-working-1-chev-g",
-                                  "name": "Glyph",
-                                  "enabled": true,
-                                  "width": 12,
-                                  "height": 12,
-                                  "icon": "chevron-down",
-                                  "library": "lucide",
-                                  "fill": "$--muted-foreground"
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-1-btn",
+                                  "name": "Chevron",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "sfu-panel-l-working-1-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-down",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "x": 0,
+                                  "y": 4,
+                                  "width": 16,
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-1-out",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 22,
+                                  "width": 1,
+                                  "height": 24,
+                                  "fill": "$--lineage-rail"
                                 }
                               ],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -5046,23 +5092,34 @@
                                   "alignItems": "center"
                                 },
                                 {
-                                  "type": "text",
-                                  "id": "sfu-panel-l-working-1-line",
-                                  "name": "4단계 리뷰 지적 수정 중",
-                                  "content": "4단계 리뷰 지적 수정 중",
-                                  "fill": "$--subtle-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-1-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-1-line",
+                                      "name": "4단계 리뷰 지적 수정 중",
+                                      "content": "4단계 리뷰 지적 수정 중",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -5071,11 +5128,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
@@ -5095,7 +5153,7 @@
                                   "x": 8,
                                   "y": 0,
                                   "width": 1,
-                                  "height": 28,
+                                  "height": 46,
                                   "fill": "$--lineage-rail"
                                 },
                                 {
@@ -5112,18 +5170,53 @@
                               ],
                               "layout": "none",
                               "width": 18,
-                              "height": 28
+                              "height": 46
                             },
                             {
                               "type": "frame",
                               "id": "sfu-panel-l-working-2-chev",
                               "name": "Chevron lane",
-                              "children": [],
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-2-btn",
+                                  "name": "Chevron",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "sfu-panel-l-working-2-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-down",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "x": 0,
+                                  "y": 4,
+                                  "width": 16,
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-2-out",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 22,
+                                  "width": 1,
+                                  "height": 24,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -5164,7 +5257,7 @@
                                       "id": "sfu-panel-l-working-2-title",
                                       "name": "Implementor",
                                       "content": "Implementor",
-                                      "fill": "$--foreground",
+                                      "fill": "$--subtle-foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
                                       "fontWeight": "400",
@@ -5211,26 +5304,6 @@
                                       "strokeAlignment": "inner"
                                     },
                                     {
-                                      "id": "sfu-panel-l-working-2-desc",
-                                      "type": "ref",
-                                      "ref": "hideui:ath-mark",
-                                      "name": "Descendant mark",
-                                      "descendants": {
-                                        "hideui:ath-mark-bang": {
-                                          "fill": "$--warning",
-                                          "enabled": false
-                                        },
-                                        "hideui:ath-mark-dot": {
-                                          "fill": "$--agent-working",
-                                          "enabled": true
-                                        },
-                                        "hideui:ath-mark-n": {
-                                          "fill": "$--agent-working",
-                                          "content": "1"
-                                        }
-                                      }
-                                    },
-                                    {
                                       "type": "text",
                                       "id": "sfu-panel-l-working-2-age",
                                       "name": "2m",
@@ -5246,15 +5319,46 @@
                                   "layout": "horizontal",
                                   "gap": 6,
                                   "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-2-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-2-branch",
+                                      "name": "core-host-node-layer5",
+                                      "content": "core-host-node-layer5",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-micro",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-2-line",
+                                      "name": "NodeLink 호출 옮기는 중",
+                                      "content": "NodeLink 호출 옮기는 중",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -5263,17 +5367,39 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             0
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
                           "id": "sfu-panel-l-working-3",
-                          "name": "사전 리뷰",
+                          "name": "테스트 작성",
                           "children": [
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-3-a0",
+                              "name": "Ancestor rail",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-3-a0-r",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 0,
+                                  "width": 1,
+                                  "height": 46,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 46
+                            },
                             {
                               "type": "frame",
                               "id": "sfu-panel-l-working-3-elbow",
@@ -5304,18 +5430,53 @@
                               ],
                               "layout": "none",
                               "width": 18,
-                              "height": 28
+                              "height": 46
                             },
                             {
                               "type": "frame",
                               "id": "sfu-panel-l-working-3-chev",
                               "name": "Chevron lane",
-                              "children": [],
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-3-btn",
+                                  "name": "Chevron",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "sfu-panel-l-working-3-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-down",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "x": 0,
+                                  "y": 4,
+                                  "width": 16,
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-3-out",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 22,
+                                  "width": 1,
+                                  "height": 24,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -5330,9 +5491,9 @@
                                     {
                                       "type": "text",
                                       "id": "sfu-panel-l-working-3-mark",
-                                      "name": "✓",
-                                      "content": "✓",
-                                      "fill": "$--success",
+                                      "name": "●",
+                                      "content": "●",
+                                      "fill": "$--agent-working",
                                       "fontFamily": "$--font-mono",
                                       "fontSize": "$--text-caption",
                                       "fontWeight": "600"
@@ -5354,9 +5515,9 @@
                                     {
                                       "type": "text",
                                       "id": "sfu-panel-l-working-3-title",
-                                      "name": "사전 리뷰",
-                                      "content": "사전 리뷰",
-                                      "fill": "$--foreground",
+                                      "name": "테스트 작성",
+                                      "content": "테스트 작성",
+                                      "fill": "$--subtle-foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
                                       "fontWeight": "400",
@@ -5366,8 +5527,8 @@
                                     {
                                       "type": "text",
                                       "id": "sfu-panel-l-working-3-age",
-                                      "name": "40m",
-                                      "content": "40m",
+                                      "name": "1m",
+                                      "content": "1m",
                                       "fill": "$--muted-foreground",
                                       "fontFamily": "$--font-mono",
                                       "fontSize": "$--text-caption",
@@ -5379,15 +5540,36 @@
                                   "layout": "horizontal",
                                   "gap": 6,
                                   "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-3-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-3-line",
+                                      "name": "e2e 스펙 두 개 추가 중",
+                                      "content": "e2e 스펙 두 개 추가 중",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -5396,27 +5578,125 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             0
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
                           "id": "sfu-panel-l-working-4",
-                          "name": "에이전트 패널 표시 규칙과 UI 구조 정리안",
+                          "name": "fixture 정리",
                           "children": [
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-4-a0",
+                              "name": "Ancestor rail",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-4-a0-r",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 0,
+                                  "width": 1,
+                                  "height": 46,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 46
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-4-a1",
+                              "name": "Ancestor rail",
+                              "children": [],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 46
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-4-elbow",
+                              "name": "Elbow",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-4-ev",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 0,
+                                  "width": 1,
+                                  "height": 13,
+                                  "fill": "$--lineage-rail"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-4-eh",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 13,
+                                  "width": 10,
+                                  "height": 1,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 46
+                            },
                             {
                               "type": "frame",
                               "id": "sfu-panel-l-working-4-chev",
                               "name": "Chevron lane",
-                              "children": [],
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-4-btn",
+                                  "name": "Chevron",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "sfu-panel-l-working-4-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-down",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "x": 0,
+                                  "y": 4,
+                                  "width": 16,
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-4-out",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 22,
+                                  "width": 1,
+                                  "height": 24,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -5455,6 +5735,465 @@
                                     {
                                       "type": "text",
                                       "id": "sfu-panel-l-working-4-title",
+                                      "name": "fixture 정리",
+                                      "content": "fixture 정리",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-4-age",
+                                      "name": "40s",
+                                      "content": "40s",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-4-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-4-branch",
+                                      "name": "e2e-fixture-home-isol…",
+                                      "content": "e2e-fixture-home-isol…",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-micro",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-4-line",
+                                      "name": "HOME 격리 옮기는 중",
+                                      "content": "HOME 격리 옮기는 중",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                4,
+                                0,
+                                4,
+                                4
+                              ]
+                            }
+                          ],
+                          "width": 420,
+                          "layout": "horizontal",
+                          "alignItems": "start",
+                          "padding": [
+                            0,
+                            8,
+                            0,
+                            0
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sfu-panel-l-working-5",
+                          "name": "로그 확인",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-5-a0",
+                              "name": "Ancestor rail",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-5-a0-r",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 0,
+                                  "width": 1,
+                                  "height": 28,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 28
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-5-a1",
+                              "name": "Ancestor rail",
+                              "children": [],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 28
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-5-pass",
+                              "name": "Pass rail",
+                              "children": [],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 28
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-5-chev",
+                              "name": "Chevron lane",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-5-in",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 0,
+                                  "width": 1,
+                                  "height": 13,
+                                  "fill": "$--lineage-rail"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-5-hang",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 13,
+                                  "width": 6,
+                                  "height": 1,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 16,
+                              "height": 28
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-5-body",
+                              "name": "Lines",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-5-head",
+                                  "name": "Line one",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-5-mark",
+                                      "name": "○",
+                                      "content": "○",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "600"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "sfu-panel-l-working-5-provider",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 14,
+                                      "height": 14,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-claude.png",
+                                        "mode": "contain"
+                                      }
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-5-title",
+                                      "name": "로그 확인",
+                                      "content": "로그 확인",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-5-age",
+                                      "name": "5m",
+                                      "content": "5m",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                4,
+                                0,
+                                4,
+                                4
+                              ]
+                            }
+                          ],
+                          "width": 420,
+                          "layout": "horizontal",
+                          "alignItems": "start",
+                          "padding": [
+                            0,
+                            8,
+                            0,
+                            0
+                          ],
+                          "cornerRadius": "$--radius-xs",
+                          "fill": "$--secondary"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sfu-panel-l-working-6",
+                          "name": "사전 리뷰",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-6-elbow",
+                              "name": "Elbow",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-6-ev",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 0,
+                                  "width": 1,
+                                  "height": 13,
+                                  "fill": "$--lineage-rail"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-6-eh",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 13,
+                                  "width": 10,
+                                  "height": 1,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 46
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-6-chev",
+                              "name": "Chevron lane",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-6-hang",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 0,
+                                  "y": 13,
+                                  "width": 14,
+                                  "height": 1,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 16,
+                              "height": 46
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-6-body",
+                              "name": "Lines",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-6-head",
+                                  "name": "Line one",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-6-mark",
+                                      "name": "○",
+                                      "content": "○",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "600"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "sfu-panel-l-working-6-provider",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 14,
+                                      "height": 14,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-claude.png",
+                                        "mode": "contain"
+                                      }
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-6-title",
+                                      "name": "사전 리뷰",
+                                      "content": "사전 리뷰",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-6-age",
+                                      "name": "40m",
+                                      "content": "40m",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-6-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-6-branch",
+                                      "name": "layer5",
+                                      "content": "layer5",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-micro",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                4,
+                                0,
+                                4,
+                                4
+                              ]
+                            }
+                          ],
+                          "width": 420,
+                          "layout": "horizontal",
+                          "alignItems": "start",
+                          "padding": [
+                            0,
+                            8,
+                            0,
+                            0
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sfu-panel-l-working-7",
+                          "name": "에이전트 패널 표시 규칙과 UI 구조 정리안",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-7-chev",
+                              "name": "Chevron lane",
+                              "children": [],
+                              "layout": "none",
+                              "width": 16,
+                              "height": 46
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-l-working-7-body",
+                              "name": "Lines",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-7-head",
+                                  "name": "Line one",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-7-mark",
+                                      "name": "●",
+                                      "content": "●",
+                                      "fill": "$--agent-working",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "600"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "sfu-panel-l-working-7-provider",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 14,
+                                      "height": 14,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-claude.png",
+                                        "mode": "contain"
+                                      }
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-7-title",
                                       "name": "에이전트 패널 표시 규칙과 UI 구조 정리안",
                                       "content": "에이전트 패널 표시 규칙과 UI 구조 정리안",
                                       "fill": "$--foreground",
@@ -5466,7 +6205,7 @@
                                     },
                                     {
                                       "type": "text",
-                                      "id": "sfu-panel-l-working-4-age",
+                                      "id": "sfu-panel-l-working-7-age",
                                       "name": "38s",
                                       "content": "38s",
                                       "fill": "$--muted-foreground",
@@ -5482,23 +6221,34 @@
                                   "alignItems": "center"
                                 },
                                 {
-                                  "type": "text",
-                                  "id": "sfu-panel-l-working-4-line",
-                                  "name": "Sessions 분류 리뷰 3건을 v3에 반영 중",
-                                  "content": "Sessions 분류 리뷰 3건을 v3에 반영 중",
-                                  "fill": "$--subtle-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-working-7-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-working-7-line",
+                                      "name": "Sessions 분류 리뷰 3건을 v3에 반영 중",
+                                      "content": "Sessions 분류 리뷰 3건을 v3에 반영 중",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -5507,11 +6257,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         }
                       ],
                       "width": "fill_container",
@@ -5569,11 +6320,9 @@
                               "id": "sfu-panel-l-done-0-chev",
                               "name": "Chevron lane",
                               "children": [],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -5678,23 +6427,34 @@
                                   "alignItems": "center"
                                 },
                                 {
-                                  "type": "text",
-                                  "id": "sfu-panel-l-done-0-line",
-                                  "name": "진단 로그 추가하고 PR 올림",
-                                  "content": "진단 로그 추가하고 PR 올림",
-                                  "fill": "$--subtle-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-done-0-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-done-0-line",
+                                      "name": "진단 로그 추가하고 PR 올림",
+                                      "content": "진단 로그 추가하고 PR 올림",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -5703,11 +6463,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         }
                       ],
                       "width": "fill_container",
@@ -5765,11 +6526,9 @@
                               "id": "sfu-panel-l-idle-0-chev",
                               "name": "Chevron lane",
                               "children": [],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -5874,23 +6633,34 @@
                                   "alignItems": "center"
                                 },
                                 {
-                                  "type": "text",
-                                  "id": "sfu-panel-l-idle-0-line",
-                                  "name": "Grok 훅 연결 마무리 남음",
-                                  "content": "Grok 훅 연결 마무리 남음",
-                                  "fill": "$--subtle-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
+                                  "type": "frame",
+                                  "id": "sfu-panel-l-idle-0-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-l-idle-0-line",
+                                      "name": "Grok 훅 연결 마무리 남음",
+                                      "content": "Grok 훅 연결 마무리 남음",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -5899,11 +6669,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
@@ -5915,11 +6686,9 @@
                               "id": "sfu-panel-l-idle-1-chev",
                               "name": "Chevron lane",
                               "children": [],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 28
                             },
                             {
                               "type": "frame",
@@ -6028,9 +6797,9 @@
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -6039,11 +6808,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
@@ -6055,11 +6825,9 @@
                               "id": "sfu-panel-l-idle-2-chev",
                               "name": "Chevron lane",
                               "children": [],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 28
                             },
                             {
                               "type": "frame",
@@ -6168,9 +6936,9 @@
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -6179,11 +6947,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
@@ -13185,22 +13954,34 @@
                               "name": "Chevron lane",
                               "children": [
                                 {
-                                  "type": "icon",
-                                  "id": "sfu-panel-d-needs-0-chev-g",
-                                  "name": "Glyph",
-                                  "enabled": true,
-                                  "width": 12,
-                                  "height": 12,
-                                  "icon": "chevron-right",
-                                  "library": "lucide",
-                                  "fill": "$--muted-foreground"
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-needs-0-btn",
+                                  "name": "Chevron",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "sfu-panel-d-needs-0-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-right",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "x": 0,
+                                  "y": 4,
+                                  "width": 16,
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
                                 }
                               ],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -13303,9 +14084,9 @@
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -13314,11 +14095,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         }
                       ],
                       "width": "fill_container",
@@ -13376,11 +14158,9 @@
                               "id": "sfu-panel-d-working-0-chev",
                               "name": "Chevron lane",
                               "children": [],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -13485,23 +14265,34 @@
                                   "alignItems": "center"
                                 },
                                 {
-                                  "type": "text",
-                                  "id": "sfu-panel-d-working-0-line",
-                                  "name": "sealed verify 다시 돌리는 중",
-                                  "content": "sealed verify 다시 돌리는 중",
-                                  "fill": "$--subtle-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-0-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-0-line",
+                                      "name": "sealed verify 다시 돌리는 중",
+                                      "content": "sealed verify 다시 돌리는 중",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -13510,11 +14301,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
@@ -13527,22 +14319,45 @@
                               "name": "Chevron lane",
                               "children": [
                                 {
-                                  "type": "icon",
-                                  "id": "sfu-panel-d-working-1-chev-g",
-                                  "name": "Glyph",
-                                  "enabled": true,
-                                  "width": 12,
-                                  "height": 12,
-                                  "icon": "chevron-down",
-                                  "library": "lucide",
-                                  "fill": "$--muted-foreground"
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-1-btn",
+                                  "name": "Chevron",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "sfu-panel-d-working-1-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-down",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "x": 0,
+                                  "y": 4,
+                                  "width": 16,
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-1-out",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 22,
+                                  "width": 1,
+                                  "height": 24,
+                                  "fill": "$--lineage-rail"
                                 }
                               ],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -13608,23 +14423,34 @@
                                   "alignItems": "center"
                                 },
                                 {
-                                  "type": "text",
-                                  "id": "sfu-panel-d-working-1-line",
-                                  "name": "4단계 리뷰 지적 수정 중",
-                                  "content": "4단계 리뷰 지적 수정 중",
-                                  "fill": "$--subtle-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-1-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-1-line",
+                                      "name": "4단계 리뷰 지적 수정 중",
+                                      "content": "4단계 리뷰 지적 수정 중",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -13633,11 +14459,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
@@ -13657,7 +14484,7 @@
                                   "x": 8,
                                   "y": 0,
                                   "width": 1,
-                                  "height": 28,
+                                  "height": 46,
                                   "fill": "$--lineage-rail"
                                 },
                                 {
@@ -13674,18 +14501,53 @@
                               ],
                               "layout": "none",
                               "width": 18,
-                              "height": 28
+                              "height": 46
                             },
                             {
                               "type": "frame",
                               "id": "sfu-panel-d-working-2-chev",
                               "name": "Chevron lane",
-                              "children": [],
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-2-btn",
+                                  "name": "Chevron",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "sfu-panel-d-working-2-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-down",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "x": 0,
+                                  "y": 4,
+                                  "width": 16,
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-2-out",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 22,
+                                  "width": 1,
+                                  "height": 24,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -13726,7 +14588,7 @@
                                       "id": "sfu-panel-d-working-2-title",
                                       "name": "Implementor",
                                       "content": "Implementor",
-                                      "fill": "$--foreground",
+                                      "fill": "$--subtle-foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
                                       "fontWeight": "400",
@@ -13773,26 +14635,6 @@
                                       "strokeAlignment": "inner"
                                     },
                                     {
-                                      "id": "sfu-panel-d-working-2-desc",
-                                      "type": "ref",
-                                      "ref": "hideui:ath-mark",
-                                      "name": "Descendant mark",
-                                      "descendants": {
-                                        "hideui:ath-mark-bang": {
-                                          "fill": "$--warning",
-                                          "enabled": false
-                                        },
-                                        "hideui:ath-mark-dot": {
-                                          "fill": "$--agent-working",
-                                          "enabled": true
-                                        },
-                                        "hideui:ath-mark-n": {
-                                          "fill": "$--agent-working",
-                                          "content": "1"
-                                        }
-                                      }
-                                    },
-                                    {
                                       "type": "text",
                                       "id": "sfu-panel-d-working-2-age",
                                       "name": "2m",
@@ -13808,15 +14650,46 @@
                                   "layout": "horizontal",
                                   "gap": 6,
                                   "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-2-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-2-branch",
+                                      "name": "core-host-node-layer5",
+                                      "content": "core-host-node-layer5",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-micro",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-2-line",
+                                      "name": "NodeLink 호출 옮기는 중",
+                                      "content": "NodeLink 호출 옮기는 중",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -13825,17 +14698,39 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             0
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
                           "id": "sfu-panel-d-working-3",
-                          "name": "사전 리뷰",
+                          "name": "테스트 작성",
                           "children": [
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-3-a0",
+                              "name": "Ancestor rail",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-3-a0-r",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 0,
+                                  "width": 1,
+                                  "height": 46,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 46
+                            },
                             {
                               "type": "frame",
                               "id": "sfu-panel-d-working-3-elbow",
@@ -13866,18 +14761,53 @@
                               ],
                               "layout": "none",
                               "width": 18,
-                              "height": 28
+                              "height": 46
                             },
                             {
                               "type": "frame",
                               "id": "sfu-panel-d-working-3-chev",
                               "name": "Chevron lane",
-                              "children": [],
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-3-btn",
+                                  "name": "Chevron",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "sfu-panel-d-working-3-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-down",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "x": 0,
+                                  "y": 4,
+                                  "width": 16,
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-3-out",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 22,
+                                  "width": 1,
+                                  "height": 24,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -13892,9 +14822,9 @@
                                     {
                                       "type": "text",
                                       "id": "sfu-panel-d-working-3-mark",
-                                      "name": "✓",
-                                      "content": "✓",
-                                      "fill": "$--success",
+                                      "name": "●",
+                                      "content": "●",
+                                      "fill": "$--agent-working",
                                       "fontFamily": "$--font-mono",
                                       "fontSize": "$--text-caption",
                                       "fontWeight": "600"
@@ -13916,9 +14846,9 @@
                                     {
                                       "type": "text",
                                       "id": "sfu-panel-d-working-3-title",
-                                      "name": "사전 리뷰",
-                                      "content": "사전 리뷰",
-                                      "fill": "$--foreground",
+                                      "name": "테스트 작성",
+                                      "content": "테스트 작성",
+                                      "fill": "$--subtle-foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
                                       "fontWeight": "400",
@@ -13928,8 +14858,8 @@
                                     {
                                       "type": "text",
                                       "id": "sfu-panel-d-working-3-age",
-                                      "name": "40m",
-                                      "content": "40m",
+                                      "name": "1m",
+                                      "content": "1m",
                                       "fill": "$--muted-foreground",
                                       "fontFamily": "$--font-mono",
                                       "fontSize": "$--text-caption",
@@ -13941,15 +14871,36 @@
                                   "layout": "horizontal",
                                   "gap": 6,
                                   "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-3-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-3-line",
+                                      "name": "e2e 스펙 두 개 추가 중",
+                                      "content": "e2e 스펙 두 개 추가 중",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -13958,27 +14909,125 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             0
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
                           "id": "sfu-panel-d-working-4",
-                          "name": "에이전트 패널 표시 규칙과 UI 구조 정리안",
+                          "name": "fixture 정리",
                           "children": [
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-4-a0",
+                              "name": "Ancestor rail",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-4-a0-r",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 0,
+                                  "width": 1,
+                                  "height": 46,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 46
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-4-a1",
+                              "name": "Ancestor rail",
+                              "children": [],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 46
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-4-elbow",
+                              "name": "Elbow",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-4-ev",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 0,
+                                  "width": 1,
+                                  "height": 13,
+                                  "fill": "$--lineage-rail"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-4-eh",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 13,
+                                  "width": 10,
+                                  "height": 1,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 46
+                            },
                             {
                               "type": "frame",
                               "id": "sfu-panel-d-working-4-chev",
                               "name": "Chevron lane",
-                              "children": [],
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-4-btn",
+                                  "name": "Chevron",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "sfu-panel-d-working-4-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "chevron-down",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "x": 0,
+                                  "y": 4,
+                                  "width": 16,
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-4-out",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 22,
+                                  "width": 1,
+                                  "height": 24,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -14017,6 +15066,465 @@
                                     {
                                       "type": "text",
                                       "id": "sfu-panel-d-working-4-title",
+                                      "name": "fixture 정리",
+                                      "content": "fixture 정리",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-4-age",
+                                      "name": "40s",
+                                      "content": "40s",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-4-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-4-branch",
+                                      "name": "e2e-fixture-home-isol…",
+                                      "content": "e2e-fixture-home-isol…",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-micro",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-4-line",
+                                      "name": "HOME 격리 옮기는 중",
+                                      "content": "HOME 격리 옮기는 중",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                4,
+                                0,
+                                4,
+                                4
+                              ]
+                            }
+                          ],
+                          "width": 420,
+                          "layout": "horizontal",
+                          "alignItems": "start",
+                          "padding": [
+                            0,
+                            8,
+                            0,
+                            0
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sfu-panel-d-working-5",
+                          "name": "로그 확인",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-5-a0",
+                              "name": "Ancestor rail",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-5-a0-r",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 0,
+                                  "width": 1,
+                                  "height": 28,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 28
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-5-a1",
+                              "name": "Ancestor rail",
+                              "children": [],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 28
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-5-pass",
+                              "name": "Pass rail",
+                              "children": [],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 28
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-5-chev",
+                              "name": "Chevron lane",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-5-in",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 0,
+                                  "width": 1,
+                                  "height": 13,
+                                  "fill": "$--lineage-rail"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-5-hang",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 13,
+                                  "width": 6,
+                                  "height": 1,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 16,
+                              "height": 28
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-5-body",
+                              "name": "Lines",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-5-head",
+                                  "name": "Line one",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-5-mark",
+                                      "name": "○",
+                                      "content": "○",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "600"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "sfu-panel-d-working-5-provider",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 14,
+                                      "height": 14,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-claude.png",
+                                        "mode": "contain"
+                                      }
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-5-title",
+                                      "name": "로그 확인",
+                                      "content": "로그 확인",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-5-age",
+                                      "name": "5m",
+                                      "content": "5m",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                4,
+                                0,
+                                4,
+                                4
+                              ]
+                            }
+                          ],
+                          "width": 420,
+                          "layout": "horizontal",
+                          "alignItems": "start",
+                          "padding": [
+                            0,
+                            8,
+                            0,
+                            0
+                          ],
+                          "cornerRadius": "$--radius-xs",
+                          "fill": "$--secondary"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sfu-panel-d-working-6",
+                          "name": "사전 리뷰",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-6-elbow",
+                              "name": "Elbow",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-6-ev",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 0,
+                                  "width": 1,
+                                  "height": 13,
+                                  "fill": "$--lineage-rail"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-6-eh",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 8,
+                                  "y": 13,
+                                  "width": 10,
+                                  "height": 1,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 18,
+                              "height": 46
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-6-chev",
+                              "name": "Chevron lane",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-6-hang",
+                                  "name": "Rail",
+                                  "children": [],
+                                  "x": 0,
+                                  "y": 13,
+                                  "width": 14,
+                                  "height": 1,
+                                  "fill": "$--lineage-rail"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 16,
+                              "height": 46
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-6-body",
+                              "name": "Lines",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-6-head",
+                                  "name": "Line one",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-6-mark",
+                                      "name": "○",
+                                      "content": "○",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "600"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "sfu-panel-d-working-6-provider",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 14,
+                                      "height": 14,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-claude.png",
+                                        "mode": "contain"
+                                      }
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-6-title",
+                                      "name": "사전 리뷰",
+                                      "content": "사전 리뷰",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-6-age",
+                                      "name": "40m",
+                                      "content": "40m",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 20,
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-6-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-6-branch",
+                                      "name": "layer5",
+                                      "content": "layer5",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-micro",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                4,
+                                0,
+                                4,
+                                4
+                              ]
+                            }
+                          ],
+                          "width": 420,
+                          "layout": "horizontal",
+                          "alignItems": "start",
+                          "padding": [
+                            0,
+                            8,
+                            0,
+                            0
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sfu-panel-d-working-7",
+                          "name": "에이전트 패널 표시 규칙과 UI 구조 정리안",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-7-chev",
+                              "name": "Chevron lane",
+                              "children": [],
+                              "layout": "none",
+                              "width": 16,
+                              "height": 46
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sfu-panel-d-working-7-body",
+                              "name": "Lines",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-7-head",
+                                  "name": "Line one",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-7-mark",
+                                      "name": "●",
+                                      "content": "●",
+                                      "fill": "$--agent-working",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "600"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "sfu-panel-d-working-7-provider",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 14,
+                                      "height": 14,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-claude.png",
+                                        "mode": "contain"
+                                      }
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-7-title",
                                       "name": "에이전트 패널 표시 규칙과 UI 구조 정리안",
                                       "content": "에이전트 패널 표시 규칙과 UI 구조 정리안",
                                       "fill": "$--foreground",
@@ -14028,7 +15536,7 @@
                                     },
                                     {
                                       "type": "text",
-                                      "id": "sfu-panel-d-working-4-age",
+                                      "id": "sfu-panel-d-working-7-age",
                                       "name": "38s",
                                       "content": "38s",
                                       "fill": "$--muted-foreground",
@@ -14044,23 +15552,34 @@
                                   "alignItems": "center"
                                 },
                                 {
-                                  "type": "text",
-                                  "id": "sfu-panel-d-working-4-line",
-                                  "name": "Sessions 분류 리뷰 3건을 v3에 반영 중",
-                                  "content": "Sessions 분류 리뷰 3건을 v3에 반영 중",
-                                  "fill": "$--subtle-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-working-7-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-working-7-line",
+                                      "name": "Sessions 분류 리뷰 3건을 v3에 반영 중",
+                                      "content": "Sessions 분류 리뷰 3건을 v3에 반영 중",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -14069,11 +15588,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         }
                       ],
                       "width": "fill_container",
@@ -14131,11 +15651,9 @@
                               "id": "sfu-panel-d-done-0-chev",
                               "name": "Chevron lane",
                               "children": [],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -14240,23 +15758,34 @@
                                   "alignItems": "center"
                                 },
                                 {
-                                  "type": "text",
-                                  "id": "sfu-panel-d-done-0-line",
-                                  "name": "진단 로그 추가하고 PR 올림",
-                                  "content": "진단 로그 추가하고 PR 올림",
-                                  "fill": "$--subtle-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-done-0-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-done-0-line",
+                                      "name": "진단 로그 추가하고 PR 올림",
+                                      "content": "진단 로그 추가하고 PR 올림",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -14265,11 +15794,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         }
                       ],
                       "width": "fill_container",
@@ -14327,11 +15857,9 @@
                               "id": "sfu-panel-d-idle-0-chev",
                               "name": "Chevron lane",
                               "children": [],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 46
                             },
                             {
                               "type": "frame",
@@ -14436,23 +15964,34 @@
                                   "alignItems": "center"
                                 },
                                 {
-                                  "type": "text",
-                                  "id": "sfu-panel-d-idle-0-line",
-                                  "name": "Grok 훅 연결 마무리 남음",
-                                  "content": "Grok 훅 연결 마무리 남음",
-                                  "fill": "$--subtle-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
+                                  "type": "frame",
+                                  "id": "sfu-panel-d-idle-0-two",
+                                  "name": "Line two",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sfu-panel-d-idle-0-line",
+                                      "name": "Grok 훅 연결 마무리 남음",
+                                      "content": "Grok 훅 연결 마무리 남음",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "layout": "horizontal",
+                                  "gap": 6,
+                                  "alignItems": "center"
                                 }
                               ],
                               "width": "fill_container",
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -14461,11 +16000,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
@@ -14477,11 +16017,9 @@
                               "id": "sfu-panel-d-idle-1-chev",
                               "name": "Chevron lane",
                               "children": [],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 28
                             },
                             {
                               "type": "frame",
@@ -14590,9 +16128,9 @@
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -14601,11 +16139,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",
@@ -14617,11 +16156,9 @@
                               "id": "sfu-panel-d-idle-2-chev",
                               "name": "Chevron lane",
                               "children": [],
+                              "layout": "none",
                               "width": 16,
-                              "height": 20,
-                              "layout": "horizontal",
-                              "justifyContent": "center",
-                              "alignItems": "center"
+                              "height": 28
                             },
                             {
                               "type": "frame",
@@ -14730,9 +16267,9 @@
                               "layout": "vertical",
                               "gap": 2,
                               "padding": [
+                                4,
                                 0,
-                                0,
-                                0,
+                                4,
                                 4
                               ]
                             }
@@ -14741,11 +16278,12 @@
                           "layout": "horizontal",
                           "alignItems": "start",
                           "padding": [
-                            4,
+                            0,
                             8,
-                            4,
+                            0,
                             4
-                          ]
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         },
                         {
                           "type": "frame",

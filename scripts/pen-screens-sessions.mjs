@@ -21,24 +21,50 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
 
   // A Sessions row (B30, B31): mark, provider, title, own PR chip, the folded
   // descendant mark and the age; the second line is the ask for Needs You and
-  // otherwise the label line, absent when there is none.
-  const row = (id, spec, width) => frame(id, spec.title, {width, layout:'horizontal', alignItems:'start', padding:[4,8,4,spec.depth ? 0 : 4]}, [
-    ...(spec.depth ? [frame(`${id}-elbow`, 'Elbow', {layout:'none',width:18,height:28}, [
-      frame(`${id}-ev`, 'Rail', {x:8,y:0,width:1,height:spec.last ? 13 : 28,fill:'$--lineage-rail'}, []),
-      frame(`${id}-eh`, 'Rail', {x:8,y:13,width:10,height:1,fill:'$--lineage-rail'}, []),
-    ])] : []),
-    chevron(`${id}-chev`, spec.open ?? null),
-    frame(`${id}-body`, 'Lines', {width:'fill_container', layout:'vertical', gap:2, padding:[0,0,0,4]}, [
+  // otherwise the label line, absent when there is none. A child row steps one
+  // indent per level down to the third (`rails` says which ancestor levels run
+  // on past it); a deeper one (`chain`) keeps the third level's column and
+  // hangs from its parent's chevron lane. A child in another checkout than its
+  // parent starts its second line with the branch in dim mono.
+  const RAIL = '$--lineage-rail';
+  const rail = (id, x, y, width, height) => frame(id, 'Rail', {x, y, width, height, fill: RAIL}, []);
+  const rowHeight = spec => (spec.ask || spec.line || spec.branch) ? 46 : 28;
+  const columns = (id, spec) => {
+    if (!spec.depth) return [];
+    const height = rowHeight(spec);
+    const ancestors = (spec.rails ?? []).map((on, index) => frame(`${id}-a${index}`, 'Ancestor rail', {layout:'none',width:18,height}, on ? [rail(`${id}-a${index}-r`, 8, 0, 1, height)] : []));
+    const last = spec.chain
+      ? frame(`${id}-pass`, 'Pass rail', {layout:'none',width:18,height}, spec.chain.pass ? [rail(`${id}-pass-r`, 8, 0, 1, height)] : [])
+      : frame(`${id}-elbow`, 'Elbow', {layout:'none',width:18,height}, [rail(`${id}-ev`, 8, 0, 1, spec.last ? 13 : height), rail(`${id}-eh`, 8, 13, 10, 1)]);
+    return [...ancestors, last];
+  };
+  const lane = (id, spec) => {
+    const height = rowHeight(spec);
+    const open = spec.open ?? null;
+    return frame(`${id}-chev`, 'Chevron lane', {layout:'none',width:16,height}, [
+      ...(spec.chain ? [rail(`${id}-in`, 8, 0, 1, open === null ? 13 : 4)] : []),
+      ...(spec.chain && open === null ? [rail(`${id}-hang`, 8, 13, 6, 1)] : spec.depth && open === null ? [rail(`${id}-hang`, 0, 13, 14, 1)] : []),
+      ...(open === null ? [] : [frame(`${id}-btn`, 'Chevron', {x:0,y:4,width:16,height:20,layout:'horizontal',justifyContent:'center',alignItems:'center'}, [icon(`${id}-g`, open ? 'chevron-down' : 'chevron-right', {size:12,fill:'$--muted-foreground'})])]),
+      ...(open || spec.chain?.on ? [rail(`${id}-out`, 8, open === null ? 13 : 22, 1, height - (open === null ? 13 : 22))] : []),
+    ]);
+  };
+  const row = (id, spec, width) => frame(id, spec.title, {width, layout:'horizontal', alignItems:'start', padding:[0,8,0,spec.depth ? 0 : 4], cornerRadius:'$--radius-xs', ...(spec.selected ? {fill:'$--secondary'} : {})}, [
+    ...columns(id, spec),
+    lane(id, spec),
+    frame(`${id}-body`, 'Lines', {width:'fill_container', layout:'vertical', gap:2, padding:[4,0,4,4]}, [
       frame(`${id}-head`, 'Line one', {width:'fill_container',height:20,layout:'horizontal',gap:6,alignItems:'center'}, [
         caption(`${id}-mark`, spec.mark ?? '●', spec.tone ?? '$--agent-working', {mono:true,weight:'600'}),
         provider(`${id}-provider`, spec.provider),
-        caption(`${id}-title`, spec.title, '$--foreground', {width:'fill_container',weight: spec.depth ? '400' : '500'}),
+        caption(`${id}-title`, spec.title, spec.depth && !spec.selected && !spec.ask ? '$--subtle-foreground' : '$--foreground', {width:'fill_container',weight: spec.depth ? '400' : '500'}),
         ...(spec.pr ? [prChip(`${id}-pr`, spec.pr)] : []),
         ...(spec.desc ? [descendantMark(`${id}-desc`, spec.desc[0], spec.desc[1])] : []),
         caption(`${id}-age`, spec.age ?? '3m', '$--muted-foreground', {mono:true}),
       ]),
       ...(spec.ask ? [frame(`${id}-ask`, 'Ask', {width:'fill_container',layout:'horizontal',gap:6,alignItems:'center'}, [verb(`${id}-verb`, spec.ask[0]), caption(`${id}-what`, spec.ask[1], '$--warning')])]
-        : spec.line ? [caption(`${id}-line`, spec.line, '$--subtle-foreground')] : []),
+        : spec.line || spec.branch ? [frame(`${id}-two`, 'Line two', {width:'fill_container',layout:'horizontal',gap:6,alignItems:'center'}, [
+          ...(spec.branch ? [text(`${id}-branch`, spec.branch, {size:'$--text-micro', fill:'$--muted-foreground', mono:true})] : []),
+          ...(spec.line ? [caption(`${id}-line`, spec.line, '$--subtle-foreground')] : []),
+        ])] : []),
     ]),
   ]);
   function panel(suffix, width=420, id=`sfu-panel-${suffix}`) {
@@ -67,8 +93,11 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       group('working','Working',[
         {title:'공통 후보 전체 검증과 PR 제출',provider:'codex',pr:{number:874,state:'failed'},age:'4h',line:'sealed verify 다시 돌리는 중'},
         {title:'Mac mini 연동 5단계 순차 구현',mark:'○',open:true,age:'2m',line:'4단계 리뷰 지적 수정 중'},
-        {title:'Implementor',depth:1,pr:{number:1188,state:'pending'},desc:['working',1],age:'2m'},
-        {title:'사전 리뷰',depth:1,last:true,mark:'✓',tone:'$--success',age:'40m'},
+        {title:'Implementor',depth:1,open:true,pr:{number:1188,state:'pending'},age:'2m',branch:'core-host-node-layer5',line:'NodeLink 호출 옮기는 중'},
+        {title:'테스트 작성',depth:2,rails:[true],last:true,open:true,age:'1m',line:'e2e 스펙 두 개 추가 중'},
+        {title:'fixture 정리',depth:3,rails:[true,false],last:true,open:true,age:'40s',branch:'e2e-fixture-home-isol…',line:'HOME 격리 옮기는 중'},
+        {title:'로그 확인',depth:4,rails:[true,false],chain:{pass:false,on:false},mark:'○',tone:'$--muted-foreground',age:'5m',selected:true},
+        {title:'사전 리뷰',depth:1,last:true,mark:'○',tone:'$--muted-foreground',age:'40m',branch:'layer5'},
         {title:'에이전트 패널 표시 규칙과 UI 구조 정리안',age:'38s',line:'Sessions 분류 리뷰 3건을 v3에 반영 중'},
       ],{count:3}),
       group('done','Done',[

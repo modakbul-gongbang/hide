@@ -248,6 +248,30 @@ fn a_parent_pane_on_another_machine_reused_by_another_agent_adopts_no_local_chil
 }
 
 #[test]
+fn a_cross_checkout_badge_names_the_branch_the_sidebar_shows() {
+    // A device checkout keeps its folder name as its label and learns its
+    // branch later; the badge reads as the sidebar does, branch first.
+    let mut workspaces = lineage_workspaces();
+    let feature = &mut workspaces[0].checkouts[1];
+    feature.label = "sessions-full-tree".to_owned();
+    feature.branch = Some("feat/sessions-full-tree-branch".to_owned());
+    let mut rows = lineage_rows();
+    let badge = |rows: &[SidebarAgentSnapshot]| {
+        let child = rows.iter().find(|row| row.pane_id == "child").unwrap();
+        child.lineage_worktree_badge.clone()
+    };
+    crate::agent_state::apply_lineage(&mut rows, &workspaces, &[]);
+    assert_eq!(
+        badge(&rows).as_deref(),
+        Some("feat/sessions-full-tree-branch")
+    );
+    // With no branch (a detached HEAD, a plain folder) the label stands.
+    workspaces[0].checkouts[1].branch = None;
+    crate::agent_state::apply_lineage(&mut rows, &workspaces, &[]);
+    assert_eq!(badge(&rows).as_deref(), Some("sessions-full-tree"));
+}
+
+#[test]
 fn lineage_cross_checkout_tree_and_orphan_keep_the_canonical_rows_and_axes() {
     let mut rows = lineage_rows();
     let mut records = std::collections::BTreeMap::new();

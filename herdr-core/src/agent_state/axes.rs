@@ -99,11 +99,12 @@ pub fn apply_lineage(
                 .tabs
                 .iter()
                 .flat_map(|tab| &tab.panes)
+                // The sidebar names a checkout by its branch, and so does the
+                // badge: a device checkout's label is its folder until its
+                // worktree facts arrive, and they bring only the branch.
                 .map(move |pane| {
-                    (
-                        pane.id.as_str(),
-                        (checkout.id.clone(), checkout.label.clone()),
-                    )
+                    let name = checkout.branch.as_ref().unwrap_or(&checkout.label);
+                    (pane.id.as_str(), (checkout.id.clone(), name.clone()))
                 })
         })
         .collect::<BTreeMap<_, _>>();
