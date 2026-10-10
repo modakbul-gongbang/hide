@@ -67,7 +67,12 @@ pub fn database_path(home: &Path) -> PathBuf {
     {
         return PathBuf::from(path);
     }
-    home.join("Library/Application Support/hide/project-memory.sqlite3")
+    // The state folder a daemon on this home uses by default, which is where
+    // the core writes the store (`hide_kit::layout::default_state_dir`; hide-kit
+    // depends on this crate, and herdr-core's tests hold the two equal). A
+    // relocated state folder is not followed: production ignores the process
+    // environment here (see `production_hook_ignores_a_database_path_override`).
+    hide_memory::database_path(&home.join(".hide").join("state"))
 }
 
 pub fn project_memory_output(
@@ -398,7 +403,7 @@ mod tests {
         }
         assert_eq!(
             database_path(home),
-            home.join("Library/Application Support/hide/project-memory.sqlite3")
+            home.join(".hide/state/project-memory.sqlite3")
         );
         // SAFETY: guarded by ENV_LOCK and restored before the test returns.
         unsafe {
@@ -662,9 +667,7 @@ mod tests {
         assert_eq!(prompt.outcome, HookMemoryOutcome::Unavailable);
         assert!(prompt.stdout.is_none());
         assert!(
-            !home
-                .join("Library/Application Support/hide/project-memory-receipts")
-                .exists(),
+            !home.join(".hide/state/project-memory-receipts").exists(),
             "the read-only hook must not create a receipt sidecar",
         );
     }
