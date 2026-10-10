@@ -33,8 +33,9 @@ pub struct Upstream {
     resolving: Arc<AtomicBool>,
 }
 
-/// A probe of the SSH greeting, bounded as a whole by `within`. The name is
-/// resolved on a thread of its own the probe waits for only until its
+/// A probe of the SSH greeting, bounded as a whole by `within`, each
+/// resolved address tried in turn with an even share of the time left. The
+/// name is resolved on a thread of its own the probe waits for only until its
 /// deadline: the system's resolver has no bound, and hangs exactly when the
 /// network is down, so it never holds the caller (the node's watch, which
 /// the role's end joins). That thread ends when the resolver answers; while
@@ -63,15 +64,20 @@ where
     let Ok(Ok(addresses)) = answer.recv_timeout(within) else {
         return false;
     };
-    addresses.into_iter().any(|address| {
+    // Each address has an even share of what is left, so one that never
+    // answers (a dead IPv6 address listed first) leaves the next its turn.
+    let count = addresses.len();
+    addresses.into_iter().enumerate().any(|(index, address)| {
         let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
+        let share = left / (count - index) as u32;
+        if share.is_zero() {
             return false;
         }
-        let Ok(mut socket) = TcpStream::connect_timeout(&address, left) else {
+        let until = Instant::now() + share;
+        let Ok(mut socket) = TcpStream::connect_timeout(&address, share) else {
             return false;
         };
-        let left = deadline.saturating_duration_since(Instant::now());
+        let left = until.saturating_duration_since(Instant::now());
         if left.is_zero() || socket.set_read_timeout(Some(left)).is_err() {
             return false;
         }
@@ -324,6 +330,32 @@ mod tests {
     use std::net::TcpListener;
 
     use super::*;
+
+    /// An address that takes the connection and never greets (a dead
+    /// address listed first) leaves the next address its own share of the
+    /// deadline, so a live one behind it still answers.
+    #[test]
+    fn a_silent_first_address_leaves_the_next_its_share_of_the_probe() {
+        let silent = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let live = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let addresses = vec![silent.local_addr().unwrap(), live.local_addr().unwrap()];
+        let greeting = std::thread::spawn(move || {
+            let (mut stream, _) = live.accept().unwrap();
+            stream.write_all(b"SSH-2.0-fixture\r\n").unwrap();
+        });
+        let resolving = Arc::new(AtomicBool::new(false));
+        let started = Instant::now();
+        assert!(probe(Duration::from_millis(600), &resolving, move || Ok(
+            addresses
+        )));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        greeting.join().unwrap();
+        drop(silent);
+    }
 
     /// A resolver that does not answer holds the probe only until its
     /// deadline, and no second resolution starts while it runs; once it has
