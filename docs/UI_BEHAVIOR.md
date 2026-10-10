@@ -36,7 +36,7 @@ Sessions follows the project of the checkout in front, with All checkouts and a 
 At Home it shows the selected device's projects together.
 Its core-selected groups are the sidebar's own, Needs You, Working, Done, Idle and Resolved, with empty groups absent and Resolved folded initially.
 A row carries its mark, provider, title, own PR chip, descendant mark while closed and elapsed time, then its ask or line; there is no counts row.
-Selecting a row opens its Workspace, tab and pane, and its chevron opens one level of its children.
+Selecting a row opens its Workspace, tab and pane, and its chevron opens its children, whose own chevrons open theirs (see Sessions: the task list).
 Sessions is a separate tool from Memory and does not start Memory's reader.
 No column has a title row, a close button or panel actions; the toolbar's icons and their chords are the only column controls.
 The second row of File Views is level with the agents' first pane header: the active document's header over each View area, naming a file from its checkout and cutting a long path at its start so the file name stays.
@@ -519,13 +519,22 @@ Resolved holds work resolved in the last 24 hours, by the operator or automatica
 Within a group, Needs You waits longest first, Working puts a failed PR first and then the most recent, Done is most recent first, and Idle puts unfinished work, then a failed, mergeable or pending PR, before the rest; Idle rows with neither a PR nor unfinished work wait behind `그 외 N`.
 
 A row's first line is its mark, provider, title, own PR chip, descendant mark while its tree is closed, and elapsed time; a Needs You row has no PR chip and no descendant mark.
-There is no checkout name, front-checkout bar or status word on the row.
+There is no checkout name, front-checkout bar or status word on a root row.
 Its second line is the ask on Needs You, the label line on Working (or the line of the most recently changed working descendant while it waits on them), the finished turn's line on Done, and on Idle only the remaining work of an unfinished turn after `◐`; with no label line there is no second line.
 The PR chip shows one PR as its number and state glyph (`✕` failed, `◷` running or awaiting review, `✓` mergeable, `⇥` merged), and several as `PR n` with the worst state's glyph and count; a closed PR is not counted, and a stale GitHub read stays dimmed with its last read time in the tooltip.
 Pressing the chip lists each PR with its state and title and opens the existing PR panel.
 The core verb ladder, read rules and PR summary are owned by [status-model.md](status-model.md#the-sessions-tool).
 Reading an AI question removes its Answer and Needs You attention; an active menu or plan approval stays until answered.
-A row with children opens one level of them under its chevron, closed at first and remembered apart from the sidebar's folds; a grandchild shows only as its child's descendant mark, and Sessions has no popover.
+A row with children, at any depth, opens them under its chevron, closed at first and remembered apart from the sidebar's folds; a row whose tree is closed wears its descendant mark, and Sessions has no popover.
+Five siblings show per parent and the rest wait behind `N개 더`, as in the sidebar (`web/src/sidebarTree.ts`).
+A child steps one indent right of its parent down to the third level below the root; deeper rows stay in the third level's column and hang from their parent's chevron lane, whose rail runs down through them, so a narrow Tools column keeps room for titles (`web/src/sessionTree.ts`).
+A child row has the root's first line without the Resolve button, and the same second line.
+When the child works in another checkout than its parent, that line starts with the checkout's branch (the core's `branch_badge`, the name the sidebar gives the checkout) in dim mono, without the part up to the first `/` (`fix/`, `feat/`), cut with `…` past two fifths of the line, with the whole branch and the checkout's path in its tooltip; the label takes the rest of the line and is cut with `…`.
+A child in its parent's checkout carries no branch, an Idle child with no label line and a branch has a second line with the branch alone, and a root row carries none.
+A child's title is quiet (subtle) unless it asks or is selected, by the sidebar's title rule; a root's title is not.
+While a Workspace is in front, the row standing for its focused pane is selected as in the sidebar: the focused pane's row, or, when a closed tree or `N개 더` hides it, the nearest ancestor row the panel draws, with the sidebar's selected fill and `aria-current`; nothing opens by itself, and a root hidden behind `그 외 N` or the folded Resolved has no selected row.
+An agent is drawn once in Sessions: a raised child's ask rides its root's row, and the child's own row, where its root's tree is open, is the one selected.
+The selected fill stays under the pointer, and keyboard focus draws its ring over it.
 
 Click or Enter opens a row's Workspace, tab and pane, and arrows, Home and End navigate the displayed group heads and rows.
 Resolve hides a session only after its state has been saved; it keeps the pane and conversation alive and appears under Resolved.
