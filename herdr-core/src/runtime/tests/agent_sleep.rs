@@ -587,6 +587,20 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
                 "tab_id":"w-order:t3","focused":false,"agent_status":"idle","revision":1
             }})
         }
+        // The one agent whose resume runs no session hook has the core say
+        // which session the woken pane resumed; no other kind is reported for.
+        "pane.report_agent_session" => {
+            assert_eq!(
+                kind, "cursor",
+                "only a kind whose resume reports no session"
+            );
+            assert_eq!(params["pane_id"], "w-order:t3:p");
+            assert_eq!(
+                params["agent_session_id"],
+                "11111111-2222-3333-4444-555555555555"
+            );
+            serde_json::json!({"type":"ok"})
+        }
         other => panic!("unexpected dormant effect: {other}"),
     });
     runtime.live.as_mut().unwrap().api_connector = Arc::new(herdr.connector());
@@ -719,6 +733,17 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         observed.recv_timeout(Duration::from_secs(5)).unwrap(),
         "start"
     );
+    if kind == "cursor" {
+        // Herdr publishes the woken pane's session only after the core's
+        // report, which follows the start on the wake's own worker and is
+        // fenced on the saved intent, so the record is confirmed after it.
+        wait_for("the resumed session's report", || {
+            herdr
+                .methods()
+                .iter()
+                .any(|method| method == "pane.report_agent_session")
+        });
+    }
     {
         let mut runtime = shared.lock().unwrap();
         let work = crate::agent_sleep_herdr::DormantWork {
@@ -777,6 +802,14 @@ fn durable_dormant_journey(kind: &'static str, interference: &'static str) {
         assert!(runtime.close_operations.is_empty());
     }
     let calls = herdr.methods();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|called| called.as_str() == "pane.report_agent_session")
+            .count(),
+        usize::from(kind == "cursor"),
+        "{calls:?}"
+    );
     for method in ["pane.close", "layout.apply", "agent.start"] {
         assert_eq!(
             calls

@@ -97,7 +97,8 @@ test(`${kind} ${kind === "cursor" ? "generated goal" : "native title"} and durab
       return fresh;
     }, { timeout: 30_000 }).not.toBe("");
     await expect.poll(() => fs.readFileSync(path.join(herdr.root, `${kind}-launches.jsonl`), "utf8").trim().split("\n").map(line => JSON.parse(line) as string[])).toContainEqual([resumeFlag, id]);
-    reportNativeWriter(herdr, kind, fresh, session);
+    // Cursor CLI runs no session hook on --resume, so the core reports the resumed session itself.
+    if (kind !== "cursor") reportNativeWriter(herdr, kind, fresh, session);
     await expect(sleeping).toHaveCount(0, { timeout: 30_000 });
     await expect(page.locator(`nav[data-sidebar] [data-pane="${fresh}"]`)).toContainText(title);
     expect(fs.readFileSync(session)).toEqual(prior);
