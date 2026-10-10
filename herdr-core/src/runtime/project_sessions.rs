@@ -36,7 +36,7 @@ const SESSION_NOT_LISTED: &str =
 #[derive(Default)]
 pub(super) struct ProjectSessionsWork {
     /// The node and folder the history is read from while the named Project
-    /// can be read (`Runtime::memory_node`); `None` for one on a device the
+    /// can be read (`Runtime::linked_node`); `None` for one on a device the
     /// core dials, on a node that is not linked, or gone from the catalog.
     pub(super) folder: Option<(NodeId, String)>,
     /// The Project identity (`hide_project`) the last history answered for;
@@ -139,7 +139,7 @@ impl Runtime {
         device_id: &str,
         workspace_id: &str,
     ) -> Result<(NodeId, String), String> {
-        let node = match self.memory_node(device_id) {
+        let node = match self.linked_node(device_id) {
             Ok((node, _)) => node,
             Err("link_down") => {
                 return Err(format!(
@@ -197,7 +197,7 @@ impl Runtime {
             .and_then(|sessions| self.project_sessions_work.known.get(&sessions.workspace_id))
             .cloned()
             .unwrap_or_default();
-        let started = match (self.worker_context.clone(), self.memory_node(node.as_str())) {
+        let started = match (self.worker_context.clone(), self.linked_node(node.as_str())) {
             (Some(context), Ok((_, sessions_node))) => {
                 let database = self.memory_database_path();
                 thread::Builder::new()
@@ -410,7 +410,7 @@ impl Runtime {
             .project_sessions_work
             .folder
             .as_ref()
-            .map(|(node, _)| (node.clone(), self.memory_node(node.as_str())));
+            .map(|(node, _)| (node.clone(), self.linked_node(node.as_str())));
         let started = match (self.worker_context.clone(), project_id, link) {
             (Some(context), Some(project_id), Some((_, Ok((_, sessions_node))))) => {
                 let database = self.memory_database_path();

@@ -158,7 +158,7 @@ The ordinary launch mode remains unchanged.
 Environment, display name, cwd, descendants and a historical registration alone confer no worker authority.
 An ended registration retained across cancel/revive counts only when its accepted spawn still joins the current independently attested native execution.
 Missing identity, an unopened Factory, a changed connection, overload, timeout or any other unavailable proof allows the tool call and records a bounded diagnostic.
-Factory starts currently belong to the core's own node; foreign-device callers cannot borrow its worker identity, while a device running its own Factory uses the same local route.
+Factory workers run on the core's machine and on the nodes that dial the core; a caller on a device the core dials cannot borrow a worker identity, while a device running its own Factory uses the same local route.
 This read starts no Factory, judgment, tick or store write and publishes no snapshot.
 
 ## The spawn guard

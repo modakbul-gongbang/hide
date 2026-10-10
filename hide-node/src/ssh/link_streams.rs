@@ -679,6 +679,7 @@ mod tests {
                     checkout_callers: false,
                     opened_roots: None,
                     browser,
+                    factory: false,
                 },
             );
         });

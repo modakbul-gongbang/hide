@@ -47,6 +47,7 @@ const PROJECT_MEMORY: &str = hide_memory::DATABASE_FILE;
 const SESSION_SEARCH: &str = "session-search.sqlite3";
 const LINKS: &str = "links.sqlite3";
 const LOCAL_ISSUES: &str = "local-issues.json";
+const FACTORY: &str = "factory.sqlite3";
 /// Where a move keeps its staging copies (`reown::staging_dir`); the
 /// move's other files, which `hide_kit::layout` names, are `UNBOUND`.
 pub const MOVE_STAGING: &str = "move-staging";
@@ -64,7 +65,7 @@ pub const MOVES_WITH_CORE: &[&str] = &[
     LINKS,
     LOCAL_ISSUES,
     PROJECT_MEMORY,
-    "factory.sqlite3",
+    FACTORY,
     "factory.v1.sqlite3",
     "factory-files",
     "mobile.json",
@@ -582,6 +583,18 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     (
         LINKS,
         "meta listed_at and listed_at:<device>, pr_issues.issue `local:<root>#n`, paths and cwds",
+        Mechanism::Owned,
+        Moves::Whole,
+    ),
+    (
+        FACTORY,
+        "factories.data node, tasks.data worker.node (`None` is the owner's)",
+        Mechanism::Owned,
+        Moves::Whole,
+    ),
+    (
+        FACTORY,
+        "tasks.data worker.pane and producer_pane",
         Mechanism::Owned,
         Moves::Whole,
     ),

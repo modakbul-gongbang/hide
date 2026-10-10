@@ -321,10 +321,11 @@ impl VerifyQueue {
 
     fn poll(&mut self, id: &str) -> VerifyOutcome {
         self.pump();
-        self.results
-            .get(id)
-            .cloned()
-            .unwrap_or(VerifyOutcome::Pending)
+        match self.results.get(id) {
+            Some(outcome) => outcome.clone(),
+            None if self.known(id) => VerifyOutcome::Pending,
+            None => VerifyOutcome::Lost,
+        }
     }
 
     fn cancel(&mut self, id: &str) {

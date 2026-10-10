@@ -25,6 +25,7 @@ fn tick_until(h: &mut Bench, f: &str, t: &str, state: TaskState) {
 fn github(h: &mut Bench) -> String {
     let created = h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: Some(VerificationChoice::Ci {
             checks: vec!["test".into()],
         }),

@@ -248,6 +248,50 @@ impl Store {
         Ok(())
     }
 
+    /// Renames the machines a core move changes (PRD core-host-node-move
+    /// Q17): each Factory's and worker's node through `machine`, where `None`
+    /// is the core's own, and each pane a Task names through `pane`, in one
+    /// transaction. Answers whether anything changed.
+    pub fn reown(
+        &mut self,
+        machine: &dyn Fn(Option<&str>) -> Option<String>,
+        pane: &dyn Fn(&str) -> String,
+    ) -> Result<bool, StoreError> {
+        let loaded = self.load()?;
+        let transaction = self.connection.transaction()?;
+        let mut changed = false;
+        for mut factory in loaded.factories {
+            let node = machine(factory.node.as_deref());
+            if node == factory.node {
+                continue;
+            }
+            factory.node = node;
+            transaction.execute(
+                "UPDATE factories SET data = ?2 WHERE id = ?1",
+                params![factory.id, serde_json::to_string(&factory)?],
+            )?;
+            changed = true;
+        }
+        for mut task in loaded.tasks {
+            let before = (task.worker.clone(), task.producer_pane.clone());
+            if let Some(worker) = &mut task.worker {
+                worker.node = machine(worker.node.as_deref());
+                worker.pane = worker.pane.as_deref().map(pane);
+            }
+            task.producer_pane = task.producer_pane.as_deref().map(pane);
+            if (&task.worker, &task.producer_pane) == (&before.0, &before.1) {
+                continue;
+            }
+            transaction.execute(
+                "UPDATE tasks SET data = ?3 WHERE factory = ?1 AND id = ?2",
+                params![task.factory, task.id, serde_json::to_string(&task)?],
+            )?;
+            changed = true;
+        }
+        transaction.commit()?;
+        Ok(changed)
+    }
+
     pub fn set_meta(&self, key: &str, value: &str) -> Result<(), StoreError> {
         self.connection.execute(
             "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",

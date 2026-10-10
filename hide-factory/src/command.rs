@@ -94,6 +94,11 @@ pub enum Command {
     /// Without `confirm`, shows what would be created and writes nothing (B1).
     Init {
         project: String,
+        /// The machine that holds `project`, as the screen that chose it
+        /// names it; a `hide factory` caller's own machine replaces it, and
+        /// the core's own machine is `None`.
+        #[serde(default)]
+        device: Option<String>,
         verification: Option<VerificationChoice>,
         merge_mode: Option<MergeMode>,
         confirm: bool,

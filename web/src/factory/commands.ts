@@ -12,7 +12,8 @@ export function taskRef(factory: string, task: string): string {
 }
 
 export type FactoryCommand =
-  | { verb: "init"; project: string; verification: VerificationChoice | null; merge_mode: MergeMode | null; confirm: boolean }
+  /** `device` names the machine that holds `project`; the core makes the Factory there. */
+  | { verb: "init"; project: string; device: string; verification: VerificationChoice | null; merge_mode: MergeMode | null; confirm: boolean }
   | { verb: "answer"; task: string; question: string | null; choice: string | null; text: string | null; change?: boolean; decision?: string }
   | { verb: "priority"; task: string; priority: number }
   | { verb: "dep"; task: string; on: string; remove: true }

@@ -92,6 +92,7 @@ fn init_previews_without_writing_and_creates_once_confirmed() {
     let mut h = Bench::new(true);
     let preview = h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: None,
         merge_mode: None,
         confirm: false,
@@ -141,6 +142,7 @@ fn init_previews_without_writing_and_creates_once_confirmed() {
     // Auto merge needs a verification (B2).
     let refused = h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: Some(VerificationChoice::None),
         merge_mode: Some(MergeMode::Auto),
         confirm: true,
@@ -149,6 +151,7 @@ fn init_previews_without_writing_and_creates_once_confirmed() {
 
     let created = h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: Some(VerificationChoice::Ci {
             checks: vec!["test".into()],
         }),
@@ -181,6 +184,7 @@ fn init_previews_without_writing_and_creates_once_confirmed() {
     // The same project again shows the existing Factory (B5).
     let again = h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: None,
         merge_mode: None,
         confirm: true,
@@ -194,6 +198,7 @@ fn a_local_project_names_no_github_access_and_records_no_approval() {
     let mut h = Bench::new(false);
     let preview = h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: None,
         merge_mode: None,
         confirm: false,
@@ -201,6 +206,7 @@ fn a_local_project_names_no_github_access_and_records_no_approval() {
     assert_eq!(preview["github"], serde_json::Value::Null, "{preview}");
     h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: Some(VerificationChoice::Commands {
             commands: vec!["true".into()],
         }),
@@ -217,6 +223,7 @@ fn a_github_project_without_a_logged_in_account_is_not_created() {
     h.world().account = None;
     let refused = h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: None,
         merge_mode: None,
         confirm: false,
@@ -231,6 +238,7 @@ fn a_machine_with_only_codex_defaults_new_workers_to_codex() {
     h.world().runtimes = vec![Runtime::CODEX];
     let preview = h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: None,
         merge_mode: Some(MergeMode::Manual),
         confirm: false,
@@ -238,6 +246,7 @@ fn a_machine_with_only_codex_defaults_new_workers_to_codex() {
     assert_eq!(preview["default_runtime"], "codex", "{preview}");
     h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: None,
         merge_mode: Some(MergeMode::Manual),
         confirm: true,
@@ -263,6 +272,7 @@ fn a_closed_factory_refuses_tasks_and_comes_back_with_its_records() {
 
     let reopened = h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: None,
         merge_mode: None,
         confirm: true,
@@ -1201,7 +1211,7 @@ fn a_cancelled_task_s_worker_stays_a_worker_and_is_stopped() {
     let bound = Some((f.clone(), t.clone()));
     assert_eq!(h.engine.role_for(Some(&pane), None), bound);
     let inside = format!("{}/src", worker.worktree);
-    assert_eq!(h.engine.role_for(None, Some(&inside)), bound);
+    assert_eq!(h.engine.role_for(None, Some((None, &inside))), bound);
     let cancelled_worker = h.task(&f, &t).worker.unwrap();
     assert_eq!(cancelled_worker.agent, worker.agent);
     assert_eq!(cancelled_worker.pane, worker.pane);
@@ -1233,7 +1243,7 @@ fn a_finished_task_whose_pane_is_gone_binds_no_caller() {
     // Herdr can give that pane id to the operator's next pane.
     assert_eq!(h.engine.role_for(Some(&pane), None), None);
     let inside = format!("{}/src", worker.worktree);
-    assert_eq!(h.engine.role_for(None, Some(&inside)), None);
+    assert_eq!(h.engine.role_for(None, Some((None, &inside))), None);
     assert_eq!(h.engine.question_worker(&pane), None);
 }
 
@@ -1309,7 +1319,8 @@ fn an_agent_a_worker_spawned_acts_as_that_worker() {
     let agent = h.task(&f, &t).worker.unwrap().agent.unwrap();
     // The child's own pane and folder name no Task; its lineage does.
     assert_eq!(
-        h.engine.role_for(Some("child-pane"), Some("/elsewhere")),
+        h.engine
+            .role_for(Some("child-pane"), Some((None, "/elsewhere"))),
         None
     );
     assert_eq!(
@@ -1337,6 +1348,7 @@ fn a_caller_binds_through_a_claimed_pane_or_an_ancestor_s_pane_and_a_cut_lineage
     let caller = Caller {
         pane: Some("child-pane"),
         cwd: Some("/elsewhere"),
+        node: None,
         claimed: None,
         ancestor_agents: &[],
         ancestor_panes: &[],
@@ -1672,6 +1684,7 @@ fn an_autonomy_task_over_the_diff_limit_goes_to_a_person() {
 fn github_factory(h: &mut Bench, mode: MergeMode) -> String {
     let created = h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: Some(VerificationChoice::Ci {
             checks: vec!["test".into()],
         }),
@@ -1686,6 +1699,7 @@ fn ci_with_no_named_check_takes_the_required_checks_and_never_none() {
     let mut h = Bench::new(true);
     let created = h.op(Command::Init {
         project: PROJECT.into(),
+        device: None,
         verification: Some(VerificationChoice::Ci { checks: vec![] }),
         merge_mode: Some(MergeMode::Auto),
         confirm: true,

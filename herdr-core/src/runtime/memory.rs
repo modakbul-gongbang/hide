@@ -28,7 +28,7 @@ const MEMORY_POLL_INTERVAL_MS: u64 = 5_000;
 const RELATION_CONTEXT_INPUT_LIMIT_BYTES: usize = 16 * 1024;
 
 /// The checkout in front for Memory and Sessions, and the node that reads
-/// its files (`Runtime::memory_node`).
+/// its files (`Runtime::linked_node`).
 struct MemoryFocus {
     workspace_id: String,
     checkout_id: String,
@@ -86,7 +86,7 @@ impl Runtime {
         }
         by_device
             .into_iter()
-            .filter_map(|(device, receipts)| match self.memory_node(&device) {
+            .filter_map(|(device, receipts)| match self.linked_node(&device) {
                 Ok((node, link)) => Some((node, link, receipts)),
                 Err(reason) => {
                     crate::diagnostic!(json!({
@@ -108,7 +108,7 @@ impl Runtime {
     /// the analysis pass records Claude Code's, Codex's, Pi's and omp's from
     /// their session files (PRD opencode-plugin D-12, pi-omp-extension D-09).
     /// A later prompt's Memory needs the session start's receipt. A machine
-    /// without Memory (`Runtime::memory_node`) has its receipts dropped with
+    /// without Memory (`Runtime::linked_node`) has its receipts dropped with
     /// a diagnostic.
     pub(crate) fn record_memory_receipts(
         &mut self,
@@ -192,7 +192,7 @@ impl Runtime {
     fn focused_memory_context(&self) -> Option<MemoryFocus> {
         let (workspace_id, checkout_id) = self.front_checkout()?;
         let (workspace, checkout) = self.catalog_checkout(workspace_id, checkout_id)?;
-        let (node, link) = self.memory_node(&workspace.device_id).ok()?;
+        let (node, link) = self.linked_node(&workspace.device_id).ok()?;
         Some(MemoryFocus {
             workspace_id: workspace.id.clone(),
             checkout_id: checkout.id.clone(),

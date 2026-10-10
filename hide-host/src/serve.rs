@@ -79,6 +79,7 @@ pub fn serve_with_terminals(
             checkout_callers: false,
             opened_roots: None,
             browser: None,
+            factory: false,
         },
     )
 }
@@ -109,6 +110,11 @@ pub struct Services<'a> {
     /// node that dialed its core (PRD core-host-node-remote-core B4, B13,
     /// B15). Every other node refuses both.
     pub browser: Option<&'a dyn crate::link_bridge::BrowserGateway>,
+    /// Whether the node does the machine work of its core's Factories for
+    /// this machine's projects (`FactoryCall::answered_by_node`): a node
+    /// that dialed its core (PRD core-host-node-move Q17). A device its core
+    /// dialed keeps no Factory and refuses it.
+    pub factory: bool,
 }
 
 /// The checkout roots a node's core opened on it over one link, which are
@@ -174,6 +180,7 @@ impl Services<'_> {
             checkout_callers: false,
             opened_roots: None,
             browser: None,
+            factory: false,
         }
     }
 }
@@ -195,6 +202,7 @@ fn serve_in(
 ) -> io::Result<()> {
     let terminals = services.terminals;
     let heartbeat = services.heartbeat;
+    let factory = services.factory;
     let opened_roots = services.opened_roots;
     // Ends the heartbeat when the input does.
     let input_ended = (Mutex::new(false), std::sync::Condvar::new());
@@ -250,10 +258,15 @@ fn serve_in(
                     };
                     let id = request.id;
                     let outcome = match request.call {
-                        call if !call.answered_by_device() => Err(HostError::new(
-                            ErrorCode::Unsupported,
-                            "A device does not answer this request; the core's own node does",
-                        )),
+                        call if !call.answered_by_device()
+                            && !(factory
+                                && matches!(&call, Call::Factory { call } if call.answered_by_node())) =>
+                        {
+                            Err(HostError::new(
+                                ErrorCode::Unsupported,
+                                "A device does not answer this request; the core's own node does",
+                            ))
+                        }
                         Call::PanesStart { herdr_socket } => match bridges {
                             Ok(bridges) => panes
                                 .start(scope, output, bridges, &herdr_socket)

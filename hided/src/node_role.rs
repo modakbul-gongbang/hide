@@ -1060,6 +1060,7 @@ fn serve(
             checkout_callers: true,
             opened_roots: Some(roots),
             browser,
+            factory: true,
         },
     )
     .map(|()| "link_closed".to_owned())

@@ -269,6 +269,7 @@ fn task(id: &str, issue: Option<u64>) -> Task {
     });
     task.worker = Some(WorkerRef {
         factory: String::new(),
+        node: None,
         agent: None,
         name: "w".into(),
         pane: None,

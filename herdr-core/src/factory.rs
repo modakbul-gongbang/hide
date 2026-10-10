@@ -18,7 +18,7 @@ use hide_factory::adapters::{
     Clock, EnvSignal, Environment, Failure, Judge, MemoryPressure, Notifier, Removal,
     WorkerRuntime, WorkerSpawn, WorkerStatus, WorkerTexts,
 };
-use hide_factory::exec::Machine;
+use hide_factory::exec::{Machine, Machines};
 use hide_factory::judgment::{Judgment, JudgmentAnswer, JudgmentOutcome};
 use hide_factory::model::{FactoryAi, Runtime as AgentRuntime, UnixMs, WorkerRef};
 use hide_factory::project::{IssueBook, SharedProjects};
@@ -72,6 +72,8 @@ fn guard(runtime: &Arc<Mutex<Runtime>>) -> MutexGuard<'_, Runtime> {
 
 /// Who is asking: the pane the command came from and the checkout it runs in.
 pub struct FactoryCaller {
+    /// The machine the caller is on, by node id; `None` is the core's own.
+    pub node: Option<String>,
     pub pane: Option<String>,
     pub cwd: Option<String>,
     /// Another pane a pane-bound caller's hint named, which cannot be checked
@@ -460,10 +462,14 @@ impl std::fmt::Debug for StartedWorker {
     }
 }
 
+/// The connection a worker start was made over, on the machine it runs on;
+/// rollback acts only while that machine still has it.
 pub(crate) struct StartControl {
+    pub device: String,
     pub connector: Arc<dyn hide_herdr_client::ApiConnector>,
     pub node: Arc<dyn crate::node_access::NodeLink>,
-    pub generation: u64,
+    /// The core's own Herdr connection; a node's is its connector and link.
+    pub generation: Option<u64>,
 }
 
 struct OwnedStart {
@@ -668,14 +674,19 @@ fn run(
     let mut engine: Option<Engine> = None;
     let mut judge: Option<JudgeThread> = None;
     let open = |judge: &mut Option<JudgeThread>| -> Option<Engine> {
-        // The Factory decides here; its machine work is the core's own
-        // node's (PRD core-host-node D-01).
+        // The Factory decides here; its machine work is the node's of the
+        // machine that holds its project (PRD core-host-node D-01,
+        // core-host-node-move Q17).
         let machine = Machine::new(guard(&lock(&runtime)?).own_node(), Arc::clone(&runner_stop));
+        let machines = CoreMachines {
+            runtime: runtime.clone(),
+            stop: Arc::clone(&runner_stop),
+        };
         let started = JudgeThread::start(runtime.clone(), home.clone());
         let port = started.port(runtime.clone(), home.clone());
         *judge = Some(started);
         let projects = SharedProjects::new(
-            machine.clone(),
+            machines.clone(),
             Box::new(CoreIssues {
                 runtime: runtime.clone(),
             }),
@@ -691,7 +702,7 @@ fn run(
                 state: Arc::clone(&workers),
             }),
             judge: Box::new(port),
-            environment: Box::new(MachineEnvironment::new(machine.clone(), runtime.clone())),
+            environment: Box::new(MachineEnvironment::new(machines, runtime.clone())),
             notifier: Box::new(CoreNotifier {
                 runtime: runtime.clone(),
             }),
@@ -960,7 +971,10 @@ fn screen_request(
                     Refusal::new("factory_screen_verb", "Use hide factory for this command")
                         .to_json()
                 }
-                Some(engine) => engine.command(&operator, command),
+                Some(engine) => match screen_command(&sink.runtime, command) {
+                    Ok(command) => engine.command(&operator, command),
+                    Err(refusal) => refusal.to_json(),
+                },
             };
             publisher.touched();
             sink.answered(ActionAnswer { request_id, answer });
@@ -980,6 +994,31 @@ fn screen_request(
         }
         ScreenRequest::CloseTask => publisher.close(),
     }
+}
+
+/// A screen's command as the engine takes it: the machine a create sheet
+/// names becomes the Factory's node, the core's own being none.
+fn screen_command(runtime: &Weak<Mutex<Runtime>>, command: Command) -> Result<Command, Refusal> {
+    let Command::Init {
+        project,
+        device: Some(device),
+        verification,
+        merge_mode,
+        confirm,
+    } = command
+    else {
+        return Ok(command);
+    };
+    let runtime = lock(runtime)
+        .ok_or_else(|| Refusal::new("factory_unavailable", "See the diagnostic log"))?;
+    let node = guard(&runtime).factory_node(&device)?;
+    Ok(Command::Init {
+        project,
+        device: node,
+        verification,
+        merge_mode,
+        confirm,
+    })
 }
 
 /// Hands the screens' values to the runtime under one short lock each and
@@ -1056,6 +1095,7 @@ fn handle(
     let facts = hide_factory::engine::Caller {
         pane: caller.pane.as_deref(),
         cwd: caller.cwd.as_deref(),
+        node: caller.node.as_deref(),
         claimed: caller.claimed.as_deref(),
         ancestor_agents: &caller.ancestors.agents,
         ancestor_panes: &caller.ancestors.panes,
@@ -1074,10 +1114,24 @@ fn handle(
         caller
             .cwd
             .as_deref()
-            .and_then(|cwd| engine.factory_for_project(cwd))
+            .and_then(|cwd| engine.factory_at(caller.node.as_deref(), cwd))
             .map(|factory| factory.project.clone())
     };
     let command = match command {
+        // A `hide factory init` makes the Factory of the caller's machine.
+        Command::Init {
+            project,
+            device: _,
+            verification,
+            merge_mode,
+            confirm,
+        } => Command::Init {
+            project,
+            device: caller.node.clone(),
+            verification,
+            merge_mode,
+            confirm,
+        },
         Command::Add {
             project,
             task,
@@ -1597,7 +1651,7 @@ impl WorkerRuntime for CoreWorkers {
         if let Some(answer) = poll_start(&self.state, &key) {
             return answer;
         }
-        if !guard(&runtime).factory_kit_read(request.runtime.as_str()) {
+        if !guard(&runtime).factory_kit_read(request.node.as_deref(), request.runtime.as_str()) {
             return Err(Failure::starting("worker.spawn", "kit_not_read"));
         }
         drop(runtime);
@@ -1778,14 +1832,19 @@ impl WorkerRuntime for CoreWorkers {
     fn remove_worktree(&mut self, worker: &WorkerRef, removal: Removal) -> Result<(), Failure> {
         let discard = removal == Removal::Discarded;
         let runtime = self.runtime()?;
-        let (connector, node) = {
-            let guard = guard(&runtime);
-            (
-                guard.delivery_connector(guard.node().as_str()),
-                guard.own_node(),
-            )
-        };
+        // The worker's own machine; one that cannot be reached waits.
+        let reach = guard(&runtime)
+            .factory_worker_reach(worker)
+            .map_err(|reason| {
+                let signal = if worker.node.is_some() {
+                    EnvSignal::NodeLink
+                } else {
+                    EnvSignal::HerdrSocket
+                };
+                Failure::environment("worktree", signal, reason)
+            })?;
         drop(runtime);
+        let (connector, node) = (reach.connector, reach.node);
         let machine = Machine::new(Arc::clone(&node), Arc::new(AtomicBool::new(false)));
         // The repository the worktree belongs to, read before it goes; a
         // folder already gone leaves nothing to remove.
@@ -1795,9 +1854,7 @@ impl WorkerRuntime for CoreWorkers {
                 checkout: worker.worktree.clone(),
             },
         )?;
-        let connector = connector
-            .ok_or_else(|| Failure::environment("worktree", EnvSignal::HerdrSocket, "no Herdr"))?;
-        let panes: Vec<String> = worker.pane.iter().cloned().collect();
+        let panes: Vec<String> = reach.herdr_pane.into_iter().collect();
         // The worker's panes close first so nothing runs in a removed folder.
         crate::live::close_checkout_panes(
             connector.as_ref(),
@@ -1912,7 +1969,7 @@ fn start_worker(
             .factory_delivery(&request.factory)
             .map_err(|reason| Failure::task("worker.spawn", reason))?;
         let control = current
-            .factory_start_control()
+            .factory_start_control(request.node.as_deref())
             .map_err(|reason| Failure::task("worker.spawn", reason))?;
         (client, authority, actor, control)
     };
@@ -1970,7 +2027,8 @@ fn start_worker(
         actor,
         crate::coordination::Command::Spawn {
             parent: Some(parent),
-            machine: None,
+            // The Factory's machine, through the spawn-on-machine path.
+            machine: request.node.clone(),
             name: request.name.clone(),
             intent,
             kind: request.runtime.as_str().into(),
@@ -1983,9 +2041,12 @@ fn start_worker(
     .map_err(|reason| spawn_failure(&reason))?;
     let worker = WorkerRef {
         factory: request.factory.clone(),
+        node: request.node.clone(),
         agent: view["id"].as_str().map(str::to_owned),
         name: request.name.clone(),
-        pane: view["pane"].as_str().map(str::to_owned),
+        pane: view["pane"]
+            .as_str()
+            .map(|pane| crate::runtime::factory_pane_id(request.node.as_deref(), pane)),
         runtime: request.runtime,
         worktree: view["project"].as_str().unwrap_or_default().to_owned(),
         branch: request.branch.clone(),
@@ -2031,9 +2092,11 @@ fn capture_owned_start(
         connector: control.connector.as_ref(),
         current: &current,
     };
+    // The pane as the worker's own Herdr names it.
     let pane = worker
         .pane
         .as_deref()
+        .and_then(|pane| crate::runtime::factory_herdr_pane(worker.node.as_deref(), pane))
         .ok_or_else(|| fail("worker has no pane".to_owned()))?;
     let native = hide_herdr_client::request_small_response(
         &connector,
@@ -2167,22 +2230,51 @@ impl IssueBook for CoreIssues {
     }
 }
 
-/// The machine the Factory's projects live on, as its node reports it, and
+/// The machines Factories' projects are on: the core's own node, and a
+/// node that dials the core while its link is up (Q17). A Factory whose
+/// node is not linked waits, as for a Herdr that does not answer.
+#[derive(Clone)]
+struct CoreMachines {
+    runtime: Weak<Mutex<Runtime>>,
+    stop: Arc<AtomicBool>,
+}
+
+impl Machines for CoreMachines {
+    fn on(&self, node: Option<&str>) -> Result<Machine, Failure> {
+        let runtime =
+            lock(&self.runtime).ok_or_else(|| Failure::task("machine", "runtime_gone"))?;
+        let core = guard(&runtime);
+        let link = match node {
+            None => core.own_node(),
+            Some(node) => {
+                core.linked_node(node)
+                    .map_err(|reason| Failure::environment("machine", EnvSignal::NodeLink, reason))?
+                    .1
+            }
+        };
+        Ok(Machine::new(link, Arc::clone(&self.stop)))
+    }
+}
+
+/// The machine a Factory's project lives on, as its node reports it, and
 /// the operator's language, as the core and this machine say it.
 struct MachineEnvironment {
-    machine: Machine,
+    machines: Arc<dyn Machines>,
     runtime: Weak<Mutex<Runtime>>,
     /// The system's primary language, read once: it changes with a new
     /// login, which starts a new daemon.
     system_language: Option<Language>,
+    /// The `hide` each node's workers run, read once a node answers.
+    hide_programs: BTreeMap<String, String>,
 }
 
 impl MachineEnvironment {
-    fn new(machine: Machine, runtime: Weak<Mutex<Runtime>>) -> Self {
+    fn new(machines: impl Machines + 'static, runtime: Weak<Mutex<Runtime>>) -> Self {
         Self {
-            machine,
+            machines: Arc::new(machines),
             runtime,
             system_language: None,
+            hide_programs: BTreeMap::new(),
         }
     }
 
@@ -2227,8 +2319,10 @@ impl Environment for MachineEnvironment {
         }
     }
 
-    fn disk_free(&mut self, project: &str) -> Option<u64> {
-        self.machine
+    fn disk_free(&mut self, node: Option<&str>, project: &str) -> Option<u64> {
+        self.machines
+            .on(node)
+            .ok()?
             .node_call::<Option<u64>>(
                 "disk",
                 Call::VolumeFree {
@@ -2241,15 +2335,41 @@ impl Environment for MachineEnvironment {
 
     /// A reading the node cannot give is normal pressure, as on a system
     /// without one.
-    fn memory_pressure(&mut self) -> MemoryPressure {
-        match self
-            .machine
-            .call::<NodeMemoryPressure>("memory", FactoryCall::MemoryPressure)
-        {
+    fn memory_pressure(&mut self, node: Option<&str>) -> MemoryPressure {
+        match self.machines.on(node).and_then(|machine| {
+            machine.call::<NodeMemoryPressure>("memory", FactoryCall::MemoryPressure)
+        }) {
             Ok(NodeMemoryPressure::Critical) => MemoryPressure::Critical,
             Ok(NodeMemoryPressure::Warn) => MemoryPressure::Warn,
             Ok(NodeMemoryPressure::Normal) | Err(_) => MemoryPressure::Normal,
         }
+    }
+
+    /// A node's own `hide`; the core's is the one the engine opened with.
+    /// A node that cannot say yet is asked again at the next start.
+    fn hide_program(&mut self, node: Option<&str>) -> Option<String> {
+        let node = node?;
+        if let Some(program) = self.hide_programs.get(node) {
+            return Some(program.clone());
+        }
+        let program = self
+            .machines
+            .on(Some(node))
+            .and_then(|machine| {
+                machine.call::<Option<String>>("hide_program", FactoryCall::HideProgram)
+            })
+            .map_err(|failure| {
+                crate::diagnostic!(json!({
+                    "component": "factory",
+                    "kind": "hide_program.unread",
+                    "node": node,
+                    "error": failure.detail,
+                }))
+            })
+            .ok()
+            .flatten()?;
+        self.hide_programs.insert(node.to_owned(), program.clone());
+        Some(program)
     }
 }
 
@@ -2743,6 +2863,7 @@ mod tests {
             let factory = hide_factory::model::Factory {
                 id: "f-1".into(),
                 project: project.clone(),
+                node: None,
                 project_name: "project".into(),
                 source: hide_factory::model::SourceKind::Local,
                 repo: None,
@@ -2821,6 +2942,7 @@ mod tests {
             let (reply, answer) = mpsc::sync_channel(1);
             send.try_send(Request::Command {
                 caller: FactoryCaller {
+                    node: None,
                     pane: None,
                     cwd: Some(project.clone()),
                     claimed: None,
@@ -2985,6 +3107,7 @@ mod tests {
     fn request(task: &str, resume: Option<WorkerRef>) -> WorkerSpawn {
         WorkerSpawn {
             factory: "f-1".into(),
+            node: None,
             task: task.into(),
             name: format!("w-{task}"),
             runtime: hide_factory::model::Runtime::CLAUDE,
@@ -3012,6 +3135,7 @@ mod tests {
     fn worker(job: &WorkerSpawn) -> WorkerRef {
         WorkerRef {
             factory: job.factory.clone(),
+            node: None,
             agent: Some(format!("agent-{}", job.task)),
             name: job.name.clone(),
             pane: Some(format!("pane-{}", job.task)),
@@ -3510,7 +3634,7 @@ mod tests {
                 node: Arc::new(hide_node::Local::of_process()),
             });
         }
-        let control = guard(&runtime).factory_start_control().unwrap();
+        let control = guard(&runtime).factory_start_control(None).unwrap();
         let rollback = capture_owned_start(
             &Arc::downgrade(&runtime),
             control,

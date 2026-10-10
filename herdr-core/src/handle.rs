@@ -484,11 +484,8 @@ impl Core {
             return Err("factory_unavailable".into());
         }
         let runtime = lock_recover(&self.runtime);
-        if device != runtime.node().as_str() {
-            return Err("factory_local_only".into());
-        }
         let factory = self.factory.as_ref().ok_or("factory_unavailable")?;
-        let caller = runtime.factory_caller(caller, expected, hint)?;
+        let caller = runtime.factory_caller(device, caller, expected, hint)?;
         drop(runtime);
         Ok(factory.prepare(caller, command))
     }

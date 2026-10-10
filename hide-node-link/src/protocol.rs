@@ -692,8 +692,10 @@ impl Call {
     /// panes; what acts with the operator's own logins (GitHub, the AI
     /// providers and their usage), the files the operator picked on this
     /// machine, and the Software Factory's work (D-01) are the core's own
-    /// node's, and a device refuses them unrun. The match names every
-    /// request, so a new one is decided here before it compiles.
+    /// node's, and a device refuses them unrun; a node that dialed its core
+    /// also does the Factory's work on its own projects
+    /// (`FactoryCall::answered_by_node`). The match names every request, so
+    /// a new one is decided here before it compiles.
     pub fn answered_by_device(&self) -> bool {
         match self {
             Self::Hello

@@ -839,7 +839,7 @@ impl Runtime {
 }
 
 /// The device a pane belongs to, when it is not this core's own.
-fn pane_device(pane_id: &str) -> Option<&str> {
+pub(super) fn pane_device(pane_id: &str) -> Option<&str> {
     pane_id
         .strip_prefix("remote:")
         .and_then(|rest| rest.split_once(":pane:"))

@@ -1051,6 +1051,10 @@ export type Device = {
   host?: DeviceHost;
   /** What Hide's install kit has put on this machine (`KitSnapshot`). */
   kit?: Kit;
+  /** The machine's own name, when the core knows it (`DeviceSnapshot::machine_name`). */
+  machine_name?: string | null;
+  /** A node that dials the core rather than a device the core dials (`DeviceSnapshot::dials_in`). */
+  dials_in?: boolean;
 };
 
 /** One part of the install kit (`contracts/snapshot-wire-enums.json`: `kit_component_id`). */

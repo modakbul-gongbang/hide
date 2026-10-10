@@ -120,6 +120,15 @@ pub enum FactoryCall {
     UtcOffset,
 }
 
+impl FactoryCall {
+    /// Whether a node that dialed its core does this for a Factory of that
+    /// machine's projects (PRD core-host-node-move Q17): all of it but
+    /// GitHub, which acts with the operator's login on the core's machine.
+    pub fn answered_by_node(&self) -> bool {
+        !matches!(self, Self::Gh { .. })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryPressure {
@@ -173,8 +182,11 @@ pub struct VerifyStep {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum VerifyOutcome {
-    /// Queued, running, or never submitted.
+    /// Queued or running.
     Pending,
+    /// Not queued, running or finished here: never submitted, or ended with
+    /// the link that asked for it (a node's runs are its link's).
+    Lost,
     Passed,
     /// A prepare step failed, named as a command line.
     StepFailed {

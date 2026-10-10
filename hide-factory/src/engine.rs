@@ -549,7 +549,7 @@ impl Engine {
     /// above, so such a caller only reads, never acts as an operator.
     pub fn caller_role(&self, caller: &Caller<'_>, command: &Command) -> Result<Role, Refusal> {
         let bound = self
-            .role_for(caller.pane, caller.cwd)
+            .role_for(caller.pane, caller.cwd.map(|cwd| (caller.node, cwd)))
             .or_else(|| {
                 caller
                     .claimed
@@ -607,7 +607,13 @@ impl Engine {
     /// stay, so its pane never gains the operator's commands; a live Task
     /// wins when a pane or folder was reused. A purged Task binds nothing,
     /// because Herdr can give its closed pane id to the operator's next pane.
-    pub fn role_for(&self, pane: Option<&str>, cwd: Option<&str>) -> Option<(String, String)> {
+    /// A folder binds only on the machine the worker runs on, by node id
+    /// (`WorkerRef::node`).
+    pub fn role_for(
+        &self,
+        pane: Option<&str>,
+        cwd: Option<(Option<&str>, &str)>,
+    ) -> Option<(String, String)> {
         let bound = |task: &&Task| {
             let Some(worker) = task.worker.as_ref().filter(|_| !task.purged) else {
                 return false;
@@ -616,7 +622,9 @@ impl Engine {
                 return true;
             }
             !worker.worktree.is_empty()
-                && cwd.is_some_and(|cwd| Path::new(cwd).starts_with(&worker.worktree))
+                && cwd.is_some_and(|(node, cwd)| {
+                    worker.node.as_deref() == node && Path::new(cwd).starts_with(&worker.worktree)
+                })
         };
         let finished = |task: &&Task| matches!(task.state, TaskState::Cancelled | TaskState::Done);
         let live = self.all_tasks().filter(|t| !finished(t)).find(&bound);
@@ -645,6 +653,16 @@ impl Engine {
         self.factories
             .values()
             .filter(|factory| path.starts_with(&factory.project))
+            .max_by_key(|factory| factory.project.len())
+    }
+
+    /// The Factory whose project holds the folder `project` on the machine
+    /// `node` names.
+    pub fn factory_at(&self, node: Option<&str>, project: &str) -> Option<&Factory> {
+        let path = Path::new(project);
+        self.factories
+            .values()
+            .filter(|factory| factory.node.as_deref() == node && path.starts_with(&factory.project))
             .max_by_key(|factory| factory.project.len())
     }
 
@@ -929,10 +947,11 @@ impl Engine {
         match command {
             Command::Init {
                 project,
+                device,
                 verification,
                 merge_mode,
                 confirm,
-            } => self.init(&project, verification, merge_mode, confirm),
+            } => self.init(&project, device, verification, merge_mode, confirm),
             Command::Add {
                 project,
                 task,
@@ -1362,6 +1381,7 @@ impl Engine {
     fn init(
         &mut self,
         project: &str,
+        node: Option<String>,
         verification: Option<VerificationChoice>,
         merge_mode: Option<MergeMode>,
         confirm: bool,
@@ -1374,6 +1394,15 @@ impl Engine {
             ));
         }
         if let Some(existing) = self.factories.values().find(|f| f.project == project) {
+            // A Factory's id is its project's path, so one path has one
+            // Factory, on the machine it was made on.
+            if existing.node != node {
+                return Err(refuse(
+                    "factory_on_other_machine",
+                    "A Factory for this path runs on another machine; close it there first",
+                )
+                .with(json!({"factory": existing.id})));
+            }
             if !existing.closed {
                 return Ok(
                     json!({"existing": true, "factory": {"id": existing.id, "project": existing.project}}),
@@ -1391,7 +1420,7 @@ impl Engine {
                 );
             }
         }
-        let probe = match self.ports.source.probe(&project) {
+        let probe = match self.ports.source.probe(node.as_deref(), &project) {
             Ok(probe) => probe,
             Err(failure) => {
                 let next = match failure.signal {
@@ -1534,6 +1563,7 @@ impl Engine {
         let factory = Factory {
             id: id.clone(),
             project: project.clone(),
+            node,
             project_name: Path::new(&project)
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -1834,7 +1864,7 @@ impl Engine {
             let attachment = self
                 .ports
                 .source
-                .read_prd(prd)
+                .read_prd(factory.node.as_deref(), prd)
                 .and_then(|bytes| {
                     self.store
                         .attach(&factory_id, &id, Path::new(prd), &bytes, 1)
@@ -1908,7 +1938,7 @@ impl Engine {
                 let attachment = self
                     .ports
                     .source
-                    .read_prd(prd)
+                    .read_prd(factory.node.as_deref(), prd)
                     .and_then(|bytes| {
                         self.store
                             .attach(factory_id, id, Path::new(prd), &bytes, version)
@@ -2115,15 +2145,15 @@ impl Engine {
                 state: other.state.as_str().to_owned(),
             })
             .collect();
-        let project = self
+        let (node, project) = self
             .factories
             .get(factory)
-            .map(|f| f.project.clone())
+            .map(|f| (f.node.clone(), f.project.clone()))
             .unwrap_or_default();
         let RepoContext {
             files: repo_files,
             guide,
-        } = self.ports.source.repo_context(&project);
+        } = self.ports.source.repo_context(node.as_deref(), &project);
         // What the repository and GitHub say is read before the review
         // asks anything (D-02); GitHub is not asked while it refuses.
         let facts = match self.factories.get(factory).cloned() {
@@ -3746,7 +3776,9 @@ impl Engine {
     /// run is never listed beside one still shown as running.
     fn cancel_verification(&mut self, factory: &str, id: &str) {
         if let Some(state) = self.verifying.remove(&(factory.to_owned(), id.to_owned())) {
-            self.ports.verifier.cancel(&state.run);
+            if let Some(record) = self.factories.get(factory) {
+                self.ports.verifier.cancel(record, &state.run);
+            }
             self.with_task(factory, id, |task| {
                 if let Some(attempt) = task
                     .attempts
@@ -5059,6 +5091,7 @@ impl Engine {
             .get(&factory_id)
             .map(|f| f.config.clone())
             .unwrap_or_default();
+        let node = self.factories.get(&factory_id).and_then(|f| f.node.clone());
         let mut machine_workers = None;
         for (key, value) in &set {
             let bad = || {
@@ -5135,7 +5168,7 @@ impl Engine {
                 "default_runtime" => {
                     // The first candidate's agent (D-42); a model or effort
                     // chosen for another agent does not carry over.
-                    let agent = self.worker_agent(key, value)?;
+                    let agent = self.worker_agent(node.as_deref(), key, value)?;
                     config.default_runtime = agent;
                     if let Some(first) = config.workers.first_mut()
                         && first.agent != agent
@@ -5172,7 +5205,7 @@ impl Engine {
                             )
                             .with(json!({"key": key, "max": WORKER_DESCRIPTION_LIMIT})));
                         }
-                        self.worker_agent(key, candidate.agent.as_str())?;
+                        self.worker_agent(node.as_deref(), key, candidate.agent.as_str())?;
                         candidate.launch_arguments().map_err(|detail| {
                             refuse("config_invalid", detail).with(json!({"key": key}))
                         })?;
@@ -5336,13 +5369,18 @@ impl Engine {
 
     /// An agent a worker candidate may name: one whose adapter declares a
     /// start and that this machine has (B28).
-    fn worker_agent(&mut self, key: &str, value: &str) -> Result<Runtime, Refusal> {
+    fn worker_agent(
+        &mut self,
+        node: Option<&str>,
+        key: &str,
+        value: &str,
+    ) -> Result<Runtime, Refusal> {
         let allowed: Vec<&str> = Runtime::all().map(Runtime::as_str).collect();
         let agent = Runtime::parse(value).ok_or_else(|| {
             refuse("agent_not_startable", "Choose an agent Factory can start")
                 .with(json!({"key": key, "allowed": allowed}))
         })?;
-        if !self.ports.source.installed(agent) {
+        if !self.ports.source.installed(node, agent) {
             return Err(refuse(
                 "agent_not_installed",
                 format!("{} is not installed on this machine", agent.label()),
@@ -5379,7 +5417,7 @@ impl Engine {
             tasks,
             Self::allowed_actions(task),
             self.ports.clock.now(),
-            &mut |log| verifier.log_tail(log),
+            &mut |log| verifier.log_tail(factory, log),
         ))
     }
 
@@ -5859,10 +5897,10 @@ impl Engine {
         if due {
             self.hold_checked_at = Some(now);
             self.hold_reason = None;
-            let project = self
+            let (node, project) = self
                 .factories
                 .get(&candidates[0].factory)
-                .map(|f| f.project.clone())
+                .map(|f| (f.node.clone(), f.project.clone()))
                 .unwrap_or_default();
             let floor = self
                 .factories
@@ -5871,11 +5909,13 @@ impl Engine {
             if self
                 .ports
                 .environment
-                .disk_free(&project)
+                .disk_free(node.as_deref(), &project)
                 .is_some_and(|free| free < floor)
             {
                 self.hold_reason = Some(EnvHold::DiskFloor);
-            } else if self.ports.environment.memory_pressure() == MemoryPressure::Critical {
+            } else if self.ports.environment.memory_pressure(node.as_deref())
+                == MemoryPressure::Critical
+            {
                 self.hold_reason = Some(EnvHold::MemoryCritical);
             }
         }
@@ -5987,6 +6027,12 @@ impl Engine {
             return Start::Waiting;
         };
         let runtime = candidate.agent;
+        // The worker runs the `hide` of the machine it starts on.
+        let hide_program = self
+            .ports
+            .environment
+            .hide_program(factory.node.as_deref())
+            .unwrap_or_else(|| self.hide_program.clone());
         let mut args = factory
             .config
             .worker_args
@@ -6029,6 +6075,7 @@ impl Engine {
                 // Retry: the same worktree and session, a fresh process (B54).
                 let request = WorkerSpawn {
                     factory: factory_id.to_owned(),
+                    node: factory.node.clone(),
                     task: id.to_owned(),
                     name: worker.name.clone(),
                     runtime,
@@ -6038,7 +6085,7 @@ impl Engine {
                         &task,
                         &factory,
                         true,
-                        &self.hide_program,
+                        &hide_program,
                         self.ports.environment.language(),
                     ),
                     args: args.clone(),
@@ -6097,6 +6144,7 @@ impl Engine {
         } else {
             let request = WorkerSpawn {
                 factory: factory_id.to_owned(),
+                node: factory.node.clone(),
                 task: id.to_owned(),
                 name: worker_name(&factory, &task),
                 runtime,
@@ -6106,7 +6154,7 @@ impl Engine {
                     &task,
                     &factory,
                     false,
-                    &self.hide_program,
+                    &hide_program,
                     self.ports.environment.language(),
                 ),
                 args,
@@ -6770,9 +6818,10 @@ impl Engine {
                     self.set_state(factory, task, TaskState::Waiting);
                 }
             }
-            EnvSignal::HerdrSocket => {
-                // Reconnect is the adapter's; the worker restarts in the same
-                // worktree and session at its next start.
+            EnvSignal::HerdrSocket | EnvSignal::NodeLink => {
+                // Reconnect is the adapter's, or the link's when the
+                // project's machine dials in again; the worker restarts in the
+                // same worktree and session at its next start.
                 if let Some(task) = task
                     && self
                         .task(factory, task)
@@ -7285,6 +7334,7 @@ fn parse_signal(value: &str) -> Option<EnvSignal> {
         EnvSignal::GithubServer,
         EnvSignal::Network,
         EnvSignal::HerdrSocket,
+        EnvSignal::NodeLink,
         EnvSignal::UsageLimit,
     ]
     .into_iter()
@@ -7367,6 +7417,9 @@ pub fn issue_body(task: &Task, factory: &Factory) -> String {
 pub struct Caller<'a> {
     pub pane: Option<&'a str>,
     pub cwd: Option<&'a str>,
+    /// The machine `cwd` is on, by node id; `None` is the core's own
+    /// (`Factory::node`).
+    pub node: Option<&'a str>,
     /// Another pane the caller named, which the host could not check against
     /// its credential: it can only make the caller a worker, never an operator.
     pub claimed: Option<&'a str>,

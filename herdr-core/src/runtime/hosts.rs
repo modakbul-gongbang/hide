@@ -866,11 +866,12 @@ impl Runtime {
             .unwrap_or_else(|| "The device helper is not ready".to_owned()))
     }
 
-    /// The node whose files Memory and Sessions read for a Project on
-    /// `device`, with its link: the core's own node, or a node that dials in
-    /// while its link is up, never a device the core dials, which keeps no
-    /// Memory (PRD core-host-node-move B14, Q20); asking starts no helper.
-    pub(crate) fn memory_node(
+    /// The node that does a Project's work on `device` for what the core
+    /// keeps (Memory, Sessions, a Factory), with its link: the core's own
+    /// node, or a node that dials in while its link is up, never a device the
+    /// core dials, which keeps none of it (PRD core-host-node-move B14, Q17,
+    /// Q20); asking starts no helper.
+    pub(crate) fn linked_node(
         &self,
         device: &str,
     ) -> Result<(crate::node::NodeId, Arc<dyn NodeLink>), &'static str> {
@@ -902,7 +903,7 @@ impl Runtime {
         &self,
         context: &crate::workspace_control::Context,
     ) -> Result<crate::memory_hook::Scope, &'static str> {
-        let (node, link) = self.memory_node(&context.device_id)?;
+        let (node, link) = self.linked_node(&context.device_id)?;
         Ok(crate::memory_hook::Scope {
             store: self.memory_database_path(),
             node,

@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use hide_factory::adapters::*;
-use hide_factory::exec::Machine;
+use hide_factory::exec::{Machine, Machines};
 use hide_factory::model::*;
 use hide_factory::project::{IssueBook, SharedProjects};
 use hide_node::Local;
@@ -205,6 +205,7 @@ fn task(fixture: &Fixture, id: &str, file: &str, text: &str) -> Task {
     git(&worktree, &["commit", "--quiet", "-m", id]);
     task.worker = Some(WorkerRef {
         factory: String::new(),
+        node: None,
         agent: None,
         name: id.into(),
         pane: None,
@@ -289,7 +290,10 @@ fn a_busy_node_leaves_a_verify_pending_rather_than_failed() {
 #[test]
 fn a_local_task_is_verified_merged_checked_on_main_and_reverted_alone() {
     let mut fx = fixture();
-    let probe = fx.projects.probe(fx.project.to_str().unwrap()).unwrap();
+    let probe = fx
+        .projects
+        .probe(None, fx.project.to_str().unwrap())
+        .unwrap();
     assert!(!probe.github);
     assert_eq!(probe.default_branch, "main");
     assert_eq!(probe.verify_candidates, vec!["make test"]);
@@ -600,4 +604,101 @@ fn a_report_after_the_remote_deleted_the_task_branch_still_pushes() {
         git(&worktree, &["rev-parse", "HEAD"]),
     );
     seen(&calls, &["factory.git", "factory.gh"]);
+}
+
+/// The core's machine and a node `n1` that links in, each its own counted
+/// node; the node's link can drop, and a new link is a new node session,
+/// which holds none of the old one's runs.
+struct TwoMachines {
+    core: Machine,
+    node: Mutex<Option<Machine>>,
+}
+
+impl Machines for TwoMachines {
+    fn on(&self, node: Option<&str>) -> Result<Machine, Failure> {
+        match node {
+            None => Ok(self.core.clone()),
+            Some("n1") => {
+                self.node.lock().unwrap().clone().ok_or_else(|| {
+                    Failure::environment("machine", EnvSignal::NodeLink, "link_down")
+                })
+            }
+            Some(other) => panic!("no machine {other}"),
+        }
+    }
+}
+
+/// A Factory on a node does its git, checks and verify runs on that node and
+/// none on the core's machine; while the node is not linked its work waits,
+/// and a run the dropped link took with it is an environment failure the
+/// Task is verified again after, never a run that stays pending
+/// (PRD core-host-node-move Q17).
+#[test]
+fn a_factory_on_a_node_works_on_that_node_and_waits_while_it_is_not_linked() {
+    let base = fixture();
+    let (core, core_calls) = node(Local::new(None));
+    let (on_node, node_calls) = node(Local::new(None));
+    let machines = Arc::new(TwoMachines {
+        core,
+        node: Mutex::new(Some(on_node)),
+    });
+    struct Shared(Arc<TwoMachines>);
+    impl Machines for Shared {
+        fn on(&self, node: Option<&str>) -> Result<Machine, Failure> {
+            self.0.on(node)
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let mut projects = SharedProjects::new(
+        Shared(Arc::clone(&machines)),
+        Box::new(Book::default()),
+        root.path().join("logs"),
+    );
+    let probe = projects
+        .probe(Some("n1"), base.project.to_str().unwrap())
+        .unwrap();
+    assert_eq!(probe.default_branch, "main");
+    let factory = Factory {
+        node: Some("n1".into()),
+        ..factory(&base.project, &["test -f b.txt"])
+    };
+    let t = task(&base, "T-1", "b.txt", "two\n");
+    assert_eq!(projects.premerge(&factory, &t).unwrap(), PreMerge::Clean);
+    let run = projects.start(&factory, &t).unwrap();
+    assert_eq!(settle(&mut projects, &factory, &run), VerifyPoll::Passed);
+    seen(
+        &node_calls,
+        &[
+            "factory.git",
+            "factory.project",
+            "factory.verify_submit",
+            "factory.verify_poll",
+        ],
+    );
+    let core_seen = core_calls.lock().unwrap().clone();
+    assert!(
+        !core_seen
+            .iter()
+            .any(|kind| kind.starts_with("factory.") && kind != "factory.verify_close"),
+        "the core's machine did the node's work: {core_seen:?}"
+    );
+
+    // The link drops: a start waits on it, a poll stays pending.
+    *machines.node.lock().unwrap() = None;
+    let waiting = projects.start(&factory, &t).unwrap_err();
+    assert_eq!(waiting.signal, Some(EnvSignal::NodeLink));
+    assert_eq!(projects.poll(&factory, &run), VerifyPoll::Pending);
+
+    // A run the old link held is gone once the node links again.
+    let (relinked, _) = node(Local::new(None));
+    *machines.node.lock().unwrap() = Some(relinked);
+    assert_eq!(
+        projects.poll(&factory, &run),
+        VerifyPoll::Environment {
+            signal: EnvSignal::NodeLink,
+            check: "verify".into(),
+        }
+    );
+    let again = projects.start(&factory, &t).unwrap();
+    assert_eq!(settle(&mut projects, &factory, &again), VerifyPoll::Passed);
 }

@@ -58,33 +58,120 @@ pub(crate) struct WorkerTextSources {
     pub connector: Option<std::sync::Arc<dyn hide_herdr_client::ApiConnector>>,
 }
 
+/// A worker's machine as the Factory host reaches it, off the lock.
+pub(crate) struct WorkerReach {
+    pub connector: std::sync::Arc<dyn hide_herdr_client::ApiConnector>,
+    pub node: std::sync::Arc<dyn crate::node_access::NodeLink>,
+    /// The worker's pane as its machine's Herdr names it.
+    pub herdr_pane: Option<String>,
+}
+
+/// A worker's pane as the core names it: Herdr's own id on the core's
+/// machine, under its node's prefix on another (`WorkerRef::node`).
+pub(crate) fn factory_pane_id(node: Option<&str>, herdr_pane: &str) -> String {
+    match node {
+        None => herdr_pane.to_owned(),
+        Some(node) => super::operations::remote_pane_id(node, herdr_pane),
+    }
+}
+
+/// The reverse of [`factory_pane_id`]; `None` for a pane another machine
+/// names.
+pub(crate) fn factory_herdr_pane<'a>(node: Option<&str>, pane: &'a str) -> Option<&'a str> {
+    match node {
+        None => Some(pane).filter(|pane| !super::is_remote_scoped_pane_id(pane)),
+        Some(node) => super::remote_pane_source_id(node, pane),
+    }
+}
+
 /// How far up the spawn lineage a caller is followed to its worker.
 const LINEAGE_LIMIT: usize = 16;
 
 impl Runtime {
-    pub(crate) fn factory_start_control(&self) -> Result<crate::factory::StartControl, String> {
+    /// What a worker start on the machine `node` names holds on to: that
+    /// machine's Herdr and node, the core's own or a node linked to it (Q17).
+    pub(crate) fn factory_start_control(
+        &self,
+        node: Option<&str>,
+    ) -> Result<crate::factory::StartControl, String> {
+        let device = node.unwrap_or(self.node.as_str());
+        let own = node.is_none();
+        let connector = self.delivery_connector(device).ok_or(if own {
+            "herdr_unavailable"
+        } else {
+            "device_unavailable"
+        })?;
+        let (_, node) = self.linked_node(device)?;
         Ok(crate::factory::StartControl {
-            connector: self
-                .live
-                .as_ref()
-                .ok_or("herdr_unavailable")?
-                .api_connector
-                .clone(),
-            node: self.own_node(),
-            generation: self.live_generation,
+            device: device.to_owned(),
+            connector,
+            node,
+            generation: own.then_some(self.live_generation),
         })
     }
 
+    /// Whether `control` still names the connection its machine has: a
+    /// Herdr or link that came back since is another connection.
     pub(crate) fn factory_start_control_current(
         &self,
         control: &crate::factory::StartControl,
     ) -> bool {
-        self.live_generation == control.generation
+        control
+            .generation
+            .is_none_or(|generation| generation == self.live_generation)
             && self
-                .live
-                .as_ref()
-                .is_some_and(|live| std::sync::Arc::ptr_eq(&live.api_connector, &control.connector))
-            && std::sync::Arc::ptr_eq(&self.own_node(), &control.node)
+                .delivery_connector(&control.device)
+                .is_some_and(|connector| std::sync::Arc::ptr_eq(&connector, &control.connector))
+            && self
+                .linked_node(&control.device)
+                .is_ok_and(|(_, node)| std::sync::Arc::ptr_eq(&node, &control.node))
+    }
+
+    /// The node a Factory a screen makes for a project on `device` names:
+    /// none for the core's own machine, the node for one that dials the
+    /// core. A device the core dials keeps no Factory (Q17).
+    pub(crate) fn factory_node(
+        &self,
+        device: &str,
+    ) -> Result<Option<String>, hide_factory::Refusal> {
+        const NEXT: &str = "Choose a project on the core's machine or on a machine linked to it";
+        if device == self.node.as_str() {
+            return Ok(None);
+        }
+        match self.link_origin(device) {
+            Some(crate::model::LinkOrigin::Inbound) => Ok(Some(device.to_owned())),
+            Some(_) => Err(hide_factory::Refusal::new(
+                "factory_device_unsupported",
+                NEXT,
+            )),
+            None => Err(hide_factory::Refusal::new("factory_device_unknown", NEXT)),
+        }
+    }
+
+    /// Where a worker's machine work goes: its machine's Herdr and node,
+    /// and its pane as that Herdr names it.
+    pub(crate) fn factory_worker_reach(
+        &self,
+        worker: &hide_factory::model::WorkerRef,
+    ) -> Result<WorkerReach, String> {
+        let device = worker.node.as_deref().unwrap_or(self.node.as_str());
+        let connector = self
+            .delivery_connector(device)
+            .ok_or("device_unavailable")?;
+        let (_, node) = self.linked_node(device)?;
+        let herdr_pane = match &worker.pane {
+            Some(pane) => Some(
+                factory_herdr_pane(worker.node.as_deref(), pane)
+                    .ok_or("worker_pane_invalid")?
+                    .to_owned(),
+            ),
+            None => None,
+        };
+        Ok(WorkerReach {
+            connector,
+            node,
+            herdr_pane,
+        })
     }
 
     pub(crate) fn set_factory_screen_port(&mut self, port: crate::factory::ScreenPort) {
@@ -209,39 +296,50 @@ impl Runtime {
         false
     }
 
-    /// Checks a local caller like a delivery request does and names the pane
-    /// and checkout it speaks from. A checkout-bound caller is the operator
-    /// acting without a pane: its hint is never identity or lineage.
+    /// Checks a caller on the core's machine or a node linked to it like a
+    /// delivery request does and names the pane and checkout it speaks from.
+    /// A checkout-bound caller is the operator acting without a pane: its
+    /// hint is never identity or lineage.
     pub(crate) fn factory_caller(
         &self,
+        device: &str,
         caller: &str,
         expected: &crate::workspace_control::Context,
         hint: Option<&str>,
     ) -> Result<crate::factory::FactoryCaller, String> {
+        self.linked_node(device).map_err(|_| "factory_local_only")?;
         let context = self
-            .workspace_control_query(self.node.as_str(), caller, Query::Info)
+            .workspace_control_query(device, caller, Query::Info)
             .map_err(|refusal| refusal.reason.to_owned())?
             .context;
         if context != *expected {
             return Err("caller_context_changed".into());
         }
+        let node = (device != self.node.as_str()).then(|| device.to_owned());
         let pane = match crate::workspace_control::Caller::parse(caller) {
             crate::workspace_control::Caller::Pane(pane) => Some(pane.to_owned()),
             crate::workspace_control::Caller::Checkout { .. } => None,
         };
         // A hint naming another pane than a pane caller's own can only make
-        // the caller a worker, never an operator.
+        // the caller a worker, never an operator. A node's hint may name the
+        // pane as its own Herdr does.
         let claimed = pane
             .as_deref()
             .and(hint)
-            .filter(|hint| pane.as_deref() != Some(*hint))
-            .map(str::to_owned);
+            .map(|hint| match node.as_deref() {
+                Some(node) if factory_herdr_pane(Some(node), hint).is_none() => {
+                    factory_pane_id(Some(node), hint)
+                }
+                _ => hint.to_owned(),
+            })
+            .filter(|hint| pane.as_deref() != Some(hint.as_str()));
         let ancestors = pane
             .as_deref()
             .map_or_else(crate::factory::Lineage::none, |pane| {
                 self.factory_lineage(pane)
             });
         Ok(crate::factory::FactoryCaller {
+            node,
             pane,
             cwd: Some(context.checkout_path.clone()).filter(|path| !path.is_empty()),
             claimed,
@@ -258,10 +356,11 @@ impl Runtime {
         runtime: &str,
         terminal_id: &str,
     ) -> Result<crate::factory::QuestionCaller, String> {
-        // Factory starts use factory_delivery's core-node authority. A
-        // foreign pane cannot be one of those accepted workers, and must
-        // not open an SSH API channel under this short question budget.
-        if device != self.node.as_str() {
+        // Factory workers run on the core's machine or a node linked to
+        // it (Q17). A pane on a device the core dials cannot be one of
+        // them, and must not open an SSH API channel under this short
+        // question budget.
+        if self.linked_node(device).is_err() {
             return Err("factory_guard_local_only".into());
         }
         let crate::workspace_control::Caller::Pane(pane) =
@@ -355,7 +454,7 @@ impl Runtime {
             || record.host_scope != native_context.host_scope
             || !parent.actor.same_identity(&crate::delivery::Actor::factory(
                 &worker.factory,
-                &actor.device_id,
+                self.node.as_str(),
             ))
             || !parent.actor.code_owned()
         {
@@ -378,13 +477,19 @@ impl Runtime {
         // own record and keep running, so ending it never makes an operator.
         // Nor does registering again without a parent: the same agent's
         // newest record that names one still decides where it sits.
-        let newest = ledger.agents.iter().rev().find(|agent| agent.pane == pane);
+        let newest = ledger
+            .agents
+            .iter()
+            .rev()
+            .find(|agent| agent.actor.pane_id == pane);
         let start = newest.and_then(|newest| {
             ledger
                 .agents
                 .iter()
                 .rev()
-                .filter(|agent| agent.pane == pane && agent.actor.same_identity(&newest.actor))
+                .filter(|agent| {
+                    agent.actor.pane_id == pane && agent.actor.same_identity(&newest.actor)
+                })
                 .find(|agent| agent.parent.is_some())
                 .or(Some(newest))
         });
@@ -407,7 +512,7 @@ impl Runtime {
             lineage.factory_spawned |= agent.actor.code_owned();
             // An ended agent's pane may be someone else's now.
             if !agent.ended {
-                lineage.panes.push(agent.pane.clone());
+                lineage.panes.push(agent.actor.pane_id.clone());
             }
             next = agent.parent.clone();
         }
@@ -478,12 +583,7 @@ impl Runtime {
             .agent_sleep
             .records
             .contains_key(pane);
-        let agent = self
-            .snapshot
-            .navigator
-            .agents
-            .iter()
-            .find(|agent| agent.pane_id == pane);
+        let agent = self.agent_row(pane);
         WorkerProbe {
             present: agent.is_some(),
             closing: self.panes_closing.contains(pane) || self.factory_closes_sent.contains(pane),
@@ -501,12 +601,7 @@ impl Runtime {
     /// the connection its screen is read through; nothing is read here.
     pub(crate) fn factory_worker_texts(&self, pane: &str) -> WorkerTextSources {
         use hide_agent_adapter::Capability;
-        let agent = self
-            .snapshot
-            .navigator
-            .agents
-            .iter()
-            .find(|agent| agent.pane_id == pane);
+        let agent = self.agent_row(pane);
         let factory = agent
             .and_then(|agent| hide_agent_adapter::adapter(&agent.agent_kind))
             .map(|row| row.factory);
@@ -536,7 +631,9 @@ impl Runtime {
                 .delivery_observations
                 .get(pane)
                 .map(|observation| observation.raw_pane_id.clone()),
-            connector: self.delivery_connector(self.node.as_str()),
+            connector: self.delivery_connector(
+                super::agent_sleep::pane_device(pane).unwrap_or(self.node.as_str()),
+            ),
         }
     }
 
@@ -593,13 +690,8 @@ impl Runtime {
             }
             return Ok(true);
         }
-        let Some(agent) = self
-            .snapshot
-            .navigator
-            .agents
-            .iter()
-            .find(|agent| agent.pane_id == pane)
-        else {
+        let device = super::agent_sleep::pane_device(pane);
+        let Some(agent) = self.agent_row(pane) else {
             return Err("This pane has no agent");
         };
         if !hide_factory::model::Runtime::parse(&agent.agent_kind)
@@ -607,14 +699,18 @@ impl Runtime {
         {
             return Err("agent_cannot_sleep");
         }
-        match crate::agent_sleep::sleep_refusal(agent, crate::agent_sleep::SleepMachine::Core) {
+        match crate::agent_sleep::sleep_refusal(agent, self.sleep_machine_of_pane(pane)) {
             None => {}
             Some("This agent is working") | Some("Hide cannot tell what this agent is doing") => {
                 return Ok(false);
             }
             Some(reason) => return Err(reason),
         }
-        if self.live.is_none() {
+        let reachable = match device {
+            None => self.live.is_some(),
+            Some(device) => self.remote_herdr_api(device).is_some(),
+        };
+        if !reachable {
             return Err("Putting an agent to sleep requires a live Herdr connection");
         }
         self.request_agent_sleep(pane);
@@ -710,10 +806,9 @@ impl Runtime {
     /// launch, or the start does not need it (`codex_launch`). When not,
     /// asks the kit to read the machine; the Factory starts workers with no
     /// Settings on screen.
-    pub(crate) fn factory_kit_read(&mut self, kind: &str) -> bool {
-        if !crate::codex_launch::needs_kit_answer(kind)
-            || self.kit_states.contains_key(self.node.as_str())
-        {
+    pub(crate) fn factory_kit_read(&mut self, node: Option<&str>, kind: &str) -> bool {
+        let device = node.unwrap_or(self.node.as_str());
+        if !crate::codex_launch::needs_kit_answer(kind) || self.kit_states.contains_key(device) {
             return true;
         }
         self.request_kit_check();
@@ -831,6 +926,7 @@ mod tests {
             ..Ledger::default()
         }));
         let worker = hide_factory::model::WorkerRef {
+            node: None,
             factory: "f-1".into(),
             agent: Some("accepted-worker".into()),
             name: "worker".into(),
@@ -973,6 +1069,7 @@ mod tests {
             .unwrap();
         crate::runtime::delivery::tests::recipient_at_rest(&mut runtime, "native-1", &herdr);
         let worker = hide_factory::model::WorkerRef {
+            node: None,
             factory: "f-1".into(),
             agent: Some("accepted-worker".into()),
             name: "worker".into(),
@@ -1042,7 +1139,9 @@ mod tests {
         }));
         let checkout = crate::workspace_control::checkout_caller_id("cap", "/checkouts/fixture");
         for hint in [None, Some("sender"), Some("w1:p1")] {
-            let caller = runtime.factory_caller(&checkout, &context, hint).unwrap();
+            let caller = runtime
+                .factory_caller(crate::node::TEST_NODE, &checkout, &context, hint)
+                .unwrap();
             assert_eq!(caller.pane, None, "hint {hint:?}");
             assert_eq!(caller.claimed, None, "hint {hint:?}");
             assert_eq!(
@@ -1055,13 +1154,13 @@ mod tests {
         // A pane caller keeps its own pane and lineage; a hint naming another
         // pane can only make it that pane's worker.
         let own = runtime
-            .factory_caller("sender", &context, Some("sender"))
+            .factory_caller(crate::node::TEST_NODE, "sender", &context, Some("sender"))
             .unwrap();
         assert_eq!(own.pane.as_deref(), Some("sender"));
         assert_eq!(own.claimed, None);
         assert_eq!(own.ancestors.agents, vec!["agent-worker"]);
         let other = runtime
-            .factory_caller("sender", &context, Some("w1:p1"))
+            .factory_caller(crate::node::TEST_NODE, "sender", &context, Some("w1:p1"))
             .unwrap();
         assert_eq!(other.pane.as_deref(), Some("sender"));
         assert_eq!(other.claimed.as_deref(), Some("w1:p1"));
