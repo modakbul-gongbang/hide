@@ -13,7 +13,7 @@ import type { TFunction } from "i18next";
 import { formatDateTime } from "./i18n/format";
 import type { MessageKey } from "./i18n/catalogs";
 import { requireInterfaceLanguage } from "./i18n/locale";
-import type { AgentRow, Checkout, IssueLabel, PullRequest, Task, TaskSubIssue, Workspace } from "./snapshot";
+import type { AgentRow, Checkout, IssueLabel, PrState, PullRequest, Task, TaskSubIssue, Workspace } from "./snapshot";
 
 export type Stage = "backlog" | "working" | "review" | "done";
 
@@ -61,23 +61,21 @@ export type BoardRow = {
   depth: number;
 };
 
-/** A pull request's lifecycle colour (D-06): open green, draft grey, merged purple, closed red. */
-export type PrTone = "open" | "draft" | "merged" | "closed";
-
-/** The result a card delivers: its pull request, with the CI rollup when it was read. */
+/**
+ * The result a card delivers: its pull request in the one PR state the core
+ * decided, and whether a reviewer asked for changes, the one review word a
+ * chip keeps beside its mark (the mark's colour says the rest).
+ */
 export type PrChip = {
   number: number;
   url: string;
-  tone: PrTone;
-  checks: "passing" | "failed" | "pending" | null;
-  /** The review GitHub asks for, on an open pull request only. */
-  review: "review_required" | "changes_requested" | "approved" | null;
+  state: PrState;
+  changesRequested: boolean;
 };
 
 export function prChip(pr: PullRequest): PrChip {
-  const tone: PrTone = pr.badge === "merged" ? "merged" : pr.badge === "closed" ? "closed" : pr.is_draft ? "draft" : "open";
-  const checks = pr.checks === "passing" || pr.checks === "failed" || pr.checks === "pending" ? pr.checks : null;
-  return { number: pr.number, url: pr.url, tone, checks, review: tone === "open" ? pr.review : null };
+  const live = pr.state !== "merged" && pr.state !== "closed";
+  return { number: pr.number, url: pr.url, state: pr.state, changesRequested: live && pr.review === "changes_requested" };
 }
 
 /** Where an issue's work is (B2): its branch, commits ahead of the base, and changed files, each above zero only. */
@@ -631,7 +629,7 @@ export type PrRow = {
   number: number;
   title: string;
   url: string;
-  tone: PrTone;
+  state: PrState;
   group: PrGroup;
   pr: PullRequest;
   branch: string;
@@ -644,7 +642,6 @@ export type PrRow = {
   lineage: BoardRow[];
   /** An agent there finished and was not looked at yet: the yellow `Review` (D-48). */
   needsLook: boolean;
-  checks: "passing" | "failed" | "pending" | null;
   review: "review_required" | "changes_requested" | "approved" | null;
   /** When it last changed, or merged, for the time column. */
   at: number | null;
@@ -691,9 +688,7 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
     const checkout = state.checkout_id === null ? null : workspace.checkouts.find((c) => c.id === state.checkout_id);
     if (checkout === undefined) throw new Error(`Missing PR checkout: ${state.checkout_id}`);
     const agentsHere = scopeOccurrences(state.agents, agents);
-    const chip = prChip(pr);
-    const merged = pr.badge === "merged";
-    const checks = chip.checks;
+    const merged = pr.state === "merged";
     const review = merged ? null : pr.review;
     const group = state.group;
     const issue = state.issue ? { ...state.issue, task: state.issue.task_key ? tasks.get(state.issue.task_key) ?? null : null } : null;
@@ -703,7 +698,7 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
       number: pr.number,
       title: pr.title,
       url: pr.url,
-      tone: chip.tone,
+      state: pr.state,
       group,
       pr,
       branch,
@@ -712,7 +707,6 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
       agents: agentsHere,
       lineage: scopeOccurrences(state.lineage, agents).map((agent, index) => ({ agent, depth: state.lineage[index]!.depth })),
       needsLook: state.needs_look,
-      checks,
       review,
       at: merged ? (pr.merged_at_unix_ms ?? null) : (pr.updated_at_unix_ms ?? null),
       delegate: group === "blocked",

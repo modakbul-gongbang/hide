@@ -323,7 +323,7 @@ describe("folds", () => {
 });
 
 describe("the filter", () => {
-  const project = () => workspace([checkout("main", { primary: true, tabs: [["m"]] }), checkout("prd/272-links", { tabs: [["a"], ["b"]], task: "github:acme/project#272", pr: { number: 301, title: "t", url: "u", badge: "open", review: null, is_draft: false, checks: "passing" } }), checkout("other", { tabs: [["c"]] })], "project", [{ key: "github:acme/project#272", source: "github", id: "#272", url: "u", title: "Links", open: true, updated_at_unix_ms: 0 }]);
+  const project = () => workspace([checkout("main", { primary: true, tabs: [["m"]] }), checkout("prd/272-links", { tabs: [["a"], ["b"]], task: "github:acme/project#272", pr: { number: 301, title: "t", url: "u", badge: "open", review: null, is_draft: false, checks: "passing", state: "mergeable" } }), checkout("other", { tabs: [["c"]] })], "project", [{ key: "github:acme/project#272", source: "github", id: "#272", url: "u", title: "Links", open: true, updated_at_unix_ms: 0 }]);
   const agents = () => [agent("m", { ...WORKING, identity_label: "Observer" }), child("a", "m", { ...ASKING, identity_label: "링크 수정" }), child("b", "m", { ...WORKING, identity_label: "테스트" }), child("c", "m", { identity_label: "정리" })];
 
   it("lights any of several chips, working with a parent waiting on children, and narrows with the search and the device (B25, B26, D-35, D-36)", () => {

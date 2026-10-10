@@ -1,6 +1,5 @@
 import {
   ArrowRightIcon,
-  CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CircleDashedIcon,
@@ -21,7 +20,6 @@ import {
   PlusIcon,
   SquareTerminalIcon,
   TriangleAlertIcon,
-  XIcon,
 } from "lucide-react";
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
 import type { Actions } from "./actions";
@@ -51,6 +49,7 @@ import { useShellStore } from "./store";
 import { placeWithin, workerElk, type GraphEdge, type NodeBox, type Placement } from "./dependencyLayout";
 import { useMeasuredPaths } from "./measuredPaths";
 import { AgentMessageHint, PullRequestChip } from "./OverviewLenses";
+import { PrChipMark } from "./components/pr-mark";
 import {
   NO_FILTER,
   STAGES,
@@ -67,7 +66,6 @@ import {
   type IssueFilter,
   type LoosePullRequest,
   type LooseWorktree,
-  type PrChip,
   type Stage,
   type TaskCard,
   type TasksBoard,
@@ -705,7 +703,6 @@ export function IssueCardView({ card, page, actions, handlers, graph }: { card: 
           {card.pr && checkout ? (
             <span className="inline-flex items-center gap-xxs" onClick={(event) => event.stopPropagation()}>
               <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} onRow={(number) => handlers.openPullRequestRow(owner, number)} now={Date.now()} />
-              {card.stage === "review" ? <ReviewMarks pr={card.pr} /> : null}
             </span>
           ) : null}
         </div>
@@ -797,51 +794,6 @@ function CheckoutChipView({ card, handlers }: { card: TaskCard; handlers: BoardH
         ) : null}
       </button>
     </CheckoutCardHint>
-  );
-}
-
-export const PR_TONE: Record<PrChip["tone"], string> = {
-  open: "text-pr-open",
-  draft: "text-pr-draft",
-  merged: "text-pr-merged",
-  closed: "text-pr-closed",
-};
-
-export const CHECKS_LABEL: Record<"passing" | "failed" | "pending", MessageKey> = {
-  passing: "requests.checks.passing",
-  failed: "requests.checks.failed",
-  pending: "requests.checks.pending",
-};
-
-export const REVIEW: Record<NonNullable<PrChip["review"]>, { label: MessageKey; tone: string }> = {
-  review_required: { label: "board.review.required", tone: "text-muted-foreground" },
-  changes_requested: { label: "board.review.changes", tone: "text-warning" },
-  approved: { label: "board.review.approved", tone: "text-success" },
-};
-
-/** The CI mark once read: passing, failed or still running. */
-export function ChecksMark({ checks }: { checks: keyof typeof CHECKS_LABEL }) {
-  const { t } = useInterfaceTranslation();
-  return (
-    <span role="img" aria-label={t(CHECKS_LABEL[checks])} className={checks === "passing" ? "text-success" : checks === "failed" ? "text-destructive" : "text-muted-foreground"} data-pr-checks={checks}>
-      {checks === "passing" ? <CheckIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : checks === "failed" ? <XIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <StatusMark symbol="●" className="size-(--size-icon-sm)" />}
-    </span>
-  );
-}
-
-/** A review card's CI mark once read and the one word of the review GitHub asks for (B2). */
-export function ReviewMarks({ pr, review = true }: { pr: PrChip; review?: boolean }) {
-  const { t } = useInterfaceTranslation();
-  const asked = review && pr.review ? REVIEW[pr.review] : null;
-  return (
-    <>
-      {pr.checks ? <ChecksMark checks={pr.checks} /> : null}
-      {asked ? (
-        <span className={cn("font-sans", asked.tone)} data-pr-review={pr.review}>
-          {t(asked.label)}
-        </span>
-      ) : null}
-    </>
   );
 }
 
@@ -1042,7 +994,7 @@ function StageGlyph({ stage }: { stage: Stage }) {
   const glyph = {
     backlog: <CircleDashedIcon className="text-muted-foreground" />,
     working: <ContrastIcon className="text-warning" />,
-    review: <GitPullRequestIcon className="text-pr-open" />,
+    review: <GitPullRequestIcon className="text-success" />,
     done: <GitMergeIcon className="text-pr-merged" />,
   }[stage];
   return (
@@ -1189,9 +1141,7 @@ function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: 
             </span>
           ) : null}
           {card.pr ? (
-            <span className={cn("inline-flex items-center gap-xxs", PR_TONE[card.pr.tone])} data-pr-chip={card.pr.number}>
-              <GitPullRequestIcon aria-hidden="true" className="size-(--size-icon-sm)" />#{card.pr.number}
-            </span>
+            <PrChipMark chip={card.pr} />
           ) : null}
           {card.chip ? <span className="max-w-(--home-collapsed-width) truncate">{card.chip.branch}</span> : null}
           {card.chip?.ahead != null ? <span>↑{card.chip.ahead}</span> : null}

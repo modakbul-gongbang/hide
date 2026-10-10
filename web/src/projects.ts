@@ -7,9 +7,9 @@ import type { AgentScope } from "./agentScope";
 // age, merge or attention rule is repeated.
 
 import type { TFunction } from "i18next";
-import type { MessageKey } from "./i18n/catalogs";
 import { agentGroupTitle, type AgentGroup, type ListedAgent } from "./navigation";
-import type { Checkout, InactiveProjectGroup, MarkCounts, PullRequest, RecentCheckout, Workspace } from "./snapshot";
+import { badgeWord, checksWord, PR_LOOK, reviewWord } from "./prMark";
+import type { Checkout, InactiveProjectGroup, MarkCounts, PrState, PullRequest, RecentCheckout, Workspace } from "./snapshot";
 
 /** Return to this device's last usable checkout, then its primary, then row order. */
 export function projectCheckout(workspace: Workspace, recent: readonly RecentCheckout[] = []): Checkout | null {
@@ -138,43 +138,6 @@ export function projectMarks(workspace: Workspace): MarkCounts {
   return workspace.agent_scope.marks;
 }
 
-/** The glyph a pull request draws: its lifecycle, with a draft keeping its own shape while it is open or under review. */
-export type PullRequestKind = Extract<CheckoutKind, `pr_${string}`>;
-
-export function pullRequestKind(pr: PullRequest): PullRequestKind {
-  if (pr.badge === "merged") return "pr_merged";
-  if (pr.badge === "closed") return "pr_closed";
-  return pr.is_draft ? "pr_draft" : "pr_open";
-}
-
-/** The word and tone of a review decision, on the badge of a pull request under review and on the card's Review row. */
-const REVIEW_WORD: Record<NonNullable<PullRequest["review"]>, { value: MessageKey; tone: string }> = {
-  approved: { value: "board.review.approved", tone: "text-success" },
-  changes_requested: { value: "board.review.changes", tone: "text-destructive" },
-  review_required: { value: "board.review.required", tone: "text-muted-foreground" },
-};
-
-/**
- * The pull request's badge (PRD checkout-pr-glyph-card D-08): the lifecycle
- * word for a merged, closed, open or draft pull request, and the review
- * decision for one under review. A draft that is under review keeps the
- * decision as its badge and says `draft` beside it, in the draft color.
- */
-export function pullRequestBadge(pr: PullRequest, t: TFunction<"translation">): { label: string; color: string; draft: boolean } {
-  switch (pr.badge) {
-    case "merged":
-      return { label: t("requests.badge.merged"), color: "text-pr-merged", draft: false };
-    case "closed":
-      return { label: t("requests.badge.closed"), color: "text-pr-closed", draft: false };
-    case "open":
-      return pr.is_draft ? { label: t("overview.draft"), color: "text-pr-draft", draft: false } : { label: t("requests.badge.open"), color: "text-pr-open", draft: false };
-    case "review": {
-      const word = REVIEW_WORD[pr.review ?? "review_required"];
-      return { label: t(word.value), color: word.tone, draft: pr.is_draft };
-    }
-  }
-}
-
 /**
  * The pull request a checkout's row speaks for: a stale refresh keeps the
  * last known one (its glyph muted), an unavailable answer that is not stale
@@ -187,14 +150,16 @@ export function shownPullRequest(checkout: Checkout): PullRequest | null {
   return !github || github.available || github.stale || github.unavailable_reason === null ? pr : null;
 }
 
-/** The checkout row's leading glyph: a pull request's lifecycle, else what kind of checkout it is. */
-export type CheckoutKind = "pr_open" | "pr_draft" | "pr_merged" | "pr_closed" | "folder" | "primary" | "detached" | "branch";
+/** The checkout row's leading glyph: its pull request's mark, else what kind of checkout it is. */
+export type CheckoutKind = "pull_request" | "folder" | "primary" | "detached" | "branch";
 
 /** One checkout row of the Projects tab, mirrored from `SidebarCheckoutPresentation`. */
 export type CheckoutPresentation = {
   kind: CheckoutKind;
-  /** The glyph's color class: danger for a missing folder, muted for stale GitHub data, else the lifecycle color. */
+  /** The glyph's color class when it is not a pull request's mark: danger for a missing folder, else subtle. */
   kindTone: string;
+  /** GitHub could not be read again: the pull request's mark dims. */
+  stale: boolean;
   /** The last commit's age; absent for a missing folder and until Git has been read. */
   age: string | null;
   /** Line two waits for Git to be read, so a row does not grow and shrink as the facts arrive. */
@@ -207,26 +172,14 @@ export type CheckoutPresentation = {
   pullRequest: PullRequest | null;
 };
 
-const LIFECYCLE_TONE: Record<Extract<CheckoutKind, `pr_${string}`>, string> = {
-  pr_open: "text-pr-open",
-  pr_draft: "text-pr-draft",
-  pr_merged: "text-pr-merged",
-  pr_closed: "text-pr-closed",
-};
-
 export function checkoutPresentation(workspace: Workspace, checkout: Checkout, nowMs: number, t: TFunction<"translation">): CheckoutPresentation {
   const github = checkout.github;
   const pr = shownPullRequest(checkout);
   const primary = checkout.is_primary === true;
   const detached = checkout.worktree ? checkout.worktree.branch === null : false;
-  const kind: CheckoutKind = primary ? "primary" : pr ? pullRequestKind(pr) : !workspace.is_git ? "folder" : detached ? "detached" : "branch";
-  const kindTone = !checkout.exists
-    ? "text-destructive"
-    : kind.startsWith("pr_")
-      ? github?.stale
-        ? "text-muted-foreground"
-        : LIFECYCLE_TONE[kind as keyof typeof LIFECYCLE_TONE]
-      : "text-subtle-foreground";
+  // A folder that is gone draws its kind in danger rather than a pull request's mark.
+  const kind: CheckoutKind = primary ? "primary" : pr && checkout.exists ? "pull_request" : !workspace.is_git ? "folder" : detached ? "detached" : "branch";
+  const kindTone = !checkout.exists ? "text-destructive" : "text-subtle-foreground";
   const gitLoading = !!workspace.is_git && !checkout.worktree;
   const commitSeconds = checkout.worktree?.last_commit_unix_seconds;
   const age = checkout.exists && !gitLoading && commitSeconds != null ? relativeActivity(commitSeconds * 1000, nowMs, t) : null;
@@ -235,7 +188,7 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
 
   const lines: string[] = [];
   if (pr) {
-    let first = `#${pr.number} · ${pullRequestBadge(pr, t).label}`;
+    let first = `#${pr.number} · ${t(PR_LOOK[pr.state].word)}`;
     if (pr.title) first += ` · ${pr.title}`;
     const lastKnown = github?.stale ? activityAge(github.last_success_at_unix_ms, nowMs) : null;
     if (lastKnown) first += ` · ${t("card.lastKnown", { age: ageText(lastKnown, t) })}`;
@@ -263,9 +216,10 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
   return {
     kind,
     kindTone,
+    stale: github?.stale === true,
     age,
     secondLineReady: !gitLoading,
-    settled: pr?.badge === "merged" || pr?.badge === "closed",
+    settled: pr?.state === "merged" || pr?.state === "closed",
     detail: lines.join("\n"),
     pullRequest: pr,
   };
@@ -282,17 +236,11 @@ export type CheckoutCardRow =
 export type CheckoutCard = {
   /** A pull request's badge line, or the danger header of a folder that is gone; null on a plain checkout. */
   header:
-    | { kind: "pull_request"; badge: ReturnType<typeof pullRequestBadge>; glyph: PullRequestKind; number: number; url: string; title: string }
+    | { kind: "pull_request"; badge: ReturnType<typeof badgeWord>; state: PrState; number: number; url: string; title: string }
     | { kind: "missing"; label: string }
     | null;
   /** Each row only where its source has a value; a row with nothing to say takes no place. */
   rows: CheckoutCardRow[];
-};
-
-const CHECKS_WORD: Partial<Record<NonNullable<PullRequest["checks"]>, { value: MessageKey; tone: string }>> = {
-  passing: { value: "card.checkPassing", tone: "text-success" },
-  failed: { value: "card.checkFailed", tone: "text-destructive" },
-  pending: { value: "card.checkPending", tone: "text-muted-foreground" },
 };
 
 /**
@@ -339,15 +287,16 @@ export function pullRequestCard(pr: PullRequest, t: TFunction<"translation">): C
 }
 
 function pullRequestHeader(pr: PullRequest, t: TFunction<"translation">): NonNullable<CheckoutCard["header"]> {
-  return { kind: "pull_request", badge: pullRequestBadge(pr, t), glyph: pullRequestKind(pr), number: pr.number, url: pr.url, title: pr.title };
+  return { kind: "pull_request", badge: badgeWord(pr, t), state: pr.state, number: pr.number, url: pr.url, title: pr.title };
 }
 
 /** A pull request's Review and Checks rows, each once GitHub has answered it. */
 function pullRequestRows(pr: PullRequest, t: TFunction<"translation">): CheckoutCardRow[] {
   const rows: CheckoutCardRow[] = [];
-  if (pr.review) rows.push({ key: "review", label: t("card.review"), value: t(REVIEW_WORD[pr.review].value), tone: REVIEW_WORD[pr.review].tone });
-  const checks = pr.checks ? CHECKS_WORD[pr.checks] : undefined;
-  if (checks) rows.push({ key: "checks", label: t("card.checks"), value: t(checks.value), tone: checks.tone });
+  const review = reviewWord(pr.review);
+  if (review) rows.push({ key: "review", label: t("card.review"), value: t(review.key), tone: review.tone });
+  const checks = checksWord(pr.checks);
+  if (checks) rows.push({ key: "checks", label: t("card.checks"), value: t(checks.key), tone: checks.tone });
   return rows;
 }
 

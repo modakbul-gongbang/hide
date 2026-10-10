@@ -2,7 +2,8 @@ import { ChevronDownIcon, CircleAlertIcon, GitPullRequestIcon, MoonIcon } from "
 import type { TFunction } from "i18next";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
-import { askWhat, PrChip, prStaleness, TreeButtonFace, VerbText } from "./components/agent-tree";
+import { askWhat, TreeButtonFace, VerbText } from "./components/agent-tree";
+import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
 import { AgentTreePopover } from "./components/agent-tree-popover";
 import { Elapsed } from "./components/elapsed";
 import { Hint } from "./components/ui/tooltip";
@@ -24,8 +25,8 @@ const LABELS: Record<string, MessageKey> = {
   blocked: "agentSessions.tag.blocked", stopped: "agentSessions.tag.stopped",
   result: "agentSessions.tag.result", fix: "agentSessions.tag.fix", review: "agentSessions.tag.review", merge: "agentSessions.tag.merge",
 };
-const TONES = { muted: "bg-secondary text-muted-foreground", warning: "bg-warning/10 text-warning", error: "bg-destructive/10 text-destructive", success: "bg-success/10 text-success", pr: "bg-pr-open/10 text-pr-open" };
-const ACTION_TONES = { muted: "bg-secondary text-secondary-foreground", warning: "bg-warning text-status-foreground", error: "bg-destructive text-destructive-foreground", success: "bg-success text-status-foreground", pr: "bg-pr-open text-status-foreground" };
+const TONES = { muted: "bg-secondary text-muted-foreground", warning: "bg-warning/10 text-warning", error: "bg-destructive/10 text-destructive", success: "bg-success/10 text-success", pr: "bg-pr-mergeable/10 text-pr-mergeable" };
+const ACTION_TONES = { muted: "bg-secondary text-secondary-foreground", warning: "bg-warning text-status-foreground", error: "bg-destructive text-destructive-foreground", success: "bg-success text-status-foreground", pr: "bg-pr-mergeable text-status-foreground" };
 
 export function PaneHeaderBand({ paneId, header, actions }: { paneId: string; header: PaneHeader | undefined; actions: Actions }) {
   const { t } = useInterfaceTranslation();
@@ -121,13 +122,17 @@ export function usePaneAgents(): AgentRow[] {
   return rows(rest, local);
 }
 
-/** The pane's own PR chip after its title (B21, B22); a descendant's PRs stay on its own rows. */
+/** The pane's own PR mark after its title (B21, B22); a descendant's PRs stay on its own rows. */
 export function PanePrChip({ paneId, actions }: { paneId: string; actions: Actions }) {
-  const rest = useShellStore((state) => state.rest);
   const agent = usePaneAgents().find((row) => row.pane_id === paneId);
   if (!agent?.state.pr) return null;
+  return <PaneAgentPrMark agent={agent} actions={actions} />;
+}
+
+function PaneAgentPrMark({ agent, actions }: { agent: AgentRow; actions: Actions }) {
+  const staleness = useAgentStaleness(agent);
   // The pane names no project; the PR's URL finds the one that lists it.
-  return <PrChip agent={agent} staleness={prStaleness(rest, agent)} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} />;
+  return <AgentPrMark agent={agent} staleness={staleness} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} />;
 }
 
 /** The pane header's child button (B21): a tree icon and the direct child count, opening the tree popover. */

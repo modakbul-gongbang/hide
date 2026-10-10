@@ -236,6 +236,8 @@ fn opening_a_pull_request_reads_its_sessions_on_the_panels_own_revision() {
     let pr = panel.pr.unwrap();
     assert_eq!(pr.branch, "4-task");
     assert_eq!(pr.issues.len(), 2);
+    // The record knows no checks: an open pull request is pending, never a pass.
+    assert_eq!(pr.state, crate::model::PrState::Pending);
 
     let first = runtime.snapshot_delta_payload(0);
     assert!(first.link_panel.is_some());

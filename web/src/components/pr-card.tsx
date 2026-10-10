@@ -3,9 +3,8 @@ import type { MouseEvent, ReactNode } from "react";
 import { badgeParts } from "../agentRow";
 import { holdsCommandKey } from "../host";
 import { useInterfaceTranslation } from "../i18n/client";
-import { cn } from "../lib/utils";
 import { cardSingleValue, type CheckoutCard } from "../projects";
-import { CHECKOUT_KIND_ICON } from "./checkout-icon";
+import { PR_LOOK } from "../prMark";
 import { BadgeMarks } from "./status-badge";
 import { Badge } from "./ui/badge";
 import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./ui/tooltip";
@@ -120,17 +119,18 @@ function PullRequestHeader({
   onOpen: (url: string, external: boolean) => void;
 }) {
   const { t } = useInterfaceTranslation();
-  // The same shape the sidebar row's glyph draws for this pull request.
-  const Icon = CHECKOUT_KIND_ICON[header.glyph];
+  // The same mark the sidebar row draws: the icon carries the state's colour,
+  // the word only says what the pull request is.
+  const { icon: Icon, tone } = PR_LOOK[header.state];
   return (
     <>
       <div className="flex items-center gap-sm">
-        <Badge variant="outline" className={cn("gap-xs", header.badge.color)} data-checkout-card-badge={header.badge.label}>
-          <Icon aria-hidden="true" />
+        <Badge variant="outline" className="gap-xs text-foreground" data-checkout-card-badge={header.badge.label} data-pr-state={header.state}>
+          <Icon aria-hidden="true" className={tone} />
           {header.badge.label}
         </Badge>
         {header.badge.draft ? (
-          <span className="text-caption text-pr-draft" data-checkout-card-draft="true">
+          <span className="text-caption text-muted-foreground" data-checkout-card-draft="true">
             {t("overview.draft")}
           </span>
         ) : null}
@@ -139,7 +139,7 @@ function PullRequestHeader({
         <button
           type="button"
           data-checkout-card-open={header.number}
-          className="inline-flex items-center gap-xxs rounded-xs text-caption font-medium text-pr-open outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+          className="inline-flex items-center gap-xxs rounded-xs text-caption font-medium text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring"
           onClick={(event) => {
             event.stopPropagation();
             onOpen(header.url, pullRequestOpenExternal(event));

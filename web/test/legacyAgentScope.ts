@@ -316,11 +316,11 @@ export function subtreeOf(inside: readonly string[], agents: readonly AgentRow[]
 }
 export function closeSheet(panes: readonly PaneRow[], host: readonly AgentRow[], all: readonly AgentRow[]) { return drawClose.closeSheet(panes, host, all, legacyCloseScope(panes, host, all)); }
 
-export function legacyPrCounts(board: { groups: { group: string; rows: { needsLook: boolean; tone: string }[] }[] }) {
+export function legacyPrCounts(board: { groups: { group: string; rows: { needsLook: boolean; state: string }[] }[] }) {
   const rows = (group: string) => board.groups.find((g) => g.group === group)?.rows ?? [];
   const turn = rows("turn");
   const look = turn.filter((r) => r.needsLook).length;
-  const draft = turn.filter((r) => !r.needsLook && r.tone === "draft").length;
+  const draft = turn.filter((r) => !r.needsLook && r.state === "draft").length;
   return { turn: turn.length, fixing: rows("fixing").length, blocked: rows("blocked").length, review: turn.length - look - draft, draft, look };
 }
 

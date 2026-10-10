@@ -448,7 +448,20 @@ impl Runtime {
             }
             Ok(PanelAnswer::Pr(links)) => {
                 if let Some(links) = links {
+                    let badge = if links.pr.merged_at.is_some() {
+                        crate::model::PullRequestBadge::Merged
+                    } else if links.pr.closed_at.is_some() {
+                        crate::model::PullRequestBadge::Closed
+                    } else {
+                        crate::model::PullRequestBadge::Open
+                    };
                     panel.pr = Some(LinkedPr {
+                        state: crate::model::PrState::of(
+                            badge,
+                            false,
+                            crate::model::PullRequestChecks::Unknown,
+                            None,
+                        ),
                         number: links.pr.number,
                         branch: links.pr.branch,
                         title: links.pr.title,

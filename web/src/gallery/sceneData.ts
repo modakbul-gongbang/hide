@@ -107,7 +107,7 @@ type CheckoutSpec = {
   purpose?: string;
   panes?: string[];
   marks?: Partial<MarkCounts>;
-  pr?: Pick<PullRequest, "badge" | "is_draft" | "number" | "title">;
+  pr?: Pick<PullRequest, "badge" | "is_draft" | "number" | "title" | "state">;
   exists?: boolean;
 };
 
@@ -204,7 +204,7 @@ function ownPull(number: number, title: string, state: PullState): Pick<AgentRow
   return {
     request: {
       verb: "working", verb_since_unix_ms: 0, line: undefined, request: null, later_by: null, reply: null,
-      pull_requests: [{ number, title, url: `https://example.invalid/herdr-ide/pull/${number}`, badge: state === "merged" ? "merged" : "open", checks: state === "failed" ? "failed" : state === "pending" ? "pending" : "passing", review: state === "pending" ? "review_required" : "approved", head_branch: `agents/${number}`, closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: state === "merged" ? 0 : null }],
+      pull_requests: [{ number, title, url: `https://example.invalid/herdr-ide/pull/${number}`, badge: state === "merged" ? "merged" : "open", checks: state === "failed" ? "failed" : state === "pending" ? "pending" : "passing", review: state === "pending" ? "review_required" : "approved", is_draft: false, head_branch: `agents/${number}`, closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: state === "merged" ? 0 : null }],
     },
   };
 }
@@ -326,8 +326,8 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
   const herdrCheckouts: Checkout[] = [
     checkout({ id: "herdr-ide:main", workspace: "herdr-ide", branch: "main", primary: true, age: 10, purpose: "사이드바 가독성 개선", panes: ["a1", ...A1_CHILDREN.filter((pane) => pane !== "a1c1"), "a1g1", "a1g2", "a2", "a2c1", "a2c2", "a3"], marks: { question: 2, working: 3, idle: 1 } }, now),
     checkout({ id: "herdr-ide:155", workspace: "herdr-ide", branch: "quick/155-browser-display", age: 40 * 60, purpose: issueTitle(155, "browser display (WebContentsView)"), panes: ["q1"], marks: { question: 1 } }, now),
-    checkout({ id: "herdr-ide:154", workspace: "herdr-ide", branch: "quick/154-search-palette", age: 3600, purpose: issueTitle(154, "⌘K search palette UI"), panes: ["q2"], marks: { done: 1 }, pr: { number: 154, title: "Search palette", badge: "open", is_draft: true } }, now),
-    checkout({ id: "herdr-ide:electron", workspace: "herdr-ide", branch: "electron-shortcut-bindings", age: 2 * 3600, purpose: "Electron desktop host for the web shell", panes: ["e1"], marks: { working: 1 }, pr: { number: 149, title: "Electron host", badge: "open", is_draft: false } }, now),
+    checkout({ id: "herdr-ide:154", workspace: "herdr-ide", branch: "quick/154-search-palette", age: 3600, purpose: issueTitle(154, "⌘K search palette UI"), panes: ["q2"], marks: { done: 1 }, pr: { number: 154, title: "Search palette", badge: "open", is_draft: true, state: "draft" } }, now),
+    checkout({ id: "herdr-ide:electron", workspace: "herdr-ide", branch: "electron-shortcut-bindings", age: 2 * 3600, purpose: "Electron desktop host for the web shell", panes: ["e1"], marks: { working: 1 }, pr: { number: 149, title: "Electron host", badge: "open", is_draft: false, state: "pending" } }, now),
     checkout({ id: "herdr-ide:ux", workspace: "herdr-ide", branch: "design/workspace-ux-proposal", age: 5 * 3600, purpose: "Workspace UX 제안과 상태 소유 정리" }, now),
     checkout({ id: "herdr-ide:fix", workspace: "herdr-ide", branch: "fix/registered-projects-only", age: 86400 }, now),
     checkout({ id: "herdr-ide:legacy", workspace: "herdr-ide", branch: "legacy-shell", exists: false }, now),

@@ -4,7 +4,8 @@ import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { markTone } from "./agentRow";
 import { sessionsModel, type SessionsModel } from "./sessionPanel";
-import { AskLine, DescendantMark, PrChip, TreeChevron, TreeRails, type PrStaleness, type TreePlace } from "./components/agent-tree";
+import { AskLine, DescendantMark, TreeChevron, TreeRails, type TreePlace } from "./components/agent-tree";
+import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
 import { childrenOf } from "./components/agent-tree-popover";
 import { Elapsed } from "./components/elapsed";
 import { StatusMark } from "./components/status-mark";
@@ -139,23 +140,23 @@ function sessionMember(model: SessionsModel, member: number): LensAgent {
 
 /** A Sessions root and, through every opened row, its descendants as tree rows. */
 function SessionTree({ row, lines, model, actions, byPane, opened, selected, onShowAll }: { row: LensAgent; lines: SidebarTreeLine[]; model: SessionsModel; actions: Actions; byPane: ReadonlyMap<string, AgentRow>; opened: ReadonlySet<string>; selected: string | null; onShowAll: (parent: string) => void }) {
-  const { agent, checkout } = row;
-  const staleness: PrStaleness = { stale: checkout.github?.stale === true, lastRead: checkout.github?.last_success_at_unix_ms ?? null };
+  const { agent } = row;
   const openOf = (of: AgentRow) => (childrenOf(of, byPane).length > 0 ? opened.has(of.pane_id) : null);
   return <>
-    <SessionRow row={row} model={model} actions={actions} staleness={staleness} open={openOf(agent)} selected={selected === agent.pane_id} />
+    <SessionRow row={row} model={model} actions={actions} open={openOf(agent)} selected={selected === agent.pane_id} />
     {lines.slice(1).map((line) => {
       if (line.kind === "more") return <TreeMoreRow key={`more:${line.parent}`} line={line} onShowAll={onShowAll} />;
       const child = line.row.agent;
       const parent = (child.lineage_parent_pane_id ? byPane.get(child.lineage_parent_pane_id) : undefined) ?? agent;
-      return <ChildRow key={child.pane_id} parent={parent} child={child} depth={line.row.depth} model={model} actions={actions} staleness={staleness} place={line.place} open={openOf(child)} selected={selected === child.pane_id} workspace={row.project.id} />;
+      return <ChildRow key={child.pane_id} parent={parent} child={child} depth={line.row.depth} model={model} actions={actions} place={line.place} open={openOf(child)} selected={selected === child.pane_id} workspace={row.project.id} />;
     })}
   </>;
 }
 
-const SessionRow = memo(function SessionRow({ row, model, actions, staleness, open, selected }: { row: LensAgent; model: SessionsModel; actions: Actions; staleness: PrStaleness; open: boolean | null; selected: boolean }) {
+const SessionRow = memo(function SessionRow({ row, model, actions, open, selected }: { row: LensAgent; model: SessionsModel; actions: Actions; open: boolean | null; selected: boolean }) {
   const { t } = useInterfaceTranslation();
   const { agent, project } = row;
+  const staleness = useAgentStaleness(agent);
   const session = agent.state.session;
   const needsYou = session.group === "needs_you";
   const open_ = () => { if (model.available) actions.openAgent(agent.pane_id); };
@@ -174,7 +175,7 @@ const SessionRow = memo(function SessionRow({ row, model, actions, staleness, op
           {session.unfinished ? <StatusMark symbol="◐" className="text-warning" data-session-unfinished="true" /> : <StatusMark symbol={agent.symbol} className={markTone(agent)} />}<AgentMark kind={agent.agent_kind} />
           <span className="min-w-0 truncate text-caption font-medium">{agent.identity_label}</span>
         </button>
-        {needsYou ? null : <PrChip agent={agent} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: project.id, url: pull.url, number: pull.number })} />}
+        {needsYou ? null : <AgentPrMark agent={agent} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: project.id, url: pull.url, number: pull.number })} />}
         {needsYou || open ? null : <DescendantMark agent={agent} />}
         <Elapsed since={agent.state.request_since} className="shrink-0 text-micro text-muted-foreground" />
         {!agent.resolved ? <Hint label={t("agentSessions.resolve")}><button type="button" disabled={!model.available} aria-label={t("agentSessions.resolve")} data-session-resolve={agent.pane_id} className="shrink-0 rounded-xs p-xxs text-muted-foreground opacity-0 outline-none hover:bg-secondary group-hover/session:opacity-100 group-focus-within/session:opacity-100 focus-visible:ring-1 focus-visible:ring-ring hoverless:opacity-100" onClick={(event) => {event.stopPropagation(); actions.resolveSession(agent.pane_id);}}><CheckIcon className="size-(--size-icon-sm)" /></button></Hint> : null}
@@ -189,8 +190,9 @@ const SessionRow = memo(function SessionRow({ row, model, actions, staleness, op
  * chevron, PR and, while folded, its descendant mark; the second line starts
  * with the branch when it works in another checkout than its parent.
  */
-function ChildRow({ parent, child, depth, model, actions, staleness, place, open, selected, workspace }: { parent: AgentRow; child: AgentRow; depth: number; model: SessionsModel; actions: Actions; staleness: PrStaleness; place: TreePlace; open: boolean | null; selected: boolean; workspace: string }) {
+function ChildRow({ parent, child, depth, model, actions, place, open, selected, workspace }: { parent: AgentRow; child: AgentRow; depth: number; model: SessionsModel; actions: Actions; place: TreePlace; open: boolean | null; selected: boolean; workspace: string }) {
   const { t } = useInterfaceTranslation();
+  const staleness = useAgentStaleness(child);
   const go = () => { if (model.available) actions.followRelation(parent.pane_id, child.pane_id, child.identity_label); };
   const toggle = () => actions.toggleSessionTree(child.pane_id);
   // The sidebar's title rule: a delegated title is quiet unless it asks or is selected.
@@ -209,7 +211,7 @@ function ChildRow({ parent, child, depth, model, actions, staleness, place, open
           <StatusMark symbol={child.symbol} className={markTone(child)} /><AgentMark kind={child.agent_kind} />
           <span className={cn("min-w-0 truncate text-caption", titleTone)}>{child.identity_label}</span>
         </button>
-        <PrChip agent={child} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: workspace, url: pull.url, number: pull.number })} />
+        <AgentPrMark agent={child} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: workspace, url: pull.url, number: pull.number })} />
         {open ? null : <DescendantMark agent={child} />}
         <Elapsed since={child.state.request_since} className="shrink-0 text-micro text-muted-foreground" />
       </div>

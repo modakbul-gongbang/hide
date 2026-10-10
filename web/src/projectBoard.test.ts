@@ -9,15 +9,16 @@ import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { allProjectsStats, boardLabels, buildDependencies, filterActive, filterBoard, issueDate, NO_FILTER, projectStats, readFailureText, stageCards, stageOf, type BoardProject } from "./projectBoard";
-import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
+import type { AgentRow, Checkout, PrState, PullRequest, Task, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;
 
 const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
 const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 
-function pr(badge: PullRequest["badge"], checks: PullRequest["checks"] = "unknown", draft = false): PullRequest {
-  return { number: 7, title: "PR", url: "https://github.com/acme/project/pull/7", badge, review: null, is_draft: draft, checks };
+/** A pull request as the core sends it; a settled one's state is its lifecycle, an open one's the state given. */
+function pr(badge: PullRequest["badge"], checks: PullRequest["checks"] = "unknown", draft = false, state: PrState = "pending"): PullRequest {
+  return { number: 7, title: "PR", url: "https://github.com/acme/project/pull/7", badge, review: null, is_draft: draft, checks, state: badge === "merged" || badge === "closed" ? badge : state };
 }
 
 /** `merged` is work that landed (Git and the link record agree); `inBase` is only Git finding HEAD in the base, as a checkout with no commits of its own does. */
@@ -126,12 +127,12 @@ describe("the Issues board", () => {
       },
     };
     const closing = (number: number, issue: number): PullRequest => ({ ...pr("open"), number, closing_issues: [{ repository: "acme/project", number: issue }] });
-    const project = { ...workspace([], { tasks: [parent, task(310)] }), pull_requests: [{ ...closing(41, 301), badge: "merged" as const }, closing(42, 302)] };
+    const project = { ...workspace([], { tasks: [parent, task(310)] }), pull_requests: [{ ...closing(41, 301), badge: "merged" as const, state: "merged" as const }, closing(42, 302)] };
     const [card, plain] = buildTasks(one(project), "project", NOW).cards;
     expect(card?.subIssues?.completed).toBe(1);
     expect(card?.subIssues?.total).toBe(3);
     expect(card?.subIssues?.items.map((item) => item.pr?.number ?? null)).toEqual([41, 42, null]);
-    expect(card?.subIssues?.items.map((item) => item.pr?.tone ?? null)).toEqual(["merged", "open", null]);
+    expect(card?.subIssues?.items.map((item) => item.pr?.state ?? null)).toEqual(["merged", "pending", null]);
     expect(plain?.subIssues).toBeNull();
   });
 
@@ -183,20 +184,19 @@ describe("the Issues board", () => {
     const merged: PullRequest = { ...pr("merged"), number: 180, merged_at_unix_ms: NOW - 86_400_000 };
     const board = buildTasks(one(workspace([checkout("both", { pr: merged, task: key(174), closes: [key(175)] })], { tasks: [task(174, false), task(175)] })), "project", NOW);
     const done = stageCards(board, "done");
-    expect(done.map((card) => [card.task.id, card.pr?.number, card.pr?.tone, card.mergedAt])).toEqual([
+    expect(done.map((card) => [card.task.id, card.pr?.number, card.pr?.state, card.mergedAt])).toEqual([
       ["#174", 180, "merged", NOW - 86_400_000],
       ["#175", 180, "merged", NOW - 86_400_000],
     ]);
     expect(done.every((card) => card.chip === null && card.first === null)).toBe(true);
   });
 
-  it("colours the pull request by its lifecycle and reads CI only once it was read (D-06)", () => {
+  it("carries the state the core decided onto the card, with the change request word only while the pull request is open", () => {
     const chip = (value: PullRequest) => buildTasks(one(workspace([checkout("a", { pr: value, task: key(1) })], { tasks: [task(1)] })), "project", NOW).cards[0]?.pr;
-    expect(chip(pr("open", "passing"))).toMatchObject({ tone: "open", checks: "passing" });
-    expect(chip(pr("review", "failed"))).toMatchObject({ tone: "open", checks: "failed" });
-    expect(chip(pr("merged", "pending"))).toMatchObject({ tone: "merged", checks: "pending" });
-    expect(chip(pr("closed", "none"))).toMatchObject({ tone: "closed", checks: null });
-    expect(chip(pr("open", "unknown", true))).toMatchObject({ tone: "draft", checks: null });
+    expect(chip(pr("open", "passing", false, "mergeable"))).toMatchObject({ state: "mergeable", changesRequested: false });
+    expect(chip({ ...pr("review", "passing", false, "failed"), review: "changes_requested" })).toMatchObject({ state: "failed", changesRequested: true });
+    expect(chip({ ...pr("merged", "passing"), review: "changes_requested" })).toMatchObject({ state: "merged", changesRequested: false });
+    expect(chip(pr("open", "failed", true, "draft"))).toMatchObject({ state: "draft", changesRequested: false });
   });
 
   it("names at most two agents, the ones that need the operator first, and counts the rest (B2)", () => {
@@ -445,7 +445,7 @@ describe("the facts line", () => {
 describe("the PRs tab", () => {
   const answered = { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: NOW - 2 * 60_000, unavailable_reason: null };
   function listed(number: number, branch: string, extra: Partial<PullRequest> = {}): PullRequest {
-    return { number, title: `PR ${number}`, url: `https://github.com/acme/project/pull/${number}`, badge: "open", review: "review_required", is_draft: false, checks: "passing", head_branch: branch, updated_at_unix_ms: NOW - number * 1000, ...extra };
+    return { number, title: `PR ${number}`, url: `https://github.com/acme/project/pull/${number}`, badge: "open", review: "review_required", is_draft: false, checks: "passing", state: "pending", head_branch: branch, updated_at_unix_ms: NOW - number * 1000, ...extra };
   }
   function repo(checkouts: Checkout[], pullRequests: PullRequest[], options: { tasks?: Task[]; github?: Checkout["github"] } = {}): Workspace {
     const main = { ...checkout("main", { worktree: false }), github: options.github ?? answered };
@@ -459,14 +459,14 @@ describe("the PRs tab", () => {
     const project = repo(
       [checkout("fixing", { panes: ["w"] }), checkout("waiting", { panes: ["parent"] }), checkout("finished", { panes: ["d"] })],
       [
-        listed(1, "gone", { badge: "merged", merged_at_unix_ms: NOW - 60_000 }),
+        listed(1, "gone", { badge: "merged", state: "merged", merged_at_unix_ms: NOW - 60_000 }),
         listed(2, "fixing", { checks: "failed" }),
         listed(3, "waiting", { checks: "failed" }),
         listed(4, "blocked", { review: "changes_requested" }),
         listed(5, "red", { checks: "failed" }),
         listed(6, "asks"),
         listed(7, "finished", { review: "approved" }),
-        listed(8, "draft", { is_draft: true }),
+        listed(8, "draft", { is_draft: true, state: "draft" }),
       ],
     );
     const agents = [agent("w", "working"), agent("parent", "seen", { activity: "idle", wait: "children" }), agent("d", "done")];
@@ -483,13 +483,13 @@ describe("the PRs tab", () => {
     expect(row(4)).toMatchObject({ delegate: true, review: "changes_requested" });
     expect(row(2)).toMatchObject({ delegate: false, agents: [expect.objectContaining({ pane_id: "w" })] });
     expect(row(7)).toMatchObject({ needsLook: true, group: "turn" });
-    expect(row(8)).toMatchObject({ tone: "draft", needsLook: false });
+    expect(row(8)).toMatchObject({ state: "draft", needsLook: false });
     expect(row(1).review).toBeNull();
   });
 
   it("lists the agent whose session made a pull request beside the branch's, leaving whose move it is to the branch (overview-request-view D-45, B55)", () => {
     const project = repo([checkout("feature", { panes: ["branch"] })], [listed(9, "feature")]);
-    const made = { number: 9, title: "PR 9", url: "https://github.com/acme/project/pull/9", badge: "open" as const, checks: "passing" as const, head_branch: "feature", closing_issues: [], live: true, duty: false, created: true, settled_at_unix_ms: null };
+    const made = { number: 9, title: "PR 9", url: "https://github.com/acme/project/pull/9", badge: "open" as const, is_draft: false, checks: "passing" as const, head_branch: "feature", closing_issues: [], live: true, duty: false, created: true, settled_at_unix_ms: null };
     const maker = agent("maker", "working", { request: { verb: "working", verb_since_unix_ms: NOW, request: null, later_by: null, reply: null, pull_requests: [made] } });
     const mentioned = agent("mentioned", "idle", { request: { verb: "idle", verb_since_unix_ms: NOW, request: null, later_by: null, reply: null, pull_requests: [{ ...made, created: false }] } });
     const board = buildPullRequests({ workspace: project, agents: [agent("branch", "idle", { activity: "idle" }), maker, mentioned], device: null }, NOW);
@@ -516,9 +516,9 @@ describe("the PRs tab", () => {
     const project = repo(
       [checkout("kept"), gone],
       [
-        listed(10, "kept", { badge: "merged", merged_at_unix_ms: NOW - 3 * 86_400_000 }),
-        listed(11, "old", { badge: "merged", merged_at_unix_ms: NOW - 86_400_000 }),
-        listed(12, "nowhere", { badge: "merged", merged_at_unix_ms: NOW - 2 * 86_400_000 }),
+        listed(10, "kept", { badge: "merged", state: "merged", merged_at_unix_ms: NOW - 3 * 86_400_000 }),
+        listed(11, "old", { badge: "merged", state: "merged", merged_at_unix_ms: NOW - 86_400_000 }),
+        listed(12, "nowhere", { badge: "merged", state: "merged", merged_at_unix_ms: NOW - 2 * 86_400_000 }),
       ],
     );
     const merged = buildPullRequests({ workspace: project, agents: [], device: null }, NOW).groups[0]!;
@@ -531,23 +531,17 @@ describe("the PRs tab", () => {
 
   it("ties a pull request to the checkout the core connected it to, so a branch name used again does not offer Clean up for the new worktree", () => {
     const reused = checkout("reused");
-    const old = listed(30, "reused", { badge: "merged", merged_at_unix_ms: NOW - 86_400_000 });
+    const old = listed(30, "reused", { badge: "merged", state: "merged", merged_at_unix_ms: NOW - 86_400_000 });
     // The core left the old merge off the new worktree: it is not on the merged pull request's commit.
     const project = { ...repo([reused], [old]), checkouts: [checkout("main", { worktree: false }), reused] };
     const row = buildPullRequests({ workspace: project, agents: [], device: null }, NOW).groups.flatMap((entry) => entry.rows)[0]!;
     expect(row).toMatchObject({ number: 30, checkout: null, cleanup: null });
   });
 
-  it("draws a merged pull request whose checks were never read with no CI mark", () => {
-    const merged = listed(31, "gone", { badge: "merged", merged_at_unix_ms: NOW - 60_000, checks: "unknown" });
-    const row = buildPullRequests({ workspace: repo([], [merged]), agents: [], device: null }, NOW).groups.flatMap((entry) => entry.rows)[0]!;
-    expect(row.checks).toBeNull();
-  });
-
   it("fills the issue cell from the branch's link, else the issue the body closes, and offers Link issue only on an open one without (B3, B7, D-34)", () => {
     const project = repo(
       [checkout("linked", { task: task(21).key })],
-      [listed(1, "linked"), listed(2, "closing", { closing_issues: [{ repository: "acme/project", number: 22 }] }), listed(3, "elsewhere", { closing_issues: [{ repository: "acme/other", number: 5 }] }), listed(4, "bare"), listed(5, "done", { badge: "merged" })],
+      [listed(1, "linked"), listed(2, "closing", { closing_issues: [{ repository: "acme/project", number: 22 }] }), listed(3, "elsewhere", { closing_issues: [{ repository: "acme/other", number: 5 }] }), listed(4, "bare"), listed(5, "done", { badge: "merged", state: "merged" })],
       { tasks: [task(21), task(22)] },
     );
     const rows = buildPullRequests({ workspace: project, agents: [], device: null }, NOW).groups.flatMap((entry) => entry.rows);

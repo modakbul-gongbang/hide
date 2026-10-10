@@ -285,14 +285,14 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     await expect(page.getByRole("tooltip")).toContainText("My turn 2");
     await expect(page.getByRole("tooltip")).toContainText("Review 2");
 
-    // A row at rest (link-graph B1): state glyph, title, the agent marks, CI
-    // and the time on one line; the number, the issue, the branch and the
-    // review word are the panel's.
+    // A row at rest (link-graph B1): the PR mark in its state, title, the
+    // agent marks and the time on one line; the checks, the issue, the branch
+    // and the review word are the panel's.
     const row = (number: number) => overview.locator(`[data-pr="${number}"]`);
-    await expect(row(21).locator("[data-pr-state]")).toHaveAttribute("data-pr-state", "open");
-    await expect(row(21).locator("[data-pr-number], [data-pr-issue], [data-pr-branch], [data-pr-review]")).toHaveCount(0);
+    await expect(row(21).locator("[data-pr-state]")).toHaveAttribute("data-pr-state", "pending");
+    await expect(row(24).locator("[data-pr-state]")).toHaveAttribute("data-pr-state", "failed");
+    await expect(row(21).locator("[data-pr-issue], [data-pr-branch], [data-pr-review], [data-pr-panel-checks]")).toHaveCount(0);
     await expect(row(23).locator(`[data-pr-agent="${fixingPane}"]`)).toBeVisible();
-    await expect(row(24).locator('[data-pr-checks-open="failed"]')).toBeVisible();
 
     // Under the pointer the time slot holds the buttons and nothing moves;
     // resting on the parts opens their cards; none of it is sent (B6, B7, B24).
@@ -323,17 +323,18 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     await page.keyboard.press("Enter");
     await expect(row(23)).toHaveAttribute("data-selected", "true");
     await expect(panel.locator("[data-pr-panel-branch]")).toHaveText("prd/fixing");
-    await expect(panel.locator("[data-pr-panel-review]")).toHaveClass(/text-warning/);
+    await expect(panel.locator("[data-pr-panel-review]")).toHaveClass(/text-pr-failed/); // red as failed checks are
     await page.keyboard.press("ArrowDown");
     await expect(row(24).locator("[data-pr-row]")).toBeFocused();
     await expect(panel.locator('[data-link-none] [data-pr-panel-delegate="24"]')).toBeVisible({ timeout: 30_000 });
     await page.keyboard.press("Escape");
     await expect(panel).toHaveCount(0);
 
-    // The CI mark is the checks on GitHub (B8).
+    // The panel's checks word is the checks on GitHub (B8).
     await page.context().route("https://github.com/**", (route) => route.fulfill({ body: "" }));
+    await row(24).locator("[data-pr-row]").click();
     const checks = page.waitForEvent("popup");
-    await row(24).locator("[data-pr-checks-open]").click();
+    await panel.locator('[data-pr-panel-checks="failed"]').click();
     expect((await checks).url()).toBe("https://github.com/acme/repo/pull/24/checks");
     await (await checks).close();
 

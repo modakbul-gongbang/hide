@@ -1,11 +1,10 @@
-import { ChevronDownIcon, ChevronRightIcon, GitPullRequestIcon, TriangleAlertIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, TriangleAlertIcon } from "lucide-react";
 import { type MouseEvent, type ReactNode } from "react";
 import { AgentMark } from "./AgentMark";
 import { markTone } from "./agentRow";
 import { CheckoutCardHint } from "./components/pr-card";
 import { Elapsed } from "./components/elapsed";
 import { StatusMark } from "./components/status-mark";
-import { Badge } from "./components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -16,7 +15,9 @@ import { prChip } from "./projectBoard";
 import type { Actions } from "./actions";
 import { laneCheckoutCard, shownPullRequest } from "./projects";
 import type { AgentRow, Checkout, Task, Workspace } from "./snapshot";
-import { CHECKS_LABEL, PR_TONE, ReviewMarks, TaskGlyph } from "./TaskBoards";
+import { TaskGlyph } from "./TaskBoards";
+import { PR_MARK_PRESS, PrChipMark } from "./components/pr-mark";
+import { PR_LOOK } from "./prMark";
 import { useUiStore, type OverviewTab } from "./ui";
 import { holdsCommandKey } from "./host";
 
@@ -203,8 +204,7 @@ export function IssueChip({ project, task, handlers, now }: { project: Workspace
 }
 
 /**
- * A checkout's pull request in its lifecycle colour, on a lens or an issue
- * card; it opens the pull request's row on the PRs tab, ⌘-click the pull
+ * A checkout's pull request as its PR mark, on a lens or an issue card; it opens the pull request's row on the PRs tab, ⌘-click the pull
  * request on GitHub, and its half-second card is the checkout's PR card
  * (B17, B24; overview-lenses-issues B8, B9; overview-lenses-prs B21).
  */
@@ -219,24 +219,15 @@ export function PullRequestChip({ project, checkout, onOpen, onRow, now }: { pro
         type="button"
         data-lens-pr-chip={pr.number}
         data-graph-focus="chip"
-        data-pr-tone={chip.tone}
-        aria-label={[`PR #${pr.number}`, chip.tone, chip.checks ? t(CHECKS_LABEL[chip.checks]) : null, chip.review === "changes_requested" ? t("board.review.changes") : null].filter(Boolean).join(" · ")}
-        className="pointer-events-auto relative z-10 rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        aria-label={[`PR #${pr.number}`, t(PR_LOOK[chip.state].word), chip.changesRequested ? t("board.review.changes") : null].filter(Boolean).join(" · ")}
+        className={cn("pointer-events-auto relative z-10", PR_MARK_PRESS)}
         onClick={(event) => {
           event.stopPropagation();
           if (holdsCommandKey(event)) onOpen(pr.url);
           else onRow(pr.number);
         }}
       >
-        <Badge variant="outline" className={PR_TONE[chip.tone]}>
-          <GitPullRequestIcon aria-hidden="true" />#{pr.number}
-          <ReviewMarks pr={chip} review={false} />
-          {chip.review === "changes_requested" ? (
-            <span className="font-sans text-warning" data-pr-review="changes_requested">
-              {t("board.review.changes")}
-            </span>
-          ) : null}
-        </Badge>
+        <PrChipMark chip={chip} stale={checkout.github?.stale === true} />
       </button>
     </CheckoutCardHint>
   );

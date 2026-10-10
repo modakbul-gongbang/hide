@@ -66,7 +66,7 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale }: Sce
         state: { ...seed.state, verb, mark_tone: { kind: tone, read: false }, chip_tone: { kind: tone, read: false }, session: { group: example.group, line: example.line, unfinished: example.unfinished ?? false }, ask: example.ask ?? null, tree_rank: 1,
           pr: example.pr ? { count: 1, worst: example.pr, worst_count: 1, pulls: [{ index: 0, state: example.pr }] } : null,
           request_since: Date.now() - 180_000, line: example.line ? { text: example.line, mode: "request", tone: { kind: "subtle", read: false } } : null },
-        request: { verb, verb_since_unix_ms: Date.now(), line: example.line ?? undefined, request: null, later_by: null, reply: null, pull_requests: example.pr ? [{ number: 220 + index, title: example.title, url: `https://example.invalid/pull/${220 + index}`, badge: example.pr === "merged" ? "merged" : "open", checks: example.pr === "failed" ? "failed" : example.pr === "pending" ? "pending" : "passing", review: example.pr === "mergeable" ? "approved" : "review_required", head_branch: "prd/session-ui", closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: null }] : [] },
+        request: { verb, verb_since_unix_ms: Date.now(), line: example.line ?? undefined, request: null, later_by: null, reply: null, pull_requests: example.pr ? [{ number: 220 + index, title: example.title, url: `https://example.invalid/pull/${220 + index}`, badge: example.pr === "merged" ? "merged" : "open", checks: example.pr === "failed" ? "failed" : example.pr === "pending" ? "pending" : "passing", review: example.pr === "mergeable" ? "approved" : "review_required", is_draft: false, head_branch: "prd/session-ui", closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: null }] : [] },
         resolved: example.group === "resolved" ? { at_unix_ms: Date.now(), source: "operator" } : null,
       };
     });
@@ -89,7 +89,7 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale }: Sce
       const state = id === "fix" ? "failed" as const : "mergeable" as const;
       return {
         state: { ...seed.state, pr: { count: 1, worst: state, worst_count: 1, pulls: [{ index: 0, state }] } },
-        request: { verb: "working", verb_since_unix_ms: Date.now(), line: undefined, request: null, later_by: null, reply: null, pull_requests: [{ number: 221, title: "세션 상태 투영 정리", url: "https://github.com/acme/app/pull/221", badge: "open", checks: state === "failed" ? "failed" : "passing", review: "approved", head_branch: "prd/session-ui", closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: null }] },
+        request: { verb: "working", verb_since_unix_ms: Date.now(), line: undefined, request: null, later_by: null, reply: null, pull_requests: [{ number: 221, title: "세션 상태 투영 정리", url: "https://github.com/acme/app/pull/221", badge: "open", checks: state === "failed" ? "failed" : "passing", review: "approved", is_draft: false, head_branch: "prd/session-ui", closing_issues: [], live: true, duty: true, created: true, settled_at_unix_ms: null }] },
       };
     };
     const headerAgents = BANDS.map(([id]) => ({ ...seed, id, pane_id: id, lineage_child_pane_ids: ["a1c1", "a1c2"], ...(id === "fix" || id === "merge" ? ownPr(id) : {}) }));
