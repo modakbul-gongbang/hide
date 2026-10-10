@@ -179,9 +179,11 @@ impl LinkFailure {
 
 impl Phase {
     /// The phase as a held screen is told it (`core_link` frame), with the
-    /// core machine's name when its hello gave it; `None` while live, when
-    /// the core draws the screen itself.
-    pub fn link_frame(&self) -> Option<serde_json::Value> {
+    /// core machine's name when its hello gave it and `alias`, the SSH alias
+    /// this machine dials it by, which a screen that has not drawn the core
+    /// yet names instead of an empty machine; `None` while live, when the
+    /// core draws the screen itself.
+    pub fn link_frame(&self, alias: &str) -> Option<serde_json::Value> {
         let (phase, machine) = match self {
             Self::Live(_) => return None,
             Self::Connecting => ("connecting", None),
@@ -197,7 +199,9 @@ impl Phase {
                 },
             ),
         };
-        Some(json!({"type": "core_link", "payload": {"phase": phase, "machine": machine}}))
+        Some(
+            json!({"type": "core_link", "payload": {"phase": phase, "machine": machine, "alias": alias}}),
+        )
     }
 }
 
@@ -1247,6 +1251,24 @@ mod tests {
     /// The port is probed for a dial that could not reach the core's
     /// machine, whatever its text, and never for another failure whose text
     /// happens to read the same.
+    /// A screen opened while the link is down has drawn no core: the frame
+    /// gives it the alias the node dials, and no machine name the core's
+    /// hello has not given.
+    #[test]
+    fn a_held_screen_is_told_the_alias_the_core_is_dialed_by() {
+        let frame = Phase::Waiting {
+            reason: LinkFailure::Unreachable("connection refused".to_owned()),
+        }
+        .link_frame("mini")
+        .unwrap();
+        assert_eq!(
+            frame["payload"],
+            json!({"phase": "waiting", "machine": null, "alias": "mini"})
+        );
+        let frame = Phase::Disconnected.link_frame("mini").unwrap();
+        assert_eq!(frame["payload"]["alias"], "mini");
+    }
+
     #[test]
     fn only_an_unreachable_dial_probes_the_core_machine_s_port() {
         let waiting = |reason| Phase::Waiting { reason };

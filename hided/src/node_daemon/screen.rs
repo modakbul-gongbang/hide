@@ -99,7 +99,7 @@ async fn hold(socket: &mut WebSocket, state: &NodeState) -> Option<Arc<LiveLink>
         if let Some(link) = live.borrow_and_update().clone() {
             return Some(link);
         }
-        let frame = phases.borrow_and_update().link_frame();
+        let frame = phases.borrow_and_update().link_frame(&state.core_alias);
         if let Some(frame) = frame
             && told.as_ref() != Some(&frame)
         {

@@ -48,7 +48,8 @@ export function windowStrip(
   const { connection, move, link } = input;
   if (connection === "moving" && move && input.machines) return { kind: "moving", text: movingStripText(move, input.machines, t), mark: "pending" };
   if (connection !== "live" && link && link.phase !== "connecting") {
-    const machine = link.machine ?? input.coreMachine;
+    // A window that has not drawn the core yet knows no name for its machine but the alias it is dialed by.
+    const machine = link.machine ?? (input.coreMachine || link.alias);
     switch (link.phase) {
       case "updating":
         return { kind: "updating", text: t("coreMove.strip.updating", { machine }), mark: "pending" };

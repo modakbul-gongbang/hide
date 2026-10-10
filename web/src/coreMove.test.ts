@@ -48,11 +48,15 @@ describe("the strip above the window (W1 to W3)", () => {
   it("names the node's update of its core and its failed link while the screen waits, and nothing once live", async () => {
     const { t } = await createInterfaceI18n("ko");
     const base = { refused: false, move: null, machines, coreMachine: "Mac mini" };
-    expect(windowStrip({ ...base, connection: "connecting", link: { phase: "updating", machine: null } }, t)?.text).toBe("Mac mini의 core를 이 앱의 빌드로 바꾸는 중 · 에이전트는 계속 돌아요");
-    expect(windowStrip({ ...base, connection: "reconnecting", link: { phase: "waiting", machine: "Mac mini" } }, t)).toEqual({ kind: "unreachable", mark: "warn", text: "Mac mini의 core에 연결할 수 없어요 · 다시 연결하는 중" });
-    expect(windowStrip({ ...base, connection: "live", link: { phase: "waiting", machine: "Mac mini" } }, t)).toBeNull();
+    expect(windowStrip({ ...base, connection: "connecting", link: { phase: "updating", machine: null, alias: "mini" } }, t)?.text).toBe("Mac mini의 core를 이 앱의 빌드로 바꾸는 중 · 에이전트는 계속 돌아요");
+    expect(windowStrip({ ...base, connection: "reconnecting", link: { phase: "waiting", machine: "Mac mini", alias: "mini" } }, t)).toEqual({ kind: "unreachable", mark: "warn", text: "Mac mini의 core에 연결할 수 없어요 · 다시 연결하는 중" });
+    expect(windowStrip({ ...base, connection: "live", link: { phase: "waiting", machine: "Mac mini", alias: "mini" } }, t)).toBeNull();
     // The operator ended the link (B16): the strip offers it back.
-    expect(windowStrip({ ...base, connection: "connecting", link: { phase: "disconnected", machine: null } }, t)).toEqual({ kind: "disconnected", mark: "warn", text: "Mac mini core와 연결을 끊었어요", action: "reconnect" });
-    expect(windowStrip({ ...base, connection: "reconnecting", link: { phase: "connecting", machine: null } }, t)?.kind).toBe("reconnecting");
+    expect(windowStrip({ ...base, connection: "connecting", link: { phase: "disconnected", machine: null, alias: "mini" } }, t)).toEqual({ kind: "disconnected", mark: "warn", text: "Mac mini core와 연결을 끊었어요", action: "reconnect" });
+    expect(windowStrip({ ...base, connection: "reconnecting", link: { phase: "connecting", machine: null, alias: "mini" } }, t)?.kind).toBe("reconnecting");
+    // A window opened while its link is down has drawn no core: it names the machine by the alias it is dialed by.
+    const fresh = { ...base, coreMachine: "" };
+    expect(windowStrip({ ...fresh, connection: "reconnecting", link: { phase: "waiting", machine: null, alias: "mini" } }, t)?.text).toBe("mini의 core에 연결할 수 없어요 · 다시 연결하는 중");
+    expect(windowStrip({ ...fresh, connection: "connecting", link: { phase: "disconnected", machine: null, alias: "mini" } }, t)?.text).toBe("mini core와 연결을 끊었어요");
   });
 });

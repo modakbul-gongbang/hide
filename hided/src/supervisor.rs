@@ -43,6 +43,9 @@ const CORE_STOP_WITHIN: Duration = Duration::from_secs(20);
 /// The exit of a process whose core did not stop in time.
 const STOP_UNCONFIRMED_EXIT: i32 = 3;
 
+// One per process and never collected, so the size between its roles is
+// not worth a box.
+#[allow(clippy::large_enum_variant)]
 enum Role {
     Core(RunningDaemon),
     Node(RunningNode),

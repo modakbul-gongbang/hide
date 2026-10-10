@@ -63,9 +63,9 @@ export const DIALOG_VIEWS: Partial<Record<CoreMoveState, MoveView>> = {
 /** The window states: the move holding the window, or where the node's link stands. */
 export const WINDOW_STATES: Partial<Record<CoreMoveState, { connection: "moving" | "connecting" | "reconnecting"; move?: MoveView; link?: CoreLink }>> = {
   "window-moving": { connection: "moving", move: view({ state: "copying", step: "copy" }) },
-  "window-updating": { connection: "connecting", link: { phase: "updating", machine: "Mac mini" } },
-  "window-unreachable": { connection: "reconnecting", link: { phase: "waiting", machine: "Mac mini" } },
-  "window-disconnected": { connection: "reconnecting", link: { phase: "disconnected", machine: null } },
+  "window-updating": { connection: "connecting", link: { phase: "updating", machine: "Mac mini", alias: "mini" } },
+  "window-unreachable": { connection: "reconnecting", link: { phase: "waiting", machine: "Mac mini", alias: "mini" } },
+  "window-disconnected": { connection: "reconnecting", link: { phase: "disconnected", machine: null, alias: "mini" } },
 };
 
 /** Which side each state is drawn from. */

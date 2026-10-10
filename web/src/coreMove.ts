@@ -53,8 +53,12 @@ export type MoveView = {
   node: string | null;
 };
 
-/** Where a node's link to its core stands while its screens wait (`core_link` frame); `disconnected` is the operator's own end of it (B16). */
-export type CoreLink = { phase: "connecting" | "updating" | "waiting" | "disconnected"; machine: string | null };
+/**
+ * Where a node's link to its core stands while its screens wait (`core_link` frame); `disconnected` is the operator's
+ * own end of it (B16). `machine` is the core machine's name once its hello gave it; `alias` is the SSH alias the node
+ * dials it by, the name a window that has not drawn the core yet has.
+ */
+export type CoreLink = { phase: "connecting" | "updating" | "waiting" | "disconnected"; machine: string | null; alias: string };
 
 /** The five steps the dialog and the strip name, in order. */
 export const MOVE_STEPS: readonly MoveStep[] = ["check", "stop_core", "copy", "start_target", "reattach"];

@@ -97,6 +97,9 @@ pub struct NodeState {
     pub phase: Arc<dyn Fn() -> Phase + Send + Sync>,
     /// The phase as it changes, which a held screen is told.
     pub phases: watch::Receiver<Phase>,
+    /// The SSH alias this machine dials its core by, which a held screen
+    /// names until the core's hello names its machine.
+    pub core_alias: Arc<str>,
     /// Gives a failed core update this connection's attempt
     /// (`NodeRole::connect_again`).
     pub connect_again: Arc<dyn Fn() + Send + Sync>,
@@ -156,6 +159,7 @@ impl NodeDaemon {
         let own_prefix = device_pane_prefix(&identity.node);
         let screen_node = identity.node.clone();
         let core_node = placement.node.clone();
+        let core_alias: Arc<str> = placement.alias.as_str().into();
         let boundary = Arc::new(Boundary::for_node(
             home,
             herdr_core::node::NodeId::parse(&identity.node)?,
@@ -247,6 +251,7 @@ impl NodeDaemon {
                 live,
                 phase,
                 phases,
+                core_alias,
                 connect_again,
                 link_control,
                 clients: Arc::new(AtomicUsize::new(0)),
