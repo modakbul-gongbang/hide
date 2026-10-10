@@ -3683,6 +3683,60 @@ fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
     );
 }
 
+/// A selection saved while another core ran this machine names that core's
+/// device, and that core saved no pane of this machine at all when it held
+/// this machine as a device; the window opens where this machine's Herdr has
+/// the keyboard, which is where the last core left it, not on the catalog's
+/// first row.
+#[test]
+fn a_restored_selection_of_another_machine_opens_where_herdr_has_the_keyboard() {
+    for saved_pane in [Some("remote:old-core:pane:w1:p1"), None] {
+        restored_selection_opens_on_herdrs_focus(saved_pane);
+    }
+}
+
+fn restored_selection_opens_on_herdrs_focus(saved_pane: Option<&str>) {
+    let (mut runtime, first_checkout, repository, worktree) =
+        split_workspace_checkouts("restore-elsewhere");
+    runtime.snapshot.ui_state.focused_checkout_id =
+        Some("remote:old-core:checkout:feature".to_owned());
+    runtime.snapshot.navigator.focused_checkout_id =
+        Some("remote:old-core:checkout:feature".to_owned());
+    runtime.snapshot.ui_state.selected_pane_id = saved_pane.map(str::to_owned);
+    let repository = repository.to_string_lossy().into_owned();
+    let worktree = worktree.to_string_lossy().into_owned();
+    let mut payload = split_workspace_payload(
+        &[
+            ("w-order:t1", repository.as_str()),
+            ("w-order:t5", worktree.as_str()),
+        ],
+        "w-order:t5",
+    );
+    payload.focused_pane_id = Some("w-order:t5:p".to_owned());
+    runtime.ingest_session(Ok(payload));
+
+    let focused = runtime.snapshot().navigator.focused_checkout_id.clone();
+    assert_ne!(
+        focused.as_deref(),
+        Some(first_checkout.as_str()),
+        "saved pane {saved_pane:?}"
+    );
+    let worktree_checkout = runtime
+        .snapshot()
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .find(|checkout| checkout.path == worktree)
+        .map(|checkout| checkout.id.clone());
+    assert_eq!(focused, worktree_checkout);
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w-order:t5:p")
+    );
+    assert_eq!(runtime.snapshot().status.last_error, None);
+}
+
 #[test]
 fn a_restored_pane_the_session_no_longer_has_retargets_without_reporting() {
     let mut runtime = runtime();

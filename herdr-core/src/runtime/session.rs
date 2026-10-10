@@ -2022,7 +2022,19 @@ impl Runtime {
             return;
         }
         self.restore_hint_pending = false;
-
+        // A saved selection this session does not hold was this machine's
+        // under another core (a core move names it as that core's device,
+        // and that core saved no pane of this machine), or it is gone.
+        // Either way Herdr's own focus is where Hide left the keyboard last,
+        // since Hide tells Herdr every focus it takes, so the window opens on
+        // Herdr's pane and its checkout; with nothing saved, the catalog's
+        // first checkout stays the start.
+        let herdr_focus = payload.focused_pane_id.as_deref().filter(|pane_id| {
+            payload
+                .layouts
+                .iter()
+                .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == *pane_id))
+        });
         let restored_pane_exists = self
             .snapshot
             .ui_state
@@ -2034,12 +2046,6 @@ impl Runtime {
                     .iter()
                     .any(|layout| layout.panes.iter().any(|pane| pane.pane_id == pane_id))
             });
-        if !restored_pane_exists {
-            self.snapshot.ui_state.selected_pane_id = None;
-            self.snapshot.terminal.pane_id = None;
-            self.snapshot.focused.pane_id = None;
-        }
-
         let restored_checkout_exists = self
             .snapshot
             .ui_state
@@ -2053,9 +2059,41 @@ impl Runtime {
                     .flat_map(|workspace| workspace.checkouts.iter())
                     .any(|checkout| checkout.id == checkout_id)
             });
+        let restore_missed = (self.snapshot.ui_state.selected_pane_id.is_some()
+            && !restored_pane_exists)
+            || (self.snapshot.ui_state.focused_checkout_id.is_some() && !restored_checkout_exists);
+        if !restored_pane_exists {
+            self.snapshot.ui_state.selected_pane_id =
+                herdr_focus.filter(|_| restore_missed).map(str::to_owned);
+            self.snapshot.terminal.pane_id = None;
+            self.snapshot.focused.pane_id = None;
+        }
+
         if !restored_checkout_exists {
-            self.snapshot.ui_state.focused_checkout_id = None;
-            self.snapshot.navigator.focused_checkout_id = None;
+            // The checkout holding the pane the window opens on, so the two
+            // never disagree.
+            let checkout = self
+                .snapshot
+                .ui_state
+                .selected_pane_id
+                .as_deref()
+                .filter(|_| restore_missed)
+                .and_then(|pane_id| {
+                    self.snapshot
+                        .navigator
+                        .workspaces
+                        .iter()
+                        .flat_map(|workspace| workspace.checkouts.iter())
+                        .find(|checkout| {
+                            checkout
+                                .tabs
+                                .iter()
+                                .any(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+                        })
+                        .map(|checkout| checkout.id.clone())
+                });
+            self.snapshot.ui_state.focused_checkout_id = checkout.clone();
+            self.snapshot.navigator.focused_checkout_id = checkout;
             self.resync_navigator_focus();
         }
     }
