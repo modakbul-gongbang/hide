@@ -449,7 +449,9 @@ impl Runtime {
             || worker.runtime.as_str() != actor.kind
             || !record.actor.same_identity(actor)
             || record.actor.kind != actor.kind
-            || record.pane != actor.pane_id
+            // The ledger keeps the pane as its own Herdr names it; a node's
+            // pane is qualified only in the core's ids.
+            || record.pane != caller.raw_pane
             || record.native_machine != native_context.machine
             || record.host_scope != native_context.host_scope
             || !parent.actor.same_identity(&crate::delivery::Actor::factory(
