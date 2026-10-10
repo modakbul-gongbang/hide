@@ -2,8 +2,10 @@
 //! which links the core takes, how the node is registered, and what the
 //! operator's device actions do to it.
 
+use super::device_catalog::{herdr_workspace, session};
 use super::*;
 use crate::remote::{Arrived, DeviceTransport};
+use std::fs;
 use std::sync::mpsc;
 
 const NODE: &str = "inbound-node-1";
@@ -14,13 +16,17 @@ struct HeldLink;
 /// A node's link that stands until the test lets it go, and then ends, so
 /// the core's phase for it can be read at each step.
 fn held_link() -> (Arrived, mpsc::Sender<()>) {
+    held_link_to(super::device_kit::KitDevice::answering(Err(
+        "not asked".to_owned()
+    )))
+}
+
+/// [`held_link`] whose node answers as `host` does.
+fn held_link_to(host: Arc<dyn crate::node_access::NodeLink>) -> (Arrived, mpsc::Sender<()>) {
     let (release, wait) = mpsc::channel::<()>();
     let arrived = Arrived {
         transport: Arc::new(HeldLink),
-        node: super::device_kit::node_ready(
-            super::device_kit::KitDevice::answering(Err("not asked".to_owned())),
-            None,
-        ),
+        node: super::device_kit::node_ready(host, None),
         hear_close: Box::new(move |on_close| {
             let _ = wait.recv_timeout(Duration::from_secs(10));
             on_close("the test's link ended".to_owned());
@@ -429,10 +435,160 @@ fn memory_is_answered_for_this_machine_and_a_linked_node_only() {
         scope(NODE),
         Ok((NODE.to_owned(), "/work/project".to_owned()))
     );
+    // The receipts the label reads find are checked against the same store:
+    // this machine's and the linked node's, each read through its own link;
+    // the dialed device's are dropped.
+    let receipt = |session: &str| crate::labels::worker::SightedMemoryReceipt {
+        provider: "opencode",
+        session_id: session.to_owned(),
+        cwd: "/work/project".to_owned(),
+        offset: 0,
+        text: String::new(),
+    };
+    let batches = shared.lock().unwrap().receipt_batches(vec![
+        (NODE.to_owned(), receipt("on-node")),
+        ("studio".to_owned(), receipt("on-studio")),
+        (own.clone(), receipt("here")),
+        (NODE.to_owned(), receipt("on-node-2")),
+    ]);
+    let mut batches = batches
+        .iter()
+        .map(|(node, _, receipts)| {
+            (
+                node.as_str().to_owned(),
+                receipts
+                    .iter()
+                    .map(|receipt| receipt.session_id.clone())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    batches.sort();
+    let mut expected = vec![
+        (own.clone(), vec!["here".to_owned()]),
+        (
+            NODE.to_owned(),
+            vec!["on-node".to_owned(), "on-node-2".to_owned()],
+        ),
+    ];
+    expected.sort();
+    assert_eq!(batches, expected);
 
     drop(release);
     wait(&shared, "the link ended", |runtime| {
         runtime.host_snapshot(NODE).state != "ready"
     });
     assert_eq!(scope(NODE), Err("link_down"));
+}
+
+/// A linked node's sessions are its own session files, read through its
+/// link: the right panel's Sessions for its checkout in front and a named
+/// Project's Sessions list what that machine holds, never this machine's,
+/// and say the node is not connected once its link is down (PRD
+/// core-host-node-move B14).
+#[test]
+fn a_linked_node_s_sessions_are_read_through_its_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    let (node_home, core_home, project) = (
+        root.join("node-home"),
+        root.join("core-home"),
+        root.join("project"),
+    );
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&core_home).unwrap();
+    let claude = node_home.join(".claude/projects/p");
+    fs::create_dir_all(&claude).unwrap();
+    let cwd = serde_json::to_string(&project).unwrap();
+    fs::write(
+        claude.join("on-the-node.jsonl"),
+        format!(
+            r#"{{"type":"user","cwd":{cwd},"timestamp":"2026-10-11T01:00:00Z","userType":"external","promptId":"p-1","message":{{"role":"user","content":"node request"}}}}"#
+        ) + "\n",
+    )
+    .unwrap();
+    let path = project.to_string_lossy().into_owned();
+
+    let shared = shared_runtime();
+    shared.lock().unwrap().own_node = Arc::new(hide_node::Local::new(Some(core_home)));
+    let (link, release) = held_link_to(Arc::new(hide_node::Local::new(Some(node_home))));
+    shared
+        .lock()
+        .unwrap()
+        .accept_inbound_node(NODE, "MacBook", link)
+        .expect("the link is taken");
+    wait(&shared, "the link ready", |runtime| {
+        runtime.host_snapshot(NODE).state == "ready"
+    });
+    {
+        let mut runtime = shared.lock().unwrap();
+        let mut reported = session(vec![herdr_workspace(NODE, "w1", &path, &[("t1", &path)])]);
+        reported.focused_workspace_id = Some(format!("remote:{NODE}:workspace:w1"));
+        reported.focused_checkout_id = Some(format!("remote:{NODE}:checkout:w1"));
+        runtime.ingest_remote_session(NODE, Ok(reported));
+        runtime.snapshot.navigator.focused_device_id = Some(NODE.to_owned());
+    }
+    let refresh = |payload: serde_json::Value| {
+        let event = serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "sessions_refresh", "payload": payload,
+        });
+        shared
+            .lock()
+            .unwrap()
+            .dispatch_json(&serde_json::to_vec(&event).unwrap());
+    };
+    let ids = |rows: &[crate::model::SessionRowSnapshot]| {
+        rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>()
+    };
+
+    refresh(serde_json::json!({}));
+    wait(&shared, "the panel's sessions read", |runtime| {
+        !runtime.snapshot.sessions.loading
+    });
+    {
+        let runtime = shared.lock().unwrap();
+        let sessions = &runtime.snapshot.sessions;
+        assert_eq!(sessions.unavailable_reason, None);
+        assert_eq!(sessions.checkout_path.as_deref(), Some(path.as_str()));
+        assert_eq!(ids(&sessions.rows), ["on-the-node"]);
+    }
+
+    // The Project as the catalog groups the node's workspaces, which is the
+    // id the Projects screen names.
+    let project_id = shared
+        .lock()
+        .unwrap()
+        .catalog_workspaces()
+        .find(|workspace| workspace.device_id == NODE && workspace.path == path)
+        .map(|workspace| workspace.id.clone())
+        .expect("the node's Project in the catalog");
+    let named = serde_json::json!({"workspace_id": project_id, "device_id": NODE});
+    refresh(named.clone());
+    wait(&shared, "the named Project's sessions read", |runtime| {
+        runtime
+            .snapshot
+            .project_sessions
+            .as_ref()
+            .is_some_and(|sessions| !sessions.loading)
+    });
+    {
+        let runtime = shared.lock().unwrap();
+        let sessions = runtime.snapshot.project_sessions.as_ref().unwrap();
+        assert_eq!(sessions.unavailable_reason, None);
+        assert_eq!(sessions.failure, None);
+        assert_eq!(ids(&sessions.rows), ["on-the-node"]);
+    }
+
+    drop(release);
+    wait(&shared, "the link ended", |runtime| {
+        runtime.host_snapshot(NODE).state != "ready"
+    });
+    refresh(named);
+    let runtime = shared.lock().unwrap();
+    let sessions = runtime.snapshot.project_sessions.as_ref().unwrap();
+    assert_eq!(
+        sessions.unavailable_reason.as_deref(),
+        Some("MacBook is not connected.")
+    );
+    assert!(sessions.rows.is_empty());
 }

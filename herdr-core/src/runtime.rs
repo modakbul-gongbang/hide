@@ -1382,8 +1382,9 @@ pub struct Runtime {
     links_work: links::LinksWork,
     memory_operation_in_flight: bool,
     memory_operation_generation: u64,
-    memory_operation_checkout_path: Option<String>,
-    memory_pending_action: Option<(String, events::MemoryActionPayload)>,
+    /// The node and checkout path the running Memory operation is for.
+    memory_operation_checkout_path: Option<(crate::node::NodeId, String)>,
+    memory_pending_action: Option<((crate::node::NodeId, String), events::MemoryActionPayload)>,
     memory_cancel: Option<hide_ai::CancelToken>,
     /// The Hide AI settings the running analysis built its router from; it
     /// is stopped when they stop describing who may be asked.
@@ -1395,7 +1396,7 @@ pub struct Runtime {
     memory_next_poll_unix_ms: u64,
     /// Memory receipts the label reads found, waiting for the one thread that
     /// checks and records them (`runtime/memory.rs`, `record_memory_receipts`).
-    memory_receipts_pending: Vec<crate::labels::worker::SightedMemoryReceipt>,
+    memory_receipts_pending: Vec<(String, crate::labels::worker::SightedMemoryReceipt)>,
     memory_receipts_in_flight: bool,
     editor_tab_history: Vec<String>,
     worker_context: Option<RuntimeWorkerContext>,

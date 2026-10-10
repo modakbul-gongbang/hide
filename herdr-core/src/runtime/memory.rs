@@ -27,6 +27,16 @@ const SESSION_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 const MEMORY_POLL_INTERVAL_MS: u64 = 5_000;
 const RELATION_CONTEXT_INPUT_LIMIT_BYTES: usize = 16 * 1024;
 
+/// The checkout in front for Memory and Sessions, and the node that reads
+/// its files (`Runtime::memory_node`).
+struct MemoryFocus {
+    workspace_id: String,
+    checkout_id: String,
+    checkout_path: String,
+    node: NodeId,
+    link: Arc<dyn NodeLink>,
+}
+
 pub(super) struct SessionsLoad {
     pub(super) project_id: String,
     pub(super) checkout_path: String,
@@ -59,16 +69,57 @@ fn archive_load_matches_scope(
 const RECEIPTS_PENDING_LIMIT: usize = 256;
 
 impl Runtime {
-    /// Takes the Memory receipts the label reads found in this Mac's sessions
+    /// `pending` by the node whose sessions carried them, each with the link
+    /// its Project is read through; receipts from a machine without Memory
+    /// are dropped here.
+    pub(super) fn receipt_batches(
+        &self,
+        pending: Vec<(String, crate::labels::worker::SightedMemoryReceipt)>,
+    ) -> Vec<(
+        NodeId,
+        Arc<dyn NodeLink>,
+        Vec<crate::labels::worker::SightedMemoryReceipt>,
+    )> {
+        let mut by_device: BTreeMap<String, Vec<_>> = BTreeMap::new();
+        for (device, receipt) in pending {
+            by_device.entry(device).or_default().push(receipt);
+        }
+        by_device
+            .into_iter()
+            .filter_map(|(device, receipts)| match self.memory_node(&device) {
+                Ok((node, link)) => Some((node, link, receipts)),
+                Err(reason) => {
+                    crate::diagnostic!(json!({
+                        "component": "memory",
+                        "kind": "receipts.no_memory",
+                        "device": device,
+                        "reason": reason,
+                        "dropped": receipts.len(),
+                    }));
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Takes the Memory receipts the label reads found in `device`'s sessions
     /// (OpenCode's, whose plugin stores them in a synthetic prompt part) and
     /// records each whose tag Memory signed, on one thread off the lock, as
     /// the analysis pass records Claude Code's, Codex's, Pi's and omp's from
-    /// their session files (PRD opencode-plugin D-12, pi-omp-extension D-09). A later prompt's Memory needs the session start's receipt.
+    /// their session files (PRD opencode-plugin D-12, pi-omp-extension D-09).
+    /// A later prompt's Memory needs the session start's receipt. A machine
+    /// without Memory (`Runtime::memory_node`) has its receipts dropped with
+    /// a diagnostic.
     pub(crate) fn record_memory_receipts(
         &mut self,
+        device: &str,
         receipts: Vec<crate::labels::worker::SightedMemoryReceipt>,
     ) {
-        self.memory_receipts_pending.extend(receipts);
+        self.memory_receipts_pending.extend(
+            receipts
+                .into_iter()
+                .map(|receipt| (device.to_owned(), receipt)),
+        );
         if self.memory_receipts_pending.len() > RECEIPTS_PENDING_LIMIT {
             let dropped = self.memory_receipts_pending.len() - RECEIPTS_PENDING_LIMIT;
             self.memory_receipts_pending.drain(..dropped);
@@ -87,8 +138,6 @@ impl Runtime {
         };
         self.memory_receipts_in_flight = true;
         let database = self.memory_database_path();
-        let node = self.node.clone();
-        let sessions_node = self.own_node();
         let spawn = thread::Builder::new()
             .name("hide-memory-receipts".to_owned())
             .spawn(move || {
@@ -96,24 +145,24 @@ impl Runtime {
                     let Some(runtime) = context.runtime.upgrade() else {
                         return;
                     };
-                    let batch = match runtime.lock() {
+                    let batches = match runtime.lock() {
                         Ok(mut guard) => {
-                            let batch = std::mem::take(&mut guard.memory_receipts_pending);
-                            if batch.is_empty() {
+                            let pending = std::mem::take(&mut guard.memory_receipts_pending);
+                            if pending.is_empty() {
                                 guard.memory_receipts_in_flight = false;
+                                return;
                             }
-                            batch
+                            guard.receipt_batches(pending)
                         }
                         Err(_) => return,
                     };
                     drop(runtime);
-                    if batch.is_empty() {
-                        return;
-                    }
                     // A defect in one batch must not leave the flag set, which
                     // would stop every later batch from starting a worker.
                     let recorded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        record_receipts(&node, sessions_node.as_ref(), &database, batch)
+                        for (node, link, batch) in batches {
+                            record_receipts(&node, link.as_ref(), &database, batch);
+                        }
                     }));
                     if recorded.is_err() {
                         crate::diagnostic!(json!({
@@ -137,13 +186,26 @@ impl Runtime {
         hide_memory::database_path(self.state_path.parent().unwrap_or(Path::new(".")))
     }
 
-    fn focused_memory_context(&self) -> Option<(String, String, String)> {
-        let (workspace, checkout) = self.focused_local_checkout()?;
-        Some((
-            workspace.id.clone(),
-            checkout.id.clone(),
-            checkout.path.clone(),
-        ))
+    /// The checkout in front whose Project Memory and Sessions the panel
+    /// shows, with the node that reads its files: this machine's or a linked
+    /// node's that dials in, never a device the core dials (B14, Q20).
+    fn focused_memory_context(&self) -> Option<MemoryFocus> {
+        let (workspace_id, checkout_id) = self.front_checkout()?;
+        let (workspace, checkout) = self.catalog_checkout(workspace_id, checkout_id)?;
+        let (node, link) = self.memory_node(&workspace.device_id).ok()?;
+        Some(MemoryFocus {
+            workspace_id: workspace.id.clone(),
+            checkout_id: checkout.id.clone(),
+            checkout_path: checkout.path.clone(),
+            node,
+            link,
+        })
+    }
+
+    /// Whether the checkout in front is still `path` on `node`.
+    fn memory_focus_is(&self, node: &NodeId, path: &str) -> bool {
+        self.focused_memory_context()
+            .is_some_and(|focus| focus.node == *node && focus.checkout_path == path)
     }
 
     /// Polls only as a coordinator-owned trigger. Session discovery, SQLite
@@ -162,17 +224,21 @@ impl Runtime {
         {
             return false;
         }
-        let Some((_, _, checkout_path)) = self.focused_memory_context() else {
+        let Some(MemoryFocus {
+            checkout_path,
+            node,
+            link: sessions_node,
+            ..
+        }) = self.focused_memory_context()
+        else {
             return false;
         };
         let Some(context) = self.worker_context.clone() else {
             return false;
         };
-        let sessions_node = self.own_node();
         self.memory_next_poll_unix_ms = now_unix_ms.saturating_add(MEMORY_POLL_INTERVAL_MS);
         self.memory_poll_in_flight = true;
         let database = self.memory_database_path();
-        let node = self.node.clone();
         let spawn = thread::Builder::new()
             .name("hide-project-memory-poll".to_owned())
             .spawn(move || {
@@ -189,10 +255,7 @@ impl Runtime {
                 let changed = match runtime.lock() {
                     Ok(mut guard) => {
                         guard.memory_poll_in_flight = false;
-                        let still_focused = guard
-                            .focused_memory_context()
-                            .is_some_and(|(_, _, path)| path == checkout_path);
-                        if !still_focused {
+                        if !guard.memory_focus_is(&node, &checkout_path) {
                             return;
                         }
                         match due {
@@ -244,7 +307,13 @@ impl Runtime {
     }
 
     pub(super) fn request_sessions_refresh(&mut self) -> bool {
-        let Some((_, _, checkout_path)) = self.focused_memory_context() else {
+        let Some(MemoryFocus {
+            checkout_path,
+            node,
+            link: sessions_node,
+            ..
+        }) = self.focused_memory_context()
+        else {
             self.snapshot.sessions = SessionsSnapshot {
                 unavailable_reason: Some("Choose a local Project to view sessions".to_owned()),
                 ..SessionsSnapshot::default()
@@ -252,7 +321,8 @@ impl Runtime {
             return true;
         };
         if self.memory_operation_in_flight
-            && self.memory_operation_checkout_path.as_deref() != Some(checkout_path.as_str())
+            && self.memory_operation_checkout_path.as_ref()
+                != Some(&(node.clone(), checkout_path.clone()))
             && let Some(cancel) = &self.memory_cancel
         {
             cancel.cancel();
@@ -274,9 +344,7 @@ impl Runtime {
         }
         self.memory_sessions_load_in_flight = true;
         self.memory_sessions_load_pending = false;
-        let sessions_node = self.own_node();
         let database = self.memory_database_path();
-        let node = self.node.clone();
         thread::Builder::new()
             .name("hide-project-memory-read".to_owned())
             .spawn(move || {
@@ -286,7 +354,9 @@ impl Runtime {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.ingest_sessions_load(generation, &checkout_path, result),
+                    Ok(mut guard) => {
+                        guard.ingest_sessions_load(generation, &node, &checkout_path, result)
+                    }
                     Err(_) => return,
                 };
                 drop(runtime);
@@ -321,11 +391,15 @@ impl Runtime {
     fn ingest_sessions_load(
         &mut self,
         generation: u64,
+        node: &NodeId,
         checkout_path: &str,
         result: Result<SessionsLoad, String>,
     ) -> bool {
         self.memory_sessions_load_in_flight = false;
-        let current_path = self.focused_memory_context().map(|(_, _, path)| path);
+        let current_path = self
+            .focused_memory_context()
+            .filter(|focus| focus.node == *node)
+            .map(|focus| focus.checkout_path);
         if !sessions_load_matches_scope(
             generation,
             self.memory_sessions_load_generation,
@@ -511,7 +585,13 @@ impl Runtime {
     }
 
     pub(super) fn open_archive_detail(&mut self, kind: &str, id: &str, preview: bool) -> bool {
-        let Some((workspace_id, checkout_id, _)) = self.focused_memory_context() else {
+        let Some(MemoryFocus {
+            workspace_id,
+            checkout_id,
+            link: sessions_node,
+            ..
+        }) = self.focused_memory_context()
+        else {
             self.set_error(
                 "archive.project_unavailable",
                 "Choose a local Project first",
@@ -544,7 +624,6 @@ impl Runtime {
             .collect::<HashSet<_>>();
         let database = self.memory_database_path();
         let project_id = self.snapshot.sessions.project_id.clone();
-        let sessions_node = self.own_node();
         thread::Builder::new()
             .name("hide-archive-detail".to_owned())
             .spawn(move || {
@@ -579,9 +658,9 @@ impl Runtime {
                             guard.archive_detail_load_generation,
                             &workspace_id,
                             &checkout_id,
-                            guard.focused_memory_context().as_ref().map(
-                                |(workspace, checkout, _)| (workspace.as_str(), checkout.as_str()),
-                            ),
+                            guard.focused_memory_context().as_ref().map(|focus| {
+                                (focus.workspace_id.as_str(), focus.checkout_id.as_str())
+                            }),
                         ) =>
                     {
                         match result {
@@ -689,7 +768,13 @@ impl Runtime {
             };
             return true;
         }
-        let Some((_, _, checkout_path)) = self.focused_memory_context() else {
+        let Some(MemoryFocus {
+            checkout_path,
+            node,
+            link: sessions_node,
+            ..
+        }) = self.focused_memory_context()
+        else {
             self.set_error(
                 "memory.project_unavailable",
                 "Choose a local Project first",
@@ -712,18 +797,18 @@ impl Runtime {
                 cancel.cancel();
             }
             if self.memory_operation_in_flight {
-                self.queue_memory_interrupt(checkout_path, payload);
+                self.queue_memory_interrupt((node, checkout_path), payload);
                 return true;
             }
         } else if self.memory_operation_in_flight {
             return false;
         }
-        self.begin_memory_action(checkout_path, payload)
+        self.begin_memory_action((node, checkout_path), sessions_node, payload)
     }
 
     fn queue_memory_interrupt(
         &mut self,
-        checkout_path: String,
+        checkout: (NodeId, String),
         payload: events::MemoryActionPayload,
     ) {
         let keep_existing_delete = self
@@ -731,7 +816,7 @@ impl Runtime {
             .as_ref()
             .is_some_and(|(_, pending)| pending.action == "delete" && payload.action != "delete");
         if !keep_existing_delete {
-            self.memory_pending_action = Some((checkout_path, payload));
+            self.memory_pending_action = Some((checkout, payload));
         }
         let action = self
             .memory_pending_action
@@ -751,7 +836,8 @@ impl Runtime {
 
     fn begin_memory_action(
         &mut self,
-        checkout_path: String,
+        (node, checkout_path): (NodeId, String),
+        sessions_node: Arc<dyn NodeLink>,
         payload: events::MemoryActionPayload,
     ) -> bool {
         let Some(context) = self.worker_context.clone() else {
@@ -765,7 +851,7 @@ impl Runtime {
         self.memory_operation_in_flight = true;
         self.memory_operation_generation = self.memory_operation_generation.saturating_add(1);
         let generation = self.memory_operation_generation;
-        self.memory_operation_checkout_path = Some(checkout_path.clone());
+        self.memory_operation_checkout_path = Some((node.clone(), checkout_path.clone()));
         let action = payload.action.clone();
         // Memory analysis is a model call: with Hide AI off or no agent
         // chosen the project is still enabled and its saved Memory still
@@ -784,9 +870,7 @@ impl Runtime {
         let database = self.memory_database_path();
         let settings = self.ai_settings.clone().unwrap_or_default();
         self.memory_analysis_settings = analyzes.then(|| settings.clone());
-        let node = self.node.clone();
         let ai_node = self.own_node();
-        let sessions_node = self.own_node();
         thread::Builder::new()
             .name("hide-project-memory-write".to_owned())
             .spawn(move || {
@@ -806,7 +890,7 @@ impl Runtime {
                         &checkout_path,
                         &cancel,
                         |snapshot| {
-                            report_analysis(&context, generation, &checkout_path, snapshot);
+                            report_analysis(&context, generation, &node, &checkout_path, snapshot);
                         },
                     ));
                 }
@@ -823,9 +907,7 @@ impl Runtime {
                         guard.memory_analysis_settings = None;
                         guard.memory_operation_checkout_path = None;
                         let pending = guard.memory_pending_action.take();
-                        let still_focused = guard
-                            .focused_memory_context()
-                            .is_some_and(|(_, _, path)| path == checkout_path);
+                        let still_focused = guard.memory_focus_is(&node, &checkout_path);
                         if still_focused && pending.is_none() {
                             match result {
                                 Ok(outcome) => {
@@ -858,11 +940,16 @@ impl Runtime {
                             guard.request_sessions_refresh();
                         }
                         if let Some((pending_checkout, pending_payload)) = pending {
-                            let pending_still_focused = guard
-                                .focused_memory_context()
-                                .is_some_and(|(_, _, path)| path == pending_checkout);
-                            if pending_still_focused {
-                                guard.begin_memory_action(pending_checkout, pending_payload);
+                            let focus = guard.focused_memory_context().filter(|focus| {
+                                (&focus.node, &focus.checkout_path)
+                                    == (&pending_checkout.0, &pending_checkout.1)
+                            });
+                            if let Some(focus) = focus {
+                                guard.begin_memory_action(
+                                    pending_checkout,
+                                    focus.link,
+                                    pending_payload,
+                                );
                             } else {
                                 guard.set_error(
                                     "memory.pending_project_changed",
@@ -1860,6 +1947,7 @@ fn should_request_memory_due_poll_after_load(
 fn report_analysis(
     context: &RuntimeWorkerContext,
     generation: u64,
+    node: &NodeId,
     checkout_path: &str,
     analysis: MemoryAnalysisSnapshot,
 ) {
@@ -1869,9 +1957,7 @@ fn report_analysis(
     let changed = match runtime.lock() {
         Ok(mut guard)
             if guard.memory_operation_generation == generation
-                && guard
-                    .focused_memory_context()
-                    .is_some_and(|(_, _, path)| path == checkout_path) =>
+                && guard.memory_focus_is(node, checkout_path) =>
         {
             guard.snapshot.sessions.analysis = analysis;
             true
@@ -2189,8 +2275,8 @@ fn session_chunk(
     .map_err(|error| error.to_string())
 }
 
-/// Records each receipt whose tag this Mac's Memory signed for its Project,
-/// provider and session; a receipt that fails the check is no injection.
+/// Records each receipt whose tag the core's Memory signed for its Project,
+/// provider and session, the Project read by `node`; a receipt that fails the check is no injection.
 fn record_receipts(
     node: &NodeId,
     sessions_node: &dyn NodeLink,

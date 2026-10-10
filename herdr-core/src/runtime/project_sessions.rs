@@ -21,6 +21,7 @@ use crate::model::{
     ArchiveDetailSnapshot, ProjectSessionDetailSnapshot, ProjectSessionsSnapshot,
     SessionRowSnapshot,
 };
+use crate::node::NodeId;
 
 /// The reason a session the history listed before carries once its file is
 /// no longer found (B5, D-04).
@@ -34,9 +35,10 @@ const SESSION_NOT_LISTED: &str =
 /// The reads behind the named Project, beside its snapshot.
 #[derive(Default)]
 pub(super) struct ProjectSessionsWork {
-    /// The folder the history is read from while the named Project can be
-    /// read here; `None` for one on another device or gone from the catalog.
-    pub(super) path: Option<String>,
+    /// The node and folder the history is read from while the named Project
+    /// can be read (`Runtime::memory_node`); `None` for one on a device the
+    /// core dials, on a node that is not linked, or gone from the catalog.
+    pub(super) folder: Option<(NodeId, String)>,
     /// The Project identity (`hide_project`) the last history answered for;
     /// a session is read under it.
     pub(super) project_id: Option<String>,
@@ -99,7 +101,7 @@ impl Runtime {
         self.project_sessions_work.list_generation += 1;
         match self.project_sessions_folder(device_id, workspace_id) {
             Err(reason) => {
-                self.project_sessions_work.path = None;
+                self.project_sessions_work.folder = None;
                 self.project_sessions_work.list_waiting = false;
                 if let Some(sessions) = self.snapshot.project_sessions.as_mut() {
                     sessions.unavailable_reason = Some(reason);
@@ -110,8 +112,8 @@ impl Runtime {
                 }
                 true
             }
-            Ok(path) => {
-                self.project_sessions_work.path = Some(path);
+            Ok(folder) => {
+                self.project_sessions_work.folder = Some(folder);
                 if let Some(sessions) = self.snapshot.project_sessions.as_mut() {
                     sessions.unavailable_reason = None;
                     sessions.loading = true;
@@ -127,43 +129,53 @@ impl Runtime {
         }
     }
 
-    /// Where the named Project's history is read from, or why it is not read
-    /// here: sessions are read only from this machine's provider folders, so
-    /// a Project on an SSH device says so rather than showing local sessions
-    /// in its place (B7).
+    /// Where the named Project's history is read from, or why it is not read:
+    /// sessions are read from the provider folders of this machine and of a
+    /// node that dials in (PRD core-host-node-move B14), so a Project on an
+    /// SSH device says so rather than showing another machine's sessions in
+    /// its place (B7).
     fn project_sessions_folder(
         &self,
         device_id: &str,
         workspace_id: &str,
-    ) -> Result<String, String> {
-        if device_id != self.node.as_str() {
-            return Err(self.device_sessions_reason(device_id));
-        }
+    ) -> Result<(NodeId, String), String> {
+        let node = match self.memory_node(device_id) {
+            Ok((node, _)) => node,
+            Err("link_down") => {
+                return Err(format!(
+                    "{} is not connected.",
+                    self.device_label(device_id)
+                ));
+            }
+            Err(_) => return Err(self.device_sessions_reason(device_id)),
+        };
         let workspace = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .find(|workspace| workspace.id == workspace_id)
+            .catalog_workspaces()
+            .find(|workspace| workspace.id == workspace_id && workspace.device_id == device_id)
             .ok_or_else(|| "This Project is no longer registered.".to_owned())?;
-        if workspace.remote_target_id.is_some() || workspace.device_id != self.node.as_str() {
-            return Err(self.device_sessions_reason(&workspace.device_id));
-        }
-        Ok(workspace.path.clone())
+        Ok((node, workspace.path.clone()))
+    }
+
+    fn device_label(&self, device_id: &str) -> String {
+        self.snapshot
+            .navigator
+            .devices
+            .iter()
+            .find(|device| device.id == device_id)
+            .map(|device| device.label.clone())
+            .unwrap_or_else(|| device_id.to_owned())
     }
 
     fn device_sessions_reason(&self, device_id: &str) -> String {
-        let label = |id: &str| {
-            self.snapshot
-                .navigator
-                .devices
-                .iter()
-                .find(|device| device.id == id)
-                .map(|device| device.label.clone())
-        };
-        let device = label(device_id).unwrap_or_else(|| device_id.to_owned());
-        let here =
-            label(self.node.as_str()).unwrap_or_else(|| workspace::local_device(&self.node).label);
+        let device = self.device_label(device_id);
+        let here = self
+            .snapshot
+            .navigator
+            .devices
+            .iter()
+            .find(|device| device.id == self.node.as_str())
+            .map(|device| device.label.clone())
+            .unwrap_or_else(|| workspace::local_device(&self.node).label);
         format!(
             "Sessions on {device} are not available here. Hide reads Codex and Claude Code sessions only on {here}."
         )
@@ -172,7 +184,7 @@ impl Runtime {
     /// Starts the history read; true when it could not start and the
     /// snapshot now says so.
     fn spawn_project_sessions_read(&mut self) -> bool {
-        let Some(path) = self.project_sessions_work.path.clone() else {
+        let Some((node, path)) = self.project_sessions_work.folder.clone() else {
             return false;
         };
         let generation = self.project_sessions_work.list_generation;
@@ -185,11 +197,9 @@ impl Runtime {
             .and_then(|sessions| self.project_sessions_work.known.get(&sessions.workspace_id))
             .cloned()
             .unwrap_or_default();
-        let started = match self.worker_context.clone() {
-            Some(context) => {
+        let started = match (self.worker_context.clone(), self.memory_node(node.as_str())) {
+            (Some(context), Ok((_, sessions_node))) => {
                 let database = self.memory_database_path();
-                let node = self.node.clone();
-                let sessions_node = self.own_node();
                 thread::Builder::new()
                     .name("hide-project-sessions-read".to_owned())
                     .spawn(move || {
@@ -213,7 +223,11 @@ impl Runtime {
                     })
                     .map_err(|error| format!("The session reader could not start: {error}"))
             }
-            None => Err("The session reader is unavailable.".to_owned()),
+            (None, _) => Err("The session reader is unavailable.".to_owned()),
+            (_, Err(_)) => Err(format!(
+                "{} is not connected.",
+                self.device_label(node.as_str())
+            )),
         };
         match started {
             Ok(_) => {
@@ -392,10 +406,14 @@ impl Runtime {
             }
             return true;
         };
-        let started = match (self.worker_context.clone(), project_id) {
-            (Some(context), Some(project_id)) => {
+        let link = self
+            .project_sessions_work
+            .folder
+            .as_ref()
+            .map(|(node, _)| (node.clone(), self.memory_node(node.as_str())));
+        let started = match (self.worker_context.clone(), project_id, link) {
+            (Some(context), Some(project_id), Some((_, Ok((_, sessions_node))))) => {
                 let database = self.memory_database_path();
-                let sessions_node = self.own_node();
                 thread::Builder::new()
                     .name("hide-project-session-read".to_owned())
                     .spawn(move || {
@@ -423,8 +441,14 @@ impl Runtime {
                     })
                     .map_err(|error| format!("The session reader could not start: {error}"))
             }
-            (None, _) => Err("The session reader is unavailable.".to_owned()),
-            (_, None) => Err("The Project's history has not been read yet.".to_owned()),
+            (None, _, _) => Err("The session reader is unavailable.".to_owned()),
+            (_, None, _) | (_, _, None) => {
+                Err("The Project's history has not been read yet.".to_owned())
+            }
+            (_, _, Some((node, Err(_)))) => Err(format!(
+                "{} is not connected.",
+                self.device_label(node.as_str())
+            )),
         };
         match started {
             Ok(_) => {

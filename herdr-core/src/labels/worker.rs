@@ -516,11 +516,12 @@ impl LabelWorker {
         }
     }
 
-    /// Keeps the Memory receipts a read of this Mac's session found. Only an
-    /// id-referenced session in a known cwd can name the Project and session
-    /// Memory checks a receipt against; a device's Memory is its own.
+    /// Keeps the Memory receipts a read of this target's sessions found. Only
+    /// an id-referenced session in a known cwd can name the Project and
+    /// session Memory checks a receipt against; which machines have Memory is
+    /// the runtime's to decide (`Runtime::record_memory_receipts`).
     fn note_receipts(&mut self, pane_id: &str, receipts: &[MemoryReceiptPart]) {
-        if receipts.is_empty() || self.target != self.store.node() {
+        if receipts.is_empty() {
             return;
         }
         let Some(pane) = self.panes.get(pane_id) else {

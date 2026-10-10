@@ -272,53 +272,57 @@ async fn focus_checkout(
     path: &std::path::Path,
 ) -> Result<()> {
     send(socket, "focus_device", json!({"device_id": device})).await?;
-    let path = path.to_string_lossy().into_owned();
-    let mut seen = Value::Null;
-    let (workspace, checkout) = tokio::task::block_in_place(|| {
-        wait_for("the checkout in the core's navigator", || {
-            let snapshot = fixture.snapshot()?;
-            // This machine's checkouts are the navigator's; a device's are
-            // its session's.
-            let mut listed: Vec<Value> = snapshot["navigator"]["workspaces"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
-            for remote in snapshot["status"]["remote"]
-                .as_array()
-                .into_iter()
-                .flatten()
-            {
-                listed.extend(
-                    remote["session"]["workspaces"]
-                        .as_array()
-                        .cloned()
-                        .unwrap_or_default(),
-                );
-            }
-            seen = json!(
-                listed
-                    .iter()
-                    .map(|workspace| &workspace["path"])
-                    .collect::<Vec<_>>()
-            );
-            Ok(listed
-                .iter()
-                .find(|workspace| workspace["path"] == path.as_str())
-                .and_then(|workspace| {
-                    Some((
-                        workspace["id"].as_str()?.to_owned(),
-                        workspace["checkouts"][0]["id"].as_str()?.to_owned(),
-                    ))
-                }))
-        })
-    })
-    .with_context(|| format!("the core's navigator: {seen}"))?;
+    let (workspace, checkout) = tokio::task::block_in_place(|| listed_checkout(fixture, path))?;
     send(
         socket,
         "focus_checkout",
         json!({"workspace_id": workspace, "checkout_id": checkout, "focus_device": true}),
     )
     .await
+}
+
+/// The Project and checkout ids the core's catalog lists for `path`, once it
+/// lists it.
+fn listed_checkout(fixture: &Fixture, path: &std::path::Path) -> Result<(String, String)> {
+    let path = path.to_string_lossy().into_owned();
+    let mut seen = Value::Null;
+    wait_for("the checkout in the core's navigator", || {
+        let snapshot = fixture.snapshot()?;
+        // This machine's checkouts are the navigator's; a device's are its
+        // session's.
+        let mut listed: Vec<Value> = snapshot["navigator"]["workspaces"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        for remote in snapshot["status"]["remote"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            listed.extend(
+                remote["session"]["workspaces"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
+        seen = json!(
+            listed
+                .iter()
+                .map(|workspace| &workspace["path"])
+                .collect::<Vec<_>>()
+        );
+        Ok(listed
+            .iter()
+            .find(|workspace| workspace["path"] == path.as_str())
+            .and_then(|workspace| {
+                Some((
+                    workspace["id"].as_str()?.to_owned(),
+                    workspace["checkouts"][0]["id"].as_str()?.to_owned(),
+                ))
+            }))
+    })
+    .with_context(|| format!("the core's navigator: {seen}"))
 }
 
 /// Waits up to `bound` for the node's link to reach `phase`, as its
@@ -1269,6 +1273,52 @@ fn an_agent_on_either_machine_reads_the_one_memory_the_core_owns() -> Result<()>
             let log = std::fs::read_to_string(fixture.core_state.join("Logs/core.jsonl"))?;
             ensure!(!log.contains("keeps its rule"), "Memory text reached the core's log");
 
+            // Sessions are each machine's own session files: the node's
+            // Project lists what the node holds, read through its link, in the
+            // right panel with its checkout in front and on its Project's
+            // Sessions screen.
+            for (home, project, id) in [
+                (fixture.screen_home(), &node_project, "node-session"),
+                (fixture.core_home(), &core_project, "core-session"),
+            ] {
+                write_claude_session(home, project, id)?;
+            }
+            focus_checkout(&fixture, &mut socket, &node, &node_project).await?;
+            send(&mut socket, "sessions_refresh", json!({})).await?;
+            let rows = tokio::task::block_in_place(|| {
+                wait_for("the right panel's sessions of the node's checkout", || {
+                    let sessions = fixture.snapshot()?["sessions"].clone();
+                    Ok((sessions["checkout_path"] == node_project.to_string_lossy().as_ref()
+                        && sessions["loading"] == false)
+                        .then(|| session_ids(&sessions)))
+                })
+            })?;
+            ensure!(rows == ["node-session"], "the right panel listed {rows:?}");
+            let (project_id, _) =
+                tokio::task::block_in_place(|| listed_checkout(&fixture, &node_project))?;
+            send(
+                &mut socket,
+                "sessions_refresh",
+                json!({"workspace_id": project_id, "device_id": node}),
+            )
+            .await?;
+            // The named Project rides its own section of a snapshot frame,
+            // beside the rest the renderer reads.
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let named = loop {
+                let frame = next_frame(&mut socket, deadline)
+                    .await?
+                    .context("the node's Project's sessions never settled")?;
+                let sessions = &frame["payload"]["project_sessions"];
+                if sessions["workspace_id"] == project_id.as_str() && sessions["loading"] == false {
+                    break sessions.clone();
+                }
+            };
+            ensure!(
+                session_ids(&named) == ["node-session"] && named["unavailable_reason"].is_null(),
+                "the node's Project's Sessions: {named}"
+            );
+
             tokio::task::block_in_place(|| fixture.ssh.online(false))?;
             node_link(port, "waiting", LINK_BOUND).await?;
             let (answer, took) = tokio::task::block_in_place(|| {
@@ -1290,6 +1340,30 @@ fn an_agent_on_either_machine_reads_the_one_memory_the_core_owns() -> Result<()>
             Err(error).context(format!("run kept at {}", fixture.root.display()))
         }
     }
+}
+
+/// A Claude Code session `id` under `home` whose one request was made in
+/// `project`.
+fn write_claude_session(home: &std::path::Path, project: &std::path::Path, id: &str) -> Result<()> {
+    let folder = home.join(".claude/projects/journey");
+    std::fs::create_dir_all(&folder)?;
+    let line = json!({
+        "type": "user", "cwd": std::fs::canonicalize(project)?,
+        "timestamp": "2026-10-11T01:00:00Z", "userType": "external", "promptId": "p-1",
+        "message": {"role": "user", "content": format!("{id} request")},
+    });
+    std::fs::write(folder.join(format!("{id}.jsonl")), format!("{line}\n"))?;
+    Ok(())
+}
+
+/// The ids of the session rows a Sessions section lists.
+fn session_ids(sessions: &Value) -> Vec<String> {
+    sessions["rows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row["id"].as_str().map(str::to_owned))
+        .collect()
 }
 
 /// The one JSON answer a `hide workspace` command printed among `text`.

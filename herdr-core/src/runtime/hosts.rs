@@ -866,38 +866,46 @@ impl Runtime {
             .unwrap_or_else(|| "The device helper is not ready".to_owned()))
     }
 
+    /// The node whose files Memory and Sessions read for a Project on
+    /// `device`, with its link: the core's own node, or a node that dials in
+    /// while its link is up, never a device the core dials, which keeps no
+    /// Memory (PRD core-host-node-move B14, Q20); asking starts no helper.
+    pub(crate) fn memory_node(
+        &self,
+        device: &str,
+    ) -> Result<(crate::node::NodeId, Arc<dyn NodeLink>), &'static str> {
+        if device == self.node.as_str() {
+            return Ok((self.node.clone(), self.own_node()));
+        }
+        let registration = self
+            .snapshot
+            .ui_state
+            .device_registrations
+            .iter()
+            .find(|registration| registration.id == device)
+            .ok_or("unregistered")?;
+        if registration.origin != crate::model::LinkOrigin::Inbound {
+            return Err("dialed_device");
+        }
+        let node = crate::node::NodeId::parse(device).map_err(|_| "unregistered")?;
+        match self.device_hosts.get(device).map(|host| &host.phase) {
+            Some(HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {
+                Ok((node, Arc::clone(host)))
+            }
+            _ => Err("link_down"),
+        }
+    }
+
     /// What a hook's Memory read for a pane in `context` is answered from
-    /// (`crate::memory_hook`): the core's own node or a node that dials in
-    /// while its link is up, never a device the core dials (PRD
-    /// core-host-node-move Q20); asking starts no helper.
+    /// (`crate::memory_hook`), on the node of the pane's checkout.
     pub(crate) fn memory_scope(
         &self,
         context: &crate::workspace_control::Context,
     ) -> Result<crate::memory_hook::Scope, &'static str> {
-        let device = context.device_id.as_str();
-        let link = if device == self.node.as_str() {
-            self.own_node()
-        } else {
-            let registration = self
-                .snapshot
-                .ui_state
-                .device_registrations
-                .iter()
-                .find(|registration| registration.id == device)
-                .ok_or("unregistered")?;
-            if registration.origin != crate::model::LinkOrigin::Inbound {
-                return Err("dialed_device");
-            }
-            match self.device_hosts.get(device).map(|host| &host.phase) {
-                Some(HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {
-                    Arc::clone(host)
-                }
-                _ => return Err("link_down"),
-            }
-        };
+        let (node, link) = self.memory_node(&context.device_id)?;
         Ok(crate::memory_hook::Scope {
             store: self.memory_database_path(),
-            node: crate::node::NodeId::parse(device).map_err(|_| "unregistered")?,
+            node,
             checkout_path: context.checkout_path.clone(),
             link,
         })

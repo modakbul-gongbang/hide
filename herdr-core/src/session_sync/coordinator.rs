@@ -1562,21 +1562,24 @@ fn exchange_pull_requests(context: &SessionSyncContext, worker: &mut LabelWorker
     times.is_some_and(|times| worker.set_pull_request_times(times))
 }
 
-/// Hands the runtime the Memory receipts this Mac's worker found in its
+/// Hands the runtime the Memory receipts this target's worker found in its
 /// sessions, under one brief lock taken only when there are some; the runtime
-/// checks and records them off the lock (PRD opencode-plugin D-12).
+/// checks and records them off the lock (PRD opencode-plugin D-12), for this
+/// machine and for a node that dials in (PRD core-host-node-move B14).
 fn hand_memory_receipts(context: &SessionSyncContext, worker: &mut LabelWorker) {
-    if !context.is_local() {
-        return;
-    }
     let receipts = worker.take_memory_receipts();
     if receipts.is_empty() {
         return;
     }
+    let device = match &context.target {
+        SessionSyncTarget::Local { .. } => None,
+        SessionSyncTarget::Remote { target_id, .. } => Some(target_id.as_str()),
+    };
     if let Some(runtime) = context.runtime.upgrade()
         && let Ok(mut guard) = runtime.lock()
     {
-        guard.record_memory_receipts(receipts);
+        let device = device.map_or_else(|| guard.node().as_str().to_owned(), str::to_owned);
+        guard.record_memory_receipts(&device, receipts);
     }
 }
 
