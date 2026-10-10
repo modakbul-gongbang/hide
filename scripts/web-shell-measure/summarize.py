@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Nearest-rank echo percentiles and the over-budget frame fraction.
 
-usage: summarize.py echo <echo-*.json...>      -> per-trial p50/p95/p99/max, median of trial p95s
+usage: summarize.py echo <echo-*.json...>      -> per-trial p50/p95/p99/max, median of trial p95s,
+                                                  and a key echo's clock offset cross-check
        summarize.py frames <frames.json>       -> count, over 16.7 ms, fraction, complete
        summarize.py topology <topology.json>   -> per operation p50/p95/max to screen and to frame
        summarize.py timing <core.jsonl>        -> per operation stage times from pane_op.timing lines,
@@ -23,6 +24,23 @@ def percentile(values, fraction):
     return ordered[max(0, math.ceil(len(ordered) * fraction) - 1)] if ordered else None
 
 
+def clocks(doc):
+    """A key echo's cross-check across two clocks: the driver's clock minus
+    the page's per hop, and the samples timed from the driver's t0. Empty for
+    an echo file timed on one clock throughout or written before these."""
+    offsets = [float(h["clock_offset_ms"]) for h in doc.get("hops", []) if "clock_offset_ms" in h]
+    if not offsets:
+        return {}
+    trips = [float(h["clock_round_trip_ms"]) for h in doc["hops"] if "clock_round_trip_ms" in h]
+    node = [float(v) for v in doc.get("node_t0_samples", [])]
+    return {
+        "clock_offset_ms": {"p50": percentile(offsets, 0.50), "min": min(offsets), "max": max(offsets)},
+        "clock_round_trip_max_ms": max(trips) if trips else None,
+        "node_t0_p50_ms": percentile(node, 0.50),
+        "node_t0_p95_ms": percentile(node, 0.95),
+    }
+
+
 def echo(paths):
     trials = []
     for path in paths:
@@ -37,6 +55,7 @@ def echo(paths):
             "max_ms": max(values) if values else None,
             "negative": sum(1 for v in values if v < 0),
             "load": doc.get("load"),
+            **clocks(doc),
         })
     p95s = sorted(t["p95_ms"] for t in trials)
     median_p95 = p95s[len(p95s) // 2] if p95s else None
