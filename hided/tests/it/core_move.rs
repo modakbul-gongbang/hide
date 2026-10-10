@@ -985,3 +985,496 @@ fn finish(mut fixture: Fixture, journey: Result<()>) -> Result<()> {
     }
     fixture.remove_run_dir()
 }
+
+/// D-15(3) and D-29: what the operator arranged on each machine is the same
+/// before the move, once it commits and after the move back, compared by the
+/// machine and path each id names, since the two cores name the machines
+/// differently. The state is written by the product's own events where one
+/// exists; labels and a letter held for the target are placed at rest,
+/// because their writers need an AI provider and a registered agent. The
+/// target's core keeps the labels it was given in memory, so its folder has
+/// none to compare.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn what_each_machine_shows_survives_the_move_and_the_move_back() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        seed_at_rest(&mut fixture)?;
+        seed_through_events(&fixture)?;
+        let shown_before = settled_window(&fixture, SOURCE_NODE)?;
+
+        let forward = moved_forward(&fixture)?;
+        let kept_before = kept_per_machine(
+            &fixture
+                .source
+                .state
+                .join("moved-out")
+                .join(forward["intent"].as_str().context("intent")?),
+            SOURCE_NODE,
+        )?;
+        let shown_after = wait_for("the window as it was, through the new core", || {
+            let shown = window_shows(&fixture, TARGET_NODE)?;
+            Ok(shown.filter(|shown| *shown == shown_before))
+        })
+        .with_context(|| {
+            format!(
+                "before: {shown_before}\nafter: {:?}",
+                window_shows(&fixture, TARGET_NODE)
+            )
+        })?;
+
+        fixture.event("core_move", json!({"action": "back"}))?;
+        let back = back_journal_until(&fixture, "done")?;
+        wait_for("this machine's core", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        fixture.device_ready()?;
+        let kept_after = kept_per_machine(
+            &fixture
+                .target
+                .state
+                .join("moved-out")
+                .join(back["intent"].as_str().context("intent")?),
+            TARGET_NODE,
+        )?;
+        wait_for("the window as it was, back on this machine", || {
+            Ok((window_shows(&fixture, SOURCE_NODE)?.as_ref() == Some(&shown_after)).then_some(()))
+        })
+        .with_context(|| {
+            format!(
+                "before: {shown_after}\nreturned: {:?}",
+                window_shows(&fixture, SOURCE_NODE)
+            )
+        })?;
+        let kept_returned = kept_per_machine(&fixture.source.state, SOURCE_NODE)?;
+
+        ensure!(
+            kept_returned == kept_before,
+            "before: {kept_before:#}\nreturned: {kept_returned:#}"
+        );
+        let mut without_labels = kept_before.clone();
+        without_labels["source"]["labels"] = json!({});
+        ensure!(
+            kept_after == without_labels,
+            "before: {kept_before:#}\nafter: {kept_after:#}"
+        );
+        ensure!(
+            kept_before["source"]["labels"]["w1:p1"]["goal"] == "Seeded goal",
+            "{kept_before:#}"
+        );
+        ensure!(
+            kept_before["target"]["letters"].as_array().map(Vec::len) == Some(1),
+            "{kept_before:#}"
+        );
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// A label on the source's pane and a letter held for an agent on the
+/// target, in the stores' own shapes, before the source's core starts.
+fn seed_at_rest(fixture: &mut Fixture) -> Result<()> {
+    fixture.kill_source()?;
+    write_record(
+        &fixture.source.state.join("labels.json"),
+        &json!({"version": 1, "targets": {SOURCE_NODE: {"w1:p1": {"goal": "Seeded goal", "line": "Seeded line"}}}}),
+    )?;
+    let actor = |pane: &str, device: &str| json!({"pane_id": pane, "name": "lead", "kind": "claude", "device_id": device, "session": "lead-session"});
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as u64;
+    let path = fixture.source.state.join("delivery-ledger.json");
+    let mut ledger: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+    ledger["next_id"] = json!(100);
+    ledger["letters"] = json!([{"id": "letter-1", "intent": "held-for-target", "sender": actor("w1:p1", SOURCE_NODE), "recipient": actor(&format!("remote:{ALIAS}:pane:w9:p9"), ALIAS), "kind": "report", "body": "A letter held for the target", "state": "undelivered", "waiting_answer": false, "reply_to": null, "created_at_unix_ms": now, "finished_at_unix_ms": now, "bell_errors": 0, "bell_sent": false, "human_notified": false}]);
+    write_record(&path, &ledger)?;
+    fixture.start_source()?;
+    fixture.device_ready()
+}
+
+/// Folds, path settings, Views, a second tab and an Agent split on the
+/// source's checkout, each through the event the window sends.
+fn seed_through_events(fixture: &Fixture) -> Result<()> {
+    let source = fixture.source.project();
+    let target = fixture.target.project();
+    std::fs::create_dir_all(source.join("src"))?;
+    std::fs::write(source.join("src/a.txt"), "a")?;
+    std::fs::create_dir_all(target.join("lib"))?;
+    let snapshot = fixture.snapshot()?;
+    let registrations = snapshot
+        .pointer("/ui_state/workspace_registrations")
+        .and_then(Value::as_array)
+        .context("registrations")?
+        .clone();
+    let project = |device: &str| {
+        registrations
+            .iter()
+            .find(|row| row["device_id"] == device)
+            .map(|row| row["id"].clone())
+            .context("project")
+    };
+    let (source_project, target_project) = (project(SOURCE_NODE)?, project(ALIAS)?);
+    let checkout = snapshot
+        .pointer("/navigator/workspaces/0/checkouts/0/id")
+        .cloned()
+        .context("checkout")?;
+    fixture.event(
+        "create_tab",
+        json!({"workspace_id": source_project, "checkout_id": checkout, "label": "second"}),
+    )?;
+    let second = wait_for("the source's second tab", || {
+        let snapshot = fixture.snapshot()?;
+        let tabs = snapshot
+            .pointer("/navigator/workspaces/0/checkouts/0/tabs")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        Ok((tabs.len() == 2).then(|| tabs[1]["id"].clone()))
+    })?;
+    let bindings = snapshot
+        .pointer("/ui_state/shortcut_bindings")
+        .cloned()
+        .unwrap_or(json!({}));
+    for (kind, payload) in [
+        (
+            "agent_layout",
+            json!({"workspace": {"device_id": SOURCE_NODE, "path": source}, "action": "split", "tab_id": second, "area_id": "a1", "edge": "right", "request_id": "seed-split"}),
+        ),
+        ("session_fold_toggle", json!({"key": source_project})),
+        ("session_fold_toggle", json!({"key": target_project})),
+        ("checkout_agents_toggle", json!({"checkout_id": checkout})),
+        (
+            "issue_source_set",
+            json!({"project_path": source, "source": "local"}),
+        ),
+        (
+            "issue_source_set",
+            json!({"project_path": target, "source": "github"}),
+        ),
+        (
+            "project_checkouts_fold",
+            json!({"workspace_id": target_project, "expanded": false}),
+        ),
+        ("sessions_set_mode", json!({"mode": "memory"})),
+        ("workspace_view", json!({"views": true})),
+        (
+            "ui_state_update",
+            json!({"expanded_paths": [source.join("src")], "device_expanded_paths": {ALIAS: [target.join("lib")]}, "selected_path": source.join("src/a.txt"), "shortcut_bindings": bindings}),
+        ),
+    ] {
+        fixture.event(kind, payload)?;
+    }
+    Ok(())
+}
+
+/// What the window shows once the seeded split has reached it and the
+/// saves behind it had time to land.
+fn settled_window(fixture: &Fixture, own: &str) -> Result<Value> {
+    let shown = wait_for("the split drawn", || {
+        Ok(window_shows(fixture, own)?.filter(|shown| {
+            shown
+                .pointer("/agent_areas/layout/root/split")
+                .is_some_and(|split| !split.is_null())
+        }))
+    })?;
+    std::thread::park_timeout(std::time::Duration::from_secs(2));
+    Ok(shown)
+}
+
+/// The machine a device id or node id names in either core.
+fn machine_of(device: &str, own: &str) -> Result<&'static str> {
+    let device = if device == "local" { own } else { device };
+    Ok(match device {
+        SOURCE_NODE => "source",
+        TARGET_NODE | ALIAS => "target",
+        other => bail!("an id names no machine of the fixture: {other}"),
+    })
+}
+
+/// `value` with every `remote:<id>:tab:` or `remote:<id>:pane:` prefix that
+/// names `machine` taken off, as that machine's own Herdr spells its ids.
+fn unqualify(value: &Value, machine: &str, own: &str) -> Value {
+    match value {
+        Value::String(text) => {
+            for kind in [":tab:", ":pane:"] {
+                if let Some((owner, id)) = text.split_once(kind)
+                    && let Some(device) = owner.strip_prefix("remote:")
+                    && machine_of(device, own).ok() == Some(machine)
+                {
+                    return json!(id);
+                }
+            }
+            value.clone()
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| unqualify(item, machine, own))
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, item)| {
+                    let key = match unqualify(&json!(key), machine, own) {
+                        Value::String(key) => key,
+                        _ => key.clone(),
+                    };
+                    (key, unqualify(item, machine, own))
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// What the window shows, read from the core whose node is `own`: the
+/// machine in front with the checkout, tab and pane it shows, every
+/// machine's checkouts with their tabs, and the front Workspace's Agent
+/// areas, each id as its machine's Herdr spells it; `None` while a core
+/// that just started names no machine in front yet.
+fn window_shows(fixture: &Fixture, own: &str) -> Result<Option<Value>> {
+    let snapshot = fixture.snapshot()?;
+    let Some(front) = snapshot
+        .pointer("/navigator/focused_device_id")
+        .and_then(Value::as_str)
+    else {
+        return Ok(None);
+    };
+    let front = machine_of(front, own)?;
+    let tabs_of = |checkouts: &[Value]| -> serde_json::Map<String, Value> {
+        checkouts
+            .iter()
+            .filter_map(|checkout| {
+                let tabs: Vec<Value> = checkout["tabs"]
+                    .as_array()?
+                    .iter()
+                    .map(|tab| json!({"id": tab["id"], "panes": tab["panes"].as_array().map(|panes| panes.iter().map(|pane| pane["id"].clone()).collect::<Vec<_>>())}))
+                    .collect();
+                Some((checkout["path"].as_str()?.to_owned(), json!(tabs)))
+            })
+            .collect()
+    };
+    let checkouts_in = |workspaces: Option<&Value>| -> Vec<Value> {
+        workspaces
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|workspace| {
+                workspace["checkouts"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .collect()
+    };
+    let mut machines = serde_json::Map::new();
+    let mut shown = Value::Null;
+    let own_checkouts = checkouts_in(snapshot.pointer("/navigator/workspaces"));
+    let own_machine = machine_of(own, own)?;
+    machines.insert(own_machine.to_owned(), json!(tabs_of(&own_checkouts)));
+    if front == own_machine {
+        let focused = snapshot.pointer("/navigator/focused_checkout_id");
+        let checkout = own_checkouts.iter().find(|row| Some(&row["id"]) == focused);
+        shown = json!({
+            "checkout": checkout.map(|row| row["path"].clone()),
+            "tab": checkout.map(|row| row["active_tab_id"].clone()),
+            "pane": snapshot.pointer("/ui_state/selected_pane_id"),
+        });
+    }
+    for status in snapshot
+        .pointer("/status/remote")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let machine = machine_of(status["target_id"].as_str().context("target")?, own)?;
+        let session = &status["session"];
+        let checkouts = checkouts_in(session.get("workspaces"));
+        machines.insert(
+            machine.to_owned(),
+            unqualify(&json!(tabs_of(&checkouts)), machine, own),
+        );
+        if front == machine {
+            let focused = session.get("focused_checkout_id");
+            shown = unqualify(
+                &json!({
+                    "checkout": checkouts.iter().find(|row| Some(&row["id"]) == focused).map(|row| row["path"].clone()),
+                    "tab": session["focused_tab_id"],
+                    "pane": session["focused_pane_id"],
+                }),
+                machine,
+                own,
+            );
+        }
+    }
+    let view = snapshot
+        .pointer("/workspace_view")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let agent_areas = match view["device_id"].as_str() {
+        Some(device) => {
+            let machine = machine_of(device, own)?;
+            unqualify(
+                &json!({"machine": machine, "path": view["path"], "layout": {"root": view["agent_layout"]["root"], "active_area": view["agent_layout"]["active_area"], "canvases": view["agent_layout"]["canvases"]}}),
+                machine,
+                own,
+            )
+        }
+        None => Value::Null,
+    };
+    Ok(Some(
+        json!({"front": front, "shown": shown, "machines": machines, "agent_areas": agent_areas}),
+    ))
+}
+
+/// What the core whose stores are in `dir`, running on node `own`, keeps
+/// for each machine: every id replaced by the machine and path it names, so
+/// two cores that name the machines differently compare equal when they
+/// keep the same things for each. Which checkout and pane a machine shows
+/// is its own Herdr's focus and is compared on the window instead.
+fn kept_per_machine(dir: &std::path::Path, own: &str) -> Result<Value> {
+    let read = |name: &str| -> Result<Value> {
+        Ok(serde_json::from_slice(
+            &std::fs::read(dir.join(name))
+                .with_context(|| format!("{name} in {}", dir.display()))?,
+        )?)
+    };
+    let core = read("core-state.json")?;
+    let views = read("workspace-views.json")?;
+    let labels = read("labels.json")?;
+    let ledger = read("delivery-ledger.json")?;
+    let registrations = core["workspace_registrations"]
+        .as_array()
+        .context("registrations")?;
+    let place_project = |id: &str| -> Result<(&'static str, String)> {
+        let registration = registrations
+            .iter()
+            .find(|row| row["id"] == id)
+            .with_context(|| format!("{id} names no registered project"))?;
+        Ok((
+            machine_of(registration["device_id"].as_str().context("device")?, own)?,
+            registration["path"].as_str().context("path")?.to_owned(),
+        ))
+    };
+    // A project id as (machine, path); a checkout id as (machine, the
+    // checkout's own key), which a remote form spells after `:checkout:`.
+    let place = |id: &str| -> Result<(&'static str, String)> {
+        if let Some((owner, checkout)) = id.split_once(":checkout:") {
+            if let Some(device) = owner.strip_prefix("remote:") {
+                return Ok((machine_of(device, own)?, format!("checkout {checkout}")));
+            }
+            let (machine, _) = place_project(owner)?;
+            return Ok((machine, format!("checkout {checkout}")));
+        }
+        place_project(id)
+    };
+    let device_of = |machine: &str| -> Result<Option<String>> {
+        if machine_of(own, own)? == machine {
+            return Ok(None);
+        }
+        Ok(registrations
+            .iter()
+            .filter_map(|row| row["device_id"].as_str())
+            .find(|device| machine_of(device, own).ok() == Some(machine))
+            .map(str::to_owned))
+    };
+    let mut kept = serde_json::Map::new();
+    for machine in ["source", "target"] {
+        let device = device_of(machine)?;
+        let ids = |field: &str| -> Result<Vec<String>> {
+            let mut paths = Vec::new();
+            for id in core[field].as_array().into_iter().flatten() {
+                let (at, path) = place(id.as_str().context("id")?)?;
+                if at == machine {
+                    paths.push(path);
+                }
+            }
+            paths.sort();
+            Ok(paths)
+        };
+        let projects: Vec<String> = registrations
+            .iter()
+            .filter(|row| {
+                row["device_id"]
+                    .as_str()
+                    .and_then(|device| machine_of(device, own).ok())
+                    == Some(machine)
+            })
+            .filter_map(|row| row["path"].as_str().map(str::to_owned))
+            .collect();
+        let by_path = |field: &str| -> Value {
+            let mut found = serde_json::Map::new();
+            for path in &projects {
+                if let Some(value) = core[field].get(path) {
+                    found.insert(path.clone(), value.clone());
+                }
+            }
+            Value::Object(found)
+        };
+        let own_or_device = |field: &str| -> Value {
+            match &device {
+                None => core[field].clone(),
+                Some(device) => core[format!("device_{field}")][device].clone(),
+            }
+        };
+        // A tab or pane id as this machine's Herdr names it, whichever core
+        // qualifies it.
+        let unqualified = |value: &Value| -> Value { unqualify(value, machine, own) };
+        let mut modes = serde_json::Map::new();
+        for (id, mode) in core["sessions_mode_by_project"]
+            .as_object()
+            .into_iter()
+            .flatten()
+        {
+            let (at, path) = place(id)?;
+            if at == machine {
+                modes.insert(path, mode.clone());
+            }
+        }
+        let workspace_views: Vec<Value> = views["workspaces"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["device_id"].as_str().and_then(|device| machine_of(device, own).ok()) == Some(machine))
+            .map(|row| unqualified(&json!({"path": row["path"], "views": row["views"], "layout": row["layout"], "agent_layout": row["agent_layout"], "bookmarks": row["view_bookmarks"]})))
+            .collect();
+        let label_records: serde_json::Map<String, Value> = labels["targets"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(node, _)| machine_of(node, own).ok() == Some(machine))
+            .flat_map(|(_, panes)| panes.as_object().cloned().unwrap_or_default())
+            .map(|(pane, record)| {
+                (
+                    pane,
+                    json!({"goal": record["goal"], "line": record["line"]}),
+                )
+            })
+            .collect();
+        let letters: Vec<Value> = ledger["letters"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|letter| letter["recipient"]["device_id"].as_str().and_then(|device| machine_of(device, own).ok()) == Some(machine))
+            .map(|letter| json!({"intent": letter["intent"], "pane": unqualified(&letter["recipient"]["pane_id"]), "body": letter["body"]}))
+            .collect();
+        kept.insert(
+            machine.to_owned(),
+            json!({
+                "session_folds": ids("session_open_folds")?,
+                "collapsed_projects": ids("collapsed_workspace_ids")?,
+                "collapsed_sessions": ids("session_collapsed_checkout_ids")?,
+                "sessions_modes": modes,
+                "issue_sources": by_path("project_issue_sources"),
+                "base_branches": by_path("project_base_branches"),
+                "expanded_paths": own_or_device("expanded_paths"),
+                "inactive_open": projects.iter().filter(|path| core["expanded_inactive_checkout_project_paths"].as_array().is_some_and(|open| open.contains(&json!(path)))).collect::<Vec<_>>(),
+                "workspace_views": workspace_views,
+                "labels": label_records,
+                "letters": letters,
+            }),
+        );
+    }
+    kept.insert("selected_path".to_owned(), core["selected_path"].clone());
+    Ok(Value::Object(kept))
+}
