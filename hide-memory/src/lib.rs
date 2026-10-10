@@ -6,6 +6,7 @@
 //! Mem0 package or service executes at runtime.
 
 mod engine;
+pub mod locator;
 mod redaction;
 mod store;
 
