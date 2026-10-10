@@ -277,6 +277,15 @@ impl LaunchDialect {
         !matches!(self, Self::Claude | Self::Codex)
     }
 
+    /// Whether the agent, resumed with its `resume_flag`, tells Herdr which
+    /// session it runs. Cursor's `sessionStart` hook is Herdr's only source
+    /// for that, and Cursor CLI 2026.10.01 does not run it on `--resume`
+    /// (issue 938), so the pane that resumed it has no session in Herdr
+    /// until whoever started the resume says which one it resumed.
+    pub const fn resume_reports_session(self) -> bool {
+        !matches!(self, Self::Cursor)
+    }
+
     /// The native selector prefix, independent of whether this build has
     /// implemented and declared the reader needed to resume that agent.
     pub const fn resume_flag(self) -> &'static str {

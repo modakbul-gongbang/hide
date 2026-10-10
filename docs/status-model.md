@@ -308,6 +308,7 @@ Its core-owned group is Seen, and it contributes no active pane, lineage, unread
 Saving and closing do not duplicate the existing live row; confirmed closure publishes the separate sleeping row, and an uncertain operation publishes its explicit status action.
 Wake resumes the saved native conversation in its own intent-marked tab, and current reader identity must confirm that conversation before the archived row is removed.
 A delegated child that held a registration wakes into the same registration, so its row returns under its parent and its parent's watch and letters still reach it ([delivery.md](delivery.md#agent-registration-and-spawning)); the sleeping row itself never carries lineage.
+A Cursor wake needs no session hook from Cursor: the core reports the resumed session to Herdr itself, so the row returns under its parent like any other kind's ([ARCHITECTURE.md: Agent sleep](ARCHITECTURE.md#agent-sleep)).
 The Wake action is available only when this build declares the provider's resume capability.
 A retained unsupported sleeping record stays visible without a Wake action or a loading spinner; only an active transition or status check spins.
 Unknown work survives restart without replaying external effects; an intent saved before close admission can be released without touching a pane.

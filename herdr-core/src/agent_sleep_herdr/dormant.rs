@@ -372,7 +372,16 @@ fn start_dormant(
         )
     };
     match started {
-        Ok(_) => DormantStartOutcome::Started,
+        Ok(_) => match report_resumed_session(connector, work, pane) {
+            Ok(()) => DormantStartOutcome::Started,
+            Err(error) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "agent_sleep", "kind": "agent_sleep.session_report_failed",
+                    "sleep_id": work.id.as_str(), "pane_id": pane, "message": error.to_string(),
+                }));
+                DormantStartOutcome::Unknown
+            }
+        },
         Err(StartError::NotStarted(_)) | Err(StartError::Herdr(ApiError::Remote { .. })) => {
             DormantStartOutcome::NotStarted
         }
@@ -384,6 +393,45 @@ fn start_dormant(
             DormantStartOutcome::Unknown
         }
     }
+}
+
+/// A resumed agent whose CLI runs no session hook on resume leaves Herdr with
+/// no session for the woken pane, so the wake could never be told from
+/// another conversation. The core chose the id the pane resumed, and says so
+/// the way the agent's own integration would have.
+fn report_resumed_session(
+    connector: &dyn ApiConnector,
+    work: &DormantWork,
+    pane: &str,
+) -> Result<(), ApiError> {
+    let reports = hide_agent_adapter::adapter(&work.record.kind)
+        .and_then(|adapter| adapter.resume)
+        .is_none_or(hide_agent_adapter::LaunchDialect::resume_reports_session);
+    if reports {
+        return Ok(());
+    }
+    let seq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+        });
+    let params = wire::report_agent_session_params(
+        pane,
+        &work.record.kind,
+        &work.record.native_session_id,
+        seq,
+    )
+    .map_err(|message| ApiError::Remote {
+        code: "session_report_unavailable".into(),
+        message,
+    })?;
+    request_with_connector(
+        connector,
+        "pane.report_agent_session",
+        params,
+        REQUEST_TIMEOUT,
+    )
+    .map(|_| ())
 }
 
 #[cfg(test)]
@@ -479,5 +527,64 @@ mod tests {
         let (outcome, names) = wake(false, 1);
         assert!(matches!(outcome, DormantStartOutcome::NotStarted));
         assert_eq!(names.len(), 1);
+    }
+
+    /// What `report_resumed_session` does for a record of `kind` against a
+    /// Herdr that accepts or refuses session reports, with the requests it got.
+    fn report_of(kind: &str, accepts: bool) -> (Result<(), ApiError>, Vec<serde_json::Value>) {
+        let mut record = fixture_record("w1:p1");
+        record.kind = kind.into();
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let reported = Arc::clone(&reports);
+        let herdr =
+            FakeHerdr::start_with_errors("dormant-session-report", move |method, params| {
+                match method {
+                    "pane.report_agent_session" => {
+                        reported.lock().unwrap().push(params.clone());
+                        if accepts {
+                            Ok(json!({"type":"ok"}))
+                        } else {
+                            Err(("invalid_request".into(), "session refused".into()))
+                        }
+                    }
+                    other => panic!("unexpected {other}"),
+                }
+            });
+        let work = DormantWork {
+            id: SleepId::new().unwrap(),
+            record,
+        };
+        let result = report_resumed_session(&herdr.connector(), &work, "w1:p9");
+        let reports = reports.lock().unwrap().clone();
+        (result, reports)
+    }
+
+    #[test]
+    fn a_resumed_cursor_is_reported_to_herdr_under_its_integration_with_the_id_it_resumed() {
+        let (result, reports) = report_of("cursor", true);
+        result.unwrap();
+        assert_eq!(reports.len(), 1, "{reports:?}");
+        let report = &reports[0];
+        assert_eq!(report["pane_id"], "w1:p9");
+        assert_eq!(report["source"], "herdr:cursor");
+        assert_eq!(report["agent"], "cursor");
+        assert_eq!(report["agent_session_id"], "native-one");
+        assert!(report["seq"].as_u64().is_some_and(|seq| seq > 0));
+    }
+
+    #[test]
+    fn an_agent_whose_resume_reports_its_own_session_is_never_reported_for() {
+        for kind in ["claude", "codex", "grok", "opencode", "pi", "omp"] {
+            let (result, reports) = report_of(kind, true);
+            result.unwrap();
+            assert!(reports.is_empty(), "{kind}: {reports:?}");
+        }
+    }
+
+    #[test]
+    fn a_session_report_herdr_refuses_is_an_error_the_wake_can_act_on() {
+        let (result, reports) = report_of("cursor", false);
+        assert!(matches!(result, Err(ApiError::Remote { .. })));
+        assert_eq!(reports.len(), 1);
     }
 }

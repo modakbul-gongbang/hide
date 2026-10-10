@@ -1171,6 +1171,29 @@ pub(crate) fn agent_start_params(
     })
 }
 
+/// The session report an agent's own Herdr integration would have sent for
+/// `pane_id`: under the source that integration uses, with a sequence that
+/// grows with time so a later report from the integration still replaces it.
+pub(crate) fn report_agent_session_params(
+    pane_id: &str,
+    kind: &str,
+    session_id: &str,
+    seq: u64,
+) -> Result<Value, String> {
+    let adapter = hide_agent_adapter::adapter(kind)
+        .ok_or_else(|| format!("{kind} has no Herdr integration to report as"))?;
+    params(req::PaneReportAgentSessionParams {
+        pane_id: pane_id.into(),
+        source: format!("herdr:{}", adapter.herdr.name),
+        agent: adapter.herdr.name.into(),
+        agent_session_id: Some(session_id.into()),
+        agent_session_path: None,
+        resume_argv: None,
+        seq: Some(seq),
+        session_start_source: None,
+    })
+}
+
 /// The most bytes the pinned Herdr types into the pane's shell for
 /// `agent.start` with `params`: the kind's program, then each argument
 /// quoted for a POSIX shell (`'…'`, a `'` inside written `'\''`; PowerShell
