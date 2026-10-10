@@ -80,6 +80,18 @@ impl Machine {
         Ok(serde_json::from_slice(&read(&path)?).ok())
     }
 
+    /// The `/health` of the daemon this machine's state folder records.
+    pub fn health(&self) -> Result<Value> {
+        let state = self.daemon()?.context("no daemon recorded")?;
+        let port = state["port"].as_u64().context("daemon port")?;
+        let answer = ureq::get(&format!("http://127.0.0.1:{port}/health"))
+            .call()
+            .context("health")?
+            .into_body()
+            .read_to_string()?;
+        Ok(serde_json::from_str(&answer)?)
+    }
+
     pub fn record(&self, name: &str) -> Result<Option<Value>> {
         let path = self.state.join(name);
         if !path.exists() {

@@ -346,15 +346,49 @@ impl Upstream {
         })
     }
 
+    /// Puts this build's programs in their version folder under
+    /// `helper_root` on the machine, over one SFTP channel of the same
+    /// connection, reusing the files a stopped upload already placed: a
+    /// core update (PRD core-host-node-move B10). Answers the path of the
+    /// build's `hided` there.
+    pub fn install_build(
+        &self,
+        packages: &super::host::HelperPackages,
+        helper_root: &str,
+    ) -> Result<String, String> {
+        let uname = self
+            .exec(
+                "core-update-platform",
+                "uname -s -m",
+                4096,
+                Duration::from_secs(15),
+            )
+            .map_err(|error| error.to_string())?;
+        if uname.exit_status != 0 {
+            return Err(format!(
+                "the machine could not report its platform: {}",
+                uname.stderr.trim()
+            ));
+        }
+        let (os, arch) = super::host::platform_of(uname.stdout.trim())?;
+        self.sftp("core-update-install", |raw| async move {
+            super::host::install_build(&raw, packages, &os, &arch, helper_root)
+                .await
+                .map(|installed| installed.helper_path)
+                .map_err(|error| super::transfer::TransferError::Remote(error.to_string()))
+        })
+        .map_err(|error| error.to_string())
+    }
+
     /// Runs `copy` on one SFTP channel of the same connection.
-    fn sftp<'a, F, Fut>(
+    fn sftp<'a, T, F, Fut>(
         &self,
         operation: &'static str,
         copy: F,
-    ) -> Result<(), super::transfer::TransferError>
+    ) -> Result<T, super::transfer::TransferError>
     where
         F: FnOnce(std::sync::Arc<russh_sftp::client::RawSftpSession>) -> Fut,
-        Fut: std::future::Future<Output = Result<(), super::transfer::TransferError>> + 'a,
+        Fut: std::future::Future<Output = Result<T, super::transfer::TransferError>> + 'a,
     {
         use super::transfer::TransferError;
         let client = &self.client;

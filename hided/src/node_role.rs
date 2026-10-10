@@ -93,6 +93,9 @@ pub enum Phase {
     Connecting,
     /// The core took the link.
     Live(Accepted),
+    /// The core runs an older build, and this node is updating it to its
+    /// own (B10).
+    Updating { core: crate::build_order::Release },
     /// The last attempt failed or the link ended; the next one waits.
     Waiting { reason: LinkFailure },
 }
@@ -117,6 +120,25 @@ pub enum LinkFailure {
     CoreNewer {
         machine: String,
         release: crate::build_order::Release,
+    },
+    /// The core runs an older build than this node's: the node updates it
+    /// to its own once per connection (B10, B20), and links once it runs
+    /// this build. `machine` is the core machine's name as its hello gave
+    /// it.
+    CoreOlder {
+        machine: String,
+        release: crate::build_order::Release,
+    },
+    /// The core was updated to this node's build, which `program` names on
+    /// its machine: the next dial goes at once.
+    CoreUpdated { program: String },
+    /// This connection's update of the core failed, and the core on
+    /// `machine` runs the build it ran before (`core`): its reason. The
+    /// next connection tries once more ([`NodeRole::connect_again`]).
+    UpdateFailed {
+        reason: String,
+        machine: String,
+        core: crate::build_order::Release,
     },
     /// The connection to the core's machine failed after its SSH server
     /// answered and before the core took the link: a reset or timeout in the
@@ -158,6 +180,9 @@ impl std::fmt::Display for LinkFailure {
             | Self::Ended(reason)
             | Self::Lost(reason) => formatter.write_str(reason),
             Self::CoreNewer { .. } => formatter.write_str("core_newer"),
+            Self::CoreOlder { .. } => formatter.write_str("core_older"),
+            Self::CoreUpdated { .. } => formatter.write_str("core_updated"),
+            Self::UpdateFailed { .. } => formatter.write_str("update_failed"),
             Self::Stopping => formatter.write_str("stopping"),
         }
     }
@@ -170,6 +195,9 @@ struct State {
     woken: bool,
     /// The live link's stream, ended to end the link.
     link: Option<ShutdownHandle>,
+    /// Why this connection's one update of the core failed, once it did
+    /// (B20).
+    update_failed: Option<String>,
 }
 
 struct Shared {
@@ -186,6 +214,19 @@ struct Shared {
     /// link each time they change, and none when a link starts: the
     /// node's screens read files under them without the core.
     roots_changed: Option<RootsChanged>,
+    /// How this node updates an older core to its build; none leaves an
+    /// older core refused as another build.
+    updates: Option<Updates>,
+}
+
+/// What a node needs to update its core to this build (PRD
+/// core-host-node-move B10): the folder this build's programs ship in, and
+/// the node's state folder, whose placement record names the program the
+/// core's machine runs.
+#[derive(Clone, Debug)]
+pub struct Updates {
+    pub packages: PathBuf,
+    pub state_dir: PathBuf,
 }
 
 /// Hears the checkout roots the core opened on this node over the live link.
@@ -208,7 +249,7 @@ impl NodeRole {
         identity: NodeIdentity,
         screen: Arc<dyn OutputSink>,
     ) -> Result<Self, String> {
-        Self::start_for_screens(home, placement, identity, screen, None, None)
+        Self::start_for_screens(home, placement, identity, screen, None, None, None)
     }
 
     /// [`NodeRole::start`] for a daemon whose screens work on this machine:
@@ -222,6 +263,7 @@ impl NodeRole {
         screen: Arc<dyn OutputSink>,
         browser: Option<Arc<crate::node_browser::NodeBrowser>>,
         roots_changed: Option<RootsChanged>,
+        updates: Option<Updates>,
     ) -> Result<Self, String> {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
@@ -229,6 +271,7 @@ impl NodeRole {
                 stopping: false,
                 woken: false,
                 link: None,
+                update_failed: None,
             }),
             changed: Condvar::new(),
             upstream: Mutex::new(None),
@@ -236,6 +279,7 @@ impl NodeRole {
             screen,
             browser,
             roots_changed,
+            updates,
         });
         let config = home.join(".ssh/config");
         let thread = {
@@ -295,6 +339,19 @@ impl NodeRole {
     pub fn wake(&self) {
         wake(&self.shared);
     }
+
+    /// A window connects (`hide connect`, a launch or its Retry): a core
+    /// update that failed on the last connection gets this one's attempt,
+    /// which starts at once (B10, B20). Anything else is left as it is.
+    pub fn connect_again(&self) {
+        let mut state = lock(&self.shared.state);
+        if state.update_failed.take().is_none() {
+            return;
+        }
+        state.phase = Phase::Connecting;
+        drop(state);
+        wake(&self.shared);
+    }
 }
 
 fn wake(shared: &Shared) {
@@ -337,6 +394,7 @@ impl Drop for NodeRole {
 }
 
 fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: &NodeIdentity) {
+    let mut placement = placement.clone();
     let mut backoff = Backoff::default();
     let mut generation = 0;
     loop {
@@ -345,7 +403,13 @@ fn keep_linked(shared: &Shared, config: &Path, placement: &Placement, identity: 
             return;
         }
         let started = Instant::now();
-        let reason = link_once(shared, config, placement, identity, generation);
+        let reason = link_once(shared, config, &placement, identity, generation);
+        // The core now runs this build: the next dial reaches it at once.
+        if let LinkFailure::CoreUpdated { program } = reason {
+            placement.program = program;
+            backoff.reset();
+            continue;
+        }
         shared.live.send_replace(None);
         if started.elapsed() >= SETTLED {
             backoff.reset();
@@ -440,7 +504,7 @@ fn watch(shared: &Shared) {
 /// failure a move may change. A refused node keeps its backoff.
 fn wakes_on_move(phase: &Phase, answered: Option<bool>) -> bool {
     match phase {
-        Phase::Connecting => false,
+        Phase::Connecting | Phase::Updating { .. } => false,
         Phase::Live(_) => answered != Some(true),
         Phase::Waiting { reason } => reason.a_move_can_change(),
     }
@@ -656,7 +720,148 @@ fn try_link(
     );
     lock(&shared.state).link = None;
     stream.shutdown_handle().shutdown();
-    ended
+    match ended {
+        Err(LinkFailure::CoreOlder { machine, release }) => {
+            Err(update_core(shared, &upstream, placement, machine, release))
+        }
+        ended => ended,
+    }
+}
+
+/// The most `hided core-update` may print.
+const UPDATE_OUTPUT_CAP: usize = 64 * 1024;
+/// How long the update on the core's machine may take: the old core's stop,
+/// the new one's 30 s to take links, and the same again for a rollback.
+const UPDATE_TIMEOUT: Duration = Duration::from_secs(150);
+
+/// Updates the core, which runs an older build, to this node's (PRD
+/// core-host-node-move B10): this build goes into a version folder beside
+/// the core's on its machine, and its own `hided core-update` replaces the
+/// core and goes back to the previous build when the new one does not take
+/// links. Once per connection (B20): a failed update is not tried again
+/// until the next one, and the core is then refused as older.
+fn update_core(
+    shared: &Shared,
+    upstream: &Upstream,
+    placement: &Placement,
+    machine: String,
+    core: crate::build_order::Release,
+) -> LinkFailure {
+    let Some(updates) = shared.updates.as_ref() else {
+        return LinkFailure::Refused("other_build".to_owned());
+    };
+    // Spent: refused as older until the next connection.
+    if let Some(reason) = lock(&shared.state).update_failed.clone() {
+        return LinkFailure::UpdateFailed {
+            reason,
+            machine,
+            core,
+        };
+    }
+    if set_phase(shared, Phase::Updating { core: core.clone() }) {
+        return LinkFailure::Stopping;
+    }
+    let intent = crate::core_move::new_intent().replacen("move-", "update-", 1);
+    let log = |kind: &str, fields: serde_json::Value| {
+        let mut record = json!({
+            "component": "node_role",
+            "kind": kind,
+            "intent": intent,
+            "core": placement.node,
+        });
+        if let (Some(record), serde_json::Value::Object(fields)) = (record.as_object_mut(), fields)
+        {
+            record.extend(fields);
+        }
+        herdr_core::diagnostic!(record);
+    };
+    let failed = |reason: String| {
+        lock(&shared.state).update_failed = Some(reason.clone());
+        log("update.failed", json!({"reason": reason}));
+        LinkFailure::UpdateFailed {
+            reason,
+            machine: machine.clone(),
+            core: core.clone(),
+        }
+    };
+    log("update.started", json!({"core_release": core}));
+    let root = match build_root(&placement.program) {
+        Ok(root) => root,
+        Err(reason) => return failed(reason),
+    };
+    let packages = hide_node::ssh::host::HelperPackages::new(Some(updates.packages.clone()));
+    let program = match upstream.install_build(&packages, root) {
+        Ok(program) => program,
+        Err(reason) => return failed(format!("upload: {reason}")),
+    };
+    log("update.uploaded", json!({"program": program}));
+    let mut command = format!(
+        "{} core-update --previous {} --intent {intent}",
+        hide_node::ssh::shell_quote(&program),
+        hide_node::ssh::shell_quote(&placement.program),
+    );
+    if let Some(state_dir) = &placement.state_dir {
+        command.push_str(&format!(
+            " --state-dir {}",
+            hide_node::ssh::shell_quote(state_dir)
+        ));
+    }
+    let output = match upstream.exec("core-update", &command, UPDATE_OUTPUT_CAP, UPDATE_TIMEOUT) {
+        Ok(output) => output,
+        Err(error) => return failed(format!("core-update: {error}")),
+    };
+    let answer = output
+        .stdout
+        .lines()
+        .last()
+        .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok());
+    let Some(answer) = answer else {
+        return failed(format!(
+            "core-update exited {}: {}",
+            output.exit_status,
+            output.stderr.trim().chars().take(512).collect::<String>()
+        ));
+    };
+    if answer.get("updated").is_none() {
+        let reason = answer
+            .pointer("/rolled_back/reason")
+            .map(|reason| format!("rolled_back: {}", reason.as_str().unwrap_or_default()))
+            .or_else(|| {
+                answer
+                    .pointer("/refused/reason")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| format!("core-update answered {answer}"));
+        return failed(reason);
+    }
+    // The node's record names the program its next dials run there.
+    let updated = Placement {
+        program: program.clone(),
+        ..placement.clone()
+    };
+    if let Err(reason) = crate::placement::write(&updates.state_dir, &updated) {
+        // The core runs this build; the record keeps naming the previous
+        // build's program, which the update kept.
+        log("update.record_failed", json!({"reason": reason}));
+    }
+    log("update.done", json!({"program": program}));
+    LinkFailure::CoreUpdated { program }
+}
+
+/// The install root of a build's `hided` on the core's machine:
+/// `<root>/<version>/hided`, `/`-separated.
+fn build_root(program: &str) -> Result<&str, String> {
+    let (folder, name) = program
+        .rsplit_once('/')
+        .ok_or_else(|| format!("{program} is not a build's hided"))?;
+    let (root, version) = folder
+        .rsplit_once('/')
+        .ok_or_else(|| format!("{program} is not in a build folder"))?;
+    if name != "hided" || !hide_kit::is_build_name(version) || !root.starts_with('/') {
+        return Err(format!("{program} is not a build's hided"));
+    }
+    Ok(root)
 }
 
 /// Why a dial for the attach role failed. Only a dial that never reached
@@ -743,7 +948,11 @@ fn serve_link(
                     machine: core.label.clone(),
                     release: core.release.clone(),
                 }),
-                crate::build_order::Standing::Newer | crate::build_order::Standing::Unordered => {
+                crate::build_order::Standing::Newer => Some(LinkFailure::CoreOlder {
+                    machine: core.label.clone(),
+                    release: core.release.clone(),
+                }),
+                crate::build_order::Standing::Unordered => {
                     Some(LinkFailure::Refused("other_build".to_owned()))
                 }
             };
@@ -775,7 +984,6 @@ fn serve_link(
             build: identity.build.clone(),
             herdr_socket: identity.herdr_socket.display().to_string(),
             release: identity.release.clone(),
-            protocol: hide_node_link::protocol::PROTOCOL_VERSION,
             move_intent: placement.move_intent.clone(),
         }),
     )

@@ -283,7 +283,8 @@ fn start(state_dir: &Path, intent: &str) -> Result<Value, Value> {
     }
     let home = hide_platform::host::home_dir().map_err(|error| plain(error.to_string()))?;
     let starter = CoreStarter::for_account(&home).map_err(plain)?;
-    let pid = starter.start(state_dir).map_err(plain)?;
+    let program = super::starter::this_program().map_err(plain)?;
+    let pid = starter.start(state_dir, &program).map_err(plain)?;
     Ok(json!({"pid": pid}))
 }
 
@@ -440,7 +441,7 @@ fn resume(state_dir: &Path, intent: &str) -> Result<Value, Value> {
     }
     let home = hide_platform::host::home_dir().map_err(|error| plain(error.to_string()))?;
     let pid = CoreStarter::for_account(&home)
-        .and_then(|starter| starter.start(state_dir))
+        .and_then(|starter| starter.start(state_dir, &super::starter::this_program()?))
         .map_err(plain)?;
     Ok(json!({"state": "running", "pid": pid}))
 }

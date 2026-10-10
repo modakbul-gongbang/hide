@@ -195,16 +195,37 @@ export function rememberedCliValue(file: string): unknown {
   return { schema: REMEMBERED_SCHEMA, path: file };
 }
 
-export type FailureReason = "cli_missing" | "start_failed" | "no_response" | "other_build" | "state_refused" | "core_newer";
+export type FailureReason = "cli_missing" | "start_failed" | "no_response" | "other_build" | "state_refused" | "core_newer" | "update_failed";
 
-/** A core newer than this app (PRD core-host-node-move B11): its machine and both builds as `hide connect` shows them. */
-export type CoreNewer = { machine: string; core: string; app: string };
+/**
+ * The core's machine and the two builds, as `hide connect` and a node's `/health` name them: for a core newer
+ * than this app (PRD core-host-node-move B11) and for an update of the core that failed (B10).
+ */
+export type CoreBuilds = { machine: string; core: string; app: string };
+
+function coreBuilds(value: Record<string, unknown> | null | undefined): CoreBuilds | null {
+  if (!value || typeof value.machine !== "string" || typeof value.core !== "string" || typeof value.app !== "string") return null;
+  return { machine: value.machine, core: value.core, app: value.app };
+}
+
+/**
+ * What an attached node's `/health` says the window shows instead of the shell: a core newer than this app, or
+ * this connection's update of the core that failed, with the builds to name. Null for anything else.
+ */
+export function healthFailure(health: unknown): { reason: "core_newer" | "update_failed"; builds: CoreBuilds } | null {
+  if (!health || typeof health !== "object") return null;
+  const value = health as Record<string, unknown>;
+  const reason = value.core_link_reason;
+  if (reason !== "core_newer" && reason !== "update_failed") return null;
+  const builds = coreBuilds(value.builds as Record<string, unknown> | null | undefined);
+  return builds ? { reason, builds } : null;
+}
 
 export type Attached = { url: string; origin: string; port: number; pid: number };
 
 export type ConnectAnswer =
   | ({ kind: "attached" } & Attached)
-  | { kind: "failed"; reason: Exclude<FailureReason, "cli_missing">; detail: string; file?: string; newer?: CoreNewer };
+  | { kind: "failed"; reason: Exclude<FailureReason, "cli_missing">; detail: string; file?: string; builds?: CoreBuilds };
 
 export type StatusAnswer = ({ running: true } & Attached) | { running: false };
 
@@ -255,14 +276,11 @@ export function parseConnect(result: ChildResult): ConnectAnswer {
   if (value?.ok === false && value.reason === "state_refused" && typeof value.file === "string") {
     return { kind: "failed", reason: "state_refused", detail: typeof value.detail === "string" ? value.detail : "", file: value.file };
   }
-  // The core runs a newer build than this app: the screen names its machine and both builds.
-  if (value?.ok === false && value.reason === "core_newer" && typeof value.machine === "string" && typeof value.core === "string" && typeof value.app === "string") {
-    return {
-      kind: "failed",
-      reason: "core_newer",
-      detail: typeof value.detail === "string" ? value.detail : "",
-      newer: { machine: value.machine, core: value.core, app: value.app },
-    };
+  // The core runs a newer build than this app, or this connection's update of it failed: the screen names its
+  // machine and both builds.
+  if (value?.ok === false && (value.reason === "core_newer" || value.reason === "update_failed")) {
+    const builds = coreBuilds(value);
+    if (builds) return { kind: "failed", reason: value.reason, detail: typeof value.detail === "string" ? value.detail : "", builds };
   }
   if (value?.ok === false && (value.reason === "start_failed" || value.reason === "no_response" || value.reason === "other_build")) {
     return { kind: "failed", reason: value.reason, detail: typeof value.detail === "string" ? value.detail : "" };

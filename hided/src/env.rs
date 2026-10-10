@@ -40,6 +40,11 @@ pub const HIDE_CORE_STARTER: &str = "HIDE_CORE_STARTER";
 /// Test-only: `hang` makes the core role's stop never return, so a journey
 /// proves the stop's bound.
 pub const HIDE_FIXTURE_CORE_STOP: &str = "HIDE_FIXTURE_CORE_STOP";
+/// Test-only: a file in a fixture HOME naming a build whose daemon exits at
+/// its start, so a journey proves a core update's way back to the previous
+/// build; a file, since the fixture's SSH sessions keep the environment
+/// they started with.
+pub const FIXTURE_FAIL_BUILD_FILE: &str = ".hide-e2e-fail-build";
 /// Test-only: a folder of stand-in `launchctl` and `pmset` that a move's
 /// checks run instead of the system's.
 pub const HIDE_PREFLIGHT_PROGRAMS: &str = "HIDE_PREFLIGHT_PROGRAMS";
@@ -619,6 +624,16 @@ pub fn fixture_build_overrides() -> BuildOverrides {
                 .unwrap_or_else(|_| panic!("{HIDE_BUILD_ORDER_OVERRIDE} is not a count: {order:?}"))
         }),
     }
+}
+
+/// Whether a fixture HOME names `build` as one whose daemon fails at its
+/// start ([`FIXTURE_FAIL_BUILD_FILE`]).
+pub fn fixture_fails_build(build: &str) -> bool {
+    hide_platform::host::home_dir().is_ok_and(|home| {
+        fixture_home(&home)
+            && std::fs::read_to_string(home.join(FIXTURE_FAIL_BUILD_FILE))
+                .is_ok_and(|named| named.trim() == build)
+    })
 }
 
 /// Whether a fixture asked the core role's stop never to return

@@ -95,6 +95,9 @@ pub struct NodeState {
     pub terminals: Arc<ScreenTerminals>,
     pub live: watch::Receiver<Option<Arc<LiveLink>>>,
     pub phase: Arc<dyn Fn() -> Phase + Send + Sync>,
+    /// Gives a failed core update this connection's attempt
+    /// (`NodeRole::connect_again`).
+    pub connect_again: Arc<dyn Fn() + Send + Sync>,
     pub clients: Arc<AtomicUsize>,
     pub connections: Arc<AtomicU64>,
     pub last_client_gone: Arc<Mutex<Instant>>,
@@ -133,6 +136,7 @@ impl NodeDaemon {
         placement: Placement,
         identity: NodeIdentity,
         server: ServerParts,
+        updates: Option<crate::node_role::Updates>,
     ) -> Result<Self, String> {
         let hub = TerminalHub::new();
         let own_prefix = device_pane_prefix(&identity.node);
@@ -153,6 +157,7 @@ impl NodeDaemon {
             }),
             Some(Arc::clone(&browser)),
             Some(roots_follow(Arc::clone(&boundary))),
+            updates,
         )?);
         let live = role.live();
         let follow = browser.spawn_follow(live.clone());
@@ -175,6 +180,14 @@ impl NodeDaemon {
                 )
             }) as Arc<dyn Fn() -> Phase + Send + Sync>
         };
+        let connect_again = {
+            let role = Arc::downgrade(&role);
+            Arc::new(move || {
+                if let Some(role) = role.upgrade() {
+                    role.connect_again();
+                }
+            }) as Arc<dyn Fn() + Send + Sync>
+        };
         let browser_routes = BrowserRoutes::new(Arc::new(NodePages::new(
             screen_node,
             core_node,
@@ -196,6 +209,7 @@ impl NodeDaemon {
                 terminals,
                 live,
                 phase,
+                connect_again,
                 clients: Arc::new(AtomicUsize::new(0)),
                 connections: Arc::new(AtomicU64::new(0)),
                 last_client_gone: Arc::new(Mutex::new(Instant::now())),
@@ -252,6 +266,7 @@ pub struct ServerParts {
 pub fn router(state: NodeState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/core-link/connect", post(connect_again))
         .route("/ws", get(ws_upgrade))
         .route(
             "/browser-route",
@@ -290,14 +305,25 @@ async fn health(State(state): State<NodeState>) -> impl IntoResponse {
     let (link, reason) = match &phase {
         Phase::Connecting => ("connecting", None),
         Phase::Live(_) => ("live", None),
+        Phase::Updating { .. } => ("updating", None),
         Phase::Waiting { reason } => ("waiting", Some(reason.to_string())),
     };
-    // What the window names when this app is the one to update (B11).
-    let (core_machine, core_release) = match &phase {
+    // The core's machine and both builds, which the window names when this
+    // app is the one to update (B11) or its update of the core failed (B10).
+    let builds = match &phase {
         Phase::Waiting {
-            reason: crate::node_role::LinkFailure::CoreNewer { machine, release },
-        } => (Some(machine.clone()), Some(release.clone())),
-        _ => (None, None),
+            reason:
+                crate::node_role::LinkFailure::CoreNewer {
+                    machine,
+                    release: core,
+                }
+                | crate::node_role::LinkFailure::UpdateFailed { machine, core, .. },
+        } => Some(json!({
+            "machine": machine,
+            "core": core.shown(),
+            "app": crate::build_order::Release::of_this_build().shown(),
+        })),
+        _ => None,
     };
     axum::Json(json!({
         "pid": std::process::id(),
@@ -313,9 +339,18 @@ async fn health(State(state): State<NodeState>) -> impl IntoResponse {
         "core_link": link,
         "core_link_reason": reason,
         "release": crate::build_order::Release::of_this_build(),
-        "core_release": core_release,
-        "core_machine": core_machine,
+        "builds": builds,
     }))
+}
+
+/// A window connects to this node (`hide connect`): a core update that
+/// failed on the last connection gets this one's attempt (B10, B20).
+async fn connect_again(State(state): State<NodeState>, headers: HeaderMap) -> StatusCode {
+    if !crate::server::bearer_matches(&headers, &state.token) {
+        return StatusCode::UNAUTHORIZED;
+    }
+    (state.connect_again)();
+    StatusCode::NO_CONTENT
 }
 
 async fn resolve_browser_route(

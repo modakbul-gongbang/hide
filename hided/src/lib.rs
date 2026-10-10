@@ -15,6 +15,7 @@ pub mod cli;
 pub mod cli_contract;
 pub mod core;
 pub mod core_move;
+pub mod core_update;
 pub mod delivery_cli;
 pub mod demand;
 pub mod env;
@@ -687,6 +688,16 @@ pub async fn start_node_role(env: Env, seat: seat::SeatParts) -> Result<RunningN
             state_dir: env.state_dir.clone(),
             browser_relay_port,
         },
+        // This build's programs ship beside this binary, as the core's
+        // devices' do; a daemon anywhere else carries none and updates no
+        // core.
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+            .map(|packages| node_role::Updates {
+                packages,
+                state_dir: env.state_dir.clone(),
+            }),
     )?;
     herdr_core::diagnostic!(serde_json::json!({
         "component": "node_daemon",

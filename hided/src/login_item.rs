@@ -15,8 +15,15 @@ use serde_json::json;
 /// How long a Herdr server this item started may take to answer.
 const HERDR_STARTED_WITHIN: Duration = Duration::from_secs(10);
 
-/// Installs the login item for the core on `state_dir`, which starts it.
-pub fn start(agents: &UserAgents, home: &Path, state_dir: &Path) -> Result<(), String> {
+/// Installs the login item that runs `program` as the core on
+/// `state_dir`, which starts it; one already installed for that folder is
+/// replaced, which ends its core.
+pub fn start(
+    agents: &UserAgents,
+    home: &Path,
+    state_dir: &Path,
+    program: &Path,
+) -> Result<(), String> {
     let stop = AtomicBool::new(false);
     if !agents
         .session_present(home, &stop)
@@ -27,8 +34,6 @@ pub fn start(agents: &UserAgents, home: &Path, state_dir: &Path) -> Result<(), S
                 .to_owned(),
         );
     }
-    let program =
-        std::env::current_exe().map_err(|error| format!("this hided has no path: {error}"))?;
     let label = hide_kit::layout::core_login_item(home, state_dir);
     let mut environment = core_environment(home, state_dir)?;
     // The core stays up with no window: its nodes and phones are its
@@ -43,7 +48,7 @@ pub fn start(agents: &UserAgents, home: &Path, state_dir: &Path) -> Result<(), S
         .map_err(|error| error.to_string())?;
     let agent = LoginAgent {
         label: &label,
-        program: &program,
+        program,
         arguments: &["core-login"],
         environment: &environment,
         log: &log,

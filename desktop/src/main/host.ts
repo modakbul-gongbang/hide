@@ -20,6 +20,7 @@ import { BrowserCdpGateway, CdpActionUncertain, parseBrowserControlResult, type 
 import {
   HAS_LOGIN_SHELL,
   loginPathCommand,
+  healthFailure,
   parseConnect,
   parseLoginPath,
   parseRememberedCli,
@@ -32,7 +33,7 @@ import {
   wellKnownDirs,
   type Attached,
   type CliSource,
-  type CoreNewer,
+  type CoreBuilds,
   type FailureReason,
 } from "./cli";
 import type { DesktopEnv } from "./env";
@@ -69,7 +70,7 @@ export type HostState =
   | { kind: "connecting" }
   | ({ kind: "attached" } & Attached)
   | ({ kind: "lost" } & Attached)
-  | { kind: "failed"; reason: FailureReason; file?: string; newer?: CoreNewer };
+  | { kind: "failed"; reason: FailureReason; file?: string; builds?: CoreBuilds };
 
 function isExecutable(file: string): boolean {
   try {
@@ -540,11 +541,11 @@ export class DesktopHost {
     return this.runChild(file, args, timeoutMs, this.childEnvironment());
   }
 
-  private fail(attempt: number, reason: FailureReason, detail: string, shown: { file?: string; newer?: CoreNewer } = {}): void {
+  private fail(attempt: number, reason: FailureReason, detail: string, shown: { file?: string; builds?: CoreBuilds } = {}): void {
     if (this.quitting) return;
-    const { file, newer } = shown;
-    this.log.event("discovery.failed", { attempt, reason, detail, ...(file === undefined ? {} : { file }), ...(newer === undefined ? {} : newer) });
-    this.setState({ kind: "failed", reason, ...(file === undefined ? {} : { file }), ...(newer === undefined ? {} : { newer }) });
+    const { file, builds } = shown;
+    this.log.event("discovery.failed", { attempt, reason, detail, ...(file === undefined ? {} : { file }), ...(builds === undefined ? {} : builds) });
+    this.setState({ kind: "failed", reason, ...(file === undefined ? {} : { file }), ...(builds === undefined ? {} : { builds }) });
   }
 
   private attach(daemon: Attached): void {
@@ -565,12 +566,18 @@ export class DesktopHost {
       const current = this.state;
       if (current.kind !== "attached" || this.quitting) return;
       let healthy = false;
+      let failure: ReturnType<typeof healthFailure> = null;
       try {
-        healthy = (await fetch(`${current.origin}/health`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) })).ok;
+        const answer = await fetch(`${current.origin}/health`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
+        healthy = answer.ok;
+        if (healthy) failure = healthFailure(await answer.json().catch(() => null));
       } catch {
         healthy = false;
       }
       if (this.state !== current) return;
+      // A node whose core is newer than this app, or whose update of its core failed, leaves its shell for the
+      // status page; Retry is the next connection, with its one attempt (PRD core-host-node-move B10, B20).
+      if (failure) return this.fail(this.attempts, failure.reason, "the node's core link", { builds: failure.builds });
       misses = healthy ? 0 : misses + 1;
       if (misses >= LOST_AFTER_MISSES) {
         this.log.event("daemon.lost", { port: current.port, pid: current.pid });
@@ -763,17 +770,18 @@ export class DesktopHost {
 
   /**
    * The failure the status page shows, in its hash: the reason, the file a
-   * refused start names, and for a core newer than this app its sentences
-   * with the core's machine and both builds in them, written here because
-   * the catalogs fill them.
+   * refused start names, and for a core newer than this app or an update of
+   * the core that failed its sentences with the core's machine and both
+   * builds in them, written here because the catalogs fill them.
    */
   private failedHash(state: Extract<HostState, { kind: "failed" }>): string {
     const shown = new URLSearchParams({ failed: state.reason });
     if (state.file !== undefined) shown.set("file", state.file);
-    if (state.newer !== undefined) {
+    if (state.builds !== undefined) {
       const t = this.language.t;
-      shown.set("said", t("native.status.coreNewer", { machine: state.newer.machine }));
-      shown.set("builds", t("native.status.builds", { core: state.newer.core, app: state.newer.app }));
+      const said = state.reason === "update_failed" ? "native.status.updateFailed" : "native.status.coreNewer";
+      shown.set("said", t(said, { machine: state.builds.machine }));
+      shown.set("builds", t("native.status.builds", { core: state.builds.core, app: state.builds.app }));
     }
     return shown.toString();
   }
@@ -796,6 +804,7 @@ export class DesktopHost {
       other_build: t("native.status.otherBuild"),
       state_refused: t("native.status.stateRefused"),
       core_newer_title: t("native.status.coreNewerTitle"),
+      update_failed_title: t("native.status.updateFailedTitle"),
     };
     return { query, lang: query.lang };
   }

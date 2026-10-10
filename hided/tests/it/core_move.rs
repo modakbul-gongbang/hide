@@ -147,6 +147,212 @@ fn a_window_older_than_its_core_asks_for_its_app_to_be_updated() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// The program the source's placement names on the target.
+fn placed_program(fixture: &Fixture) -> Result<String> {
+    Ok(fixture
+        .source
+        .record("core-placement.json")?
+        .context("placement")?["program"]
+        .as_str()
+        .context("placement program")?
+        .to_owned())
+}
+
+/// The build folders under the install root of `program` on the target,
+/// and where its `current` leads.
+fn builds_beside(program: &str) -> Result<(Vec<String>, String)> {
+    let root = std::path::Path::new(program)
+        .parent()
+        .and_then(std::path::Path::parent)
+        .context("build root")?;
+    let mut builds: Vec<String> = std::fs::read_dir(root)?
+        .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
+        .collect::<Result<_>>()?;
+    builds.retain(|name| name != "current");
+    builds.sort();
+    let current = std::fs::read_link(root.join("current"))?
+        .to_string_lossy()
+        .into_owned();
+    Ok((builds, current))
+}
+
+fn version_of(program: &str) -> Result<String> {
+    Ok(std::path::Path::new(program)
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .context("version folder")?
+        .to_string_lossy()
+        .into_owned())
+}
+
+/// A window whose app is newer than the core it moved to updates the core
+/// to its own build through the core machine's starter and links to it,
+/// and the core machine keeps that build and the one before (B10).
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_window_newer_than_its_core_updates_it_and_links() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.journal_until("done")?;
+        let before = fixture.target_core()?.context("no core on the target")?;
+        let previous = placed_program(&fixture)?;
+        let newer = fixture.other_build("newer")?;
+        let newer_build =
+            hided::build_id::of_file(&newer.join("hided")).map_err(anyhow::Error::msg)?;
+        fixture.kill_source()?;
+        fixture.start_source_with(
+            &newer,
+            &[(hided::env::HIDE_BUILD_VERSION_OVERRIDE, "999.0.0")],
+        )?;
+        let done = fixture.logged(&fixture.source, "update.done")?;
+        wait_for("the window's link to the updated core", || {
+            Ok((fixture.health()?["core_link"] == "live").then_some(()))
+        })?;
+        let after = fixture.target_core()?.context("no core after the update")?;
+        ensure!(after != before, "the core was not replaced");
+        let health = fixture.target.health()?;
+        ensure!(
+            health["build"] == newer_build.as_str(),
+            "the core runs {health}"
+        );
+        let program = placed_program(&fixture)?;
+        ensure!(
+            done["program"] == program.as_str() && program != previous,
+            "the placement names {program} after {done}"
+        );
+        let (builds, current) = builds_beside(&program)?;
+        let mut expected = vec![version_of(&previous)?, version_of(&program)?];
+        expected.sort();
+        ensure!(
+            builds == expected && current == version_of(&program)?,
+            "the core machine keeps {builds:?} with current at {current}"
+        );
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// An update to a build whose core does not start goes back to the build
+/// the core ran, which takes links again; the window does not try again on
+/// this connection, its page names both builds, and its Retry is the next
+/// connection's one attempt (B10, B20).
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_core_update_that_does_not_start_goes_back_to_the_previous_build() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.journal_until("done")?;
+        let previous = placed_program(&fixture)?;
+        let previous_build = fixture.target.health()?["build"].clone();
+        let newer = fixture.other_build("newer")?;
+        let newer_build =
+            hided::build_id::of_file(&newer.join("hided")).map_err(anyhow::Error::msg)?;
+        std::fs::write(
+            fixture
+                .target
+                .home()
+                .join(hided::env::FIXTURE_FAIL_BUILD_FILE),
+            &newer_build,
+        )?;
+        fixture.kill_source()?;
+        fixture.start_source_with(
+            &newer,
+            &[(hided::env::HIDE_BUILD_VERSION_OVERRIDE, "999.0.0")],
+        )?;
+        let failed = fixture.logged(&fixture.source, "update.failed")?;
+        ensure!(
+            failed["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.starts_with("rolled_back")),
+            "{failed}"
+        );
+        let health = fixture.target.health()?;
+        ensure!(health["build"] == previous_build, "the core runs {health}");
+        ensure!(placed_program(&fixture)? == previous, "the placement moved");
+        let (builds, current) = builds_beside(&previous)?;
+        ensure!(
+            builds.len() == 2 && current == version_of(&previous)?,
+            "the core machine keeps {builds:?} with current at {current}"
+        );
+        // Dials go on after the failure, and none updates again.
+        wait_for("a dial after the failed update", || {
+            let ended = records(&fixture, "link.ended")?;
+            let failed = ended
+                .iter()
+                .filter(|record| record["reason"] == "update_failed");
+            Ok((failed.count() >= 2).then_some(()))
+        })?;
+        ensure!(
+            records(&fixture, "update.started")?.len() == 1,
+            "the update ran again"
+        );
+        // What the window's update-failed page names: the core's machine,
+        // the build it runs again and this app's.
+        let health = fixture.health()?;
+        let builds = &health["builds"];
+        ensure!(
+            health["core_link_reason"] == "update_failed"
+                && builds["machine"]
+                    .as_str()
+                    .is_some_and(|machine| !machine.is_empty())
+                && builds["core"]
+                    == hided::build_order::Release::of_this_build()
+                        .shown()
+                        .as_str()
+                && builds["app"] == "999.0.0",
+            "the node's health: {health}"
+        );
+        // Retry is the next connection's one attempt, which succeeds once
+        // the build can start.
+        std::fs::remove_file(
+            fixture
+                .target
+                .home()
+                .join(hided::env::FIXTURE_FAIL_BUILD_FILE),
+        )?;
+        let answer = fixture.connect_with(&newer)?;
+        ensure!(answer["ok"] == true, "hide connect answered {answer}");
+        fixture.logged(&fixture.source, "update.done")?;
+        wait_for("the window's link to the updated core", || {
+            Ok((fixture.health()?["core_link"] == "live").then_some(()))
+        })?;
+        ensure!(records(&fixture, "update.started")?.len() == 2);
+        ensure!(fixture.target.health()?["build"] == newer_build.as_str());
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// An update is refused while a move holds the core's machine, and the
+/// core goes on as it was (B10, D-20).
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_core_update_waits_for_a_move_on_the_core_machine() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.journal_until("done")?;
+        let core = fixture.target_core()?.context("no core on the target")?;
+        write_record(
+            &fixture.target.state.join("core-handover.json"),
+            &json!({"version": 1, "intent": "move-0123456789abcdef", "source": SOURCE_NODE, "target": TARGET_NODE, "state": {"state": "pending"}}),
+        )?;
+        let newer = fixture.other_build("newer")?;
+        fixture.kill_source()?;
+        fixture.start_source_with(
+            &newer,
+            &[(hided::env::HIDE_BUILD_VERSION_OVERRIDE, "999.0.0")],
+        )?;
+        let failed = fixture.logged(&fixture.source, "update.failed")?;
+        ensure!(failed["reason"] == "move_running", "{failed}");
+        ensure!(fixture.target_core()? == Some(core), "the core was touched");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The source's window state the journeys compare: its projects and the
 /// devices it registers.
 fn visible(fixture: &Fixture) -> Result<Value> {

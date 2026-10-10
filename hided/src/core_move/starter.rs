@@ -20,7 +20,12 @@ pub enum CoreStarter {
     /// The account's login item (`login_item`).
     LoginItem { home: PathBuf },
     /// A detached `hided`, only in a fixture HOME.
-    Fixture { program: PathBuf },
+    Fixture,
+}
+
+/// This `hided`, which a move starts as the core.
+pub fn this_program() -> Result<PathBuf, String> {
+    std::env::current_exe().map_err(|error| format!("this hided has no path: {error}"))
 }
 
 impl CoreStarter {
@@ -42,9 +47,7 @@ impl CoreStarter {
                     home.display()
                 ));
             }
-            let program = std::env::current_exe()
-                .map_err(|error| format!("this hided has no path: {error}"))?;
-            return Ok(Self::Fixture { program });
+            return Ok(Self::Fixture);
         }
         if fixture {
             return Err(format!(
@@ -57,12 +60,13 @@ impl CoreStarter {
         })
     }
 
-    /// Starts the core on `state_dir` and waits until it takes links.
-    pub fn start(&self, state_dir: &Path) -> Result<u32, String> {
+    /// Starts `program` as the core on `state_dir` and waits until it
+    /// takes links.
+    pub fn start(&self, state_dir: &Path, program: &Path) -> Result<u32, String> {
         let stale = std::fs::read(crate::attach::attach_record(state_dir)).ok();
         let mut exited: Box<dyn FnMut() -> Option<String>> = Box::new(|| None);
         match self {
-            Self::Fixture { program } => {
+            Self::Fixture => {
                 let log = log_file(state_dir)?;
                 let mut command = std::process::Command::new(program);
                 command.env("HIDE_STATE_DIR", state_dir);
@@ -87,9 +91,24 @@ impl CoreStarter {
                 &hide_platform::user_agents::UserAgents::current(),
                 home,
                 state_dir,
+                program,
             )?,
         }
         wait_for_core(state_dir, stale.as_deref(), &mut *exited)
+    }
+
+    /// Replaces the core running on `state_dir` with `program`'s and waits
+    /// until it takes links (PRD core-host-node-move B10). The login item is
+    /// replaced in place, so a machine that restarts midway starts one of
+    /// the two builds at login; the fixture's process is stopped first.
+    pub fn replace(&self, state_dir: &Path, program: &Path) -> Result<u32, String> {
+        if let Self::Fixture = self
+            && let Some(running) = crate::state_file::read_state(state_dir)
+                .map_err(|error| format!("the core's state could not be read: {error}"))?
+        {
+            stop_pid(running.pid)?;
+        }
+        self.start(state_dir, program)
     }
 
     /// Stops the core on `state_dir` and removes its starter, and answers
@@ -202,7 +221,7 @@ mod tests {
         assert!(CoreStarter::chosen(home.path(), None).is_err());
         assert!(matches!(
             CoreStarter::chosen(home.path(), Some("fixture".as_ref())),
-            Ok(CoreStarter::Fixture { .. })
+            Ok(CoreStarter::Fixture)
         ));
     }
 }

@@ -961,12 +961,18 @@ pub enum ConnectError {
     /// The core runs a newer build than this app's (PRD core-host-node-move
     /// B11): the core is left as it is, and the host shows both builds and
     /// asks for this app to be updated.
-    CoreNewer(CoreNewer),
+    CoreNewer(CoreBuilds),
+    /// This connection's update of the core to this app's build failed and
+    /// the core runs its previous build (B10): the host shows both builds,
+    /// Retry (the next connection's one attempt) and updating on the core's
+    /// machine.
+    UpdateFailed(CoreBuilds),
 }
 
-/// A core newer than this app, as `hide connect` names it to the host.
-#[derive(Debug, Eq, PartialEq)]
-pub struct CoreNewer {
+/// The core's machine and the two builds `hide connect` names to the host,
+/// as the node's `/health` gives them (`builds`).
+#[derive(Debug, serde::Deserialize, Eq, PartialEq)]
+pub struct CoreBuilds {
     /// The core machine's name.
     pub machine: String,
     /// The core's build and this app's, as `build_order::Release::shown`.
@@ -982,6 +988,7 @@ impl ConnectError {
             ConnectError::OtherBuild(_) => "other_build",
             ConnectError::StateRefused { .. } => "state_refused",
             ConnectError::CoreNewer(_) => "core_newer",
+            ConnectError::UpdateFailed(_) => "update_failed",
         }
     }
 
@@ -994,6 +1001,10 @@ impl ConnectError {
             ConnectError::CoreNewer(newer) => format!(
                 "the core on {} runs {}, newer than this app's {}",
                 newer.machine, newer.core, newer.app
+            ),
+            ConnectError::UpdateFailed(failed) => format!(
+                "the core on {} could not be updated to {} and runs {}",
+                failed.machine, failed.app, failed.core
             ),
         }
     }
@@ -1034,15 +1045,19 @@ const CORE_LINK_WITHIN: Duration = Duration::from_secs(20);
 
 /// A daemon in the node role (PRD core-host-node-remote-core D-08, D-23)
 /// attaches the host once its first attempt to link to its core ended: a
-/// live link, or a core that is not running or cannot be reached, which
-/// the window shows as its reconnecting state. A core of another build
-/// refuses the node, and the host shows the failure it shows for a local
-/// daemon of another build. Past [`CORE_LINK_WITHIN`] the host attaches
-/// and the window shows the same reconnecting state. A daemon that is its
-/// own core answers at once.
+/// live link, a core it is updating to this build (PRD core-host-node-move
+/// B10), or a core that is not running or cannot be reached, which the
+/// window shows as its reconnecting state. This connection first gives a
+/// core update that failed on the last one its attempt (B20). A core of
+/// another build refuses the node, and the host shows the failure it shows
+/// for a local daemon of another build; a newer core or a failed update is
+/// named with both builds. Past [`CORE_LINK_WITHIN`] the host attaches and
+/// the window shows the same reconnecting state. A daemon that is its own
+/// core answers at once.
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn await_core_link(state: &DaemonState) -> Result<(), ConnectError> {
     let deadline = std::time::Instant::now() + CORE_LINK_WITHIN;
+    let mut connected = false;
     loop {
         let Ok(health) = health_json(state.port, HEALTH_REQUEST) else {
             return Ok(());
@@ -1050,20 +1065,38 @@ fn await_core_link(state: &DaemonState) -> Result<(), ConnectError> {
         if health["role"] != "node" {
             return Ok(());
         }
+        if !connected {
+            connected = true;
+            connect_again(state).map_err(ConnectError::NoResponse)?;
+            continue;
+        }
         if health["core_link"] == "connecting" && std::time::Instant::now() < deadline {
             std::thread::sleep(HEALTH_PAUSE);
             continue;
         }
-        if health["core_link_reason"] == "core_newer" {
-            let newer = core_newer(&health).map_err(ConnectError::StartFailed)?;
+        let builds = || {
+            serde_json::from_value::<CoreBuilds>(health["builds"].clone()).map_err(|error| {
+                ConnectError::StartFailed(format!("the node's health names no builds: {error}"))
+            })
+        };
+        let named = |kind: &str, builds: &CoreBuilds| {
             eprintln!(
                 "{}",
                 serde_json::json!({
-                    "component": "hide", "kind": "core.newer_refused",
-                    "pid": state.pid, "core": newer.core, "app": newer.app,
+                    "component": "hide", "kind": kind, "pid": state.pid,
+                    "core": builds.core, "app": builds.app,
                 })
             );
+        };
+        if health["core_link_reason"] == "core_newer" {
+            let newer = builds()?;
+            named("core.newer_refused", &newer);
             return Err(ConnectError::CoreNewer(newer));
+        }
+        if health["core_link_reason"] == "update_failed" {
+            let failed = builds()?;
+            named("core.update_failed", &failed);
+            return Err(ConnectError::UpdateFailed(failed));
         }
         if health["core_link_reason"] == "other_build" {
             eprintln!(
@@ -1082,22 +1115,23 @@ fn await_core_link(state: &DaemonState) -> Result<(), ConnectError> {
     }
 }
 
-/// What a node's `/health` says of a core newer than this app: the core
-/// machine's name and both builds as the host shows them.
-fn core_newer(health: &serde_json::Value) -> Result<CoreNewer, String> {
-    let release = |field: &str| {
-        serde_json::from_value::<crate::build_order::Release>(health[field].clone())
-            .map(|release| release.shown())
-            .map_err(|error| format!("the node's health has no readable {field}: {error}"))
-    };
-    let machine = health["core_machine"]
-        .as_str()
-        .ok_or("the node's health names no core machine")?;
-    Ok(CoreNewer {
-        machine: machine.to_owned(),
-        core: release("core_release")?,
-        app: release("release")?,
-    })
+/// Tells the node daemon a window connects, which gives a core update
+/// that failed on the last connection this one's attempt.
+fn connect_again(state: &DaemonState) -> Result<(), String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(HEALTH_REQUEST))
+        .proxy(None)
+        .build()
+        .into();
+    agent
+        .post(&format!(
+            "http://127.0.0.1:{}/core-link/connect",
+            state.port
+        ))
+        .header("Authorization", &format!("Bearer {}", state.token))
+        .send_empty()
+        .map(|_| ())
+        .map_err(|error| format!("the node did not take this connection: {error}"))
 }
 
 /// The daemon of this state folder, replaced or started as [`connect`]
@@ -1236,14 +1270,16 @@ fn connect_json(env: &Env) -> Result<(), String> {
                         "detail": error.detail(),
                         "file": file,
                     }),
-                    ConnectError::CoreNewer(newer) => serde_json::json!({
-                        "ok": false,
-                        "reason": error.reason(),
-                        "detail": error.detail(),
-                        "machine": newer.machine,
-                        "core": newer.core,
-                        "app": newer.app,
-                    }),
+                    ConnectError::CoreNewer(builds) | ConnectError::UpdateFailed(builds) => {
+                        serde_json::json!({
+                            "ok": false,
+                            "reason": error.reason(),
+                            "detail": error.detail(),
+                            "machine": builds.machine,
+                            "core": builds.core,
+                            "app": builds.app,
+                        })
+                    }
                     _ => serde_json::json!({
                         "ok": false,
                         "reason": error.reason(),

@@ -142,10 +142,6 @@ pub struct NodeHello {
     /// The node build's version and order (`build_order`).
     #[serde(default)]
     pub release: crate::build_order::Release,
-    /// The node-link protocol the node speaks, which a newer node must
-    /// share with the core it links to (D-10).
-    #[serde(default)]
-    pub protocol: u32,
     /// The core move whose commit this link is, while the node's placement
     /// names one (PRD core-host-node-move amendment 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -588,21 +584,16 @@ fn take_link(stream: LocalStream, service: &AttachService) {
         );
     };
     // The node decides the same before it says hello; this is the core's
-    // own rule (D-10): an older node updates its app, a newer one links
-    // only over this core's protocol, and builds nothing orders stay apart.
+    // own rule (D-10): only the same build links, and an older node is told
+    // the core is newer so its app is the one updated. A newer node updates
+    // this core over SSH before it dials, never across builds.
     match crate::build_order::standing((&node.build, &node.release), (&build, &release)) {
         crate::build_order::Standing::Same => {}
         crate::build_order::Standing::Older => {
             refuse(&mut writer, "core_newer");
             return;
         }
-        crate::build_order::Standing::Newer
-            if node.protocol == hide_node_link::protocol::PROTOCOL_VERSION => {}
-        crate::build_order::Standing::Newer => {
-            refuse(&mut writer, "other_protocol");
-            return;
-        }
-        crate::build_order::Standing::Unordered => {
+        crate::build_order::Standing::Newer | crate::build_order::Standing::Unordered => {
             refuse(&mut writer, "other_build");
             return;
         }

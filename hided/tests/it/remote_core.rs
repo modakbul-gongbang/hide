@@ -758,7 +758,6 @@ fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<
                     build: core.build,
                     herdr_socket: fixture.screen.socket.display().to_string(),
                     release: core.release,
-                    protocol: core.protocol,
                     move_intent: None,
                 }),
             )
@@ -796,11 +795,12 @@ fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<
 }
 
 /// The core's own rule, whatever a node decides before its hello (D-10):
-/// an older node is told the core is newer, a newer one links only over
-/// the core's protocol, and builds nothing orders stay apart.
+/// only the same build links; an older node is told the core is newer, and
+/// a newer or unordered one is refused as another build, since a newer node
+/// updates the core before it dials and never links across builds.
 #[test]
 #[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
-fn the_core_takes_a_newer_node_only_over_its_own_protocol() -> Result<()> {
+fn the_core_links_only_its_own_build_and_tells_an_older_node_it_is_newer() -> Result<()> {
     use hided::attach::{Line, NodeHello, read_line, write_line};
     use hided::build_order::Release;
     let mut fixture = Fixture::start()?;
@@ -813,7 +813,7 @@ fn the_core_takes_a_newer_node_only_over_its_own_protocol() -> Result<()> {
             &fixture.core_state,
         ))
         .map_err(anyhow::Error::msg)?;
-        let answer = |version: &str, protocol: Option<u32>| -> Result<(Line, Release)> {
+        let answer = |version: &str| -> Result<(Line, Release)> {
             let stream = hide_platform::ipc::LocalStream::connect(&socket)?;
             stream.set_read_timeout(Some(Duration::from_secs(20)))?;
             let mut reader = std::io::BufReader::new(stream.duplicate());
@@ -833,7 +833,6 @@ fn the_core_takes_a_newer_node_only_over_its_own_protocol() -> Result<()> {
                         order: core.release.order,
                         commit: None,
                     },
-                    protocol: protocol.unwrap_or(core.protocol),
                     move_intent: None,
                 }),
             )
@@ -847,26 +846,18 @@ fn the_core_takes_a_newer_node_only_over_its_own_protocol() -> Result<()> {
             Line::Refused(refusal) => Some(refusal.reason.clone()),
             _ => None,
         };
-        let (older, core) = answer("0.0.1", None)?;
+        let (older, core) = answer("0.0.1")?;
         ensure!(
             refused(&older).as_deref() == Some("core_newer"),
             "an older node was answered {older:?} by core {core:?}"
         );
-        let (other_protocol, _) = answer("999.0.0", Some(0))?;
-        ensure!(
-            refused(&other_protocol).as_deref() == Some("other_protocol"),
-            "a newer node over another protocol was answered {other_protocol:?}"
-        );
-        let (unordered, _) = answer("nightly", None)?;
-        ensure!(
-            refused(&unordered).as_deref() == Some("other_build"),
-            "an unordered node was answered {unordered:?}"
-        );
-        let (newer, _) = answer("999.0.0", None)?;
-        ensure!(
-            matches!(newer, Line::Accepted(_)),
-            "a newer node over the core's protocol was answered {newer:?}"
-        );
+        for version in ["999.0.0", "nightly"] {
+            let (other, _) = answer(version)?;
+            ensure!(
+                refused(&other).as_deref() == Some("other_build"),
+                "a node at {version} was answered {other:?}"
+            );
+        }
         let logged = fixture.core_log("node_link", "attach.refused")?;
         ensure!(
             logged.iter().any(|row| row["reason"] == "core_newer"

@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   HAS_LOGIN_SHELL,
+  healthFailure,
   loginPathCommand,
   parseConnect,
   parseLoginPath,
@@ -210,15 +211,22 @@ describe("the hide CLI's answers", () => {
     expect(parseConnect(result('{"ok":false,"reason":"state_refused","detail":"x"}', { code: 2 }))).toMatchObject({ reason: "start_failed" });
   });
 
-  it("carries the core's machine and both builds when the core is newer than this app, and reads one without them as unreadable", () => {
-    const newer = '{"ok":false,"reason":"core_newer","detail":"newer","machine":"Mac mini","core":"0.4.2 (3f1c2a9)","app":"0.4.1 (b520d6e)"}';
-    expect(parseConnect(result(newer, { code: 2 }))).toEqual({
-      kind: "failed",
-      reason: "core_newer",
-      detail: "newer",
-      newer: { machine: "Mac mini", core: "0.4.2 (3f1c2a9)", app: "0.4.1 (b520d6e)" },
-    });
-    expect(parseConnect(result('{"ok":false,"reason":"core_newer","detail":"x","core":"0.4.2","app":"0.4.1"}', { code: 2 }))).toMatchObject({ reason: "start_failed" });
+  it("carries the core's machine and both builds for a newer core or a failed update, and reads one without them as unreadable", () => {
+    const builds = { machine: "Mac mini", core: "0.4.2 (3f1c2a9)", app: "0.4.1 (b520d6e)" };
+    for (const reason of ["core_newer", "update_failed"] as const) {
+      expect(parseConnect(result(JSON.stringify({ ok: false, reason, detail: "d", ...builds }), { code: 2 }))).toEqual({ kind: "failed", reason, detail: "d", builds });
+      expect(parseConnect(result(JSON.stringify({ ok: false, reason, detail: "d", core: "0.4.2", app: "0.4.1" }), { code: 2 }))).toMatchObject({ reason: "start_failed" });
+    }
+  });
+
+  it("reads from an attached node's health only a newer core or a failed update that names its builds", () => {
+    const builds = { machine: "Mac mini", core: "0.4.1 (b520d6e)", app: "0.4.2 (3f1c2a9)" };
+    expect(healthFailure({ role: "node", core_link: "waiting", core_link_reason: "update_failed", builds })).toEqual({ reason: "update_failed", builds });
+    expect(healthFailure({ role: "node", core_link: "waiting", core_link_reason: "core_newer", builds })).toEqual({ reason: "core_newer", builds });
+    expect(healthFailure({ role: "node", core_link: "waiting", core_link_reason: "update_failed", builds: null })).toBeNull();
+    expect(healthFailure({ role: "node", core_link: "updating", core_link_reason: null, builds: null })).toBeNull();
+    expect(healthFailure({ role: "core" })).toBeNull();
+    expect(healthFailure(null)).toBeNull();
   });
 
   it("keeps the CLI's failure category and turns everything unreadable into start_failed", () => {

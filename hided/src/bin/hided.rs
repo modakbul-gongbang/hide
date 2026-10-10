@@ -47,6 +47,11 @@ fn run() -> Result<(), String> {
     if args.first().is_some_and(|arg| arg == "core-move") {
         return hided::core_move::target::run(&args[1..]);
     }
+    // The update of the core here to this build, run over SSH by a node of
+    // this build.
+    if args.first().is_some_and(|arg| arg == "core-update") {
+        return hided::core_update::run(&args[1..]);
+    }
     if args.first().is_some_and(|arg| arg == "--open-helper") {
         // Only Unix supervises a file opener through this mode.
         #[cfg(unix)]
@@ -63,7 +68,13 @@ fn run() -> Result<(), String> {
     })?;
     // Hashed before anything else: an app update replaces the file under the
     // same path, and a later read would report the new build as this one.
-    env.build = Some(hided::build_id::of_current_exe()?);
+    let build = hided::build_id::of_current_exe()?;
+    if hided::env::fixture_fails_build(&build) {
+        return Err(format!(
+            "this build ({build}) is one a fixture fails at its start"
+        ));
+    }
+    env.build = Some(build);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("hided")
