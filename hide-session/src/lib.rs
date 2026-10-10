@@ -319,6 +319,9 @@ impl Agent {
     pub const fn reports_turns(self) -> bool {
         self.format().reports_turns()
     }
+    pub const fn waits_while_working(self) -> bool {
+        self.format().waits_while_working()
+    }
     pub const fn reports_wake_devices(self) -> bool {
         self.format().reports_wake_devices()
     }
