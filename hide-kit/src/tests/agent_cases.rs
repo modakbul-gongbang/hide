@@ -754,8 +754,9 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
     // the table: what Hide does for each agent in this build (D-10, B18;
     // opencode-plugin D-11: OpenCode takes letters and is refused a launch,
     // so it is no longer Basic, while no bell rings for it; grok-cursor-hooks:
-    // Grok and Cursor get the spawn guard and the subagent count from their
-    // official hooks, take no letters and stay Basic, and Grok discards a
+    // Grok and Cursor get the spawn guard from their official hooks, and Grok
+    // the subagent count (Cursor's hooks never fire for a Task subagent, issue
+    // 911), take no letters and stay Basic, and Grok discards a
     // session-start hook's output). The session-reader common contract B1/B6
     // enables starts for the five agents besides Claude Code and Codex
     // without enabling their future reader/sleep/fork features. The complete
@@ -829,7 +830,6 @@ fn claude_code_and_codex_do_everything_opencode_pi_and_omp_collaborate_and_grok_
             &[
                 Skill,
                 Guidance,
-                Subagents,
                 SpawnGuard,
                 HerdrIntegration,
                 Sleep,

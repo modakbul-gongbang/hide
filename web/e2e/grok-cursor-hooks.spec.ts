@@ -343,15 +343,14 @@ test("subagent events of the installed Grok and Cursor hooks reach the core's co
     send("grok", grok, "SubagentStop", "subagent_stop", { sessionId: "child", subagentType: "general" });
     await expect.poll(() => wire.counts(grok), { timeout: 20_000 }).toEqual([0, 1]);
 
-    // B3, Cursor: its subagents end with the turn, and each start is answered with allow.
+    // B3, Cursor: each subagent start is answered with allow, and Hide counts nothing for Cursor: its CLI runs
+    // no subagent hook for a Task subagent (issue 911), so its adapter declares no count and the pane reports none.
     const started = { conversation_id: "c1", hook_event_name: "subagentStart", subagent_id: "s1", subagent_type: "explore", task: "look", parent_conversation_id: "c1", tool_call_id: "t1", is_parallel_worker: false };
     for (let count = 0; count < 2; count += 1) expect(JSON.parse(send("cursor", cursor, "SubagentStart", "", started))).toEqual({ permission: "allow" });
-    await expect.poll(() => wire.counts(cursor), { timeout: 20_000 }).toEqual([2, 0]);
     send("cursor", cursor, "SubagentStop", "", { conversation_id: "c1", subagent_type: "explore", status: "completed", loop_count: 0 });
-    await expect.poll(() => wire.counts(cursor), { timeout: 20_000 }).toEqual([1, 1]);
     send("cursor", cursor, "Stop", "", { conversation_id: "c1", status: "completed", loop_count: 0 });
-    await expect.poll(() => wire.counts(cursor), { timeout: 20_000 }).toEqual([0, 1]);
-    expect(wire.pane(cursor)?.instrumented).toBe(true);
+    // The pane is on the wire, with a count of nothing rather than a zero.
+    await expect.poll(() => wire.pane(cursor)?.subagents, { timeout: 20_000 }).toMatchObject({ working: null, done: null });
     // The other pane's count was never touched by these.
     expect(wire.counts(grok)).toEqual([0, 1]);
   } finally {

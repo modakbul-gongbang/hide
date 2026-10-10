@@ -1545,8 +1545,8 @@ An unanswered native `ask` enters the existing question state with bounded text 
 Its question keeps the existing Answer tag in the pane header even while the native session holds for an operator reply.
 Grok has native titles, Sleep and Fork from its complete session reader beside the spawn guard and subagent count from its own hook; it has no letters, so its row keeps the Basic chip.
 Its `/rename` title wins over a generated goal, an unanswered `ask_user_question` enters the question state with bounded text and choices, and a plan awaiting approval enters the approval state with the plan text.
-Cursor has conversation, search, exact resume and Sleep from its ordinary native chat reader, with generated goal then provider as its title; it has no native title, Fork, Memory extraction, structured question/plan wait or tool-output PR discovery.
-Its Basic chip and existing guidance, subagent and spawn-guard facts remain, and it offers no model or effort choice.
+Cursor has conversation, search, exact resume and Sleep from its ordinary native chat reader, with generated goal then provider as its title; it has no native title, Fork, Memory extraction, subagent count, structured question/plan wait or tool-output PR discovery.
+Its Basic chip and existing guidance and spawn-guard facts remain, and its Basic popover lists `– Not available` for subagents rather than a count of zero, and it offers no model or effort choice.
 Archive resume sends the selected source path to the core, which decides whether the native reader requires that exact file proof before starting.
 OpenCode has native titles, Sleep and Fork from its database reader beside letters, Memory, subagents and the spawn guard from Hide's plugin; an unanswered native `question` enters the existing question state with its text and choices even with summaries off.
 Its question keeps the existing Answer tag in the pane header, as omp's does.
