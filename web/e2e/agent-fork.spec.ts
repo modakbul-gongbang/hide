@@ -62,7 +62,13 @@ test("Fork agent from the pane menu starts the pane's conversation again in a ne
     ).toContain(`claude --resume ${SESSION} --fork-session`);
 
     // The forked pane says so, and names its source; the source does not.
-    await page.locator(`nav[data-sidebar] [data-pane="${forked}"]`).click();
+    // A fork is the source's descendant, so its sidebar row sits under the
+    // source's folded children.
+    const row = page.locator(`nav[data-sidebar] [data-pane="${forked}"]`);
+    const fold = page.getByRole("button", { name: "Show the children of Agent two" });
+    await expect(row.or(fold)).toBeVisible({ timeout: 30_000 });
+    if (await fold.isVisible()) await fold.click();
+    await row.click();
     const mark = page.locator(`[data-pane-view="${forked}"] [data-pane-fork]`);
     await expect(mark).toHaveAttribute("data-pane-fork", forker, { timeout: 30_000 });
     await expect(mark).toHaveAccessibleName("Forked from Agent two");
