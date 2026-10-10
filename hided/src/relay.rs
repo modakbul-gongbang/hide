@@ -147,13 +147,6 @@ enum TapItem {
 }
 
 impl TapItem {
-    fn pane(&self) -> &str {
-        match self {
-            Self::Output(output) => &output.pane,
-            Self::Forget(pane) => pane,
-        }
-    }
-
     /// What it holds of the tap's byte bound.
     fn size(&self) -> usize {
         match self {
@@ -323,9 +316,11 @@ impl RelayTap {
         if state.closed {
             return;
         }
+        // Its output goes; a Forget already queued for it stays, so a
+        // second forget before the relay sends still forgets it once.
         let mut freed = 0;
         state.items.retain(|item| {
-            if item.pane() == pane {
+            if matches!(item, TapItem::Output(output) if output.pane == pane) {
                 freed += item.size();
                 false
             } else {
@@ -900,6 +895,31 @@ mod tests {
         // The pane coming back starts whole again.
         tap.output("w1:p1", b"partial", false);
         assert!(outputs(&tap).is_empty());
+    }
+
+    /// A pane forgotten twice before the relay sends keeps its one Forget,
+    /// so the node's hub never keeps it.
+    #[test]
+    fn a_pane_forgotten_twice_before_a_send_is_still_forgotten_once() {
+        let tap = RelayTap::new("mac");
+        tap.output("w1:p1", b"whole", true);
+        assert_eq!(outputs(&tap).len(), 1);
+        tap.forget("w1:p1");
+        tap.forget("w1:p1");
+        let (text, _) = tap.take();
+        let lines: Vec<TerminalUp> = text
+            .unwrap_or_default()
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<TerminalLine<TerminalUp>>(line)
+                    .unwrap()
+                    .terminal
+            })
+            .collect();
+        assert!(
+            matches!(lines.as_slice(), [TerminalUp::Forget { pane }] if pane == "w1:p1"),
+            "{lines:?}"
+        );
     }
 
     #[test]
