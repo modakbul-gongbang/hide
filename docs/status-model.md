@@ -426,7 +426,8 @@ The pet dashboard's count tiles read the same four groups, plus the rows whose s
 
 ## The subagent badge
 
-The badge row carries one more count after the three groups: the in-process subagents Hide's hook reports as working, in purple.
+The pet's badge row carries one more count after the three groups: the in-process subagents Hide's hook reports as working, in purple.
+The pet is its only reader: the desktop app draws no pet today, and the web shell draws no subagent count on any surface ([UI_BEHAVIOR.md, Subagent count](UI_BEHAVIOR.md#subagent-count)).
 `agent_state/tally.rs::subagents_active` sums the `working` hook token over the agents on an answering server, with saturation, and returns zero while disconnected; a pane whose agent has gone is not counted even if its token lingers, and an instrumented pane whose count is unknown adds nothing rather than a zero.
 It is the one count the hook can vouch for; Herdr's own wire carries no ambient counts, and nothing here scans transcripts or output.
 
@@ -434,22 +435,23 @@ Regression owner: `subagent_counts_sum_the_hook_tokens_of_listed_agents_and_go_q
 
 ## Uninstrumented is not an unknown activity
 
-A pane whose agent Hide cannot see into is a different answer from a pane whose activity Herdr reports as `unknown`, and the two are drawn differently on purpose.
+A pane whose agent Hide cannot see into is a different answer from a pane whose activity Herdr reports as `unknown`, and the two are kept apart on purpose.
 
 - Activity `unknown` is Herdr saying it does not know what the process is doing. It is one of the three activity values and it groups like any other.
-- Uninstrumented is Hide saying it cannot tell what that session has spawned. It is not an activity, it never changes a group, and it is drawn as its own mark beside the agent.
+- Uninstrumented is Hide saying it cannot tell what that session has spawned. It is not an activity, it never changes a group, and it is projected as its own field beside the agent.
 
 The reason is resolved once, by `hide_agent_hooks::diagnosis::instrumentation`, in a fixed order: config unreadable, remote host, hooks not installed, session predates install, hook outdated, unknown.
 The first match wins and nothing falls through to an empty value or an invented cause.
 Every projection carries the reason's stable code alongside its sentence, so no surface has to recognise its own operator-facing text.
 
-The mark appears in three places, and only on panes where an agent was detected: the pane header's 28pt identity row, the sidebar row, and the Overview worktree row's agent line.
-That third position exists because an empty agent line has to distinguish "nobody is working here" from "Hide cannot see into this worktree".
+The projection is made only for panes where an agent was detected, and no screen draws it as a mark: it would say Hide cannot tell how many subagents the session runs, which the operator can do nothing about, so the pane header, the sidebar row and the Overview line carry nothing for it (operator decision on issue #810, design principle 13; [UI_BEHAVIOR.md, Subagent count](UI_BEHAVIOR.md#subagent-count)).
+The core still projects it (`PaneChildren.instrumented`, the reason and its code), because the connection below is judged from the code.
 A count Hide cannot read is reported as unknown and never as zero, because a zero is a claim that the agent is working alone.
+An agent whose adapter declares no subagent count (`subagent_counts: None`: Pi and Cursor) has nothing to read, and the core projects it with the reason `unknown` and no count.
 
 ### Not connected, and what fixes it
 
-A Claude Code or Codex pane whose session Hide does not hear also carries a connection (`PaneChildrenSnapshot.connection`), read from the same observation as the mark above (PRD settings-cleanup D-09, D-11, B26 to B31).
+A Claude Code or Codex pane whose session Hide does not hear also carries a connection (`PaneChildrenSnapshot.connection`), read from the same observation as the projection above (PRD settings-cleanup D-09, D-11, B26 to B31).
 It is judged by `sidebar::pane_connection` from `uninstrumented_code`, and by nothing else, for an agent that is awake: a sleeping agent has ended its process, so no hook can speak from its pane, and it carries no connection until it wakes.
 Settings counts sessions and never these connections, so a pane that needs a Reopen says so only in its own header.
 

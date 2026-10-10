@@ -5,8 +5,8 @@
 // agent's shape and let other calls run, subagent events reach the core's snapshot of a pane Herdr classifies
 // as grok or cursor (stand-in programs named for the agent), and under Grok's environment Hide's Claude Code
 // hook, Cursor entry and Grok file together count and refuse once.
-// The web shell draws no subagent count yet, so the count is read where the shell would read it: the pane's
-// `children.subagents` in the snapshot frames the page receives. Hide's hook commands run from a process that
+// The web shell draws no subagent count (docs/UI_BEHAVIOR.md, Subagent count), so the count is read where the core
+// publishes it: the pane's `children.subagents` in the snapshot frames the page receives. Hide's hook commands run from a process that
 // is no descendant of the pane's shell, so hided binds them to the registered checkout holding their working
 // folder (`hided/src/pane_auth.rs`, `attest_checkout`), which is the fixture's own checkout.
 
@@ -65,7 +65,7 @@ type Subagents = { working: number | null; done: number | null };
 
 /**
  * What the page's snapshot frames say, latest first: each agent's hook piece in the machine's kit, and each
- * pane's `children` (whether Hide hears its hook, and the subagent counts the shell has no mark for yet).
+ * pane's `children` (whether Hide hears its hook, and the subagent counts, which no screen draws).
  */
 function watchWire(page: Page) {
   const hooks = new Map<string, Piece>();
@@ -163,7 +163,7 @@ test("the switches write Hide's Grok file and Cursor entries beside the others, 
     await expect(list.locator("[data-agent-problem]")).toHaveCount(0);
     await list.locator('[data-agent-partial="grok"]').click();
     const popover = page.locator('[data-agent-partial-popover="grok"]');
-    for (const feature of ["spawn_guard:yes", "subagents:yes", "letters:no", "bell:no"]) await expect(popover.locator(`[data-agent-feature="${feature}"]`)).toBeVisible();
+    for (const feature of ["spawn_guard:yes", "letters:no", "bell:no"]) await expect(popover.locator(`[data-agent-feature="${feature}"]`)).toBeVisible();
     await screenshot(page, "grok-cursor-hooks-on");
     await page.keyboard.press("Escape");
 

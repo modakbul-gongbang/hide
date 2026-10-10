@@ -388,7 +388,7 @@ The agent hook is not written on Windows, because its command is a shell command
 Grok and Cursor each document a hook that can refuse a shell call and that sees a subagent start and end, so Hide's hook for them carries the spawn guard and, for Grok, the subagent count (PRD grok-cursor-hooks).
 Cursor declares no subagent count: Cursor CLI 2026.10.01 runs `subagentStart` and `subagentStop` only when its agent server asks for them, and a Task subagent run (issue 911) never produced one, so the count stayed 0 for a pane that had run a subagent.
 Its chat store does keep each subagent as a store of its own, in the parent's folder under `~/.cursor/chats`, with `subagentInfo` (`parentAgentId`, `toolCallId`, `typeName`), and the parent's graph holds the Task call and its tool result; a finished subagent could be counted from those, but nothing in a subagent's store says it is still running, so Hide shows no count rather than a zero it cannot stand behind (design principle 10).
-The pane's children projection follows the count's dialect, so a Cursor pane reads as Pi's does: the uninstrumented mark with the reason `unknown` and no count, which says Hide cannot tell what the session spawned ([status-model.md](status-model.md#uninstrumented-is-not-an-unknown-activity)), never a zero; the spawn guard and the guidance keep their own hooks.
+The pane's children projection follows the count's dialect, so a Cursor pane reads as Pi's does: the uninstrumented projection with the reason `unknown` and no count, which says Hide cannot tell what the session spawned ([status-model.md](status-model.md#uninstrumented-is-not-an-unknown-activity)), never a zero, and no screen draws it; the spawn guard and the guidance keep their own hooks.
 Each runs only the events its documentation names: Grok `SessionStart`, `PreToolUse` (matcher `Bash|ask_user_question|exit_plan_mode`; `Bash` is Grok's alias of `run_terminal_command`), `SubagentStart`, `SubagentStop` and `Stop` (the hooks guide Grok ships, `~/.grok/docs/user-guide/10-hooks.md`); Cursor `sessionStart` and `preToolUse` (matcher `Shell`).
 Grok's `SessionStart` does not fire for a subagent, so it is where the pane's count starts over and the pane first reports itself instrumented.
 
@@ -477,7 +477,6 @@ Its popover groups the feature table into Herdr basics, session reading and mult
 | `guidance` | Hide's hook, plugin or extension prints the session guidance | yes | yes | yes | yes | no | yes |
 | `letters` | its prompt dialect declaration | yes | yes | yes | yes | no | no |
 | `spawn_guard` | its refusal dialect declaration | yes | yes | yes | yes | yes | yes |
-| `subagents` | its counter dialect declaration | yes | yes | no | yes | yes | yes |
 | `memory` | its Memory dialect declaration | yes | yes | yes | yes | no | no |
 | `bell` | the core rings the doorbell for that agent (`AgentAdapter::bell`, tied to `delivery::doorbell::bell_target`) | yes | no | no | no | no | no |
 | `herdr_integration` | always: every supported agent has a Herdr target | yes | yes | yes | yes | yes | yes |
@@ -644,7 +643,7 @@ The kit looks for the agents once per pass, asks the login shell for its `PATH` 
 Removal does not need the helper, and must not: it reads the configuration file and takes out the entries carrying Hide's marker, and nothing else.
 Removing a device from Hide does that on the device while its helper is connected (D-16); the operator removes a hook on their own machine by editing the file, and the kit then leaves it removed.
 
-`hide-agent-hooks doctor [--json]` prints the same judgement in a terminal, because a broken hook shows on screen only as an uninstrumented mark and the output of that command is the evidence.
+`hide-agent-hooks doctor [--json]` prints the same judgement in a terminal, because a broken hook shows on screen only as a Not connected chip on a Claude Code or Codex pane and nowhere for any other agent, and the output of that command is the evidence.
 Install and remove are deliberately not CLI subcommands: writing to the operator's configuration is the kit's decision, agreed to when the app was installed or the device added, not something a stray command line performs.
 
 ## Testing
