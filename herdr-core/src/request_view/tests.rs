@@ -565,6 +565,70 @@ fn a_shared_pull_request_gives_its_duty_to_the_row_on_its_branch() {
 }
 
 #[test]
+fn a_checkouts_pull_request_stays_with_its_row_nearest_the_root_whichever_works_last() {
+    // A lead on main spawned an Observer, which spawned an implementor; both
+    // work on the pull request's checkout. Rows arrive in activity order, so
+    // either of the two may come first.
+    for implementor_first in [false, true] {
+        let mut rows = rows(&[
+            ("lead", "idle"),
+            ("observer", "idle"),
+            ("implementor", "idle"),
+        ]);
+        rows[1].lineage_depth = 1;
+        rows[2].lineage_depth = 2;
+        if implementor_first {
+            rows.swap(1, 2);
+        }
+        run(
+            &mut rows,
+            &[
+                ("lead", "main"),
+                ("observer", "prd/x"),
+                ("implementor", "prd/x"),
+            ],
+            &github(vec![pull_request(
+                5,
+                "prd/x",
+                PullRequestBadge::Open,
+                PullRequestChecks::Failed,
+            )]),
+        );
+        let row = |pane: &str| rows.iter().find(|row| row.pane_id == pane).unwrap();
+        let pulls = |pane: &str| &row(pane).request.as_ref().unwrap().pull_requests;
+        assert_eq!(
+            verb(row("observer")),
+            RequestVerb::Fix,
+            "implementor first: {implementor_first}"
+        );
+        assert_eq!(verb(row("implementor")), RequestVerb::Idle);
+        assert!(!pulls("implementor")[0].duty, "the link stays, the duty goes");
+        assert!(
+            pulls("lead").is_empty(),
+            "the duty never climbs out of the checkout"
+        );
+    }
+}
+
+#[test]
+fn rows_at_one_depth_on_the_checkout_give_the_duty_to_the_session_that_made_it() {
+    let mut rows = rows(&[("helper", "idle"), ("maker", "idle")]);
+    rows[1].row_facts.as_mut().unwrap().created_prs = vec![("acme/app".to_owned(), 5, 1)];
+    run(
+        &mut rows,
+        &[("helper", "prd/x"), ("maker", "prd/x")],
+        &github(vec![pull_request(
+            5,
+            "prd/x",
+            PullRequestBadge::Open,
+            PullRequestChecks::Failed,
+        )]),
+    );
+    assert_eq!(verb(&rows[1]), RequestVerb::Fix);
+    assert_eq!(verb(&rows[0]), RequestVerb::Idle);
+}
+
+#[test]
 fn who_sent_the_shown_request_and_who_came_after() {
     let mut rows = rows(&[("parent", "idle"), ("child", "idle")]);
     rows[1].delegated = true;
