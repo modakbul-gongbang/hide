@@ -190,6 +190,9 @@ impl Runtime {
         }
         self.delivery_connected.insert(device.to_owned());
         self.observe_registration_panes(device, payload, host_scope);
+        // A woken pane is first seen here; the session projection that
+        // follows publishes whatever this settles.
+        self.settle_dormant_registrations();
     }
 
     /// A host's session sync is about to ask Herdr for a fresh snapshot.
@@ -254,6 +257,17 @@ impl Runtime {
         let Ok(ledger) = self.delivery_ledger.as_ref() else {
             return;
         };
+        // A sleeping session's pane is closed on purpose and its wake
+        // continues the registration, so its absence ends nothing.
+        let held: HashSet<&str> = self
+            .snapshot
+            .ui_state
+            .agent_sleep
+            .dormant
+            .values()
+            .filter_map(|record| record.registration.as_ref())
+            .map(|registration| registration.id.as_str())
+            .collect();
         let read =
             self.delivery_panes
                 .entry(device.to_owned())
@@ -266,13 +280,49 @@ impl Runtime {
         let previous = read
             .panes
             .replace(panes.into_iter().map(str::to_owned).collect());
-        self.registrations_gone
-            .extend(crate::coordination::gone_registrations(
-                ledger,
-                device,
-                read,
-                previous.as_ref(),
-            ));
+        self.registrations_gone.extend(
+            crate::coordination::gone_registrations(ledger, device, read, previous.as_ref())
+                .into_iter()
+                .filter(|(id, _)| !held.contains(id.as_str())),
+        );
+    }
+
+    /// The registration the live execution in `pane` holds, which a sleep
+    /// that closes the pane saves so its wake continues it.
+    pub(super) fn delivery_registration_of(
+        &self,
+        pane: &str,
+    ) -> Option<crate::agent_sleep::DormantRegistration> {
+        let actor = &self.delivery_observations.get(pane)?.actor;
+        self.delivery_ledger
+            .as_ref()
+            .ok()?
+            .agents
+            .iter()
+            .find(|record| !record.ended && record.actor.same_identity(actor))
+            .map(|record| crate::agent_sleep::DormantRegistration {
+                id: record.id.clone(),
+                actor: record.actor.clone(),
+            })
+    }
+
+    /// Whether a sleeping session holds `actor`'s registration for its wake.
+    fn dormant_holds_actor(&self, actor: &Actor) -> bool {
+        self.snapshot
+            .ui_state
+            .agent_sleep
+            .dormant
+            .values()
+            .filter_map(|record| record.registration.as_ref())
+            .any(|registration| registration.actor.same_identity(actor))
+    }
+
+    /// The registrations the delivery store has still to point at a woken
+    /// pane.
+    pub(crate) fn delivery_registration_rebinds(
+        &self,
+    ) -> std::collections::BTreeMap<String, crate::coordination::Rebind> {
+        self.registration_rebinds.clone()
     }
 
     /// A retired remote coordinator may finish before its off-lock join,
@@ -584,6 +634,11 @@ impl Runtime {
                     .any(|record| &record.id == id && !record.ended)
             });
         }
+        self.registration_rebinds.retain(|id, rebind| {
+            ledger.agents.iter().any(|record| {
+                &record.id == id && !record.ended && record.actor.same_identity(&rebind.from)
+            })
+        });
         // Only a change in who waits for a reply moves a row's wait, so the
         // lineage is not rebuilt for every letter's delivery step.
         let waiters = |ledger: &Ledger| {
@@ -600,9 +655,15 @@ impl Runtime {
             .ok()
             .is_none_or(|previous| waiters(previous) != waiters(&ledger));
         self.delivery_ledger = Ok(ledger);
+        let continued = self.settle_dormant_registrations();
         self.feed_link_parents();
         let lineage = waiters_moved && self.refresh_agent_lineage();
-        changed | reopened | lineage | self.sync_session_state() | self.refresh_agent_scopes()
+        changed
+            | reopened
+            | continued
+            | lineage
+            | self.sync_session_state()
+            | self.refresh_agent_scopes()
     }
 
     /// The Factory host publishes which Factories exist.
@@ -790,7 +851,8 @@ impl Runtime {
                 };
                 let gone = proven_absence_or_replacement
                     && self.delivery_connected.contains(&watch.target.device_id)
-                    && !self.delivery_overflow.contains(&watch.target.device_id);
+                    && !self.delivery_overflow.contains(&watch.target.device_id)
+                    && !self.dormant_holds_actor(&watch.target);
                 let source = crate::delivery::worker::ActivitySource {
                     link: if self.node == watch.target.device_id {
                         Some(Arc::clone(&self.own_node))

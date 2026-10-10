@@ -23,7 +23,11 @@ use crate::sidebar::{
 };
 
 mod dormant;
-pub use dormant::{DormantPhase, DormantRecord, SleepId, SleepingSessionSnapshot};
+#[cfg(test)]
+pub(crate) use dormant::fixture_record;
+pub use dormant::{
+    DormantPhase, DormantRecord, DormantRegistration, SleepId, SleepingSessionSnapshot,
+};
 
 /// The Settings choices besides Never, in hours (PRD D-10).
 pub const SLEEP_AFTER_CHOICES_HOURS: [u32; 3] = [12, 24, 72];

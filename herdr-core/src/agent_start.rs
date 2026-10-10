@@ -101,6 +101,8 @@ pub(crate) fn start_at_shell_checked(
 /// A start for an agent that goes back under the name of the one
 /// just ended in this pane: `agent_name_taken` is answered by sending the
 /// start again until Herdr has released the name, within [`NAME_RELEASE_WAIT`].
+/// `check` is the action proof [`start_at_shell_checked`] repeats before every
+/// attempt.
 pub(crate) fn start_at_shell_reusing_name(
     connector: &dyn ApiConnector,
     node: Option<&dyn NodeLink>,
@@ -108,6 +110,7 @@ pub(crate) fn start_at_shell_reusing_name(
     pane_id: &str,
     params: Value,
     answer_timeout: Duration,
+    check: &dyn Fn() -> Result<(), String>,
 ) -> Result<Value, StartError> {
     start_within(
         connector,
@@ -118,7 +121,7 @@ pub(crate) fn start_at_shell_reusing_name(
         answer_timeout,
         SHELL_WAIT,
         NAME_RELEASE_WAIT,
-        &|| Ok(()),
+        check,
     )
 }
 
