@@ -6,7 +6,7 @@
 // cannot yet (#315).
 #![cfg(unix)]
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -16,109 +16,10 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::ORIGIN;
 
+use crate::support::fake_tailscale::{DNS, FakeTailscale};
+
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-const DNS: &str = "mac.tailnet-name.ts.net";
-
-/// A `tailscale` that answers from files under `state`: `status.json`,
-/// `serve.json`; `fail-serve` makes every serve change fail, `fail-remove`
-/// only removals, and `apply-then-fail` applies an add and then fails it
-/// (a `serve --bg` that timed out after it took); with `funnel` a removal
-/// leaves the Funnel flag in place; every call is appended to `calls.log`.
-struct FakeTailscale {
-    state: PathBuf,
-    bin: PathBuf,
-}
-
-impl FakeTailscale {
-    fn new(root: &Path) -> Self {
-        let state = root.join("tailscale-state");
-        std::fs::create_dir_all(&state).unwrap();
-        let bin = root.join("tailscale");
-        let script = format!(
-            r#"#!/bin/sh
-S='{state}'
-echo "$*" >> "$S/calls.log"
-case "$1" in
-  status) cat "$S/status.json" ;;
-  serve)
-    shift
-    if [ "$1" = status ]; then cat "$S/serve.json" 2>/dev/null || echo '{{}}'; exit 0; fi
-    if [ -e "$S/fail-serve" ]; then echo "serve config denied: access denied" >&2; exit 1; fi
-    last=""; for a in "$@"; do last="$a"; done
-    if [ "$last" = off ] && [ -e "$S/fail-remove" ]; then echo "remove denied" >&2; exit 1; fi
-    if [ "$last" = off ] && [ -e "$S/funnel" ]; then echo '{{"AllowFunnel":{{"{dns}:443":true}}}}' > "$S/serve.json"; exit 0; fi
-    if [ "$last" = off ]; then echo '{{}}' > "$S/serve.json"; exit 0; fi
-    printf '{{"TCP":{{"443":{{"HTTPS":true}}}},"Web":{{"{dns}:443":{{"Handlers":{{"/":{{"Proxy":"%s"}}}}}}}}}}' "$last" > "$S/serve.json"
-    if [ -e "$S/apply-then-fail" ]; then echo "timed out" >&2; exit 1; fi
-    ;;
-  *) exit 2 ;;
-esac
-"#,
-            state = state.display(),
-            dns = DNS,
-        );
-        std::fs::write(&bin, script).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        Self { state, bin }
-    }
-
-    fn status(&self, value: Value) {
-        std::fs::write(self.state.join("status.json"), value.to_string()).unwrap();
-    }
-
-    fn logged_out(&self) {
-        self.status(
-            json!({"BackendState": "NeedsLogin", "Self": {"DNSName": "", "HostName": "mac"}}),
-        );
-    }
-
-    fn https_off(&self) {
-        self.status(json!({"BackendState": "Running", "Self": {"DNSName": format!("{DNS}."), "HostName": "mac"},
-            "CurrentTailnet": {"MagicDNSEnabled": true}}));
-    }
-
-    fn ready(&self) {
-        self.status(json!({"BackendState": "Running", "Self": {"DNSName": format!("{DNS}."), "HostName": "mac"},
-            "CurrentTailnet": {"MagicDNSEnabled": true}, "CertDomains": [DNS]}));
-    }
-
-    fn serve(&self) -> Value {
-        std::fs::read_to_string(self.state.join("serve.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or(json!({}))
-    }
-
-    fn set_serve(&self, value: Value) {
-        std::fs::write(self.state.join("serve.json"), value.to_string()).unwrap();
-    }
-
-    fn calls(&self) -> String {
-        std::fs::read_to_string(self.state.join("calls.log")).unwrap_or_default()
-    }
-
-    fn proxy(&self) -> Option<String> {
-        self.serve()
-            .pointer(&format!("/Web/{DNS}:443/Handlers/~1/Proxy"))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    }
-
-    /// Switch-off shows `off` at once and removes the entry right after it.
-    async fn wait_until_removed(&self) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while self.proxy().is_some() {
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "hide's serve entry was never removed"
-            );
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    }
-}
 
 fn env(dir: &Path, tailscale: &Path) -> Env {
     Env {
