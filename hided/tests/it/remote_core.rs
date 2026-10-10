@@ -1154,27 +1154,33 @@ fn seed_memory(
 
 /// `hide workspace memory` for a session start in `cwd`, as `command` runs
 /// it, and how long the answer took.
-fn ask_memory(
+fn ask_memory(command: std::process::Command, cwd: &std::path::Path) -> Result<(Value, Duration)> {
+    ask_memory_for(command, cwd, "SessionStart", None)
+}
+
+/// `hide workspace memory` for `event` in `cwd`, with `prompt` on its
+/// standard input as a hook sends it.
+fn ask_memory_for(
     mut command: std::process::Command,
     cwd: &std::path::Path,
+    event: &str,
+    prompt: Option<&str>,
 ) -> Result<(Value, Duration)> {
+    use std::io::Write;
     command
-        .args([
-            "workspace",
-            "memory",
-            "--event",
-            "SessionStart",
-            "--runtime",
-            "codex",
-            "--session",
-            "memory-session",
-            "--cwd",
-        ])
+        .args(["workspace", "memory", "--event", event])
+        .args(["--runtime", "codex", "--session", "memory-session", "--cwd"])
         .arg(cwd)
         .current_dir(cwd)
-        .stdin(std::process::Stdio::null());
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
     let asked = Instant::now();
-    let output = command.output()?;
+    let mut child = command.spawn()?;
+    let mut stdin = child.stdin.take().context("the command's input")?;
+    stdin.write_all(prompt.unwrap_or_default().as_bytes())?;
+    drop(stdin);
+    let output = child.wait_with_output()?;
     let took = asked.elapsed();
     let answer = workspace_answer(&String::from_utf8_lossy(&output.stdout))
         .with_context(|| format!("stderr: {}", String::from_utf8_lossy(&output.stderr)))?;
@@ -1269,9 +1275,49 @@ fn an_agent_on_either_machine_reads_the_one_memory_the_core_owns() -> Result<()>
                 "the core's agent did not get its Project's Memory: {answer}"
             );
             eprintln!("memory answer for the core's agent took {took:?}");
-            // B19: the read is not logged with its text.
-            let log = std::fs::read_to_string(fixture.core_state.join("Logs/core.jsonl"))?;
-            ensure!(!log.contains("keeps its rule"), "Memory text reached the core's log");
+            // A later prompt's first bytes cross to the core with the ask.
+            let prompt = "Where does the zebrafinch-7c41 rule apply?";
+            let (answer, _) = tokio::task::block_in_place(|| {
+                ask_memory_for(
+                    fixture.screen_command(&hide),
+                    &node_project,
+                    "UserPromptSubmit",
+                    Some(prompt),
+                )
+            })?;
+            ensure!(answer["ok"] == true, "the node's prompt ask: {answer}");
+            // B19: neither the Memory read nor the prompt is recorded with its
+            // text, in either machine's log or anywhere in the core's state.
+            let mut records = vec![
+                fixture.root.join("core-hided.log"),
+                fixture.root.join("node-hided.log"),
+            ];
+            for folder in [fixture.core_state.clone(), fixture.node_state()] {
+                records.extend(files_under(&folder)?);
+            }
+            let mut found_in_store = false;
+            for record in &records {
+                let Ok(bytes) = std::fs::read(record) else {
+                    continue;
+                };
+                // The store holds the Memory itself, never the prompt; that it
+                // is found there shows the search reads what was written.
+                let store = record
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("project-memory.sqlite3"));
+                for text in ["keeps its rule", "zebrafinch-7c41"] {
+                    if store && text == "keeps its rule" {
+                        found_in_store |= bytes.windows(text.len()).any(|window| window == text.as_bytes());
+                        continue;
+                    }
+                    ensure!(
+                        !bytes.windows(text.len()).any(|window| window == text.as_bytes()),
+                        "{text:?} was written to {}",
+                        record.display()
+                    );
+                }
+            }
+            ensure!(found_in_store, "the search found no seeded Memory in the store");
 
             // Sessions are each machine's own session files: the node's
             // Project lists what the node holds, read through its link, in the
@@ -1354,6 +1400,24 @@ fn write_claude_session(home: &std::path::Path, project: &std::path::Path, id: &
     });
     std::fs::write(folder.join(format!("{id}.jsonl")), format!("{line}\n"))?;
     Ok(())
+}
+
+/// Every file under `folder`, at any depth.
+fn files_under(folder: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
+    let mut files = Vec::new();
+    let mut folders = vec![folder.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                folders.push(entry.path());
+            } else if kind.is_file() {
+                files.push(entry.path());
+            }
+        }
+    }
+    Ok(files)
 }
 
 /// The ids of the session rows a Sessions section lists.
