@@ -30,7 +30,11 @@ fn every_installed_hook_dialect_resolves_through_the_shared_adapter() {
                         assert_eq!(printed, None, "{}", row.id);
                     }
                     assert_eq!(guidance.dialect(), row.spawn_guard);
-                    assert_eq!(guidance.dialect(), row.subagent_counts);
+                    // The count is declared on its own: Cursor's hooks never
+                    // fire for a Task subagent, so it declares none.
+                    if row.subagent_counts.is_some() {
+                        assert_eq!(guidance.dialect(), row.subagent_counts);
+                    }
                     assert!(AgentRuntime::parse(&spelling).is_none());
                 }
                 // OpenCode's, Pi's and omp's hook is a script file of Hide's: no

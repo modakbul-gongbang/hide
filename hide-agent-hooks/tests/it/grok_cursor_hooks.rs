@@ -375,7 +375,7 @@ fn grok_counts_its_subagents_and_keeps_background_ones_past_the_turn() {
 }
 
 #[test]
-fn cursor_counts_its_subagents_answers_allow_to_each_start_and_sweeps_at_the_turn_end() {
+fn cursor_answers_allow_to_each_subagent_start_and_tells_herdr_no_count() {
     let machine = Machine::new("registered");
     let herdr = Herdr::start();
     let socket = herdr.socket.display().to_string();
@@ -404,10 +404,10 @@ fn cursor_counts_its_subagents_answers_allow_to_each_start_and_sweeps_at_the_tur
         &env,
     );
     assert_eq!(run.stdout, "", "stop asks for no follow-up");
-    assert_eq!(
-        herdr.counts(),
-        [pair(1, 0), pair(2, 0), pair(1, 1), pair(0, 1)]
-    );
+    // Cursor CLI 2026.10.01 runs no `subagentStart`/`subagentStop` hook for a
+    // Task subagent (issue 911), so its adapter declares no count and a count
+    // here would only ever read zero: the hook reports nothing.
+    assert_eq!(herdr.counts(), []);
 }
 
 #[test]

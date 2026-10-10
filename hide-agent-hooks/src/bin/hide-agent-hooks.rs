@@ -228,6 +228,11 @@ fn run_basic_hook(agent: GuidanceAgent, arguments: &[String], started: Instant) 
 /// background subagents still running and comes from inside a subagent too,
 /// which leaves the count alone; Cursor's subagents end with the turn.
 fn count_basic(dialect: HookDialect, event: HookEvent, started: Instant) {
+    // An agent whose adapter declares no count reports none, rather than a
+    // zero its hooks never changed (Cursor, issue 911).
+    if dialect.adapter().subagent_counts.is_none() {
+        return;
+    }
     let change = match (dialect, event) {
         (_, HookEvent::SessionStart) => Change::Reset,
         (_, HookEvent::SubagentStart) => Change::Started,

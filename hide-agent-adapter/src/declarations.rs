@@ -314,7 +314,12 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         // with `hide inbox` and its bell stays off.
         prompt_hook: None,
         spawn_guard: Some(HookDialect::Cursor),
-        subagent_counts: Some(HookDialect::Cursor),
+        // Cursor CLI 2026.10.01 runs `subagentStart` and `subagentStop` only
+        // when its agent server asks for them, and none did for a Task
+        // subagent (issue 911). Its chat store does keep each subagent as a
+        // store of its own, but nothing in it marks a subagent still running,
+        // so no count is better than a zero it cannot stand behind.
+        subagent_counts: None,
         memory: None,
         bell: false,
         session: Some(SessionFormat::Cursor),
