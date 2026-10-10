@@ -210,6 +210,17 @@ describe("the hide CLI's answers", () => {
     expect(parseConnect(result('{"ok":false,"reason":"state_refused","detail":"x"}', { code: 2 }))).toMatchObject({ reason: "start_failed" });
   });
 
+  it("carries the core's machine and both builds when the core is newer than this app, and reads one without them as unreadable", () => {
+    const newer = '{"ok":false,"reason":"core_newer","detail":"newer","machine":"Mac mini","core":"0.4.2 (3f1c2a9)","app":"0.4.1 (b520d6e)"}';
+    expect(parseConnect(result(newer, { code: 2 }))).toEqual({
+      kind: "failed",
+      reason: "core_newer",
+      detail: "newer",
+      newer: { machine: "Mac mini", core: "0.4.2 (3f1c2a9)", app: "0.4.1 (b520d6e)" },
+    });
+    expect(parseConnect(result('{"ok":false,"reason":"core_newer","detail":"x","core":"0.4.2","app":"0.4.1"}', { code: 2 }))).toMatchObject({ reason: "start_failed" });
+  });
+
   it("keeps the CLI's failure category and turns everything unreadable into start_failed", () => {
     expect(parseConnect(result('{"ok":false,"reason":"no_response","detail":"not healthy"}', { code: 2 }))).toEqual({
       kind: "failed",

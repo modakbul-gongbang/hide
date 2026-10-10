@@ -108,7 +108,11 @@ pnpm(["--dir", "web", "build"]);
 // from (`hide version`); a package that cannot name its commit is refused.
 const commit = run("git", ["rev-parse", "HEAD"]);
 if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error(`the package's commit could not be read (got '${commit}')`);
-run("bash", ["scripts/verify-cargo.sh", "release"], { stdio: "inherit", env: { ...process.env, HIDE_VERSION: version, HIDE_COMMIT: commit } });
+// Its place in main's history orders two builds of one release, so a newer
+// screen updates its core (hided/src/build_order.rs).
+const order = run("git", ["rev-list", "--first-parent", "--count", "HEAD"]);
+if (!/^[0-9]+$/.test(order)) throw new Error(`the package's build order could not be read (got '${order}')`);
+run("bash", ["scripts/verify-cargo.sh", "release"], { stdio: "inherit", env: { ...process.env, HIDE_VERSION: version, HIDE_COMMIT: commit, HIDE_BUILD_ORDER: order } });
 const herdr = system.herdr();
 
 const release = path.join(repo, "target", "release");

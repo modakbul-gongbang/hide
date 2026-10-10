@@ -60,6 +60,8 @@ pub struct NodeIdentity {
     pub node: String,
     pub label: String,
     pub build: String,
+    /// This build's version and order, which the core's are compared with.
+    pub release: crate::build_order::Release,
     /// This machine's own Herdr, which the core reaches only through the
     /// link.
     pub herdr_socket: PathBuf,
@@ -109,6 +111,13 @@ pub enum LinkFailure {
     /// The core refused the node, with its reason (`other_build`,
     /// `own_node`, ...).
     Refused(String),
+    /// The core runs a newer build than this node's (B11): the core is left
+    /// as it is and this machine's app is the one to update. `machine` is
+    /// the core machine's name as its hello gave it.
+    CoreNewer {
+        machine: String,
+        release: crate::build_order::Release,
+    },
     /// The connection to the core's machine failed after its SSH server
     /// answered and before the core took the link: a reset or timeout in the
     /// key exchange, a channel that failed, or the handshake cut off or left
@@ -148,6 +157,7 @@ impl std::fmt::Display for LinkFailure {
             | Self::Transport(reason)
             | Self::Ended(reason)
             | Self::Lost(reason) => formatter.write_str(reason),
+            Self::CoreNewer { .. } => formatter.write_str("core_newer"),
             Self::Stopping => formatter.write_str("stopping"),
         }
     }
@@ -722,7 +732,35 @@ fn serve_link(
         Line::Core(core) if core.node != placement.node => {
             return Err(LinkFailure::WrongCore(core.node));
         }
-        Line::Core(_) => {}
+        Line::Core(core) => {
+            let standing = crate::build_order::standing(
+                (&identity.build, &identity.release),
+                (&core.build, &core.release),
+            );
+            let refused = match standing {
+                crate::build_order::Standing::Same => None,
+                crate::build_order::Standing::Older => Some(LinkFailure::CoreNewer {
+                    machine: core.label.clone(),
+                    release: core.release.clone(),
+                }),
+                crate::build_order::Standing::Newer | crate::build_order::Standing::Unordered => {
+                    Some(LinkFailure::Refused("other_build".to_owned()))
+                }
+            };
+            if let Some(refused) = refused {
+                herdr_core::diagnostic!(json!({
+                    "component": "node_role",
+                    "kind": "link.build_refused",
+                    "core": placement.node,
+                    "reason": refused.to_string(),
+                    "node_build": identity.build,
+                    "core_build": core.build,
+                    "node_release": identity.release,
+                    "core_release": core.release,
+                }));
+                return Err(refused);
+            }
+        }
         _ => {
             return Err(ended(
                 "the core's machine answered another line than its core's".to_owned(),
@@ -736,6 +774,8 @@ fn serve_link(
             label: identity.label.clone(),
             build: identity.build.clone(),
             herdr_socket: identity.herdr_socket.display().to_string(),
+            release: identity.release.clone(),
+            protocol: hide_node_link::protocol::PROTOCOL_VERSION,
             move_intent: placement.move_intent.clone(),
         }),
     )

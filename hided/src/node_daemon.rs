@@ -292,6 +292,13 @@ async fn health(State(state): State<NodeState>) -> impl IntoResponse {
         Phase::Live(_) => ("live", None),
         Phase::Waiting { reason } => ("waiting", Some(reason.to_string())),
     };
+    // What the window names when this app is the one to update (B11).
+    let (core_machine, core_release) = match &phase {
+        Phase::Waiting {
+            reason: crate::node_role::LinkFailure::CoreNewer { machine, release },
+        } => (Some(machine.clone()), Some(release.clone())),
+        _ => (None, None),
+    };
     axum::Json(json!({
         "pid": std::process::id(),
         "version": state.version,
@@ -305,6 +312,9 @@ async fn health(State(state): State<NodeState>) -> impl IntoResponse {
         "node": state.boundary.node().as_str(),
         "core_link": link,
         "core_link_reason": reason,
+        "release": crate::build_order::Release::of_this_build(),
+        "core_release": core_release,
+        "core_machine": core_machine,
     }))
 }
 

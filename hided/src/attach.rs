@@ -123,6 +123,14 @@ pub struct CoreHello {
     pub node: String,
     pub build: String,
     pub protocol: u32,
+    /// The core build's version and order (`build_order`); a core before
+    /// this field reads as unordered.
+    #[serde(default)]
+    pub release: crate::build_order::Release,
+    /// The core machine's name, which a node's page names when it asks
+    /// for this app to be updated (B11).
+    #[serde(default)]
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -131,6 +139,13 @@ pub struct NodeHello {
     pub label: String,
     pub build: String,
     pub herdr_socket: String,
+    /// The node build's version and order (`build_order`).
+    #[serde(default)]
+    pub release: crate::build_order::Release,
+    /// The node-link protocol the node speaks, which a newer node must
+    /// share with the core it links to (D-10).
+    #[serde(default)]
+    pub protocol: u32,
     /// The core move whose commit this link is, while the node's placement
     /// names one (PRD core-host-node-move amendment 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -510,10 +525,13 @@ fn take_link(stream: LocalStream, service: &AttachService) {
     let mut writer = stream.duplicate();
     let mut reader = BufReader::new(stream.duplicate());
     let core_node = service.core.node().as_str().to_owned();
+    let release = crate::build_order::Release::of_this_build();
     let hello = Line::Core(CoreHello {
         node: core_node.clone(),
         build: build.clone(),
         protocol: hide_node_link::protocol::PROTOCOL_VERSION,
+        release: release.clone(),
+        label: crate::host_name().unwrap_or_else(|| core_node.clone()),
     });
     if let Err(message) = write_line(&mut writer, &hello) {
         attach_failed("", &message);
@@ -559,6 +577,8 @@ fn take_link(stream: LocalStream, service: &AttachService) {
             "reason": reason,
             "node_build": node.build,
             "core_build": build,
+            "node_release": node.release,
+            "core_release": release,
         }));
         let _ = write_line(
             writer,
@@ -567,9 +587,25 @@ fn take_link(stream: LocalStream, service: &AttachService) {
             }),
         );
     };
-    if node.build != build {
-        refuse(&mut writer, "other_build");
-        return;
+    // The node decides the same before it says hello; this is the core's
+    // own rule (D-10): an older node updates its app, a newer one links
+    // only over this core's protocol, and builds nothing orders stay apart.
+    match crate::build_order::standing((&node.build, &node.release), (&build, &release)) {
+        crate::build_order::Standing::Same => {}
+        crate::build_order::Standing::Older => {
+            refuse(&mut writer, "core_newer");
+            return;
+        }
+        crate::build_order::Standing::Newer
+            if node.protocol == hide_node_link::protocol::PROTOCOL_VERSION => {}
+        crate::build_order::Standing::Newer => {
+            refuse(&mut writer, "other_protocol");
+            return;
+        }
+        crate::build_order::Standing::Unordered => {
+            refuse(&mut writer, "other_build");
+            return;
+        }
     }
     let Some(_attaching) = service.attaching.hold(&node.node) else {
         refuse(&mut writer, "already_linked");

@@ -195,13 +195,16 @@ export function rememberedCliValue(file: string): unknown {
   return { schema: REMEMBERED_SCHEMA, path: file };
 }
 
-export type FailureReason = "cli_missing" | "start_failed" | "no_response" | "other_build" | "state_refused";
+export type FailureReason = "cli_missing" | "start_failed" | "no_response" | "other_build" | "state_refused" | "core_newer";
+
+/** A core newer than this app (PRD core-host-node-move B11): its machine and both builds as `hide connect` shows them. */
+export type CoreNewer = { machine: string; core: string; app: string };
 
 export type Attached = { url: string; origin: string; port: number; pid: number };
 
 export type ConnectAnswer =
   | ({ kind: "attached" } & Attached)
-  | { kind: "failed"; reason: Exclude<FailureReason, "cli_missing">; detail: string; file?: string };
+  | { kind: "failed"; reason: Exclude<FailureReason, "cli_missing">; detail: string; file?: string; newer?: CoreNewer };
 
 export type StatusAnswer = ({ running: true } & Attached) | { running: false };
 
@@ -251,6 +254,15 @@ export function parseConnect(result: ChildResult): ConnectAnswer {
   // The daemon refused its state folder (PRD core-host-node B2): the screen names the file.
   if (value?.ok === false && value.reason === "state_refused" && typeof value.file === "string") {
     return { kind: "failed", reason: "state_refused", detail: typeof value.detail === "string" ? value.detail : "", file: value.file };
+  }
+  // The core runs a newer build than this app: the screen names its machine and both builds.
+  if (value?.ok === false && value.reason === "core_newer" && typeof value.machine === "string" && typeof value.core === "string" && typeof value.app === "string") {
+    return {
+      kind: "failed",
+      reason: "core_newer",
+      detail: typeof value.detail === "string" ? value.detail : "",
+      newer: { machine: value.machine, core: value.core, app: value.app },
+    };
   }
   if (value?.ok === false && (value.reason === "start_failed" || value.reason === "no_response" || value.reason === "other_build")) {
     return { kind: "failed", reason: value.reason, detail: typeof value.detail === "string" ? value.detail : "" };

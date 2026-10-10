@@ -10,6 +10,7 @@ pub mod browser_page;
 pub mod browser_relay;
 pub mod browser_routes;
 pub mod build_id;
+pub mod build_order;
 pub mod cli;
 pub mod cli_contract;
 pub mod core;
@@ -664,6 +665,7 @@ pub async fn start_node_role(env: Env, seat: seat::SeatParts) -> Result<RunningN
             node: node.as_str().to_owned(),
             label: host_name().unwrap_or_else(|| node.as_str().to_owned()),
             build: build.clone(),
+            release: crate::build_order::Release::of_this_build(),
             herdr_socket: std::path::PathBuf::from(&herdr_socket),
             herdr_bin: env
                 .herdr_bin_path

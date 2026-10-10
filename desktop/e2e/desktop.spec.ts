@@ -245,6 +245,25 @@ test("failure: a state folder another node owns names the file and starts nothin
   expect(JSON.parse(fs.readFileSync(marker, "utf8"))).toEqual({ version: 1, node: "another-node" });
 });
 
+test("failure: a core newer than this app names its machine and both builds and asks for the app to be updated", async () => {
+  // PRD core-host-node-move B11: a stand-in hide answers as a node whose core runs a newer build; the core is left as it is.
+  const cli = path.join(run.root, "bin", "hide");
+  fs.mkdirSync(path.dirname(cli), { recursive: true });
+  const answer = { ok: false, reason: "core_newer", detail: "newer", machine: "Mac mini", core: "0.4.2 (3f1c2a9)", app: "0.4.1 (b520d6e)" };
+  fs.writeFileSync(cli, `#!/bin/sh\necho '${JSON.stringify(answer)}'\nexit 2\n`, { mode: 0o755 });
+  ({ app } = await launch({ ...run.env, HIDE_CLI_PATH: cli }));
+  const page = await app.firstWindow();
+  await expect(page.locator("h1")).toHaveText("Update this app", { timeout: 20_000 });
+  await expect(page.locator("#reason")).toHaveText(
+    "The core on Mac mini runs a newer build than this app, so they did not connect. The core keeps running. Replace hide.app with the newer build, then open it again.",
+  );
+  await expect(page.locator("#builds")).toHaveText("core 0.4.2 (3f1c2a9) · this app 0.4.1 (b520d6e)");
+  await expect(page.locator("#file")).toBeHidden();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  await screenshot(page, "desktop-core-newer");
+  expect(hostLog(run.env).find((line) => line.event === "discovery.failed")).toMatchObject({ reason: "core_newer", machine: "Mac mini", core: "0.4.2 (3f1c2a9)", app: "0.4.1 (b520d6e)" });
+});
+
 test("discovery: a Finder-style PATH still lets a new daemon run installed tools", async () => {
   // launchd's bare PATH, no override, no worktree build beside it. Playwright runs the app
   // unpackaged, so the login-shell step is skipped here; cli.test.ts covers its place in the order.

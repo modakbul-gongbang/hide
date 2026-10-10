@@ -32,6 +32,7 @@ import {
   wellKnownDirs,
   type Attached,
   type CliSource,
+  type CoreNewer,
   type FailureReason,
 } from "./cli";
 import type { DesktopEnv } from "./env";
@@ -68,7 +69,7 @@ export type HostState =
   | { kind: "connecting" }
   | ({ kind: "attached" } & Attached)
   | ({ kind: "lost" } & Attached)
-  | { kind: "failed"; reason: FailureReason; file?: string };
+  | { kind: "failed"; reason: FailureReason; file?: string; newer?: CoreNewer };
 
 function isExecutable(file: string): boolean {
   try {
@@ -409,7 +410,7 @@ export class DesktopHost {
     if (this.quitting) return;
     const answer = parseConnect(await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS));
     if (this.quitting) return;
-    if (answer.kind === "failed") return this.fail(attempt, answer.reason, answer.detail, answer.file);
+    if (answer.kind === "failed") return this.fail(attempt, answer.reason, answer.detail, answer);
     this.log.event("discovery.attached", { attempt, port: answer.port, pid: answer.pid });
     this.remember(cli);
     this.attach(answer);
@@ -539,10 +540,11 @@ export class DesktopHost {
     return this.runChild(file, args, timeoutMs, this.childEnvironment());
   }
 
-  private fail(attempt: number, reason: FailureReason, detail: string, file?: string): void {
+  private fail(attempt: number, reason: FailureReason, detail: string, shown: { file?: string; newer?: CoreNewer } = {}): void {
     if (this.quitting) return;
-    this.log.event("discovery.failed", { attempt, reason, detail, ...(file === undefined ? {} : { file }) });
-    this.setState(file === undefined ? { kind: "failed", reason } : { kind: "failed", reason, file });
+    const { file, newer } = shown;
+    this.log.event("discovery.failed", { attempt, reason, detail, ...(file === undefined ? {} : { file }), ...(newer === undefined ? {} : newer) });
+    this.setState({ kind: "failed", reason, ...(file === undefined ? {} : { file }), ...(newer === undefined ? {} : { newer }) });
   }
 
   private attach(daemon: Attached): void {
@@ -742,7 +744,7 @@ export class DesktopHost {
       this.load(window.loadURL(state.url), state.kind);
       return;
     }
-    const hash = state.kind === "failed" ? `failed=${state.reason}${state.file === undefined ? "" : `&file=${encodeURIComponent(state.file)}`}` : "connecting";
+    const hash = state.kind === "failed" ? this.failedHash(state) : "connecting";
     const words = this.statusWords();
     const shown = window.webContents.getURL();
     if (shown.startsWith(STATUS_PAGE_URL) && new URL(shown).searchParams.get("lang") === words.lang) {
@@ -757,6 +759,23 @@ export class DesktopHost {
     };
     loading.then(settled, settled);
     this.load(loading, state.kind);
+  }
+
+  /**
+   * The failure the status page shows, in its hash: the reason, the file a
+   * refused start names, and for a core newer than this app its sentences
+   * with the core's machine and both builds in them, written here because
+   * the catalogs fill them.
+   */
+  private failedHash(state: Extract<HostState, { kind: "failed" }>): string {
+    const shown = new URLSearchParams({ failed: state.reason });
+    if (state.file !== undefined) shown.set("file", state.file);
+    if (state.newer !== undefined) {
+      const t = this.language.t;
+      shown.set("said", t("native.status.coreNewer", { machine: state.newer.machine }));
+      shown.set("builds", t("native.status.builds", { core: state.newer.core, app: state.newer.app }));
+    }
+    return shown.toString();
   }
 
   /**
@@ -776,6 +795,7 @@ export class DesktopHost {
       no_response: t("native.status.noResponse"),
       other_build: t("native.status.otherBuild"),
       state_refused: t("native.status.stateRefused"),
+      core_newer_title: t("native.status.coreNewerTitle"),
     };
     return { query, lang: query.lang };
   }

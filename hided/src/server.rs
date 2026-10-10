@@ -439,6 +439,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         "pid": std::process::id(),
         "role": "core",
         "version": state.version,
+        "release": crate::build_order::Release::of_this_build(),
         "build": state.build.as_deref(),
         "schema_version": SCHEMA_VERSION,
         "clients": state.clients.load(Ordering::SeqCst),

@@ -32,6 +32,7 @@ fn identity(fixture: &Fixture) -> Result<NodeIdentity> {
             .to_owned(),
         label: "screen-fixture".to_owned(),
         build: hided::build_id::of_file(&fixture.hided).map_err(anyhow::Error::msg)?,
+        release: hided::build_order::Release::of_this_build(),
         herdr_socket: fixture.screen.socket.clone(),
         herdr_bin: std::env::var_os("HIDE_E2E_HERDR_BIN")
             .map(std::path::PathBuf::from)
@@ -756,6 +757,8 @@ fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<
                     label: "screen-fixture".to_owned(),
                     build: core.build,
                     herdr_socket: fixture.screen.socket.display().to_string(),
+                    release: core.release,
+                    protocol: core.protocol,
                     move_intent: None,
                 }),
             )
@@ -786,6 +789,96 @@ fn a_node_that_dials_again_replaces_its_link_that_no_longer_answers() -> Result<
         Ok(()) => fixture.remove_run_dir(),
         Err(error) => {
             let _ = fixture.signal_running_node(libc::SIGCONT);
+            let _ = fixture.stop();
+            Err(error).context(format!("run kept at {}", fixture.root.display()))
+        }
+    }
+}
+
+/// The core's own rule, whatever a node decides before its hello (D-10):
+/// an older node is told the core is newer, a newer one links only over
+/// the core's protocol, and builds nothing orders stay apart.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn the_core_takes_a_newer_node_only_over_its_own_protocol() -> Result<()> {
+    use hided::attach::{Line, NodeHello, read_line, write_line};
+    use hided::build_order::Release;
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        let node = herdr_core::node::NodeId::of_this_machine()
+            .map_err(anyhow::Error::msg)?
+            .as_str()
+            .to_owned();
+        let socket = hide_node::pane_proof::recorded_socket_path(&hided::attach::attach_record(
+            &fixture.core_state,
+        ))
+        .map_err(anyhow::Error::msg)?;
+        let answer = |version: &str, protocol: Option<u32>| -> Result<(Line, Release)> {
+            let stream = hide_platform::ipc::LocalStream::connect(&socket)?;
+            stream.set_read_timeout(Some(Duration::from_secs(20)))?;
+            let mut reader = std::io::BufReader::new(stream.duplicate());
+            let mut writer = stream;
+            let Line::Core(core) = read_line(&mut reader).map_err(anyhow::Error::msg)? else {
+                bail!("the core did not greet first");
+            };
+            write_line(
+                &mut writer,
+                &Line::Node(NodeHello {
+                    node: node.clone(),
+                    label: "screen-fixture".to_owned(),
+                    build: "0".repeat(64),
+                    herdr_socket: fixture.screen.socket.display().to_string(),
+                    release: Release {
+                        version: version.to_owned(),
+                        order: core.release.order,
+                        commit: None,
+                    },
+                    protocol: protocol.unwrap_or(core.protocol),
+                    move_intent: None,
+                }),
+            )
+            .map_err(anyhow::Error::msg)?;
+            Ok((
+                read_line(&mut reader).map_err(anyhow::Error::msg)?,
+                core.release,
+            ))
+        };
+        let refused = |line: &Line| match line {
+            Line::Refused(refusal) => Some(refusal.reason.clone()),
+            _ => None,
+        };
+        let (older, core) = answer("0.0.1", None)?;
+        ensure!(
+            refused(&older).as_deref() == Some("core_newer"),
+            "an older node was answered {older:?} by core {core:?}"
+        );
+        let (other_protocol, _) = answer("999.0.0", Some(0))?;
+        ensure!(
+            refused(&other_protocol).as_deref() == Some("other_protocol"),
+            "a newer node over another protocol was answered {other_protocol:?}"
+        );
+        let (unordered, _) = answer("nightly", None)?;
+        ensure!(
+            refused(&unordered).as_deref() == Some("other_build"),
+            "an unordered node was answered {unordered:?}"
+        );
+        let (newer, _) = answer("999.0.0", None)?;
+        ensure!(
+            matches!(newer, Line::Accepted(_)),
+            "a newer node over the core's protocol was answered {newer:?}"
+        );
+        let logged = fixture.core_log("node_link", "attach.refused")?;
+        ensure!(
+            logged.iter().any(|row| row["reason"] == "core_newer"
+                && row["node_release"]["version"] == "0.0.1"
+                && row["core_release"]["version"] == core.version.as_str()),
+            "the core logged no older node: {logged:?}"
+        );
+        Ok(())
+    })();
+    match journey {
+        Ok(()) => fixture.remove_run_dir(),
+        Err(error) => {
             let _ = fixture.stop();
             Err(error).context(format!("run kept at {}", fixture.root.display()))
         }
@@ -879,13 +972,15 @@ fn a_screen_of_another_build_than_its_core_is_told_so() -> Result<()> {
             answer["ok"] == false && answer["reason"] == "other_build",
             "hide connect did not answer other_build: {answer}"
         );
-        fixture
-            .core_log_until("node_link", "attach.refused", |refused| {
-                refused.iter().any(|row| {
-                    row["reason"] == "other_build" && row["node_build"] != row["core_build"]
-                })
-            })
-            .context("the core logged no build mismatch")?;
+        // Builds that only their hashes tell apart are not ordered: the
+        // node refuses before it says hello and names both builds.
+        let refused = fixture.node_log("node_role", "link.build_refused")?;
+        ensure!(
+            refused.iter().any(|row| {
+                row["reason"] == "other_build" && row["node_build"] != row["core_build"]
+            }),
+            "the node logged no build mismatch: {refused:?}"
+        );
         Ok(())
     })();
     match journey {

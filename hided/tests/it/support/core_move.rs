@@ -337,6 +337,26 @@ impl Fixture {
 
     /// Starts the source machine's hided, which runs its core.
     pub fn start_source(&mut self) -> Result<()> {
+        self.start_source_with(&self.cli.clone(), &[])
+    }
+
+    /// A copy of the CLI whose `hided` is another build than the fixture's:
+    /// one byte past the program's end, which its signature does not cover.
+    pub fn other_build(&self, name: &str) -> Result<PathBuf> {
+        let cli = self.root.join(name);
+        fs::create_dir(&cli)?;
+        for program in ["hide", "hided", "hide-agent-hooks"] {
+            fs::copy(self.cli.join(program), cli.join(program))?;
+        }
+        let mut bytes = fs::read(cli.join("hided"))?;
+        bytes.push(0);
+        fs::write(cli.join("hided"), bytes)?;
+        Ok(cli)
+    }
+
+    /// [`Fixture::start_source`] with the `hided` in `cli`, and `extra` in
+    /// its environment, such as the release a fixture has it present.
+    pub fn start_source_with(&mut self, cli: &Path, extra: &[(&str, &str)]) -> Result<()> {
         ensure!(self.daemon.is_none(), "the source's hided already runs");
         match fs::remove_file(self.source.state.join("hided.json")) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
@@ -346,11 +366,11 @@ impl Fixture {
             .create(true)
             .append(true)
             .open(self.root.join("source-hided.log"))?;
-        let mut command = self
-            .source
-            .herdr
-            .environment
-            .command(self.cli.join("hided"));
+        let mut environment = self.source.herdr.environment.clone();
+        for (key, value) in extra {
+            environment.set(key, value);
+        }
+        let mut command = environment.command(cli.join("hided"));
         command
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
@@ -360,6 +380,21 @@ impl Fixture {
         self.port = state["port"].as_u64().context("source port")? as u16;
         self.token = state["token"].as_str().context("source token")?.to_owned();
         Ok(())
+    }
+
+    /// What `hide connect --json` answers the source machine's host, as the
+    /// `hide` in `cli` asks it.
+    pub fn connect_with(&self, cli: &Path) -> Result<Value> {
+        let mut command = self.source.herdr.environment.command(cli.join("hide"));
+        command.args(["connect", "--json"]);
+        let output = command.output()?;
+        serde_json::from_slice(&output.stdout).with_context(|| {
+            format!(
+                "hide connect answered {:?} ({})",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })
     }
 
     /// The source's window address: it stays the same through a move.

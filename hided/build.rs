@@ -77,6 +77,18 @@ fn collect(root: &Path, dir: &Path, files: &mut Vec<(String, PathBuf)>) {
 fn build_identity(manifest: &Path) {
     println!("cargo:rerun-if-env-changed=HIDE_VERSION");
     println!("cargo:rerun-if-env-changed=HIDE_COMMIT");
+    println!("cargo:rerun-if-env-changed=HIDE_BUILD_ORDER");
+    // The package's place in main's history, which orders two builds of one
+    // release (`hided::build_order`); a build no package numbered is 0.
+    let order = env::var("HIDE_BUILD_ORDER")
+        .ok()
+        .filter(|order| !order.is_empty())
+        .unwrap_or_else(|| "0".to_owned());
+    assert!(
+        order.bytes().all(|byte| byte.is_ascii_digit()) && order.parse::<u64>().is_ok(),
+        "HIDE_BUILD_ORDER must be a commit count, not '{order}'"
+    );
+    println!("cargo:rustc-env=HIDE_BUILD_ORDER={order}");
     let version = env::var("HIDE_VERSION")
         .ok()
         .filter(|version| !version.is_empty())

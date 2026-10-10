@@ -76,6 +76,22 @@ const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [
 /// package passes the version it ships), else the crate's own.
 pub const VERSION: &str = env!("HIDE_BUILD_VERSION");
 
+/// This build's place in main's history (`HIDE_BUILD_ORDER`, its
+/// first-parent commit count), which orders two builds of one release
+/// (`build_order`); 0 for a build no package numbered.
+pub const ORDER: u64 = count(env!("HIDE_BUILD_ORDER"));
+
+/// A count `build.rs` checked is digits only.
+const fn count(digits: &str) -> u64 {
+    let digits = digits.as_bytes();
+    let (mut value, mut index) = (0_u64, 0);
+    while index < digits.len() {
+        value = value * 10 + (digits[index] - b'0') as u64;
+        index += 1;
+    }
+    value
+}
+
 /// The commit this build was made from, when it was built from a checkout.
 pub const COMMIT: Option<&str> = match env!("HIDE_BUILD_COMMIT").as_bytes() {
     [] => None,
@@ -942,6 +958,20 @@ pub enum ConnectError {
     /// The daemon stopped because a stored file could not be made this
     /// machine's (PRD core-host-node B2); the host names the file.
     StateRefused { file: String, detail: String },
+    /// The core runs a newer build than this app's (PRD core-host-node-move
+    /// B11): the core is left as it is, and the host shows both builds and
+    /// asks for this app to be updated.
+    CoreNewer(CoreNewer),
+}
+
+/// A core newer than this app, as `hide connect` names it to the host.
+#[derive(Debug, Eq, PartialEq)]
+pub struct CoreNewer {
+    /// The core machine's name.
+    pub machine: String,
+    /// The core's build and this app's, as `build_order::Release::shown`.
+    pub core: String,
+    pub app: String,
 }
 
 impl ConnectError {
@@ -951,15 +981,20 @@ impl ConnectError {
             ConnectError::NoResponse(_) => "no_response",
             ConnectError::OtherBuild(_) => "other_build",
             ConnectError::StateRefused { .. } => "state_refused",
+            ConnectError::CoreNewer(_) => "core_newer",
         }
     }
 
-    fn detail(&self) -> &str {
+    fn detail(&self) -> String {
         match self {
             ConnectError::StartFailed(detail)
             | ConnectError::NoResponse(detail)
             | ConnectError::OtherBuild(detail)
-            | ConnectError::StateRefused { detail, .. } => detail,
+            | ConnectError::StateRefused { detail, .. } => detail.clone(),
+            ConnectError::CoreNewer(newer) => format!(
+                "the core on {} runs {}, newer than this app's {}",
+                newer.machine, newer.core, newer.app
+            ),
         }
     }
 }
@@ -1019,6 +1054,17 @@ fn await_core_link(state: &DaemonState) -> Result<(), ConnectError> {
             std::thread::sleep(HEALTH_PAUSE);
             continue;
         }
+        if health["core_link_reason"] == "core_newer" {
+            let newer = core_newer(&health).map_err(ConnectError::StartFailed)?;
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "hide", "kind": "core.newer_refused",
+                    "pid": state.pid, "core": newer.core, "app": newer.app,
+                })
+            );
+            return Err(ConnectError::CoreNewer(newer));
+        }
         if health["core_link_reason"] == "other_build" {
             eprintln!(
                 "{}",
@@ -1034,6 +1080,24 @@ fn await_core_link(state: &DaemonState) -> Result<(), ConnectError> {
         }
         return Ok(());
     }
+}
+
+/// What a node's `/health` says of a core newer than this app: the core
+/// machine's name and both builds as the host shows them.
+fn core_newer(health: &serde_json::Value) -> Result<CoreNewer, String> {
+    let release = |field: &str| {
+        serde_json::from_value::<crate::build_order::Release>(health[field].clone())
+            .map(|release| release.shown())
+            .map_err(|error| format!("the node's health has no readable {field}: {error}"))
+    };
+    let machine = health["core_machine"]
+        .as_str()
+        .ok_or("the node's health names no core machine")?;
+    Ok(CoreNewer {
+        machine: machine.to_owned(),
+        core: release("core_release")?,
+        app: release("release")?,
+    })
 }
 
 /// The daemon of this state folder, replaced or started as [`connect`]
@@ -1150,7 +1214,7 @@ fn proven_daemon(
 }
 
 fn open(env: &Env) -> Result<(), String> {
-    let (state, health) = connect(env).map_err(|error| error.detail().to_owned())?;
+    let (state, health) = connect(env).map_err(|error| error.detail())?;
     open_browser(&state, &health)
 }
 
@@ -1171,6 +1235,14 @@ fn connect_json(env: &Env) -> Result<(), String> {
                         "reason": error.reason(),
                         "detail": error.detail(),
                         "file": file,
+                    }),
+                    ConnectError::CoreNewer(newer) => serde_json::json!({
+                        "ok": false,
+                        "reason": error.reason(),
+                        "detail": error.detail(),
+                        "machine": newer.machine,
+                        "core": newer.core,
+                        "app": newer.app,
                     }),
                     _ => serde_json::json!({
                         "ok": false,

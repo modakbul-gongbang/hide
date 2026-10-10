@@ -108,6 +108,45 @@ fn the_core_moves_to_the_device_and_the_window_follows_it() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// A window whose app is older than the core it moved to is told so with
+/// both builds and the core's machine, and the core goes on as it was
+/// (B11).
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_window_older_than_its_core_asks_for_its_app_to_be_updated() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.journal_until("done")?;
+        let core = fixture.target_core()?.context("no core on the target")?;
+        let core_release = hided::build_order::Release::of_this_build().shown();
+        // The window's app is another build that presents an older release.
+        let older = fixture.other_build("older")?;
+        fixture.kill_source()?;
+        fixture.start_source_with(
+            &older,
+            &[(hided::env::HIDE_BUILD_VERSION_OVERRIDE, "0.0.1")],
+        )?;
+        let answer = fixture.connect_with(&older)?;
+        ensure!(
+            answer["ok"] == false
+                && answer["reason"] == "core_newer"
+                && answer["app"] == "0.0.1"
+                && answer["core"] == core_release.as_str()
+                && answer["machine"]
+                    .as_str()
+                    .is_some_and(|machine| !machine.is_empty()),
+            "hide connect answered {answer}"
+        );
+        ensure!(
+            fixture.target_core()? == Some(core),
+            "the core did not go on as it was"
+        );
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The source's window state the journeys compare: its projects and the
 /// devices it registers.
 fn visible(fixture: &Fixture) -> Result<Value> {

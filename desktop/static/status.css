@@ -35,21 +35,30 @@ h1 {
 }
 
 #reason {
-  margin: 0 0 var(--spacing-lg);
+  max-width: var(--size-status-copy);
+  margin: 0 auto var(--spacing-lg);
   color: var(--color-muted-foreground);
 }
 
-/* The file a refused start names sits between the reason and Retry. */
-#reason:has(+ #file:not([hidden])) {
+/* The file a refused start names, or the two builds of a core newer than
+   this app, sit between the reason and Retry. */
+#reason:has(+ #file:not([hidden])),
+#reason:has(+ #file[hidden] + #builds:not([hidden])) {
   margin-bottom: var(--spacing-xs);
 }
 
-#file {
+#file,
+#builds {
   margin: 0 0 var(--spacing-lg);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
   -webkit-user-select: text;
   user-select: text;
+}
+
+#builds {
+  color: var(--color-muted-foreground);
+  font-size: var(--text-caption);
 }
 
 button {

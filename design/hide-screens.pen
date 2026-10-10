@@ -1768,6 +1768,10 @@
       "type": "number",
       "value": 320
     },
+    "--size-status-copy": {
+      "type": "number",
+      "value": 460
+    },
     "--size-mobile-row-inset": {
       "type": "number",
       "value": 44
