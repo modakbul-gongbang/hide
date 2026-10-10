@@ -28,19 +28,11 @@ impl GithubFailureCategory {
     }
 }
 
-/// Whether `value` reads as `owner/name`: two plain path-safe parts, so it
-/// can be handed to `gh` as a repository.
+/// Whether `value` reads as `owner/name` alone, no host: what
+/// [`valid_repository`] takes in two parts, so it can be handed to `gh` as a
+/// repository.
 pub fn is_repository(value: &str) -> bool {
-    let mut parts = value.split('/');
-    let valid = |part: &str| {
-        !part.is_empty()
-            && part != "."
-            && part != ".."
-            && part
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
-    };
-    parts.next().is_some_and(valid) && parts.next().is_some_and(valid) && parts.next().is_none()
+    value.split('/').count() == 2 && valid_repository(value)
 }
 
 /// The fields `issue_detail` asks `gh issue view` for, and the only ones
@@ -322,6 +314,26 @@ mod tests {
         assert!(!valid_repository("ghe.example.com:84a3/acme/app"));
         assert!(!valid_repository("acme:1/app"), "a port only on a host");
         assert!(valid_repository("acme/.github"));
+    }
+
+    /// `OWNER/NAME` is read by the one validator: what it refuses (a part
+    /// that could read as a flag or a path step) is refused here too, and a
+    /// host is not taken where only `OWNER/NAME` is.
+    #[test]
+    fn an_owner_and_name_is_what_the_repository_validator_takes_without_a_host() {
+        for value in ["acme/app", "acme/.github", "a_b/c-d.e"] {
+            assert!(is_repository(value), "{value}");
+        }
+        for value in [
+            "-acme/app",
+            "acme/-app",
+            "acme/..",
+            "acme",
+            "ghe.example.com/acme/app",
+            "acme/app/x",
+        ] {
+            assert!(!is_repository(value), "{value}");
+        }
     }
 
     #[test]
