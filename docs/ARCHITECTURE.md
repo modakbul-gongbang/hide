@@ -432,6 +432,7 @@ A count Hide cannot read is reported as unknown, never as zero.
 
 A pane's parent travels the same channel, and it is the only lineage there is: Herdr records none.
 hided is the sole writer of `parent_pane`, optional `parent_machine`, `child_session` and `parent_session` through `pane.report_metadata`; the unchanged value and lifetime contract is described in [status-model.md](status-model.md#where-a-parent-comes-from).
+Fork agent adds one more, `fork`, on the pane it made, so the pane header can say a pane is a fork and a delegated child is not drawn as one.
 Those tokens die with the pane, not with the agent, so a relationship holds only while both panes still report the sessions it was written for: `wire.rs` compares the child's, `agent_state::apply_lineage` the parent's, and an agent that took over a pane is a root.
 A spawn without `--parent` is an operator handoff: `AgentRecord.parent` is empty and its separate optional `origin` records the spawner.
 Delegated origin is derived from parent, and all CLI agent answers include nullable origin.

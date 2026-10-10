@@ -238,6 +238,72 @@ pub fn is_forkable(agent_kind: Option<&str>, session_id: Option<&str>) -> bool {
 mod tests {
     use super::*;
 
+    /// A row Herdr lists running `kind` with `session`, under the lineage
+    /// tokens Hide writes for a child of `parent` and, for a fork, the fork mark.
+    fn listed(
+        kind: &str,
+        session: Option<&str>,
+        parent: Option<&str>,
+        fork_mark: bool,
+    ) -> crate::model::SidebarAgentSnapshot {
+        let mut agent = serde_json::json!({
+            "id": "w1:p2", "pane_id": "w1:p2", "agent": kind, "agent_status": "idle", "state_change_seq": 1,
+            "spawned_from_pane_id": parent,
+            "tokens": if fork_mark { serde_json::json!({"fork": "1"}) } else { serde_json::json!({}) },
+        });
+        agent["spawned_from_pane_id"] = parent.map_or(serde_json::Value::Null, Into::into);
+        let mut row = crate::sidebar::project_agents(
+            crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [agent]})).unwrap(),
+        )
+        .agents
+        .remove(0);
+        row.session_id = session.map(str::to_owned);
+        row
+    }
+
+    #[test]
+    fn a_forkable_agent_with_a_session_offers_fork_and_one_without_says_why() {
+        let fork = |kind, session| {
+            crate::runtime::pane_fork_snapshot(Some(&listed(kind, session, None, false)))
+        };
+        let ready = fork("claude", Some("s-1"));
+        assert!(ready.available && ready.reason.is_none());
+        let waiting = fork("claude", None);
+        assert!(!waiting.available);
+        assert!(waiting.reason.is_some());
+        // An agent that has no fork command, and a pane with no agent, offer
+        // nothing and owe no reason.
+        let never = fork("cursor", Some("s-1"));
+        assert!(!never.available && never.reason.is_none());
+        assert_eq!(
+            crate::runtime::pane_fork_snapshot(None),
+            crate::model::PaneForkSnapshot::default()
+        );
+    }
+
+    #[test]
+    fn only_a_pane_the_fork_marked_says_which_pane_it_was_forked_from() {
+        let forked = listed("claude", Some("s-2"), Some("w1:p1"), true);
+        assert_eq!(
+            crate::runtime::pane_fork_snapshot(Some(&forked))
+                .forked_from_pane_id
+                .as_deref(),
+            Some("w1:p1")
+        );
+        // A delegated child has a parent too, and is not a fork of it.
+        let delegated = listed("claude", Some("s-3"), Some("w1:p1"), false);
+        assert_eq!(
+            crate::runtime::pane_fork_snapshot(Some(&delegated)).forked_from_pane_id,
+            None
+        );
+        // The mark counts only while the pane still declares its parent.
+        let orphan = listed("claude", Some("s-4"), None, true);
+        assert_eq!(
+            crate::runtime::pane_fork_snapshot(Some(&orphan)).forked_from_pane_id,
+            None
+        );
+    }
+
     fn request(agent: ForkableAgent) -> ForkRequest {
         ForkRequest {
             source_reference: None,

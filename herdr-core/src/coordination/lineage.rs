@@ -300,6 +300,21 @@ fn write(connector: &dyn ApiConnector, patch: &Patch) -> Result<(), String> {
     .map(|_| ())
     .map_err(|error| format!("{error}"))
 }
+/// Marks `pane` as the pane Hide's Fork made. It is a separate patch from the
+/// lineage tokens so reconciling those never clears or rewrites it; the mark
+/// counts only while they hold (`wire::FORK_TOKEN`).
+pub(crate) fn mark_fork(connector: &dyn ApiConnector, pane: &str) -> Result<(), String> {
+    write(
+        connector,
+        &Patch {
+            pane: pane.to_owned(),
+            tokens: BTreeMap::from([(
+                crate::wire::FORK_TOKEN.to_owned(),
+                Value::String("1".into()),
+            )]),
+        },
+    )
+}
 pub(crate) fn write_record(
     connector: &dyn ApiConnector,
     record: &AgentRecord,
@@ -366,6 +381,19 @@ mod tests {
                 .values()
                 .all(Value::is_null)
         );
+    }
+    #[test]
+    fn the_fork_mark_is_its_own_token_patch_that_leaves_the_lineage_tokens_alone() {
+        let herdr = crate::fake_herdr::FakeHerdr::start("fork-mark", |method, _| {
+            assert_eq!(method, "pane.report_metadata");
+            json!({"type":"ok"})
+        });
+        mark_fork(&herdr.connector(), "w2:p1").unwrap();
+        let calls = herdr.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1["pane_id"], "w2:p1");
+        assert_eq!(calls[0].1["source"], "hide");
+        assert_eq!(calls[0].1["tokens"], json!({"fork": "1"}));
     }
     #[test]
     fn an_ended_registration_keeps_lineage_and_same_server_omits_machine() {

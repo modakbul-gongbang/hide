@@ -2528,9 +2528,17 @@ pub fn pane_fork_snapshot(agent: Option<&SidebarAgentSnapshot>) -> PaneForkSnaps
     let Some(agent) = agent else {
         return PaneForkSnapshot::default();
     };
+    let available = is_forkable(Some(agent.agent_kind.as_str()), agent.session_id.as_deref());
     PaneForkSnapshot {
-        available: is_forkable(Some(agent.agent_kind.as_str()), agent.session_id.as_deref()),
-        forked_from_pane_id: agent.spawned_from_pane_id.clone(),
+        available,
+        reason: (!available && ForkableAgent::parse(&agent.agent_kind).is_some())
+            .then(|| "This agent has not reported its conversation yet".to_owned()),
+        // Any child a parent declared has a `spawned_from_pane_id`; only one
+        // that was started as a fork is a fork of it.
+        forked_from_pane_id: agent
+            .started_as_fork
+            .then(|| agent.spawned_from_pane_id.clone())
+            .flatten(),
     }
 }
 

@@ -967,6 +967,11 @@ pub struct SidebarAgentSnapshot {
     /// cannot stand in for this.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herdr_name: Option<String>,
+    /// Whether this agent is the pane Hide's Fork made from its declared
+    /// parent (`wire::FORK_TOKEN`). Any child has a parent; only a fork is a
+    /// fork of it, and a name cannot tell them apart once the agent is woken.
+    #[serde(skip_serializing)]
+    pub started_as_fork: bool,
     pub pane_id: String,
     pub workspace_label: String,
     /// The checkout the agent's pane is in, once the navigator has placed it.
@@ -2085,9 +2090,14 @@ pub struct ServerEndpointSnapshot {
 /// Both facts come from Herdr: whether the pane runs an agent whose own fork
 /// command can take its recorded session, and whether this pane is itself the
 /// result of such a fork.
+///
+/// `reason` is set only on a pane whose agent can be forked in principle but
+/// not yet, so the menu item that is drawn disabled can say why; an agent that
+/// cannot be forked at all, and a pane with no agent, carry neither.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct PaneForkSnapshot {
     pub available: bool,
+    pub reason: Option<String>,
     pub forked_from_pane_id: Option<String>,
 }
 

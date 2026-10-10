@@ -1022,7 +1022,8 @@ pub(crate) fn link_fork(
         &client,
         connector.as_ref(),
         value["id"].as_str().ok_or("child_unavailable")?,
-    )
+    )?;
+    super::lineage::mark_fork(connector.as_ref(), child)
 }
 
 #[cfg(test)]
