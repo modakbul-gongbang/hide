@@ -55,6 +55,21 @@ struct Shared {
 impl Shared {
     fn job(&self, work: impl Future<Output = ()> + Send + 'static) -> Result<()> {
         let mut jobs = self.jobs.lock().expect("SSH jobs");
+        // A channel that ended frees its place, so the cap bounds the jobs
+        // running, not every channel a long run ever opened; one that
+        // panicked is a failure the stop reports.
+        let mut running = Vec::with_capacity(jobs.len());
+        for mut job in jobs.drain(..) {
+            if !job.is_finished() {
+                running.push(job);
+            } else if let Some(Err(error)) = futures_util::FutureExt::now_or_never(&mut job) {
+                let mut failures = self.failures.lock().expect("SSH failures");
+                if failures.len() < 16 {
+                    failures.push(format!("private SSH channel panicked: {error}"));
+                }
+            }
+        }
+        *jobs = running;
         if jobs.len() >= JOB_CAP {
             bail!("private SSH channel job cap reached");
         }
