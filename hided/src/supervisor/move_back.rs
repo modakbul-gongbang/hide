@@ -132,7 +132,7 @@ pub(super) async fn prepare_back(
         if let Some(state_dir) = &state_dir {
             remote = remote.with_state_dir(state_dir);
         }
-        let inspected = driver::inspect(&remote)?;
+        let inspected = driver::inspect(&remote, &[])?;
         Ok::<_, MoveFailure>((remote, inspected))
     })
     .await

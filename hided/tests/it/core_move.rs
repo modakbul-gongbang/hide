@@ -150,6 +150,35 @@ fn a_failing_check_changes_nothing() -> Result<()> {
     finish(fixture, journey)
 }
 
+/// B3: each step missing on the target is named with what its check found,
+/// `gh` signed out, no desktop session, sleep on power and Hide AI's agent
+/// signed out, and the move starts nothing on either machine.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn each_step_missing_on_the_target_is_named_and_nothing_changes() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        fixture.fail_checks()?;
+        let target_before = listing(&fixture.target.state)?;
+        let before = visible(&fixture)?;
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        let failed = fixture.logged(&fixture.source, "checks.failed")?;
+        ensure!(
+            failed["checks"] == json!(["gh", "gui_session", "sleep", "ai"]),
+            "{failed}"
+        );
+        ensure!(fixture.role()? == "core");
+        ensure!(visible(&fixture)? == before, "the window changed");
+        ensure!(!fixture.source.state.join("core-move.json").exists());
+        ensure!(
+            listing(&fixture.target.state)? == target_before,
+            "the target changed"
+        );
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The target's core cannot start after the source's core stopped: the
 /// source waits while a core may still be starting there, then starts its
 /// own core again unchanged; the retry keeps the move's intent and sends
@@ -1184,6 +1213,18 @@ fn what_each_machine_shows_survives_the_move_and_the_move_back() -> Result<()> {
 /// A label on the source's pane and a letter held for an agent on the
 /// target, in the stores' own shapes, before the source's core starts.
 fn seed_at_rest(fixture: &mut Fixture) -> Result<()> {
+    // The kill gives the save thread no last write, so both projects must be
+    // on disk before it.
+    let saved = fixture.source.state.join("core-state.json");
+    wait_for("both machines' projects saved", || {
+        let state: Value = serde_json::from_slice(&std::fs::read(&saved)?)?;
+        Ok((state
+            .pointer("/workspace_registrations")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            == Some(2))
+        .then_some(()))
+    })?;
     fixture.kill_source()?;
     write_record(
         &fixture.source.state.join("labels.json"),

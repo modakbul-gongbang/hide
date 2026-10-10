@@ -145,10 +145,23 @@ pub struct Inspected {
     pub handover: Option<super::handover::Handover>,
     /// The Herdr socket its core would own; none when it finds no Herdr.
     pub herdr_socket: Option<String>,
+    /// The build of the `hided` that answered.
+    pub build: String,
+    /// Its Hide AI settings as stored there, `Ok(None)` when none are, and
+    /// `Err` when they could not be read.
+    pub ai: Result<Option<serde_json::Value>, String>,
+    /// Each of the move's checks that fails there (`preflight`).
+    pub failed: Vec<super::control::FailedCheck>,
 }
 
-pub fn inspect(remote: &Remote) -> Result<Inspected, MoveFailure> {
-    let answer = remote.step("inspect", &[])?;
+/// Asks the other machine what it says of itself; `ai` names the agents
+/// Hide AI asks, which it checks with its own logins.
+pub fn inspect(remote: &Remote, ai: &[(String, String)]) -> Result<Inspected, MoveFailure> {
+    let asks = serde_json::to_string(ai).map_err(|error| MoveFailure::Local {
+        reason: error.to_string(),
+    })?;
+    let args: &[(&str, &str)] = if ai.is_empty() { &[] } else { &[("ai", &asks)] };
+    let answer = remote.step("inspect", args)?;
     let refused = |reason: &str| MoveFailure::Refused {
         step: "inspect".to_owned(),
         reason: reason.to_owned(),
@@ -167,6 +180,20 @@ pub fn inspect(remote: &Remote) -> Result<Inspected, MoveFailure> {
         handover: serde_json::from_value(answer["handover"].clone())
             .map_err(|_| refused("an unreadable handover"))?,
         herdr_socket: answer["herdr_socket"].as_str().map(str::to_owned),
+        build: answer["build"]
+            .as_str()
+            .ok_or_else(|| refused("no build"))?
+            .to_owned(),
+        ai: match (
+            answer["ai"].get("settings"),
+            answer["ai"]["unreadable"].as_str(),
+        ) {
+            (Some(settings), _) => Ok((!settings.is_null()).then(|| settings.clone())),
+            (None, Some(reason)) => Err(reason.to_owned()),
+            (None, None) => return Err(refused("no Hide AI settings answer")),
+        },
+        failed: serde_json::from_value(answer["failed"].clone())
+            .map_err(|_| refused("no check list"))?,
     })
 }
 

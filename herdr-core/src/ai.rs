@@ -202,6 +202,67 @@ fn backends(
         .collect()
 }
 
+/// The agents Hide AI as stored in `home` asks, in its order, with the
+/// model each is asked for (PRD core-host-node-move D-04): what the machine
+/// taking the core must answer for. `Err` says why Hide AI asks none.
+pub fn hide_ai_asks(home: &std::path::Path) -> Result<Vec<(String, String)>, String> {
+    let settings = hide_ai::settings::load_choice(home)
+        .map_err(|error| format!("the Hide AI settings could not be read: {error}"))?
+        .filter(|settings| settings.chosen)
+        .ok_or("Hide AI is not set up: no agent is chosen")?;
+    if !settings.enabled {
+        return Err("Hide AI is off".to_owned());
+    }
+    let models = settings.models_by_provider();
+    Ok(settings
+        .router_config()
+        .priority
+        .into_iter()
+        .map(|provider| {
+            let model = models
+                .get(&provider)
+                .cloned()
+                .unwrap_or_else(|| hide_ai::settings::default_model(provider).to_owned());
+            (provider.as_str().to_owned(), model)
+        })
+        .collect())
+}
+
+/// Whether every agent in `asks` answers `Ready` on this machine with this
+/// account's logins. `Err` names each that does not and why.
+pub fn hide_ai_ready_here(asks: &[(String, String)]) -> Result<(), String> {
+    let missing: Vec<String> = asks
+        .iter()
+        .filter_map(|(id, model)| {
+            let Some(provider) = ProviderId::from_id(id) else {
+                return Some(format!("{id}: unknown to this build"));
+            };
+            let backend = hide_ai::build_backend(provider, model, Arc::new(DiagnosticLogSink));
+            match backend.availability() {
+                Availability::Ready => None,
+                other => Some(format!("{id}: {}", other.class())),
+            }
+        })
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(missing.join(", "))
+    }
+}
+
+/// The Hide AI settings stored in `home`, read as this build reads them,
+/// so two machines' files compare by what they choose rather than by their
+/// bytes; `None` when none are stored.
+pub fn stored_hide_ai_settings(
+    home: &std::path::Path,
+) -> Result<Option<serde_json::Value>, String> {
+    hide_ai::settings::load_choice(home)
+        .map_err(|error| format!("the Hide AI settings could not be read: {error}"))?
+        .map(|settings| serde_json::to_value(settings).map_err(|error| error.to_string()))
+        .transpose()
+}
+
 /// Numbers each backend the core builds; its node keeps one real backend
 /// per number.
 static NEXT_BACKEND: AtomicU64 = AtomicU64::new(1);

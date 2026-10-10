@@ -15,6 +15,7 @@ pub mod driver;
 pub mod gate;
 pub mod handover;
 pub mod journal;
+pub mod preflight;
 pub mod screen;
 pub mod starter;
 pub mod target;

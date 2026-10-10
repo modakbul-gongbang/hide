@@ -28,6 +28,29 @@ pub const TARGET_NODE: &str = "fixture-move-target";
 /// registration id in the source's core.
 pub const ALIAS: &str = "mini";
 
+/// The stand-ins of the target's checks: each passes until a `.fail` file
+/// beside it says otherwise.
+const STAND_INS: [(&str, &str); 3] = [
+    ("gh", r#"[ -e "$0.fail" ] && exit 1; exit 0"#),
+    ("launchctl", r#"[ -e "$0.fail" ] && exit 113; exit 0"#),
+    (
+        "pmset",
+        r#"if [ -e "$0.fail" ]; then printf 'AC Power:\n sleep 10\n'; else printf 'AC Power:\n sleep 0\n'; fi"#,
+    ),
+];
+const CLAUDE: &str = r#"if [ "$1 $2" = "auth status" ]; then
+  if [ -e "$0.fail" ]; then echo '{"loggedIn":false}'; else echo '{"loggedIn":true}'; fi
+  exit 0
+fi
+exit 2"#;
+
+fn stand_in(path: &Path, script: &str) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::write(path, format!("#!/bin/sh\n{script}\n"))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
+    Ok(())
+}
+
 pub struct Machine {
     pub herdr: Herdr,
     pub state: PathBuf,
@@ -124,6 +147,36 @@ impl Fixture {
         // The target's reads find `herdr` where a real install puts it.
         fs::create_dir_all(target_env.home.join(".local/bin"))?;
         std::os::unix::fs::symlink(&bin, target_env.home.join(".local/bin/herdr"))?;
+        // The move's checks on the target run stand-ins for the machine's
+        // own `gh`, session and power settings, and the agent Hide AI asks
+        // answers there as signed in; `fail_checks` turns each against the
+        // move.
+        let preflight = root.join("c/preflight");
+        fs::create_dir(&preflight)?;
+        for (name, script) in STAND_INS {
+            stand_in(&preflight.join(name), script)?;
+        }
+        stand_in(&target_env.home.join(".local/bin/claude"), CLAUDE)?;
+        // Each runs once here, so the system's first look at a new program
+        // (macOS checks each one once, machine-wide in turn) is not inside a
+        // check's bound.
+        for (program, args) in [
+            (preflight.join("gh"), &[][..]),
+            (preflight.join("launchctl"), &[]),
+            (preflight.join("pmset"), &[]),
+            (
+                target_env.home.join(".local/bin/claude"),
+                &["auth", "status"],
+            ),
+        ] {
+            let mut command = target_env.command(&program);
+            command.args(args);
+            successful(command)?;
+        }
+        target_env.set("HIDE_PREFLIGHT_PROGRAMS", preflight.into_os_string());
+        let settings = hide_platform::host::state_dir_under(&source_env.home).join("hide/ai.json");
+        fs::create_dir_all(settings.parent().context("settings folder")?)?;
+        fs::write(&settings, r#"{"provider":"claude"}"#)?;
         // A shipped build carries no debug data; the helper upload stays
         // inside its bound with a copy of the same kind.
         let cli = root.join("cli");
@@ -227,6 +280,17 @@ impl Fixture {
             Ok((projects.len() == 2).then_some(()))
         })?;
         Ok(fixture)
+    }
+
+    /// Makes every stand-in check on the target fail: `gh` signed out, no
+    /// desktop session, sleep on power, and Hide AI's agent signed out.
+    pub fn fail_checks(&self) -> Result<()> {
+        let preflight = self.root.join("c/preflight");
+        for (name, _) in STAND_INS {
+            fs::write(preflight.join(format!("{name}.fail")), "")?;
+        }
+        fs::write(self.target.home().join(".local/bin/claude.fail"), "")?;
+        Ok(())
     }
 
     /// Waits until the source's core holds a ready link to the target.

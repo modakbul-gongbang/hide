@@ -40,6 +40,9 @@ pub const HIDE_CORE_STARTER: &str = "HIDE_CORE_STARTER";
 /// Test-only: `hang` makes the core role's stop never return, so a journey
 /// proves the stop's bound.
 pub const HIDE_FIXTURE_CORE_STOP: &str = "HIDE_FIXTURE_CORE_STOP";
+/// Test-only: a folder of stand-in `launchctl` and `pmset` that a move's
+/// checks run instead of the system's.
+pub const HIDE_PREFLIGHT_PROGRAMS: &str = "HIDE_PREFLIGHT_PROGRAMS";
 /// The file that declares a HOME a test fixture's, beside every test-only
 /// key's other conditions ([`fixture_home`]).
 pub const FIXTURE_HOME_MARKER: &str = ".hide-e2e-device-home";
@@ -170,6 +173,12 @@ pub const REGISTRY: &[EnvKey] = &[
         required: false,
         format: "`hang`; read only when HOME is a fixture HOME (under /tmp, carrying .hide-e2e-device-home, and not the account's own)",
         absent_behavior: "The core role stops when asked; a fixture HOME with `hang` makes that stop never return, so the process ends itself past its bound",
+    },
+    EnvKey {
+        key: HIDE_PREFLIGHT_PROGRAMS,
+        required: false,
+        format: "absolute path of a folder holding stand-in `gh`, `launchctl` and `pmset`; read only when HOME is a fixture HOME (under /tmp, carrying .hide-e2e-device-home, and not the account's own)",
+        absent_behavior: "A core move's checks on the machine taking the core run the account's `gh`, /bin/launchctl and /usr/bin/pmset; a fixture HOME names stand-ins, so a test passes or fails each check without the machine's own GitHub login, session and power settings",
     },
     EnvKey {
         key: HOME,
@@ -573,6 +582,14 @@ pub fn fixture_home(home: &std::path::Path) -> bool {
         .and_then(|own| hide_platform::fs::identity::canonical(&own))
         .is_ok_and(|own| own == home);
     temporary && !own && home.join(FIXTURE_HOME_MARKER).is_file()
+}
+
+/// The stand-in programs a fixture gave a move's checks
+/// ([`HIDE_PREFLIGHT_PROGRAMS`]).
+pub fn fixture_preflight_programs() -> Option<PathBuf> {
+    let folder = PathBuf::from(std::env::var_os(HIDE_PREFLIGHT_PROGRAMS)?);
+    (folder.is_absolute() && hide_platform::host::home_dir().is_ok_and(|home| fixture_home(&home)))
+        .then_some(folder)
 }
 
 /// Whether a fixture asked the core role's stop never to return

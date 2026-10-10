@@ -29,6 +29,10 @@ pub struct MoveSource {
     pub projects: Vec<MoveProject>,
     /// Nodes other than the device that dialed in and are linked now.
     pub other_linked_nodes: Vec<String>,
+    /// The agents of this machine asleep with their panes closed, by the
+    /// name the sidebar gives them: once this machine is a node, nothing
+    /// can wake them.
+    pub dormant: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -181,6 +185,15 @@ impl Runtime {
                 .linked_nodes()
                 .into_iter()
                 .filter(|linked| linked != device)
+                .collect(),
+            dormant: self
+                .snapshot
+                .ui_state
+                .agent_sleep
+                .dormant
+                .values()
+                .filter(|record| record.node_id == self.node.as_str())
+                .map(|record| record.identity_label.clone())
                 .collect(),
         })
     }

@@ -100,6 +100,21 @@ pub enum CheckId {
     OwnState,
     /// For a move back: this machine's node is linked to the core.
     Link,
+    /// The machine taking the core is signed in to `gh`.
+    Gh,
+    /// Someone is logged in to the desktop of the machine taking the core,
+    /// the session its login item runs in.
+    GuiSession,
+    /// The machine taking the core does not sleep by itself on power.
+    Sleep,
+    /// The `hided` the move runs there is this build.
+    Build,
+    /// Hide AI is set up and every agent it asks answers on the machine
+    /// taking the core.
+    Ai,
+    /// No agent of this machine is asleep with its pane closed: a node
+    /// cannot wake it.
+    Dormant,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

@@ -25,9 +25,11 @@ struct Args {
     intent: Option<String>,
     source: Option<String>,
     target: Option<String>,
+    /// For `inspect`: the agents Hide AI asks, as `[[provider, model]]`.
+    ai: Option<String>,
 }
 
-const USAGE: &str = "usage: hided core-move <inspect|verify|place|start|status|abort|finish|release|resume|retire> [--state-dir <dir>] [--intent <id>] [--source <node>] [--target <node>]";
+const USAGE: &str = "usage: hided core-move <inspect|verify|place|start|status|abort|finish|release|resume|retire> [--state-dir <dir>] [--intent <id>] [--source <node>] [--target <node>] [--ai <json>]";
 
 /// How long a released core may take to end once it answered.
 const RELEASED_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
@@ -39,7 +41,8 @@ fn parse(args: &[OsString]) -> Result<Args, String> {
         .and_then(|step| step.to_str())
         .ok_or(USAGE)?
         .to_owned();
-    let (mut state_dir, mut intent, mut source, mut target) = (None, None, None, None);
+    let (mut state_dir, mut intent, mut source, mut target, mut ai) =
+        (None, None, None, None, None);
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -56,6 +59,7 @@ fn parse(args: &[OsString]) -> Result<Args, String> {
             Some("--intent") => intent = Some(super::checked_intent(&value)?.to_owned()),
             Some("--source") => source = Some(value),
             Some("--target") => target = Some(value),
+            Some("--ai") => ai = Some(value),
             _ => return Err(USAGE.to_owned()),
         }
     }
@@ -73,13 +77,14 @@ fn parse(args: &[OsString]) -> Result<Args, String> {
         intent,
         source,
         target,
+        ai,
     })
 }
 
 pub fn run(args: &[OsString]) -> Result<(), String> {
     let args = parse(args)?;
     let answer = match args.step.as_str() {
-        "inspect" => inspect(&args.state_dir),
+        "inspect" => inspect(&args.state_dir, args.ai.as_deref()),
         step => {
             let intent = args.intent.as_deref().ok_or(USAGE)?;
             match step {
@@ -137,20 +142,46 @@ fn plain(reason: impl Into<String>) -> Value {
 }
 
 /// This machine's node, state folder, what brain state the folder holds,
-/// and the move touching it.
-fn inspect(state_dir: &Path) -> Result<Value, Value> {
+/// the move touching it, its build and Hide AI settings, and each of the
+/// move's checks that fails here (`preflight`), Hide AI's agents in `ai`
+/// among them.
+fn inspect(state_dir: &Path, ai: Option<&str>) -> Result<Value, Value> {
     let node = herdr_core::node::NodeId::of_this_machine().map_err(plain)?;
     let handover = handover::read(state_dir).map_err(plain)?;
-    // The socket this machine's core would own, as its daemon resolves it.
-    let herdr_socket = crate::env::load()
-        .map_err(|errors| plain(format!("{} environment errors", errors.len())))?
-        .herdr_socket_path;
+    // The Herdr this machine's core would own, as its daemon resolves it.
+    let env = crate::env::load()
+        .map_err(|errors| plain(format!("{} environment errors", errors.len())))?;
+    let mut failed = super::preflight::failing(
+        &env.home,
+        &super::preflight::Herdr {
+            bin: env.herdr_bin_path.as_deref(),
+            socket: env.herdr_socket_path.as_deref(),
+        },
+        &super::preflight::Programs::for_this_machine(),
+    );
+    if let Some(asks) = ai {
+        let asks: Vec<(String, String)> = serde_json::from_str(asks)
+            .map_err(|error| plain(format!("--ai is not a list of agents: {error}")))?;
+        if let Err(detail) = herdr_core::hide_ai_ready_here(&asks) {
+            failed.push(super::control::FailedCheck {
+                check: super::control::CheckId::Ai,
+                detail,
+            });
+        }
+    }
+    let ai = match herdr_core::stored_hide_ai_settings(&env.home) {
+        Ok(settings) => json!({"settings": settings}),
+        Err(error) => json!({"unreadable": error}),
+    };
     Ok(json!({
-        "herdr_socket": herdr_socket,
+        "herdr_socket": env.herdr_socket_path,
         "node": node.as_str(),
         "state_dir": hide_platform::path::to_wire(state_dir).map_err(|error| plain(error.to_string()))?,
         "brain": copy::brain_present(state_dir),
         "handover": handover,
+        "build": crate::build_id::of_current_exe().map_err(plain)?,
+        "ai": ai,
+        "failed": failed,
     }))
 }
 

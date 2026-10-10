@@ -448,7 +448,7 @@ struct Prepared {
 fn checks_failed(moves: &MoveControl, device: &str, failed: Vec<FailedCheck>) {
     log(
         "checks.failed",
-        json!({"device": device, "checks": failed.iter().map(|check| check.check).collect::<Vec<_>>()}),
+        json!({"device": device, "checks": failed.iter().map(|check| check.check).collect::<Vec<_>>(), "failed": failed}),
     );
     moves.set(MoveView {
         state: MoveState::ChecksFailed,
@@ -494,11 +494,21 @@ async fn prepare(
             detail: "this machine has no Herdr server".to_owned(),
         });
     }
+    let asks = match herdr_core::hide_ai_asks(&env.home) {
+        Ok(asks) => asks,
+        Err(detail) => {
+            failed.push(FailedCheck {
+                check: CheckId::Ai,
+                detail,
+            });
+            Vec::new()
+        }
+    };
     let home = env.home.clone();
     let (alias, program) = (source.ssh_alias.clone(), source.helper_path.clone());
     let inspected = tokio::task::spawn_blocking(move || {
         let remote = Remote::new(&home, &alias, &program)?;
-        let inspected = driver::inspect(&remote)?;
+        let inspected = driver::inspect(&remote, &asks)?;
         Ok::<_, MoveFailure>((remote, inspected))
     })
     .await
@@ -519,6 +529,29 @@ async fn prepare(
             detail: inspected.node.clone(),
         });
     }
+    match env
+        .build
+        .clone()
+        .map_or_else(crate::build_id::of_current_exe, Ok)
+    {
+        Ok(own) if own == inspected.build => {}
+        Ok(own) => failed.push(FailedCheck {
+            check: CheckId::Build,
+            detail: format!("the device runs {}, this machine {own}", inspected.build),
+        }),
+        Err(reason) => failed.push(FailedCheck {
+            check: CheckId::Build,
+            detail: reason,
+        }),
+    }
+    failed.extend(inspected.failed.iter().cloned());
+    if !source.dormant.is_empty() {
+        failed.push(FailedCheck {
+            check: CheckId::Dormant,
+            detail: source.dormant.join(", "),
+        });
+    }
+
     let retry = journal::read(&env.state_dir)
         .ok()
         .flatten()
@@ -532,17 +565,37 @@ async fn prepare(
                 .as_ref()
                 .is_none_or(|retry| retry.intent != handover.intent)
     });
-    if !inspected.brain.is_empty() || other_move {
+    let mut held = inspected.brain.clone();
+    if let Some(handover) = inspected.handover.as_ref().filter(|_| other_move) {
+        held.push(format!("move {}", handover.intent));
+    }
+    // Hide AI settings move with the core and are never merged.
+    match (
+        &inspected.ai,
+        herdr_core::stored_hide_ai_settings(&env.home),
+    ) {
+        (Ok(None), _) => {}
+        (Ok(Some(theirs)), Ok(Some(ours))) if *theirs == ours => {}
+        (Ok(Some(_)), _) => held.push("Hide AI settings unlike this machine's".to_owned()),
+        (Err(reason), _) => held.push(reason.clone()),
+    }
+    if !held.is_empty() {
         failed.push(FailedCheck {
             check: CheckId::TargetState,
-            detail: format!("{}: {}", inspected.state_dir, inspected.brain.join(", ")),
+            detail: format!("{}: {}", inspected.state_dir, held.join(", ")),
         });
     }
     let Some(target_socket) = inspected.herdr_socket.clone() else {
-        failed.push(FailedCheck {
-            check: CheckId::Herdr,
-            detail: "the device has no Herdr server".to_owned(),
-        });
+        if !inspected
+            .failed
+            .iter()
+            .any(|check| check.check == CheckId::Herdr)
+        {
+            failed.push(FailedCheck {
+                check: CheckId::Herdr,
+                detail: "the device has no Herdr server".to_owned(),
+            });
+        }
         return Err(failed);
     };
     if !failed.is_empty() {
