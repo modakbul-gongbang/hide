@@ -4221,6 +4221,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn writer_database_is_owner_only() {
         use std::os::unix::fs::PermissionsExt;
