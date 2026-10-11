@@ -550,8 +550,18 @@ fn is_empty(value: &Value) -> bool {
 /// in memory and wrote to `moved` when it stopped, become its own.
 fn reown_labels(value: &mut Value, change: &OwnerChange) -> Result<(), String> {
     let Some(object) = value.as_object_mut() else {
-        return Ok(());
+        return Err("the labels are not a map".to_owned());
     };
+    // A section this build does not know may name a machine; it stops the
+    // move rather than travel unconverted (Q18).
+    if let Some(key) = object
+        .keys()
+        .find(|key| !matches!(key.as_str(), "version" | "targets" | "moved"))
+    {
+        return Err(format!(
+            "/{key} is a section of the labels this build does not move"
+        ));
+    }
     let mut targets = match object.remove("targets") {
         Some(Value::Object(map)) => map,
         None => Map::new(),
@@ -1510,6 +1520,23 @@ mod tests {
             refusal.reason.contains("/new_feature_panes/focus"),
             "{refusal}"
         );
+        assert_eq!(
+            read(&state.join(MARKER_FILE))["node"],
+            json!(M),
+            "the owner is unchanged"
+        );
+    }
+
+    #[test]
+    fn a_labels_section_the_move_does_not_know_stops_it() {
+        let dir = macbook_folder();
+        let state = dir.path();
+        let mut labels = read(&state.join(LABELS));
+        labels["pending"] = json!({ M: {} });
+        std::fs::write(state.join(LABELS), serde_json::to_vec(&labels).unwrap()).unwrap();
+        let refusal = reown(state, &forward(), &forward_ids()).unwrap_err();
+        assert_eq!(refusal.file, state.join(LABELS));
+        assert!(refusal.reason.contains("/pending"), "{refusal}");
         assert_eq!(
             read(&state.join(MARKER_FILE))["node"],
             json!(M),
