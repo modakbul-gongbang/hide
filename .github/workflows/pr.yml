@@ -315,8 +315,8 @@ jobs:
         timeout-minutes: 10
         run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-kit)'
       - name: Agent hooks, their Windows entries run through PowerShell
-        # The hook file writer, the entries Claude Code and Codex run on
-        # Windows, and the helper's stdin deadline. It stands on its own, so
+        # The hook file writer, the entries Claude Code, Codex, Grok and
+        # Cursor run on Windows, and the helper's stdin deadline. It stands on its own, so
         # it runs whatever the step above answered.
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 15

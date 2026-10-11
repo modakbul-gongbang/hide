@@ -560,9 +560,21 @@ fn memory_output_before_deadline(
     .or_else(|| hook_stdout(runtime, event))
 }
 
+/// The hook's event from stdin, read until EOF, the size cap or `deadline`.
+/// A leading UTF-8 byte order mark is dropped: the Cursor CLI on Windows
+/// pipes the event through PowerShell, which writes one before the JSON
+/// (Cursor's forum, threads 166794 and 168407), and JSON does not allow it.
+fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
+    let (mut payload, truncated) = read_raw_stdin_before_deadline(deadline)?;
+    if payload.starts_with(b"\xEF\xBB\xBF") {
+        payload.drain(..3);
+    }
+    Some((payload, truncated))
+}
+
 #[cfg(unix)]
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
+fn read_raw_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
     use std::os::fd::AsRawFd;
 
     let stdin = std::io::stdin();
@@ -620,7 +632,7 @@ fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
 /// and this waits for it until the deadline; a producer that never closes
 /// stdin leaves that thread blocked, and the process exits without it.
 #[cfg(not(unix))]
-fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
+fn read_raw_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = sender.send(hide_agent_hooks::memory::read_bounded(std::io::stdin()));

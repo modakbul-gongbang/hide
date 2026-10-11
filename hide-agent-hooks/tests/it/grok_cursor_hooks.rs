@@ -91,6 +91,21 @@ fn a_grok_launch_is_refused_with_the_reason_claude_code_gets_and_other_calls_run
 }
 
 #[test]
+fn a_cursor_event_that_starts_with_a_byte_order_mark_is_still_read() {
+    // The Cursor CLI on Windows pipes the event through PowerShell, which
+    // writes a UTF-8 byte order mark before the JSON.
+    let machine = Machine::new("registered");
+    let run = machine.run_event(
+        "cursor",
+        "PreToolUse",
+        &format!("\u{feff}{}", cursor_shell(&machine, START)),
+        Some(PANE),
+        CURSOR,
+    );
+    assert_eq!(cursor_answer(&run)["permission"], "deny");
+}
+
+#[test]
 fn a_cursor_launch_is_refused_in_cursors_shape_and_every_other_path_answers_allow() {
     let machine = Machine::new("registered");
     let run = machine.run_event(

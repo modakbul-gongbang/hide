@@ -210,12 +210,14 @@ impl GuidanceAgent {
     }
 
     /// Whether Hide writes this agent's hook on this system. Copilot CLI has a
-    /// `powershell` key of its own; every other agent's hook is one command
-    /// string whose documentation names no Windows shell (Gemini CLI, Qwen
-    /// Code, Factory Droid, Kiro, Cursor, Augment, Junie, Grok), so a guard
-    /// written for POSIX or PowerShell would be a guess there.
+    /// `powershell` key of its own. Grok and Cursor run a hook's command as
+    /// PowerShell on Windows: Grok's hooks guide says so and its source picks
+    /// PowerShell 7, then Windows PowerShell (`xai-grok-config/src/shell.rs`),
+    /// and the Cursor CLI's own bundle runs it inside a PowerShell pipeline
+    /// (`docs/agent-hooks.md`, Installing). The retired agents' documentation
+    /// names no Windows shell, so a guard written for one would be a guess.
     pub fn supported_here(self) -> Result<(), &'static str> {
-        if cfg!(windows) && self != Self::Copilot {
+        if cfg!(windows) && !matches!(self, Self::Copilot | Self::Grok | Self::Cursor) {
             return Err("its documentation does not say which shell runs a hook on Windows");
         }
         Ok(())
@@ -406,8 +408,9 @@ fn posix_command(
     }
 }
 
-/// The same guard for PowerShell, the one Windows form a documented key
-/// exists for (Copilot CLI's `powershell`).
+/// The same guard for PowerShell: Copilot CLI's `powershell` key, and Grok's
+/// command on Windows, which Grok hands to `pwsh` or `powershell.exe` as
+/// `-NoProfile -NonInteractive -Command <command>` with the event on stdin.
 fn powershell_command(helper: &Path, agent: GuidanceAgent, event: HookEvent) -> String {
     let quoted = Quoting::PowerShell.quote(&helper.display().to_string());
     format!(
@@ -441,10 +444,34 @@ fn plain_command(helper: &Path, agent: GuidanceAgent, event: HookEvent) -> Strin
     }
 }
 
+/// Cursor's command on Windows. The Cursor CLI writes the event to a file and
+/// runs `Get-Content <file> -Raw | & { $input | <command> }` under PowerShell 7
+/// or Windows PowerShell (read from its 2026.10.01 Windows package), so the
+/// command is one pipeline element: a script block that hands its input to
+/// the helper while it is there and, for a permission event, answers allow
+/// itself when it is gone, as the POSIX guard does.
+fn cursor_powershell_command(helper: &Path, event: HookEvent) -> String {
+    let quoted = Quoting::PowerShell.quote(&helper.display().to_string());
+    let run = format!(
+        "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ $input | & {quoted} {} }}",
+        arguments(GuidanceAgent::Cursor, event)
+    );
+    if crate::basic::cursor_permission_event(event) {
+        format!(
+            "& {{ {run} else {{ {} }} }}",
+            Quoting::PowerShell.quote(crate::basic::CURSOR_ALLOW)
+        )
+    } else {
+        format!("& {{ {run} }}")
+    }
+}
+
 /// The entry Hide writes for `slot`.
 fn entry(agent: GuidanceAgent, helper: &Path, slot: &Slot) -> Value {
     let event = slot.event;
-    let command = if cfg!(windows) {
+    let command = if cfg!(windows) && agent == GuidanceAgent::Cursor {
+        cursor_powershell_command(helper, event)
+    } else if cfg!(windows) {
         powershell_command(helper, agent, event)
     } else if agent == GuidanceAgent::Cursor {
         plain_command(helper, agent, event)
