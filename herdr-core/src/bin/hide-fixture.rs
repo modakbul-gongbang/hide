@@ -68,7 +68,7 @@ fn execute(args: Vec<String>) -> Result<Value, String> {
 }
 
 fn usage() -> String {
-    "usage: herdr-ide-fixture plan herdr-ide-verify-<name> | plan-scale/create herdr-ide-verify-<name> --target local|mini --cwd /tmp/herdr-ide-verify-... --workspaces N --panes N [--manifest path] | status/cleanup --manifest path".to_owned()
+    "usage: hide-fixture plan hide-verify-<name> | plan-scale/create hide-verify-<name> --target local|mini --cwd /tmp/hide-verify-... --workspaces N --panes N [--manifest path] | status/cleanup --manifest path".to_owned()
 }
 
 fn parse_scale_request(args: &[String]) -> Result<ScalePlan, String> {

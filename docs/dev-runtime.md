@@ -54,5 +54,5 @@ Use [UI_BEHAVIOR.md](UI_BEHAVIOR.md) for shell behavior.
 
 ## Pet, deep links and other retired native-only features
 
-The removed native shell had a pet window, a `herdr-ide://` deep-link scheme, global shortcuts, a menu bar item and Dock badges; none of that exists in this host.
+The removed native shell had a pet window, its own deep-link scheme, global shortcuts, a menu bar item and Dock badges; none of that exists in this host.
 See the electron backlog issue (issue 184) for what of it, if anything, is still wanted.

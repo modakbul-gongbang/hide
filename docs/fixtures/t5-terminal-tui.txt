@@ -1,4 +1,4 @@
-HERDR IDE NATIVE TERMINAL
+HIDE NATIVE TERMINAL
 
 This is a deterministic local Vim fixture.
 Hide displays the Herdr terminal stream through its native terminal view.

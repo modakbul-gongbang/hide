@@ -4,7 +4,7 @@
 # It intentionally exercises SGR, OSC 8, Unicode, cursor visibility, and
 # bracketed-paste mode while keeping the visible screen free of host data.
 printf '\033[?1049h\033[2J\033[H'
-printf '\033[1;38;5;45mHerdr IDE terminal\033[0m\r\n'
+printf '\033[1;38;5;45mHide terminal\033[0m\r\n'
 printf '\033[38;5;114mANSI colors\033[0m  \033[4munderline\033[0m  \033[3mitalic\033[0m\r\n'
 printf '\033]8;;https://example.invalid/herdr\033\\OSC 8 hyperlink\033]8;;\033\\\r\n'
 printf 'Korean UTF-8: 한글 입력 준비\r\n'

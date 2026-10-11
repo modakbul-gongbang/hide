@@ -2281,7 +2281,7 @@ fn session_fold_events_toggle_project_and_cleanup_state_independently() {
 #[test]
 fn a_pane_in_a_second_directory_projects_into_its_own_project() {
     let mut runtime = runtime();
-    let repository_path = "/private/tmp/hide-rebrand/herdr-ide";
+    let repository_path = "/private/tmp/hide-rebrand/hide";
     let checkout_path = "/private/tmp/hide-rebrand/worktrees/hide-rebrand";
     // Neither path is a git repository here, so each is its own
     // project: a Herdr workspace spanning two directories is two rows,
@@ -2289,7 +2289,7 @@ fn a_pane_in_a_second_directory_projects_into_its_own_project() {
     // repository's project; `workspace::tests` covers that with git.)
     let spaces = vec![workspace::SessionSpace {
         id: "w3M".to_owned(),
-        label: "herdr-ide".to_owned(),
+        label: "hide".to_owned(),
         purpose: None,
         cwds: vec![repository_path.to_owned(), checkout_path.to_owned()],
     }];
@@ -2309,7 +2309,7 @@ fn a_pane_in_a_second_directory_projects_into_its_own_project() {
 
     let payload: SessionSnapshotPayload = crate::sidebar::owned_label_fixture(serde_json::json!({
         "agents": [],
-        "workspaces": [{"workspace_id": "w3M", "label": "herdr-ide"}],
+        "workspaces": [{"workspace_id": "w3M", "label": "hide"}],
         "panes": [{"pane_id": "w3M:p1", "cwd": checkout_path}],
         "tabs": [{"workspace_id": "w3M", "tab_id": "w3M:t1", "label": ""}],
         "layouts": [{
@@ -3023,7 +3023,7 @@ fn a_new_tab_goes_to_the_workspace_herdr_binds_to_the_checkout_not_where_its_tab
     let path = owner_fixture("git", true);
     let bound = serde_json::json!({
         "workspace_id": "w9J",
-        "label": "herdr-ide",
+        "label": "hide",
         "worktree": {
             "repo_key": path, "repo_name": "repo", "repo_root": path,
             "checkout_path": path, "is_linked_worktree": false

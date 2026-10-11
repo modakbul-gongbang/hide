@@ -1598,8 +1598,8 @@ mod tests {
     fn the_offered_command_is_filled_from_the_call() {
         let start = found("herdr agent start set-g --kind claude --pane p -- --model opus");
         assert_eq!(
-            spawn_command(&start, Some("/Users/me/herdr-ide"), Some("fix/thing"), true),
-            "hide agent spawn --parent here --name set-g --intent <intent> --kind claude --repo /Users/me/herdr-ide --branch fix/thing -- --model opus"
+            spawn_command(&start, Some("/Users/me/hide"), Some("fix/thing"), true),
+            "hide agent spawn --parent here --name set-g --intent <intent> --kind claude --repo /Users/me/hide --branch fix/thing -- --model opus"
         );
         assert_eq!(
             spawn_command(&start, Some("/repo"), Some("topic"), false),

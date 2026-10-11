@@ -14,7 +14,7 @@ import type { SceneParams } from "./SidebarScene";
 export function ServerSessionScene({ scene: kind, theme, scale, content }: SceneParams & { scene: "workspace-servers" | "session-search" }) {
   const fixture = useMemo(() => {
     const scene = sidebarScene(content, REFERENCE_FOLDS, Date.now());
-    const workspace = scene.rest.navigator!.workspaces!.find((project) => project.id === "herdr-ide")!;
+    const workspace = scene.rest.navigator!.workspaces!.find((project) => project.id === "hide")!;
     const checkout = workspace.checkouts[0]!;
     const tab = checkout.tabs[0]!;
     const pane = tab.panes[0]!;

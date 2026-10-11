@@ -558,10 +558,10 @@ mod tests {
                 "workspaces": [
                     {"id": "w-home", "label": "hide", "is_home": true, "path": "/Users/example/hide",
                      "checkouts": [{"id": "c-home", "path": "/Users/example/hide", "label": "hide"}]},
-                    {"id": "w1", "label": "herdr-ide", "is_git": true, "path": "/Users/example/projects/herdr-ide",
+                    {"id": "w1", "label": "hide", "is_git": true, "path": "/Users/example/projects/hide",
                      "checkouts": [
-                        {"id": "c1", "path": "/Users/example/projects/herdr-ide", "label": "main", "branch": "main"},
-                        {"id": "c2", "path": "/Users/example/projects/herdr-ide.worktrees/a", "label": "a", "branch": "prd/a"},
+                        {"id": "c1", "path": "/Users/example/projects/hide", "label": "main", "branch": "main"},
+                        {"id": "c2", "path": "/Users/example/projects/hide.worktrees/a", "label": "a", "branch": "prd/a"},
                         {"id": "c3", "path": "/tmp/gone", "label": "gone", "branch": "gone", "exists": false},
                      ]},
                     {"id": "w2", "label": "notes", "is_git": false, "path": "/Users/example/notes",
@@ -592,8 +592,8 @@ mod tests {
             places,
             [
                 None,
-                Some("herdr-ide · main"),
-                Some("herdr-ide · prd/a"),
+                Some("hide · main"),
+                Some("hide · prd/a"),
                 Some("notes"),
                 None,
                 Some("contong · main")
@@ -664,7 +664,7 @@ mod tests {
             local["payload"],
             json!({
                 "provider": "claude", "prompt": "테스트 고쳐줘\n그리고 PR", "request_id": "r1",
-                "model": "opus", "checkout_path": "/Users/example/projects/herdr-ide.worktrees/a",
+                "model": "opus", "checkout_path": "/Users/example/projects/hide.worktrees/a",
             })
         );
         let remote = event(&request("rc1", None), &catalog).unwrap();

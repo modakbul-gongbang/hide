@@ -297,7 +297,7 @@ async function enterState(page, state, target) {
     await page.keyboard.press('Shift');
     await page.locator('nav[data-sidebar] [data-agent-open="a1"]').focus();
   }
-  if (state === 'checkout-closed') await page.locator('nav[data-sidebar] [data-checkout-toggle="herdr-ide:main"]').click();
+  if (state === 'checkout-closed') await page.locator('nav[data-sidebar] [data-checkout-toggle="hide:main"]').click();
   if (state === 'checkout-closed') await page.mouse.move(0, 0);
   // Sessions opens a row a level through its chevron; a pane header opens the tree popover from its tree button.
   if (state === 'children') await page.locator('[data-session-chevron], [data-pane-tree]').first().click();
