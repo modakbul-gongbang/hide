@@ -58,6 +58,15 @@ export function coreMachineName(devices: readonly Device[] | undefined, t: TFunc
   return machineName(devices, coreRowId(devices), t);
 }
 
+/**
+ * The core's machine as this window names it, when the window runs on
+ * another machine: what the core does with its own logins (gh, Hide AI's
+ * agents) is fixed there (B15). Null on the core's own machine (B1).
+ */
+export function coreMachineAway(devices: readonly Device[] | undefined, t: TFunction<"translation">): string | null {
+  return windowDeviceId(devices) === coreRowId(devices) ? null : coreMachineName(devices, t);
+}
+
 /** Whether `deviceId` is the machine the core runs on. */
 export function isCoreMachine(devices: readonly Device[] | undefined, deviceId: string): boolean {
   return deviceId === coreRowId(devices);

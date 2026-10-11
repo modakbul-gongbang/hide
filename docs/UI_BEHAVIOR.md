@@ -1540,6 +1540,7 @@ While a remote device is selected, a small device chip beside the tab descriptio
 General holds three groups: Appearance, Connections and About.
 Appearance is one group with Language, Theme, Accent and Interface text; Accent shows its swatches and no hex value, and Interface text carries one note that the sidebar keeps its own sizes.
 Connections has the GitHub row: its description, whether `gh` is signed in, and Check again, which asks the core to read GitHub again for the registered projects.
+The core reads GitHub with its own machine's `gh`, so in a window on another machine a signed-out `gh` is named on the core's machine ("Not signed in to gh on Mac mini") with the command that fixes it there (Run on Mac mini, `gh auth login`, with Copy) in place of `gh`'s own reason; on the core's own machine the row is as it was (PRD core-host-node-move B15, B1).
 Hide has no GitHub sign-in of its own, so there is no connect or reconnect action beyond that read.
 About shows the `hide` version and Herdr as `Connected · <version>` or its failure in one line, and a closed Details disclosure holds the rest: the process, lifetime, state file, page connection, Herdr's runtime message, version, protocol, socket and binary paths, the environment rows, the recent diagnostics and Copy diagnostics.
 The Protocol row shows one number while the protocol Hide expects and the one Herdr answered are the same, and `<received> (expects <expected>)` when they differ.
@@ -1663,6 +1664,7 @@ Every value is the core's `status.background_ai`; the tab sends `ai_settings` ev
 - While another agent answers, one line under Runs on reads "Using Codex · Claude Code is out of usage until 3:10 PM" and disappears when Runs on answers again.
   With the list empty and Runs on unable to answer, the Agent row says why and that Hide AI is paused; nothing else on screen changes, and a failure the operator cannot act on stays in the diagnostic log.
 - With no agent signed in, one line says "Sign in to <first agent that is on> to use Hide AI" (or to turn an agent on in Agents when none is); it appears only after every agent has been probed, and Hide's other features keep working without AI.
+- Hide AI runs the core machine's agents, so in a window on another machine every sign-in state and line above names that machine ("Not signed in on Mac mini", "Claude Code is signed out on Mac mini", "Sign in to Codex on Mac mini to use Hide AI"); the agents have no one sign-in command, so the fix is the machine in words, as the move's Hide AI check says it; on the core's own machine nothing names a machine (PRD core-host-node-move B15, B1).
 - **Features** holds Agent summaries (the `agent_summary` switch of `ai_settings`: off, no agent label is asked for, the one being made is dropped, and every surface names each agent by its session's own title or its provider with no AI line or written question; on again, the kept labels return at once and each pane's current turn is asked for) and Worktree names (the same `issue_settings` value the Issues tab held).
 
 ## Mobile companion

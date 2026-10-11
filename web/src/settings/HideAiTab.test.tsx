@@ -32,11 +32,11 @@ const provider = (id: string, label: string, over: Partial<AiProvider> = {}): Ai
   ...over,
 });
 
-const snapshot = (ai: Partial<BackgroundAi>, kitAgents: unknown[] = []) => ({
+const snapshot = (ai: Partial<BackgroundAi>, kitAgents: unknown[] = [], others: unknown[] = []) => ({
   connection: "live" as const,
   rest: {
     status: { background_ai: { enabled: true, provider: "claude", chosen: true, providers: [provider("claude", "Claude Code"), provider("codex", "Codex")], fallback: [], refusal: null, unavailable_reason: null, ...ai } },
-    navigator: { devices: [{ id: "local", kit: { agents: kitAgents } }] },
+    navigator: { devices: [{ id: "local", machine_name: "Mac mini", kit: { agents: kitAgents } }, ...others] },
     ui_state: { issue_settings: { ai_worktree_name: true, closes_instruction: true } },
   },
 });
@@ -82,6 +82,26 @@ it("puts the reason on the Runs on row, and no banner, when the chosen agent can
   expect(q("[data-ai-using]")).toBeNull();
   expect(text()).not.toContain("Using ");
   await unmount();
+});
+
+it("names the core's machine where a sign-in lapsed on it, from a window on another machine, and only there (B15, B1)", async () => {
+  const signedOut = { refusal: { provider: "claude", reason: "needs_login" as const, retry_at_ms: null, using: null }, providers: [provider("claude", "Claude Code", { state: "needs_login", selectable: false }), provider("codex", "Codex")] };
+  const node = [{ id: "mbp", kind: "remote", label: "MacBook Pro", dials_in: true }];
+  window.location.hash = "#token=t&node=mbp";
+  const away = await mount(snapshot(signedOut, [], node));
+  expect(away.q("[data-ai-state='claude:needs_login']")?.textContent).toContain("Not signed in on Mac mini");
+  expect(away.q("[data-ai-paused]")?.textContent).toBe("Claude Code is signed out on Mac mini · Hide AI is paused until Claude Code can answer.");
+  await away.unmount();
+  const nobody = await mount(snapshot({ provider: null, chosen: false, providers: [provider("codex", "Codex", { state: "needs_login", selectable: false })] }, [{ id: "codex", label: "Codex", availability: "available", enabled: true }], node));
+  expect(nobody.q("[data-ai-sign-in]")?.textContent).toBe("Sign in to Codex on Mac mini to use Hide AI");
+  await nobody.unmount();
+  window.location.hash = "";
+
+  // On the core's own machine nothing names a machine, a node dialing in or not.
+  const own = await mount(snapshot(signedOut, [], node));
+  expect(own.q("[data-ai-state='claude:needs_login']")?.textContent).not.toContain("Mac mini");
+  expect(own.q("[data-ai-paused]")?.textContent).toBe("Claude Code is signed out · Hide AI is paused until Claude Code can answer.");
+  await own.unmount();
 });
 
 it("asks to sign in to the first agent that is on when nobody is signed in, and not before every row has been read (B47)", async () => {

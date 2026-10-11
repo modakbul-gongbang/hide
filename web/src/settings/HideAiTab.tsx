@@ -21,7 +21,7 @@ import { useErrorSince } from "./useErrorSince";
  */
 export function HideAiTab({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const { refusal } = useHideAiWords();
+  const { refusal, signIn } = useHideAiWords();
   const ai = useShellStore((s) => s.rest?.status?.background_ai);
   const kitAgents = useShellStore((s) => s.rest?.navigator?.devices?.find((device) => device.kind !== "remote")?.kit?.agents);
   const issueSettings = useShellStore((s) => s.rest?.ui_state?.issue_settings);
@@ -52,7 +52,7 @@ export function HideAiTab({ actions }: { actions: Actions }) {
       <Note key="signin" tone="warn" data-ai-sign-in="true">
         {(() => {
           const agent = firstEnabledAgent(kitAgents);
-          return agent ? t("hideAi.signIn", { agent }) : t("hideAi.turnOnAgent");
+          return agent ? signIn(agent) : t("hideAi.turnOnAgent");
         })()}
       </Note>
     ) : null,

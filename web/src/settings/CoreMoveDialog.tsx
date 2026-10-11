@@ -1,4 +1,3 @@
-import { CopyIcon } from "lucide-react";
 import { useState } from "react";
 import type { Actions } from "../actions";
 import { Button } from "../components/ui/button";
@@ -9,6 +8,7 @@ import { takesEun, takesEuro } from "../i18n/koParticle";
 import { cn } from "../lib/utils";
 import { moveMachines } from "../screenMachine";
 import { useShellStore } from "../store";
+import { FixCommand } from "./FixCommand";
 
 /** What the operator asked from Settings: the core toward a device, or back to this machine from a node's window. */
 export type MoveRequest = { direction: "forward"; device: string } | { direction: "back" };
@@ -228,12 +228,7 @@ function FailedCheck({ check, detail, machine, actions }: { check: MoveView["fai
         {t(`coreMove.check.${check}`, { machine })}
       </span>
       {command ? (
-        <span className="flex shrink-0 items-center gap-xxs rounded-sm bg-muted py-xxs pl-sm pr-xxs" data-core-move-command={check}>
-          <code className="font-mono text-body text-foreground">{command}</code>
-          <Button variant="ghost" size="icon" aria-label={t("coreMove.copy")} onClick={() => actions.copyText(command, "core move command")}>
-            <CopyIcon aria-hidden="true" />
-          </Button>
-        </span>
+        <FixCommand command={command} what="core move command" actions={actions} data-core-move-command={check} />
       ) : (
         <span className="min-w-0 text-right text-caption text-muted-foreground">{t(`coreMove.fix.${check}`, { machine })}</span>
       )}

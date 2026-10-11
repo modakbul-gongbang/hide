@@ -2,12 +2,17 @@ import { Status, type Tone } from "../components/settings-rows";
 import { providerReason, resetTime } from "../hideAi";
 import { useInterfaceTranslation } from "../i18n/client";
 import { requireInterfaceLanguage } from "../i18n/locale";
+import { coreMachineAway } from "../screenMachine";
 import type { AiProvider, AiRefusal } from "../snapshot";
+import { useShellStore } from "../store";
 
 /** How the Hide AI tab words an agent's state and a refusal; one place so the Runs on row, the fallback rows and the Add menu agree. */
 export function useHideAiWords() {
   const { t, i18n } = useInterfaceTranslation();
   const language = requireInterfaceLanguage(i18n.language);
+  // Hide AI runs the core machine's agents: seen from another machine, a sign-in that lapsed is named there (B15).
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
+  const coreMachine = coreMachineAway(devices, t);
   const time = (unixMs: number) => resetTime(language, unixMs);
   /** One short state: "Signed in", "Out of usage until 3:10 PM". */
   const state = (provider: AiProvider): { tone: Tone; text: string } => {
@@ -16,7 +21,7 @@ export function useHideAiWords() {
         // An agent with no sign-in check is ready only because its program was found, so it does not claim to be signed in.
         return provider.login_checked === false ? { tone: "muted", text: t("hideAi.state.loginUnchecked") } : { tone: "ok", text: t("hideAi.state.ready") };
       case "needs_login":
-        return { tone: "warn", text: t("hideAi.state.needsLogin") };
+        return { tone: "warn", text: coreMachine ? t("hideAi.state.needsLoginOn", { machine: coreMachine }) : t("hideAi.state.needsLogin") };
       case "usage_limited":
         return {
           tone: "warn",
@@ -42,7 +47,7 @@ export function useHideAiWords() {
           ? t("hideAi.reason.usageLimitedUntil", { agent, time: time(why.retry_at_ms) })
           : t("hideAi.reason.usageLimited", { agent });
       case "needs_login":
-        return t("hideAi.reason.needsLogin", { agent });
+        return coreMachine ? t("hideAi.reason.needsLoginOn", { agent, machine: coreMachine }) : t("hideAi.reason.needsLogin", { agent });
       case "not_installed":
         return t("hideAi.reason.notInstalled", { agent });
       case "unsupported":
@@ -51,7 +56,9 @@ export function useHideAiWords() {
         return t("hideAi.reason.unavailable", { agent });
     }
   };
-  return { state, refusal };
+  /** The line that asks for a sign-in when no agent is signed in, on the machine whose agents Hide AI runs. */
+  const signIn = (agent: string): string => (coreMachine ? t("hideAi.signInOn", { agent, machine: coreMachine }) : t("hideAi.signIn", { agent }));
+  return { state, refusal, signIn };
 }
 
 /** An agent's state as symbol plus words, never colour alone (design 7). */
