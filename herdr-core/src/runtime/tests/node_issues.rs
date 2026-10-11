@@ -627,6 +627,61 @@ fn a_node_project_says_when_this_machine_s_gh_is_signed_out() {
     );
 }
 
+/// Before this machine's GitHub read answers, and while every read fails,
+/// a node project is named by the repository the node read, so ⌘K's GitHub
+/// search covers it.
+#[test]
+fn a_node_project_is_named_and_searched_by_the_repository_the_node_read() {
+    let repo = repo(Some("git@github.com:acme/app.git"), "feature");
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    let mut runtime = shared.lock().unwrap();
+    let searched = |runtime: &Runtime| {
+        let (targets, _) = runtime.github_search_targets();
+        targets
+            .into_iter()
+            .map(|target| {
+                (
+                    target.root.to_string_lossy().into_owned(),
+                    target.repository,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let named = vec![(repo.root.clone(), Some("acme/app".to_owned()))];
+    let repository = |runtime: &Runtime| {
+        node_project(runtime)
+            .unwrap()
+            .home_issues
+            .repository
+            .clone()
+    };
+    assert_eq!(repository(&runtime).as_deref(), Some("acme/app"));
+    assert_eq!(searched(&runtime), named);
+
+    runtime.ingest_device_github(
+        NODE,
+        crate::model::GithubSnapshot {
+            projects: vec![crate::model::GithubProjectSnapshot {
+                root_path: repo.root.clone(),
+                status: crate::model::GithubStatusSnapshot {
+                    available: false,
+                    unavailable_reason: Some("gh auth login".to_owned()),
+                    failure_category: Some(crate::model::GithubFailureCategory::NotLoggedIn),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+        },
+    );
+    assert_eq!(repository(&runtime).as_deref(), Some("acme/app"));
+    assert_eq!(searched(&runtime), named);
+}
+
 /// A new GitHub issue for a node's project is made by the repository's name
 /// with this machine's login, never in a folder of this machine at the
 /// node's path, and shows on the project at once.

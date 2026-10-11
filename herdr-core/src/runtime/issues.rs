@@ -1587,10 +1587,18 @@ impl Runtime {
                 asked,
             );
             // The rows carry the issues as tasks; `home_issues` names only the
-            // repository, which is all the shell reads of a node's.
+            // repository, which is all the shell reads of a node's. Before a
+            // GitHub read answers with its name, or while every read fails,
+            // the repository the node named is it, as a local project's is
+            // the one its worktree read named.
             let issues = found.map_or(&unread, |found| &found.issues);
+            let repository = issues.repository.clone().or_else(|| {
+                listed
+                    .and_then(|listed| listed.projects.get(&workspace.path))
+                    .and_then(|project| project.repository.clone())
+            });
             workspace.home_issues = crate::issues::ProjectIssuesSnapshot {
-                repository: issues.repository.clone(),
+                repository,
                 ..Default::default()
             };
             let notes = listed.and_then(|listed| listed.notes.get(&workspace.path));
@@ -1601,14 +1609,7 @@ impl Runtime {
                 &workspace.home_issues,
                 &status,
             ) == crate::tasks::SourceKind::Local;
-            // Before the first read answers, the repository the node named
-            // resolves a bare `#12`, as the answer's own name does after it.
-            let repository = workspace.home_issues.repository.clone().or_else(|| {
-                listed
-                    .and_then(|listed| listed.projects.get(&workspace.path))
-                    .and_then(|project| project.repository.clone())
-            });
-            let repository = repository.as_deref();
+            let repository = workspace.home_issues.repository.as_deref();
             let mut local_links = BTreeMap::new();
             let mut linked = BTreeSet::new();
             for checkout in &mut workspace.checkouts {
