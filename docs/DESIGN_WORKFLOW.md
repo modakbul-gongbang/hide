@@ -32,6 +32,7 @@ The gallery also renders production screens on synthetic scenes, one document pe
 Its query takes `theme` (`light`, `dark`), `width` (the sidebar's CSS width, seeded as the core's `ui_state.sidebar_width`), `scale` (the interface text scale, which reaches only what lies outside the sidebar, since the sidebar keeps its sizes at every scale) and `content` (`reference`, or `long` for long Korean titles).
 `/gallery?scene=factory` is the shell's real `Sidebar` beside the real `FactoryScreen` over `web/src/gallery/factorySceneData.ts`, a `FactorySummary` of two Factories with the content `Screen / Factory` draws; the scene answers the screen's requests as the engine does (the settings tab's `config` read, and an answer, merge, retry or cancel taking its item off 내 차례).
 Its query takes `theme` (`light`, `dark`), `tab` (`turn`, `board`, `graph`, `settings`), `task` (a Task id such as `t-412`, which opens that Task's page) and `content` (`reference`, or `long` for a long Korean title and a long issue number).
+`/gallery?scene=memory` is the real Tools column on its Memory tab over invented cards, one state per document; its query takes `theme`, `width` (the column's CSS width) and `state` (`workspace`, `off`, `ai_not_ready`, `analyzing`, `empty`, `remote`, `promote`, `failed`, `forgotten`), the states the Memory screen's design draws.
 Every name, path and count in a scene is invented example data, so a capture of it is safe to publish.
 
 ## The flow: scratch to one PR

@@ -3,20 +3,23 @@ import type { Actions } from "./actions";
 import { AgentSessions } from "./AgentSessions";
 import { ExplorerTree } from "./ExplorerTree";
 import { HistoryList } from "./HistoryList";
+import { MemoryTab } from "./MemoryTab";
+import { frontCheckout } from "./snapshot";
+import { useShellStore } from "./store";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
 import type { Tool } from "./workspace";
 
 // The Tools column (PRD S6 D-05, B10; PRD three-column-panel D-01, D-04): the
-// Sessions, Explorer or History, one at a time, at the Workspace body's right
+// Sessions, Explorer, History or Memory (PRD project-memory-v2 D-17), one at a time, at the Workspace body's right
 // edge. The tool is the front Workspace's, so switching it here leaves every
 // other Workspace's alone. The column has no title row and no close: its
 // first row is its named tool tabs, level with the other
 // columns' tab rows, and the toolbar's Tools icon and ⌘E turn it off. The
 // names are docs/UI_BEHAVIOR.md's current ones.
 
-const TOOL_NAMES = { agent_sessions: "agentSessions.title", explorer: "panes.tools.explorer", changes: "panes.tools.history" } as const satisfies Record<Tool, MessageKey>;
-const TOOLS: readonly Tool[] = ["agent_sessions", "explorer", "changes"];
+const TOOL_NAMES = { agent_sessions: "agentSessions.title", explorer: "panes.tools.explorer", changes: "panes.tools.history", memory: "memory.title" } as const satisfies Record<Tool, MessageKey>;
+const TOOLS: readonly Tool[] = ["agent_sessions", "explorer", "changes", "memory"];
 
 export function Tools({ tool, actions }: { tool: Tool; actions: Actions }) {
   const { t } = useInterfaceTranslation();
@@ -29,7 +32,7 @@ export function Tools({ tool, actions }: { tool: Tool; actions: Actions }) {
       <section role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${tool}`} className="flex min-h-0 flex-1 flex-col" aria-label={t(TOOL_NAMES[tool])} data-tool={tool} data-right-panel={tool}>
         {/* The tree reads the selected device's checkout through its helper;
             History reads the front checkout's Git through its own host. */}
-        {tool === "agent_sessions" ? <AgentSessions actions={actions} /> : tool === "explorer" ? <ExplorerTree actions={actions} /> : <HistoryList actions={actions} />}
+        {tool === "agent_sessions" ? <AgentSessions actions={actions} /> : tool === "explorer" ? <ExplorerTree actions={actions} /> : tool === "memory" ? <MemoryTab actions={actions} /> : <HistoryList actions={actions} />}
       </section>
     </aside>
   );
@@ -38,6 +41,11 @@ export function Tools({ tool, actions }: { tool: Tool; actions: Actions }) {
 /** Named tabs share one keyboard stop; arrows select in displayed order. */
 function ToolTabs({ tool, actions, id }: { tool: Tool; actions: Actions; id: string }) {
   const { t } = useInterfaceTranslation();
+  // The Memory tab's dot: its Project has something to ask (B28).
+  const asking = useShellStore((state) => {
+    const project = state.memory?.project;
+    return Boolean(project?.enabled && project.questions.length > 0 && project.workspace_id === frontCheckout(state.rest)?.workspace_id);
+  });
   const move = (event: KeyboardEvent<HTMLDivElement>) => {
     const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : null;
     if (step === null && event.key !== "Home" && event.key !== "End") return;
@@ -63,10 +71,11 @@ function ToolTabs({ tool, actions, id }: { tool: Tool; actions: Actions; id: str
               aria-selected={selected}
               aria-label={t(TOOL_NAMES[each])}
               data-tool-tab={each}
-              className={`relative flex min-w-0 items-center justify-center px-md text-caption outline-none hover:bg-accent focus-visible:bg-accent ${selected ? "text-foreground" : "text-subtle-foreground"}`}
+              className={`relative flex min-w-0 items-center justify-center gap-xxs px-sm text-caption outline-none hover:bg-accent focus-visible:bg-accent ${selected ? "text-foreground" : "text-subtle-foreground"}`}
               onClick={() => actions.showTool(each)}
             >
               <span className="truncate">{t(TOOL_NAMES[each])}</span>
+              {each === "memory" && asking ? <span role="img" aria-label={t("memory.questionsWaiting")} className="size-(--size-status-mark) shrink-0 rounded-full bg-warning" data-tool-dot="memory" /> : null}
               {selected ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
             </button>
         );

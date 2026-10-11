@@ -82,7 +82,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator(`nav[data-sidebar] [data-agent-open="${parent}"]`).first().click();
     await page.getByRole("button", { name: "Tools", exact: true }).click();
-    await expect(page.locator('[data-tool-tabs] [data-tool-tab]')).toHaveText(["Sessions", "Explorer", "History"]);
+    await expect(page.locator('[data-tool-tabs] [data-tool-tab]')).toHaveText(["Sessions", "Explorer", "History", "Memory"]);
     await page.locator('[data-tool-tab="agent_sessions"]').click();
     const panel = page.locator("[data-session-panel]");
     const showSessions = () => ensureSessions(page);
