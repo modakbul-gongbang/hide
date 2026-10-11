@@ -545,20 +545,25 @@ impl Runtime {
         let Ok(channel) = self.node_link(target) else {
             return false;
         };
+        // Branch notes link a node's checkouts to their issues (D-29); a
+        // device this core dials keeps its issues there, so none is asked.
+        let notes = self
+            .link_origin(target)
+            .is_some_and(LinkOrigin::reports_own_facts);
         let generation = self.device_host_generation(target);
         let entry = self.device_worktrees.entry(target.to_owned()).or_default();
         entry.in_flight = Some(generation);
         entry.again = false;
         entry.reread = false;
         let Some(context) = self.worker_context.clone() else {
-            let answer = ask_worktrees(channel.as_ref(), &wanted);
+            let answer = ask_worktrees(channel.as_ref(), &wanted, notes);
             return self.ingest_device_worktrees(target, generation, answer);
         };
         let device = target.to_owned();
         let spawned = thread::Builder::new()
             .name("herdr-core-device-worktrees".to_owned())
             .spawn(move || {
-                let answer = ask_worktrees(channel.as_ref(), &wanted);
+                let answer = ask_worktrees(channel.as_ref(), &wanted, notes);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -702,12 +707,24 @@ pub(super) struct WorktreesAnswer {
 
 type BranchNotes = std::collections::BTreeMap<String, hide_node_link::catalog::BranchNote>;
 
-/// Reads each repository in turn, then every one's branch notes in one
-/// `Call::PathFacts`; a refusal is that repository's answer (no rows), a
-/// connection failure stops the batch with the reason. Notes that cannot be
-/// read leave the issue a branch names unread, which is logged, not failed.
-fn ask_worktrees(channel: &dyn crate::node_access::NodeLink, roots: &[String]) -> WorktreesAnswer {
+/// Reads each repository in turn, then, when `notes`, every one's branch
+/// notes in one `Call::PathFacts`; a refusal is that repository's answer (no
+/// rows), a connection failure stops the batch with the reason. Notes that
+/// cannot be read leave the issue a branch names unread, which is logged,
+/// not failed.
+fn ask_worktrees(
+    channel: &dyn crate::node_access::NodeLink,
+    roots: &[String],
+    notes: bool,
+) -> WorktreesAnswer {
     let (answers, failure) = ask_repositories(channel, roots);
+    if !notes {
+        return WorktreesAnswer {
+            answers,
+            notes: Vec::new(),
+            failure,
+        };
+    }
     let notes = match crate::workspace::PathIndex::ask(
         channel,
         answers.iter().map(|(root, _)| root.clone()).collect(),

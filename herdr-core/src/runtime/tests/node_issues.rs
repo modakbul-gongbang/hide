@@ -800,6 +800,39 @@ fn a_node_checkout_s_github_link_is_removed_before_its_repository_is_named() {
     assert!(own.git_writes().is_empty() && own.gh_calls().is_empty());
 }
 
+/// A device this core dials keeps its issues there, so its worktree read
+/// asks no branch notes; a node's asks them in one call.
+#[test]
+fn a_dialed_device_s_worktree_read_asks_no_branch_notes() {
+    let repo = repo(None, "feature");
+    let node = Recording::of(Some(FakeDevice::new()));
+    let shared = node_runtime(&repo, node.clone(), Recording::of(None), Default::default());
+    let asked = |node: &Recording| {
+        node.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| matches!(call, Call::PathFacts { .. }))
+            .count()
+    };
+    assert_eq!(asked(&node), 1);
+    node.calls.lock().unwrap().clear();
+    {
+        let mut runtime = shared.lock().unwrap();
+        runtime.snapshot.ui_state.device_registrations[0].origin =
+            crate::model::LinkOrigin::Dialed {
+                ssh_alias: "macbook".to_owned(),
+            };
+        runtime.request_device_worktrees(NODE, true);
+    }
+    wait(&shared, "the dialed device's worktree read", |runtime| {
+        runtime.device_worktrees[NODE].in_flight.is_none()
+    });
+    let calls = node.calls.lock().unwrap().len();
+    assert!(calls > 0);
+    assert_eq!(asked(&node), 0);
+}
+
 /// A device this core dials keeps its issues on that device: its projects
 /// carry no issue source here, so no board, New issue or link reaches them.
 #[test]
