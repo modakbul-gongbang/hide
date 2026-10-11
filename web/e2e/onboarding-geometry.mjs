@@ -40,7 +40,7 @@ export async function measure(page) {
       const truncates = style.textOverflow === "ellipsis" || style.webkitLineClamp !== "none";
       if (part.scrollWidth > part.clientWidth + 1 && !truncates && style.overflowX !== "visible") rowsFit.push(`${part.textContent.trim().slice(0, 40)} is cut off`);
       // An ellipsis shortens a line sideways only; a box shorter than its text cuts the letters themselves (B41).
-      if (part.scrollHeight > part.clientHeight + 1 && style.overflowY !== "visible") rowsFit.push(`${part.textContent.trim().slice(0, 40)} is cut off at the bottom`);
+      if (part.scrollHeight > part.clientHeight + 1 && style.webkitLineClamp === "none" && style.overflowY !== "visible") rowsFit.push(`${part.textContent.trim().slice(0, 40)} is cut off at the bottom`);
     }
     // A tile's mark keeps its size: a tile too short for its lines shrinks the mark first.
     for (const mark of dialog.querySelectorAll("[data-onboarding-tile] > [aria-hidden]:not(.absolute)")) {
@@ -50,6 +50,8 @@ export async function measure(page) {
     if (dialog.scrollWidth > dialog.clientWidth + 1) overflow.push(`the wizard scrolls sideways ${dialog.scrollWidth} > ${dialog.clientWidth}`);
     const box = dialog.getBoundingClientRect();
     if (box.left < -0.5 || box.right > document.documentElement.clientWidth + 0.5) overflow.push("the wizard passes the window's edge");
+    // Taller interface text grows the tiles, and the wizard has no scroll of its own, so it must still fit the window (B41).
+    if (box.top < -0.5 || box.bottom > document.documentElement.clientHeight + 0.5) overflow.push("the wizard passes the window's top or bottom edge");
     return { partProblems, rowsFit, overflow };
   });
 }
