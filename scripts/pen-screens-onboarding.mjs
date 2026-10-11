@@ -37,7 +37,6 @@ export function onboardingBoards(tokens, root, {themedXref, screenButton, screen
   const F = frame;
   const at = (node, x, y) => ({...node, x: Math.round(x), y: Math.round(y)});
   const spacer = id => F(id, 'Spacer', {width: 'fill_container', height: 1}, []);
-  const vfill = id => F(id, 'Fill', {width: 1, height: 'fill_container'}, []);
 
   function scaleRef(node, key) {
     if (SCALE === 1) return node;
