@@ -800,6 +800,54 @@ fn a_node_checkout_s_github_link_is_removed_before_its_repository_is_named() {
     assert!(own.git_writes().is_empty() && own.gh_calls().is_empty());
 }
 
+/// A GitHub link on a node checkout whose repository the node has not
+/// named yet cannot be read, so it ends at once as a failed task with why,
+/// and nothing is written on either machine.
+#[test]
+fn a_node_checkout_s_github_link_before_its_repository_is_named_fails_with_why() {
+    let repo = repo(None, "feature");
+    let node = Recording::of(Some(FakeDevice::new()));
+    let own = Recording::of(None);
+    let shared = node_runtime(&repo, node.clone(), own.clone(), Default::default());
+    dispatch(
+        &shared,
+        "issue_source_set",
+        serde_json::json!({"project_path": repo.root, "source": "github"}),
+    );
+    let checkout_id = {
+        let runtime = shared.lock().unwrap();
+        node_project(&runtime)
+            .unwrap()
+            .checkouts
+            .iter()
+            .find(|checkout| checkout.path == repo.linked)
+            .unwrap()
+            .id
+            .clone()
+    };
+    dispatch(
+        &shared,
+        "set_checkout_issue",
+        serde_json::json!({"checkout_id": checkout_id, "text": "acme/app#5"}),
+    );
+    let runtime = shared.lock().unwrap();
+    let operation = runtime.snapshot.task_operation.as_ref().unwrap();
+    assert_eq!(
+        (
+            operation.kind.as_str(),
+            operation.phase.as_str(),
+            operation.message.as_deref()
+        ),
+        (
+            "checkout_issue",
+            "failed",
+            Some("The node has not named this project's GitHub repository yet")
+        )
+    );
+    assert!(node.git_writes().is_empty() && node.gh_calls().is_empty());
+    assert!(own.git_writes().is_empty() && own.gh_calls().is_empty());
+}
+
 /// A device this core dials keeps its issues there, so its worktree read
 /// asks no branch notes; a node's asks them in one call.
 #[test]

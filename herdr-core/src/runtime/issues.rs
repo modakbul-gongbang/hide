@@ -273,15 +273,15 @@ impl Runtime {
         };
         // Removing a link reads nothing, so it needs no repository name.
         let read = if local_source || text.is_empty() {
-            None
+            Ok(None)
         } else {
-            let place = self
-                .github_place(node.as_deref(), &workspace.path)
-                .map_err(|error| ("checkout_issue.unavailable", error))?;
-            Some(crate::live::GhPlace {
-                node: self.own_node(),
-                place,
-            })
+            self.github_place(node.as_deref(), &workspace.path)
+                .map(|place| {
+                    Some(crate::live::GhPlace {
+                        node: self.own_node(),
+                        place,
+                    })
+                })
         };
         let id = self
             .begin_task_operation(
@@ -292,6 +292,24 @@ impl Runtime {
                 None,
             )
             .map_err(|error| ("checkout_issue.busy", error))?;
+        // A link that cannot be read yet ends as the operator's failed task,
+        // with why, rather than as a click that shows nothing.
+        let read = match read {
+            Ok(read) => read,
+            Err(message) => {
+                self.push_diagnostic("checkout_issue.unavailable", message.clone());
+                self.op_timings
+                    .finish(&super::op_timing::task_create_op_id(id), "failed");
+                let operation = self
+                    .snapshot
+                    .task_operation
+                    .as_mut()
+                    .expect("the task operation was begun above");
+                operation.phase = "failed".into();
+                operation.message = Some(message);
+                return Ok(());
+            }
+        };
         // The Workspace that carries the token: this machine's authoritative
         // one for the checkout, or the Herdr workspace that owns a node's.
         let (session, previous) = match node.as_deref() {
