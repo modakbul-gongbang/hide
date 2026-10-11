@@ -8,6 +8,7 @@
 use crate::delivery::{self, Failure};
 use crate::runtime::{AgentRuntime, HookEvent, hook_stdout_with_context};
 use hide_memory::HOOK_INPUT_LIMIT_BYTES;
+use hide_memory::hook::{HookContext, HookOutcome};
 use serde::Deserialize;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -130,23 +131,18 @@ impl MemoryContext {
     }
 }
 
-/// The core's answer: what `hide_memory::hook::HookContext` serializes to.
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case", tag = "outcome")]
-enum Outcome {
-    Provided { count: usize },
-    Empty,
-    Disabled,
-    Unavailable,
-    Deadline,
-    ProjectUnresolved,
-}
-
-#[derive(Deserialize)]
-struct Answer {
-    context: Option<String>,
-    #[serde(flatten)]
-    outcome: Outcome,
+/// The core's outcome as the hook records it.
+impl From<HookOutcome> for HookMemoryOutcome {
+    fn from(outcome: HookOutcome) -> Self {
+        match outcome {
+            HookOutcome::Provided { count } => Self::Provided { count },
+            HookOutcome::Empty => Self::Empty,
+            HookOutcome::Disabled => Self::Disabled,
+            HookOutcome::Unavailable => Self::Unavailable,
+            HookOutcome::Deadline => Self::Deadline,
+            HookOutcome::ProjectUnresolved => Self::ProjectUnresolved,
+        }
+    }
 }
 
 /// [`MemoryContext`] for `request` from the core, bounded by `deadline` and
@@ -197,7 +193,9 @@ pub fn memory_context_until(
     };
     let answer =
         delivery::run_cli_with_input(&arguments, prompt.unwrap_or_default().as_bytes(), deadline)
-            .and_then(|value| serde_json::from_value::<Answer>(value).map_err(|_| "format".into()));
+            .and_then(|value| {
+                serde_json::from_value::<HookContext>(value).map_err(|_| "format".into())
+            });
     let answer = match answer {
         Ok(answer) => answer,
         Err(failure) => {
@@ -212,14 +210,7 @@ pub fn memory_context_until(
     };
     MemoryContext {
         context: answer.context,
-        outcome: match answer.outcome {
-            Outcome::Provided { count } => HookMemoryOutcome::Provided { count },
-            Outcome::Empty => HookMemoryOutcome::Empty,
-            Outcome::Disabled => HookMemoryOutcome::Disabled,
-            Outcome::Unavailable => HookMemoryOutcome::Unavailable,
-            Outcome::Deadline => HookMemoryOutcome::Deadline,
-            Outcome::ProjectUnresolved => HookMemoryOutcome::ProjectUnresolved,
-        },
+        outcome: answer.outcome.into(),
     }
 }
 
@@ -251,18 +242,19 @@ mod tests {
 
     #[test]
     fn the_core_s_answer_reads_as_the_hook_s_outcome() {
-        let answer = |value: serde_json::Value| serde_json::from_value::<Answer>(value).unwrap();
-        let provided = answer(serde_json::json!({
+        let answer = |value: serde_json::Value| {
+            let answer = serde_json::from_value::<HookContext>(value).unwrap();
+            (answer.context, HookMemoryOutcome::from(answer.outcome))
+        };
+        let (context, outcome) = answer(serde_json::json!({
             "context": "Project Memory:\n- Keep it.\n", "outcome": "provided", "count": 1,
         }));
-        assert!(matches!(provided.outcome, Outcome::Provided { count: 1 }));
-        assert_eq!(
-            provided.context.as_deref(),
-            Some("Project Memory:\n- Keep it.\n")
-        );
-        let none = answer(serde_json::json!({"context": null, "outcome": "project_unresolved"}));
-        assert!(matches!(none.outcome, Outcome::ProjectUnresolved));
-        assert!(none.context.is_none());
+        assert_eq!(outcome, HookMemoryOutcome::Provided { count: 1 });
+        assert_eq!(context.as_deref(), Some("Project Memory:\n- Keep it.\n"));
+        let (context, outcome) =
+            answer(serde_json::json!({"context": null, "outcome": "project_unresolved"}));
+        assert_eq!(outcome, HookMemoryOutcome::ProjectUnresolved);
+        assert!(context.is_none());
     }
 
     #[test]
