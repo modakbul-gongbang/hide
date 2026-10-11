@@ -228,6 +228,12 @@ The version and digest of the Herdr binary the app ships are pinned in `contract
 `scripts/bump-herdr.sh <version>` moves the pin after verifying the release asset; a weekly workflow proposes that bump as a pull request when a new stable Herdr release appears.
 It never merges, because three Herdr behaviors the core relies on are covered by fixtures this repository wrote, not by Herdr's own tests.
 
+## License of contributions
+
+hide is released under the Fair Core License, Version 1.0, MIT Future License ([LICENSE](LICENSE)).
+By submitting a contribution, you confirm that you have the right to submit it, and you grant Hoyeon Lee a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license to use, reproduce, modify, distribute, sublicense and relicense it under any terms, including in versions of hide that are not published as source.
+You keep the copyright in your contribution.
+
 ## Commit messages and attribution
 
 Write commits as project work: what changed in the product, code, or documentation, and why.
