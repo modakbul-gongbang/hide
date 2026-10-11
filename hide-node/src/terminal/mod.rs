@@ -229,6 +229,8 @@ struct Inner {
     /// Something may now be due earlier than the clock's current wait.
     wake_clock: bool,
     refusals: Refusals,
+    /// Its owner ended it ([`Service::close`]): no session starts again.
+    closed: bool,
 }
 
 #[derive(Default)]
@@ -332,6 +334,18 @@ impl Service {
     /// Panes holding a session or starting one.
     pub fn attached(&self) -> usize {
         self.shared.lock().attached()
+    }
+
+    /// Ends every session it holds, whose attach children end with them,
+    /// and starts none after: its owner ended (the core whose role stopped
+    /// for a move, in a process that goes on as a node), whoever still holds
+    /// the service. A session still holding a pane would leave the next
+    /// client of this machine's Herdr only a read-only view of it.
+    pub fn close(&self) {
+        self.shared.run(|inner, _| {
+            inner.closed = true;
+            inner.panes.clear();
+        });
     }
 }
 
@@ -1294,6 +1308,9 @@ impl Inner {
         message: Option<String>,
         now: Instant,
     ) {
+        if self.closed {
+            return;
+        }
         self.next_generation = self.next_generation.saturating_add(1);
         let generation = self.next_generation;
         let at_cap = self.attached() >= MAX_ATTACHED_PANES

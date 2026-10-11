@@ -158,6 +158,10 @@ pub struct CoreHandle {
     /// What every pane's output reaches: the hub, and the terminals relay
     /// of each linked node (`relay`).
     pub outputs: Arc<crate::relay::ScreenOutputs>,
+    /// This machine's terminal service, which `terminals` routes its panes
+    /// to; closed with the core, since what else holds the router may
+    /// outlive it.
+    local: Arc<Service>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -298,15 +302,17 @@ impl CoreHandle {
         let reports: Arc<dyn ReportSink> = Arc::new(reports);
         let hub = TerminalHub::new();
         let outputs = crate::relay::ScreenOutputs::new(Arc::clone(&hub));
-        let local = Service::start(
-            local_attacher(&options),
-            Arc::clone(&outputs) as Arc<dyn OutputSink>,
-            Arc::clone(&reports),
-            RetryPolicy::Automatic,
-        )
-        .map_err(|error| format!("terminal service failed to start: {error}"))?;
+        let local = Arc::new(
+            Service::start(
+                local_attacher(&options),
+                Arc::clone(&outputs) as Arc<dyn OutputSink>,
+                Arc::clone(&reports),
+                RetryPolicy::Automatic,
+            )
+            .map_err(|error| format!("terminal service failed to start: {error}"))?,
+        );
         let terminals = Arc::new(Router::new(
-            Arc::new(local),
+            Arc::clone(&local) as Arc<dyn hide_node_link::terminal::TerminalNode>,
             Arc::clone(&outputs) as Arc<dyn OutputSink>,
             reports,
         ));
@@ -334,6 +340,7 @@ impl CoreHandle {
             terminals,
             hub,
             outputs,
+            local,
             thread: Mutex::new(Some(thread)),
         })
     }
@@ -638,9 +645,13 @@ impl CoreHandle {
             let _ = thread.join();
         }
         // The core that installs devices is gone: a device's terminals end,
-        // so the router, this machine's terminal service and its attach
-        // children end with this handle rather than with the process.
+        // and so do this machine's sessions and their attach children, now
+        // rather than when the last holder of the router lets it go. A core
+        // that stops for a move leaves its process a node, whose own
+        // sessions would otherwise find each pane held and draw it only
+        // read-only.
         self.terminals.remove_every_device();
+        self.local.close();
     }
 }
 

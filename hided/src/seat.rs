@@ -13,12 +13,31 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
 use hyper::service::Service as _;
 use tokio::sync::{Notify, watch};
+
+/// How long a closing seat lets the requests it is serving finish before
+/// it ends them: a role ends its own sockets as it ends, so what is left is
+/// a request on its last bytes, or a client that never lets go.
+const CLOSE_WITHIN: Duration = Duration::from_secs(5);
+
+/// Where the seat's roles stand, as a request that arrives reads it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Mounts {
+    /// No role has mounted yet: a request waits for the first, as a
+    /// connection waited in the listener's backlog before seats.
+    Waiting,
+    /// A role is mounted.
+    Mounted,
+    /// The seat is closing: a request still waiting for a role, or arriving
+    /// now, is answered that the service is unavailable.
+    Closing,
+}
 
 /// One process's server, with the role router it forwards to.
 pub struct Seat {
@@ -41,10 +60,16 @@ struct Mounted {
     /// remembers it (the desktop host's browser control) knows to register
     /// again.
     instance: AtomicU64,
-    /// Told on every mount, so a request that came before the first one
-    /// waits for it, as a connection waited in the listener's backlog before
-    /// seats.
-    mounts: watch::Sender<u64>,
+    /// Told on the first mount and when the seat closes, so a request that
+    /// came before the first role waits for it or for the close.
+    mounts: watch::Sender<Mounts>,
+}
+
+impl Mounted {
+    /// Ends every wait for a role: the seat is closing.
+    fn close(&self) {
+        self.mounts.send_replace(Mounts::Closing);
+    }
 }
 
 /// What a role needs from the seat it runs on.
@@ -64,8 +89,16 @@ impl SeatParts {
             .router
             .write()
             .unwrap_or_else(|error| error.into_inner()) = router;
-        let instance = self.mounted.instance.fetch_add(1, Ordering::SeqCst) + 1;
-        self.mounted.mounts.send_replace(instance);
+        self.mounted.instance.fetch_add(1, Ordering::SeqCst);
+        // A closing seat stays closing: a role that mounts while its seat
+        // closes serves only the requests already past the wait.
+        self.mounted.mounts.send_if_modified(|mounts| {
+            let opened = *mounts == Mounts::Waiting;
+            if opened {
+                *mounts = Mounts::Mounted;
+            }
+            opened
+        });
     }
 
     /// The mounted role's number, which `/health` reports.
@@ -89,7 +122,7 @@ impl Seat {
         let mounted = Arc::new(Mounted {
             router: RwLock::new(Router::new()),
             instance: AtomicU64::new(0),
-            mounts: watch::Sender::new(0),
+            mounts: watch::Sender::new(Mounts::Waiting),
         });
         let stopping = Arc::new(Notify::new());
         let app = Router::new()
@@ -123,8 +156,10 @@ impl Seat {
     /// when it stops, as it did before seats.
     pub fn end_with(&self, role: crate::ending::Ending, state_dir: std::path::PathBuf) {
         let stopping = Arc::clone(&self.stopping);
+        let mounted = Arc::clone(&self.mounted);
         tokio::spawn(async move {
             role.ended().await;
+            mounted.close();
             stopping.notify_one();
             crate::state_file::forget_daemon(&state_dir, std::process::id());
         });
@@ -139,24 +174,40 @@ impl Seat {
         }
     }
 
-    /// Stops accepting and waits for the server to finish its graceful stop.
+    /// Stops accepting and waits for the server to finish its graceful stop,
+    /// at most [`CLOSE_WITHIN`]; what is still being served then is ended
+    /// with the server, so the process's instance lock outlives no client.
     pub async fn close(mut self) {
+        self.mounted.close();
         self.stopping.notify_one();
-        if let Some(served) = self.served.take() {
-            let _ = served.await;
+        if let Some(mut served) = self.served.take()
+            && tokio::time::timeout(CLOSE_WITHIN, &mut served)
+                .await
+                .is_err()
+        {
+            served.abort();
+            eprintln!(
+                "{}",
+                serde_json::json!({"component":"hided","kind":"server.close_unfinished","waited_ms": CLOSE_WITHIN.as_millis()})
+            );
         }
     }
 }
 
 impl Drop for Seat {
     fn drop(&mut self) {
+        self.mounted.close();
         self.stopping.notify_one();
     }
 }
 
 async fn forward(State(mounted): State<Arc<Mounted>>, request: Request) -> Response {
     let mut mounts = mounted.mounts.subscribe();
-    if mounts.wait_for(|instance| *instance > 0).await.is_err() {
+    let ready = mounts
+        .wait_for(|mounts| *mounts != Mounts::Waiting)
+        .await
+        .map(|mounts| *mounts);
+    if !matches!(ready, Ok(Mounts::Mounted)) {
         return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     let router = mounted
@@ -170,5 +221,45 @@ async fn forward(State(mounted): State<Arc<Mounted>>, request: Request) -> Respo
     {
         Ok(response) => response,
         Err(never) => match never {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A request that came before any role mounted (a window reconnecting to
+    /// a process whose folder holds its core for a move, which mounts none)
+    /// is answered when the seat closes, and the close does not wait on it.
+    #[tokio::test]
+    async fn a_request_waiting_for_a_first_role_ends_with_the_seat() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let seat = Seat::serve(listener, "token".to_owned(), crate::ending::Ending::new()).unwrap();
+        let mut client = tokio::net::TcpStream::connect(("127.0.0.1", seat.port))
+            .await
+            .unwrap();
+        client
+            .write_all(b"GET /health HTTP/1.1\r\nhost: seat\r\n\r\n")
+            .await
+            .unwrap();
+        let mounted = Arc::clone(&seat.mounted);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while mounted.mounts.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the request never waited for a role");
+        tokio::time::timeout(Duration::from_secs(5), seat.close())
+            .await
+            .expect("the close waited on the request");
+        let mut answer = vec![0; 64];
+        let read = tokio::time::timeout(Duration::from_secs(5), client.read(&mut answer))
+            .await
+            .expect("no answer")
+            .unwrap();
+        let answer = String::from_utf8_lossy(&answer[..read]);
+        assert!(answer.starts_with("HTTP/1.1 503"), "{answer}");
     }
 }

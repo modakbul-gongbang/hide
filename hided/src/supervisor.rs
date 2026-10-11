@@ -7,7 +7,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use herdr_core::node_migration::{self, copy};
 use serde_json::json;
@@ -18,7 +18,7 @@ use crate::core_move::control::{
     Asked, CheckId, FailedCheck, MoveControl, MoveRequest, MoveState, MoveView, Release,
 };
 use crate::core_move::driver::{self, Remote, TargetSays};
-use crate::core_move::handover::{self, Handover, HandoverState};
+use crate::core_move::handover::{self, Handover, HandoverState, now_unix_ms};
 use crate::core_move::journal::{
     self, BackPhase, Direction, ForwardPhase, Journal, MoveFailure, MoveStep, Phase,
 };
@@ -507,13 +507,6 @@ fn next_ask(
         Permanent::Ends => None,
         Permanent::AskedAgain => Some(slower.failed()),
     }
-}
-
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or_default()
 }
 
 /// The role a start runs: a move the journal left unresolved first, then

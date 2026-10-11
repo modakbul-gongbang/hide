@@ -570,12 +570,23 @@ fn release(state_dir: &Path, intent: &str, target: &str) -> Answered {
 /// its folder again. A core retired for the move stays retired.
 fn resume(state_dir: &Path, intent: &str) -> Answered {
     let held = hold(state_dir)?;
+    let mut leftover = None;
     match held.read().map_err(plain)? {
         Some(record) if record.intent == intent && record.state == HandoverState::Retired => {
             return Ok(StepAnswer::Retired { leftover: None });
         }
         Some(record) if record.intent == intent && record.state == HandoverState::StoppedFor => {
-            super::back::remove_staging(state_dir, intent).map_err(plain)?;
+            // The core the record says stopped may still be ending: it exits
+            // successfully, which nothing starts again, so it is waited for
+            // rather than read as running.
+            if let Some(stopping) = crate::state_file::read_state(state_dir)
+                .map_err(|error| plain(error.to_string()))?
+            {
+                wait_until_gone(&stopping)?;
+            }
+            // A staged copy that cannot be removed keeps no core from
+            // starting: the next staging removes it first.
+            leftover = super::back::remove_staging(state_dir, intent).err();
             held.remove().map_err(plain)?;
         }
         Some(record) if record.state != HandoverState::Retired => {
@@ -591,13 +602,16 @@ fn resume(state_dir: &Path, intent: &str) -> Answered {
     if let Ok(Some(running)) = crate::state_file::read_state(state_dir)
         && running.is_proven_running()
     {
-        return Ok(StepAnswer::Running { pid: running.pid });
+        return Ok(StepAnswer::Running {
+            pid: running.pid,
+            leftover,
+        });
     }
     let home = hide_platform::host::home_dir().map_err(|error| plain(error.to_string()))?;
     let pid = CoreStarter::for_account(&home)
         .and_then(|starter| starter.start(state_dir, &super::starter::this_program()?))
         .map_err(plain)?;
-    Ok(StepAnswer::Running { pid })
+    Ok(StepAnswer::Running { pid, leftover })
 }
 
 /// The commit of a move back: this machine's starter is removed, so no

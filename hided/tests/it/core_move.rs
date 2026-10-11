@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
-use crate::support::core_move::{ALIAS, Fixture, SOURCE_NODE, TARGET_NODE};
+use crate::support::core_move::{ALIAS, DEVICE_ID, Fixture, SOURCE_NODE, TARGET_NODE};
 use crate::support::fake_tailscale::FakeTailscale;
 use crate::support::remote_delivery::renderer::Renderer;
 use crate::support::remote_delivery::{wait_for, wait_within};
@@ -31,7 +31,7 @@ fn the_core_moves_to_the_device_and_the_window_follows_it() -> Result<()> {
                         fixture.source.project().display().to_string()
                     ),
                     (
-                        ALIAS.to_owned(),
+                        DEVICE_ID.to_owned(),
                         fixture.target.project().display().to_string()
                     ),
                 ],
@@ -41,7 +41,7 @@ fn the_core_moves_to_the_device_and_the_window_follows_it() -> Result<()> {
         let instance = fixture.health()?["instance"].as_u64().context("instance")?;
         // A window open on the core when the move starts.
         let mut open = Renderer::connect(window.0, &window.1)?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
 
         // Its socket is closed as the core stops, and what answers at its
         // address by then is the move's screen (or the node after it), so
@@ -133,7 +133,7 @@ fn the_core_moves_to_the_device_and_the_window_follows_it() -> Result<()> {
 fn a_window_older_than_its_core_asks_for_its_app_to_be_updated() -> Result<()> {
     let mut fixture = Fixture::start()?;
     let journey = (|| {
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         fixture.journal_until("done")?;
         let core = fixture.target_core()?.context("no core on the target")?;
         let core_release = hided::build_order::Release::of_this_build().shown();
@@ -172,7 +172,7 @@ fn a_window_older_than_its_core_asks_for_its_app_to_be_updated() -> Result<()> {
 fn a_newer_app_on_the_core_machine_updates_its_core() -> Result<()> {
     let fixture = Fixture::start()?;
     let journey = (|| {
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         fixture.journal_until("done")?;
         let before = fixture.target_core()?.context("no core on the target")?;
         let previous = fixture.target.health()?["starter"]["program"]
@@ -217,7 +217,7 @@ fn a_newer_app_on_the_core_machine_updates_its_core() -> Result<()> {
 fn an_older_app_on_the_core_machine_leaves_its_core_running() -> Result<()> {
     let fixture = Fixture::start()?;
     let journey = (|| {
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         fixture.journal_until("done")?;
         let core = fixture.target_core()?.context("no core on the target")?;
         let older = fixture.other_build("older")?;
@@ -268,7 +268,7 @@ fn a_letter_held_across_the_move_keeps_its_wait() -> Result<()> {
         write_record(&path, &ledger)?;
         fixture.start_source()?;
         fixture.device_ready()?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         fixture.journal_until("done")?;
         let target_ledger = fixture.target.state.join("delivery-ledger.json");
         let held = || -> Result<(Value, Value)> {
@@ -357,7 +357,7 @@ fn version_of(program: &str) -> Result<String> {
 fn a_window_newer_than_its_core_updates_it_and_links() -> Result<()> {
     let mut fixture = Fixture::start()?;
     let journey = (|| {
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         fixture.journal_until("done")?;
         let before = fixture.target_core()?.context("no core on the target")?;
         let previous = placed_program(&fixture)?;
@@ -406,7 +406,7 @@ fn a_window_newer_than_its_core_updates_it_and_links() -> Result<()> {
 fn a_core_update_that_does_not_start_goes_back_to_the_previous_build() -> Result<()> {
     let mut fixture = Fixture::start()?;
     let journey = (|| {
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         fixture.journal_until("done")?;
         let previous = placed_program(&fixture)?;
         let previous_build = fixture.target.health()?["build"].clone();
@@ -496,7 +496,7 @@ fn a_core_update_that_does_not_start_goes_back_to_the_previous_build() -> Result
 fn a_core_update_waits_for_a_move_on_the_core_machine() -> Result<()> {
     let mut fixture = Fixture::start()?;
     let journey = (|| {
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         fixture.journal_until("done")?;
         let core = fixture.target_core()?.context("no core on the target")?;
         write_record(
@@ -542,7 +542,7 @@ fn a_failing_check_changes_nothing() -> Result<()> {
         std::fs::write(&theirs, r#"{"provider":"codex"}"#)?;
         let target_before = listing(&fixture.target.state)?;
         let before = visible(&fixture)?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let failed = fixture.logged(&fixture.source, "checks.failed")?;
         ensure!(failed["checks"] == json!(["target_state"]), "{failed}");
         // Every check ran, so the window counts the ten that passed.
@@ -582,7 +582,7 @@ fn each_step_missing_on_the_target_is_named_and_nothing_changes() -> Result<()> 
         fixture.fail_checks()?;
         let target_before = listing(&fixture.target.state)?;
         let before = visible(&fixture)?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let failed = fixture.logged(&fixture.source, "checks.failed")?;
         ensure!(
             failed["checks"] == json!(["gui_session", "sleep", "gh", "ai"]),
@@ -615,7 +615,7 @@ fn a_target_core_that_cannot_start_is_rolled_back_and_the_retry_reuses_the_copy(
         // Another process holds the target folder's instance lock, so the
         // core the move starts there exits at once.
         let lock = hided::state_file::acquire_lock(&fixture.target.state)?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let failed = fixture.logged(&fixture.source, "abort.failed")?;
         let intent = failed["intent"].as_str().context("intent")?.to_owned();
         // Never two cores: while the target's folder may still start one,
@@ -638,7 +638,7 @@ fn a_target_core_that_cannot_start_is_rolled_back_and_the_retry_reuses_the_copy(
         ensure!(incoming.join("core-state.json").is_file(), "no copy kept");
 
         fixture.device_ready()?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         wait_for("the retry started", || {
             Ok((records(&fixture, "move.started")?.len() == 2).then_some(()))
         })?;
@@ -674,7 +674,7 @@ fn a_source_killed_mid_move_rolls_back_on_its_next_start() -> Result<()> {
     let journey = (|| {
         let before = visible(&fixture)?;
         let lock = hided::state_file::acquire_lock(&fixture.target.state)?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         fixture.logged(&fixture.source, "abort.failed")?;
         fixture.kill_source()?;
         drop(lock);
@@ -707,7 +707,7 @@ fn a_source_killed_while_its_core_stops_starts_it_again() -> Result<()> {
         // A move's journal, from a move that stopped at its staging.
         let planted = fixture.source.state.join("move-staging");
         std::fs::write(&planted, b"")?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let mut journal = fixture.journal_until("rolled_back")?;
         wait_for("the source's core again", || {
             Ok((fixture.role()? == "core").then_some(()))
@@ -755,7 +755,7 @@ fn a_stop_during_a_stalled_check_ends_the_process_with_its_core_stopped() -> Res
                 asked = asked.display()
             ),
         )?;
-        fixture.event("core_move", json!({"action": "check", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "check", "device": DEVICE_ID}))?;
         wait_for("the check on the peer", || Ok(asked.exists().then_some(())))?;
         fixture.stop_source()?;
         let ended = fixture.source_ended_within(std::time::Duration::from_secs(5))?;
@@ -797,7 +797,7 @@ fn a_core_that_will_not_stop_is_restarted_unchanged() -> Result<()> {
             .set(hided::env::HIDE_FIXTURE_CORE_STOP, "hang");
         fixture.start_source()?;
         fixture.device_ready()?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         // Past the stop's 20 s bound, and before a stop with none would
         // ever end.
         let ended = fixture.source_ended_within(std::time::Duration::from_secs(40))?;
@@ -839,7 +839,7 @@ fn a_core_that_will_not_stop_is_restarted_unchanged() -> Result<()> {
 fn a_lost_link_answer_after_the_target_took_the_move_goes_forward() -> Result<()> {
     let mut fixture = Fixture::start()?;
     let journey = (|| {
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let mut journal = fixture.journal_until("done")?;
         let after = wait_for("the projects through the new core", || {
             let projects = fixture.projects()?;
@@ -892,7 +892,7 @@ fn a_lost_link_answer_after_the_target_took_the_move_goes_forward() -> Result<()
 fn a_resumed_move_whose_alias_cannot_be_read_waits_for_its_peer() -> Result<()> {
     let mut fixture = Fixture::start()?;
     let journey = (|| {
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let mut journal = fixture.journal_until("done")?;
         fixture.kill_source()?;
         let intent = journal["intent"].as_str().context("intent")?.to_owned();
@@ -942,7 +942,7 @@ fn a_refused_first_link_rolls_back() -> Result<()> {
     let fixture = Fixture::start()?;
     let journey = (|| {
         let before = visible(&fixture)?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         wait_for("the copy placed on the target", || {
             Ok(fixture
                 .target
@@ -1015,7 +1015,7 @@ fn a_move_given_up_while_its_peer_is_cut_off_ends_the_peer_s_core_once_it_is_bac
             abandon(&mut fixture.held_window()?)?.as_deref() == Some("move_not_waiting"),
             "an abandon with no move waiting was taken"
         );
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let mut journal = fixture.journal_until("done")?;
         let stray = fixture.target_core()?.context("the target's core")?;
         fixture.kill_source()?;
@@ -1141,7 +1141,7 @@ fn a_move_given_up_while_its_pending_peer_is_busy_leaves_nothing_of_it() -> Resu
     let fixture = Fixture::start()?;
     let journey = (|| {
         let before = fixture.projects()?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         wait_for("the copy placed on the target", || {
             Ok(fixture
                 .target
@@ -1308,7 +1308,7 @@ fn a_copy_the_target_cannot_take_back_still_restarts_the_old_core() -> Result<()
     let fixture = Fixture::start()?;
     let journey = (|| {
         let before = visible(&fixture)?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let placed = wait_for("the copy placed on the target", || {
             Ok(fixture
                 .target
@@ -1382,7 +1382,7 @@ esac"#,
                 allowed = allowed.display()
             ),
         )?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let first = fixture.journal_until("rolled_back")?;
         ensure!(
             first["phase"]["failed"] == "copy" && first["phase"]["cause"]["step"] == "place",
@@ -1399,7 +1399,7 @@ esac"#,
         ensure!(fixture.target.state.join("node.json").is_file());
         std::fs::write(&allowed, b"")?;
         fixture.device_ready()?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         wait_for("the retry started", || {
             Ok((records(&fixture, "move.started")?.len() == 2).then_some(()))
         })?;
@@ -1423,7 +1423,7 @@ fn a_staging_failure_restarts_the_old_core() -> Result<()> {
         let target_before = listing(&fixture.target.state)?;
         // This machine cannot make its staging folder.
         std::fs::write(fixture.source.state.join("move-staging"), b"")?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let journal = fixture.journal_until("rolled_back")?;
         ensure!(journal["phase"]["failed"] == "copy", "{journal}");
         ensure!(journal["phase"]["cause"]["kind"] == "staging", "{journal}");
@@ -1450,7 +1450,7 @@ fn an_upload_cut_midway_resumes_by_digest() -> Result<()> {
     let fixture = Fixture::start()?;
     let journey = (|| {
         let before = visible(&fixture)?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         // Armed once the core is stopping, so only the move's own upload
         // counts: the manifest, then the copy's files in name order. The
         // cut comes as the fourth of them opens, three already whole.
@@ -1493,7 +1493,7 @@ fn an_upload_cut_midway_resumes_by_digest() -> Result<()> {
         let files = manifest["files"].as_object().context("manifest")?.len();
 
         fixture.device_ready()?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         wait_for("the retry started", || {
             Ok((records(&fixture, "move.started")?.len() == 2).then_some(()))
         })?;
@@ -1534,7 +1534,7 @@ fn a_place_failure_leaves_no_brain_state_on_the_target() -> Result<()> {
         // The place waits for the record's lock, so the folder changes
         // after the checks and before the place reads it.
         let held = fixture.hold_target_handover()?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let journal = fixture.journal_until("placed")?;
         let intent = journal["intent"].as_str().context("intent")?.to_owned();
         let own = fixture.target.state.join("labels.json");
@@ -1603,7 +1603,7 @@ fn a_target_that_asks_for_a_file_outside_the_copy_is_refused() -> Result<()> {
 fi"#
             ),
         )?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let journal = fixture.journal_until("rolled_back")?;
         let cause = &journal["phase"]["cause"];
         ensure!(
@@ -1636,7 +1636,7 @@ fn a_target_core_that_cannot_be_stopped_is_waited_for() -> Result<()> {
     let fixture = Fixture::start()?;
     let journey = (|| {
         let before = visible(&fixture)?;
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         wait_for("the copy placed on the target", || {
             Ok(fixture
                 .target
@@ -1690,7 +1690,7 @@ fn the_core_moves_back_and_the_window_shows_what_it_showed_before() -> Result<()
         let before = visible(&fixture)?;
         let settings = std::fs::read_to_string(fixture.source.ai_settings())?;
         let window = fixture.window();
-        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
         let forward = fixture.journal_until("done")?;
         wait_for("the projects through the new core", || {
             Ok((fixture.projects()?.len() == 2).then_some(()))
@@ -1797,7 +1797,7 @@ fn the_core_moves_back_and_the_window_shows_what_it_showed_before() -> Result<()
 /// Moves the core to the target and waits until the window shows both
 /// machines' projects through it.
 fn moved_forward(fixture: &Fixture) -> Result<Value> {
-    fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+    fixture.event("core_move", json!({"action": "start", "device": DEVICE_ID}))?;
     let journal = fixture.journal_until("done")?;
     wait_for("the projects through the new core", || {
         Ok((fixture.projects()?.len() == 2).then_some(()))
@@ -2620,7 +2620,7 @@ fn seed_at_rest(fixture: &mut Fixture) -> Result<()> {
     let path = fixture.source.state.join("delivery-ledger.json");
     let mut ledger: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
     ledger["next_id"] = json!(100);
-    ledger["letters"] = json!([{"id": "letter-1", "intent": "held-for-target", "sender": actor("w1:p1", SOURCE_NODE), "recipient": actor(&format!("remote:{ALIAS}:pane:w9:p9"), ALIAS), "kind": "report", "body": "A letter held for the target", "state": "undelivered", "waiting_answer": false, "reply_to": null, "created_at_unix_ms": now, "finished_at_unix_ms": now, "bell_errors": 0, "bell_sent": false, "human_notified": false}]);
+    ledger["letters"] = json!([{"id": "letter-1", "intent": "held-for-target", "sender": actor("w1:p1", SOURCE_NODE), "recipient": actor(&format!("remote:{DEVICE_ID}:pane:w9:p9"), DEVICE_ID), "kind": "report", "body": "A letter held for the target", "state": "undelivered", "waiting_answer": false, "reply_to": null, "created_at_unix_ms": now, "finished_at_unix_ms": now, "bell_errors": 0, "bell_sent": false, "human_notified": false}]);
     write_record(&path, &ledger)?;
     fixture.start_source()?;
     fixture.device_ready()
@@ -2647,7 +2647,7 @@ fn seed_through_events(fixture: &Fixture) -> Result<()> {
             .map(|row| row["id"].clone())
             .context("project")
     };
-    let (source_project, target_project) = (project(SOURCE_NODE)?, project(ALIAS)?);
+    let (source_project, target_project) = (project(SOURCE_NODE)?, project(DEVICE_ID)?);
     let checkout = snapshot
         .pointer("/navigator/workspaces/0/checkouts/0/id")
         .cloned()
@@ -2693,7 +2693,7 @@ fn seed_through_events(fixture: &Fixture) -> Result<()> {
         ("workspace_view", json!({"views": true})),
         (
             "ui_state_update",
-            json!({"expanded_paths": [source.join("src")], "device_expanded_paths": {ALIAS: [target.join("lib")]}, "selected_path": source.join("src/a.txt"), "shortcut_bindings": bindings}),
+            json!({"expanded_paths": [source.join("src")], "device_expanded_paths": {DEVICE_ID: [target.join("lib")]}, "selected_path": source.join("src/a.txt"), "shortcut_bindings": bindings}),
         ),
     ] {
         fixture.event(kind, payload)?;
@@ -2720,7 +2720,7 @@ fn machine_of(device: &str, own: &str) -> Result<&'static str> {
     let device = if device == "local" { own } else { device };
     Ok(match device {
         SOURCE_NODE => "source",
-        TARGET_NODE | ALIAS => "target",
+        TARGET_NODE | DEVICE_ID => "target",
         other => bail!("an id names no machine of the fixture: {other}"),
     })
 }

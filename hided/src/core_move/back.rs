@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 
 use super::answer::StepAnswer;
 use super::driver::Remote;
-use super::journal::{BackPhase, ForwardPhase, Journal, MoveFailure, Peer, Phase};
+use super::journal::{BackPhase, Direction, ForwardPhase, Journal, MoveFailure, Peer, Phase};
 
 const EXPORT_VERSION: u32 = 1;
 const EXPORT_CAP: u64 = 16 * 1024 * 1024;
@@ -168,10 +168,27 @@ pub fn back_change(
     }
 }
 
+/// The registration id this machine's core gave `peer_node` before the
+/// forward move to it: as that move's journal recorded it, or as a move
+/// back to here that rolled back recorded it from there.
+pub fn recorded_device(previous: Option<&Journal>, peer_node: &str) -> Option<String> {
+    previous
+        .filter(|journal| {
+            journal.peer.node == peer_node
+                && (journal.phase == Phase::Forward(ForwardPhase::Done)
+                    || (journal.phase.direction() == Direction::Back
+                        && journal.phase.is_rolled_back()))
+        })
+        .map(|journal| journal.peer.device.clone())
+}
+
 /// The registration this machine's core kept for the core's machine before
-/// the forward move, as it set it aside (`moved-out`); none when the
-/// folder holds no such registration.
-pub fn kept_registration(state_dir: &Path, device: &str) -> Option<herdr_core::DeviceRegistration> {
+/// the forward move, as it set it aside (`moved-out`): the first that
+/// `wanted` picks; none when the folder holds no such registration.
+pub fn kept_registration(
+    state_dir: &Path,
+    wanted: impl Fn(&herdr_core::DeviceRegistration) -> bool,
+) -> Option<herdr_core::DeviceRegistration> {
     let root = hide_kit::layout::moved_out(state_dir);
     let entries = std::fs::read_dir(&root).ok()?;
     for entry in entries.flatten() {
@@ -185,12 +202,10 @@ pub fn kept_registration(state_dir: &Path, device: &str) -> Option<herdr_core::D
             .as_array()
             .into_iter()
             .flatten()
-            .find(|registration| registration["id"] == device)
-            .cloned();
-        if let Some(found) = found
-            && let Ok(registration) = serde_json::from_value(found)
-        {
-            return Some(registration);
+            .filter_map(|row| serde_json::from_value(row.clone()).ok())
+            .find(|registration| wanted(registration));
+        if found.is_some() {
+            return found;
         }
     }
     None
@@ -399,15 +414,16 @@ pub fn retire(remote: &Remote, intent: &str) -> Result<Option<String>, MoveFailu
 /// What the core's machine answered a resume.
 #[derive(Debug, Eq, PartialEq)]
 pub enum Resumed {
-    /// Its core runs on its folder as before.
-    Running,
+    /// Its core runs on its folder as before; `leftover` names what of the
+    /// staged copy it could not remove.
+    Running { leftover: Option<String> },
     /// It retired its core for this move: the move committed.
     Retired,
 }
 
 pub fn resume(remote: &Remote, journal: &Journal) -> Result<Resumed, MoveFailure> {
     match remote.step("resume", &[("intent", &journal.intent)])? {
-        StepAnswer::Running { .. } => Ok(Resumed::Running),
+        StepAnswer::Running { leftover, .. } => Ok(Resumed::Running { leftover }),
         StepAnswer::Retired { .. } => Ok(Resumed::Retired),
         other => Err(super::driver::unexpected("resume", &other)),
     }

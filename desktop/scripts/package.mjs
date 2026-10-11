@@ -30,6 +30,15 @@ const resources = path.join(root, "resources");
 /** Runs a tool in the repository; its stdout is the answer, unless `stdio` shows it instead. */
 const run = (file, args, options = {}) => execFileSync(file, args, { cwd: repo, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", ...options })?.trim() ?? "";
 
+/** The first-parent count of the last commit HEAD shares with main. */
+function orderOnMain() {
+  if (run("git", ["rev-parse", "--is-shallow-repository"]) === "true") {
+    throw new Error("a shallow checkout cannot count the package's place in main's history: fetch it, or set HIDE_BUILD_ORDER");
+  }
+  const base = run("git", ["merge-base", "HEAD", "origin/main"]);
+  return run("git", ["rev-list", "--first-parent", "--count", base]);
+}
+
 // Windows starts pnpm's `.cmd` shim only through a shell; the arguments here
 // are fixed words, so the shell has nothing to reinterpret.
 const pnpm = (args) => run("pnpm", args, { stdio: "inherit", shell: process.platform === "win32" });
@@ -109,8 +118,11 @@ pnpm(["--dir", "web", "build"]);
 const commit = run("git", ["rev-parse", "HEAD"]);
 if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error(`the package's commit could not be read (got '${commit}')`);
 // Its place in main's history orders two builds of one release, so a newer
-// screen updates its core (hided/src/build_order.rs).
-const order = run("git", ["rev-list", "--first-parent", "--count", "HEAD"]);
+// screen updates its core (hided/src/build_order.rs): the first-parent count
+// of the last commit it shares with main, so a branch's own commits never
+// order it past a later main build. A shallow checkout cannot count it and
+// names it in HIDE_BUILD_ORDER, or is refused.
+const order = process.env.HIDE_BUILD_ORDER || orderOnMain();
 if (!/^[0-9]+$/.test(order)) throw new Error(`the package's build order could not be read (got '${order}')`);
 run("bash", ["scripts/verify-cargo.sh", "release"], { stdio: "inherit", env: { ...process.env, HIDE_VERSION: version, HIDE_COMMIT: commit, HIDE_BUILD_ORDER: order } });
 const herdr = system.herdr();

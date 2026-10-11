@@ -27,6 +27,9 @@ const UNLOAD_POLL: Duration = Duration::from_millis(100);
 /// `bootout`'s exit when launchd has begun to tear the job down and has not
 /// finished (`EINPROGRESS`, "Operation now in progress").
 const BOOTOUT_IN_PROGRESS: i32 = 36;
+/// `bootout`'s exit when another `bootout` already began the teardown that
+/// has not finished (`EALREADY`, "Operation already in progress").
+const BOOTOUT_ALREADY_IN_PROGRESS: i32 = 37;
 
 #[derive(Clone, Debug)]
 pub(super) struct Launchd {
@@ -203,11 +206,12 @@ impl Launchd {
     }
 
     /// Unloads the agent `label`, which ends its process, and returns once
-    /// launchd no longer knows it. A `bootout` that answers 0 or
-    /// [`BOOTOUT_IN_PROGRESS`] has begun the teardown, which launchd finishes
-    /// after it answers while the job exits, so the job is asked about until
-    /// it is gone, within [`STOPPED_WITHIN`] of the `bootout`. Any other
-    /// answer with the job still loaded is a failed `bootout`.
+    /// launchd no longer knows it. A `bootout` that answers 0,
+    /// [`BOOTOUT_IN_PROGRESS`] or [`BOOTOUT_ALREADY_IN_PROGRESS`] leaves a
+    /// teardown under way, which launchd finishes after it answers while the
+    /// job exits, so the job is asked about until it is gone, within
+    /// [`STOPPED_WITHIN`] of the `bootout`. Any other answer with the job
+    /// still loaded is a failed `bootout`.
     #[allow(clippy::disallowed_methods)] // a production wait, not test code
     pub(super) fn unload(&self, label: &str, home: &Path, stop: &AtomicBool) -> io::Result<()> {
         let name = format!("{}/{label}", self.domain);
@@ -216,7 +220,10 @@ impl Launchd {
         }
         let started = Instant::now();
         let result = self.run_within(&["bootout", &name], home, stop, STOPPED_WITHIN)?;
-        let under_way = matches!(result.code, Some(0 | BOOTOUT_IN_PROGRESS));
+        let under_way = matches!(
+            result.code,
+            Some(0 | BOOTOUT_IN_PROGRESS | BOOTOUT_ALREADY_IN_PROGRESS)
+        );
         loop {
             if !self.loaded(&name, home, stop)? {
                 return Ok(());

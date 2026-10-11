@@ -231,6 +231,10 @@ pub(super) async fn prepare_back(
         }
     };
     let forward_ids = back::forward_ids_reversed(previous.as_ref(), &placement.node);
+    // The core's machine is named in this machine's core by its registration
+    // id, which the forward move to it recorded (or this move back's first
+    // try, which read it there); its SSH alias is another name.
+    let recorded_id = back::recorded_device(previous.as_ref(), &placement.node);
     let retry = previous.filter(|journal| {
         journal.phase.direction() == Direction::Back
             && journal.peer.node == placement.node
@@ -294,25 +298,40 @@ pub(super) async fn prepare_back(
     if !failed.is_empty() {
         return Err(failed);
     }
+    // The registration this machine's core kept for the core's machine
+    // before the forward move: the one with the recorded id, or, with no
+    // record of the forward move here, the one that dialed the placement's
+    // alias. A node that never held the core makes one the operator
+    // consents to again.
+    let kept = match &recorded_id {
+        Some(id) => back::kept_registration(&env.state_dir, |registration| registration.id == *id),
+        None => back::kept_registration(&env.state_dir, |registration| {
+            registration.origin.ssh_alias() == Some(placement.alias.as_str())
+        }),
+    };
+    let registration = match kept {
+        Some(registration) => registration,
+        None => {
+            let id = recorded_id.unwrap_or_else(|| placement.alias.clone());
+            log(
+                "move.back.new_registration",
+                json!({"device": id, "alias": placement.alias, "peer": placement.node}),
+            );
+            serde_json::from_value(json!({
+                "id": id,
+                "label": id,
+                "ssh_alias": placement.alias,
+                "herdr_socket_path": peer_socket,
+            }))
+            .map_err(|error| fail(CheckId::Connection, error.to_string()))?
+        }
+    };
     let peer = Peer {
-        device: placement.alias.clone(),
+        device: registration.id.clone(),
         alias: placement.alias.clone(),
         node: placement.node.clone(),
         program: placement.program.clone(),
         state_dir: inspected.state_dir.clone(),
-    };
-    // The registration this machine's core kept for the core's machine
-    // before the forward move; a node that never held the core makes one
-    // the operator consents to again.
-    let registration = match back::kept_registration(&env.state_dir, &peer.device) {
-        Some(registration) => registration,
-        None => serde_json::from_value(json!({
-            "id": peer.device,
-            "label": peer.device,
-            "ssh_alias": peer.alias,
-            "herdr_socket_path": peer_socket,
-        }))
-        .map_err(|error| fail(CheckId::Connection, error.to_string()))?,
     };
     let change = back::back_change(&peer, own.as_str(), registration, peer_socket, own_socket);
     // A retry keeps the table its first try started from.
@@ -634,7 +653,14 @@ pub(super) async fn back_rollback(
         )
     })?;
     match resumed {
-        Resumed::Running => {}
+        Resumed::Running { leftover } => {
+            if let Some(reason) = leftover {
+                log(
+                    "resume.leftover",
+                    json!({"intent": journal.intent, "peer": journal.peer.node, "reason": reason}),
+                );
+            }
+        }
         Resumed::Retired => {
             log("rollback.found_retired", json!({"intent": journal.intent}));
             copy_placed(env, &journal)?;
