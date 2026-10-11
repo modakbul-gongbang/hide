@@ -3,9 +3,11 @@
 // pinned Herdr in its resources folder, archived beside a SHA-256
 // checksum (the Electron release app PRD, D-03 and D-08).
 //
-// macOS builds hide.app, ad-hoc signed, as a zip. Windows x64 builds an
-// unsigned folder as a zip and Linux x64 an unsigned folder as a tar.gz
-// (operator decision 2026-10-03: no signing outside macOS for now). Each is
+// macOS builds hide.app as a zip, ad-hoc signed, or signed with the Developer
+// ID certificate and notarized when HIDE_MACOS_SIGNING asks for it
+// (macos-signing.mjs). Windows x64 builds an unsigned folder as a zip and
+// Linux x64 an unsigned folder as a tar.gz (operator decision 2026-10-03: no
+// signing outside macOS for now). Each is
 // built on its own system, because the release binaries come from that
 // system's cargo build; nothing is cross-built.
 //
@@ -21,6 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { packager } from "@electron/packager";
+import { assertNotarized, developerIdOptions, macosSigning } from "./macos-signing.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repo = path.resolve(root, "..");
@@ -91,6 +94,9 @@ const arch = process.arch;
 if (arch !== system.arch) throw new Error(`the pinned Herdr serves ${system.label} ${system.arch} only, and this machine is ${arch}`);
 const exe = platform === "win32" ? ".exe" : "";
 const version = resolveVersion();
+// Read before the build, so a release missing a signing secret fails in
+// seconds rather than after it.
+const signing = platform === "darwin" ? macosSigning(process.env) : null;
 
 // A failed run leaves no app or archive behind, stale or otherwise (B12).
 const packaged = path.join(out, `hide-${platform}-${arch}`);
@@ -169,6 +175,9 @@ const [outputDir] = await packager({
   extraResource,
   // Only the bundles and the status page ship; sources, tests and tooling do not.
   ignore: (file) => file !== "" && file !== "/package.json" && !file.startsWith("/dist"),
+  ...(signing?.mode === "developer-id"
+    ? developerIdOptions(signing, shipped.map(([name]) => name), path.join(resources, "entitlements"))
+    : {}),
 });
 
 // The packager answers with the per-platform directory. On macOS the bundle
@@ -186,7 +195,8 @@ for (const companion of herdr.companions) {
   if (!fs.existsSync(path.join(bundledResources, name))) throw new Error(`Herdr's ${name} did not land in ${bundledResources}`);
 }
 if (platform === "darwin") {
-  run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", bundle], { stdio: "inherit" });
+  // A Developer ID bundle was signed and notarized inside the packager.
+  if (signing.mode === "adhoc") run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", bundle], { stdio: "inherit" });
   run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundle], { stdio: "inherit" });
 }
 
@@ -204,6 +214,15 @@ if (platform === "darwin") {
 } else {
   // A tar keeps the executable bits a zip extracted by most tools would drop.
   run("tar", ["-czf", archive, "-C", out, path.basename(bundle)]);
+}
+// What a downloader gets is the archive, so Gatekeeper judges the app expanded from it.
+if (signing?.mode === "developer-id") {
+  try {
+    assertNotarized(archive, out);
+  } catch (error) {
+    fs.rmSync(archive, { force: true });
+    throw error;
+  }
 }
 const digest = createHash("sha256").update(fs.readFileSync(archive)).digest("hex");
 fs.writeFileSync(`${archive}.sha256`, `${digest}  ${archiveName}\n`);
