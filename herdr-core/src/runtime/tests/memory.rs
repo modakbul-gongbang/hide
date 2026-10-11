@@ -543,3 +543,47 @@ fn one_unsupported_runtime_does_not_disable_another_supported_runtime() {
 
     assert!(runtime.hooks_support_memory());
 }
+
+#[test]
+fn a_project_only_a_device_lists_is_kept_on_that_device_not_unregistered() {
+    // B16: "Memory는 이 Mac의 세션에만 씁니다. 이 pane은 mini에서 돌아갑니다."
+    let mut runtime = runtime();
+    let mut project = workspace(
+        "remote:mini:workspace:w",
+        "api",
+        "/srv/api",
+        vec![checkout(
+            "remote:mini:workspace:w",
+            "remote:mini:checkout:c",
+            "/srv/api",
+            None,
+        )],
+    );
+    project.device_id = "mini".into();
+    project.remote_target_id = Some("mini".into());
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: "mini".into(),
+        state: "connected".into(),
+        message: None,
+        herdr_version: None,
+        session: Some(RemoteSessionSnapshot {
+            workspaces: vec![project],
+            agents: Vec::new(),
+            active_tab_ids: Default::default(),
+            focused_workspace_id: None,
+            focused_checkout_id: None,
+            focused_tab_id: None,
+            focused_pane_id: None,
+            pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
+        }),
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+
+    assert!(runtime.open_project_memory(Some("remote:mini:workspace:w".into())));
+    assert!(matches!(
+        opened(&runtime).unwrap().unavailable,
+        Some(MemoryUnavailableSnapshot::RemoteDevice { .. })
+    ));
+}

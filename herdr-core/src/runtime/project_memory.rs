@@ -212,10 +212,7 @@ impl Runtime {
     /// here: Memory is kept for the Projects on this machine (B16).
     fn memory_folder(&self, workspace_id: &str) -> Result<String, MemoryUnavailableSnapshot> {
         let workspace = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
+            .catalog_workspaces()
             .find(|workspace| workspace.id == workspace_id)
             .ok_or(MemoryUnavailableSnapshot::Unregistered)?;
         if workspace.remote_target_id.is_some() || workspace.device_id != self.node.as_str() {
