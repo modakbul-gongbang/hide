@@ -1,5 +1,7 @@
-/* withhide.dev: a night-owl field by default, a day field under prefers-color-scheme: light.
-   One accent (lime) at a time; status colors appear only inside product mocks, as the app draws them.
+/* withhide.dev: the Owl Field palette by default, the mark's blue-gray field taken down to night,
+   and a day field under prefers-color-scheme: light.
+   Lime is the one primary accent; the field color is the secondary, kept to kickers, numbers and markers.
+   Status colors appear only inside product mocks, as the app draws them.
    The owl illustrations carry the warmth; type and shapes stay calm and round. */
 
 @font-face {
@@ -18,26 +20,26 @@
 
 :root {
   color-scheme: dark light;
-  --bg: #0a0b0c;
-  --bg-raised: #0f1112;
-  --surface: #141617;
-  --surface-2: #1b1e20;
-  --line: #222629;
-  --line-strong: #30363a;
-  --ink: #f4f4f6;
-  --muted: #959fa3;
-  --faint: #5d666a;
+  --bg: #0d191b;
+  --bg-raised: #112023;
+  --surface: #15272a;
+  --surface-2: #1b3034;
+  --line: #24383c;
+  --line-strong: #31494e;
+  --ink: #f1f6f5;
+  --muted: #9cb1b3;
+  --faint: #5f7679;
   --lime: #b9ff66;
   --accent-text: #b9ff66;
-  --field: #b7c9cc;
+  --second: #b7c9cc;
   --focus: #b9ff66;
   --btn-bg: #b9ff66;
   --btn-fg: #101112;
-  --btn-hover-bg: #f4f4f6;
-  --glow-a: rgba(185, 255, 102, 0.2);
-  --glow-b: rgba(183, 201, 204, 0.14);
-  --dot: rgba(244, 244, 246, 0.07);
-  --shot-shadow: 0 40px 120px -30px rgba(0, 0, 0, 0.9), 0 0 0 1px var(--line-strong);
+  --btn-hover-bg: #f1f6f5;
+  --glow-a: rgba(185, 255, 102, 0.18);
+  --glow-b: rgba(183, 201, 204, 0.22);
+  --dot: rgba(241, 246, 245, 0.08);
+  --shot-shadow: 0 40px 120px -30px rgba(0, 0, 0, 0.75), 0 0 0 1px var(--line-strong);
 
   /* Status colors, as the app's status marks use them (docs/status-model.md). */
   --st-needs: #f5c451;
@@ -76,7 +78,7 @@
   --radius: 14px;
   --radius-lg: 20px;
   --radius-pill: 999px;
-  --owl-halo: rgba(183, 201, 204, 0.16);
+  --owl-halo: rgba(183, 201, 204, 0.2);
 }
 
 @media (prefers-color-scheme: light) {
@@ -91,6 +93,7 @@
     --muted: #535b5f;
     --faint: #8a9397;
     --accent-text: #3e6b06;
+    --second: #4f6f76;
     --focus: #344b51;
     --btn-bg: #101112;
     --btn-fg: #f4f4f6;
@@ -152,7 +155,7 @@ code, .mono { font-family: var(--font-mono); }
   font-weight: var(--w-medium);
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--second);
 }
 .label::before { content: ""; width: 40px; height: 1px; background: currentColor; opacity: 0.6; }
 .label.bare::before { display: none; }
@@ -237,7 +240,7 @@ code, .mono { font-family: var(--font-mono); }
 .hero .actions { justify-content: center; margin-top: 40px; }
 .hero-meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 28px; margin-top: 24px; font-family: var(--font-mono); font-size: var(--t-label); letter-spacing: 0.06em; color: var(--faint); }
 .hero-meta span { display: inline-flex; align-items: center; gap: 8px; }
-.hero-meta span::before { content: ""; width: 5px; height: 5px; border-radius: 1px; background: var(--accent-text); opacity: 0.8; }
+.hero-meta span::before { content: ""; width: 5px; height: 5px; border-radius: 1px; background: var(--second); opacity: 0.8; }
 
 /* Hero product shot: the real app, lifted on a quiet aurora. */
 .stage { position: relative; margin-top: 88px; }
@@ -297,12 +300,12 @@ code, .mono { font-family: var(--font-mono); }
 .pillar-copy:has(.owl) { position: relative; }
 .pillar-copy .owl { filter: drop-shadow(0 18px 28px rgba(0, 0, 0, 0.25)); }
 .pillar-copy .owl + .num { margin-top: 0; }
-.pillar-copy .num { font-family: var(--font-mono); font-size: var(--t-label); letter-spacing: 0.16em; color: var(--accent-text); }
+.pillar-copy .num { font-family: var(--font-mono); font-size: var(--t-label); letter-spacing: 0.16em; color: var(--second); }
 .pillar-copy h3 { margin-top: 18px; font-size: var(--t-title); line-height: var(--lh-head); letter-spacing: -0.02em; font-weight: var(--w-semibold); }
 .pillar-copy p { max-width: 460px; margin-top: 20px; color: var(--muted); }
 .pillar-copy ul { margin-top: 24px; display: grid; gap: 10px; font-size: var(--t-small); color: var(--muted); }
 .pillar-copy li { position: relative; padding-left: 18px; }
-.pillar-copy li::before { content: ""; position: absolute; left: 0; top: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-text); }
+.pillar-copy li::before { content: ""; position: absolute; left: 0; top: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--second); }
 .pillar-copy code, .paths code { padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-2); font-size: 0.9em; color: var(--ink); white-space: nowrap; }
 .soon { display: inline-block; margin-left: 12px; padding: 3px 9px; border: 1px solid var(--line-strong); border-radius: 999px; font-family: var(--font-mono); font-size: var(--t-label); font-weight: var(--w-medium); letter-spacing: 0.1em; vertical-align: middle; color: var(--muted); }
 
@@ -464,7 +467,7 @@ code, .mono { font-family: var(--font-mono); }
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: var(--space-xl); border-block: 1px solid var(--line); }
 .stats > div { padding: 40px 32px 40px 0; }
 .stats > div + div { padding-left: 32px; border-left: 1px solid var(--line); }
-.stats dt { font-family: var(--font-mono); font-size: var(--t-label); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.stats dt { font-family: var(--font-mono); font-size: var(--t-label); letter-spacing: 0.12em; text-transform: uppercase; color: var(--second); }
 .stats .num { margin-top: 14px; font-size: var(--t-title); font-weight: var(--w-semibold); letter-spacing: -0.035em; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .stats dd + dd { margin-top: 12px; font-size: var(--t-small); color: var(--muted); }
 .stats-note { margin-top: 20px; font-size: var(--t-small); color: var(--faint); }

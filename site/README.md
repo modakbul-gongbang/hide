@@ -71,7 +71,8 @@ The site has its own small CSS scale and brand palette; it does not consume or r
 The workspace render is assembled from `design/hide-screens.pen` parts (the Projects sidebar, the Workspace toolbar and Agent column, the Sessions panel) with two terminal panes and example session titles written for the page; the Factory render is the Line sheet of that file with its text switched to the app's English catalog (`web/src/i18n/resources/`) and the example Tasks translated.
 Both were built in a scratch copy through the Pen CLI and exported at 2x; the committed `.pen` files are unchanged.
 `assets/owls/` holds the owl character's poses, generated with the approved mark as the style reference and keyed to transparency; [BRAND.md](../docs/BRAND.md#the-owl-character) owns what the character may and may not do, and the mark stays the unchanged `hide-mark.png` in the header and favicon.
-The page is dark by default and follows `prefers-color-scheme` for a light variant that keeps the brand palette.
+The page is dark by default, on the Owl Field palette: the mark's blue-gray field taken down to night, lime as the one primary accent and the field color as the secondary on kickers, numbers and markers.
+It follows `prefers-color-scheme` for a light variant that keeps the same primary and secondary.
 
 ## Remaining publication work
 
