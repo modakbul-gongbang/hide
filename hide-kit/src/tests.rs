@@ -946,7 +946,7 @@ fn the_standalone_hcoord_plugin_is_unlinked_once() {
     let fixture = Fixture::new();
     fixture.herdr.plugins.lock().unwrap().push(plugin(
         HCOORD_PLUGIN_ID,
-        "/work/herdr-ide/plugins/hcoord",
+        "/work/hide/plugins/hcoord",
         "local",
     ));
 

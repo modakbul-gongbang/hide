@@ -243,15 +243,15 @@ describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
   it("holds this Mac's issues and pull requests, a pull request once however many places name it", () => {
     const entries = searchEntries(RICH, t);
     expect(entries.filter((entry) => entry.kind === "pr").map((entry) => entry.id)).toEqual(["pr:w1:275", "pr:w1:260"]);
-    expect(entries.filter((entry) => entry.kind === "issue").map((entry) => entry.id)).toEqual(["issue:github:acme/herdr-ide#273"]);
+    expect(entries.filter((entry) => entry.kind === "issue").map((entry) => entry.id)).toEqual(["issue:github:acme/hide#273"]);
   });
 
   it("finds a pull request by number, title or branch and an issue by number or title, not by words only a body would hold (B13)", () => {
     expect(found("#275")).toContain("pr:w1:275");
     expect(found("sandbox refusals")).toContain("pr:w1:275");
     expect(found("sandbox-letters")).toContain("pr:w1:275");
-    expect(found("273")).toContain("issue:github:acme/herdr-ide#273");
-    expect(found("internal")).toContain("issue:github:acme/herdr-ide#273");
+    expect(found("273")).toContain("issue:github:acme/hide#273");
+    expect(found("internal")).toContain("issue:github:acme/hide#273");
     expect(found("zzzzz")).toEqual([]);
   });
 
@@ -259,7 +259,7 @@ describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
     const withTwin = structuredClone(RICH) as typeof RICH;
     withTwin.navigator!.workspaces![0]!.pull_requests = [{ ...(RICH.navigator!.workspaces![0]!.pull_requests![0]!), number: 273, title: "Unrelated 275 title" }];
     const ranked = filterEntries(searchEntries(withTwin, t), "#273").map((entry) => entry.id);
-    expect(ranked.slice(0, 2)).toEqual(["issue:github:acme/herdr-ide#273", "pr:w1:273"]);
+    expect(ranked.slice(0, 2)).toEqual(["issue:github:acme/hide#273", "pr:w1:273"]);
     // A bare number holds only rows whose text holds the digits.
     expect(filterEntries(searchEntries(RICH, t), "273").every((entry) => `${entry.title} ${entry.subtitle}`.includes("273"))).toBe(true);
   });
@@ -279,7 +279,7 @@ describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
 
   it("keeps the 80 row cap", () => {
     const many = structuredClone(RICH) as typeof RICH;
-    many.navigator!.workspaces![0]!.tasks!.tasks = Array.from({ length: 120 }, (_, index) => ({ key: `github:acme/herdr-ide#${index + 1000}`, source: "github", id: `#${index + 1000}`, url: null, title: `sandbox issue ${index}`, open: true }));
+    many.navigator!.workspaces![0]!.tasks!.tasks = Array.from({ length: 120 }, (_, index) => ({ key: `github:acme/hide#${index + 1000}`, source: "github", id: `#${index + 1000}`, url: null, title: `sandbox issue ${index}`, open: true }));
     expect(filterEntries(searchEntries(many, t), "sandbox").length).toBe(80);
   });
 

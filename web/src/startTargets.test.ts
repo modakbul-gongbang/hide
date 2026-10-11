@@ -18,8 +18,8 @@ function workspace(id: string, label: string, device: string, checkouts: Checkou
 
 const device = (id: string, label: string, kind: "local" | "remote"): Device => ({ id, label, kind, state: kind === "local" ? "local" : "ready" }) as Device;
 
-const HERDR_MAIN = checkout("c-main", "w-herdr", "/herdr-ide", { is_primary: true, label: "main" });
-const HERDR_TREE = checkout("c-tree", "w-herdr", "/herdr-ide.worktrees/rail", { is_worktree: true, label: "rail" });
+const HIDE_MAIN = checkout("c-main", "w-hide", "/hide", { is_primary: true, label: "main" });
+const HIDE_TREE = checkout("c-tree", "w-hide", "/hide.worktrees/rail", { is_worktree: true, label: "rail" });
 const SASU_MAIN = checkout("c-sasu", "w-sasu", "/sasu", { is_primary: true, label: "main" });
 const MINI_MAIN = checkout("m-main", "mw", "/srv/app", { is_primary: true, label: "main" });
 
@@ -35,7 +35,7 @@ function rest(over: { front?: string; connected?: boolean; miniSession?: boolean
       focused_checkout_id: over.focusedCheckout ?? "c-main",
       devices: [device("local", "This Mac", "local"), device("mini", "mini", "remote"), device("box", "build-box", "remote")],
       workspaces: [
-        workspace("w-herdr", "herdr-ide", "local", [HERDR_MAIN, HERDR_TREE]),
+        workspace("w-hide", "hide", "local", [HIDE_MAIN, HIDE_TREE]),
         workspace("w-sasu", "sasu", "local", [SASU_MAIN]),
         workspace("w-home", "hide", "local", [checkout("h1", "w-home", "/Users/example/hide")], { is_home: true }),
       ],
@@ -61,13 +61,13 @@ const keys = (rest: SnapshotRest, screen: Screen | null) => startTargets(rest, s
 describe("start target default (PRD home-device-rail D-19, B25)", () => {
   it("is the checkout in front, a worktree included", () => {
     const workspaceScreen: Screen = { kind: "workspace" };
-    expect(startTargets(rest(), workspaceScreen).defaultKey).toBe(checkoutKey("local", "/herdr-ide"));
-    expect(startTargets(rest({ focusedCheckout: "c-tree" }), workspaceScreen).defaultKey).toBe(checkoutKey("local", "/herdr-ide.worktrees/rail"));
+    expect(startTargets(rest(), workspaceScreen).defaultKey).toBe(checkoutKey("local", "/hide"));
+    expect(startTargets(rest({ focusedCheckout: "c-tree" }), workspaceScreen).defaultKey).toBe(checkoutKey("local", "/hide.worktrees/rail"));
   });
 
   it("is a project Overview's main checkout", () => {
     expect(overviewTargets(rest(), "w-sasu").defaultKey).toBe(checkoutKey("local", "/sasu"));
-    expect(overviewTargets(rest(), "w-herdr").defaultKey).toBe(checkoutKey("local", "/herdr-ide"));
+    expect(overviewTargets(rest(), "w-hide").defaultKey).toBe(checkoutKey("local", "/hide"));
   });
 
   it("is the front device's Home when no project is in front", () => {
@@ -108,7 +108,7 @@ describe("start target default (PRD home-device-rail D-19, B25)", () => {
 describe("start target menu (B26)", () => {
   it("lists the front device's Home and checkouts, then each other device's Home and checkouts", () => {
     expect(keys(rest(), { kind: "main" })).toEqual([
-      [homeKey("local"), checkoutKey("local", "/herdr-ide"), checkoutKey("local", "/herdr-ide.worktrees/rail"), checkoutKey("local", "/sasu")],
+      [homeKey("local"), checkoutKey("local", "/hide"), checkoutKey("local", "/hide.worktrees/rail"), checkoutKey("local", "/sasu")],
       [homeKey("mini"), checkoutKey("mini", "/srv/app")],
       [homeKey("box")],
     ]);
@@ -121,12 +121,12 @@ describe("start target menu (B26)", () => {
 
   it("never lists the Home workspace among checkouts", () => {
     const all = startTargets(rest(), null).groups.flatMap((group) => group.items);
-    expect(all.some((item) => item.kind === "checkout" && item.checkoutPath.endsWith("/hide"))).toBe(false);
+    expect(all.some((item) => item.kind === "checkout" && ["w-home", "mh"].includes(item.workspaceId))).toBe(false);
   });
 
   it("names the front device's items plainly and the others' with their device", () => {
     const labels = startTargets(rest(), null).groups.map((group) => group.items.map((item) => item.label));
-    expect(labels[0]).toEqual(["Home", "herdr-ide · main", "herdr-ide · rail", "sasu · main"]);
+    expect(labels[0]).toEqual(["Home", "hide · main", "hide · rail", "sasu · main"]);
     expect(labels[1]).toEqual(["mini · Home", "mini · app · main"]);
     // Home is the one word this module words itself.
     const ko = targetsWith(rest(), null, initializeInterfaceI18n("ko").t).groups.map((group) => group.items[0]!.label);

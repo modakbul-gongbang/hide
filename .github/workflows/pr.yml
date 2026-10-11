@@ -42,8 +42,10 @@
 # rest of the web end-to-end is the same code on every system, so the move of
 # the web end-to-end costs no macOS coverage, only its delay. On Windows, `windows check`
 # compiles the workspace and runs the daemon's and the app's suites there,
-# beside the OS contract's Windows leg (issue #293), and `windows e2e` runs the
-# browser `@platform` tests.
+# beside the OS contract's Windows leg (issue #293), `windows e2e` runs the
+# browser `@platform` tests, and `windows desktop` the Electron app's
+# `@platform` tests (`desktop-e2e.yml`, the workflow the macOS `desktop e2e`
+# lane calls too).
 #
 # Short jobs are merged because each job costs a runner start, a checkout and a
 # place in the queue: one `checks` job runs the web shell's and the desktop
@@ -316,11 +318,12 @@ jobs:
         run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-kit)'
       - name: Agent hooks, their Windows entries run through PowerShell
         # The hook file writer, the entries Claude Code and Codex run on
-        # Windows, and the helper's stdin deadline. It stands on its own, so
+        # Windows, OpenCode's plugin and Pi's and omp's extension run in
+        # Node, and the helper's stdin deadline. It stands on its own, so
         # it runs whatever the step above answered.
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 15
-        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-agent-hooks) & (kind(lib) | kind(bin) | test(/^(hook_deadline|windows_hook_command)::/))'
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-agent-hooks) & (kind(lib) | kind(bin) | test(/^(hook_deadline|windows_hook_command|windows_scripts)::/))'
       - name: Fetch the pinned Herdr runtime
         id: herdr
         # The proof below stands on its own, so it runs whatever the step
@@ -474,82 +477,41 @@ jobs:
       contents: read
       issues: write
 
+  # The Electron app on macOS, the system it is written against: the whole
+  # suite, for a change to the desktop app or the web code it drives.
   desktop-e2e:
     name: desktop e2e
     needs: plan
     if: contains(fromJSON(needs.plan.outputs.lanes), 'desktop-e2e')
-    runs-on: macos-15
-    timeout-minutes: 30
+    uses: ./.github/workflows/desktop-e2e.yml
     permissions:
       contents: read
       issues: write
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Build hide and hided for the desktop app
-        # hide-agent-hooks too, which the fixture's app bundle links beside
-        # them: the home-layout spec stages every binary the packaged app
-        # carries, and a device runs hided itself as its node.
-        run: bash scripts/verify-cargo.sh cli
-      - name: Install dependencies
-        run: bash scripts/verify-web.sh install
-      - name: Install the pinned Electron runtime
-        id: electron
-        timeout-minutes: 5
-        # Acquire once before the suite, preserving an upstream failure here.
-        run: bash scripts/verify-web.sh desktop electron-install
-      - name: Build the web shell
-        # The desktop app serves web/dist through the hided it starts.
-        run: bash scripts/verify-web.sh web build
-      - name: Install Playwright Chromium
-        # The browser spec opens a page in Chromium beside the Electron app.
-        run: bash scripts/verify-web.sh desktop playwright-install
-      - name: Fetch the pinned Herdr runtime
-        id: herdr
-        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"
-      - name: Compare the binary schema and version with the pin on macOS
-        run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
-      - name: Desktop app end-to-end
-        # The desktop app against an isolated Herdr, starting its own hided
-        # through the hide CLI built above. Electron downloads its runtime on
-        # first launch outside CI; this lane acquires it once before the suite.
-        timeout-minutes: 20
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
-        run: |
-          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          bash scripts/verify-web.sh desktop e2e
-      - name: Report flaky and failed tests
-        # A failed test is retried once; see web-e2e.yml.
-        id: flaky
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        timeout-minutes: 5
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json
-      - name: Keep the e2e run's logs
-        # A flaky run keeps them as a failed one does; see web-e2e.yml.
-        if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: hide-desktop-e2e-logs
-          path: |
-            ${{ runner.temp }}/hide-e2e
-            desktop/test-results
-          if-no-files-found: ignore
+    with:
+      lane: macos
+      runner: macos-15
+      herdr-platform: macos-aarch64
+
+  # The Electron app on Windows: the desktop tests tagged `@platform` (what
+  # the host does differently there: `hide connect` starting hided, the
+  # window's lifetime, the CLI's name and places, the wire path, the file
+  # manager's reveal), for a change to the desktop app, the web code it
+  # drives or what differs by system. About six minutes on a warm cache
+  # (nightly, 2026-10-10). The window it draws is kept as the run's artifact.
+  windows-desktop:
+    name: windows desktop
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'windows-desktop')
+    uses: ./.github/workflows/desktop-e2e.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      lane: windows
+      runner: windows-latest
+      herdr-platform: windows-x86_64
+      grep: "@platform"
+      keep-screenshots: true
 
   package:
     name: package
@@ -565,7 +527,7 @@ jobs:
 
   verify:
     name: verify
-    needs: [plan, policy, rust, checks, os-contract, os-contract-macos, windows-check, windows-e2e, web-e2e, remote-mailbox, desktop-e2e, package]
+    needs: [plan, policy, rust, checks, os-contract, os-contract-macos, windows-check, windows-e2e, windows-desktop, web-e2e, remote-mailbox, desktop-e2e, package]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

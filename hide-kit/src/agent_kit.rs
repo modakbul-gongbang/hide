@@ -218,15 +218,6 @@ fn plugin_state(
 ) -> (ComponentState, Option<String>) {
     let file = plugin::file(dialect);
     let noun = file.noun;
-    if let Err(why) = plugin::supported_here() {
-        return (
-            ComponentState::Absent,
-            Some(format!(
-                "{}'s {noun} is not written here: {why}",
-                adapter.label
-            )),
-        );
-    }
     let helper = helper(target);
     let observed = file.observe(&target.home, &helper);
     if !matches!(
@@ -426,7 +417,6 @@ fn observe_dirs(
         .map(|dir| {
             let wanted = ADAPTERS.iter().any(|adapter| {
                 adapter.skill_dir == dir
-                    && adapter.skill_supported()
                     && enabled(record, scope, adapter)
                     && detection.installed(adapter)
                     && dir.writable(&target.home)
@@ -450,13 +440,7 @@ fn report_agent(
     parts: &[PartView],
 ) -> AgentReport {
     let installed = detection.installed(adapter);
-    // The switch works while either piece can be put here: Codex on a system
-    // with no documented skill folder still has its hook to switch off.
-    let availability = availability(
-        installed,
-        adapter.skill_supported(),
-        adapter.hook_supported(),
-    );
+    let availability = availability(installed);
     let skill = if !on {
         let location = skill_location(adapter.skill_dir, &target.home);
         // A switch-off whose removal failed, or that left Hide's stub behind,
@@ -482,15 +466,6 @@ fn report_agent(
         PieceReport {
             state: ComponentState::Absent,
             reason: Some(not_found(adapter)),
-            location: None,
-        }
-    } else if !adapter.skill_supported() {
-        PieceReport {
-            state: ComponentState::Absent,
-            reason: Some(format!(
-                "{}'s documentation gives no skill folder for this system",
-                adapter.label
-            )),
             location: None,
         }
     } else {
@@ -805,7 +780,6 @@ pub(crate) fn apply(
     // only on by default needs its program found to count.
     let live_reads_shared = ADAPTERS.iter().any(|adapter| {
         adapter.skill_dir == SkillDir::Shared
-            && adapter.skill_supported()
             && enabled(record, scope, adapter)
             && (detection.installed(adapter) || record.agent_choice(adapter.id) == Some(true))
     });
@@ -896,7 +870,7 @@ pub(crate) fn apply(
         }
         // An agent whose program is gone keeps the file Hide wrote: only the
         // operator's switch takes it out (D-20, D-26).
-        if !detection.installed(adapter) || plugin::supported_here().is_err() {
+        if !detection.installed(adapter) {
             continue;
         }
         let helper = helper(target);
@@ -933,8 +907,7 @@ pub(crate) fn apply(
                 .filter(move |adapter| adapter.skill_dir == dir)
         };
         let wanted = readers().any(|adapter| {
-            adapter.skill_supported()
-                && enabled(record, scope, adapter)
+            enabled(record, scope, adapter)
                 && detection.installed(adapter)
                 && dir.writable(&target.home)
         });

@@ -64,7 +64,6 @@ const SessionsContent = memo(function SessionsContent({ model, actions, folds, f
 }) {
   const { t } = useInterfaceTranslation();
   const [resolvedOpen, setResolvedOpen] = useState(false);
-  const [idleOpen, setIdleOpen] = useState(false);
   // Siblings past five wait behind "N more" until asked, for this panel only, as in the sidebar.
   const [shownAll, setShownAll] = useState<ReadonlySet<string>>(NO_PANES);
   const groups = model.scope?.sessions.groups ?? [];
@@ -72,13 +71,13 @@ const SessionsContent = memo(function SessionsContent({ model, actions, folds, f
   const opened = useMemo(() => new Set(folds), [folds]);
   const byPane = useMemo(() => new Map(model.agents.map((row) => [row.pane_id, row])), [model.agents]);
   // Each shown root's drawn tree, so the selection knows every row the panel draws.
-  const sections = useMemo(() => groups.map(({ group, members, more }) => {
-    const shown = group === "resolved" && !resolvedOpen ? [] : [...members, ...(idleOpen ? more : [])];
-    return { group, count: members.length + more.length, more: more.length, trees: shown.map((member) => {
+  const sections = useMemo(() => groups.map(({ group, members }) => {
+    const shown = group === "resolved" && !resolvedOpen ? [] : members;
+    return { group, count: members.length, trees: shown.map((member) => {
       const row = sessionMember(model, member);
       return { row, lines: sessionTreeLines(row.agent, byPane, opened, shownAll) };
     }) };
-  }), [groups, resolvedOpen, idleOpen, model, byPane, opened, shownAll]);
+  }), [groups, resolvedOpen, model, byPane, opened, shownAll]);
   const selected = useMemo(() => {
     const drawn = new Set(sections.flatMap(({ trees }) => trees.flatMap(({ lines }) => lines.flatMap((line) => (line.kind === "agent" ? [line.row.agent.pane_id] : [])))));
     return sidebarFocusPane(focusedPane, model.agents, drawn);
@@ -96,7 +95,7 @@ const SessionsContent = memo(function SessionsContent({ model, actions, folds, f
       {!model.available ? <p className="px-md py-sm text-caption text-muted-foreground" role="status">{model.reason ?? t("devices.rail.notConnected")}</p> : null}
       <div className="min-h-0 flex-1 overflow-y-auto px-sm pb-md" onKeyDown={moveFocus}>
         {groups.length === 0 ? <p className="px-xs py-md text-caption text-muted-foreground" data-sessions-empty="true">{t("requests.nothingToDo")}</p> : null}
-        {sections.map(({ group, count, more, trees }) => {
+        {sections.map(({ group, count, trees }) => {
           const collapsible = group === "resolved";
           const expanded = collapsible ? resolvedOpen : true;
           return <section key={group} data-session-group={group} aria-label={t(GROUP_LABEL[group])}>
@@ -107,11 +106,6 @@ const SessionsContent = memo(function SessionsContent({ model, actions, folds, f
             </button>
             {expanded ? <ul className="flex min-w-0 flex-col">
               {trees.map(({ row, lines }) => <SessionTree key={`${row.project.id}:${row.agent.pane_id}`} row={row} lines={lines} model={model} actions={actions} byPane={byPane} opened={opened} selected={selected} onShowAll={showAll} />)}
-              {more > 0 && !idleOpen ? <li>
-                <button type="button" data-session-focus="more" data-session-more={more} onClick={() => setIdleOpen(true)} className="flex w-full items-center gap-xs rounded-xs px-xs py-sm text-left text-caption text-subtle-foreground outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring">
-                  <ChevronRightIcon className="size-(--size-icon-sm)" /><span>{t("agentSessions.foldedMore", { count: more })}</span>
-                </button>
-              </li> : null}
             </ul> : null}
           </section>;
         })}
@@ -178,7 +172,7 @@ const SessionRow = memo(function SessionRow({ row, model, actions, open, selecte
         {needsYou ? null : <AgentPrMark agent={agent} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: project.id, url: pull.url, number: pull.number })} />}
         {needsYou || open ? null : <DescendantMark agent={agent} />}
         <Elapsed since={agent.state.request_since} className="shrink-0 text-micro text-muted-foreground" />
-        {!agent.resolved ? <Hint label={t("agentSessions.resolve")}><button type="button" disabled={!model.available} aria-label={t("agentSessions.resolve")} data-session-resolve={agent.pane_id} className="shrink-0 rounded-xs p-xxs text-muted-foreground opacity-0 outline-none hover:bg-secondary group-hover/session:opacity-100 group-focus-within/session:opacity-100 focus-visible:ring-1 focus-visible:ring-ring hoverless:opacity-100" onClick={(event) => {event.stopPropagation(); actions.resolveSession(agent.pane_id);}}><CheckIcon className="size-(--size-icon-sm)" /></button></Hint> : null}
+        {!agent.resolved ? <Hint label={t("agentSessions.resolve")}><button type="button" disabled={!model.available} aria-label={t("agentSessions.resolve")} data-session-resolve={agent.pane_id} className="shrink-0 rounded-xs p-xxs text-muted-foreground opacity-0 outline-none hover:bg-secondary group-hover/session:opacity-100 group-focus-within/session:opacity-100 focus-visible:ring-1 focus-visible:ring-ring hoverless:opacity-100" onClick={(event) => {event.stopPropagation(); actions.resolveSession(agent.pane_id);}}><CheckIcon className="size-(--size-icon-sm)" /></button></Hint> : <ResolveLane />}
       </div>
       <SecondLine agent={agent} />
     </div>
@@ -214,10 +208,20 @@ function ChildRow({ parent, child, depth, model, actions, place, open, selected,
         <AgentPrMark agent={child} staleness={staleness} disabled={!model.available} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: workspace, url: pull.url, number: pull.number })} />
         {open ? null : <DescendantMark agent={child} />}
         <Elapsed since={child.state.request_since} className="shrink-0 text-micro text-muted-foreground" />
+        <ResolveLane />
       </div>
       <SecondLine agent={child} branch />
     </div>
   </li>;
+}
+
+/**
+ * The Resolve button's slot on a row that has no Resolve button (a child, a
+ * resolved root), so every row's time stands in one column, as the sidebar's
+ * fold slot does.
+ */
+function ResolveLane() {
+  return <span aria-hidden="true" data-resolve-slot="true" className="box-content size-(--size-icon-sm) shrink-0 p-xxs" />;
 }
 
 /** Past five siblings, the rest wait behind one line at their depth, as in the sidebar (B12). */
@@ -247,15 +251,19 @@ function SecondLine({ agent, branch: withBranch = false }: { agent: AgentRow; br
   if (!session.line && !ask && !branch) return null;
   const blocked = agent.status_code === "error";
   return <div className={cn("flex min-w-0 gap-xs text-micro", blocked ? "text-warning" : "text-subtle-foreground")} data-session-line={ask ? "ask" : blocked ? "blocked" : session.unfinished ? "unfinished" : session.line ? "label" : "branch"}>
-    {branch ? <BranchText agent={agent} branch={branch} /> : null}
+    {branch ? <BranchText agent={agent} branch={branch} alone={!ask && !session.line} /> : null}
     {ask ? <AskLine ask={ask} className="min-w-0 flex-1" /> : session.line ? <span className="min-w-0 truncate" title={session.line}>{session.line}</span> : null}
   </div>;
 }
 
-/** The child's branch, dim mono, cut with … past two fifths of the line; the whole branch and path in its tooltip. */
-function BranchText({ agent, branch }: { agent: AgentRow; branch: string }) {
+/**
+ * The child's branch, dim mono, cut with … past two fifths of the line when a
+ * label follows and at the line's end when it stands alone; the whole branch
+ * and path in its tooltip.
+ */
+function BranchText({ agent, branch, alone }: { agent: AgentRow; branch: string; alone: boolean }) {
   const path = useShellStore((state) => checkoutPathOfPane(state.rest, agent.pane_id));
-  return <span className="max-w-2/5 shrink-0 truncate font-mono text-muted-foreground" data-session-branch={agent.pane_id}
+  return <span className={cn("truncate font-mono text-muted-foreground", alone ? "min-w-0" : "max-w-2/5 shrink-0")} data-session-branch={agent.pane_id}
     title={[agent.state.branch_badge, path].filter(Boolean).join("\n")}>{branch}</span>;
 }
 

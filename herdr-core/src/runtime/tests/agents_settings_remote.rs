@@ -7,15 +7,15 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
     // The checkout's owner on the device is w1.
     let mut owned = checkout(
         projected_workspace_id,
-        &crate::device_catalog::checkout_id("mini", "/tmp/herdr-ide-remote-tab"),
-        "/tmp/herdr-ide-remote-tab",
+        &crate::device_catalog::checkout_id("mini", "/tmp/hide-remote-tab"),
+        "/tmp/hide-remote-tab",
         None,
     );
     owned.owner_workspace_id = Some("w1".to_owned());
     let mut remote_workspace = workspace(
         projected_workspace_id,
         "Fixture",
-        "/tmp/herdr-ide-remote-tab",
+        "/tmp/hide-remote-tab",
         vec![owned],
     );
     remote_workspace.remote_target_id = Some("mini".to_owned());
@@ -51,7 +51,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
     runtime.remote_tab_creations_in_flight.insert((
         "mini".to_owned(),
         "w1".to_owned(),
-        "/tmp/herdr-ide-remote-tab".to_owned(),
+        "/tmp/hide-remote-tab".to_owned(),
         "New tab".to_owned(),
     ));
 
@@ -63,7 +63,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
         request: RemoteControlRequest::CreateTab {
             workspace_id: projected_workspace_id.to_owned(),
             checkout_id: None,
-            cwd: "/tmp/herdr-ide-remote-tab".to_owned(),
+            cwd: "/tmp/hide-remote-tab".to_owned(),
             label: "New tab".to_owned(),
         },
     }));

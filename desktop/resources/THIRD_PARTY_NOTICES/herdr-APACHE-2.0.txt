@@ -8,7 +8,7 @@ https://github.com/herdrdev/herdr/releases/tag/v0.9.3
 
 BEGIN HERDR PROVENANCE
 This application distributes the upstream Herdr release v0.9.3 from herdrdev/herdr.
-The bundled binary is not modified by hide.
+The bundled binary's code is not modified by hide; on macOS a release replaces only its ad-hoc signature with hide's Developer ID one, which notarization requires.
 hide monitors upstream stable through herdr-update.yml; updates must pass contract and runtime checks.
 END HERDR PROVENANCE
 

@@ -56,7 +56,7 @@ export function buildAgentTreeParts(tokens) {
   // variant hides the number where the row already names the pull request.
   const prIcon = frame(AGENT_TREE_MASTERS.prIcon, 'PR mark', {reusable: true, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', width: 'fit_content', height: PR}, [
     icon('ath-pr-g', 'git-pull-request', {size: PR, fill: '$--pr-failed'}),
-    caption('ath-pr-n', '#924', '$--subtle-foreground', {mono: true}),
+    caption('ath-pr-n', '924', '$--subtle-foreground', {mono: true}),
     {...caption('ath-pr-more', '+1', '$--muted-foreground', {mono: true}), enabled: false},
   ]);
 

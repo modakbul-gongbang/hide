@@ -9,7 +9,7 @@ const FRAME = `{
   "type": "start_catalog",
   "targets": [
     {"id": "home:local", "device_id": "local", "place": null, "device_label": null, "connected": true},
-    {"id": "c1", "device_id": "local", "place": "herdr-ide · main", "device_label": null, "connected": true},
+    {"id": "c1", "device_id": "local", "place": "hide · main", "device_label": null, "connected": true},
     {"id": "home:mini", "device_id": "mini", "place": null, "device_label": "mini", "connected": false}
   ],
   "kinds": [

@@ -1,0 +1,150 @@
+# The Electron desktop app end to end on one system: the debug build of the
+# host, starting its own hided through the `hide` CLI built here, against an
+# isolated pinned Herdr for that system. `pr.yml` calls it for the macOS
+# suite (`desktop-e2e`) and for the Windows `@platform` tests
+# (`windows-desktop`), and `nightly.yml` for all three systems; each caller
+# names the runner, the Herdr asset and which tests run.
+#
+# The window the tests draw is kept as the run's artifact when the caller asks
+# for it (`keep-screenshots`), so a reviewer can see what the app drew on a
+# system no maintainer has at hand; a run whose suite passed without one fails
+# that step. Every run keeps its logs when a test failed or was flaky.
+name: desktop e2e lane
+
+on:
+  workflow_call:
+    inputs:
+      lane:
+        description: Names the lane in the job name and the artifact names.
+        type: string
+        required: true
+      runner:
+        description: The GitHub-hosted runner label.
+        type: string
+        required: true
+      herdr-platform:
+        description: The pinned Herdr asset to run, as `fetch-herdr-runtime.sh --platform` names it.
+        type: string
+        required: true
+      grep:
+        description: Playwright `--grep` filter; empty runs every test.
+        type: string
+        required: false
+        default: ""
+      keep-screenshots:
+        description: Keep the screenshots the tests take as an artifact, and fail when the suite passed without one.
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  e2e:
+    name: desktop e2e ${{ inputs.lane }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install zsh and the virtual display on Linux
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: sudo apt-get install -y --no-install-recommends zsh xvfb
+      - name: Build the desktop app's daemon and kit binaries
+        # hide-agent-hooks too, which the fixture's app bundle links beside
+        # them: the home-layout spec stages every binary the packaged app
+        # carries, and a device runs hided itself as its node.
+        timeout-minutes: 20
+        run: bash scripts/verify-cargo.sh cli
+      - name: Install dependencies
+        timeout-minutes: 5
+        run: bash scripts/verify-web.sh install
+      - name: Install the pinned Electron runtime
+        # Acquired once before the suite, so an upstream failure shows here.
+        timeout-minutes: 5
+        run: bash scripts/verify-web.sh desktop electron-install
+      - name: Build the web shell
+        # The desktop app serves web/dist through the hided it starts.
+        timeout-minutes: 5
+        run: bash scripts/verify-web.sh web build
+      - name: Install Playwright Chromium
+        # The browser spec opens a page in Chromium beside the Electron app.
+        timeout-minutes: 5
+        run: bash scripts/verify-web.sh desktop playwright-install
+      - name: Fetch the pinned Herdr runtime
+        id: herdr
+        timeout-minutes: 5
+        env:
+          HERDR_PLATFORM: ${{ inputs.herdr-platform }}
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
+          else
+            bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")
+          fi
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: Compare the binary schema and version with the pin
+        run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
+      - name: Desktop app end-to-end
+        id: suite
+        timeout-minutes: 20
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+          GREP: ${{ inputs.grep }}
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          args=()
+          if [ -n "$GREP" ]; then args+=(--grep "$GREP"); fi
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a bash scripts/verify-web.sh desktop e2e "${args[@]}"
+          else
+            bash scripts/verify-web.sh desktop e2e "${args[@]}"
+          fi
+      - name: Report flaky and failed tests
+        # A failed test is retried once; see web-e2e.yml. One report per
+        # step: the step's annotations are its failed tests, and GitHub keeps
+        # 10 per step.
+        id: flaky
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json
+      - name: Keep the window the tests drew
+        if: ${{ inputs.keep-screenshots && steps.suite.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-desktop-screenshots-${{ inputs.lane }}
+          path: ${{ runner.temp }}/hide-e2e/*.png
+          if-no-files-found: error
+      - name: Keep the e2e run's logs
+        # A flaky run keeps them as a failed one does; see web-e2e.yml.
+        if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-desktop-e2e-logs-${{ inputs.lane }}
+          path: |
+            ${{ runner.temp }}/hide-e2e
+            desktop/test-results
+          if-no-files-found: ignore
