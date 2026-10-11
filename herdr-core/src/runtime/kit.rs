@@ -353,6 +353,9 @@ impl Runtime {
             }
         }
         changed |= self.set_kit_state(device_id, snapshot);
+        if device_id == self.node.as_str() {
+            changed |= self.settle_first_run_apply();
+        }
         changed
     }
 
@@ -398,8 +401,14 @@ impl Runtime {
         } else {
             AgentOnboarding::Done
         };
+        // A record that waits is a first run: the wizard opens with the
+        // question as its first step (PRD first-run-onboarding D-08).
+        let opened = after == AgentOnboarding::Pending && self.open_first_run();
         if before == Some(after) {
-            return false;
+            if opened {
+                self.persist_ui_state();
+            }
+            return opened;
         }
         self.snapshot.ui_state.agent_onboarding = Some(after);
         if after == AgentOnboarding::Done && before != Some(AgentOnboarding::Done) {
@@ -458,10 +467,15 @@ impl Runtime {
         }
     }
 
-    /// The operator applied the first-run choice: the agents left on are
-    /// switched on here and on every device that waits for it, each by its
-    /// own detection, and the choice is kept for devices that connect later.
-    pub(super) fn apply_agent_onboarding(&mut self, agents: Vec<String>) -> bool {
+    /// The wizard's first step was continued with `agents` on (PRD
+    /// first-run-onboarding B10, B45). While this Mac's record waits it is the
+    /// first-run answer: the agents left on are switched on here and on every
+    /// device that waits for it, each by its own detection, and the choice is
+    /// kept for devices that connect later. After that, from a step reopened
+    /// by a failed apply or by Help > Set up Hide, it switches each agent
+    /// installed here the way Settings > Agents does, so only a changed agent
+    /// moves. A press while the last one's pass still runs is that intent.
+    pub(super) fn apply_agent_onboarding(&mut self, agents: Vec<String>, finish: bool) -> bool {
         if let Some(unknown) = agents
             .iter()
             .find(|agent| hide_kit::agents::adapter(agent).is_none())
@@ -473,10 +487,51 @@ impl Runtime {
             );
             return true;
         }
+        if self.first_run_apply_in_flight() {
+            return false;
+        }
         let mut agents = agents;
         agents.sort();
         agents.dedup();
-        self.finish_agent_onboarding(agents)
+        let changed = if self.snapshot.ui_state.agent_onboarding
+            == Some(crate::model::AgentOnboarding::Pending)
+        {
+            self.finish_agent_onboarding(agents.clone())
+        } else {
+            self.switch_agents_here(&agents)
+        };
+        changed | self.wait_for_first_run_apply(agents, finish)
+    }
+
+    /// Switches every agent installed on this Mac to what `on` says, through
+    /// the per-agent path Settings > Agents uses.
+    fn switch_agents_here(&mut self, on: &[String]) -> bool {
+        let node = self.node.clone();
+        let view = self.kit_view(node.as_str());
+        if let Some(reason) = view.unavailable {
+            self.set_error("kit.unavailable", reason, false);
+            return true;
+        }
+        // Decided before anything is queued: a queued switch marks the row
+        // busy, which would make every later agent of the same press read as
+        // undecided and be sent again.
+        let moves: Vec<(String, bool)> = view
+            .agents
+            .iter()
+            .filter(|row| row.availability == hide_kit::Availability::Available)
+            .filter_map(|row| {
+                let wanted = on.contains(&row.id);
+                let now = self
+                    .queued_agent_choice(node.as_str(), &row.id)
+                    .unwrap_or(row.enabled);
+                (wanted != now || wanted && row.needs_attention()).then(|| (row.id.clone(), wanted))
+            })
+            .collect();
+        let mut changed = false;
+        for (agent, wanted) in moves {
+            changed |= self.request_kit_agent_set(node.as_str(), &agent, wanted);
+        }
+        changed
     }
 
     /// Ends the first-run choice with `agents` on; only a pending choice can

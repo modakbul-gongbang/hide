@@ -5,6 +5,8 @@
   "checkout_purpose_origin": ["token", "branch_description", "agent_title", "pull_request_title"],
   "document_kind": ["text", "markdown", "image", "pdf", "binary"],
   "editor_tab_kind": ["file", "diff", "session", "memory"],
+  "first_run_step": ["agents", "notifications", "project", "done"],
+  "screen_intro": ["factory", "devices"],
   "factory_attempt_outcome": ["passed", "failed", "environment", "cancelled", "running"],
   "factory_attempt_stage": ["task", "pre_merge"],
   "factory_column": ["before", "moving", "stuck", "done"],
