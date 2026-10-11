@@ -1904,6 +1904,14 @@ fn a_pending_core_does_nothing_outside_until_its_link_commits() -> Result<()> {
         pending["ui_state"]["device_registrations"]
     );
     ensure!(!attempted(&pending), "a pending core dialed the device");
+    // A move of its own, or its checks, would dial the device: the window
+    // is refused before anything is asked.
+    for action in ["check", "start"] {
+        let refused = Renderer::connect(running.port, &running.token)?
+            .event("core_move", json!({"action": action, "device": "probe"}))
+            .expect_err("a pending core took a move");
+        ensure!(refused.to_string().contains("core_pending"), "{refused}");
+    }
     runtime.block_on(running.mobile.reconcile());
     ensure!(
         tailscale.calls().is_empty(),

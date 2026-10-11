@@ -498,6 +498,7 @@ pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningD
         renderer_transitions: Arc::new(Mutex::new(())),
         shutdown: shutdown.clone(),
         role_ended: role_ended.subscribe(),
+        move_gate: Arc::clone(&move_gate),
         ui_dir: if server::has_embedded_ui() {
             None
         } else {

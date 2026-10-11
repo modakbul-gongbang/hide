@@ -194,10 +194,9 @@ async fn core_turn(
             }
             Ok(Some(Role::Core(running)))
         }
+        // A pending core's window is refused before its request reaches
+        // here (`core_pending`).
         Event::Request(MoveRequest::Start { device }) => {
-            if !running.move_gate.is_open() {
-                return Ok(Some(Role::Core(running)));
-            }
             forward(env, seat, running, &device).await.map(Some)
         }
         Event::LeaseEnded => {

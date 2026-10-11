@@ -105,6 +105,9 @@ pub struct AppState {
     /// reconnects to the role mounted next on the same seat rather than wait
     /// on a core that has stopped (PRD core-host-node-move B4).
     pub role_ended: tokio::sync::watch::Receiver<bool>,
+    /// Closed while this core runs on a move's copy that has not committed:
+    /// it takes no move of its own then, and dials nothing to check one.
+    pub move_gate: Arc<crate::core_move::gate::MoveGate>,
     pub ui_dir: Option<PathBuf>,
     pub version: &'static str,
     /// The seat this role is mounted on; `/health` names its instance, so a
@@ -1062,6 +1065,8 @@ async fn screen_loop(
                                 // machine's hided, never through this one.
                                 let answer = if relay.is_some() {
                                     Err("move_not_here")
+                                } else if !state.move_gate.is_open() {
+                                    Err("core_pending")
                                 } else {
                                     state.seat.moves.request_event(&event)
                                 };

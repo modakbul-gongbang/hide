@@ -115,7 +115,7 @@ export function CoreMoveDialog({ request, asked: first, actions, onClose, onRequ
           {form === "checking" ? (
             refusal ? (
               <p className="text-body text-destructive" data-core-move-refused={refusal}>
-                {refusal === "move_busy" ? t("coreMove.refused.busy") : refusal === "move_unavailable" || refusal === "moving" ? t("coreMove.refused.unavailable") : t("coreMove.refused.other")}
+                {refusal === "move_busy" || refusal === "core_pending" ? t("coreMove.refused.busy") : refusal === "move_unavailable" || refusal === "moving" ? t("coreMove.refused.unavailable") : t("coreMove.refused.other")}
               </p>
             ) : (
               <p className="text-body text-muted-foreground" data-core-move-checking="true">{t("coreMove.checking")}</p>

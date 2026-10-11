@@ -157,6 +157,15 @@ it("crowns the core's machine and offers the core to a connected device it dials
   await unmount();
 });
 
+it("tells a window whose core is still taking a move that another move is under way (core_pending)", async () => {
+  const { q, unmount } = await mount(state([remote("mini")]));
+  await openMenu(q, "mini");
+  await act(async () => { (document.querySelector('[data-device-move="mini"]') as HTMLElement).click(); });
+  await act(async () => { useShellStore.setState({ coreMoveRefusal: "core_pending" }); });
+  expect(document.querySelector('[data-core-move-refused="core_pending"]')?.textContent).toBe("Another move is under way");
+  await unmount();
+});
+
 it("walks the move dialog through the supervisor's frames: failing checks with their fixes, confirm, steps, the result (B3 to B5)", async () => {
   const { q, events, unmount } = await mount(state([remote("mini")]));
   await openMenu(q, "mini");

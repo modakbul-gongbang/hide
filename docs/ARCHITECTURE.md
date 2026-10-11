@@ -1281,6 +1281,7 @@ Until then the move may still be rolled back, and the core it replaced starts ag
 No provider is asked for labels (`Runtime::labels_asked`) or for Memory, no bell is typed (`core_pending` in the doorbell's verdict), no watched pane is read, so no warning is raised, no human notice is claimed and GitHub is asked nothing.
 The Factory's thread waits before it opens its engine, so it ticks nothing and starts no worker, and the requests sent to it wait in its bounded queue.
 No device is dialed and no device helper started, and no agent is put to sleep.
+A window on the pending core takes no move of its own, whose checks would dial the device: its `core_move` request is refused as `core_pending` before it reaches the supervisor.
 Mobile holds as well: it serves no phone, pushes nothing and runs no `tailscale`, and a pending core that stops removes no serve entry, since the one recorded is the previous core's.
 Session sync, the catalog, the attach role and reads that change nothing run, so the link can be proven.
 The gate's commit releases the hold once (`Core::release_effects`, called when the gate opens): the doorbell and the watches act on their next pass, the Factory's thread opens its engine, every registered device is dialed and Mobile starts.
