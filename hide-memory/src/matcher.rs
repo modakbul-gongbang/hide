@@ -129,7 +129,32 @@ const STOPWORDS: &[&str] = &[
     "then",
     "just",
     "also",
+    "is",
+    "in",
+    "it",
+    "to",
+    "of",
+    "on",
+    "do",
+    "be",
+    "as",
+    "or",
+    "if",
+    "at",
+    "by",
+    "we",
+    "an",
+    "my",
+    "me",
+    "so",
+    "no",
+    "up",
+    "ok",
 ];
+
+/// The shortest non-Hangul stem a card word may merely start with: `test`
+/// finds `tests`, but `is` does not find `issue` (B12).
+const PREFIX_MINIMUM_CHARS: usize = 4;
 
 /// A text's normalized form: NFC, lowercase, single spaces.
 pub(crate) fn normalize(value: &str) -> String {
@@ -238,6 +263,23 @@ struct QueryTerm {
     grams: Vec<String>,
 }
 
+impl QueryTerm {
+    fn new(word: String) -> Self {
+        Self {
+            stem: stem(&word),
+            grams: grams(&word),
+            word,
+        }
+    }
+
+    /// Whether a card word that only starts with this term's stem counts:
+    /// a Hangul stem has its particle off already, and any other stem must
+    /// be long enough to name something.
+    fn prefixes(&self) -> bool {
+        self.stem.chars().any(is_hangul) || self.stem.chars().count() >= PREFIX_MINIMUM_CHARS
+    }
+}
+
 /// A text a lookup starts from: a prompt, a search, or new card text.
 #[derive(Debug)]
 pub(crate) struct Query {
@@ -255,13 +297,35 @@ impl Query {
             .filter(|word| !STOPWORDS.contains(&word.as_str()))
             .filter(|word| seen.insert(word.clone()))
             .take(limit)
-            .map(|word| QueryTerm {
-                stem: stem(&word),
-                grams: grams(&word),
-                word,
-            })
+            .map(QueryTerm::new)
             .collect();
         Self { terms }
+    }
+
+    /// The `limit` words a long text repeats most, earlier first among
+    /// equals: what a conversation is about, wherever in it that is, rather
+    /// than its first words (D-13, B17).
+    pub(crate) fn salient(text: &str, limit: usize) -> Self {
+        let mut counts: Vec<(String, usize)> = Vec::new();
+        let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for word in words(&normalize(text)).filter(|word| !STOPWORDS.contains(&word.as_str())) {
+            match index.get(&word) {
+                Some(&position) => counts[position].1 += 1,
+                None => {
+                    index.insert(word.clone(), counts.len());
+                    counts.push((word, 1));
+                }
+            }
+        }
+        // A stable sort keeps first occurrence as the tie-break.
+        counts.sort_by(|left, right| right.1.cmp(&left.1));
+        Self {
+            terms: counts
+                .into_iter()
+                .take(limit)
+                .map(|(word, _)| QueryTerm::new(word))
+                .collect(),
+        }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -273,7 +337,8 @@ impl Query {
     pub(crate) fn fts_expression(&self) -> String {
         let mut parts = Vec::new();
         for term in &self.terms {
-            parts.push(format!("\"{}\"*", term.stem.replace('"', "\"\"")));
+            let star = if term.prefixes() { "*" } else { "" };
+            parts.push(format!("\"{}\"{star}", term.stem.replace('"', "\"\"")));
             if term.word != term.stem {
                 parts.push(format!("\"{}\"", term.word.replace('"', "\"\"")));
             }
@@ -300,7 +365,9 @@ impl Query {
                     .is_ok()
                 {
                     1.0
-                } else if card.words.iter().any(|word| word.starts_with(&term.stem)) {
+                } else if term.prefixes()
+                    && card.words.iter().any(|word| word.starts_with(&term.stem))
+                {
                     0.85
                 } else if term
                     .grams
@@ -364,6 +431,20 @@ mod tests {
     }
 
     #[test]
+    fn short_english_words_find_no_card_by_prefix() {
+        // B12: "is it ok to push" shares no subject with these cards.
+        let card = "Track issues, items and tokens in the tools";
+        assert!(score("is it ok to push", card, &[]) < MINIMUM_SCORE);
+        assert!(score("go", "Run gofmt before a commit", &[]) < MINIMUM_SCORE);
+        assert!(
+            Query::new("is it ok to push")
+                .fts_expression()
+                .split(" OR ")
+                .all(|part| !part.ends_with('*') || part.len() > 6)
+        );
+    }
+
+    #[test]
     fn english_words_match_whole_or_by_prefix() {
         assert_eq!(
             score("hook retrieval", "Keep hook retrieval local", &[]),
@@ -389,6 +470,19 @@ mod tests {
                 "{part} missing from {text}"
             );
         }
+    }
+
+    #[test]
+    fn a_long_texts_comparison_terms_are_what_it_repeats_not_its_first_words() {
+        // B17: the subject named late but often still finds its card.
+        let mut text = (0..200).map(|n| format!("word{n} ")).collect::<String>();
+        text.push_str("nextest nextest nextest");
+        let card = CardTerms::new("Run tests with nextest", &[]);
+        assert_eq!(
+            Query::with_limit(&text, COMPARISON_TERM_LIMIT).score(&card),
+            0.0
+        );
+        assert!(Query::salient(&text, COMPARISON_TERM_LIMIT).score(&card) >= MINIMUM_SCORE);
     }
 
     #[test]

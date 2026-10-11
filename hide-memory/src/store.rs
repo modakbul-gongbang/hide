@@ -1236,7 +1236,7 @@ impl MemoryStore {
         maximum_items: usize,
         maximum_bytes: usize,
     ) -> Result<Vec<ComparisonCard>, MemoryError> {
-        let query = Query::with_limit(text, crate::matcher::COMPARISON_TERM_LIMIT);
+        let query = Query::salient(text, crate::matcher::COMPARISON_TERM_LIMIT);
         let candidates = self.matching_active(project_id, &query, HOOK_CANDIDATE_LIMIT)?;
         let mut selected = Vec::new();
         let mut bytes = 0;
@@ -1629,6 +1629,31 @@ impl MemoryStore {
         )
     }
 
+    /// Frees a Project's receipt rows at the cap, the sessions quiet for 30
+    /// days first, so a new session's prompts get Memory again (B26); the
+    /// Memory pass asks it once a pass, since a capped Project's hooks record
+    /// nothing that would.
+    pub fn prune_receipts(
+        &mut self,
+        project_id: &str,
+        now_unix_ms: u64,
+    ) -> Result<(), MemoryError> {
+        self.prune_receipts_with_limit(project_id, now_unix_ms, RECEIPT_LIMIT)
+    }
+
+    fn prune_receipts_with_limit(
+        &mut self,
+        project_id: &str,
+        now_unix_ms: u64,
+        limit: usize,
+    ) -> Result<(), MemoryError> {
+        self.require_writer()?;
+        let transaction = self.connection.transaction()?;
+        prune_stale_receipts(&transaction, project_id, now_unix_ms, limit)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)] // one receipt's identity, its time and the cap
     fn record_receipt_with_limit(
         &mut self,
@@ -1654,14 +1679,8 @@ impl MemoryStore {
         if known {
             return Ok(ReceiptRecord::Recorded);
         }
-        if count_receipts(&transaction, project_id)? >= limit {
-            transaction.execute(
-                "DELETE FROM injection_receipts WHERE project_id=?1 AND (runtime,session_id) IN (SELECT runtime,session_id FROM injection_receipts WHERE project_id=?1 GROUP BY runtime,session_id HAVING MAX(created_at_ms)<?2)",
-                params![project_id, now_unix_ms.saturating_sub(RECEIPT_STALE_AFTER_MS)],
-            )?;
-            if count_receipts(&transaction, project_id)? >= limit {
-                return Ok(ReceiptRecord::Capped);
-            }
+        if prune_stale_receipts(&transaction, project_id, now_unix_ms, limit)? >= limit {
+            return Ok(ReceiptRecord::Capped);
         }
         let mut items = Vec::new();
         for entry in item_key.split(',').filter(|entry| !entry.is_empty()) {
@@ -2413,14 +2432,29 @@ impl CardText {
     }
 }
 
-/// A body's first line within the index line limit (D-23).
+/// At the cap, deletes the receipts of sessions quiet for 30 days and
+/// answers how many rows the Project keeps.
+fn prune_stale_receipts(
+    transaction: &rusqlite::Transaction<'_>,
+    project_id: &str,
+    now_unix_ms: u64,
+    limit: usize,
+) -> Result<usize, MemoryError> {
+    let count = count_receipts(transaction, project_id)?;
+    if count < limit {
+        return Ok(count);
+    }
+    transaction.execute(
+        "DELETE FROM injection_receipts WHERE project_id=?1 AND (runtime,session_id) IN (SELECT runtime,session_id FROM injection_receipts WHERE project_id=?1 GROUP BY runtime,session_id HAVING MAX(created_at_ms)<?2)",
+        params![project_id, now_unix_ms.saturating_sub(RECEIPT_STALE_AFTER_MS)],
+    )?;
+    count_receipts(transaction, project_id)
+}
+
+/// A body's first 60 characters as one line, the index line of a card that
+/// has no title of its own (D-23, B25).
 fn derive_title(body: &str) -> String {
-    let line = body
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or_default();
-    line.split_whitespace()
+    body.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .chars()
@@ -2825,6 +2859,17 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         let clock = Arc::clone(&elapsed);
         let expired = move || anchor + Duration::from_millis(clock.load(Ordering::SeqCst)) >= end;
         (elapsed, expired)
+    }
+
+    #[test]
+    fn an_index_line_without_a_title_is_the_bodys_first_sixty_characters() {
+        // B25, D-23: the body's start, not its first line.
+        assert_eq!(
+            derive_title("Run tests\nwith nextest before a merge"),
+            "Run tests with nextest before a merge"
+        );
+        let long = "가".repeat(80);
+        assert_eq!(derive_title(&long).chars().count(), TITLE_LIMIT_CHARS);
     }
 
     #[test]
@@ -3725,6 +3770,39 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         assert_eq!(
             store.session_given_ids(&project, "codex", "s").unwrap(),
             Some(vec![ids[&2].clone()])
+        );
+    }
+
+    #[test]
+    fn a_capped_project_frees_its_quiet_sessions_without_a_new_receipt() {
+        // B26: the hook records nothing for a new session at the cap, so the
+        // pass prunes.
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "b1", "h1"),
+                &[candidate("Keep receipt provenance", CandidateRelation::New)],
+            )
+            .unwrap();
+        let day = 86_400_000;
+        let now = 100 * day;
+        for (session, at) in [("old", now - 31 * day), ("recent", now - day)] {
+            store
+                .record_receipt_with_limit(&project, "codex", session, "t", "m1@1", at, 2)
+                .unwrap();
+        }
+        assert_eq!(
+            store
+                .session_given_ids_with_limit(&project, "codex", "new", 2)
+                .unwrap(),
+            None
+        );
+        store.prune_receipts_with_limit(&project, now, 2).unwrap();
+        assert_eq!(
+            store
+                .session_given_ids_with_limit(&project, "codex", "new", 2)
+                .unwrap(),
+            Some(vec![])
         );
     }
 

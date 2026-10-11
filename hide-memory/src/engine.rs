@@ -24,12 +24,12 @@ You keep long-term memory cards for one software project. Agents of several runt
 
 ## What becomes a card
 Keep only what stays true and useful for later work in this project:
-- rule: an instruction the operator wants followed every time.
+- rule: an instruction the operator wants followed every time, including a standing instruction about how the work is run (who reviews or merges, how agents are started, watched or resumed), even when it is given in passing mid-conversation.
 - decision: a choice that was made, with its reason, when it constrains later work.
 - lesson: the cause found after a failure, phrased so the mistake is not repeated.
 - fact: a durable project fact that cannot be read from the source code.
 Skip proposals, plans, progress reports, one-off errors, guesses, questions, thanks, and anything obvious from the code. Keep an agent_note as one card unless it repeats or contradicts an existing card.
-Each card stands alone: one subject, written so an agent who never saw this conversation can act on it, in the language of its source, a few sentences at most.
+Each card stands alone: one subject, written so an agent who never saw this conversation can act on it, in the language of its source, a few sentences at most. Related decisions stay separate cards; fold two into one only when one restates the other.
 
 ## Fields
 - text: the card.
@@ -59,7 +59,6 @@ pub const SYSTEM_PROMPT_LIMIT_BYTES: usize = 8 * 1024;
 pub enum HideNativeOutputError {
     InputTooLarge { measured: usize },
     InvalidShape(String),
-    SecretCandidate,
 }
 
 impl Display for HideNativeOutputError {
@@ -69,7 +68,6 @@ impl Display for HideNativeOutputError {
                 write!(formatter, "memory_input_over_cap:{measured}")
             }
             Self::InvalidShape(reason) => write!(formatter, "memory_output_invalid:{reason}"),
-            Self::SecretCandidate => formatter.write_str("memory_output_secret_candidate"),
         }
     }
 }
@@ -90,6 +88,9 @@ pub struct AliasBackfill {
 pub struct AnalysisOutput {
     pub candidates: Vec<Candidate>,
     pub backfill: Vec<AliasBackfill>,
+    /// Candidates left out because their text looked like a secret: the
+    /// rest of the answer is kept, so one such card never stalls a session.
+    pub secret_rejected: usize,
 }
 
 #[derive(Default)]
@@ -179,9 +180,15 @@ impl HideNativeAnalyzer {
                     HideNativeOutputError::InvalidShape(format!("unknown target {name}"))
                 })
         };
+        let mut secret_rejected = 0;
         let candidates = output
             .candidates
             .into_iter()
+            .filter(|candidate| {
+                let secret = redact(candidate.text.trim()).contains_secret_candidate;
+                secret_rejected += usize::from(secret);
+                !secret
+            })
             .map(|candidate| {
                 if candidate.text.is_empty()
                     || candidate.text.chars().count() > MEMORY_BODY_LIMIT_CHARS
@@ -200,9 +207,6 @@ impl HideNativeAnalyzer {
                     ));
                 }
                 let redacted = redact(candidate.text.trim());
-                if redacted.contains_secret_candidate {
-                    return Err(HideNativeOutputError::SecretCandidate);
-                }
                 if redacted.text.is_empty() {
                     return Err(HideNativeOutputError::InvalidShape(
                         "empty candidate".to_owned(),
@@ -268,6 +272,7 @@ impl HideNativeAnalyzer {
         Ok(AnalysisOutput {
             candidates,
             backfill,
+            secret_rejected,
         })
     }
 }
@@ -434,15 +439,18 @@ mod tests {
     }
 
     #[test]
-    fn invalid_relations_unknown_targets_and_secret_candidates_are_rejected() {
+    fn invalid_relations_and_unknown_targets_are_rejected_and_a_secret_card_is_left_out() {
         let secret = json!({"candidates":[{
             "text":"api_key=super-secret-value-123", "title":"", "aliases":[], "kind":"fact",
             "confidence":1, "salience":1, "source_offsets":[1], "relation":"new", "target_id":null
+        }, {
+            "text":"Keep tests deterministic", "title":"", "aliases":[], "kind":"rule",
+            "confidence":1, "salience":1, "source_offsets":[1], "relation":"new", "target_id":null
         }], "alias_backfill": []});
-        assert_eq!(
-            HideNativeAnalyzer.parse(secret, &[]),
-            Err(HideNativeOutputError::SecretCandidate)
-        );
+        let output = HideNativeAnalyzer.parse(secret, &[]).unwrap();
+        assert_eq!(output.secret_rejected, 1);
+        assert_eq!(output.candidates.len(), 1);
+        assert_eq!(output.candidates[0].text, "Keep tests deterministic");
         let unknown = json!({"candidates":[{
             "text":"Keep tests deterministic", "title":"", "aliases":[], "kind":"rule",
             "confidence":1, "salience":1, "source_offsets":[1], "relation":"rewrite", "target_id":null

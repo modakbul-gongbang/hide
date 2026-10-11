@@ -26,9 +26,8 @@ use crate::node::NodeId;
 use crate::node_access::NodeLink;
 use hide_ai::{AiError, AiRouter, CancelToken};
 use hide_memory::{
-    ANALYSIS_INPUT_LIMIT_BYTES, AnalysisBatch, ApplySummary, Candidate, CandidateRelation,
-    CursorReader, HideNativeAnalyzer, MemoryStore, ReceiptRecord, SessionCursorRecord,
-    SessionSourceRecord,
+    AnalysisBatch, ApplySummary, Candidate, CandidateRelation, CursorReader, HideNativeAnalyzer,
+    MemoryStore, ReceiptRecord, SessionCursorRecord, SessionSourceRecord,
 };
 use hide_node_link::protocol::Call;
 use hide_session::{EventKind, ProjectSession, SessionAvailability};
@@ -619,6 +618,9 @@ fn walk_project(
     if identity.id != project_id {
         return Err(format!("project_moved:{}", identity.id));
     }
+    store
+        .prune_receipts(project_id, now_ms())
+        .map_err(|error| error.to_string())?;
     // Memory analyzes the sessions of agents this build has a Memory reader
     // for (the JSONL ones: Claude Code, Codex, Grok, Pi, omp); an OpenCode
     // session, kept in OpenCode's database, is walked for its receipts alone
@@ -704,6 +706,12 @@ fn walk_project(
         if !(closed || quiet) || !analysis_pending(store, project_id, &session, &stat)? {
             continue;
         }
+        // A held-back call is logged, never shown: the Project does not turn
+        // "analyzing" for a pass that will ask nothing (B5).
+        if let Some(reason) = deferral(store, input.weekly_used, true)? {
+            *deferred = Some(reason);
+            continue;
+        }
         if !analyzing {
             analyzing = true;
             report(PassReport::Analyzing {
@@ -759,20 +767,31 @@ pub(crate) fn admit_call(
     weekly_used: Option<f64>,
     background: bool,
 ) -> Result<(), AnalysisFailure> {
-    if background && weekly_used.is_some_and(|used| used >= WEEKLY_USAGE_DEFER_PERCENT) {
-        return Err(AnalysisFailure::Deferred("weekly_usage"));
-    }
-    let now = now_ms();
-    let calls = store
-        .analysis_calls(now)
-        .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
-    if calls >= hide_memory::DAILY_ANALYSIS_CALL_LIMIT {
-        return Err(AnalysisFailure::Deferred("daily_cap"));
+    if let Some(reason) =
+        deferral(store, weekly_used, background).map_err(AnalysisFailure::Local)?
+    {
+        return Err(AnalysisFailure::Deferred(reason));
     }
     store
-        .count_analysis_call(now)
+        .count_analysis_call(now_ms())
         .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
     Ok(())
+}
+
+/// Why a call would be held back now, if it would: the provider's weekly
+/// usage for background analysis, or the machine's calls today.
+fn deferral(
+    store: &MemoryStore,
+    weekly_used: Option<f64>,
+    background: bool,
+) -> Result<Option<&'static str>, String> {
+    if background && weekly_used.is_some_and(|used| used >= WEEKLY_USAGE_DEFER_PERCENT) {
+        return Ok(Some("weekly_usage"));
+    }
+    let calls = store
+        .analysis_calls(now_ms())
+        .map_err(|error| error.to_string())?;
+    Ok((calls >= hide_memory::DAILY_ANALYSIS_CALL_LIMIT).then_some("daily_cap"))
 }
 
 fn analysis_pending(
@@ -823,7 +842,11 @@ fn read_receipts(
     }
     let chunk = session_chunk(sessions_node, session, saved.as_ref())?;
     let checkpoint = serde_json::to_vec(&chunk.checkpoint).map_err(|error| error.to_string())?;
-    let parsed = hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
+    // Joined as the label read joins a message's parts, so a receipt in a
+    // later part is named by the same turn whichever reader finds it.
+    let mut parsed =
+        hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
+    parsed.coalesce();
     for (event, offset) in parsed.events.iter().zip(&parsed.event_offsets) {
         if event.kind != EventKind::Injected {
             continue;
@@ -836,7 +859,7 @@ fn read_receipts(
             event.is_provider_injected(),
             &event.text,
             *offset,
-        );
+        )?;
     }
     store
         .save_cursor(
@@ -909,7 +932,7 @@ fn read_database_receipts(
             true,
             &receipt.text,
             receipt.offset,
-        );
+        )?;
     }
     store
         .save_cursor(
@@ -934,7 +957,10 @@ fn read_database_receipts(
 
 /// Records one receipt a session carried, when its tag is the one this
 /// machine's Memory signed for the Project, provider and session; anything
-/// else is no delivery. A receipt past the Project's cap is logged (B26).
+/// else is no delivery (`Ok(false)`). A receipt past the Project's cap, or
+/// one naming a card this Project no longer has, is logged and passed over;
+/// a store that could not write answers the failure, so the caller keeps its
+/// cursor and reads the receipt again.
 fn record_receipt(
     store: &mut MemoryStore,
     project_id: &str,
@@ -943,7 +969,7 @@ fn record_receipt(
     provider_injected: bool,
     text: &str,
     offset: u64,
-) -> bool {
+) -> Result<bool, String> {
     let Some(receipt) = trusted_memory_receipt(
         store,
         project_id,
@@ -952,11 +978,11 @@ fn record_receipt(
         provider_injected,
         text,
     ) else {
-        return false;
+        return Ok(false);
     };
     // A receipt naming no card records nothing.
     if receipt.item_key().is_empty() {
-        return true;
+        return Ok(true);
     }
     match store.record_receipt(
         project_id,
@@ -973,19 +999,34 @@ fn record_receipt(
             "project_id": project_id,
             "provider": provider,
         })),
-        Err(error) => crate::diagnostic!(json!({
+        Err(
+            error @ (hide_memory::MemoryError::CrossProjectTarget
+            | hide_memory::MemoryError::InvalidState(_)),
+        ) => crate::diagnostic!(json!({
             "component": "memory",
-            "kind": "receipts.write_failed",
+            "kind": "receipts.unrecordable",
             "project_id": project_id,
             "provider": provider,
             "message": error.to_string(),
         })),
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "receipts.write_failed",
+                "project_id": project_id,
+                "provider": provider,
+                "message": error.to_string(),
+            }));
+            return Err(error.to_string());
+        }
     }
-    true
+    Ok(true)
 }
 
 /// Records the receipts the label reads of live panes found, each against
-/// the Project its pane's cwd names.
+/// the Project its pane's cwd names. One this store could not take is not
+/// lost: the walk reads a session from its own receipt cursor once no live
+/// pane holds it.
 fn record_sighted_receipts(
     node: &NodeId,
     sessions_node: &dyn NodeLink,
@@ -1017,14 +1058,17 @@ fn record_sighted_receipts(
             refused += 1;
             continue;
         };
-        if record_receipt(
-            &mut store,
-            &identity.id,
-            sighted.provider,
-            &sighted.session_id,
-            true,
-            &sighted.text,
-            sighted.offset,
+        if matches!(
+            record_receipt(
+                &mut store,
+                &identity.id,
+                sighted.provider,
+                &sighted.session_id,
+                true,
+                &sighted.text,
+                sighted.offset,
+            ),
+            Ok(true)
         ) {
             recorded += 1;
         } else {
@@ -1066,7 +1110,9 @@ fn analyze_session(
     let chunk = session_chunk(sessions_node, session, saved.as_ref()).map_err(local)?;
     let checkpoint =
         serde_json::to_vec(&chunk.checkpoint).map_err(|error| local(error.to_string()))?;
-    let parsed = hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
+    let mut parsed =
+        hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
+    parsed.coalesce();
     let events = parsed
         .events
         .into_iter()
@@ -1224,7 +1270,18 @@ pub(crate) fn write_cards(
     let output = analyzer
         .parse(answer.value, &similar)
         .map_err(|error| AnalysisFailure::Provider(AiError::InvalidOutput(format!("{error:?}"))))?;
-    let mut candidates = validate_candidates(output.candidates, group)?;
+    let mut candidates = output.candidates;
+    let unsourced = validate_candidates(&mut candidates, group);
+    if unsourced + output.secret_rejected > 0 {
+        crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "analysis.candidates_left_out",
+            "project_id": source.project_id,
+            "provider": source.provider,
+            "unsourced": unsourced,
+            "secret": output.secret_rejected,
+        }));
+    }
     keep_cited_paths(sessions_node, source.checkout_path, &mut candidates);
     let summary = store
         .apply_candidates(
@@ -1284,13 +1341,11 @@ fn comparison_text(group: &[Value]) -> String {
     text
 }
 
-/// Checks the answer against what was sent: every source is an event of the
-/// group, the operator's own words are the sources whose event is `human`,
-/// and a correction without them waits for review instead (D-14).
-pub(super) fn validate_candidates(
-    mut candidates: Vec<Candidate>,
-    events: &[Value],
-) -> Result<Vec<Candidate>, AnalysisFailure> {
+/// Checks the answer against what was sent: a candidate citing an event
+/// outside the group is left out, the operator's own words are the sources
+/// whose event is `human`, and a correction without them waits for review
+/// instead (D-14). Answers how many were left out.
+pub(super) fn validate_candidates(candidates: &mut Vec<Candidate>, events: &[Value]) -> usize {
     let offsets = events
         .iter()
         .filter_map(|event| event.get("offset")?.as_u64())
@@ -1303,16 +1358,14 @@ pub(super) fn validate_candidates(
                 .flatten()
         })
         .collect::<HashSet<_>>();
-    for candidate in &mut candidates {
-        if candidate
+    let before = candidates.len();
+    candidates.retain(|candidate| {
+        candidate
             .source_offsets
             .iter()
-            .any(|offset| !offsets.contains(offset))
-        {
-            return Err(AnalysisFailure::Provider(AiError::InvalidOutput(
-                "Memory output referenced an event outside the request".to_owned(),
-            )));
-        }
+            .all(|offset| offsets.contains(offset))
+    });
+    for candidate in candidates.iter_mut() {
         candidate.human_offsets = candidate
             .source_offsets
             .iter()
@@ -1327,7 +1380,7 @@ pub(super) fn validate_candidates(
             };
         }
     }
-    Ok(candidates)
+    before - candidates.len()
 }
 
 /// Keeps only the cited paths that name a file or folder inside the
@@ -1379,6 +1432,9 @@ fn keep_cited_paths(sessions_node: &dyn NodeLink, checkout: &str, candidates: &m
 }
 
 /// The new events cut into groups, each sent in one provider call.
+/// The most text of one event analysis reads.
+const EVENT_TEXT_LIMIT_BYTES: usize = 48 * 1024;
+
 pub(super) fn event_groups(events: &[Value]) -> Result<Vec<Vec<Value>>, String> {
     const EVENT_BUDGET: usize = 36 * 1024;
     let mut groups = Vec::new();
@@ -1409,11 +1465,6 @@ fn bounded_event_chunks(event: &Value, budget: usize) -> Result<Vec<Value>, Stri
     if serialized.len() <= budget {
         return Ok(vec![event.clone()]);
     }
-    if serialized.len() > ANALYSIS_INPUT_LIMIT_BYTES {
-        return Err(format!(
-            "Memory event exceeds the {ANALYSIS_INPUT_LIMIT_BYTES}-byte analysis limit"
-        ));
-    }
     let object = event
         .as_object()
         .ok_or_else(|| "Memory event must be a JSON object".to_owned())?;
@@ -1421,6 +1472,12 @@ fn bounded_event_chunks(event: &Value, budget: usize) -> Result<Vec<Value>, Stri
         .get("text")
         .and_then(Value::as_str)
         .ok_or_else(|| "Oversized Memory event has no text to split".to_owned())?;
+    // A message far past one request, a paste or a dump, keeps its start:
+    // a few requests' worth, never one call per slice of it.
+    let text = split_utf8(text, EVENT_TEXT_LIMIT_BYTES)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
     let mut base = object.clone();
     base.remove("text");
     let base_size = serde_json::to_vec(&base)
@@ -1745,6 +1802,34 @@ mod tests {
     }
 
     #[test]
+    fn a_session_quiet_for_thirty_minutes_is_analyzed_and_one_quiet_a_moment_less_waits() {
+        // B1, D-07.
+        let fixture = Fixture::new();
+        fixture.answer(&[]);
+        let age = |minutes: u64| {
+            std::fs::File::options()
+                .append(true)
+                .open(&fixture.locator)
+                .unwrap()
+                .set_modified(
+                    std::time::SystemTime::now() - std::time::Duration::from_secs(minutes * 60),
+                )
+                .unwrap();
+        };
+
+        age(29);
+        assert!(fixture.pass(false, false, None).is_empty());
+        assert_eq!(fixture.calls(), 0);
+
+        age(31);
+        assert_eq!(
+            fixture.pass(false, false, None),
+            ["analyzing", "learned one"]
+        );
+        assert_eq!(fixture.calls(), 1);
+    }
+
+    #[test]
     fn an_opencode_session_outside_a_pane_has_its_receipt_recorded_once_by_the_walk() {
         // B13, D-16: OpenCode keeps its sessions in a database, read through
         // the conversation reader the label read uses.
@@ -1818,9 +1903,9 @@ mod tests {
         let fixture = Fixture::new();
         fixture.answer(&[]);
 
-        assert_eq!(
-            fixture.pass(false, true, Some(80.0)),
-            ["analyzing", "analyzed"]
+        assert!(
+            fixture.pass(false, true, Some(80.0)).is_empty(),
+            "a held-back Project never shows analyzing"
         );
         assert_eq!(
             fixture.calls(),
@@ -1833,10 +1918,7 @@ mod tests {
             store.count_analysis_call(now_ms()).unwrap();
         }
         drop(store);
-        assert_eq!(
-            fixture.pass(false, true, Some(10.0)),
-            ["analyzing", "analyzed"]
-        );
+        assert!(fixture.pass(false, true, Some(10.0)).is_empty());
         assert_eq!(fixture.calls(), 0, "the day's calls are spent");
         assert!(
             fixture
@@ -1901,7 +1983,12 @@ mod tests {
             json!({"offset": 2, "kind": "assistant", "text": "Switching to yarn"}),
         ];
 
-        let checked = validate_candidates(vec![candidate(1), candidate(2)], &events).unwrap();
+        let mut checked = vec![candidate(1), candidate(2), candidate(9)];
+        assert_eq!(
+            validate_candidates(&mut checked, &events),
+            1,
+            "offset 9 was never sent"
+        );
 
         assert_eq!(checked[0].human_offsets, [1]);
         assert!(matches!(
@@ -1913,9 +2000,6 @@ mod tests {
             checked[1].relation,
             CandidateRelation::Conflicts { .. }
         ));
-        assert!(matches!(
-            validate_candidates(vec![candidate(9)], &events),
-            Err(AnalysisFailure::Provider(AiError::InvalidOutput(_)))
-        ));
+        assert_eq!(checked.len(), 2);
     }
 }
