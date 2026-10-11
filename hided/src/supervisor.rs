@@ -29,8 +29,8 @@ use crate::{RunningDaemon, RunningNode, seat, server, state_file};
 
 mod move_back;
 use move_back::{
-    back, back_checks_failed, back_rollback, commit_back, prepare_back, release_core,
-    retire_and_commit,
+    answer_release, back, back_checks_failed, back_rollback, commit_back, prepare_back,
+    release_core, retire_and_commit,
 };
 
 /// How long past the target's lease a driver that cannot reach it waits
@@ -154,14 +154,8 @@ async fn core_turn(
     };
     match event {
         Event::Release(release) => {
-            let checked = release_core(env, &running, &release).await;
-            let refused = checked.as_ref().err().cloned();
-            log(
-                "release.checked",
-                json!({"intent": release.intent, "target": release.target, "refused": refused}),
-            );
-            let _ = release.reply.send(checked);
-            if refused.is_some() {
+            let record = release_core(env, &running, &release);
+            if !answer_release(&env.state_dir, &release, record).await {
                 return Ok(Some(Role::Core(running)));
             }
             // The stop is recorded: this process runs no role after it, and
@@ -1406,7 +1400,15 @@ fn end_on_peer(env: &Env, kept: &Abandoned) -> Result<&'static str, MoveFailure>
             // No core of the given-up move runs beside another move's.
             driver::Abandoned::OtherMove { .. } => Ok("other_move"),
         },
-        PeerStep::Retire => back::retire(&remote, &kept.intent).map(|()| "retired"),
+        PeerStep::Retire => back::retire(&remote, &kept.intent).map(|leftover| {
+            if let Some(reason) = leftover {
+                log(
+                    "retire.leftover",
+                    json!({"intent": kept.intent, "peer": kept.peer.node, "reason": reason}),
+                );
+            }
+            "retired"
+        }),
     }
 }
 
@@ -1658,6 +1660,91 @@ mod tests {
         give_back_pending(&state, home.path(), "i1");
         assert!(handover::read(&state).unwrap().is_none());
         assert!(!list.exists(), "the login item's list is left");
+    }
+
+    /// A release its asker gave up on never stops the core: one given up
+    /// while it waited in line behind a check is dropped before anything is
+    /// written, and one given up while its stop was being written is undone,
+    /// leaving no handover record or export. The core stops only for a
+    /// release it took while its asker still waited, which hears the answer
+    /// and can no longer give it up.
+    #[tokio::test]
+    async fn a_release_its_asker_gave_up_on_never_stops_the_core() {
+        let home = tempfile::tempdir().unwrap();
+        let state = home.path().join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        let release = || {
+            let (reply, answer) = std::sync::mpsc::channel();
+            let release = Release {
+                intent: "i1".to_owned(),
+                target: "mbp".to_owned(),
+                claim: Arc::default(),
+                reply,
+            };
+            (release, answer)
+        };
+        // What `release_core` writes.
+        let record = |state: &Path| {
+            handover::hold(state)
+                .unwrap()
+                .write(&Handover::new(
+                    "i1",
+                    "mini",
+                    "mbp",
+                    HandoverState::StoppedFor,
+                ))
+                .unwrap();
+            let export = back::export_path(state, "i1");
+            std::fs::create_dir_all(export.parent().unwrap()).unwrap();
+            std::fs::write(&export, "{}").unwrap();
+        };
+
+        let (in_line, _answer) = release();
+        assert!(in_line.claim.give_up());
+        let written = std::cell::Cell::new(false);
+        let stops = answer_release(&state, &in_line, async {
+            written.set(true);
+            Ok(())
+        })
+        .await;
+        assert!(
+            !stops && !written.get(),
+            "a release given up in line was acted on"
+        );
+
+        let (late, _answer) = release();
+        let stops = answer_release(&state, &late, async {
+            record(&state);
+            assert!(late.claim.give_up());
+            Ok(())
+        })
+        .await;
+        assert!(
+            !stops,
+            "the core stops for a release given up while it was written"
+        );
+        assert_eq!(handover::read(&state).unwrap(), None);
+        assert!(
+            !back::export_path(&state, "i1").exists(),
+            "the export is left"
+        );
+
+        let (asked, answer) = release();
+        let stops = answer_release(&state, &asked, async {
+            record(&state);
+            Ok(())
+        })
+        .await;
+        assert!(stops);
+        assert_eq!(answer.try_recv().unwrap(), Ok(()));
+        assert!(
+            !asked.claim.give_up(),
+            "the asker gave up a release the core took"
+        );
+        assert_eq!(
+            handover::read(&state).unwrap().unwrap().state,
+            HandoverState::StoppedFor
+        );
     }
 
     /// A stop ends a wait on the peer that would ask forever, both between

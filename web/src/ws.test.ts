@@ -209,6 +209,35 @@ it("a move holds the window as moving, sends only the move, and the role after i
   shell.close();
 });
 
+// The core keeps sending state between the move's stopping frame and its
+// socket's close, and the node draws the window before the move is done:
+// neither releases a window the move holds, so no key reaches a role that is
+// stopping or a move that has not finished (W1).
+it("a frame a role sends while the move is under way keeps the window held", async () => {
+  const shell = connectShell({ onChunks: () => {} });
+  const first = made(0);
+  first.open();
+  first.frame({ type: "snapshot", payload: { revision: 3, rest: {} } });
+  first.frame({ type: "core_move", payload: { state: "stopping", direction: "forward", device: "mini", node: "mbp", sent: 0, total: 0, failed: [], step: "stop_core", cause: null, intent: "i" } });
+  first.frame({ type: "delta", payload: { revision: 4, rest: {} } });
+  expect(useShellStore.getState().connection).toBe("moving");
+  expect(shell.dispatch({ schema_version: 2, kind: "pane_input", payload: {} })).toBe(false);
+  first.closeWith(1012, "role_ended");
+  await Promise.resolve();
+  await vi.runOnlyPendingTimersAsync();
+
+  const node = made(1);
+  node.open();
+  node.frame({ type: "core_move", payload: { state: "linking", direction: "forward", device: "mini", node: "mbp", sent: 2, total: 2, failed: [], step: "reattach", cause: null, intent: "i" } });
+  node.frame({ type: "snapshot", payload: { revision: 1, rest: {} } });
+  expect(useShellStore.getState().connection).toBe("moving");
+  expect(shell.dispatch({ schema_version: 2, kind: "pane_input", payload: {} })).toBe(false);
+  node.frame({ type: "core_move", payload: { state: "done", direction: "forward", device: "mini", node: "mbp", sent: 2, total: 2, failed: [], step: "reattach", cause: null, intent: "i" } });
+  expect(useShellStore.getState().connection).toBe("live");
+  expect(shell.dispatch({ schema_version: 2, kind: "pane_input", payload: {} })).toBe(true);
+  shell.close();
+});
+
 it("a move back removes the node from the address, and an unfinished move leaves it", async () => {
   const { addressAfterMove } = await import("./ws");
   const view = (state: string, direction: "forward" | "back", node: string | null) => ({ state, direction, node, device: "mini", sent: 0, total: 0, failed: [], step: null, cause: null, intent: "i" }) as never;
