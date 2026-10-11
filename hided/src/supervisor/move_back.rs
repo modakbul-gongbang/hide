@@ -653,7 +653,14 @@ pub(super) async fn back_rollback(
         )
     })?;
     match resumed {
-        Resumed::Running => {}
+        Resumed::Running { leftover } => {
+            if let Some(reason) = leftover {
+                log(
+                    "resume.leftover",
+                    json!({"intent": journal.intent, "peer": journal.peer.node, "reason": reason}),
+                );
+            }
+        }
         Resumed::Retired => {
             log("rollback.found_retired", json!({"intent": journal.intent}));
             copy_placed(env, &journal)?;

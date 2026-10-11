@@ -71,8 +71,14 @@ pub enum StepAnswer {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         leftover: Option<String>,
     },
-    /// `resume`: the core runs on its folder.
-    Running { pid: u32 },
+    /// `resume`: the core runs on its folder; `leftover` names what of the
+    /// move's staged copy could not be removed, which the next staging
+    /// removes first.
+    Running {
+        pid: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        leftover: Option<String>,
+    },
     /// The step cannot act yet (a lock another change holds, a core still
     /// starting or not yet confirmed stopped): asking again may answer.
     Busy { reason: String },

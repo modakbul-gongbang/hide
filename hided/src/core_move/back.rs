@@ -414,15 +414,16 @@ pub fn retire(remote: &Remote, intent: &str) -> Result<Option<String>, MoveFailu
 /// What the core's machine answered a resume.
 #[derive(Debug, Eq, PartialEq)]
 pub enum Resumed {
-    /// Its core runs on its folder as before.
-    Running,
+    /// Its core runs on its folder as before; `leftover` names what of the
+    /// staged copy it could not remove.
+    Running { leftover: Option<String> },
     /// It retired its core for this move: the move committed.
     Retired,
 }
 
 pub fn resume(remote: &Remote, journal: &Journal) -> Result<Resumed, MoveFailure> {
     match remote.step("resume", &[("intent", &journal.intent)])? {
-        StepAnswer::Running { .. } => Ok(Resumed::Running),
+        StepAnswer::Running { leftover, .. } => Ok(Resumed::Running { leftover }),
         StepAnswer::Retired { .. } => Ok(Resumed::Retired),
         other => Err(super::driver::unexpected("resume", &other)),
     }
