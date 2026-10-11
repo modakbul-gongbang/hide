@@ -653,12 +653,16 @@ impl MemoryStore {
         path.is_file()
     }
 
+    /// Opens the store for a worker's read (the Memory tab, the Sessions
+    /// history, the promotion tracker): it waits out a writer's moment of
+    /// exclusive lock instead of calling the store unreadable, while the
+    /// hook's open stays bounded by its own deadline.
     pub fn open_read_only(path: &Path) -> Result<Self, MemoryError> {
         let connection = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
         )?;
-        connection.busy_timeout(Duration::ZERO)?;
+        connection.busy_timeout(Duration::from_secs(1))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         require_schema(&connection)?;
         let store = Self {
