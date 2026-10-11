@@ -297,13 +297,10 @@ pub(super) async fn back(env: &Env, seat: &seat::Seat, running: RunningNode) -> 
         "move.started",
         json!({"intent": journal.intent, "direction": "back", "source": journal.peer.node}),
     );
-    let (device, intent) = (journal.peer.device.clone(), journal.intent.clone());
+    let shown = MoveView::of(&journal, MoveState::Stopping);
     let view = move |state: MoveState| MoveView {
         state,
-        direction: Some(Direction::Back),
-        device: Some(device.clone()),
-        intent: Some(intent.clone()),
-        ..MoveView::default()
+        ..shown.clone()
     };
     moves.set(view(MoveState::Stopping));
     // The move's screen is mounted first, so a window the node's end closes
@@ -515,13 +512,7 @@ pub(super) async fn commit_back(
         "move.done",
         json!({"intent": journal.intent, "direction": "back"}),
     );
-    seat.moves.set(MoveView {
-        state: MoveState::Done,
-        direction: Some(Direction::Back),
-        device: Some(journal.peer.device.clone()),
-        intent: Some(journal.intent.clone()),
-        ..MoveView::default()
-    });
+    seat.moves.set(MoveView::of(&journal, MoveState::Done));
     Ok(Role::Core(running))
 }
 
@@ -544,13 +535,9 @@ pub(super) async fn back_rollback(
         json!({"intent": journal.intent, "direction": "back", "step": step, "cause": cause}),
     );
     seat.moves.set(MoveView {
-        state: MoveState::RollingBack,
-        direction: Some(Direction::Back),
-        device: Some(journal.peer.device.clone()),
-        intent: Some(journal.intent.clone()),
         step: Some(step),
         cause: Some(cause.clone()),
-        ..MoveView::default()
+        ..MoveView::of(&journal, MoveState::RollingBack)
     });
     let resumed = wait_on_peer(
         &seat.stop,
@@ -622,13 +609,9 @@ pub(super) async fn back_rollback(
         json!({"intent": journal.intent, "direction": "back", "step": step}),
     );
     seat.moves.set(MoveView {
-        state: MoveState::RolledBack,
-        direction: Some(Direction::Back),
-        device: Some(journal.peer.device.clone()),
-        intent: Some(journal.intent.clone()),
         step: Some(step),
         cause: Some(cause),
-        ..MoveView::default()
+        ..MoveView::of(&journal, MoveState::RolledBack)
     });
     Ok(Role::Node(node))
 }

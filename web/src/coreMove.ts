@@ -43,6 +43,8 @@ export type MoveView = {
   state: MoveState;
   direction: "forward" | "back" | null;
   device: string | null;
+  /** The SSH alias the move reaches its other machine by: a window the move holds before it drew the core names that machine by it. */
+  alias?: string;
   intent: string | null;
   sent: number;
   total: number;

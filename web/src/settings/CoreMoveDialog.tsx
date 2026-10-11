@@ -99,7 +99,7 @@ export function CoreMoveDialog({ request, asked: first, giveUp = false, actions,
   }, [offered]);
   const asMoving = moveForm(view, asked, request);
   const form: MoveForm = asMoving === "moving" && offered && givingUp ? "give_up" : asMoving;
-  const machines = moveMachines(devices, request.direction === "back" ? { direction: "back", device: null } : { direction: "forward", device: request.device }, t);
+  const machines = moveMachines(devices, request.direction === "back" ? { direction: "back", device: null, alias: view?.alias } : { direction: "forward", device: request.device, alias: view?.alias }, t);
   const values = moveCopy(machines);
   const back = request.direction === "back";
   // The machine the move waits on: the core's machine for a move back, the device for a forward move.
@@ -183,7 +183,7 @@ export function CoreMoveDialog({ request, asked: first, giveUp = false, actions,
               <p className="break-keep text-body font-semibold text-foreground">{t("coreMove.final")}</p>
               <p className="break-keep text-body text-foreground">{back ? t("coreMove.takeHere.here") : t("coreMove.giveUp.here")}</p>
               <p className="break-keep text-body text-foreground">{back ? t("coreMove.takeHere.held", { machine: peer }) : t("coreMove.giveUp.back", { machine: peer })}</p>
-              {back ? null : <p className="break-keep text-body text-muted-foreground" data-core-move-give-up-risk="true">{t("coreMove.giveUp.risk", { machine: peer })}</p>}
+              {back ? null : <p className="break-keep text-body text-foreground" data-core-move-give-up-risk="true">{t("coreMove.giveUp.risk", { machine: peer })}</p>}
               {refusal ? (
                 <p className="break-keep text-body text-destructive" data-core-move-refused={refusal}>
                   {refusal === "move_not_waiting" ? t("coreMove.refused.notWaiting") : refusal === "move_busy" ? t("coreMove.refused.busy") : t("coreMove.refused.other")}

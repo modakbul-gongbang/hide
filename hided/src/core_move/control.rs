@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 
-use super::journal::{MoveFailure, MoveStep};
+use super::journal::{Journal, MoveFailure, MoveStep};
 
 /// What a window's `core_move` event asks: a request the supervisor takes,
 /// or the abandon of the move its wait offers, which the wait itself hears.
@@ -191,6 +191,10 @@ pub struct MoveView {
     /// Toward the machine named by `device`, or back to this one.
     pub direction: Option<super::journal::Direction>,
     pub device: Option<String>,
+    /// The SSH alias the move reaches its other machine by, which a window
+    /// the move holds before it drew the core names that machine by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
     pub intent: Option<String>,
     pub sent: u64,
     pub total: u64,
@@ -207,6 +211,21 @@ pub struct MoveView {
     /// Whether the move's wait takes an `abandon` request now.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub abandon: bool,
+}
+
+impl MoveView {
+    /// `journal`'s move in `state`: its direction, its other machine and
+    /// the move itself; the step, the cause and the counts are the caller's.
+    pub fn of(journal: &Journal, state: MoveState) -> Self {
+        MoveView {
+            state,
+            direction: Some(journal.phase.direction()),
+            device: Some(journal.peer.device.clone()),
+            alias: Some(journal.peer.alias.clone()),
+            intent: Some(journal.intent.clone()),
+            ..MoveView::default()
+        }
+    }
 }
 
 /// The supervisor's side of the move: one request waiting at most, and the

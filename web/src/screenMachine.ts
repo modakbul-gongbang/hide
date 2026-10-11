@@ -91,9 +91,14 @@ export function coreShared(devices: readonly Device[] | undefined): boolean {
 /**
  * The machines a move names, as this window calls them: toward a device,
  * from this Mac to that device; back, from the core's machine to this Mac.
+ * A window the move holds before it drew the core, a reload during a long
+ * wait, has no device rows, so it names the other machine by the alias the
+ * move reaches it by.
  */
-export function moveMachines(devices: readonly Device[] | undefined, view: Pick<MoveView, "direction" | "device">, t: TFunction<"translation">): MoveMachines {
+export function moveMachines(devices: readonly Device[] | undefined, view: Pick<MoveView, "direction" | "device" | "alias">, t: TFunction<"translation">): MoveMachines {
   const here = t("common.thisMac");
-  if (view.direction === "back") return { from: coreMachineName(devices, t), to: here };
-  return { from: here, to: view.device ? machineName(devices, view.device, t) : here };
+  const drawn = (devices ?? []).length > 0;
+  if (view.direction === "back") return { from: drawn || !view.alias ? coreMachineName(devices, t) : view.alias, to: here };
+  if (!view.device) return { from: here, to: here };
+  return { from: here, to: drawn || !view.alias ? machineName(devices, view.device, t) : view.alias };
 }

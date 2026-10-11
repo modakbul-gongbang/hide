@@ -1071,6 +1071,8 @@ fn a_move_given_up_while_its_peer_is_cut_off_ends_the_peer_s_core_once_it_is_bac
         ensure!(fixture.role()? == "node");
         let mut window = fixture.held_window()?;
         let offered = abandon_offered(&mut window)?;
+        // A window held before it drew the core names the peer by this.
+        ensure!(offered["alias"] == ALIAS, "{offered}");
         let refused = abandon(&mut window)?;
         if refused.is_some() {
             let now = fixture
@@ -1239,6 +1241,7 @@ fi"#,
         let mut window = fixture.held_window()?;
         let offered = abandon_offered(&mut window)?;
         ensure!(offered["direction"] == "back", "{offered}");
+        ensure!(offered["alias"] == ALIAS, "{offered}");
         let refused = abandon(&mut window)?;
         ensure!(
             refused.is_none(),

@@ -900,7 +900,7 @@
       "Does each dialog form name the reason first and keep one primary action?",
       "Korean particles after the machine's name (로/으로, 는/은): do they read as Korean reads the name?",
       "The Dark frames are set against the Light ones: does Dark use the tokens as Light does?",
-      "The give-up and take-here confirms have no approved frame: do they read as the move dialog's own confirm, with the line that it cannot be undone first, the risk line quiet, and the destructive action not the default?"
+      "The give-up and take-here confirms have no approved frame: do they read as the move dialog's own confirm, with the line that it cannot be undone first, the risk line in the body color like the lines above it, and the destructive action not the default?"
     ]
   },
   "core-move-window": {

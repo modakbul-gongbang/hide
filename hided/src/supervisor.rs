@@ -908,11 +908,10 @@ async fn forward(
         "move.started",
         json!({"intent": journal.intent, "device": device, "target": journal.peer.node}),
     );
+    let shown = MoveView::of(&journal, MoveState::Stopping);
     let view = |state: MoveState| MoveView {
         state,
-        device: Some(device.to_owned()),
-        intent: Some(journal.intent.clone()),
-        ..MoveView::default()
+        ..shown.clone()
     };
     moves.set(view(MoveState::Stopping));
     // Mounted before the core stops: a window whose socket the stopping core
@@ -1230,6 +1229,7 @@ async fn offering_abandon<T>(
     moves.update(|view| {
         view.direction = Some(journal.phase.direction());
         view.device = Some(journal.peer.device.clone());
+        view.alias = Some(journal.peer.alias.clone());
         view.intent = Some(journal.intent.clone());
     });
     moves.offer_abandon(Some(intent));
@@ -1295,12 +1295,7 @@ async fn abandon_here(
         );
     }
     let running = crate::start_core_role(env.clone(), seat.parts()).await?;
-    seat.moves.set(MoveView {
-        state: MoveState::Abandoned,
-        device: Some(journal.peer.device.clone()),
-        intent: Some(journal.intent.clone()),
-        ..MoveView::default()
-    });
+    seat.moves.set(MoveView::of(&journal, MoveState::Abandoned));
     Ok(Role::Core(running))
 }
 
@@ -1476,11 +1471,8 @@ async fn commit(env: &Env, moves: &MoveControl, mut journal: Journal, remote: &A
         ),
     }
     moves.set(MoveView {
-        state: MoveState::Done,
-        device: Some(journal.peer.device.clone()),
-        intent: Some(journal.intent.clone()),
         node: Some(journal.change.old_owner.clone()),
-        ..MoveView::default()
+        ..MoveView::of(&journal, MoveState::Done)
     });
 }
 
@@ -1501,12 +1493,9 @@ async fn rollback(
         json!({"intent": journal.intent, "step": step, "cause": cause}),
     );
     seat.moves.set(MoveView {
-        state: MoveState::RollingBack,
-        device: Some(journal.peer.device.clone()),
-        intent: Some(journal.intent.clone()),
         step: Some(step),
         cause: Some(cause.clone()),
-        ..MoveView::default()
+        ..MoveView::of(&journal, MoveState::RollingBack)
     });
     let screen = MoveScreen::mount(&seat.parts(), env.vite_origin.as_deref());
     let placed = matches!(
@@ -1606,12 +1595,9 @@ async fn rollback(
         json!({"intent": journal.intent, "step": step}),
     );
     seat.moves.set(MoveView {
-        state: MoveState::RolledBack,
-        device: Some(journal.peer.device.clone()),
-        intent: Some(journal.intent.clone()),
         step: Some(step),
         cause: Some(cause),
-        ..MoveView::default()
+        ..MoveView::of(&journal, MoveState::RolledBack)
     });
     Ok(Role::Core(running))
 }

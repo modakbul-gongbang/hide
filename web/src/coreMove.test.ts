@@ -3,6 +3,7 @@ import { windowStrip } from "./connection";
 import { stepMarks, type MoveView } from "./coreMove";
 import { createInterfaceI18n } from "./i18n/instance";
 import { moveForm } from "./settings/CoreMoveDialog";
+import { coreMachineName, moveMachines } from "./screenMachine";
 
 const view = (over: Partial<MoveView>): MoveView => ({ state: "idle", direction: "forward", device: "mini", intent: null, sent: 0, total: 0, failed: [], step: null, cause: null, node: null, ...over });
 
@@ -46,6 +47,18 @@ describe("the strip above the window (W1 to W3)", () => {
     expect(strip(view({ state: "waiting", step: "reattach", abandon: true }))?.action).toBe("give_up");
     expect(strip(view({ state: "waiting", step: "reattach" }))?.action).toBeUndefined();
     expect(strip(view({ state: "rolling_back", step: "reattach" }))?.action).toBeUndefined();
+  });
+
+  // A window reloaded during a long wait gets the move's frame before any
+  // snapshot, so it has no device rows to name the other machine from.
+  it("names the other machine by the move's alias in a window the move holds before it drew the core", async () => {
+    const { t } = await createInterfaceI18n("ko");
+    const firstFrame = (move: MoveView) => windowStrip({ connection: "moving", refused: false, move, link: null, machines: moveMachines(undefined, move, t), coreMachine: coreMachineName(undefined, t) }, t);
+    const forward = firstFrame(view({ state: "waiting", step: "reattach", device: "mini-2", alias: "mini", abandon: true }));
+    expect(forward?.text).toContain("core를 mini로 옮기는 중");
+    expect(forward?.text).not.toContain("mini-2");
+    // A move back's strip names this Mac only; its take-here dialog names the core's machine.
+    expect(moveMachines(undefined, view({ state: "waiting", direction: "back", device: "mini-2", alias: "mini", abandon: true }), t)).toEqual({ from: "mini", to: "이 Mac" });
   });
 
   it("names the move's step while a move holds the window", async () => {
