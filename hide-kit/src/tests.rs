@@ -280,10 +280,7 @@ impl Fixture {
             codex: None,
             login_shell: None,
             legacy_coordination_home: None,
-            user_agents: hide_platform::user_agents::UserAgents::fixture(
-                root.join("launchctl"),
-                "fixture".into(),
-            ),
+            user_agents: hide_platform::user_agents::UserAgents::fixture(&root),
             retirement_projects: Vec::new(),
             legacy: Vec::new(),
             stop: Arc::default(),
@@ -949,7 +946,7 @@ fn the_standalone_hcoord_plugin_is_unlinked_once() {
     let fixture = Fixture::new();
     fixture.herdr.plugins.lock().unwrap().push(plugin(
         HCOORD_PLUGIN_ID,
-        "/work/herdr-ide/plugins/hcoord",
+        "/work/hide/plugins/hcoord",
         "local",
     ));
 

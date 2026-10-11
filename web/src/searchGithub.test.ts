@@ -107,12 +107,12 @@ describe("the explicit GitHub search (B16-B19)", () => {
 
   it("shows a result a held row already is only once (B17)", () => {
     const results = [
-      { kind: "pr" as const, repository: "acme/herdr-ide", number: 275, title: "Surface mailbox sandbox refusals", state: "open", url: "https://github.com/acme/herdr-ide/pull/275", pr_state: "pending" as const },
-      { kind: "pr" as const, repository: "acme/herdr-ide", number: 12, title: "Old", state: "merged", url: "https://github.com/acme/herdr-ide/pull/12", pr_state: "merged" as const },
+      { kind: "pr" as const, repository: "acme/hide", number: 275, title: "Surface mailbox sandbox refusals", state: "open", url: "https://github.com/acme/hide/pull/275", pr_state: "pending" as const },
+      { kind: "pr" as const, repository: "acme/hide", number: 12, title: "Old", state: "merged", url: "https://github.com/acme/hide/pull/12", pr_state: "merged" as const },
     ];
-    const held = [{ url: "https://github.com/acme/herdr-ide/pull/275" }] as unknown as Parameters<typeof githubEntries>[1];
+    const held = [{ url: "https://github.com/acme/hide/pull/275" }] as unknown as Parameters<typeof githubEntries>[1];
     const shown = githubEntries(results, held, t);
-    expect(shown.map((entry) => entry.id)).toEqual(["github:pr:acme/herdr-ide#12"]);
-    expect(shown[0]).toMatchObject({ external: true, kind: "pr", url: "https://github.com/acme/herdr-ide/pull/12" });
+    expect(shown.map((entry) => entry.id)).toEqual(["github:pr:acme/hide#12"]);
+    expect(shown[0]).toMatchObject({ external: true, kind: "pr", url: "https://github.com/acme/hide/pull/12" });
   });
 });

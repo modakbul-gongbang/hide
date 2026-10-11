@@ -1,7 +1,9 @@
 # The unsigned Windows x64 and Linux x64 packages (operator decision
 # 2026-10-03), each built on its own runner by `bash scripts/verify-web.sh desktop package`
 # and then started without a window by `desktop/scripts/smoke-package.mjs`,
-# because no machine of either system is at hand to try a package on.
+# because no machine of either system is at hand to try a package on. The
+# Windows package is then opened with its window
+# (`desktop/e2e/packaged-window.spec.ts`), and the shell it draws is kept.
 #
 # A release calls this workflow and attaches what it uploads, and the nightly
 # calls it on main. A pull request runs it as `pr.yml`'s `package` lane, which
@@ -14,7 +16,11 @@
 #
 # `include-macos` adds the macOS archive and runs the packaged app's own specs
 # on it: the signed bundle with its own host, daemon and Herdr, which no other
-# lane starts.
+# lane starts. A release asks for `macos-signing: developer-id`, so the
+# archive it ships is the one those specs started: signed with the Developer
+# ID certificate and notarized, with the secrets of the `release` environment,
+# which only a `v*` tag can use (docs/BUILD.md). Pull requests and the nightly
+# keep the ad-hoc signature and reach no secret.
 name: package
 
 on:
@@ -25,10 +31,15 @@ on:
         type: string
         required: true
       include-macos:
-        description: Also test the macOS archive and its packaged app (pull requests and nightly).
+        description: Also build the macOS archive and test its packaged app.
         type: boolean
         required: false
         default: false
+      macos-signing:
+        description: How the macOS app is signed, adhoc or developer-id (HIDE_MACOS_SIGNING; a release only).
+        type: string
+        required: false
+        default: adhoc
 
 permissions:
   contents: read
@@ -91,6 +102,60 @@ jobs:
       - name: Unpack, install the kit, and replace the daemon without a window
         timeout-minutes: 5
         run: node desktop/scripts/smoke-package.mjs "desktop/out/hide-v${HIDE_VERSION}-${{ matrix.system }}-x64.${{ matrix.archive }}"
+      - name: Unpack the package for its window
+        # Extract All's reading of the zip, as smoke-package.mjs unpacks it.
+        id: unpacked
+        if: matrix.system == 'windows'
+        run: |
+          destination="$RUNNER_TEMP/packaged"
+          SMOKE_ARCHIVE="desktop/out/hide-v${HIDE_VERSION}-windows-x64.zip" SMOKE_DESTINATION="$destination" \
+            pwsh -NoProfile -Command 'Expand-Archive -LiteralPath $env:SMOKE_ARCHIVE -DestinationPath $env:SMOKE_DESTINATION'
+          app="$destination/hide-win32-x64"
+          # The fixture's own `hide status` and `hide stop` read target/debug;
+          # these are the package's binaries, so no workspace is built twice.
+          mkdir -p target/debug
+          cp "$app/resources/hide.exe" "$app/resources/hided.exe" target/debug/
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+      - name: The packaged app's window
+        # The packaged hide.exe with its window, against a private HOME, state
+        # and Herdr (desktop/e2e/packaged-window.spec.ts); the shell it draws
+        # is kept below.
+        id: window
+        if: matrix.system == 'windows'
+        timeout-minutes: 10
+        env:
+          HIDE_E2E_PACKAGED_APP: ${{ steps.unpacked.outputs.app }}/hide.exe
+          HIDE_E2E_HERDR_BIN: ${{ steps.unpacked.outputs.app }}/resources/herdr.exe
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          bash scripts/verify-web.sh desktop e2e packaged-window.spec.ts
+      - name: Report flaky and failed window tests
+        # See the macOS job below: this workflow has no `issues: write`.
+        id: flaky
+        if: ${{ !cancelled() && matrix.system == 'windows' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json
+      - name: Keep the packaged window
+        if: ${{ matrix.system == 'windows' && steps.window.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-package-window-windows
+          path: ${{ runner.temp }}/hide-e2e/*.png
+          if-no-files-found: error
+      - name: Keep the failed window run
+        # On Linux nothing is there to keep, and the step keeps nothing.
+        if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-package-window-logs-windows
+          path: |
+            ${{ runner.temp }}/hide-e2e
+            desktop/test-results
+          if-no-files-found: ignore
       - name: Keep the package
         uses: actions/upload-artifact@v7
         with:
@@ -107,7 +172,10 @@ jobs:
     name: package (macos)
     if: ${{ inputs.include-macos }}
     runs-on: macos-15
-    timeout-minutes: 70
+    # Notarization waits on Apple, which takes minutes and now and then longer.
+    timeout-minutes: 100
+    # An empty name is no environment: the ad-hoc runs reach no secret.
+    environment: ${{ inputs.macos-signing == 'developer-id' && 'release' || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -135,8 +203,42 @@ jobs:
       - name: Install dependencies
         timeout-minutes: 5
         run: bash scripts/verify-web.sh install
+      - name: Install the Developer ID certificate and the notary key
+        # The certificate goes into a keychain of this job's own, put on the
+        # search list so codesign finds it; the step names the one Developer
+        # ID Application identity in it rather than trusting a typed name.
+        if: ${{ inputs.macos-signing == 'developer-id' }}
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_DEVELOPER_ID_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -hex 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/^ *[0-9]*) [0-9A-F]* "\(Developer ID Application: .*\)"$/\1/p')"
+          if [ "$(printf '%s' "$identity" | grep -c '^')" != 1 ]; then
+            echo "::error::the certificate must hold exactly one Developer ID Application identity"
+            exit 1
+          fi
+          printf '%s' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary-key.p8"
+          echo "HIDE_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "HIDE_NOTARY_KEY_PATH=$RUNNER_TEMP/notary-key.p8" >> "$GITHUB_ENV"
       - name: Package the app and checksum
-        timeout-minutes: 50
+        # With developer-id the packager also signs, notarizes and staples,
+        # and fails unless Gatekeeper accepts the archived app as notarized.
+        timeout-minutes: 80
+        env:
+          HIDE_MACOS_SIGNING: ${{ inputs.macos-signing }}
+          HIDE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          HIDE_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: bash scripts/verify-web.sh desktop package
       - name: Verify the archive and the extracted bundle
         id: bundle
@@ -198,3 +300,8 @@ jobs:
             desktop/out/hide-v*-macos-arm64.zip.sha256
           if-no-files-found: error
           retention-days: 7
+      - name: Remove the signing keychain and the notary key
+        if: ${{ always() && inputs.macos-signing == 'developer-id' }}
+        run: |
+          if [ -f "$RUNNER_TEMP/signing.keychain-db" ]; then security delete-keychain "$RUNNER_TEMP/signing.keychain-db"; fi
+          rm -f "$RUNNER_TEMP/notary-key.p8"

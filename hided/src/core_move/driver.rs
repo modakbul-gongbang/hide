@@ -400,41 +400,59 @@ pub fn send(
     let _ = std::fs::remove_file(&manifest_file);
     let total = manifest.total_bytes();
     let sent = std::sync::atomic::AtomicU64::new(0);
-    let mut wanted = differing(remote, journal, manifest)?;
+    let wanted = differing(remote, journal, manifest)?;
     let held = manifest.files.len().saturating_sub(wanted.len());
-    let mut uploaded: Vec<String> = Vec::new();
+    let uploaded = send_until_same(
+        wanted,
+        |attempt, wanted| {
+            let files = copies(wanted, &staging, &incoming)?;
+            if attempt == 0 {
+                // Files the peer already holds count as sent.
+                let held: u64 = manifest
+                    .files
+                    .iter()
+                    .filter(|(path, _)| !wanted.contains(path))
+                    .map(|(_, file)| file.size)
+                    .sum();
+                sent.store(held, std::sync::atomic::Ordering::Relaxed);
+                progress(held, total);
+            }
+            remote.upload(&files, &|bytes| {
+                let now = sent.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed) + bytes;
+                progress(now.min(total), total);
+            })
+        },
+        || differing(remote, journal, manifest),
+    )?;
+    herdr_core::diagnostic!(json!({
+        "component": "core_move",
+        "kind": "copy.sent",
+        "intent": journal.intent,
+        "held": held,
+        "uploaded": uploaded,
+    }));
+    Ok(())
+}
+
+/// Sends what `wanted` names and asks the peer again what differs, at most
+/// twice: every file sent, once nothing differs, or the files that still
+/// do. `upload` is told which pass it is on.
+fn send_until_same(
+    mut wanted: Vec<String>,
+    mut upload: impl FnMut(usize, &[String]) -> Result<(), MoveFailure>,
+    mut differing: impl FnMut() -> Result<Vec<String>, MoveFailure>,
+) -> Result<Vec<String>, MoveFailure> {
+    let mut uploaded = Vec::new();
     for attempt in 0..2 {
         if wanted.is_empty() {
-            herdr_core::diagnostic!(json!({
-                "component": "core_move",
-                "kind": "copy.sent",
-                "intent": journal.intent,
-                "held": held,
-                "uploaded": uploaded,
-            }));
-            return Ok(());
+            return Ok(uploaded);
         }
-        uploaded.extend(wanted.iter().cloned());
-        let files = copies(&wanted, &staging, &incoming)?;
-        if attempt == 0 {
-            // Files the peer already holds count as sent.
-            let held: u64 = manifest
-                .files
-                .iter()
-                .filter(|(path, _)| !wanted.contains(path))
-                .map(|(_, file)| file.size)
-                .sum();
-            sent.store(held, std::sync::atomic::Ordering::Relaxed);
-            progress(held, total);
-        }
-        remote.upload(&files, &|bytes| {
-            let now = sent.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed) + bytes;
-            progress(now.min(total), total);
-        })?;
-        wanted = differing(remote, journal, manifest)?;
+        upload(attempt, &wanted)?;
+        uploaded.extend(wanted);
+        wanted = differing()?;
     }
     if wanted.is_empty() {
-        Ok(())
+        Ok(uploaded)
     } else {
         Err(MoveFailure::Digest { files: wanted })
     }
@@ -833,5 +851,37 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    /// A copy the peer finds whole only after the second pass ends sent,
+    /// naming both passes' files, so its record is written on that exit too;
+    /// one still differing after it is refused with what differs.
+    #[test]
+    fn a_copy_whole_only_after_the_second_pass_ends_sent_with_both_passes_files() {
+        let mut answers = vec![Vec::new(), vec!["links.sqlite3".to_owned()]];
+        let mut passes = Vec::new();
+        let uploaded = send_until_same(
+            vec!["labels.json".to_owned(), "links.sqlite3".to_owned()],
+            |attempt, files| {
+                passes.push((attempt, files.to_vec()));
+                Ok(())
+            },
+            || Ok(answers.pop().expect("asked at most twice")),
+        )
+        .unwrap();
+        assert_eq!(uploaded, ["labels.json", "links.sqlite3", "links.sqlite3"]);
+        assert_eq!(passes.len(), 2);
+        assert_eq!(passes[1], (1, vec!["links.sqlite3".to_owned()]));
+
+        let refused = send_until_same(
+            vec!["links.sqlite3".to_owned()],
+            |_, _| Ok(()),
+            || Ok(vec!["links.sqlite3".to_owned()]),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(refused, MoveFailure::Digest { ref files } if files == &["links.sqlite3"]),
+            "{refused:?}"
+        );
     }
 }

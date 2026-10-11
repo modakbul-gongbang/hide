@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use hide_platform::user_agents::{LoginAgent, UserAgents};
+use hide_platform::user_agents::{Login, LoginAgent, UserAgents};
 use serde_json::json;
 
 /// How long a Herdr server this item started may take to answer.
@@ -29,9 +29,10 @@ pub fn start(
     program: &Path,
 ) -> Result<(), String> {
     let stop = AtomicBool::new(false);
-    if !agents
-        .session_present(home, &stop)
+    if agents
+        .login(home, &stop)
         .map_err(|error| error.to_string())?
+        == Login::LoggedOut
     {
         return Err(
             "no GUI session runs for this account: log in on this machine, or turn on automatic login in System Settings"
@@ -59,7 +60,7 @@ pub fn start(
     };
     agents
         .install(&agent, home, &stop)
-        .and_then(|()| agents.kickstart(&label, home, &stop))
+        .and_then(|()| agents.start(&label, home, &stop))
         .map_err(|error| format!("the login item {label}: {error}"))
 }
 
@@ -126,19 +127,16 @@ pub fn remove(agents: &UserAgents, home: &Path, state_dir: &Path) -> Result<(), 
         .map_err(|error| format!("the login item {label}: {error}"))
 }
 
-/// Removes the property list of the login item the core on `state_dir`
-/// runs under, leaving the item loaded: that core is the process asking,
-/// which its own `bootout` would stop midway. It exits successfully next,
-/// which the item never restarts, so nothing of it starts again, and the
-/// next login loads nothing; the next install or removal unloads what is
-/// left loaded.
-pub fn forget(home: &Path, state_dir: &Path) -> Result<(), String> {
+/// Forgets the login item the core on `state_dir` runs under, leaving the
+/// item loaded: that core is the process asking, which its own unload would
+/// stop midway. It exits successfully next, which the item never restarts,
+/// so nothing of it starts again, and the next login starts nothing; the
+/// next install or removal unloads what is left loaded.
+pub fn forget(agents: &UserAgents, home: &Path, state_dir: &Path) -> Result<(), String> {
     let label = hide_kit::layout::core_login_item(home, state_dir);
-    match std::fs::remove_file(UserAgents::plist(home, &label)) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("the login item {label}: {error}")),
-    }
+    agents
+        .forget(&label, home)
+        .map_err(|error| format!("the login item {label}: {error}"))
 }
 
 /// The file the login item's job writes its output to.

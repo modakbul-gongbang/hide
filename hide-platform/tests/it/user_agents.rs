@@ -1,27 +1,97 @@
-use hide_platform::user_agents::{UserAgents, account_home, last_exit_of};
+#[cfg(unix)]
+use hide_platform::user_agents::Login;
+use hide_platform::user_agents::{LoginAgent, UserAgents, account_home};
+use std::io::ErrorKind;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+#[cfg(unix)]
+use std::time::Duration;
 
 #[test]
-fn login_agent_paths_belong_to_the_supplied_home() {
-    let home = Path::new("isolated-home");
-    assert_eq!(
-        UserAgents::plist(home, "example.agent"),
-        home.join("Library/LaunchAgents/example.agent.plist")
-    );
+fn the_account_home_is_an_absolute_path() {
     assert!(account_home().unwrap().is_absolute());
+}
+
+/// A system with no login agents answers each question that needs one
+/// `Unsupported` with its reason, holds no agent to read, unload, remove or
+/// forget, and runs nothing: a fixture HOME's kit gets this on every system.
+fn has_no_login_agents(agents: &UserAgents) {
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path();
+    let stop = AtomicBool::new(false);
+    let unsupported = |result: std::io::Result<()>, reason: &str| {
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Unsupported, "{error}");
+        assert_eq!(error.to_string(), reason);
+    };
+    let agent = LoginAgent {
+        label: "example.agent",
+        program: Path::new("/bin/sleep"),
+        arguments: &[],
+        environment: &[],
+        log: &home.join("agent.log"),
+    };
+    unsupported(agents.supported(), "this system has no login agents");
+    unsupported(
+        agents.login(home, &stop).map(drop),
+        "this system has no login agents",
+    );
+    unsupported(
+        agents.sleeps_on_power(home, &stop).map(drop),
+        "this system has no power settings to read",
+    );
+    unsupported(
+        agents.install(&agent, home, &stop),
+        "this system has no login agents",
+    );
+    unsupported(
+        agents.start_once(&agent, home, home, &stop),
+        "this system has no login agents",
+    );
+    unsupported(
+        agents.start("example.agent", home, &stop),
+        "this system has no login agents",
+    );
+    assert_eq!(
+        agents.last_exit("example.agent", home, &stop).unwrap(),
+        None
+    );
+    assert!(!agents.is_loaded("example.agent", home, &stop).unwrap());
+    assert!(!agents.is_installed("example.agent", home).unwrap());
+    agents.unload("example.agent", home, &stop).unwrap();
+    agents.remove("example.agent", home, &stop).unwrap();
+    agents.forget("example.agent", home).unwrap();
+    assert_eq!(std::fs::read_dir(home).unwrap().count(), 0);
+}
+
+#[test]
+fn none_has_no_login_agents() {
+    has_no_login_agents(&UserAgents::none());
+}
+
+/// launchd is the one system with login agents; every other one answers
+/// that it has none, so a core move refuses it rather than guess.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn systems_other_than_macos_have_no_login_agents() {
+    has_no_login_agents(&UserAgents::current());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_has_login_agents() {
+    UserAgents::current().supported().unwrap();
 }
 
 #[cfg(unix)]
 #[test]
 fn fixture_inspection_failure_does_not_attempt_a_bootout() {
-    use std::sync::atomic::AtomicBool;
     let directory = tempfile::tempdir().unwrap();
-    let command = directory.path().join("launchctl-fixture");
     crate::stand_ins::program(
-        &command,
+        &directory.path().join("launchctl"),
         "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$HOME/calls\"\nexit 5\n",
     );
-    let boundary = UserAgents::fixture(command, "isolated-domain".into());
+    let boundary = UserAgents::fixture(directory.path());
     assert!(
         boundary
             .unload("example.agent", directory.path(), &AtomicBool::new(false))
@@ -33,15 +103,71 @@ fn fixture_inspection_failure_does_not_attempt_a_bootout() {
     );
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Someone is logged in when the account's session answers, and an answer
+/// the system's program cannot give is a failure, not a session.
+#[cfg(unix)]
 #[test]
-fn systems_without_login_agents_need_no_command() {
-    use std::sync::atomic::AtomicBool;
+fn the_login_is_what_the_session_answers() {
     let directory = tempfile::tempdir().unwrap();
-    UserAgents::current()
-        .unload("example.agent", directory.path(), &AtomicBool::new(false))
-        .unwrap();
-    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    let home = directory.path();
+    let stop = AtomicBool::new(false);
+    crate::stand_ins::program(
+        &home.join("launchctl"),
+        "#!/bin/sh\n[ -f \"$HOME/logged-in\" ] && exit 0\nexit 113\n",
+    );
+    let boundary = UserAgents::fixture(home);
+    assert_eq!(boundary.login(home, &stop).unwrap(), Login::LoggedOut);
+    std::fs::write(home.join("logged-in"), "").unwrap();
+    assert_eq!(boundary.login(home, &stop).unwrap(), Login::LoggedIn);
+    let gone = UserAgents::fixture(&home.join("missing"));
+    let error = gone.login(home, &stop).unwrap_err();
+    assert!(
+        error.to_string().starts_with("launchctl did not answer: "),
+        "{error}"
+    );
+}
+
+/// The machine sleeps on its own on power after the power section's
+/// `sleep` minutes, never at 0; a sleep setting only on battery, one that
+/// is not a number, or a program that fails answers no sleep at all.
+#[cfg(unix)]
+#[test]
+fn only_the_power_section_s_sleep_counts() {
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path();
+    let stop = AtomicBool::new(false);
+    crate::stand_ins::program(
+        &home.join("pmset"),
+        "#!/bin/sh\n[ \"$*\" = '-g custom' ] || exit 2\ncat \"$HOME/settings\"\n",
+    );
+    let boundary = UserAgents::fixture(home);
+    let sleeps = |settings: &str| {
+        std::fs::write(home.join("settings"), settings).unwrap();
+        boundary
+            .sleeps_on_power(home, &stop)
+            .map_err(|error| error.to_string())
+    };
+    assert_eq!(
+        sleeps(
+            "Battery Power:\n lidwake              1\n sleep                1\n displaysleep         2\nAC Power:\n lidwake              1\n sleep                0 (sleep prevented by sharingd)\n displaysleep         10\n"
+        ),
+        Ok(None)
+    );
+    assert_eq!(
+        sleeps("AC Power:\n displaysleep         10\n sleep                10\n"),
+        Ok(Some(Duration::from_secs(600)))
+    );
+    let none = Err("pmset reports no sleep setting on power".to_owned());
+    assert_eq!(sleeps("Battery Power:\n sleep                0\n"), none);
+    assert_eq!(sleeps("AC Power:\n sleep                never\n"), none);
+    std::fs::remove_file(home.join("settings")).unwrap();
+    assert_eq!(
+        boundary
+            .sleeps_on_power(home, &stop)
+            .unwrap_err()
+            .to_string(),
+        "pmset exited Some(1)"
+    );
 }
 
 /// A bootout may take as long to answer as its job takes to end, which can be
@@ -50,15 +176,13 @@ fn systems_without_login_agents_need_no_command() {
 #[cfg(unix)]
 #[test]
 fn a_job_that_takes_its_time_to_stop_is_still_unloaded() {
-    use std::sync::atomic::AtomicBool;
     let directory = tempfile::tempdir().unwrap();
-    let command = directory.path().join("launchctl-fixture");
     crate::stand_ins::program(
-        &command,
+        &directory.path().join("launchctl"),
         "#!/bin/sh\ncase \"$1\" in\n  print) [ -f \"$HOME/loaded\" ] && exit 0; exit 113 ;;\n  bootout) sleep 6; rm -f \"$HOME/loaded\" ;;\nesac\nexit 0\n",
     );
     std::fs::write(directory.path().join("loaded"), "").unwrap();
-    let boundary = UserAgents::fixture(command, "isolated-domain".into());
+    let boundary = UserAgents::fixture(directory.path());
     boundary
         .unload("example.agent", directory.path(), &AtomicBool::new(false))
         .unwrap();
@@ -72,18 +196,16 @@ fn a_job_that_takes_its_time_to_stop_is_still_unloaded() {
 #[cfg(unix)]
 #[test]
 fn an_unload_waits_out_a_teardown_the_bootout_left_under_way() {
-    use std::sync::atomic::AtomicBool;
     for answer in [0, 36, 37] {
         let directory = tempfile::tempdir().unwrap();
-        let command = directory.path().join("launchctl-fixture");
         // `print` answers loaded twice more after the bootout, then gone.
         crate::stand_ins::program(
-            &command,
+            &directory.path().join("launchctl"),
             &format!(
                 "#!/bin/sh\ncase \"$1\" in\n  print)\n    [ -f \"$HOME/left\" ] || exit 0\n    left=$(cat \"$HOME/left\")\n    [ \"$left\" -eq 0 ] && exit 113\n    echo $((left - 1)) > \"$HOME/left\"\n    exit 0 ;;\n  bootout) echo 2 > \"$HOME/left\"; exit {answer} ;;\nesac\nexit 0\n"
             ),
         );
-        let boundary = UserAgents::fixture(command, "isolated-domain".into());
+        let boundary = UserAgents::fixture(directory.path());
         boundary
             .unload("example.agent", directory.path(), &AtomicBool::new(false))
             .unwrap_or_else(|error| panic!("bootout answering {answer}: {error}"));
@@ -100,14 +222,12 @@ fn an_unload_waits_out_a_teardown_the_bootout_left_under_way() {
 #[cfg(unix)]
 #[test]
 fn a_failed_bootout_with_the_job_still_loaded_is_reported() {
-    use std::sync::atomic::AtomicBool;
     let directory = tempfile::tempdir().unwrap();
-    let command = directory.path().join("launchctl-fixture");
     crate::stand_ins::program(
-        &command,
+        &directory.path().join("launchctl"),
         "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$HOME/calls\"\n[ \"$1\" = bootout ] && exit 5\nexit 0\n",
     );
-    let boundary = UserAgents::fixture(command, "isolated-domain".into());
+    let boundary = UserAgents::fixture(directory.path());
     let error = boundary
         .unload("example.agent", directory.path(), &AtomicBool::new(false))
         .unwrap_err();
@@ -118,22 +238,46 @@ fn a_failed_bootout_with_the_job_still_loaded_is_reported() {
     );
 }
 
-/// An install replaces what is loaded, then loads the written list; a
-/// removal unloads before it deletes the list.
+/// `print` answers loaded once a list is bootstrapped and until a bootout;
+/// the list each bootstrap loads is kept as `list`.
+#[cfg(unix)]
+const RECORDING_LAUNCHCTL: &str = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/calls\"\ncase \"$1\" in\n  print) [ -f \"$HOME/loaded\" ] && exit 0; exit 113 ;;\n  bootstrap) cp \"$3\" \"$HOME/list\"; touch \"$HOME/loaded\" ;;\n  bootout) rm -f \"$HOME/loaded\" ;;\nesac\nexit 0\n";
+
+/// The changes a recording `launchctl` was asked for, as the command and
+/// its domain or job.
+#[cfg(unix)]
+fn changes(home: &Path) -> Vec<String> {
+    std::fs::read_to_string(home.join("calls"))
+        .unwrap()
+        .lines()
+        .filter(|call| !call.starts_with("print "))
+        .map(|call| call.split(' ').take(2).collect::<Vec<_>>().join(" "))
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn lint(list: &Path) {
+    let lint = std::process::Command::new("/usr/bin/plutil")
+        .arg("-lint")
+        .arg(list)
+        .output()
+        .unwrap();
+    assert!(
+        lint.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lint.stdout)
+    );
+}
+
+/// An install replaces what is loaded, then loads its definition for the
+/// home it was given; a removal unloads before it uninstalls, and a
+/// forgotten agent stays loaded but is no longer installed.
 #[cfg(unix)]
 #[test]
-fn an_install_loads_the_written_list_and_a_removal_unloads_it_first() {
-    use hide_platform::user_agents::LoginAgent;
-    use std::sync::atomic::AtomicBool;
+fn an_install_loads_its_definition_and_a_removal_unloads_it_first() {
     let directory = tempfile::tempdir().unwrap();
-    let command = directory.path().join("launchctl-fixture");
-    // `print` answers loaded once the list is bootstrapped and until a
-    // bootout.
-    crate::stand_ins::program(
-        &command,
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/calls\"\ncase \"$1\" in\n  print) [ -f \"$HOME/loaded\" ] && exit 0; exit 113 ;;\n  bootstrap) touch \"$HOME/loaded\" ;;\n  bootout) rm -f \"$HOME/loaded\" ;;\nesac\nexit 0\n",
-    );
-    let boundary = UserAgents::fixture(command, "isolated-domain".into());
+    crate::stand_ins::program(&directory.path().join("launchctl"), RECORDING_LAUNCHCTL);
+    let boundary = UserAgents::fixture(directory.path());
     let home = directory.path();
     let stop = AtomicBool::new(false);
     let agent = LoginAgent {
@@ -144,60 +288,55 @@ fn an_install_loads_the_written_list_and_a_removal_unloads_it_first() {
         log: &home.join("agent.log"),
     };
     boundary.install(&agent, home, &stop).unwrap();
-    let list = UserAgents::plist(home, "example.agent");
-    let written = std::fs::read_to_string(&list).unwrap();
+    let written = std::fs::read_to_string(home.join("list")).unwrap();
     assert!(
         written.contains("<string>/private/tmp/a&amp;b</string>"),
         "{written}"
     );
     #[cfg(target_os = "macos")]
-    {
-        let lint = std::process::Command::new("/usr/bin/plutil")
-            .arg("-lint")
-            .arg(&list)
-            .output()
-            .unwrap();
-        assert!(
-            lint.status.success(),
-            "{}",
-            String::from_utf8_lossy(&lint.stdout)
-        );
-    }
+    lint(&home.join("list"));
     assert!(boundary.is_loaded("example.agent", home, &stop).unwrap());
+    assert!(boundary.is_installed("example.agent", home).unwrap());
+    let other = tempfile::tempdir().unwrap();
+    assert!(
+        !boundary
+            .is_installed("example.agent", other.path())
+            .unwrap()
+    );
     boundary.install(&agent, home, &stop).unwrap();
     boundary.remove("example.agent", home, &stop).unwrap();
-    assert!(!list.exists());
-    let calls = std::fs::read_to_string(home.join("calls")).unwrap();
-    let bootstrap = format!("bootstrap isolated-domain {}", list.display());
-    let changes: Vec<&str> = calls
-        .lines()
-        .filter(|call| !call.starts_with("print "))
-        .collect();
+    assert!(!boundary.is_installed("example.agent", home).unwrap());
+    assert!(!boundary.is_loaded("example.agent", home, &stop).unwrap());
     assert_eq!(
-        changes,
+        changes(home),
         [
-            bootstrap.as_str(),
-            "bootout isolated-domain/example.agent",
-            bootstrap.as_str(),
-            "bootout isolated-domain/example.agent",
+            "bootstrap fixture",
+            "bootout fixture/example.agent",
+            "bootstrap fixture",
+            "bootout fixture/example.agent",
         ]
     );
+
+    boundary.install(&agent, home, &stop).unwrap();
+    boundary.forget("example.agent", home).unwrap();
+    assert!(!boundary.is_installed("example.agent", home).unwrap());
+    assert!(boundary.is_loaded("example.agent", home, &stop).unwrap());
+    boundary.forget("example.agent", home).unwrap();
+    boundary.unload("example.agent", home, &stop).unwrap();
 }
 
 /// The real launchd of a disposable macOS runner (PRD core-host-node-move
-/// D-16): a login agent installed with this list starts, comes back after it
-/// is killed, stays stopped after it exits successfully, is replaced by the
-/// next install when only its list was removed (a core that gives its copy
-/// back leaves itself loaded, B9), and is gone with its process when
-/// removed. It refuses to run anywhere but a hosted CI
-/// runner, since `gui/<uid>` is the account's real session whatever HOME is.
+/// D-16): a login agent installed this way starts, comes back after it is
+/// killed, stays stopped after it exits successfully, is replaced by the
+/// next install when it was only forgotten (a core that gives its copy back
+/// leaves itself loaded, B9), and is gone with its process when removed. It
+/// refuses to run anywhere but a hosted CI runner, since `gui/<uid>` is the
+/// account's real session whatever HOME is.
 #[cfg(target_os = "macos")]
 #[test]
 #[ignore = "real launchd: only on a disposable macOS CI runner"]
 fn a_login_agent_restarts_after_a_kill_never_after_success_and_ends_when_removed() {
-    use hide_platform::user_agents::LoginAgent;
-    use std::sync::atomic::AtomicBool;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
     assert!(
         std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
             && std::env::var("RUNNER_ENVIRONMENT").as_deref() == Ok("github-hosted"),
@@ -240,8 +379,9 @@ fn a_login_agent_restarts_after_a_kill_never_after_success_and_ends_when_removed
         }
     };
     let alive = |pid: u32| hide_platform::process::is_alive(pid);
-    assert!(
-        agents.session_present(home, &stop).unwrap(),
+    assert_eq!(
+        agents.login(home, &stop).unwrap(),
+        Login::LoggedIn,
         "no GUI session"
     );
     agents.install(&agent, home, &stop).unwrap();
@@ -264,13 +404,13 @@ fn a_login_agent_restarts_after_a_kill_never_after_success_and_ends_when_removed
         #[allow(clippy::disallowed_methods)] // past launchd's ten-second throttle
         std::thread::sleep(Duration::from_secs(15));
         assert_eq!(starts().len(), 2, "launchd restarted a successful exit");
-        agents.kickstart(&label, home, &stop).unwrap();
+        agents.start(&label, home, &stop).unwrap();
         wait("the start asked for", Duration::from_secs(20), &|| {
             starts().len() == 3
         });
         let third = starts()[2];
-        // Only the list goes; the job stays loaded and running.
-        std::fs::remove_file(UserAgents::plist(home, &label)).unwrap();
+        // Only the installation goes; the job stays loaded and running.
+        agents.forget(&label, home).unwrap();
         assert!(agents.is_loaded(&label, home, &stop).unwrap());
         agents.install(&agent, home, &stop).unwrap();
         wait(
@@ -295,40 +435,54 @@ fn a_login_agent_restarts_after_a_kill_never_after_success_and_ends_when_removed
     wait("the removed agent's end", Duration::from_secs(10), &|| {
         !alive(running)
     });
-    assert!(!UserAgents::plist(home, &label).exists());
+    assert!(!agents.is_installed(&label, home).unwrap());
 }
 
-/// A job's exit is read only once it is not running and has exited.
+/// A job's exit is read only once it is not running and has exited, and
+/// only while the system holds it.
+#[cfg(unix)]
 #[test]
 fn a_job_s_exit_is_read_only_once_it_ran_and_stopped() {
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path();
+    let stop = AtomicBool::new(false);
+    crate::stand_ins::program(
+        &home.join("launchctl"),
+        "#!/bin/sh\n[ -f \"$HOME/printed\" ] || exit 113\ncat \"$HOME/printed\"\n",
+    );
+    let boundary = UserAgents::fixture(home);
+    let last_exit = |printed: &str| {
+        std::fs::write(home.join("printed"), printed).unwrap();
+        boundary.last_exit("example.job", home, &stop).unwrap()
+    };
     let job = |state: &str, code: &str| {
         format!(
             "gui/501/example.job = {{\n\tactive count = 0\n\tstate = {state}\n\truns = 1\n\tlast exit code = {code}\n}}\n"
         )
     };
-    assert_eq!(last_exit_of(&job("not running", "3")).as_deref(), Some("3"));
-    assert_eq!(last_exit_of(&job("running", "3")), None);
-    assert_eq!(last_exit_of(&job("not running", "(never exited)")), None);
-    assert_eq!(last_exit_of("gui/501/example.job = {\n}\n"), None);
+    assert_eq!(last_exit(&job("not running", "3")).as_deref(), Some("3"));
+    assert_eq!(last_exit(&job("running", "3")), None);
+    assert_eq!(last_exit(&job("not running", "(never exited)")), None);
+    assert_eq!(last_exit("gui/501/example.job = {\n}\n"), None);
+    std::fs::remove_file(home.join("printed")).unwrap();
+    assert_eq!(
+        boundary.last_exit("example.job", home, &stop).unwrap(),
+        None
+    );
 }
 
-/// A one-shot job is loaded from a list outside the login agents folder,
-/// so no later login loads it, and launchd never restarts it.
+/// A one-shot job is loaded from the caller's folder, never installed, so
+/// no later login starts it, and launchd never restarts it.
 #[cfg(unix)]
 #[test]
-fn a_one_shot_job_is_loaded_from_its_own_list_and_never_restarted() {
-    use hide_platform::user_agents::LoginAgent;
-    use std::sync::atomic::AtomicBool;
+fn a_one_shot_job_is_loaded_from_the_caller_s_folder_and_never_restarted() {
     let directory = tempfile::tempdir().unwrap();
-    let command = directory.path().join("launchctl-fixture");
-    crate::stand_ins::program(
-        &command,
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/calls\"\ncase \"$1\" in\n  print) [ -f \"$HOME/loaded\" ] && exit 0; exit 113 ;;\n  bootstrap) touch \"$HOME/loaded\" ;;\n  bootout) rm -f \"$HOME/loaded\" ;;\nesac\nexit 0\n",
-    );
-    let boundary = UserAgents::fixture(command, "isolated-domain".into());
+    crate::stand_ins::program(&directory.path().join("launchctl"), RECORDING_LAUNCHCTL);
+    let boundary = UserAgents::fixture(directory.path());
     let home = directory.path();
     let stop = AtomicBool::new(false);
-    let list = home.join("job.plist");
+    let folder = home.join("job");
+    std::fs::create_dir(&folder).unwrap();
     let agent = LoginAgent {
         label: "example.job",
         program: Path::new("/usr/bin/true"),
@@ -336,39 +490,25 @@ fn a_one_shot_job_is_loaded_from_its_own_list_and_never_restarted() {
         environment: &[],
         log: &home.join("job.log"),
     };
-    boundary.start_once(&agent, &list, home, &stop).unwrap();
-    let written = std::fs::read_to_string(&list).unwrap();
+    boundary.start_once(&agent, &folder, home, &stop).unwrap();
+    let written = std::fs::read_to_string(home.join("list")).unwrap();
     assert!(
         written.contains("<key>KeepAlive</key><false/>"),
         "{written}"
     );
     assert!(!written.contains("ThrottleInterval"), "{written}");
     #[cfg(target_os = "macos")]
-    {
-        let lint = std::process::Command::new("/usr/bin/plutil")
-            .arg("-lint")
-            .arg(&list)
-            .output()
-            .unwrap();
-        assert!(
-            lint.status.success(),
-            "{}",
-            String::from_utf8_lossy(&lint.stdout)
-        );
-    }
-    assert!(!UserAgents::plist(home, "example.job").exists());
-    boundary.unload("example.job", home, &stop).unwrap();
+    lint(&home.join("list"));
+    assert!(!boundary.is_installed("example.job", home).unwrap());
     let calls = std::fs::read_to_string(home.join("calls")).unwrap();
-    let changes: Vec<&str> = calls
-        .lines()
-        .filter(|call| !call.starts_with("print "))
-        .collect();
+    assert!(
+        calls.contains(&format!("bootstrap fixture {}/", folder.display())),
+        "{calls}"
+    );
+    boundary.unload("example.job", home, &stop).unwrap();
     assert_eq!(
-        changes,
-        [
-            format!("bootstrap isolated-domain {}", list.display()).as_str(),
-            "bootout isolated-domain/example.job",
-        ]
+        changes(home),
+        ["bootstrap fixture", "bootout fixture/example.job"]
     );
 }
 
@@ -380,9 +520,7 @@ fn a_one_shot_job_is_loaded_from_its_own_list_and_never_restarted() {
 #[test]
 #[ignore = "real launchd: only on a disposable macOS CI runner"]
 fn a_one_shot_job_runs_once_in_the_gui_session_even_when_it_fails() {
-    use hide_platform::user_agents::LoginAgent;
-    use std::sync::atomic::AtomicBool;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
     assert!(
         std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
             && std::env::var("RUNNER_ENVIRONMENT").as_deref() == Ok("github-hosted"),
@@ -411,9 +549,7 @@ fn a_one_shot_job_runs_once_in_the_gui_session_even_when_it_fails() {
             .lines()
             .count()
     };
-    agents
-        .start_once(&agent, &home.join("job.plist"), home, &stop)
-        .unwrap();
+    agents.start_once(&agent, home, home, &stop).unwrap();
     let ran = std::panic::catch_unwind(|| {
         let deadline = Instant::now() + Duration::from_secs(20);
         while starts() == 0 {
@@ -433,5 +569,5 @@ fn a_one_shot_job_runs_once_in_the_gui_session_even_when_it_fails() {
     ran.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
     unloaded.unwrap();
     assert!(!agents.is_loaded(&label, home, &stop).unwrap());
-    assert!(!UserAgents::plist(home, &label).exists());
+    assert!(!agents.is_installed(&label, home).unwrap());
 }

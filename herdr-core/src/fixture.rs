@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const FIXTURE_PREFIX: &str = "herdr-ide-verify-";
+pub const FIXTURE_PREFIX: &str = "hide-verify-";
 
 /// Synthetic fixtures live below the canonical OS temp directory. These
 /// bucket spellings come from Pi 1.0.4 and omp 18.7.0, independently of the
@@ -227,7 +227,7 @@ pub fn validate_owned_name(name: &str) -> Result<(), String> {
 }
 
 fn validate_fixture_cwd(cwd: &str) -> Result<(), String> {
-    let Some(suffix) = cwd.strip_prefix("/tmp/herdr-ide-verify-") else {
+    let Some(suffix) = cwd.strip_prefix("/tmp/hide-verify-") else {
         return Err("Fixture cwd must be an owned path under /tmp".to_owned());
     };
     if suffix.is_empty()
@@ -301,10 +301,10 @@ mod tests {
 
     #[test]
     fn prefixed_fixture_plan_is_deterministic_and_idempotent() {
-        let first = plan("herdr-ide-verify-shell").unwrap();
-        let second = plan("herdr-ide-verify-shell").unwrap();
+        let first = plan("hide-verify-shell").unwrap();
+        let second = plan("hide-verify-shell").unwrap();
         assert_eq!(first, second);
-        assert!(first.branch_name.starts_with("verify/herdr-ide-verify-"));
+        assert!(first.branch_name.starts_with("verify/hide-verify-"));
     }
 
     #[test]
@@ -315,9 +315,9 @@ mod tests {
     #[test]
     fn scale_plan_has_exact_requested_counts_and_prefixes() {
         let planned = plan_scale(
-            "herdr-ide-verify-scale",
+            "hide-verify-scale",
             "local",
-            "/tmp/herdr-ide-verify-scale",
+            "/tmp/hide-verify-scale",
             7,
             11,
         )
@@ -352,23 +352,14 @@ mod tests {
     fn remote_fixture_paths_reject_shell_syntax_before_process_launch() {
         assert!(
             plan_scale(
-                "herdr-ide-verify-safe",
+                "hide-verify-safe",
                 "mini",
-                "/tmp/herdr-ide-verify-safe;touch-pwned",
+                "/tmp/hide-verify-safe;touch-pwned",
                 1,
                 1,
             )
             .is_err()
         );
-        assert!(
-            plan_scale(
-                "herdr-ide-verify-safe",
-                "mini",
-                "/tmp/herdr-ide-verify-safe",
-                1,
-                1,
-            )
-            .is_ok()
-        );
+        assert!(plan_scale("hide-verify-safe", "mini", "/tmp/hide-verify-safe", 1, 1,).is_ok());
     }
 }

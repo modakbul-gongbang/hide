@@ -287,8 +287,9 @@ pub fn check_loadable(dir: &Path) -> Result<(), Refusal> {
         } else if name.ends_with(".sqlite3") {
             // Immutable, so the check writes no log or index beside a copy
             // whose files must stay as they were sent.
+            let uri = immutable_uri(&path).ok_or_else(|| refuse(&path, "is not named in UTF-8"))?;
             let connection = rusqlite::Connection::open_with_flags(
-                immutable_uri(&path),
+                uri,
                 rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
             )
             .map_err(|error| refuse(&path, error))?;
@@ -306,17 +307,20 @@ pub fn check_loadable(dir: &Path) -> Result<(), Refusal> {
     Ok(())
 }
 
-/// `path` as an SQLite URI that opens it immutable.
-fn immutable_uri(path: &Path) -> String {
+/// `path` as an SQLite URI that opens it immutable: the name's UTF-8 bytes,
+/// with every byte of 0x80 or more and `%`, `?` and `#` escaped, since
+/// SQLite turns each escape back into that byte. None for a name that is
+/// not UTF-8.
+fn immutable_uri(path: &Path) -> Option<String> {
     let mut uri = String::from("file:");
-    for byte in path.to_string_lossy().bytes() {
+    for byte in path.to_str()?.bytes() {
         match byte {
-            b'%' | b'?' | b'#' => uri.push_str(&format!("%{byte:02X}")),
+            b'%' | b'?' | b'#' | 0x80.. => uri.push_str(&format!("%{byte:02X}")),
             _ => uri.push(char::from(byte)),
         }
     }
     uri.push_str("?immutable=1");
-    uri
+    Some(uri)
 }
 
 /// A store's write-ahead log and index, which SQLite replays into a store
@@ -740,6 +744,20 @@ mod tests {
         assert_eq!(
             check_loadable(&staging).unwrap_err().file,
             staging.join("links.sqlite3")
+        );
+    }
+
+    #[test]
+    fn a_copy_under_a_folder_named_outside_ascii_passes_the_load_check() {
+        let source = folder();
+        let staging = source.path().join("상태 é/move-staging/i1");
+        stage(source.path(), &staging, &settings(source.path())).unwrap();
+        check_loadable(&staging).unwrap();
+        std::fs::write(staging.join("links.sqlite3"), "not a database").unwrap();
+        assert_eq!(
+            check_loadable(&staging).unwrap_err().file,
+            staging.join("links.sqlite3"),
+            "the check read the store at that name, not another"
         );
     }
 

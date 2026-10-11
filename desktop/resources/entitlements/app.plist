@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The hardened-runtime exceptions hide.app holds in a Developer ID package
+  (desktop/scripts/macos-signing.mjs). allow-jit is V8's.
+  The rest exist because hide.app is the responsible process for the programs
+  its terminals run: macOS asks the operator about the microphone, the camera
+  or controlling another app on hide.app's behalf, and under the hardened
+  runtime it refuses without asking when the app lacks the entitlement.
+  The device and personal-information keys are the ones @electron/osx-sign
+  gives an Electron app by default; Apple events is a terminal's addition.
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.device.bluetooth</key>
+    <true/>
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    <key>com.apple.security.device.print</key>
+    <true/>
+    <key>com.apple.security.device.usb</key>
+    <true/>
+    <key>com.apple.security.personal-information.location</key>
+    <true/>
+    <key>com.apple.security.personal-information.photos-library</key>
+    <true/>
+  </dict>
+</plist>

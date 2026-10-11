@@ -393,7 +393,7 @@ const PR_TREE = Object.fromEntries(PR_STATES.map(([state, glyph, fill]) => [stat
 // Agent tree parts master: the state's icon and colour, the number unless compact.
 function screenPrMark(id, {state, number, compact = false}) {
   const [glyph, fill] = PR_TREE[state];
-  return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': compact ? {enabled: false} : {content: `#${number}`}});
+  return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': compact ? {enabled: false} : {content: `${number}`}});
 }
 function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', provider = 'claude', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, inset = 0, width = 268}) {
   const descendants = {
@@ -407,7 +407,7 @@ function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground'
     'ath-row-elbow-v': {height: last ? 13 : 28},
     'ath-row-chev': chevron ? {enabled: true, icon: chevron === 'open' ? 'chevron-down' : 'chevron-right'} : {enabled: false},
     'ath-row-pr': pr ? {enabled: true} : {enabled: false},
-    ...(pr ? {'ath-row-pr/ath-pr-g': {icon: PR_TREE[pr.state][0], fill: PR_TREE[pr.state][1]}, 'ath-row-pr/ath-pr-n': {content: `#${pr.number}`}} : {}),
+    ...(pr ? {'ath-row-pr/ath-pr-g': {icon: PR_TREE[pr.state][0], fill: PR_TREE[pr.state][1]}, 'ath-row-pr/ath-pr-n': {content: `${pr.number}`}} : {}),
     'ath-row-desc': mark ? {enabled: true} : {enabled: false},
     ...(mark ? {
       'ath-row-desc/ath-mark-bang': {enabled: mark.kind === 'raised'},
@@ -479,7 +479,7 @@ function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
     // Root rows keep direct children behind their shared badge.
     ...agents.flatMap((agent, index) => [
       screenSidebarAgentRow(`${id}-agent${index}-${suffix}`, {
-        title: agent.title, symbol: agent.symbol ?? '●', color: agent.statusColor ?? '$--agent-working', age: agent.age ?? '3m', place: agent.place ?? 'herdr-ide › main',
+        title: agent.title, symbol: agent.symbol ?? '●', color: agent.statusColor ?? '$--agent-working', age: agent.age ?? '3m', place: agent.place ?? 'hide › main',
         device: agent.device, badge: agent.badge, fold: 'none',
         width: num(tokens, '--size-sidebar-ideal') - 2 * num(tokens, '--spacing-md'),
       }),
@@ -1250,7 +1250,7 @@ function graphParts(tokens) {
 const gh = number => ({source: 'github', label: `#${number}`});
 const local = number => ({source: 'local', label: `L-${number}`});
 
-// The cards and agents of herdr-ide, the project both boards draw.
+// The cards and agents of hide, the project both boards draw.
 const BUG = ['bug', '$--destructive'];
 const ENHANCEMENT = ['enhancement', '$--agent-working'];
 const ISSUE_192 = {task: gh(192), labels: [BUG], title: 'hided has no SIGTERM handler: AI children die with the stdin pipe', branch: '192-hided-sigterm-handler', ahead: 3, files: 4, needsYou: true, agents: [
@@ -1325,20 +1325,20 @@ function buildMain(tokens) {
       header(suffix, 'board'),
       frame(`main-cols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         stageColumn(`main-backlog-${suffix}`, '백로그', 4, [
-          card('b1', {task: gh(201), project: 'herdr-ide', title: 'Add Workspace design reference and visual review coverage', hover: 'start'}),
+          card('b1', {task: gh(201), project: 'hide', title: 'Add Workspace design reference and visual review coverage', hover: 'start'}),
           card('b2', {task: gh(14), project: 'sasu', title: 'judge backend switch for claude and codex'}),
           card('b3', {task: local(7), project: 'creator', title: 'AI 개발자 릴스 5탄 기획'}),
-          card('b4', {task: gh(199), project: 'herdr-ide', title: 'Read the remote primary checkout over device connections'}),
+          card('b4', {task: gh(199), project: 'hide', title: 'Read the remote primary checkout over device connections'}),
         ], {newIssue: true}),
         stageColumn(`main-working-${suffix}`, '진행 중', 2, [
           card('w1', LOCAL_5),
-          card('w2', {...ISSUE_192, project: 'herdr-ide'}),
+          card('w2', {...ISSUE_192, project: 'hide'}),
         ], {foot: [foldLine(`main-loose-${suffix}`, '이슈 없는 워크트리 5')]}),
         stageColumn(`main-review-${suffix}`, '리뷰', 2, [
-          card('r1', {...ISSUE_186, project: 'herdr-ide'}),
+          card('r1', {...ISSUE_186, project: 'hide'}),
           card('r2', {task: gh(9), project: 'sasu', title: 'mailbox-decouple: move lineage tokens into the plugin', branch: '9-mailbox-decouple', pr: {number: 12, state: 'pending', checks: 'pending', review: 'review_required'}}),
         ]),
-        doneColumn(`main-done-${suffix}`, 19, [{name: 'herdr-ide', count: 12}, {name: 'sasu', count: 6}, {name: 'creator', count: 1}]),
+        doneColumn(`main-done-${suffix}`, 19, [{name: 'hide', count: 12}, {name: 'sasu', count: 6}, {name: 'creator', count: 1}]),
       ]),
     ]);
     // A blocker in another project is an arrow too; its lock line names it with its repository.
@@ -1346,14 +1346,14 @@ function buildMain(tokens) {
       header(`d${suffix}`, 'dependencies'),
       legend(`main-dlegend-${suffix}`),
       chain(`main-dchain-${suffix}`, [
-        card('d1', {...ISSUE_192, project: 'herdr-ide', word: '진행 중'}),
+        card('d1', {...ISSUE_192, project: 'hide', word: '진행 중'}),
         arrow(`main-da1-${suffix}`),
         card('d2', {task: gh(14), project: 'sasu', title: 'judge backend switch for claude and codex', word: '백로그', locked: 'modakbul-gongbang/hide#192', dim: true}),
       ]),
       text(`main-dunrel-${suffix}`, '관계 없는 태스크', {size: '$--text-subhead', weight: '600', fill: '$--subtle-foreground'}),
       frame(`main-dunrelrow-${suffix}`, 'Unrelated', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         card('d3', {...LOCAL_5, word: '진행 중'}),
-        card('d4', {...ISSUE_186, project: 'herdr-ide', word: '리뷰'}),
+        card('d4', {...ISSUE_186, project: 'hide', word: '리뷰'}),
       ]),
     ]);
     return [sidebar, frame(`main-views-${suffix}`, 'Views', {layout: 'vertical', gap: '$--spacing-xl'}, [agents, sessionDesign(tokens).panel(suffix), board, dependencies])];
@@ -1450,7 +1450,7 @@ function buildProjectOverview(tokens) {
   const boardWidth = 4 * column + 3 * num(tokens, '--spacing-md');
   function build(suffix) {
     const card = (id, value) => taskCard(`ov-${id}-${suffix}`, value);
-    const header = (id, filter = {}) => overviewHeader(tokens, id, suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'agents', width, filter: key => graph.filter(key, filter)});
+    const header = (id, filter = {}) => overviewHeader(tokens, id, suffix, {project: 'hide', facts: HERDR_FACTS, view: 'agents', width, filter: key => graph.filter(key, filter)});
 
     // The graph (B1-B9, B21-B23): main's Observer delegates to a worktree that
     // asks (its line orange) and, through an Implementor that waits on a
@@ -1532,7 +1532,7 @@ function buildProjectOverview(tokens) {
       graph.filterEmpty(`ov-gempty-${suffix}`, width),
     ]);
     const issues = frame(`ov-tasks-${suffix}`, 'Project Overview · Issues › Board', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
-      overviewHeader(tokens, 'ov-head', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'issues', mode: 'board', width: boardWidth}),
+      overviewHeader(tokens, 'ov-head', suffix, {project: 'hide', facts: HERDR_FACTS, view: 'issues', mode: 'board', width: boardWidth}),
       frame(`ov-cols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         stageColumn(`ov-backlog-${suffix}`, '백로그', 5, [
           card('b1', {task: gh(201), labels: [ENHANCEMENT], title: 'Add Workspace design reference and visual review coverage', hover: 'start'}),
@@ -1584,7 +1584,7 @@ function buildProjectOverview(tokens) {
     // (B10-B16, B18, B19): a GitHub issue in progress, a Local one in the
     // backlog, a Local one being edited, and a GitHub one whose read failed.
     const withPanel = (key, panel) => frame(`ov-panel-${key}-${suffix}`, `Project Overview · Issues › Panel · ${panel.name}`, {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
-      overviewHeader(tokens, `ov-phead-${key}`, suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'issues', mode: 'board', width: boardWidth}),
+      overviewHeader(tokens, `ov-phead-${key}`, suffix, {project: 'hide', facts: HERDR_FACTS, view: 'issues', mode: 'board', width: boardWidth}),
       frame(`ov-psplit-${key}-${suffix}`, 'Board and panel', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         frame(`ov-pcols-${key}-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, panel.columns),
         issuePanel(`ov-panel-${key}-p-${suffix}`, panel.spec),
@@ -1633,7 +1633,7 @@ function buildProjectOverview(tokens) {
       failure: '이슈를 읽지 못함 · 이유는 로그에', body: [], comments: [],
     }});
     const dependencies = frame(`ov-deps-${suffix}`, 'Project Overview · Issues › Dependencies', {layout: 'vertical', gap: '$--spacing-lg', width: boardWidth}, [
-      overviewHeader(tokens, 'ov-dhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'issues', mode: 'dependencies', width: boardWidth}),
+      overviewHeader(tokens, 'ov-dhead', suffix, {project: 'hide', facts: HERDR_FACTS, view: 'issues', mode: 'dependencies', width: boardWidth}),
       legend(`ov-dlegend-${suffix}`),
       chain(`ov-dchain-${suffix}`, [
         card('d1', {...ISSUE_192, word: '진행 중'}),
@@ -1654,7 +1654,7 @@ function buildProjectOverview(tokens) {
     // under the pointer with 맡기기 in the time slot, 최근 머지 folded; then
     // 이슈 잇기's confirmation over it (B10).
     const prsView = frame(`ov-prs-${suffix}`, 'Project Overview · PRs', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
-      overviewHeader(tokens, 'ov-prhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'prs', width: boardWidth}),
+      overviewHeader(tokens, 'ov-prhead', suffix, {project: 'hide', facts: HERDR_FACTS, view: 'prs', width: boardWidth}),
       prGroup(`ov-prg1-${suffix}`, '내 차례', 4, '$--warning', [
         ...prRow(`ov-pr222-${suffix}`, {number: 222, state: 'pending', title: 'Start the bundled Herdr server when none answers on the socket', issue: gh(191), branch: '191-desktop-starts-herdr', checks: 'passing', review: 'review_required', age: '12m', agents: [{mark: 'done', title: 'Herdr 서버 시작 구현', line: 'PR 올림 · CI 통과', age: '12m'}], look: true, open: true}),
         ...prRow(`ov-pr218-${suffix}`, {number: 218, state: 'pending', title: 'Overview lenses: tiles and checkout lanes', branch: 'feat/overview-lenses', checks: 'passing', review: 'review_required', age: '1h', linkable: true}),
@@ -3448,25 +3448,25 @@ function buildPalette(tokens) {
     // elsewhere as one `↑ 부모` line.
     const relations = wide('related', {placeholder: '이름이나 #번호를 입력하세요', list: [
       heading('g-related', 'Related'),
-      row('q0', {lead: glyph('q0i', 'circle-dot'), title: '#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · herdr-ide', selected: true}),
-      row('q1', {lead: glyph('q1i', 'git-branch'), title: 'fix/mailbox-sandbox-letters', detail: 'herdr-ide'}),
+      row('q0', {lead: glyph('q0i', 'circle-dot'), title: '#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · hide', selected: true}),
+      row('q1', {lead: glyph('q1i', 'git-branch'), title: 'fix/mailbox-sandbox-letters', detail: 'hide'}),
       row('q2', {lead: glyph('q2i', 'git-pull-request'), title: '#275 Surface mailbox sandbox refusals', detail: 'PR · Open · fix/mailbox-sandbox-letters'}),
-      row('q3', {lead: mark('q3m', 'claude'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'herdr-ide › fix/mailbox-sandbox-letters · Done'}),
-      row('q4', {lead: mark('q4m', 'codex'), title: '↑ 부모 codex workspace-write 원인 조사', detail: 'herdr-ide › main · Working'}),
-    ], detail: detailLines('rel-d', 'Issue', 'mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', [pill('rel-p1', 'Open', '$--secondary', '$--success'), pill('rel-p2', '#273')], [['프로젝트', 'herdr-ide'], ['맡은 곳', 'fix/mailbox-sandbox-letters'], ['닫는 PR', '#275'], ['읽음', '4분 전 읽음']], [['#273 mailbox 쓰기 명령이 sandbox 거부를…', 0, true], ['fix/mailbox-sandbox-letters', 0, false], ['#275 Surface mailbox sandbox refusals', 1, false]])});
+      row('q3', {lead: mark('q3m', 'claude'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'hide › fix/mailbox-sandbox-letters · Done'}),
+      row('q4', {lead: mark('q4m', 'codex'), title: '↑ 부모 codex workspace-write 원인 조사', detail: 'hide › main · Working'}),
+    ], detail: detailLines('rel-d', 'Issue', 'mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', [pill('rel-p1', 'Open', '$--secondary', '$--success'), pill('rel-p2', '#273')], [['프로젝트', 'hide'], ['맡은 곳', 'fix/mailbox-sandbox-letters'], ['닫는 PR', '#275'], ['읽음', '4분 전 읽음']], [['#273 mailbox 쓰기 명령이 sandbox 거부를…', 0, true], ['fix/mailbox-sandbox-letters', 0, false], ['#275 Surface mailbox sandbox refusals', 1, false]])});
 
     const typed = wide('typed', {query: 'sand', list: [
       heading('g-issues', 'Issues'),
-      row('t0', {lead: glyph('t0i', 'circle-dot'), title: '#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · herdr-ide'}),
+      row('t0', {lead: glyph('t0i', 'circle-dot'), title: '#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · hide'}),
       heading('g-agents', 'Agents'),
-      row('t1', {lead: mark('t1m', 'claude'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'herdr-ide › fix/mailbox-sandbox-letters · Done', selected: true}),
+      row('t1', {lead: mark('t1m', 'claude'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'hide › fix/mailbox-sandbox-letters · Done', selected: true}),
       heading('g-checkouts', 'Checkouts'),
-      row('t2', {lead: glyph('t2i', 'git-branch'), title: 'herdr-ide / fix/mailbox-sandbox-letters', detail: '~/projects/herdr-ide.worktrees/sandbox', mono: true}),
+      row('t2', {lead: glyph('t2i', 'git-branch'), title: 'hide / fix/mailbox-sandbox-letters', detail: '~/projects/hide.worktrees/sandbox', mono: true}),
       frame(id('t-gh'), 'GitHub row', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: ROW, padding: ['$--spacing-xs', '$--spacing-sm']}, [
         glyph('t-ghi', 'search'),
         text(id('t-ght'), 'GitHub에서 "sand" 검색', {weight: '500'}),
       ]),
-    ], detail: detailLines('typed-d', 'Agent · Claude', 'mailbox 쓰기 명령 sandbox 오류 해결', [pill('typed-p1', 'Done', '$--secondary', '$--success'), pill('typed-p2', 'This Mac')], [['checkout', 'herdr-ide › fix/mailbox-sandbox-letters']], null)});
+    ], detail: detailLines('typed-d', 'Agent · Claude', 'mailbox 쓰기 명령 sandbox 오류 해결', [pill('typed-p1', 'Done', '$--secondary', '$--success'), pill('typed-p2', 'This Mac')], [['checkout', 'hide › fix/mailbox-sandbox-letters']], null)});
 
     const number = wide('number', {query: '#275', list: [
       heading('g-prs', 'Pull requests'),
@@ -3490,9 +3490,9 @@ function buildPalette(tokens) {
     ], detail: ghDetail('gh-working-d')});
     const ghResults = wide('gh-results', {query: 'quota wall', list: [
       heading('g-github', 'GitHub'),
-      row('gr0', {lead: glyph('gr0i', 'git-pull-request'), title: '#118 Close stale sandbox watches', detail: 'PR · acme/herdr-ide · Merged', selected: true}),
-      row('gr1', {lead: glyph('gr1i', 'circle-dot'), title: '#96 mailbox sandbox 거부 로그가 비어 있음', detail: 'Issue · acme/herdr-ide · Closed'}),
-    ], detail: detailLines('gh-results-d', 'Pull request · GitHub', 'Close stale sandbox watches', [pill('gh-results-p1', 'Merged'), pill('gh-results-p2', '#118'), pill('gh-results-p3', 'acme/herdr-ide')], [], null)});
+      row('gr0', {lead: glyph('gr0i', 'git-pull-request'), title: '#118 Close stale sandbox watches', detail: 'PR · acme/hide · Merged', selected: true}),
+      row('gr1', {lead: glyph('gr1i', 'circle-dot'), title: '#96 mailbox sandbox 거부 로그가 비어 있음', detail: 'Issue · acme/hide · Closed'}),
+    ], detail: detailLines('gh-results-d', 'Pull request · GitHub', 'Close stale sandbox watches', [pill('gh-results-p1', 'Merged'), pill('gh-results-p2', '#118'), pill('gh-results-p3', 'acme/hide')], [], null)});
     const ghFailed = wide('gh-failed', {query: 'quota wall', list: [
       empty('gh-failed-e', '일치하는 항목 없음'),
       ghRow('gh-failed-r', 'GitHub 검색 실패 · 다시 시도', icon(`${id('gh-failed-ri')}`, 'triangle-alert', {size: num(tokens, '--size-icon'), fill: '$--warning'})),
@@ -3651,7 +3651,7 @@ function buildDialogs(tokens) {
   }
   function build3(suffix) {
     return [frame(`dlg-row3-${suffix}`, 'Row 3 · issues', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [
-      newIssue(`dlg-issue-${suffix}`, {where: 'herdr-ide · GitHub modakbul-gongbang/hide', title: 'Overview: Tasks board as the default tab', body: '이슈 우선 흐름: 백로그 → 진행 중 → 리뷰 → 완료.\n카드는 이슈, 에이전트, PR 순서로 읽는다.', start: false}),
+      newIssue(`dlg-issue-${suffix}`, {where: 'hide · GitHub modakbul-gongbang/hide', title: 'Overview: Tasks board as the default tab', body: '이슈 우선 흐름: 백로그 → 진행 중 → 리뷰 → 완료.\n카드는 이슈, 에이전트, PR 순서로 읽는다.', start: false}),
       newIssue(`dlg-issuego-${suffix}`, {where: 'creator · Local', title: '릴스 6탄 대본 초안', body: '인터뷰 녹취에서 핵심 세 문장을 뽑는다.', start: true}),
       startIssue(`dlg-start-${suffix}`),
     ])];
@@ -3693,7 +3693,7 @@ function buildMenus(tokens) {
       ]),
       frame(`${p}-bar`, 'Bar', {width: ASK_W, height: BAR_H, layout: 'none', fill: '$--popover'}, [
         at(frame(`${p}-barrule`, 'Rule', {width: ASK_W, height: 1, fill: '$--secondary'}, []), 0, 0),
-        at(dropdown(`${p}-dt`, {lead: icon(`${p}-dtg`, 'folder-git-2', {size: 12, fill: SUBTLE}), label: 'herdr-ide · main', width: DD.target.w, open: open === 'target'}), DD.target.x, DD_Y),
+        at(dropdown(`${p}-dt`, {lead: icon(`${p}-dtg`, 'folder-git-2', {size: 12, fill: SUBTLE}), label: 'hide · main', width: DD.target.w, open: open === 'target'}), DD.target.x, DD_Y),
         at(dropdown(`${p}-dk`, {lead: providerArt(`${p}-dkg`, 'claude'), label: 'Claude', width: DD.kind.w, open: open === 'kind'}), DD.kind.x, DD_Y),
         at(dropdown(`${p}-dm`, {lead: icon(`${p}-dmg`, 'cpu', {size: 12, fill: SUBTLE}), label: 'opus', width: DD.model.w, open: open === 'model'}), DD.model.x, DD_Y),
         at(themedXref(`${p}-kbd`, 'kbd-m', '⏎', {}, {'kbd-t': {content: '⏎'}}), ASK_W - MD - 56 - SM - 22, 10),
@@ -3717,13 +3717,13 @@ function buildMenus(tokens) {
   const menuBox = (id, width, rows) => frame(id, 'Menu', {width, layout: 'vertical', padding: XS, fill: '$--popover', cornerRadius: '$--radius-sm', stroke: '$--secondary', strokeWidth: 1, strokeAlignment: 'inner', effect: SHADOW}, rows);
   const lead = (id, glyph) => frame(id, 'Lead', {width: 16, height: 16, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [icon(`${id}-i`, glyph, {size: 14, fill: MUTED})]);
   const MENU_W = 236, ROW_W = MENU_W - 2 * XS;
-  // The target follows what is in front (here herdr-ide main); Home stays on top
+  // The target follows what is in front (here hide main); Home stays on top
   // so going back to it is one pick, then this device's checkouts, then every
   // other device's Home and checkouts.
   const targetMenu = p => menuBox(`${p}-mt`, MENU_W, [
     menuRow(`${p}-mt0`, {lead: lead(`${p}-mt0g`, 'house'), label: 'Home', width: ROW_W}),
     menuSep(`${p}-mts0`, ROW_W),
-    menuRow(`${p}-mt1`, {lead: lead(`${p}-mt1g`, 'folder-git-2'), label: 'herdr-ide · main', checked: true, highlighted: true, width: ROW_W}),
+    menuRow(`${p}-mt1`, {lead: lead(`${p}-mt1g`, 'folder-git-2'), label: 'hide · main', checked: true, highlighted: true, width: ROW_W}),
     menuRow(`${p}-mt2`, {lead: lead(`${p}-mt2g`, 'folder-git-2'), label: 'oh-my-principle · main', width: ROW_W}),
     menuRow(`${p}-mt3`, {lead: lead(`${p}-mt3g`, 'folder-git-2'), label: 'sasu · main', width: ROW_W}),
     menuRow(`${p}-mt4`, {lead: lead(`${p}-mt4g`, 'folder-git-2'), label: 'demo · main', width: ROW_W}),
@@ -4076,11 +4076,11 @@ function buildProjectsSidebar(tokens) {
   // Agent rows the device sidebars share: title, mark, and the context line the
   // Needs You and Agents lists carry; a remote row wears the device chip.
   const AGENTS = {
-    deploy: {title: '배포 전 확인', status: 'asking', age: '30s', line: '승인  e2e 테스트 돌리던 중', place: 'herdr-ide › main', bright: true},
+    deploy: {title: '배포 전 확인', status: 'asking', age: '30s', line: '승인  e2e 테스트 돌리던 중', place: 'hide › main', bright: true},
     blog: {title: '블로그 초안 정리', status: 'asking', age: '2m', line: '답변  톤을 이대로 갈까요?', place: 'Home', bright: true},
     research: {title: '두 프로젝트 비교 조사', status: 'seen', provider: 'codex', age: '14m', place: 'Home'},
-    ci: {title: 'CI 러너 샤드 정리', status: 'done', age: '6m', place: 'herdr-ide › ci-shards', bright: true},
-    readable: {title: '사이드바 가독성 개선', status: 'working', age: '1m', place: 'herdr-ide › main'},
+    ci: {title: 'CI 러너 샤드 정리', status: 'done', age: '6m', place: 'hide › ci-shards', bright: true},
+    readable: {title: '사이드바 가독성 개선', status: 'working', age: '1m', place: 'hide › main'},
     principle: {title: '원칙 문서 정리', status: 'working', provider: 'codex', age: '3m', place: 'oh-my-principle › main'},
     sasu: {title: '판정 로그 확인', status: 'seen', age: '1h', place: 'sasu › main'},
     batch: {title: '배치 감시', status: 'asking', provider: 'codex', age: '5m', line: 'PR #252 머지할까요?', place: 'Home', bright: true},
@@ -4122,14 +4122,14 @@ function buildProjectsSidebar(tokens) {
     const id = key => `psb-${key}-${s}`;
     const mark = {question: 1, working: 2, done: 1};
     // The rest state the review target names: This Mac in front, its Needs You
-    // and Done groups over Projects, the Overview child of herdr-ide selected.
+    // and Done groups over Projects, the Overview child of hide selected.
     const rest = deviceSidebar('sidebar', s, {
       name: 'This Mac', needs: {p: `psb-nu-${s}`, rows: [['deploy'], ['blog']], total: 2}, done: {p: `psb-dn-${s}`, rows: [['ci']], total: 1}, home: {count: '6 projects', agents: ['blog', 'research']},
       rows: [
         section(`psb-sec-pin-${s}`, 'Pinned · 1'),
         folderRow(`psb-p-notes-${s}`, {name: 'team-notes', marks: {idle: 1}, purpose: '회의록 요약 정리'}),
         section(`psb-sec-recent-${s}`, 'Projects · Recent activity · 5'),
-        projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
+        projectRow(`psb-p-herdr-${s}`, {name: 'hide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
         // main opened (PRD agent-hierarchy-screens D-12, D-38, B35): one line, its agents as a tree.
         group(`psb-g-main-${s}`, [
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, expanded: true}),
@@ -4197,7 +4197,7 @@ function buildProjectsSidebar(tokens) {
       height: WIN_H, home: {count: '4 projects', agents: ['blog', 'research']},
       rows: [
         section(`psb-one-sp-${s}`, 'Projects · Recent activity · 4'),
-        projectRow(`psb-one-p0-${s}`, {name: 'herdr-ide', marks: mark, expanded: true}),
+        projectRow(`psb-one-p0-${s}`, {name: 'hide', marks: mark, expanded: true}),
         checkoutRow(`psb-one-p0m-${s}`, {name: 'main', kind: 'primary', age: 'now', purpose: '사이드바 가독성 개선', marks: {question: 1, working: 1}, selected: true}),
         checkoutRow(`psb-one-p0w-${s}`, {name: 'feat/home-device-rail', kind: 'mergeable', age: '12m', purpose: 'Home · 기기 레일', marks: {working: 1}}),
         projectRow(`psb-one-p1-${s}`, {name: 'oh-my-principle', marks: {working: 1}}),
@@ -4217,7 +4217,7 @@ function buildProjectsSidebar(tokens) {
       name: 'This Mac', menu: true, height: WIN_H, home: {count: '4 projects', agents: ['blog', 'research']},
       rows: [
         section(`psb-hid-sp-${s}`, 'Projects · Recent activity · 2'),
-        projectRow(`psb-hid-p0-${s}`, {name: 'herdr-ide', marks: mark}),
+        projectRow(`psb-hid-p0-${s}`, {name: 'hide', marks: mark}),
         projectRow(`psb-hid-p1-${s}`, {name: 'sasu', marks: {idle: 1}}),
       ],
     });
@@ -4256,7 +4256,7 @@ function buildProjectsSidebar(tokens) {
     ]);
     return frame(`psb-menus-${s}`, 'Row menus', {layout: 'vertical', gap: '$--spacing-lg'}, [
       opened('proj', 'Project row menu', [
-        projectRow(`psb-m-proj-row-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
+        projectRow(`psb-m-proj-row-${s}`, {name: 'hide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
       ], 220, [
         I('psb-m-proj-1', 'New worktree…'),
         I('psb-m-proj-2', 'New tab in main', {shortcut: '⌘T'}),
@@ -4307,7 +4307,7 @@ function buildProjectsSidebar(tokens) {
     const gap = num(tokens, '--spacing-sm');
     const cardW = num(tokens, '--size-pr-popover');
     const rows = [
-      projectRow(`psb-h-p-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
+      projectRow(`psb-h-p-${s}`, {name: 'hide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
       checkoutRow(`psb-h-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, purpose: '#155 browser display (WebCon…'}),
       checkoutRow(`psb-h-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, purpose: '#154 ⌘K search palette UI'}),
       checkoutRow(`psb-h-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'mergeable', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…', hovered: true}),
@@ -4328,7 +4328,7 @@ function buildProjectsSidebar(tokens) {
       'pr-card-agents-idle': {enabled: false},
       'pr-card-agents-working-count': {content: '1'},
       'pr-card-commit': {content: '2h ago'},
-      'pr-card-path': {content: '~/projects/herdr-ide.worktrees/electron-shortcut-bindings'},
+      'pr-card-path': {content: '~/projects/hide.worktrees/electron-shortcut-bindings'},
     });
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
@@ -4474,21 +4474,21 @@ function buildMobile(tokens) {
   }
   const AGENTS = {
     needs: [
-      {title: '솔루션 6 구현', status: 'approval', project: 'herdr-ide', branch: 'prd/mobile-companion', age: '2m', request: 'Bash(cargo test -p hided) 실행을 허용할까요?'},
-      {title: 'mailbox 플러그인 구현', status: 'question', kind: 'codex', project: 'herdr-ide', branch: 'prd/mailbox-plugin', machine: 'mini', age: '9m', request: '워크스페이스 이름을 어떤 걸로 할까요?'},
+      {title: '솔루션 6 구현', status: 'approval', project: 'hide', branch: 'prd/mobile-companion', age: '2m', request: 'Bash(cargo test -p hided) 실행을 허용할까요?'},
+      {title: 'mailbox 플러그인 구현', status: 'question', kind: 'codex', project: 'hide', branch: 'prd/mailbox-plugin', machine: 'mini', age: '9m', request: '워크스페이스 이름을 어떤 걸로 할까요?'},
     ],
     done: [
-      {title: '사이드바 행 클릭으로 펼치기', status: 'done', project: 'herdr-ide', branch: 'prd/sidebar-row-click-unfold', age: '14m', news: 'PR #186 열림 · CI 통과'},
+      {title: '사이드바 행 클릭으로 펼치기', status: 'done', project: 'hide', branch: 'prd/sidebar-row-click-unfold', age: '14m', news: 'PR #186 열림 · CI 통과'},
     ],
     working: [
-      {title: '리뷰 반영', status: 'working', project: 'herdr-ide', branch: 'fix/hook-probe', age: '5m'},
+      {title: '리뷰 반영', status: 'working', project: 'hide', branch: 'fix/hook-probe', age: '5m'},
       {title: '세션 초기화 작업 대기', status: 'working', kind: 'codex', project: 'contong', branch: 'main', machine: 'mini', age: '21m'},
-      {title: 'Agent tab group 시각화 검토', status: 'working', project: 'herdr-ide', branch: 'prd/agent-tab-groups', age: '38m'},
+      {title: 'Agent tab group 시각화 검토', status: 'working', project: 'hide', branch: 'prd/agent-tab-groups', age: '38m'},
     ],
     seen: [
-      {title: '코덱스 데이터 구조 조사', status: 'seen', project: 'herdr-ide', branch: 'main', age: '1h', dim: true},
-      {title: 'tab-names 구현 상태 점검', status: 'seen', project: 'herdr-ide', branch: 'main', age: '2h', dim: true},
-      {title: '체크아웃 capability 구현', status: 'seen', project: 'herdr-ide', branch: 'prd/checkout-capability', age: '3h', dim: true},
+      {title: '코덱스 데이터 구조 조사', status: 'seen', project: 'hide', branch: 'main', age: '1h', dim: true},
+      {title: 'tab-names 구현 상태 점검', status: 'seen', project: 'hide', branch: 'main', age: '2h', dim: true},
+      {title: '체크아웃 capability 구현', status: 'seen', project: 'hide', branch: 'prd/checkout-capability', age: '3h', dim: true},
     ],
   };
   function listBody(id, {unreachable = false, empty = false} = {}) {
@@ -4519,7 +4519,7 @@ function buildMobile(tokens) {
     ['  ⎿  Running…', MUTED],
     ['', MUTED],
     ['$ cargo test -p hided', SUBTLE],
-    ['   Compiling hided v0.1.0 (/Users/example/projects/herdr-ide/hided)', MUTED],
+    ['   Compiling hided v0.1.0 (/Users/example/projects/hide/hided)', MUTED],
     ['    Finished test [unoptimized] target(s) in 41.2s', MUTED],
     ['test server::tests::token_compare_needs_the_whole_token ... ok', MUTED],
     ['test pane_auth::tests::sweep_drops_unregistered ... ok', MUTED],
@@ -4635,7 +4635,7 @@ function buildMobile(tokens) {
       frame(`${id}-tx`, 'Text', {layout: 'vertical', gap: 1, width: W - 2 * LG - 38 - MD}, [
         frame(`${id}-r1`, 'Row', {layout: 'horizontal', width: 'fill_container', alignItems: 'center'}, [text(`${id}-app`, 'hide', {size: '$--text-subhead', weight: '600', fill: FG}), spacer(`${id}-s`), text(`${id}-when`, '지금', {size: '$--text-body', fill: MUTED})]),
         text(`${id}-ti`, '솔루션 6 구현', {size: '$--text-title', weight: '600', fill: FG}),
-        text(`${id}-bo`, '내 확인 대기 · herdr-ide', {size: '$--text-subhead', fill: SUBTLE}),
+        text(`${id}-bo`, '내 확인 대기 · hide', {size: '$--text-subhead', fill: SUBTLE}),
       ]),
     ]);
   }
@@ -4846,7 +4846,7 @@ function buildOverview(tokens) {
       ]),
       frame(`${id}-header`, 'Overview scope', {width: 'fill_container', layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center'}, [
         text(`${id}-title`, 'Overview', {size: '$--text-title', weight: '600'}),
-        screenToggleGroup(`${id}-scope`, ['All projects', 'herdr-ide'], project ? 1 : 0),
+        screenToggleGroup(`${id}-scope`, ['All projects', 'hide'], project ? 1 : 0),
         frame(`${id}-space`, 'Spacer', {width: 'fill_container', height: 1}, []),
         screenButton(`${id}-close`, 'Esc', {variant: 'ghost'}),
       ]),

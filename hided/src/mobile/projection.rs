@@ -54,7 +54,7 @@ mod tests {
                     agent("w1:p4", "seen", json!({"detail": "quiet sentence"})),
                 ],
                 "workspaces": [
-                    {"label": "herdr-ide", "is_git": true, "checkouts": [
+                    {"label": "hide", "is_git": true, "checkouts": [
                         {"label": "main", "branch": "prd/mobile-companion", "tabs": [{"panes": [{"id": "w1:p1"}, {"id": "w1:p2"}]}]},
                     ]},
                     {"label": "notes", "is_git": false, "checkouts": [
@@ -227,10 +227,7 @@ mod tests {
     fn rows_carry_place_line_and_lineage_root() {
         let projection = project(&rest(), "local");
         let asking = &projection.groups[0].agents[0];
-        assert_eq!(
-            asking.place.as_deref(),
-            Some("herdr-ide · prd/mobile-companion")
-        );
+        assert_eq!(asking.place.as_deref(), Some("hide · prd/mobile-companion"));
         assert_eq!(asking.tone, "warning");
         assert_eq!(asking.line.as_ref().unwrap().tone, "warning");
         assert_eq!(asking.key().herdr_pane_id(), "w1:p2");

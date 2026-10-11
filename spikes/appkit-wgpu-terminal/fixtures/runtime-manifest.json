@@ -1,7 +1,7 @@
 {
   "schema": "herdr.native-spike.fixture.v1",
-  "bundle_relative_path": "dist/Herdr IDE Native Spike.app",
-  "executable_relative_path": "dist/Herdr IDE Native Spike.app/Contents/MacOS/herdr-ide-native-spike",
+  "bundle_relative_path": "dist/Hide Native Spike.app",
+  "executable_relative_path": "dist/Hide Native Spike.app/Contents/MacOS/hide-native-spike",
   "probe_count": 32,
   "autoclose_ms": 15000,
   "warm_launch_budget_ms": 1000,

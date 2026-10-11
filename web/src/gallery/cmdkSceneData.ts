@@ -23,8 +23,8 @@ export const OTHER = agent("p-dag", "그래프 다이어그램 DAG 시각화");
 const pane = (id: string) => ({ id, herdr_label: null, terminal_title: null, cwd: "/repo", status_code: "unknown", requires_close_confirmation: false, requires_close_status_check: false, identity_label: null });
 const tab = (checkout: string, panes: string[]) => ({ id: `t-${checkout}`, workspace_id: "w1", checkout_id: checkout, label: "Tab", empty: false, delegated: false, panes: panes.map(pane) });
 
-export const PR_275 = { number: 275, title: "Surface mailbox sandbox refusals", url: "https://github.com/acme/herdr-ide/pull/275", badge: "open", review: null, is_draft: false, checks: "pending", head_branch: "fix/mailbox-sandbox-letters", closing_issues: [{ repository: "acme/herdr-ide", number: 273 }], state: "pending" as const };
-export const PR_260 = { number: 260, title: "Terminal links click path", url: "https://github.com/acme/herdr-ide/pull/260", badge: "merged", review: null, is_draft: false, checks: "passing", head_branch: "feat/terminal-links", state: "merged" as const };
+export const PR_275 = { number: 275, title: "Surface mailbox sandbox refusals", url: "https://github.com/acme/hide/pull/275", badge: "open", review: null, is_draft: false, checks: "pending", head_branch: "fix/mailbox-sandbox-letters", closing_issues: [{ repository: "acme/hide", number: 273 }], state: "pending" as const };
+export const PR_260 = { number: 260, title: "Terminal links click path", url: "https://github.com/acme/hide/pull/260", badge: "merged", review: null, is_draft: false, checks: "passing", head_branch: "feat/terminal-links", state: "merged" as const };
 
 export const RICH = {
   navigator: {
@@ -36,7 +36,7 @@ export const RICH = {
       {
         agent_scope: scopes.project,
         id: "w1",
-        label: "herdr-ide",
+        label: "hide",
         path: "/repo",
         device_id: "local",
         registered: true,
@@ -44,15 +44,15 @@ export const RICH = {
         pinned: false,
         is_git: true,
         tasks: {
-          source: { kind: "github", label: "GitHub", name: "acme/herdr-ide", reading: false, failure: null, last_read_at_unix_ms: READ_AT },
-          tasks: [{ key: `github:acme/herdr-ide${HASH}273`, source: "github", id: `${HASH}273`, url: "https://github.com/acme/herdr-ide/issues/273", title: "mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김", open: true }],
+          source: { kind: "github", label: "GitHub", name: "acme/hide", reading: false, failure: null, last_read_at_unix_ms: READ_AT },
+          tasks: [{ key: `github:acme/hide${HASH}273`, source: "github", id: `${HASH}273`, url: "https://github.com/acme/hide/issues/273", title: "mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김", open: true }],
           overflow: false,
         },
         pull_requests: [PR_275, PR_260],
         inactive_checkouts: { expanded: false, checkout_ids: [] },
         checkouts: [
           { agent_scope: scopes.checkouts["c-main"], id: "c-main", workspace_id: "w1", label: "main", path: "/repo", branch: "main", purpose: null, is_worktree: false, exists: true, has_panes: true, pull_request: null, tabs: [tab("c-main", ["p-parent", "p-dag"])], active_tab_id: null, strip: [], next_tab_label: "Tab 2", github: { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: READ_AT, unavailable_reason: null } },
-          { agent_scope: scopes.checkouts["c-sand"], id: "c-sand", workspace_id: "w1", label: "mailbox-sandbox-letters", path: "/repo.worktrees/sand", branch: "fix/mailbox-sandbox-letters", purpose: null, is_worktree: true, exists: true, has_panes: true, pull_request: PR_275, task_key: `github:acme/herdr-ide${HASH}273`, closes_task_keys: [`github:acme/herdr-ide${HASH}273`], changed_file_count: 14, ahead: 1, tabs: [tab("c-sand", ["p-child"])], active_tab_id: null, strip: [], next_tab_label: "Tab 2" },
+          { agent_scope: scopes.checkouts["c-sand"], id: "c-sand", workspace_id: "w1", label: "mailbox-sandbox-letters", path: "/repo.worktrees/sand", branch: "fix/mailbox-sandbox-letters", purpose: null, is_worktree: true, exists: true, has_panes: true, pull_request: PR_275, task_key: `github:acme/hide${HASH}273`, closes_task_keys: [`github:acme/hide${HASH}273`], changed_file_count: 14, ahead: 1, tabs: [tab("c-sand", ["p-child"])], active_tab_id: null, strip: [], next_tab_label: "Tab 2" },
         ],
       },
     ],
@@ -61,6 +61,6 @@ export const RICH = {
 
 /** What the explicit GitHub search finds for the scene: a pull request and an issue this Mac does not hold. */
 export const CMDK_RESULTS: GithubSearchResult[] = [
-  { kind: "pr", repository: "acme/herdr-ide", number: 118, title: "Close stale sandbox watches", state: "merged", url: "https://github.com/acme/herdr-ide/pull/118", pr_state: "merged" },
-  { kind: "issue", repository: "acme/herdr-ide", number: 96, title: "mailbox sandbox 거부 로그가 비어 있음", state: "closed", url: "https://github.com/acme/herdr-ide/issues/96" },
+  { kind: "pr", repository: "acme/hide", number: 118, title: "Close stale sandbox watches", state: "merged", url: "https://github.com/acme/hide/pull/118", pr_state: "merged" },
+  { kind: "issue", repository: "acme/hide", number: 96, title: "mailbox sandbox 거부 로그가 비어 있음", state: "closed", url: "https://github.com/acme/hide/issues/96" },
 ];

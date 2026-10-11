@@ -171,10 +171,14 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
         const view = frame.payload as unknown as MoveView;
         const address = addressAfterMove(window.location.hash, view);
         if (address !== null) history.replaceState(history.state, "", address);
-        // A drawn window is held from the moment the move is under way: the
-        // role it draws from is about to stop.
-        if (!drawn || moveUnderWay(view.state)) useShellStore.getState().setConnection("moving");
-        else if (useShellStore.getState().connection === "moving") useShellStore.getState().setConnection("live");
+        // A window is held from the moment the move is under way: the role it
+        // draws from is about to stop. One not drawn yet is also held while
+        // the node holds its screens (`core_link`); an idle move frame, which
+        // every role sends first, holds nothing. A held window not drawn yet
+        // stays held until the role after the move draws it.
+        const nodeHolds = !drawn && useShellStore.getState().coreLink !== null;
+        if (moveUnderWay(view.state) || nodeHolds) useShellStore.getState().setConnection("moving");
+        else if (drawn && useShellStore.getState().connection === "moving") useShellStore.getState().setConnection("live");
         return;
       }
       if (frame.type === "file_bytes_error") {

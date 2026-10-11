@@ -4932,7 +4932,7 @@ mod tests {
             PaneControlAction::Split {
                 pane_id: "w1:p1".to_owned(),
                 direction: PaneSplitDirection::Right,
-                cwd: Some("/tmp/herdr-ide-verify-shortcuts".to_owned()),
+                cwd: Some("/tmp/hide-verify-shortcuts".to_owned()),
             },
             PaneControlAction::Split {
                 pane_id: "w1:p1".to_owned(),
@@ -4958,7 +4958,7 @@ mod tests {
                         "direction": "right",
                         "right_click": "herdr",
                         "focus": true,
-                        "cwd": "/tmp/herdr-ide-verify-shortcuts"
+                        "cwd": "/tmp/hide-verify-shortcuts"
                     }),
                 ),
                 (
@@ -5084,7 +5084,7 @@ mod tests {
             },
             RemoteControlAction::CreateTab {
                 workspace_id: "w1".to_owned(),
-                cwd: "/tmp/herdr-ide-remote-tab".to_owned(),
+                cwd: "/tmp/hide-remote-tab".to_owned(),
                 label: "New tab".to_owned(),
                 area_id: None,
                 admission_id: None,
@@ -5133,7 +5133,7 @@ mod tests {
                     "tab.create".to_owned(),
                     json!({
                         "workspace_id": "w1",
-                        "cwd": "/tmp/herdr-ide-remote-tab",
+                        "cwd": "/tmp/hide-remote-tab",
                         "focus": true,
                         "label": "New tab"
                     }),
@@ -5153,7 +5153,7 @@ mod tests {
         let cwd = std::env::var("HERDR_TEST_REMOTE_CONTROL_CWD")
             .expect("HERDR_TEST_REMOTE_CONTROL_CWD names the owned fixture directory");
         assert!(
-            cwd.starts_with("/tmp/herdr-ide-verify-"),
+            cwd.starts_with("/tmp/hide-verify-"),
             "remote control fixture must use the owned fixture namespace"
         );
 
@@ -5187,7 +5187,7 @@ mod tests {
         assert!(
             workspace["label"]
                 .as_str()
-                .is_some_and(|label| label.starts_with("herdr-ide-verify-")),
+                .is_some_and(|label| label.starts_with("hide-verify-")),
             "remote control refused a workspace outside the owned fixture namespace"
         );
         let original_tab_id = snapshot["tabs"]
@@ -5223,7 +5223,7 @@ mod tests {
             &RemoteControlAction::CreateTab {
                 workspace_id: workspace_id.clone(),
                 cwd: cwd.clone(),
-                label: "Herdr IDE remote control probe".to_owned(),
+                label: "Hide remote control probe".to_owned(),
                 area_id: None,
                 admission_id: None,
             },
@@ -5491,7 +5491,7 @@ mod tests {
             "panes": [],
             "tabs": [],
             "workspaces": [
-                {"workspace_id": "w1", "label": "herdr-ide", "active_tab_id": "w1:t1", "number": 1, "focused": true, "pane_count": 1, "tab_count": 1, "agent_status": "idle"},
+                {"workspace_id": "w1", "label": "hide", "active_tab_id": "w1:t1", "number": 1, "focused": true, "pane_count": 1, "tab_count": 1, "agent_status": "idle"},
             ],
             "layouts": [],
             "agents": [
@@ -5520,10 +5520,7 @@ mod tests {
         let payload = project_session(&snapshot).expect("projects");
         assert_eq!(payload.agents.len(), 2);
         assert_eq!(payload.agents[0].pane_id.as_deref(), Some("w1:p1"));
-        assert_eq!(
-            payload.agents[0].workspace_label.as_deref(),
-            Some("herdr-ide")
-        );
+        assert_eq!(payload.agents[0].workspace_label.as_deref(), Some("hide"));
         assert_eq!(
             payload.agents[0].tokens.get("status_working"),
             Some(&json!("●"))
