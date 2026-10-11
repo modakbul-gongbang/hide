@@ -98,38 +98,56 @@ It folds linked worktrees into their canonical main worktree, identifies plain f
 `hide-session` owns native file discovery and parsing for Claude Code, Codex, Pi, omp and Grok, the read-only Cursor SQLite/protobuf graph and the read-only OpenCode database, while `herdr-core` receives only provider-neutral catalog rows and archived ledger events.
 Raw transcript bodies remain in the providers' files.
 
-`hide-memory` owns Hide-native extraction and relation planning, one app SQLite store, its schema and migrations, Project hard filters, session cursors, item and revision lifecycle, provenance, receipts, query-dependent retrieval, and the active FTS5 projection.
-Official Mem0 OSS v2.1.0 does not execute in Hide and is not a runtime dependency, embedded service, compatibility package, daemon, account, credential, or vector database.
-Its pinned extraction and update prompt assets are retained only as audited design-reference provenance under `hide-memory/reference/mem0-v2.1.0/`.
-`hide-memory/hide-native-engine-reference.json` records the exact upstream commit, audited source hashes, local prompt-asset hashes, and the explicit non-runtime role.
-Every Hide-native analysis result is a proposal only: the write service validates Project identity, provenance, redaction, lifecycle, capacity, relation authority, and transaction boundaries before any durable change.
-Normalized session events and the bounded active-Memory comparison set both pass through the current local redactor at the final provider egress boundary.
-Relation planning receives a relevance-neutral active-Memory comparison set, rather than prompt FTS results, so same-meaning Korean and English memories do not need shared literal tokens to reach the provider's strict relation schema.
-The comparison set has item, token, and serialized-byte caps and is composed with normalized events as JSON arrays under the final 64 KiB request cap.
+`hide-memory` owns Hide's extraction prompt and output schema (`engine.rs`), one app SQLite store, its schema and migrations, Project hard filters, session cursors, card and revision lifecycle, provenance, receipts, usage counts, the matcher, and the FTS5 projection.
+No third-party memory engine, service, prompt asset or vector database is part of it.
+The extraction prompt is Hide's own, held under 8 KiB by a test, and asks for each card's text, a one-line title, three to eight Korean and English aliases, its kind, the files it rests on (`cited_paths`) and its relation to a similar card (PRD project-memory-v2 D-09, D-26).
+Every analysis result is a proposal only: the write service validates Project identity, provenance, redaction, lifecycle, capacity, relation authority and transaction boundaries before any durable change, and keeps a cited path only when it names a file inside the checkout (`Call::RealPaths`, a repository-relative path with no `..`).
+Normalized session events and the comparison cards both pass through the current local redactor at the final provider egress boundary.
 The disclosure acceptance is versioned; a material egress-copy change disables previously enabled Projects until the operator accepts the current disclosure, without deleting their local data.
-Prompt retrieval confirms lexical or meaningful cwd/path overlap before ranking; salience, extraction confidence, and recency only break ties after relevance and are never presented as semantic similarity.
+
+A card has a number inside its Project (`m1`, `m2`), never reused, which agents name it by.
+`hide_memory::matcher` is the one model-free matcher: a card is indexed by its words, the words with a Korean particle or ending taken off, its aliases and every two-syllable piece of its Hangul words, FTS5 ranks the candidates by BM25, and a card is kept only above a minimum score, so a prompt that shares no word, stem, alias or piece with a card never receives it (B11, B12).
+The prompt hook, `hide memory search` and the comparison set a new card is checked against all use it, so a same-meaning card outside the most salient ones still reaches the provider (D-13, B17).
+The comparison set is bounded by cards and by bytes so it and one event group fit the 64 KiB request.
+On a conflict the old card stays active and keeps being injected and the new card waits for review; only the operator's own words supersede a card, and its old revision stays for Undo (D-14).
+Resolving a review pair writes a batch, so it is undone like any other.
+
 The app owns the only writer connection.
 The store is `project-memory.sqlite3` in the daemon's state folder, and `hide_memory::database_path` is the one function that names it: the core writes it from the state folder it was given, and every hook (Claude Code, Codex, OpenCode's, Pi's and omp's helper) reads it from `<home>/.hide/state`, the folder `hide_kit::layout::default_state_dir` names, which a herdr-core test holds equal.
 The hook does not follow a relocated state folder (`HIDE_STATE_DIR`, `XDG_STATE_HOME`), because a production hook takes no path from its environment; a daemon started with one gets no Memory context from its panes' hooks.
 The store `~/Library/Application Support/hide/project-memory.sqlite3` that the removed native shell wrote is never read, moved or deleted: its Project ids name this machine `local`, which the node-id conversion rewrites only inside the state folder, so a copy would key Projects wrongly, and Memory is opt-in per Project, so a fresh store starts with every Project off.
 Hook helpers and render-facing reads open read-only connections, fail closed on schema or projection drift, and never rebuild the index in the prompt path.
-The same SQLite store owns one random authentication key per Project, and each hook receipt is authenticated over Project, runtime, session, event, and the exact ordered item revisions before the core accepts it as provided-history.
-Transcript text prefixes remain display classification only: receipt authority additionally requires Claude Code's own `hook_additional_context` attachment record (the shape since 2.1.296, read through `hide-session/src/claude_attachment.rs`, which the wake reader shares; the `hook_success` record repeating the same text in its `stdout` is never read) or a user record its hook metadata marks, a Codex developer message, an OpenCode synthetic user part or a Pi or omp custom message of Hide's own extension (`customType` `hide`), so human or Project instruction text cannot assert a receipt.
-OpenCode keeps its sessions in a database the label read already opens, so its receipts come from that read rather than a session-file poll: `LabelTranscript.memory_receipts` carries the receipt lines of the synthetic parts Hide's plugin added (at most 64 a read), the label worker hands them up with its result, and `Runtime::record_memory_receipts` verifies and records them on one owned thread off the lock, at most 256 waiting.
+Schema 8 adds card numbers, titles, aliases, cited paths, usage counts and the human flag on sources, and the migration copies the store aside first and repairs any review pair whose older card had been hidden.
 
-The coordinator's existing worker context owns session refresh, the five-second due-work poll, and one Memory analysis intent at a time.
-It waits for a session file to remain unchanged for sixty seconds, reads only complete events after the durable cursor, redacts known credential patterns locally, and sends bounded normalized input through `hide-ai` outside `Mutex<Runtime>`.
+A session start receives an index of at most 20 rule, decision and lesson cards, one line each, and no body; a prompt receives the bodies of the cards the matcher finds that the session was not already given in full (D-03, D-04, B10-B12).
+Each body injection carries a receipt authenticated over Project, runtime, session, event and the exact ordered card revisions, with one random key per Project kept in the store; an index carries none, because an index line is no delivery.
+Transcript text prefixes remain display classification only: receipt authority additionally requires Claude Code's own `hook_additional_context` attachment record (read through `hide-session/src/claude_attachment.rs`, which the wake reader shares), a Codex developer message, an OpenCode synthetic user part or a Pi or omp custom message of Hide's own extension (`customType` `hide`), so human or Project instruction text cannot assert a receipt.
+A receipt is recorded by one function, `memory_analysis::record_receipt`, under the turn id `event:<offset>`, so whichever reader sees it first records it once (D-16, B13).
+Two readers feed it.
+The label worker's read of a live pane on this Mac with a known session id hands its receipts up (`LabelTranscript.memory_receipts`, at most 64 a read) with the set of sessions the live panes hold, and `Runtime::record_memory_receipts` records them on one owned thread off the lock, at most 256 waiting.
+The pass below walks every session of each Memory-enabled Project that no live pane holds, a session started outside Herdr or whose pane closed, and reads its receipts past a durable receipt cursor (`receipt_cursors`): a JSONL session (Claude Code, Codex, Pi, omp, Grok) one bounded chunk at a time, an OpenCode session through the same conversation read the label worker uses, so the message index, and the turn, is the same.
+`hide memory show` records a receipt too, under the turn `show`.
+A Project keeps at most 20,000 receipt rows; past it, receipts of sessions quiet for 30 days go first, and a receipt that still does not fit is logged and the session's prompts get no Memory until there is room (B26).
+
+One pass at a time walks every Memory-enabled local Project, whatever the screen shows, on a worker off the runtime lock, every 60 s or at once when a live session's pane closes (D-07, D-08).
+A session's new conversation is analyzed once its file has been quiet for 30 minutes or within a minute of its pane closing; a session still being written waits.
+It reads only complete events after the durable analysis cursor and sends bounded groups through `hide-ai`; the cursor moves only when every group was written, and the same provider, session and content hash converge on one batch instead of repeating revisions.
 The durable cursor stores file identity and the safe start offset of an incomplete final line, never that line's bytes; a later read resumes from the provider-owned session file.
-Each incremental poll reads at most 1 MiB and retains no JSONL line larger than 256 KiB, while catalog and archive detail reads reject a complete session larger than 64 MiB.
-The same provider, session, content-hash retry converges through a deterministic receipt instead of repeating revisions.
-All filesystem, SQLite, hook-config, provider, and serialization work occurs outside the runtime mutex; applying a completed worker result is the only locked transition.
+Each incremental read takes at most 1 MiB and retains no JSONL line larger than 256 KiB, while catalog and archive detail reads reject a complete session larger than 64 MiB.
+A machine makes at most 1,000 analysis calls a UTC day, and background analysis waits while the provider's weekly usage, as the toolbar reads it, is at 80% or more; either deferral is logged and never shown (D-10, B5).
+A provider failure backs off from one minute, doubling to an hour, honors a `retry_after` the provider names, and reaches the screen only as an action the operator can take, a sign-in or an agent choice (B4, B23).
+Changing the Hide AI agent clears what a provider failure decided, and turning Hide AI off stops analysis while receipts go on being recorded (B33).
+All filesystem, SQLite, hook-config, provider, and serialization work occurs outside the runtime mutex; reporting a Project's state and finishing a pass are the only locked transitions.
 The session files are read by the node that holds them and the Memory store is the core's: the core asks that node for the Project's facts (`project`, its id named by the node's id), its session list (`project_sessions`), a file's size and time (`session_stat`), one bounded read past a saved cursor (`session_chunk`, which answers the next checkpoint) and a whole session for the archive (`session_text`), and parses and stores what comes back.
 Search and archive detail dispatch only to an explicitly supported session provider; archive detail refuses an unsupported provider before asking the node to read its locator or opening the Memory store.
 A node reads a session file the core names, for these calls and for search (`session_index_read`, `session_stamps`), only when the path, with every link resolved, lies in the Claude Code or Codex CLI session folder of its home, and opens it without waiting, so a pipe in its place is refused at once.
-Disabling Memory stops new analysis and injection without deleting its data, while Forget, revision Undo, and confirmed Project deletion have their own explicit lifecycle operations.
+Disabling Memory stops new analysis and injection without deleting its data, while Forget, Undo, and confirmed Project deletion have their own explicit lifecycle operations.
 
-The core owns the fourth right-panel section, each Project's Sessions/Memory mode, filters, actionable analysis state, and editor preview identity.
-Opening Memory for a turn is one typed event that makes the panel visible, selects Sessions, enters Memory mode, and applies the exact provided-item filter in one frame.
+`hide memory show|search|add` (`herdr-core/src/memory_command.rs`) goes through hided like `hide links`: the core checks the caller under its lock (`Core::prepare_memory`), refusing a connected device's caller (D-22) and naming the Project by the caller's checkout, and the command runs on hided's blocking task.
+`show` answers a card with its state, kind, source counts and cited paths and counts the read for the caller's session, `search` answers at most ten matching cards, and `add` writes through the same `write_cards` path background analysis uses, as an `agent_note` the provider sees, never as the operator's words (D-11, B7, B8, B14-B16, B27).
+An `add` is one batch per Project and text, so the same text added again answers the card it made and asks no provider; its provider tries end within 50 s, before the caller's minute runs out, so a refused or timed-out `add` has written nothing.
+
+The core owns the fourth right-panel section, the focused checkout's session list with its filters and editor preview identity; Memory is not shown there.
 The shell renders those snapshot values and dispatches typed actions; it does not discover sessions, rank memories, infer counts, or classify failures.
 
 The web shell reads a Project's Sessions through the same catalog, but for a Project it names rather than the focused checkout (PRD S8 D-03, `herdr-core/src/runtime/project_sessions.rs`).
@@ -137,6 +155,9 @@ The web shell reads a Project's Sessions through the same catalog, but for a Pro
 Overview's project scope sends it once when it opens, so its Sessions tab counts today's sessions without the Sessions view being chosen (PRD overview-lenses-tiles-agents B5).
 The named Project stays named while the focus moves, a read that finishes after another Project was named is dropped by the existing generation fence, and naming another Project closes the open session.
 A device Project reads no local session: the section carries the device's reason, because the provider files live on the device and there is no contract yet for reading them there.
+The named Project's Sessions/Memory choice is the core's, kept per Project in `ui_state.sessions_mode_by_project` (`sessions_mode` with `workspace_id`), and `project_sessions.memory` carries that Project's Memory: whether it is on, its cards with their usage counts (review pairs first, with both bodies), the analysis state and the last action's notice (PRD project-memory-v2 B21-B24).
+`memory_action` with `workspace_id` turns Memory on or off, deletes its data, forgets a card, resolves a review pair or undoes a batch on a worker off the lock, one action at a time.
+This departs from the PRD's technical note, which named the right-panel `SessionsSnapshot`: the web shows Memory where the Overview names a Project, so its state is keyed by that Project rather than the focused checkout.
 The section rides the snapshot delta on its own revision, `project_sessions`, beside `rest`, `editor` and `changes`, so an agent or navigator change never resends a history; its immutable history rows and open transcript use shared pointers for O(1) unchanged comparisons and payload capture under the lock, and it is absent from the wire until a Project is named.
 The core words each reason for the operator (a missing, unparsable, oversized or unreadable file, a session or Project folder it could not read) and records a read failure as a diagnostic.
 A session a Project's history listed and a later read no longer finds stays listed as unavailable, with its last location, when its file is gone, for as long as the daemon runs, so a moved or deleted file reads differently from one that never existed (B5); one whose file is still there no longer belongs to the Project (its checkout was removed, say) and leaves the list as the catalog decides.

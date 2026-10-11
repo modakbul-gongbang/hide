@@ -510,13 +510,14 @@ Manual acceptance in the desktop app additionally covers row click versus header
 
 ## Project Memory cost contract
 
-Opening Sessions starts one bounded background catalog read for the focused local Project; filtering, searching, and switching Sessions/Memory modes operate on the retained snapshot and start no subprocess.
-The coordinator checks for due Memory work no more than once every five seconds, keeps one poll in flight, and schedules analysis only after a source has complete unread bytes and its size and modification time have remained unchanged for sixty seconds.
-An unchanged poll publishes nothing.
+Opening Sessions starts one bounded background catalog read for the focused local Project; filtering, searching, and switching a Project's Sessions/Memory mode operate on the retained snapshot and start no subprocess.
+One Memory pass at a time runs on a worker, every 60 s or at once when a live session's pane closes, and walks every Memory-enabled local Project; a session is analyzed only after its file has been unchanged for 30 minutes or its pane closed (PRD project-memory-v2 D-07).
+A pass reads each session's size and time once, at most one bounded receipt read and, when analysis is due, one bounded chunk per session; an unchanged session reads no transcript byte and makes no provider call, and a pass that changed nothing publishes nothing.
 Session file discovery, incremental reads, SQLite work, redaction, provider requests, hook-config writes, and JSON serialization stay outside `Mutex<Runtime>`.
-One incremental transcript poll reads at most 1 MiB, one retained JSONL line is capped at 256 KiB, and catalog or archive detail parsing rejects a complete session above 64 MiB.
-One Project/session/content-hash intent is idempotent, and background input is capped at 64 KiB, one inflight request, thirty requests per minute, and 10,000 active items per Project.
-Crossing a cap is an actionable state rather than an enlarged queue or automatic deletion.
+One incremental transcript read takes at most 1 MiB, one retained JSONL line is capped at 256 KiB, and catalog or archive detail parsing rejects a complete session above 64 MiB.
+One Project/session/content-hash intent is idempotent, and background input is capped at 64 KiB a request, one pass in flight, 1,000 analysis calls a machine a UTC day, 10,000 active cards and 20,000 receipt rows per Project; at 80% weekly provider usage background analysis waits.
+Receipts a live pane's label read hands up wait at most 256 and are recorded on one owned thread; closed sessions waiting for a pass are capped at 256.
+Crossing a cap is logged, never an enlarged queue; the operator sees only a state they can act on.
 
 The web shell's Project Sessions (PRD S8) adds no work until a Project is named: the `project_sessions` delta section is one absent check per publication.
 Naming a Project, arriving at its screen, reconnecting or pressing Retry is one bounded catalog read on a worker; a request that arrives during a read coalesces into one more read, so pending work is at most one read, and opening a session is one bounded detail read the same way.
@@ -538,7 +539,8 @@ Regression owners are `runtime::tests::project_sessions`, `web/src/sessions.test
 It accepts at most 256 KiB of hook input, opens the app database read-only, checks schema and active-projection integrity, requests at most sixty local FTS candidates, and returns at most three whole items and 600 estimated tokens.
 It has a 100 ms hard deadline and starts no model, embedding, transcript scan, child process, network request, or database write.
 Missing, locked, corrupt, stale, unresolved, or over-deadline inputs exit successfully with empty context so prompt submission continues.
-`SessionStart` reads the precomputed Project capsule under the same read-only and fail-open ownership, with at most five whole items and 600 tokens.
+`SessionStart` reads the Project's index under the same read-only and fail-open ownership: at most 20 one-line rule, decision and lesson cards and no body.
+`hide memory show|search` is one read-only lookup and one counted read on hided's blocking task; `add` is one provider call bounded at 50 s.
 If the first prompt arrives before that durable receipt is projected, the hook omits Memory for that prompt and retries on the next prompt; it never guesses the delivered set or creates a receipt sidecar or other second store.
 
 Regression owners are the `hide-project` identity tests, `hide-session` provider-neutral catalog and cursor tests, `hide-memory` Project-isolation, lifecycle, convergence, FTS transaction, redaction, ranking and budget tests, `hide-agent-hooks` fixture/config/fail-open tests, and core atomic-event and editor-preview tests.
