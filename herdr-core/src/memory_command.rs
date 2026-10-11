@@ -13,7 +13,8 @@ use crate::node::NodeId;
 use crate::node_access::NodeLink;
 use crate::runtime::RuntimeWorkerContext;
 use crate::runtime::memory_analysis::{
-    AnalysisFailure, BatchSource, admit_call, batch_identity, report_memory_change, write_cards,
+    AnalysisFailure, BatchSource, WeeklyUsage, admit_call, batch_identity, report_memory_change,
+    write_cards,
 };
 use hide_ai::{AiError, AiRouter, AiSettings, CancelToken};
 use hide_memory::{CandidateOutcome, MemoryItem, MemoryLifecycle, MemoryStore, card_name};
@@ -264,7 +265,7 @@ impl PreparedMemory {
                     &self.add_source(&identity.id, &session_id, deadline),
                     &group,
                     &CancelToken::new(),
-                    &mut |store| admit_call(store, None, false),
+                    &mut |store| admit_call(store, WeeklyUsage::Unknown, false),
                 )
                 .map_err(|failure| add_failure(&identity.id, failure))?;
                 let kept = written

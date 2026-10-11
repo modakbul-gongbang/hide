@@ -826,7 +826,9 @@ impl Runtime {
 
     pub(crate) fn usage_activity(&self) -> crate::usage::UsageActivity {
         crate::usage::UsageActivity {
-            window_visible: self.usage_window_visible,
+            // Background Memory analysis reads the weekly figure with no
+            // window attached (D-10 b).
+            window_visible: self.usage_window_visible || self.memory_reads_usage(),
             popover_open_generation: self.usage_popover_open_generation,
         }
     }

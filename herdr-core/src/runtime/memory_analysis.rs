@@ -53,9 +53,15 @@ const WEEKLY_USAGE_DEFER_PERCENT: f64 = 80.0;
 /// The most receipts waiting for the recording thread; more means it fell
 /// behind, and the oldest go to the log rather than to Memory.
 const RECEIPTS_PENDING_LIMIT: usize = 256;
-/// The most closed sessions waiting for a pass; a burst past it waits for
-/// the quiet rule instead.
+/// The most closed sessions waiting for analysis; a burst past it waits for
+/// the quiet rule instead, and the log says so.
 const CLOSED_SESSIONS_LIMIT: usize = 256;
+/// How long background analysis waits for a first read of the provider's
+/// weekly usage before it goes on under the daily cap alone (D-10).
+const USAGE_READ_WAIT_MS: u64 = 10 * 60_000;
+/// How long after a pass last wanted the weekly figure the usage reader keeps
+/// reading with no window attached.
+const USAGE_WANTED_MS: u64 = 30 * 60_000;
 /// Bytes of existing cards one analysis compares new text against: with an
 /// event group's 36 KiB it keeps a request under the analysis input cap.
 const COMPARISON_INPUT_LIMIT_BYTES: usize = 16 * 1024;
@@ -77,16 +83,24 @@ pub(super) struct MemoryWork {
     /// Sessions this Mac's live panes hold, whose receipts the label read
     /// records; the walk leaves them to it.
     live_sessions: BTreeSet<MemorySession>,
-    /// Sessions whose pane let them go since the last pass started; each is
-    /// analyzed without waiting for the quiet rule (B2).
+    /// Sessions whose pane let them go; each is analyzed without waiting for
+    /// the quiet rule (B2), and stays here until a pass finds nothing left
+    /// to analyze in it, so a pass that was cancelled, held back or failed
+    /// does not drop it into the 30 minute wait.
     pub(super) closed_sessions: BTreeSet<MemorySession>,
+    /// Until when the usage reader reads with no window attached, because a
+    /// pass wants the analysis provider's weekly usage (D-10 b).
+    usage_wanted_until_unix_ms: u64,
+    /// When a pass first found the weekly figure unread; past
+    /// [`USAGE_READ_WAIT_MS`] analysis goes on without it.
+    usage_unread_since_unix_ms: Option<u64>,
     receipts_pending: Vec<SightedMemoryReceipt>,
     receipts_in_flight: bool,
     /// Each Project's analysis state and last change, by Memory's Project id.
     pub(super) projects: HashMap<String, ProjectMemoryWork>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct ProjectMemoryWork {
     pub(super) analysis: MemoryAnalysisSnapshot,
     pub(super) notice: Option<MemoryNoticeSnapshot>,
@@ -100,15 +114,38 @@ enum PassReport {
     Analyzing {
         project_id: String,
     },
+    /// The Project's analysis in this pass ended: what it learned, and the
+    /// provider error that stopped it, if one did.
     Analyzed {
         project_id: String,
         learned: usize,
         batch_ids: Vec<String>,
+        error: Option<AiError>,
     },
-    Failed {
-        project_id: String,
-        error: AiError,
-    },
+}
+
+/// What a whole pass tells the runtime when it ends.
+#[derive(Debug, Default, PartialEq)]
+struct PassOutcome {
+    /// Closed sessions with nothing left to analyze, or no longer in any
+    /// Memory-enabled Project.
+    settled: BTreeSet<MemorySession>,
+    /// A session was due for background analysis, which needs the
+    /// provider's weekly usage read fresh.
+    wants_usage: bool,
+}
+
+/// The analysis provider's weekly usage as a pass sees it (D-10 b).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum WeeklyUsage {
+    /// The share already spent.
+    Used(f64),
+    /// The provider reports weekly usage and it has not been read yet:
+    /// background analysis waits for it.
+    Unread,
+    /// The provider reports no weekly usage, or reading it failed: only the
+    /// daily cap applies.
+    Unknown,
 }
 
 /// Why one analysis did not finish.
@@ -130,15 +167,23 @@ impl Runtime {
     pub(crate) fn take_memory_handoff(&mut self, handoff: MemoryHandoff) {
         if let Some(live) = handoff.live_sessions {
             let work = &mut self.memory_work;
+            let mut closed = false;
             for gone in work.live_sessions.difference(&live) {
                 if work.closed_sessions.len() < CLOSED_SESSIONS_LIMIT {
-                    work.closed_sessions.insert(gone.clone());
+                    closed |= work.closed_sessions.insert(gone.clone());
+                } else {
+                    crate::diagnostic!(json!({
+                        "component": "memory",
+                        "kind": "analysis.closed_sessions_capped",
+                        "provider": gone.0,
+                        "session_id": gone.1,
+                    }));
                 }
             }
-            if live
-                .iter()
-                .any(|session| !work.live_sessions.contains(session))
-                || !work.closed_sessions.is_empty()
+            if closed
+                || live
+                    .iter()
+                    .any(|session| !work.live_sessions.contains(session))
             {
                 work.next_pass_unix_ms = 0;
             }
@@ -228,19 +273,11 @@ impl Runtime {
             return false;
         };
         let database = self.memory_database_path();
-        if !MemoryStore::exists(&database) {
-            self.memory_work.next_pass_unix_ms =
-                now_unix_ms.saturating_add(MEMORY_PASS_INTERVAL_MS);
-            return false;
-        }
         // Memory analysis is a model call: with Hide AI off or no agent chosen
         // the walk still records receipts and the analysis waits (B33).
         let settings = self.ai_active().then(|| self.ai_settings.clone()).flatten();
-        let weekly_used = settings.as_ref().and_then(|settings| {
-            weekly_used_percent(
-                &self.snapshot.navigator.provider_usage,
-                settings.provider.as_str(),
-            )
+        let weekly = settings.as_ref().map_or(WeeklyUsage::Unknown, |settings| {
+            self.weekly_usage(settings.provider.as_str(), now_unix_ms)
         });
         let held = self
             .memory_work
@@ -259,14 +296,16 @@ impl Runtime {
         work.pass_in_flight = true;
         work.pass_cancel = Some(cancel.clone());
         work.pass_settings = settings.clone();
+        // A pane closed or a wake while the pass runs sets this back to now.
+        work.next_pass_unix_ms = now_unix_ms.saturating_add(MEMORY_PASS_INTERVAL_MS);
         let input = PassInput {
             node,
             sessions_node: own_node,
             database,
             router,
-            weekly_used,
+            weekly,
             live: work.live_sessions.clone(),
-            closed: std::mem::take(&mut work.closed_sessions),
+            closed: work.closed_sessions.clone(),
             held,
             cancel,
         };
@@ -277,18 +316,19 @@ impl Runtime {
                 let mut report = |report| apply_pass_report(&report_context, report);
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     run_pass(&input, &mut report)
-                }));
-                if outcome.is_err() {
+                }))
+                .unwrap_or_else(|_| {
                     crate::diagnostic!(json!({
                         "component": "memory",
                         "kind": "pass.panicked",
                     }));
-                }
+                    PassOutcome::default()
+                });
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.finish_memory_pass(),
+                    Ok(mut guard) => guard.finish_memory_pass(outcome),
                     Err(_) => return,
                 };
                 drop(runtime);
@@ -301,7 +341,6 @@ impl Runtime {
             work.pass_in_flight = false;
             work.pass_cancel = None;
             work.pass_settings = None;
-            work.next_pass_unix_ms = now_unix_ms.saturating_add(MEMORY_PASS_INTERVAL_MS);
             crate::diagnostic!(json!({
                 "component": "memory",
                 "kind": "pass.worker_failed",
@@ -311,14 +350,17 @@ impl Runtime {
         false
     }
 
-    fn finish_memory_pass(&mut self) -> bool {
+    fn finish_memory_pass(&mut self, outcome: PassOutcome) -> bool {
         let work = &mut self.memory_work;
         work.pass_in_flight = false;
         work.pass_cancel = None;
         work.pass_settings = None;
-        // A pane closed while the pass ran asked for the next one at once.
-        if work.closed_sessions.is_empty() {
-            work.next_pass_unix_ms = now_ms().saturating_add(MEMORY_PASS_INTERVAL_MS);
+        work.closed_sessions
+            .retain(|session| !outcome.settled.contains(session));
+        if outcome.wants_usage {
+            let now = now_ms();
+            work.usage_wanted_until_unix_ms = now.saturating_add(USAGE_WANTED_MS);
+            work.usage_unread_since_unix_ms.get_or_insert(now);
         }
         let mut changed = false;
         for project in work.projects.values_mut() {
@@ -331,6 +373,47 @@ impl Runtime {
             self.sync_project_memory();
         }
         changed
+    }
+
+    /// The analysis provider's weekly usage as the toolbar's usage read last
+    /// answered it. A provider the reader has not answered for yet is unread
+    /// for at most [`USAGE_READ_WAIT_MS`] after a pass first wanted it.
+    fn weekly_usage(&mut self, provider: &str, now_unix_ms: u64) -> WeeklyUsage {
+        let row = self
+            .snapshot
+            .navigator
+            .provider_usage
+            .iter()
+            .find(|row| row.provider == provider)
+            .filter(|row| row.window_minutes == crate::usage::WEEKLY_WINDOW_MINUTES);
+        let work = &mut self.memory_work;
+        let usage = match row {
+            Some(row) if row.used_percent.is_some() => {
+                WeeklyUsage::Used(row.used_percent.unwrap_or_default())
+            }
+            Some(row) if row.last_checked_at_unix_ms.is_none() => {
+                match work.usage_unread_since_unix_ms {
+                    Some(since) if now_unix_ms.saturating_sub(since) >= USAGE_READ_WAIT_MS => {
+                        crate::diagnostic!(json!({
+                            "component": "memory",
+                            "kind": "analysis.weekly_usage_unread",
+                            "provider": provider,
+                        }));
+                        WeeklyUsage::Unknown
+                    }
+                    _ => return WeeklyUsage::Unread,
+                }
+            }
+            _ => WeeklyUsage::Unknown,
+        };
+        work.usage_unread_since_unix_ms = None;
+        usage
+    }
+
+    /// Whether the usage reader reads with no window attached: a pass wants
+    /// the analysis provider's weekly usage (D-10 b).
+    pub(crate) fn memory_reads_usage(&self) -> bool {
+        now_ms() < self.memory_work.usage_wanted_until_unix_ms
     }
 
     /// Marks a pass as running on the current settings, without a worker,
@@ -436,8 +519,15 @@ impl Runtime {
         }
     }
 
-    fn apply_memory_report(&mut self, report: PassReport) {
+    /// Applies one report; answers whether the screen changed.
+    fn apply_memory_report(&mut self, report: PassReport) -> bool {
         let now = now_ms();
+        let project_id = match &report {
+            PassReport::Analyzing { project_id } | PassReport::Analyzed { project_id, .. } => {
+                project_id.clone()
+            }
+        };
+        let before = self.memory_work.projects.get(&project_id).cloned();
         match report {
             PassReport::Analyzing { project_id } => {
                 let project = self.memory_work.projects.entry(project_id).or_default();
@@ -451,12 +541,32 @@ impl Runtime {
                 project_id,
                 learned,
                 batch_ids,
+                error,
             } => {
                 let named = self.named_memory_project() == Some(project_id.as_str());
+                if let Some(error) = &error {
+                    crate::diagnostic!(json!({
+                        "component": "memory",
+                        "kind": "analysis.failed",
+                        "project_id": project_id,
+                        "error": format!("{error:?}"),
+                    }));
+                }
                 let project = self.memory_work.projects.entry(project_id).or_default();
-                project.analysis = MemoryAnalysisSnapshot::default();
-                project.failures = 0;
-                project.retry_at_unix_ms = 0;
+                match &error {
+                    Some(error) => {
+                        project.failures = project.failures.saturating_add(1);
+                        let (analysis, retry_at) =
+                            analysis_after_failure(error, project.failures, now);
+                        project.analysis = analysis;
+                        project.retry_at_unix_ms = retry_at;
+                    }
+                    None => {
+                        project.analysis = MemoryAnalysisSnapshot::default();
+                        project.failures = 0;
+                        project.retry_at_unix_ms = 0;
+                    }
+                }
                 if !batch_ids.is_empty() {
                     project.notice = Some(MemoryNoticeSnapshot {
                         message: format!(
@@ -470,21 +580,14 @@ impl Runtime {
                     self.refresh_project_memory();
                 }
             }
-            PassReport::Failed { project_id, error } => {
-                crate::diagnostic!(json!({
-                    "component": "memory",
-                    "kind": "analysis.failed",
-                    "project_id": project_id,
-                    "error": format!("{error:?}"),
-                }));
-                let project = self.memory_work.projects.entry(project_id).or_default();
-                project.failures = project.failures.saturating_add(1);
-                let (analysis, retry_at) = analysis_after_failure(&error, project.failures, now);
-                project.analysis = analysis;
-                project.retry_at_unix_ms = retry_at;
-            }
+        }
+        if self.named_memory_project() != Some(project_id.as_str())
+            || self.memory_work.projects.get(&project_id) == before.as_ref()
+        {
+            return false;
         }
         self.sync_project_memory();
+        true
     }
 }
 
@@ -535,15 +638,12 @@ fn apply_pass_report(context: &RuntimeWorkerContext, report: PassReport) {
     let Some(runtime) = context.runtime.upgrade() else {
         return;
     };
-    let applied = match runtime.lock() {
-        Ok(mut guard) => {
-            guard.apply_memory_report(report);
-            true
-        }
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.apply_memory_report(report),
         Err(_) => false,
     };
     drop(runtime);
-    if applied {
+    if changed {
         context.notifier.notify();
     }
 }
@@ -572,18 +672,6 @@ pub(crate) fn report_memory_change(
     }
 }
 
-/// The weekly share of `provider`'s usage already spent, when the toolbar's
-/// usage read knows it.
-fn weekly_used_percent(
-    rows: &[crate::model::ProviderUsageSnapshot],
-    provider: &str,
-) -> Option<f64> {
-    rows.iter()
-        .find(|row| row.provider == provider)
-        .filter(|row| row.window_minutes == crate::usage::WEEKLY_WINDOW_MINUTES)
-        .and_then(|row| row.used_percent)
-}
-
 /// What one pass needs, taken under the lock when it starts.
 struct PassInput {
     node: NodeId,
@@ -591,7 +679,7 @@ struct PassInput {
     database: PathBuf,
     /// `None` while Hide AI is off: the pass only records receipts.
     router: Option<AiRouter>,
-    weekly_used: Option<f64>,
+    weekly: WeeklyUsage,
     live: BTreeSet<MemorySession>,
     closed: BTreeSet<MemorySession>,
     /// Projects whose analysis waits for a retry time.
@@ -599,7 +687,13 @@ struct PassInput {
     cancel: CancelToken,
 }
 
-fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) {
+fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) -> PassOutcome {
+    let mut outcome = PassOutcome::default();
+    // No store yet: Memory was never turned on on this machine.
+    if !MemoryStore::exists(&input.database) {
+        outcome.settled = input.closed.clone();
+        return outcome;
+    }
     let mut store = match MemoryStore::open(&input.database) {
         Ok(store) => store,
         Err(error) => {
@@ -608,7 +702,7 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) {
                 "kind": "pass.store_unavailable",
                 "message": error.to_string(),
             }));
-            return;
+            return outcome;
         }
     };
     let projects = match store.enabled_projects(input.node.as_str()) {
@@ -619,17 +713,34 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) {
                 "kind": "pass.projects_unreadable",
                 "message": error.to_string(),
             }));
-            return;
+            return outcome;
         }
     };
     // A deferral holds for the rest of the pass and is logged once.
     let mut deferred = None;
+    // Closed sessions some enabled Project lists; the rest belong to no
+    // Project Memory analyzes, once every Project was walked.
+    let mut reached = BTreeSet::new();
+    let mut walked_all = true;
     for (project_id, root) in projects {
         if input.cancel.is_cancelled() {
-            return;
+            walked_all = false;
+            break;
         }
-        let outcome = walk_project(input, &mut store, &project_id, &root, &mut deferred, report);
-        if let Err(message) = outcome {
+        let mut tally = ProjectTally::default();
+        let walked = walk_project(
+            input,
+            &mut store,
+            &project_id,
+            &root,
+            &mut deferred,
+            &mut tally,
+            &mut outcome,
+            &mut reached,
+            report,
+        );
+        if let Err(message) = walked {
+            walked_all = false;
             crate::diagnostic!(json!({
                 "component": "memory",
                 "kind": "pass.project_failed",
@@ -637,6 +748,21 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) {
                 "message": message,
             }));
         }
+        // Reported whatever ended the walk, so a Project that turned
+        // "analyzing" always ends it and keeps what it learned.
+        if tally.analyzing {
+            report(PassReport::Analyzed {
+                project_id,
+                learned: tally.learned,
+                batch_ids: tally.batch_ids,
+                error: tally.error,
+            });
+        }
+    }
+    if walked_all {
+        outcome
+            .settled
+            .extend(input.closed.difference(&reached).cloned());
     }
     if let Some(reason) = deferred {
         crate::diagnostic!(json!({
@@ -645,14 +771,28 @@ fn run_pass(input: &PassInput, report: &mut dyn FnMut(PassReport)) {
             "reason": reason,
         }));
     }
+    outcome
 }
 
+/// What one Project's walk analyzed.
+#[derive(Default)]
+struct ProjectTally {
+    analyzing: bool,
+    learned: usize,
+    batch_ids: Vec<String>,
+    error: Option<AiError>,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn walk_project(
     input: &PassInput,
     store: &mut MemoryStore,
     project_id: &str,
     root: &str,
     deferred: &mut Option<&'static str>,
+    tally: &mut ProjectTally,
+    outcome: &mut PassOutcome,
+    reached: &mut BTreeSet<MemorySession>,
     report: &mut dyn FnMut(PassReport),
 ) -> Result<(), String> {
     let sessions_node = input.sessions_node.as_ref();
@@ -692,12 +832,19 @@ fn walk_project(
             }));
         }
     }
-    let mut analyzing = false;
-    let mut learned = 0;
-    let mut batch_ids = Vec::new();
     for session in sessions {
         if input.cancel.is_cancelled() {
             break;
+        }
+        let key = (session.agent.as_str(), session.id.clone());
+        let closed = input.closed.contains(&key);
+        if closed {
+            reached.insert(key.clone());
+        }
+        // A closed session open in a pane again is the label read's, and the
+        // quiet rule analyzes it when that pane closes or goes quiet.
+        if closed && input.live.contains(&key) {
+            outcome.settled.insert(key.clone());
         }
         let availability = match &session.availability {
             SessionAvailability::Available => None,
@@ -718,9 +865,11 @@ fn walk_project(
         // A session that cannot be read is no failure of Memory's: it is
         // listed with its reason and read again when it comes back.
         if availability.is_some() {
+            if closed {
+                outcome.settled.insert(key);
+            }
             continue;
         }
-        let key = (session.agent.as_str(), session.id.clone());
         let Ok(stat) = session_stat(sessions_node, &session) else {
             continue;
         };
@@ -735,32 +884,36 @@ fn walk_project(
                 "message": message,
             }));
         }
+        let pending = analysis_pending(store, project_id, &session, &stat)?;
+        if closed && !pending {
+            outcome.settled.insert(key.clone());
+        }
         let Some(router) = input.router.as_ref() else {
             continue;
         };
-        if deferred.is_some() || input.held.contains(project_id) {
+        if deferred.is_some() || input.held.contains(project_id) || tally.error.is_some() {
             continue;
         }
-        let closed = input.closed.contains(&key) && !input.live.contains(&key);
         let quiet = stat
             .modified_unix_ms
             .is_some_and(|modified| now_ms().saturating_sub(modified) >= MEMORY_QUIESCENCE_MS);
-        if !(closed || quiet) || !analysis_pending(store, project_id, &session, &stat)? {
+        if !pending || !((closed && !input.live.contains(&key)) || quiet) {
             continue;
         }
+        outcome.wants_usage = true;
         // A held-back call is logged, never shown: the Project does not turn
         // "analyzing" for a pass that will ask nothing (B5).
-        if let Some(reason) = deferral(store, input.weekly_used, true)? {
+        if let Some(reason) = deferral(store, input.weekly, true)? {
             *deferred = Some(reason);
             continue;
         }
-        if !analyzing {
-            analyzing = true;
+        if !tally.analyzing {
+            tally.analyzing = true;
             report(PassReport::Analyzing {
                 project_id: project_id.to_owned(),
             });
         }
-        let mut admit = |store: &MemoryStore| admit_call(store, input.weekly_used, true);
+        let mut admit = |store: &MemoryStore| admit_call(store, input.weekly, true);
         match analyze_session(
             store,
             sessions_node,
@@ -771,16 +924,12 @@ fn walk_project(
             &mut admit,
         ) {
             Ok(result) => {
-                learned += result.learned;
-                batch_ids.extend(result.batch_ids);
+                tally.learned += result.learned;
+                tally.batch_ids.extend(result.batch_ids);
             }
-            Err(AnalysisFailure::Provider(error)) => {
-                report(PassReport::Failed {
-                    project_id: project_id.to_owned(),
-                    error,
-                });
-                return Ok(());
-            }
+            // One provider failure stops this Project's analysis for the pass;
+            // its receipts are still walked.
+            Err(AnalysisFailure::Provider(error)) => tally.error = Some(error),
             Err(AnalysisFailure::Deferred(reason)) => *deferred = Some(reason),
             Err(AnalysisFailure::Cancelled) => break,
             Err(AnalysisFailure::Local(message)) => crate::diagnostic!(json!({
@@ -792,13 +941,6 @@ fn walk_project(
             })),
         }
     }
-    if analyzing {
-        report(PassReport::Analyzed {
-            project_id: project_id.to_owned(),
-            learned,
-            batch_ids,
-        });
-    }
     Ok(())
 }
 
@@ -806,12 +948,10 @@ fn walk_project(
 /// background analysis, the provider's weekly usage (D-10), and counts it.
 pub(crate) fn admit_call(
     store: &MemoryStore,
-    weekly_used: Option<f64>,
+    weekly: WeeklyUsage,
     background: bool,
 ) -> Result<(), AnalysisFailure> {
-    if let Some(reason) =
-        deferral(store, weekly_used, background).map_err(AnalysisFailure::Local)?
-    {
+    if let Some(reason) = deferral(store, weekly, background).map_err(AnalysisFailure::Local)? {
         return Err(AnalysisFailure::Deferred(reason));
     }
     store
@@ -824,11 +964,17 @@ pub(crate) fn admit_call(
 /// usage for background analysis, or the machine's calls today.
 fn deferral(
     store: &MemoryStore,
-    weekly_used: Option<f64>,
+    weekly: WeeklyUsage,
     background: bool,
 ) -> Result<Option<&'static str>, String> {
-    if background && weekly_used.is_some_and(|used| used >= WEEKLY_USAGE_DEFER_PERCENT) {
-        return Ok(Some("weekly_usage"));
+    if background {
+        match weekly {
+            WeeklyUsage::Used(used) if used >= WEEKLY_USAGE_DEFER_PERCENT => {
+                return Ok(Some("weekly_usage"));
+            }
+            WeeklyUsage::Unread => return Ok(Some("weekly_usage_unread")),
+            WeeklyUsage::Used(_) | WeeklyUsage::Unknown => {}
+        }
     }
     let calls = store
         .analysis_calls(now_ms())
@@ -1750,8 +1896,9 @@ mod tests {
             }));
         }
 
-        fn pass(&self, live: bool, closed: bool, weekly_used: Option<f64>) -> Vec<&'static str> {
-            self.pass_for(("claude", SESSION.to_owned()), live, closed, weekly_used)
+        fn pass(&self, live: bool, closed: bool, weekly: WeeklyUsage) -> Vec<&'static str> {
+            self.pass_for(("claude", SESSION.to_owned()), live, closed, weekly)
+                .0
         }
 
         fn pass_for(
@@ -1759,8 +1906,8 @@ mod tests {
             key: MemorySession,
             live: bool,
             closed: bool,
-            weekly_used: Option<f64>,
-        ) -> Vec<&'static str> {
+            weekly: WeeklyUsage,
+        ) -> (Vec<&'static str>, PassOutcome) {
             let backend: Arc<dyn AiBackend> = self.backend.clone();
             let input = PassInput {
                 node: crate::node::test_node(),
@@ -1775,22 +1922,22 @@ mod tests {
                     },
                     Arc::new(NoopLogSink),
                 )),
-                weekly_used,
+                weekly,
                 live: live.then(|| key.clone()).into_iter().collect(),
                 closed: closed.then_some(key).into_iter().collect(),
                 held: HashSet::new(),
                 cancel: CancelToken::new(),
             };
             let mut reports = Vec::new();
-            run_pass(&input, &mut |report| {
+            let outcome = run_pass(&input, &mut |report| {
                 reports.push(match report {
                     PassReport::Analyzing { .. } => "analyzing",
+                    PassReport::Analyzed { error: Some(_), .. } => "failed",
                     PassReport::Analyzed { learned: 1, .. } => "learned one",
                     PassReport::Analyzed { .. } => "analyzed",
-                    PassReport::Failed { .. } => "failed",
                 })
             });
-            reports
+            (reports, outcome)
         }
 
         fn store(&self) -> MemoryStore {
@@ -1809,7 +1956,7 @@ mod tests {
 
         // A live pane's receipts are its label read's, and a session written
         // a moment ago is not quiet: nothing is read, nothing is analyzed.
-        assert!(fixture.pass(true, false, None).is_empty());
+        assert!(fixture.pass(true, false, WeeklyUsage::Unknown).is_empty());
         assert_eq!(fixture.calls(), 0);
         let seeded = |store: &MemoryStore| store.item_by_number(&fixture.project_id, 1).unwrap();
         assert_eq!(seeded(&fixture.store()).unwrap().provided_session_count, 0);
@@ -1817,7 +1964,7 @@ mod tests {
         // Its pane closed: the receipt is recorded and the session analyzed.
         fixture.answer(&["src/lib.rs", "src/missing.rs", "../outside.rs"]);
         assert_eq!(
-            fixture.pass(false, true, None),
+            fixture.pass(false, true, WeeklyUsage::Unknown),
             ["analyzing", "learned one"]
         );
         assert_eq!(fixture.calls(), 1);
@@ -1835,7 +1982,7 @@ mod tests {
         drop(store);
 
         // Nothing new: the same signal analyzes nothing again.
-        assert!(fixture.pass(false, true, None).is_empty());
+        assert!(fixture.pass(false, true, WeeklyUsage::Unknown).is_empty());
         assert_eq!(fixture.calls(), 1);
 
         // A new line keeps the session busy for 30 minutes (B1).
@@ -1855,7 +2002,7 @@ mod tests {
         )
         .unwrap();
         drop(file);
-        assert!(fixture.pass(false, false, None).is_empty());
+        assert!(fixture.pass(false, false, WeeklyUsage::Unknown).is_empty());
         assert_eq!(fixture.calls(), 1);
     }
 
@@ -1876,12 +2023,12 @@ mod tests {
         };
 
         age(29);
-        assert!(fixture.pass(false, false, None).is_empty());
+        assert!(fixture.pass(false, false, WeeklyUsage::Unknown).is_empty());
         assert_eq!(fixture.calls(), 0);
 
         age(31);
         assert_eq!(
-            fixture.pass(false, false, None),
+            fixture.pass(false, false, WeeklyUsage::Unknown),
             ["analyzing", "learned one"]
         );
         assert_eq!(fixture.calls(), 1);
@@ -1945,12 +2092,12 @@ mod tests {
 
         // A live pane's label read owns the session: the walk records only
         // the fixture's Claude Code session.
-        fixture.pass_for(key.clone(), true, false, None);
+        fixture.pass_for(key.clone(), true, false, WeeklyUsage::Unknown);
         assert_eq!(delivered(), 1);
 
-        fixture.pass_for(key.clone(), false, false, None);
+        fixture.pass_for(key.clone(), false, false, WeeklyUsage::Unknown);
         assert_eq!(delivered(), 2);
-        fixture.pass_for(key, false, false, None);
+        fixture.pass_for(key, false, false, WeeklyUsage::Unknown);
         assert_eq!(delivered(), 2);
         assert_eq!(fixture.calls(), 0, "an OpenCode session is not analyzed");
     }
@@ -1962,7 +2109,9 @@ mod tests {
         fixture.answer(&[]);
 
         assert!(
-            fixture.pass(false, true, Some(80.0)).is_empty(),
+            fixture
+                .pass(false, true, WeeklyUsage::Used(80.0))
+                .is_empty(),
             "a held-back Project never shows analyzing"
         );
         assert_eq!(
@@ -1976,7 +2125,11 @@ mod tests {
             store.count_analysis_call(now_ms()).unwrap();
         }
         drop(store);
-        assert!(fixture.pass(false, true, Some(10.0)).is_empty());
+        assert!(
+            fixture
+                .pass(false, true, WeeklyUsage::Used(10.0))
+                .is_empty()
+        );
         assert_eq!(fixture.calls(), 0, "the day's calls are spent");
         assert!(
             fixture
@@ -1986,6 +2139,87 @@ mod tests {
                 .is_none(),
             "the conversation waits, unread"
         );
+    }
+
+    #[test]
+    fn unread_weekly_usage_holds_background_analysis_and_asks_for_a_read() {
+        // D-10 b: with no window attached the figure is read for Memory.
+        let fixture = Fixture::new();
+        fixture.answer(&[]);
+        let key = ("claude", SESSION.to_owned());
+
+        let (reports, outcome) = fixture.pass_for(key.clone(), false, true, WeeklyUsage::Unread);
+        assert!(reports.is_empty());
+        assert_eq!(fixture.calls(), 0);
+        assert!(outcome.wants_usage);
+        assert!(
+            !outcome.settled.contains(&key),
+            "the closed session waits for the read, not for the quiet rule"
+        );
+
+        let (reports, _) = fixture.pass_for(key, false, true, WeeklyUsage::Used(10.0));
+        assert_eq!(reports, ["analyzing", "learned one"]);
+    }
+
+    #[test]
+    fn weekly_usage_is_read_headless_for_a_pass_and_waited_for_ten_minutes_at_most() {
+        // D-10: a provider whose usage cannot be read gets the daily cap alone.
+        let mut runtime = crate::runtime::tests::runtime();
+        let now = now_ms();
+        runtime.snapshot.navigator.provider_usage =
+            crate::model::ProviderUsageSnapshot::initial_rows();
+        assert!(!runtime.memory_reads_usage());
+        assert_eq!(runtime.weekly_usage("claude", now), WeeklyUsage::Unread);
+        assert_eq!(runtime.weekly_usage("grok", now), WeeklyUsage::Unknown);
+
+        runtime.finish_memory_pass(PassOutcome {
+            wants_usage: true,
+            ..PassOutcome::default()
+        });
+        assert!(runtime.memory_reads_usage());
+        assert!(runtime.usage_activity().window_visible);
+        assert_eq!(runtime.weekly_usage("claude", now), WeeklyUsage::Unread);
+        assert_eq!(
+            runtime.weekly_usage("claude", now + USAGE_READ_WAIT_MS),
+            WeeklyUsage::Unknown
+        );
+
+        let row = &mut runtime.snapshot.navigator.provider_usage[0];
+        row.used_percent = Some(85.0);
+        let provider = row.provider.clone();
+        assert_eq!(
+            runtime.weekly_usage(&provider, now),
+            WeeklyUsage::Used(85.0)
+        );
+    }
+
+    #[test]
+    fn a_closed_session_stays_closed_until_a_pass_analyzes_it() {
+        // B2: a failed pass does not drop the session into the 30 minute wait.
+        let fixture = Fixture::new();
+        let key = ("claude", SESSION.to_owned());
+
+        // No scripted answer: the provider call fails.
+        let (reports, outcome) = fixture.pass_for(key.clone(), false, true, WeeklyUsage::Unknown);
+        assert_eq!(reports, ["analyzing", "failed"]);
+        assert!(!outcome.settled.contains(&key));
+
+        fixture.answer(&[]);
+        let (reports, outcome) = fixture.pass_for(key.clone(), false, true, WeeklyUsage::Unknown);
+        assert_eq!(reports, ["analyzing", "learned one"]);
+        assert!(
+            !outcome.settled.contains(&key),
+            "settled by the pass that finds nothing left"
+        );
+
+        let (reports, outcome) = fixture.pass_for(key.clone(), false, true, WeeklyUsage::Unknown);
+        assert!(reports.is_empty());
+        assert!(outcome.settled.contains(&key));
+
+        // A session no Memory-enabled Project lists is let go after a pass.
+        let stray = ("codex", "not-in-any-project".to_owned());
+        let (_, outcome) = fixture.pass_for(stray.clone(), false, true, WeeklyUsage::Unknown);
+        assert!(outcome.settled.contains(&stray));
     }
 
     #[test]

@@ -396,10 +396,27 @@ fn run_coordinator(
         }
 
         // With no window attached only label work runs; these readers feed
-        // nothing else (PRD labels-in-hided B29).
+        // nothing else (PRD labels-in-hided B29). The usage reader also runs
+        // while background Memory analysis needs the weekly figure (PRD
+        // project-memory-v2 D-10 b).
         let run_background_reads =
             subscription.is_some() && !defer_background_reads && read_ui_attached(&context);
+        let read_usage = subscription.is_some()
+            && !defer_background_reads
+            && (run_background_reads || read_memory_reads_usage(&context));
         defer_background_reads = false;
+        if read_usage && let Some(reader) = usage_reader.as_mut() {
+            let Some(activity) = read_usage_activity(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if let Some(provider_usage) = reader.read_if_due(activity)
+                && !publish_provider_usage(&context, provider_usage)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
+        }
         if run_background_reads {
             if let Some(current) = replica.as_mut()
                 && process_reader.poll(&context, current, subscription_generation)
@@ -419,18 +436,6 @@ fn run_coordinator(
                     Err(error) => {
                         log_sync_failure(&context, "process.publish_failed", Some(current), &error)
                     }
-                }
-            }
-            if let Some(reader) = usage_reader.as_mut() {
-                let Some(activity) = read_usage_activity(&context) else {
-                    stop_subscription(&mut subscription);
-                    return;
-                };
-                if let Some(provider_usage) = reader.read_if_due(activity)
-                    && !publish_provider_usage(&context, provider_usage)
-                {
-                    stop_subscription(&mut subscription);
-                    return;
                 }
             }
 
@@ -1738,6 +1743,15 @@ fn publish_provider_usage(
 fn read_usage_activity(context: &SessionSyncContext) -> Option<crate::usage::UsageActivity> {
     let runtime = context.runtime.upgrade()?;
     runtime.lock().ok().map(|guard| guard.usage_activity())
+}
+
+/// Whether background Memory analysis wants the weekly usage read.
+fn read_memory_reads_usage(context: &SessionSyncContext) -> bool {
+    context
+        .runtime
+        .upgrade()
+        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.memory_reads_usage()))
+        .unwrap_or(false)
 }
 
 /// Whether a window draws the snapshot; a gone runtime reads as attached,
