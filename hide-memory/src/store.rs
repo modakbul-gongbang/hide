@@ -1655,20 +1655,18 @@ impl MemoryStore {
     }
 
     /// The promotions still waiting on an agent or a pull request, in every
-    /// Project on `device`, with the Project's root; a failed one stays for
-    /// `failed_since`, since its pull request may reach the catalog late.
+    /// Project on `device`, with the Project's root.
     pub fn open_promotions(
         &self,
         device: &str,
-        failed_since: u64,
     ) -> Result<Vec<(String, String, u64, Promotion)>, MemoryError> {
         let mut statement = self.connection.prepare(
             "SELECT pr.id,pr.root,i.number FROM card_promotions p JOIN memory_items i ON i.id=p.item_id \
              JOIN projects pr ON pr.id=i.project_id WHERE pr.device_id=?1 \
-             AND (p.state IN ('running','pr_open') OR (p.state='failed' AND p.updated_at_ms>=?2)) ORDER BY pr.id,i.number",
+             AND p.state IN ('running','pr_open') ORDER BY pr.id,i.number",
         )?;
         let rows = statement
-            .query_map(params![device, failed_since], |row| {
+            .query_map([device], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,

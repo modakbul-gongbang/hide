@@ -19,9 +19,6 @@ use serde_json::json;
 /// How often a running promotion's agent is checked; a pull request is
 /// followed on each GitHub answer instead.
 const TRACK_INTERVAL_MS: u64 = 60_000;
-/// How long a failed promotion is still matched to a pull request that
-/// reaches the PR catalog after its agent ended.
-const FAILED_RECHECK_MS: u64 = 60 * 60_000;
 /// How long a promotion may stay running with no agent: past it the start
 /// was cut short (Hide quit between writing the state and the spawn).
 const START_GRACE_MS: u64 = 5 * 60_000;
@@ -86,13 +83,22 @@ pub(super) struct PromotionStart {
 pub(super) struct PromotionTracking {
     in_flight: bool,
     again: bool,
-    /// Whether any promotion is followed (running, its pull request open, or
-    /// failed within the recheck); unknown until the first check.
+    /// Whether any promotion is followed (running or its pull request open);
+    /// unknown until the first check.
     followed: Option<bool>,
     /// Whether one is running: only then does the minute tick check agents.
     running: bool,
     next_unix_ms: u64,
+    /// Each running attempt seen gone with no pull request, and the PR
+    /// catalog generation asked for when it was: the attempt fails only on
+    /// an answer to that ask or a later one, so a pull request opened just
+    /// before the agent ended is not missed by an older read. Kept in memory:
+    /// after a restart the ask is made again.
+    gone: HashMap<AttemptKey, u64>,
 }
+
+/// One attempt: the Project, the card number and the attempt.
+type AttemptKey = (String, u64, u32);
 
 impl PromotionTracking {
     /// A promotion started or a read found one followed: check it.
@@ -264,41 +270,30 @@ impl Runtime {
         }
     }
 
-    /// What the PR catalog says of an attempt's pull request: the one it
-    /// already found, by number; else one this repository's own branch opened
-    /// since the attempt started, an open one first. A fork's branch of the
-    /// same name, or a pull request an earlier attempt left on it, is never
-    /// the attempt's (a branch name says nothing of who pushed it).
     fn promotion_pull_request(&self, root: &str, promotion: &Promotion) -> Option<PullRequestFact> {
-        let project = self.github.project(root)?;
-        let branch = promotion.branch.as_deref()?;
-        let started = promotion.started_at_unix_ms.saturating_sub(START_SLACK_MS);
-        let mut on_branch = project
-            .pull_requests
-            .iter()
-            .filter(|pull| !pull.cross_repository && pull.head_branch == branch)
-            .filter(|pull| match promotion.pr_number {
-                Some(number) => u64::from(pull.number) == number,
-                None => pull.created_at_unix_ms.is_some_and(|at| at >= started),
-            })
-            .collect::<Vec<_>>();
-        on_branch.sort_by_key(|pull| {
-            (
-                matches!(
-                    pull.badge,
-                    PullRequestBadge::Open | PullRequestBadge::Review
-                ),
-                pull.number,
-            )
-        });
-        on_branch.last().map(|pull| PullRequestFact {
-            number: u64::from(pull.number),
-            badge: pull.badge,
-        })
+        attempt_pull_request(self.github.project(root)?, promotion)
     }
 
-    fn promotion_catalog_current(&self, root: &str) -> bool {
-        catalog_current(self.github.project(root))
+    /// Whether the PR catalog has answered for `root` since the attempt
+    /// `key` was seen gone; the first time it is seen, asks for that answer.
+    fn promotion_catalog_answered(&mut self, key: &AttemptKey, root: &str) -> bool {
+        let asked = match self.project_memory.promotions.gone.get(key) {
+            Some(asked) => *asked,
+            None => {
+                self.refresh_pull_requests(root);
+                let asked = self.github_generations.get(root).copied().unwrap_or(0);
+                self.project_memory
+                    .promotions
+                    .gone
+                    .insert(key.clone(), asked);
+                return false;
+            }
+        };
+        catalog_answered(
+            self.github.project(root),
+            self.github_read_generation.get(root).copied(),
+            asked,
+        )
     }
 
     /// Whether the agent with coordination id `id` has ended: `None` while
@@ -315,13 +310,54 @@ impl Runtime {
     }
 }
 
-/// Whether the PR catalog's answer for a repository is a current read, so a
-/// pull request missing from it is missing on GitHub too; a repository with
-/// no GitHub remote has none to miss.
-fn catalog_current(project: Option<&GithubProjectSnapshot>) -> bool {
+/// What the PR catalog says of an attempt's pull request: the one it
+/// already found, by number; else one this repository's own branch opened
+/// since the attempt started, an open one first. A fork's branch of the
+/// same name, or a pull request an earlier attempt left on it, is never
+/// the attempt's (a branch name says nothing of who pushed it).
+fn attempt_pull_request(
+    project: &GithubProjectSnapshot,
+    promotion: &Promotion,
+) -> Option<PullRequestFact> {
+    let branch = promotion.branch.as_deref()?;
+    let started = promotion.started_at_unix_ms.saturating_sub(START_SLACK_MS);
+    let mut on_branch = project
+        .pull_requests
+        .iter()
+        .filter(|pull| !pull.cross_repository && pull.head_branch == branch)
+        .filter(|pull| match promotion.pr_number {
+            Some(number) => u64::from(pull.number) == number,
+            None => pull.created_at_unix_ms.is_some_and(|at| at >= started),
+        })
+        .collect::<Vec<_>>();
+    on_branch.sort_by_key(|pull| {
+        (
+            matches!(
+                pull.badge,
+                PullRequestBadge::Open | PullRequestBadge::Review
+            ),
+            pull.number,
+        )
+    });
+    on_branch.last().map(|pull| PullRequestFact {
+        number: u64::from(pull.number),
+        badge: pull.badge,
+    })
+}
+
+/// Whether the PR catalog's answer for a repository is a current read of
+/// generation `asked` or later, so a pull request missing from it is missing on
+/// GitHub too; a repository with no GitHub remote has none to miss.
+fn catalog_answered(
+    project: Option<&GithubProjectSnapshot>,
+    read: Option<u64>,
+    asked: u64,
+) -> bool {
     project.is_some_and(|project| {
-        (project.pull_requests_read && !project.status.stale)
-            || project.status.failure_category == Some(GithubFailureCategory::NoGithubRemote)
+        project.status.failure_category == Some(GithubFailureCategory::NoGithubRemote)
+            || (read.is_some_and(|read| read >= asked)
+                && project.pull_requests_read
+                && !project.status.stale)
     })
 }
 
@@ -347,28 +383,35 @@ fn track_promotions(
     }
     let now = super::memory::now_ms();
     let followed = MemoryStore::open_read_only(database)
-        .and_then(|store| {
-            store.open_promotions(node.as_str(), now.saturating_sub(FAILED_RECHECK_MS))
-        })
+        .and_then(|store| store.open_promotions(node.as_str()))
         .map_err(|error| error.to_string())?;
-    if followed.is_empty() {
-        return Ok(outcome);
-    }
     let moves = {
         let runtime = context.runtime.upgrade().ok_or("runtime_gone")?;
-        let guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
-        followed
+        let mut guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
+        let mut gone_now = HashSet::new();
+        let moves = followed
             .iter()
-            .map(|(_, root, _, promotion)| {
+            .map(|(project_id, root, number, promotion)| {
                 let pull = guard.promotion_pull_request(root, promotion);
                 let ended = promotion
                     .agent_id
                     .as_deref()
                     .and_then(|id| guard.promotion_agent_ended(id));
-                let current = guard.promotion_catalog_current(root);
-                next_promotion(promotion, pull, ended, current, now)
+                let answered = pull.is_none() && attempt_gone(promotion, ended, now) && {
+                    let key = (project_id.clone(), *number, promotion.attempt);
+                    let answered = guard.promotion_catalog_answered(&key, root);
+                    gone_now.insert(key);
+                    answered
+                };
+                next_promotion(promotion, pull, answered)
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        guard
+            .project_memory
+            .promotions
+            .gone
+            .retain(|key, _| gone_now.contains(key));
+        moves
     };
     let mut store = moves
         .iter()
@@ -399,26 +442,31 @@ fn track_promotions(
             }
             _ => promotion.state,
         };
-        outcome.followed |= matches!(
-            state,
-            PromotionState::Running | PromotionState::PrOpen | PromotionState::Failed
-        );
+        outcome.followed |= matches!(state, PromotionState::Running | PromotionState::PrOpen);
         outcome.running |= state == PromotionState::Running;
     }
     Ok(outcome)
 }
 
+/// Whether a running attempt's agent is gone: it ended, or none was written
+/// within the grace (Hide quit between writing the state and the spawn).
+/// `agent_ended` is `None` while the ledger cannot be read.
+fn attempt_gone(promotion: &Promotion, agent_ended: Option<bool>, now_unix_ms: u64) -> bool {
+    promotion.state == PromotionState::Running
+        && match &promotion.agent_id {
+            Some(_) => agent_ended == Some(true),
+            None => now_unix_ms.saturating_sub(promotion.started_at_unix_ms) >= START_GRACE_MS,
+        }
+}
+
 /// Where a followed promotion goes next, or `None` when it stays (B31, B32):
-/// the attempt's pull request decides first, even after the attempt was
-/// called failed; with none, a running promotion whose agent ended, or that
-/// never got an agent within the grace, failed, but only on a current read of
-/// the PR catalog, since a pull request just opened may not be in it yet.
+/// the attempt's pull request decides; with none, a running attempt whose
+/// agent is gone fails once the PR catalog has answered since
+/// (`catalog_answered`).
 fn next_promotion(
     promotion: &Promotion,
     pull: Option<PullRequestFact>,
-    agent_ended: Option<bool>,
-    catalog_current: bool,
-    now_unix_ms: u64,
+    catalog_answered: bool,
 ) -> Option<(PromotionState, Option<u64>)> {
     let next = match pull {
         Some(PullRequestFact {
@@ -430,14 +478,7 @@ fn next_promotion(
             badge: PullRequestBadge::Closed,
         }) => (PromotionState::ClosedUnmerged, Some(number)),
         Some(PullRequestFact { number, .. }) => (PromotionState::PrOpen, Some(number)),
-        None if promotion.state == PromotionState::Running => {
-            let gone = match &promotion.agent_id {
-                Some(_) => agent_ended == Some(true),
-                None => now_unix_ms.saturating_sub(promotion.started_at_unix_ms) >= START_GRACE_MS,
-            };
-            if !gone || !catalog_current {
-                return None;
-            }
+        None if promotion.state == PromotionState::Running && catalog_answered => {
             (PromotionState::Failed, None)
         }
         None => return None,
@@ -635,72 +676,109 @@ mod tests {
         }
     }
 
+    /// Card m1 of `project`: a rule from the operator's words.
+    fn seed(store: &mut MemoryStore, project: &str, text: &str) {
+        use hide_memory::{AnalysisBatch, Candidate, CandidateKind, CandidateRelation};
+        store.set_enabled(project, true, true).unwrap();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: format!("seed-{project}"),
+                    project_id: project.to_owned(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "seed".to_owned(),
+                    content_hash: "seed".to_owned(),
+                    created_at_unix_ms: 1,
+                },
+                &[Candidate {
+                    text: text.to_owned(),
+                    title: text.to_owned(),
+                    aliases: Vec::new(),
+                    kind: CandidateKind::Rule,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    human_offsets: vec![1],
+                    source_times: Default::default(),
+                    cited_paths: Vec::new(),
+                    relation: CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+    }
+
+    fn pull_request(number: u32, branch: &str, created: u64) -> crate::model::PullRequestSnapshot {
+        crate::model::PullRequestSnapshot {
+            closing_issues: Vec::new(),
+            title: format!("PR {number}"),
+            checks: crate::model::PullRequestChecks::Failed,
+            number,
+            head_branch: branch.into(),
+            base_branch: "main".into(),
+            url: format!("https://github.com/acme/project/pull/{number}"),
+            badge: PullRequestBadge::Open,
+            review: None,
+            is_draft: false,
+            merged_at_unix_ms: None,
+            updated_at_unix_ms: Some(created),
+            created_at_unix_ms: Some(created),
+            closed_at_unix_ms: None,
+            head_oid: None,
+            cross_repository: false,
+        }
+    }
+
     #[test]
-    fn a_promotion_follows_its_pull_request_and_fails_only_when_its_agent_ended_without_one() {
+    fn a_promotion_follows_its_pull_request_and_fails_only_when_gone_and_the_catalog_answered() {
         // B31, B32.
         let now = 10 * START_GRACE_MS;
         let pull = |badge| Some(PullRequestFact { number: 924, badge });
         let promotion = running(Some("agent-7"), now);
 
-        assert_eq!(
-            next_promotion(&promotion, None, Some(false), true, now),
-            None
-        );
-        assert_eq!(
-            next_promotion(&promotion, None, None, true, now),
+        assert!(!attempt_gone(&promotion, Some(false), now));
+        assert!(!attempt_gone(&promotion, None, now), "unread ledger");
+        assert!(attempt_gone(&promotion, Some(true), now));
+        assert!(attempt_gone(
+            &running(None, now - START_GRACE_MS),
             None,
-            "unread ledger"
-        );
+            now
+        ));
+        assert!(!attempt_gone(&running(None, now - 1), None, now));
+
+        assert_eq!(next_promotion(&promotion, None, false), None);
         assert_eq!(
-            next_promotion(&promotion, None, Some(true), false, now),
-            None,
-            "a pull request just opened may not be in a stale catalog yet"
-        );
-        let failed = next_promotion(&promotion, None, Some(true), true, now);
-        assert_eq!(failed, Some((PromotionState::Failed, None)));
-        assert_eq!(
-            next_promotion(
-                &after(&promotion, failed),
-                pull(PullRequestBadge::Open),
-                Some(true),
-                true,
-                now
-            ),
-            Some((PromotionState::PrOpen, Some(924))),
-            "a pull request that reaches the catalog late takes a failed attempt back"
+            next_promotion(&promotion, None, true),
+            Some((PromotionState::Failed, None))
         );
         let open = after(
             &promotion,
-            next_promotion(&promotion, pull(PullRequestBadge::Review), None, true, now),
+            next_promotion(&promotion, pull(PullRequestBadge::Review), false),
         );
         assert_eq!(open.state, PromotionState::PrOpen);
         assert_eq!(
-            next_promotion(&open, pull(PullRequestBadge::Open), None, true, now),
+            next_promotion(&open, pull(PullRequestBadge::Open), false),
             None,
             "no move, no write"
         );
         assert_eq!(
-            next_promotion(&open, pull(PullRequestBadge::Merged), None, true, now),
+            next_promotion(&open, None, true),
+            None,
+            "an open pull request that left the catalog stays open"
+        );
+        assert_eq!(
+            next_promotion(&open, pull(PullRequestBadge::Merged), false),
             Some((PromotionState::Merged, Some(924)))
         );
         assert_eq!(
-            next_promotion(&open, pull(PullRequestBadge::Closed), None, true, now),
+            next_promotion(&open, pull(PullRequestBadge::Closed), false),
             Some((PromotionState::ClosedUnmerged, Some(924)))
-        );
-
-        let cut_short = running(None, now - START_GRACE_MS);
-        assert_eq!(
-            next_promotion(&cut_short, None, None, true, now),
-            Some((PromotionState::Failed, None))
-        );
-        assert_eq!(
-            next_promotion(&running(None, now - 1), None, None, true, now),
-            None
         );
     }
 
     #[test]
-    fn only_a_current_read_or_a_repository_without_github_says_a_pull_request_is_missing() {
+    fn only_an_answer_asked_for_after_the_agent_went_or_a_repository_without_github_says_none_came()
+    {
         let project = |read: bool, stale: bool, category| GithubProjectSnapshot {
             pull_requests_read: read,
             status: crate::model::GithubStatusSnapshot {
@@ -710,19 +788,190 @@ mod tests {
             },
             ..Default::default()
         };
-        assert!(!catalog_current(None), "GitHub has not answered");
-        assert!(catalog_current(Some(&project(true, false, None))));
-        assert!(!catalog_current(Some(&project(true, true, None))));
-        assert!(!catalog_current(Some(&project(
-            false,
-            false,
-            Some(GithubFailureCategory::NotLoggedIn)
-        ))));
-        assert!(catalog_current(Some(&project(
-            false,
-            false,
-            Some(GithubFailureCategory::NoGithubRemote)
-        ))));
+        let current = project(true, false, None);
+        assert!(
+            !catalog_answered(None, Some(3), 3),
+            "GitHub has not answered"
+        );
+        assert!(catalog_answered(Some(&current), Some(3), 3));
+        assert!(catalog_answered(Some(&current), Some(4), 3));
+        assert!(
+            !catalog_answered(Some(&current), Some(2), 3),
+            "a read from before the ask, such as one restored at launch"
+        );
+        assert!(!catalog_answered(Some(&current), None, 0));
+        assert!(!catalog_answered(
+            Some(&project(true, true, None)),
+            Some(3),
+            3
+        ));
+        assert!(!catalog_answered(
+            Some(&project(
+                false,
+                false,
+                Some(GithubFailureCategory::NotLoggedIn)
+            )),
+            Some(3),
+            3
+        ));
+        assert!(catalog_answered(
+            Some(&project(
+                false,
+                false,
+                Some(GithubFailureCategory::NoGithubRemote)
+            )),
+            None,
+            3
+        ));
+    }
+
+    #[test]
+    fn an_attempt_takes_only_its_own_repositorys_pull_request_opened_since_it_started() {
+        let started = 1_791_700_000_000;
+        let promotion = running(Some("agent-7"), started);
+        let attempt = branch(7, started);
+        let mut fork = pull_request(30, &attempt, started + 1);
+        fork.cross_repository = true;
+        let mut catalog = GithubProjectSnapshot {
+            pull_requests: vec![
+                fork,
+                pull_request(31, &attempt, started - START_SLACK_MS - 1),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            attempt_pull_request(&catalog, &promotion),
+            None,
+            "a fork's branch of the same name, and one made before the attempt"
+        );
+        catalog
+            .pull_requests
+            .push(pull_request(32, &attempt, started + 1));
+        assert_eq!(
+            attempt_pull_request(&catalog, &promotion).map(|pull| pull.number),
+            Some(32)
+        );
+        catalog
+            .pull_requests
+            .push(pull_request(33, &attempt, started + 2));
+        let bound = Promotion {
+            pr_number: Some(32),
+            ..promotion
+        };
+        assert_eq!(
+            attempt_pull_request(&catalog, &bound).map(|pull| pull.number),
+            Some(32),
+            "once found, the attempt's pull request is the one it found"
+        );
+    }
+
+    #[test]
+    fn an_agent_that_ended_before_its_pull_request_reached_the_catalog_is_not_failed() {
+        // R2-1: the catalog restored at launch, or read before the agent
+        // ended, has not seen the pull request yet.
+        use crate::handle::ChangeNotifier;
+
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = crate::runtime::delivery::tests::fixture(root.path());
+        let context = RuntimeWorkerContext {
+            runtime: Arc::downgrade(&runtime),
+            notifier: ChangeNotifier::noop(),
+        };
+        let node = crate::node::NodeId::parse("test-node").unwrap();
+        let repo = "/checkouts/fixture";
+        let database = root.path().join("memory.sqlite3");
+        let mut store = MemoryStore::open(&database).unwrap();
+        store
+            .ensure_project("p", Path::new(repo), "test-node")
+            .unwrap();
+        store
+            .ensure_project("q", Path::new("/checkouts/other"), "test-node")
+            .unwrap();
+        seed(&mut store, "p", "Run lint before tests");
+        seed(&mut store, "q", "Keep audit logs");
+        let started = super::super::memory::now_ms() - 1_000;
+        // An agent the ledger does not hold has ended.
+        let attempt = running(Some("agent-gone"), started);
+        let attempt = Promotion {
+            branch: Some(branch(1, started)),
+            ..attempt
+        };
+        store.set_promotion("p", 1, &attempt).unwrap();
+        store
+            .set_promotion("q", 1, &running(Some("agent-gone"), started))
+            .unwrap();
+        {
+            let mut runtime = runtime.lock().unwrap();
+            runtime.github.projects.push(GithubProjectSnapshot {
+                root_path: repo.into(),
+                pull_requests_read: true,
+                ..Default::default()
+            });
+            runtime.github_read_generation.insert(repo.into(), 0);
+        }
+        let state =
+            |store: &MemoryStore, project: &str| store.promotions(project).unwrap()[0].1.state;
+
+        track_promotions(&context, &node, &database).unwrap();
+        assert_eq!(state(&store, "p"), PromotionState::Running);
+        let asked = runtime.lock().unwrap().github_generations[repo];
+        assert!(asked > 0, "the tracker asked the catalog for a new read");
+        track_promotions(&context, &node, &database).unwrap();
+        assert_eq!(
+            state(&store, "p"),
+            PromotionState::Running,
+            "no answer to the ask yet"
+        );
+
+        {
+            let mut runtime = runtime.lock().unwrap();
+            runtime.github_read_generation.insert(repo.into(), asked);
+            runtime.github.projects[0].pull_requests =
+                vec![pull_request(924, &branch(1, started), started + 1)];
+        }
+        let outcome = track_promotions(&context, &node, &database).unwrap();
+        let (_, open) = store.promotions("p").unwrap().remove(0);
+        assert_eq!(
+            (open.state, open.pr_number),
+            (PromotionState::PrOpen, Some(924))
+        );
+        assert!(
+            outcome.followed,
+            "another Project's card of the same number is still followed"
+        );
+        assert_eq!(state(&store, "q"), PromotionState::Running);
+        assert!(
+            runtime
+                .lock()
+                .unwrap()
+                .project_memory
+                .promotions
+                .gone
+                .keys()
+                .all(|(project, _, _)| project == "q"),
+            "an attempt that moved is forgotten"
+        );
+
+        // With an answer and no pull request, the attempt failed.
+        let retry = Promotion {
+            attempt: 2,
+            ..running(Some("agent-gone"), started)
+        };
+        let retry = Promotion {
+            branch: Some(branch(1, started + 5)),
+            started_at_unix_ms: started + 5,
+            ..retry
+        };
+        store.set_promotion("p", 1, &retry).unwrap();
+        track_promotions(&context, &node, &database).unwrap();
+        let asked = runtime.lock().unwrap().github_generations[repo];
+        runtime
+            .lock()
+            .unwrap()
+            .github_read_generation
+            .insert(repo.into(), asked);
+        track_promotions(&context, &node, &database).unwrap();
+        assert_eq!(state(&store, "p"), PromotionState::Failed);
     }
 
     #[test]
