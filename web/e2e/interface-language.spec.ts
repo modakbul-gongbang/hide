@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { enterWorkspace, screenshot } from "./wire";
+import { enterWorkspace, screenshot, THIS_MACHINE } from "./wire";
 import { chord } from "./chords";
 
 async function openSettings(page: Page, daemon: Daemon) {
@@ -51,7 +51,7 @@ test("one confirmed choice follows every window, persists, and resets to each sy
         await expect(page.locator('[data-settings-tab="general"]')).toHaveText(general!);
       }
       // User-owned names and paths remain byte-for-byte unchanged.
-      await expect(left.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
+      await expect(left.locator("[data-sidebar-title-name]")).toHaveText(THIS_MACHINE);
       await expect(left.locator("[data-settings]")).toContainText(path.join(daemon.stateDir, "core-state.json"));
       await expect(left.locator("[data-sidebar-mode]")).toHaveCount(0);
       await expect(left.locator(".sidebar-command-keycap")).toHaveText(keycaps);

@@ -7,6 +7,9 @@ import path from "node:path";
 import { chord } from "./chords";
 import { animationsFinished } from "./wait";
 
+/** What the core names its own machine on the system the fixture runs on (`LOCAL_DEVICE_LABEL` in `herdr-core/src/workspace.rs`). */
+export const THIS_MACHINE = process.platform === "darwin" ? "This Mac" : process.platform === "win32" ? "This PC" : "This computer";
+
 /**
  * Counts client events by kind as the page sends them; one action must be
  * one event. `last` keeps the newest payload per kind for shape assertions.

@@ -10,7 +10,7 @@ import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { chord } from "../../web/e2e/chords";
 import { toPage } from "../src/main/wirePath";
-import { sendEvent } from "../../web/e2e/wire";
+import { sendEvent, THIS_MACHINE } from "../../web/e2e/wire";
 import { isolate, launch, nodeOf, test } from "./fixture";
 import { compositorPresents } from "../../web/e2e/wait";
 
@@ -61,7 +61,7 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     await add.click();
     await expect(dialog).toHaveAttribute("data-add-project", nodeOf(run.env));
     await expect(dialog.getByRole("heading", { name: "Add a project" })).toBeVisible();
-    await expect(dialog.locator("[data-add-project-host]")).toHaveText(/This Mac/);
+    await expect(dialog.locator("[data-add-project-host]")).toHaveText(new RegExp(THIS_MACHINE));
     await expect(browse).toBeFocused();
 
     // A cancelled pick changes nothing: the dialog stays, with no alert and nothing pending.
