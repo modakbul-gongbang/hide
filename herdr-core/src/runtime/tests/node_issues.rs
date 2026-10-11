@@ -533,6 +533,32 @@ fn a_node_s_github_project_lists_its_repository_s_issues_and_links_its_checkouts
     assert_eq!(linked.task_key.as_deref(), Some("github:acme/app#12"));
 }
 
+/// Choosing a node project's issue source in Settings moves its board to
+/// that source at once, as it does for this machine's project, not at the
+/// node's next answer.
+#[test]
+fn a_node_project_s_issue_source_choice_moves_its_board_at_once() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    let kind = |shared: &Arc<Mutex<Runtime>>| {
+        node_project(&shared.lock().unwrap())
+            .and_then(|project| project.tasks.source.as_ref())
+            .map(|source| source.kind.clone())
+    };
+    assert_eq!(kind(&shared).as_deref(), Some("github"));
+    dispatch(
+        &shared,
+        "issue_source_set",
+        serde_json::json!({"project_path": repo.root, "source": "local"}),
+    );
+    assert_eq!(kind(&shared).as_deref(), Some("local"));
+}
+
 /// When this machine's `gh` is signed out, a node's GitHub project says so
 /// with the reason, as one of this machine's does, instead of moving its
 /// issues to Local or reading forever.

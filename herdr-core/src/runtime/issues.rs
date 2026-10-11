@@ -739,6 +739,21 @@ impl Runtime {
         }));
         self.persist_ui_state();
         self.apply_pull_requests();
+        // The source is kept by path, so a node project at that path reads
+        // its issues from the new source now too (D-29).
+        let nodes: Vec<String> = self
+            .node_sessions()
+            .filter(|(_, session)| {
+                session
+                    .workspaces
+                    .iter()
+                    .any(|project| project.path == payload.project_path)
+            })
+            .map(|(node, _)| node.to_owned())
+            .collect();
+        for node in nodes {
+            self.refresh_issue_rows(Some(&node));
+        }
         true
     }
 
