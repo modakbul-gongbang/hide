@@ -182,6 +182,9 @@ class Workflows(unittest.TestCase):
                 for step in steps:
                     if "upload-artifact" not in step or "hide-e2e" not in step:
                         continue
+                    # The window a passing run drew is kept on success, not as a failure's logs.
+                    if re.search(r"path: \$\{\{ runner\.temp \}\}/hide-e2e/\*\.png\n", step):
+                        continue
                     uploads += 1
                     self.assertIn("if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}", step, workflow.name)
                     self.assertEqual(len(reports), 1, f"{workflow.name}: the job's report step has id flaky")
