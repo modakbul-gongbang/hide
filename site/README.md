@@ -55,9 +55,12 @@ The brand line, approved owl mark, palette and voice come from [BRAND.md](../doc
 The page presents hide as an agent development environment in four pillars: multi-agent, multi-device, Hide AI and Software Factory, followed by the Herdr relationship.
 Each pillar's claims follow the owning guide: the supported agents and their tiers [agent-hooks.md](../docs/agent-hooks.md), the four groups and status marks [status-model.md](../docs/status-model.md), devices and the phone [ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [INSTALL.md](../docs/INSTALL.md), Hide AI [AI_PROVIDERS.md](../docs/AI_PROVIDERS.md), the Factory [factory.md](../docs/factory.md), and adopting an existing Herdr server [INSTALL.md](../docs/INSTALL.md).
 The Factory is marked Coming soon until a public release carries it.
-The first three pillars' panels are small HTML drawings of the app's own surfaces (the sidebar's four groups, Settings › Devices, an agent title) with invented example tasks; they are illustrations, not captures, and use the app's status marks and colors. The Factory pillar shows the Factory render described below.
+The first three pillars' panels are small HTML drawings of the app's own surfaces (the sidebar's four groups, Settings › Devices, an agent title) with invented example tasks; they are illustrations, not captures, and use the app's status marks and colors.
+The Factory pillar has an animated Line drawing above the Factory render described below.
 Supported agents are named in text; third-party agent marks stay inside the app, where `web/src/assets/agents/manifest.json` records their terms.
-`site.js` runs the one-time scroll reveals and the sidebar panel's group changes, the page's only repeating animation; it pauses off screen and in a hidden tab, and both stop under `prefers-reduced-motion`.
+`site.js` runs the one-time scroll reveals and the sidebar panel's group changes.
+`factory.js` plays a scripted Factory line: Tasks move from Intake to Merged, and each question goes where the mode table in [factory.md](../docs/factory.md#factory-ai-the-observer) sends it (Direct, Together, Delegate), so a permission always reaches the desk and a risky-path merge goes to Factory AI only in Delegate.
+The two repeating animations sit in different sections, each runs only while it is on screen and the tab is visible, and under `prefers-reduced-motion` both show one still frame.
 The workflow and feature descriptions follow [UI_BEHAVIOR.md](../docs/UI_BEHAVIOR.md), with current main's agent launcher, project overview and Workspace components as implementation references.
 Supported platforms, signing limitations, prerequisites and installation links follow [INSTALL.md](../docs/INSTALL.md).
 Performance copy quotes only the dated candidate measurements in [PERFORMANCE_RESULTS.md](../docs/PERFORMANCE_RESULTS.md), with sample counts and boundaries beside the figures.

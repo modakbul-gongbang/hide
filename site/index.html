@@ -19,6 +19,7 @@
     <script>document.documentElement.classList.remove("no-js");</script>
     <script type="module" src="./downloads.js"></script>
     <script defer src="./site.js"></script>
+    <script type="module" src="./factory.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -162,13 +163,45 @@
               <h3 id="factory-title">Queue the issue.<br> Review the pull request.</h3>
             </div>
             <div class="pillar-copy reveal">
-              <p>Hand the Factory tasks whose requirements are clear. Worker agents take them in dependency order, verify and merge them, and bring back only what needs a person. Permissions always do.</p>
+              <p>Hand the Factory tasks whose requirements are clear. Worker agents take them in dependency order, verify and merge them, and bring back only what needs a person.</p>
               <ul>
-                <li>Add work from any agent with <code>hide factory add</code>, or from the board.</li>
-                <li>Drive it yourself, work together, or hand it over.</li>
-                <li>GitHub issues and pull requests, or local issues without a remote.</li>
+                <li>Code runs the rules: order, slots, checks and merges.</li>
+                <li>Factory AI answers only the questions your mode hands it.</li>
+                <li>Permissions always reach you: cost, sign-in, deletion, anything irreversible.</li>
               </ul>
             </div>
+
+            <div class="factory-demo reveal" data-factory>
+              <div class="fd-top">
+                <div class="fd-modes" role="group" aria-label="Who decides">
+                  <button type="button" aria-pressed="false" data-mode="manual">Direct</button>
+                  <button type="button" aria-pressed="true" data-mode="assist">Together</button>
+                  <button type="button" aria-pressed="false" data-mode="autonomous">Delegate</button>
+                </div>
+                <p class="fd-mode-line" data-mode-line>Technical to AI, product to me</p>
+              </div>
+              <p class="visually-hidden">An animation of the Factory line. Tasks move from Intake through Work, Verify and Merge. Code runs the checks and merges, Factory AI answers the questions the chosen mode hands it, and the rest, such as a permission, wait on your desk until you answer.</p>
+              <div class="fd-stage" aria-hidden="true">
+                <p class="fd-cmd" data-cmd></p>
+                <div class="fd-desk">
+                  <div class="fd-desk-head">
+                    <span class="fd-desk-title">Your desk</span>
+                    <span class="fd-desk-count" data-desk-count>0</span>
+                    <span class="fd-desk-hint">Decisions needed</span>
+                  </div>
+                  <div class="fd-desk-list" data-desk><p class="fd-desk-empty">Nothing needs you right now.</p></div>
+                </div>
+                <div class="fd-line">
+                  <div class="fd-col" data-col="intake"><p class="fd-col-h">Intake</p><div class="fd-list"></div></div>
+                  <div class="fd-col" data-col="work"><p class="fd-col-h">Work</p><div class="fd-list"></div></div>
+                  <div class="fd-col" data-col="verify"><p class="fd-col-h">Verify</p><div class="fd-list"></div></div>
+                  <div class="fd-col" data-col="merge"><p class="fd-col-h">Merge</p><div class="fd-list"></div></div>
+                  <div class="fd-col fd-merged" data-col="merged"><p class="fd-col-h">Merged</p><p class="fd-merged-n"><b data-merged>12</b><span>today</span></p><div class="fd-list"></div></div>
+                </div>
+                <ol class="fd-log" data-log></ol>
+              </div>
+            </div>
+
             <figure class="pillar-shot window reveal">
               <img src="./assets/hide-factory.webp" width="2880" height="2440" loading="lazy" alt="The Factory's Line tab. Three decisions wait on top, each with a recommended answer and its evidence, above a list of Tasks with their stage and what each worker is doing now.">
             </figure>
