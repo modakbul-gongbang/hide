@@ -82,14 +82,20 @@ export function sourcePlace(workspace: Workspace): string {
 }
 
 /**
- * A row of New issue's project list: `sourcePlace`, and for a node's
- * project the machine it is on, so the core's project and a node's at the
- * same name read apart (PRD core-host-node-move D-29).
+ * New issue's project list rows by project id: `sourcePlace`, and when the
+ * list holds projects of more than one machine, each row's machine, this
+ * window's own as This Mac, so the core's project and a node's at the same
+ * name read apart from either window (PRD core-host-node-move D-29). A list
+ * from one machine names none.
  */
-export function issuePlace(workspace: Workspace, devices: readonly Device[] | undefined, t: TFunction<"translation">): string {
-  const place = sourcePlace(workspace);
-  const machine = workspace.remote_target_id ? workspace.device_id : null;
-  return machine ? `${place} · ${machineName(devices, machine, t)}` : place;
+export function issuePlaces(projects: readonly Workspace[], devices: readonly Device[] | undefined, t: TFunction<"translation">): Map<string, string> {
+  const machines = new Set(projects.map((workspace) => workspace.device_id));
+  return new Map(
+    projects.map((workspace) => {
+      const place = sourcePlace(workspace);
+      return [workspace.id, machines.size > 1 ? `${place} · ${machineName(devices, workspace.device_id, t)}` : place];
+    }),
+  );
 }
 
 /**
@@ -103,6 +109,7 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
   const remote = useShellStore((s) => s.rest?.status?.remote);
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const projects = useMemo(() => issueProjects(catalogOf(workspaces, remote)), [workspaces, remote]);
+  const places = useMemo(() => issuePlaces(projects, devices, t), [projects, devices, t]);
   const [projectId, setProjectId] = useState(workspace.id);
   const project = projects.find((row) => row.id === projectId) ?? null;
   const [title, setTitle] = useState("");
@@ -146,7 +153,7 @@ export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actio
                 <SelectContent>
                   {projects.map((row) => (
                     <SelectItem key={row.id} value={row.id}>
-                      {issuePlace(row, devices, t)}
+                      {places.get(row.id)}
                     </SelectItem>
                   ))}
                 </SelectContent>

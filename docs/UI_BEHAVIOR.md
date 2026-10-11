@@ -705,6 +705,7 @@ Hover, focus and a half-second rest publish no snapshot and start no Git or disk
 
 The header's primary action is `새 이슈` (`C` whenever the page itself has the keyboard); New agent, which starts work with no issue, is the quiet one beside it.
 New issue makes the issue in the page's project's source, and its `어디에` list moves it to another project that has a source; `만들고 바로 시작` goes on to the Start dialog once the source has the issue.
+When that list holds projects of more than one machine, as the core's and a node's do after a core move, every row names its machine, this window's own as `이 Mac`, so two projects at the same name read apart from either window; a list from one machine names none.
 The Start dialog turns an issue into work in one step: a worktree named for the issue, its base, the agent, and the agent's first prompt.
 The name opens as the issue number and the title's English words (`192-hided-sigterm-handler`, `L-3-...`, or `issue-192` when the title has none), and when Settings > Hide AI > Features allows it the background AI's name replaces it once it answers, unless the operator has typed; `↺ AI 이름으로` brings the AI's name back.
 A name that is already a branch says so, and when a worktree has it the primary button opens that worktree instead.
