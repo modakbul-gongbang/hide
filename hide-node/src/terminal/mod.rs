@@ -601,13 +601,16 @@ impl Shared {
         let pane = request.pane.clone();
         let generation = request.generation;
         let mode = request.mode;
+        // Counted before its worker exists, so a close that runs before the
+        // worker does waits for it, and the worker then opens nothing.
+        let child = self.children.hold();
         let started = thread::Builder::new().name(name).spawn(move || {
             let Some(shared) = shared.upgrade() else {
                 return;
             };
-            // Counted before it starts, so a close that runs while it starts
-            // waits for it too.
-            let child = shared.children.hold();
+            if shared.lock().closed {
+                return;
+            }
             let began = Instant::now();
             let result = shared.attacher.open(
                 &request.pane,
@@ -629,6 +632,7 @@ impl Shared {
             });
         });
         if let Err(error) = started {
+            // The worker never ran; its count went with it.
             let message = format!("terminal session worker could not be started: {error}");
             let child = self.children.hold();
             self.run(|inner, shared| {

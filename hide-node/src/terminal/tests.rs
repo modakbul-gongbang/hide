@@ -1412,3 +1412,50 @@ fn a_close_returns_only_once_its_children_have_exited() {
             .expect("the close returned once its child exited");
     });
 }
+
+#[test]
+fn a_close_that_runs_before_a_spawn_s_worker_waits_and_nothing_opens_after_it() {
+    // Tells of any open that comes after its service's close returned.
+    struct Late {
+        returned: Arc<std::sync::atomic::AtomicBool>,
+        late: Mutex<Sender<()>>,
+    }
+    impl Attacher for Late {
+        fn open(&self, _: &str, _: Mode, _: u16, _: u16) -> Result<SessionParts, String> {
+            if self.returned.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = self.late.lock().unwrap().send(());
+            }
+            Err("refused".into())
+        }
+    }
+    let (late_tx, late) = channel();
+    // Every service lives to the end, so a worker that runs late still can.
+    let mut services = Vec::new();
+    for _ in 0..50 {
+        let returned = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (reports_tx, reports) = channel();
+        let service = Service::start(
+            Box::new(Late {
+                returned: Arc::clone(&returned),
+                late: Mutex::new(late_tx.clone()),
+            }),
+            Arc::new(Outputs::default()),
+            Arc::new(Reports(Mutex::new(reports_tx))),
+            RetryPolicy::Manual,
+        )
+        .unwrap();
+        // The attach queues a spawn whose worker may not have run yet.
+        service.control(TerminalControl::Attach {
+            pane: "w1:p1".into(),
+            size: Some(SIZE),
+            manual: false,
+        });
+        service.close();
+        returned.store(true, std::sync::atomic::Ordering::SeqCst);
+        services.push((service, reports));
+    }
+    assert!(
+        late.recv_timeout(WAIT / 10).is_err(),
+        "a session opened after its service's close returned"
+    );
+}
