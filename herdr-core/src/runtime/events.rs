@@ -638,8 +638,11 @@ pub(super) struct UiStateUpdatePayload {
     pub(super) usage_popover_open: Option<bool>,
 }
 
+/// Shows the named Project's Sessions or its Memory (PRD project-memory-v2
+/// D-17).
 #[derive(Debug, Deserialize)]
 pub(super) struct SessionsModePayload {
+    pub(super) workspace_id: String,
     pub(super) mode: String,
 }
 
@@ -683,24 +686,20 @@ pub(super) struct ArchiveOpenPayload {
     pub(super) workspace_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct MemoryOpenForTurnPayload {
-    pub(super) item_ids: Vec<String>,
-}
-
 fn default_true() -> bool {
     true
 }
 
+/// One operator action on a Project's Memory, named by the catalog Project
+/// its Sessions screen shows (PRD project-memory-v2 B20-B24).
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct MemoryActionPayload {
+    pub(super) workspace_id: String,
     pub(super) action: String,
     #[serde(default)]
     pub(super) item_id: Option<String>,
     #[serde(default)]
     pub(super) candidate_id: Option<String>,
-    #[serde(default)]
-    pub(super) body: Option<String>,
     #[serde(default)]
     pub(super) batch_id: Option<String>,
     #[serde(default)]
@@ -1296,7 +1295,6 @@ pub(super) enum Event {
     SessionsSetMode(SessionsModePayload),
     SessionsSetFilter(SessionsFilterPayload),
     ArchiveOpen(ArchiveOpenPayload),
-    MemoryOpenForTurn(MemoryOpenForTurnPayload),
     MemoryAction(MemoryActionPayload),
     RetryConnect(RetryConnectPayload),
     CloneRepository(CloneRepositoryPayload),
@@ -1517,7 +1515,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "factory_secretary_set" => decode!(PaneTargetPayload, FactorySecretarySet),
         "links_close" => Ok(Event::LinksClose),
         "archive_open" => decode!(ArchiveOpenPayload, ArchiveOpen),
-        "memory_open_for_turn" => decode!(MemoryOpenForTurnPayload, MemoryOpenForTurn),
         "memory_action" => decode!(MemoryActionPayload, MemoryAction),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "clone_repository" => decode!(CloneRepositoryPayload, CloneRepository),
@@ -1674,7 +1671,9 @@ impl Runtime {
             Event::FactoryTaskClose => self.factory_task_close(),
             Event::FactorySecretarySet(payload) => self.factory_secretary_set(payload.pane_id),
             Event::LinksClose => self.close_links(),
-            Event::SessionsSetMode(payload) => self.set_sessions_mode(&payload.mode),
+            Event::SessionsSetMode(payload) => {
+                self.set_sessions_mode(&payload.workspace_id, &payload.mode)
+            }
             Event::SessionsSetFilter(payload) => {
                 self.set_sessions_filter(&payload.provider, payload.query)
             }
@@ -1684,7 +1683,6 @@ impl Runtime {
                 }
                 None => self.open_archive_detail(&payload.kind, &payload.id, payload.preview),
             },
-            Event::MemoryOpenForTurn(payload) => self.open_memory_for_turn(payload.item_ids),
             Event::MemoryAction(payload) => self.apply_memory_action(payload),
             Event::Attachment(payload) => self.begin_attachment(payload),
             Event::AttachmentReady(payload) => self.attachment_ready(payload),

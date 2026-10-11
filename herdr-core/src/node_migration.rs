@@ -888,7 +888,7 @@ mod tests {
         let connection = rusqlite::Connection::open(state.join(PROJECT_MEMORY)).unwrap();
         connection
             .execute(
-                "INSERT INTO session_topics VALUES(?1,'claude','s1',0,'terms',1)",
+                "INSERT INTO receipt_cursors VALUES(?1,'claude','s1',0,x'',NULL,1)",
                 [&old_project],
             )
             .unwrap();
@@ -1048,12 +1048,12 @@ mod tests {
         assert!(memory.has_device(NODE).unwrap());
         drop(memory);
         let connection = rusqlite::Connection::open(legacy.state.join(PROJECT_MEMORY)).unwrap();
-        let topics: String = connection
-            .query_row("SELECT project_id FROM session_topics", [], |row| {
+        let cursor: String = connection
+            .query_row("SELECT project_id FROM receipt_cursors", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(topics, new_project);
+        assert_eq!(cursor, new_project);
         let search = rusqlite::Connection::open(legacy.state.join(SESSION_SEARCH)).unwrap();
         let (policy, messages): (String, String) = search
             .query_row(

@@ -1590,20 +1590,20 @@ fn exchange_pull_requests(context: &SessionSyncContext, worker: &mut LabelWorker
 }
 
 /// Hands the runtime the Memory receipts this Mac's worker found in its
-/// sessions, under one brief lock taken only when there are some; the runtime
-/// checks and records them off the lock (PRD opencode-plugin D-12).
+/// sessions and the sessions its live panes hold, under one brief lock taken
+/// only when there is something; the runtime checks and records receipts off
+/// the lock (PRD project-memory-v2 D-16).
 fn hand_memory_receipts(context: &SessionSyncContext, worker: &mut LabelWorker) {
     if !context.is_local() {
         return;
     }
-    let receipts = worker.take_memory_receipts();
-    if receipts.is_empty() {
+    let Some(handoff) = worker.take_memory_handoff() else {
         return;
-    }
+    };
     if let Some(runtime) = context.runtime.upgrade()
         && let Ok(mut guard) = runtime.lock()
     {
-        guard.record_memory_receipts(receipts);
+        guard.take_memory_handoff(handoff);
     }
 }
 

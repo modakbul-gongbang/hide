@@ -2442,22 +2442,12 @@ pub enum SessionsProviderFilter {
 pub struct SessionsSnapshot {
     pub project_id: Option<String>,
     pub checkout_path: Option<String>,
-    pub mode: SessionsMode,
     pub provider_filter: SessionsProviderFilter,
     pub query: String,
     pub loading: bool,
     pub unavailable_reason: Option<String>,
     pub rows: Vec<SessionRowSnapshot>,
     pub total_session_count: usize,
-    pub memories: Vec<MemoryRowSnapshot>,
-    pub memory_enabled: bool,
-    pub memory_disclosure_accepted: bool,
-    pub memory_active_count: usize,
-    pub memory_conflict_count: usize,
-    pub memory_capacity_reached: bool,
-    pub analysis: MemoryAnalysisSnapshot,
-    pub notice: Option<MemoryNoticeSnapshot>,
-    pub this_turn_memory_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2500,6 +2490,37 @@ pub struct ProjectSessionsSnapshot {
     #[serde(serialize_with = "serialize_session_rows")]
     pub rows: Arc<Vec<SessionRowSnapshot>>,
     pub detail: Option<ProjectSessionDetailSnapshot>,
+    /// Which of the Project's Sessions and Memory the screen shows, kept
+    /// per Project (`ui_state.sessions_mode_by_project`, D-17).
+    pub mode: SessionsMode,
+    /// The Project's Memory once its history read answered for it; `None`
+    /// before then and for a Project not read here.
+    pub memory: Option<ProjectMemorySnapshot>,
+}
+
+/// One Project's Memory as its Sessions screen shows it (PRD
+/// project-memory-v2 B21-B24): the switch, the cards, what analysis needs
+/// from the operator, and the last change with its Undo.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ProjectMemorySnapshot {
+    pub enabled: bool,
+    /// Live cards, needing-review ones included, against the store's cap.
+    pub capacity_reached: bool,
+    /// Cards needing review first, then the most recently changed.
+    #[serde(serialize_with = "serialize_memory_rows")]
+    pub rows: Arc<Vec<MemoryRowSnapshot>>,
+    pub analysis: MemoryAnalysisSnapshot,
+    pub notice: Option<MemoryNoticeSnapshot>,
+    /// The operator's Memory action still running for this Project; another
+    /// waits for it.
+    pub pending_action: Option<String>,
+}
+
+fn serialize_memory_rows<S: serde::Serializer>(
+    rows: &Arc<Vec<MemoryRowSnapshot>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    rows.as_ref().serialize(serializer)
 }
 
 fn serialize_session_rows<S: serde::Serializer>(
@@ -2552,24 +2573,42 @@ fn serialize_shared_archive<S: serde::Serializer>(
     archive.as_deref().serialize(serializer)
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+/// One card of a Project's Memory list (B21).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MemoryRowSnapshot {
     pub id: String,
-    pub body: String,
+    /// `m<number>` names it to agents (`hide memory show`).
+    pub number: u64,
+    pub title: String,
+    /// `rule`, `decision`, `lesson` or `fact`.
+    pub kind: String,
+    /// `active`, or `conflicting` for a card needing review.
     pub lifecycle: String,
-    pub revision: u64,
     pub source_count: usize,
+    /// Sources that are the operator's own words.
+    pub human_source_count: usize,
+    /// Distinct sessions given the card in full (D-18).
     pub provided_session_count: usize,
+    /// Reads with `hide memory show`.
+    pub pull_count: u64,
+    pub last_used_at_unix_ms: Option<u64>,
     pub updated_at_unix_ms: u64,
+    /// The other card of a needs-review pair, by number.
+    pub conflict_number: Option<u64>,
+    /// The card's text, carried only for a card in a needs-review pair, so
+    /// the two can be compared before one is chosen (B20).
+    pub body: Option<String>,
 }
 
+/// What a Project's Memory analysis needs the operator to see (B23): an
+/// `analyzing` progress state, or `needs_action` with the one action that
+/// unblocks it; `idle` otherwise. A failure the operator cannot act on is
+/// logged and never shown.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct MemoryAnalysisSnapshot {
     pub state: String,
-    pub discovered: usize,
-    pub analyzed: usize,
-    pub failed: usize,
     pub message: Option<String>,
+    /// `sign_in`, `open_settings`, `update_hooks` or `retry`.
     pub action: Option<String>,
 }
 

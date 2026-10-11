@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use hide_agent_adapter::{AgentAdapter, Capability, PluginDialect};
 use hide_agent_hooks::delivery::{self, Intake, Prompt};
-use hide_agent_hooks::memory::{MemoryRequest, memory_context_until};
+use hide_agent_hooks::memory::{HookMemoryOutcome, MemoryRequest, memory_context_until};
 use hide_agent_hooks::runtime::HookEvent;
 use hide_agent_hooks::spawn_guard::{self as guard, QuestionDecision, Registration};
 use hide_agent_hooks::{counters, guidance, report};
@@ -211,8 +211,10 @@ fn prompt(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value 
 }
 
 /// The Memory capsule for this prompt, signed for the session Memory knows,
-/// and whether it is the session-start capsule, which tells the script to stop
-/// asking for one once the message carrying it is written.
+/// and whether the session-start index was answered, which tells the script
+/// to stop asking for it once the message carrying this prompt is written.
+/// The first prompt carries the index and the cards its own words match,
+/// since these hosts have no hook of their own at session start.
 fn prompt_memory(
     home: &Path,
     agent: &Agent,
@@ -229,25 +231,26 @@ fn prompt_memory(
         delivery::diagnose(home, "plugin");
         return (None, false);
     };
-    let start = input.memory_first.unwrap_or(input.first);
-    let memory = memory_context_until(
-        MemoryRequest {
-            runtime_id: agent.runtime(),
-            event: if start {
-                HookEvent::SessionStart
-            } else {
-                HookEvent::UserPromptSubmit
-            },
-            cwd: input.cwd.clone(),
-            prompt: input.prompt.clone(),
-            session_id: Some(memory_session),
-        },
-        home,
-        deadline,
-    )
-    .context;
-    let start = start && memory.is_some();
-    (memory, start)
+    let request = |event| MemoryRequest {
+        runtime_id: agent.runtime(),
+        event,
+        cwd: input.cwd.clone(),
+        prompt: input.prompt.clone(),
+        session_id: Some(memory_session.clone()),
+    };
+    let mut start = false;
+    let mut context = String::new();
+    if input.memory_first.unwrap_or(input.first) {
+        let index = memory_context_until(request(HookEvent::SessionStart), home, deadline);
+        start = matches!(
+            index.outcome,
+            HookMemoryOutcome::Provided { .. } | HookMemoryOutcome::Empty
+        );
+        context.push_str(index.context.as_deref().unwrap_or_default());
+    }
+    let prompt = memory_context_until(request(HookEvent::UserPromptSubmit), home, deadline);
+    context.push_str(prompt.context.as_deref().unwrap_or_default());
+    ((!context.is_empty()).then_some(context), start)
 }
 
 fn confirm(home: &Path, input: Input, deadline: Instant) -> Value {
@@ -402,60 +405,90 @@ mod tests {
         (field("event"), field("items"), field("auth"))
     }
 
-    /// Pi's and omp's extension names the session by its file for letters and
-    /// by the host's own id for Memory: the session-start receipt is signed
-    /// for the id, which is what their session reader keys it by, never for
-    /// the file. OpenCode's session id is its own.
+    /// The first prompt of a Pi, omp or OpenCode session carries the index
+    /// and the cards its words match, and the script stops asking for the
+    /// index even when it is empty. Pi's and omp's extension names the session
+    /// by its file for letters and by the host's own id for Memory: the
+    /// prompt's receipt is signed for the id, which is what their session
+    /// reader keys it by, never for the file. OpenCode's session id is its own.
     #[test]
-    fn a_session_start_receipt_is_signed_for_the_session_memory_knows() {
-        let (temp, root, project_id, store) = memory_project();
+    fn the_first_prompt_carries_the_index_and_a_receipt_signed_for_the_session_memory_knows() {
+        let (temp, root, project_id, mut store) = memory_project();
         let home = temp.path().join("home");
         let deadline = || Instant::now() + MEMORY_TEST_DEADLINE;
-        for name in ["pi", "omp"] {
+        let asked = |session: &str, native: Option<&str>, first: bool| {
+            let mut value = json!({"session_id": session, "prompt": "Fix the flaky hook",
+                "cwd": root, "first": true, "memory_first": first});
+            if let Some(native) = native {
+                value["native_session"] = json!(native);
+            }
+            input(value)
+        };
+        let empty = asked("ses_empty", None, true);
+        let opencode = Agent::parse("opencode").unwrap();
+        assert_eq!(
+            prompt_memory(&home, &opencode, &empty, "ses_empty", deadline()),
+            (None, true),
+            "an empty index is answered, so the script stops asking"
+        );
+
+        store
+            .apply_candidates(
+                &hide_memory::AnalysisBatch {
+                    id: "b".to_owned(),
+                    project_id: project_id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "s".to_owned(),
+                    content_hash: "h".to_owned(),
+                    created_at_unix_ms: 1,
+                },
+                &[hide_memory::Candidate {
+                    text: "Rerun a flaky hook test once before filing it".to_owned(),
+                    title: String::new(),
+                    aliases: Vec::new(),
+                    kind: hide_memory::CandidateKind::Rule,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    human_offsets: vec![1],
+                    cited_paths: Vec::new(),
+                    relation: hide_memory::CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+        for name in ["pi", "omp", "opencode"] {
             let agent = Agent::parse(name).unwrap();
             let file = format!("/sessions/-work-/2026-10-09T00-00-00-000Z_{name}.jsonl");
             let id = format!("01a11d1d-{name}");
-            let asked = input(
-                json!({"session_id": file, "native_session": id, "prompt": "Fix it",
-                "cwd": root, "first": true, "memory_first": true}),
+            let (session, first) = if name == "opencode" {
+                ("ses_root".to_owned(), asked("ses_root", None, true))
+            } else {
+                (file.clone(), asked(&file, Some(&id), true))
+            };
+            let (memory, start) = prompt_memory(&home, &agent, &first, &session, deadline());
+            assert!(start, "{name}");
+            let memory = memory.unwrap();
+            assert!(memory.contains("<hide-memory-index"), "{name}: {memory}");
+            let (event, items, auth) = receipt(&memory);
+            assert_eq!(
+                (event.as_str(), items.as_str()),
+                ("UserPromptSubmit", "m1@1")
             );
-            let (memory, start) = prompt_memory(&home, &agent, &asked, &file, deadline());
-            assert!(start, "{name}: the session-start capsule was given");
-            let (event, items, auth) = receipt(&memory.unwrap());
-            assert_eq!(event, "SessionStart");
             let verifies = |session: &str| {
                 store
                     .verify_receipt_auth(&project_id, name, session, &event, &items, &auth)
                     .unwrap()
             };
-            assert!(verifies(&id), "{name}: signed for the host's id");
-            assert!(!verifies(&file), "{name}: never for the session file");
-
-            // Once the start capsule is written the script asks for the
-            // prompt capsule, even on the guidance's first prompt; with no
-            // session-start receipt projected yet there is none to give.
-            let later = input(
-                json!({"session_id": file, "native_session": id, "prompt": "Fix it",
-                "cwd": root, "first": true, "memory_first": false}),
-            );
-            assert_eq!(
-                prompt_memory(&home, &agent, &later, &file, deadline()),
-                (None, false),
-                "{name}"
-            );
+            let signed_for = if name == "opencode" {
+                "ses_root"
+            } else {
+                id.as_str()
+            };
+            assert!(verifies(signed_for), "{name}: signed for the host's id");
+            if name != "opencode" {
+                assert!(!verifies(&file), "{name}: never for the session file");
+            }
         }
-
-        let agent = Agent::parse("opencode").unwrap();
-        let asked = input(
-            json!({"session_id": "ses_root", "prompt": "Fix it", "cwd": root, "first": true}),
-        );
-        let (memory, start) = prompt_memory(&home, &agent, &asked, "ses_root", deadline());
-        assert!(start);
-        let (event, items, auth) = receipt(&memory.unwrap());
-        assert!(
-            store
-                .verify_receipt_auth(&project_id, "opencode", "ses_root", &event, &items, &auth)
-                .unwrap()
-        );
     }
 }
