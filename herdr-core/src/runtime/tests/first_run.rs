@@ -261,6 +261,47 @@ fn a_pass_that_did_not_run_keeps_the_first_step_and_continue_again_sends_it() {
     }
 }
 
+/// B12: while this Mac's kit cannot run, Try again on a step that drew no
+/// tile records no choice and queues no pass, on the desktop and in a browser
+/// tab alike; it only has the agents read again.
+#[test]
+fn try_again_while_the_kit_cannot_run_records_nothing_and_reads_the_agents_again() {
+    for finish in [false, true] {
+        let mut runtime = runtime();
+        report_here(&mut runtime, &first_run_pass());
+        runtime.set_local_kit_unavailable("timed out");
+        assert!(runtime.dispatch_json(&event(
+            "agent_onboarding_apply",
+            serde_json::json!({"agents": [], "finish": finish}),
+        )));
+        assert_eq!(
+            step(&runtime),
+            Some(FirstRunStep::Agents),
+            "finish {finish}"
+        );
+        assert_eq!(
+            runtime.snapshot().ui_state.agent_onboarding,
+            Some(crate::model::AgentOnboarding::Pending),
+            "finish {finish}: the question stays open"
+        );
+        assert!(
+            runtime
+                .snapshot()
+                .ui_state
+                .agent_onboarding_agents
+                .is_empty(),
+            "finish {finish}"
+        );
+        assert!(
+            matches!(
+                runtime.take_local_kit_job(Instant::now()),
+                Some(KitJob::Status)
+            ),
+            "finish {finish}: only the agents are read again"
+        );
+    }
+}
+
 /// B26: a browser tab's wizard is its first step alone, so applying it ends it.
 #[test]
 fn a_browser_tab_finishes_the_wizard_with_its_first_step() {

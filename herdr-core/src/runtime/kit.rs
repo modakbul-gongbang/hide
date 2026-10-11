@@ -497,15 +497,26 @@ impl Runtime {
         agents.dedup();
         let answer =
             self.snapshot.ui_state.agent_onboarding == Some(crate::model::AgentOnboarding::Pending);
+        let node = self.node.clone();
+        if let Some(reason) = self.kit_view(node.as_str()).unavailable {
+            // Nothing can be written here, and the step may not even have
+            // drawn a tile, so the press records and queues nothing: the first
+            // run's question stays open and the agents are read again (B12).
+            crate::diagnostic!(serde_json::json!({
+                "component": "first_run",
+                "kind": "first_run.apply_kit_unavailable",
+                "answer": answer,
+                "reason": reason,
+            }));
+            if !answer {
+                self.set_error("kit.unavailable", reason, false);
+            }
+            self.local_kit_check_requested = true;
+            return true;
+        }
         let changed = if answer {
             self.finish_agent_onboarding(agents.clone())
         } else {
-            let node = self.node.clone();
-            if let Some(reason) = self.kit_view(node.as_str()).unavailable {
-                // Nothing can be switched, so nothing is waited for.
-                self.set_error("kit.unavailable", reason, false);
-                return true;
-            }
             self.switch_agents_here(&agents)
         };
         changed | self.wait_for_first_run_apply(agents, finish, answer)
