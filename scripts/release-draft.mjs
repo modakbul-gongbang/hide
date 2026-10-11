@@ -1,5 +1,9 @@
-// Never publish, PATCH release metadata, DELETE or overwrite an asset.
-// The repository's immutable releases setting protects publication during an upload.
+// prepareDraft never publishes, PATCHes release metadata, DELETEs or
+// overwrites an asset. publishDraft publishes only the exact complete draft
+// prepareDraft has just verified, as the latest release, and changes nothing
+// else; release.yml calls it after every release gate passed (operator
+// decision 2026-10-12). The repository's immutable releases setting protects
+// publication during an upload, and makes a published release final.
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -70,6 +74,7 @@ export function createGitHubClient({ repository, writeToken, fetchImpl = fetch }
       throw new Error("annotated tag nesting exceeds five objects");
     },
     create: (record) => request("POST", "/releases", { body: record }),
+    publish: (id) => request("PATCH", `/releases/${id}`, { body: { draft: false, make_latest: "true" } }),
     upload: async (id, asset) => {
       const stream = createReadStream(asset.file);
       try {
@@ -136,13 +141,35 @@ export async function prepareDraft({ tag, sha, directory, client }) {
   return { id, tag, assets: manifest.length };
 }
 
+/**
+ * Prepares the draft as prepareDraft does, then publishes that release as the
+ * latest. Nothing is published unless the final read showed the complete
+ * draft under the event commit's tag; GitHub's answer must be that release,
+ * now public.
+ */
+export async function publishDraft({ tag, sha, directory, client }) {
+  const prepared = await prepareDraft({ tag, sha, directory, client });
+  const published = await client.publish(prepared.id);
+  if (published?.id !== prepared.id || published.tag_name !== tag || published.draft !== false || published.prerelease !== false) {
+    throw new Error("GitHub's answer is not the verified release, published");
+  }
+  return prepared;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const [tag, sha, directory] = process.argv.slice(2);
+  const [tag, sha, directory, mode] = process.argv.slice(2);
   try {
-    if (!tag || !sha || !directory || process.argv.length !== 5) throw new Error("usage: node scripts/release-draft.mjs <vX.Y.Z> <commit-sha> <directory>");
+    if (!tag || !sha || !directory || ![5, 6].includes(process.argv.length) || (mode !== undefined && mode !== "--publish")) {
+      throw new Error("usage: node scripts/release-draft.mjs <vX.Y.Z> <commit-sha> <directory> [--publish]");
+    }
     const client = createGitHubClient({ repository: process.env.GITHUB_REPOSITORY, writeToken: process.env.GH_TOKEN });
-    const result = await prepareDraft({ tag, sha, directory, client });
-    console.log(`complete unpublished draft verified: ${result.tag}, release ${result.id}, ${result.assets} assets`);
+    if (mode === "--publish") {
+      const result = await publishDraft({ tag, sha, directory, client });
+      console.log(`verified draft published as the latest release: ${result.tag}, release ${result.id}, ${result.assets} assets`);
+    } else {
+      const result = await prepareDraft({ tag, sha, directory, client });
+      console.log(`complete unpublished draft verified: ${result.tag}, release ${result.id}, ${result.assets} assets`);
+    }
   } catch (error) {
     console.error(`release preparation blocked: ${error.message}`);
     process.exitCode = 1;
