@@ -7,10 +7,9 @@
 // the notification permission helper, the bundled CLIs and Herdr) is signed
 // with the Developer ID certificate under the hardened runtime, Apple
 // notarizes the app and its ticket is stapled, so a downloaded copy opens
-// like any other app. Herdr ships with
-// only the linker's ad-hoc signature and notarization refuses an executable
-// without a Developer ID one, so hide's signature replaces it; Herdr's code is
-// not changed.
+// like any other app. Herdr ships with only the linker's ad-hoc signature and
+// notarization refuses an executable without a Developer ID one, so hide's
+// signature replaces it; Herdr's code is not changed.
 //
 // The keys below are the whole contract, read here and nowhere else. Every
 // missing or malformed one is reported at once, before the build starts.
