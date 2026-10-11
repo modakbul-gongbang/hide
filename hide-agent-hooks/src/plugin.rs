@@ -61,18 +61,6 @@ pub fn file(dialect: PluginDialect) -> &'static PluginFile {
     }
 }
 
-/// Whether Hide writes these files on this system. The script starts the
-/// helper by its path with no shell, which has been checked on macOS and
-/// Linux only.
-pub fn supported_here() -> Result<(), &'static str> {
-    if cfg!(windows) {
-        return Err(
-            "starting Hide's helper from an agent's extension has not been checked on Windows",
-        );
-    }
-    Ok(())
-}
-
 fn digest(text: &str) -> String {
     Sha256::digest(text.as_bytes())
         .iter()
@@ -194,7 +182,6 @@ impl PluginFile {
     /// and the agent's own folder is never created. Writing the same bytes
     /// twice writes nothing; true when the file changed.
     pub fn install(&self, home: &Path, helper: &Path) -> Result<bool, String> {
-        supported_here().map_err(str::to_owned)?;
         let path = self.path(home);
         match self.observe(home, helper) {
             PluginObserved::Current => return Ok(false),
