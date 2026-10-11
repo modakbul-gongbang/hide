@@ -36822,8 +36822,8 @@
                                 {
                                   "type": "text",
                                   "id": "agb-pr-n",
-                                  "name": "#221",
-                                  "content": "#221",
+                                  "name": "221",
+                                  "content": "221",
                                   "fill": "$--subtle-foreground",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-caption",
@@ -38125,7 +38125,7 @@
                       "fill": "$--pr-failed"
                     },
                     "agb-pr-n": {
-                      "content": "#221"
+                      "content": "221"
                     },
                     "agb-pr-rv": {
                       "enabled": true
@@ -38550,7 +38550,7 @@
                       "fill": "$--pr-merged"
                     },
                     "agb-pr-n": {
-                      "content": "#216"
+                      "content": "216"
                     },
                     "agb-pr-rv": {
                       "enabled": false
@@ -39380,7 +39380,7 @@
                       "fill": "$--pr-failed"
                     },
                     "agb-pr-n": {
-                      "content": "#221"
+                      "content": "221"
                     },
                     "agb-pr-rv": {
                       "enabled": true
@@ -39805,7 +39805,7 @@
                       "fill": "$--pr-merged"
                     },
                     "agb-pr-n": {
-                      "content": "#216"
+                      "content": "216"
                     },
                     "agb-pr-rv": {
                       "enabled": false
@@ -40469,8 +40469,8 @@
                 {
                   "type": "text",
                   "id": "ath-pr-n",
-                  "name": "#924",
-                  "content": "#924",
+                  "name": "924",
+                  "content": "924",
                   "fill": "$--subtle-foreground",
                   "fontFamily": "$--font-mono",
                   "fontSize": "$--text-caption",
