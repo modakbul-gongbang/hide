@@ -616,6 +616,45 @@ impl Fixture {
         })
     }
 
+    /// The Herdr pane the source's project opened with, as the source's
+    /// Herdr lists it.
+    pub fn source_pane(&self) -> Result<String> {
+        let project = self.source.project().display().to_string();
+        wait_for("the source project's pane", || {
+            let snapshot = self.source.herdr.run(&["api", "snapshot"])?;
+            let mut panes = Vec::new();
+            panes_under(&snapshot, &mut panes);
+            Ok(panes
+                .into_iter()
+                .find(|pane| pane["cwd"] == project.as_str())
+                .and_then(|pane| pane["pane_id"].as_str().map(str::to_owned)))
+        })
+    }
+
+    /// The `herdr terminal session` children of the source's hided for the
+    /// Herdr pane `pane`, as the process table lists them.
+    pub fn source_sessions(&self, pane: &str) -> Result<Vec<String>> {
+        let parent = self
+            .daemon
+            .as_ref()
+            .context("the source's hided is not running")?
+            .id()
+            .to_string();
+        let mut command = std::process::Command::new("/bin/ps");
+        command.args(["-axo", "ppid=,command="]);
+        let listed = String::from_utf8(successful(command)?)?;
+        Ok(listed
+            .lines()
+            .filter_map(|line| {
+                let (ppid, command) = line.trim_start().split_once(' ')?;
+                (ppid == parent
+                    && command.contains("terminal session")
+                    && command.split_whitespace().any(|word| word == pane))
+                .then(|| command.trim().to_owned())
+            })
+            .collect())
+    }
+
     /// The pid of the core the move started on the target, if one runs.
     pub fn target_core(&self) -> Result<Option<u32>> {
         Ok(self.target.daemon()?.and_then(|state| {
@@ -668,6 +707,26 @@ impl Fixture {
         let text = read(&path).map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
         let text = text.unwrap_or_else(|error| format!("no log at {}: {error}", path.display()));
         text.lines().rev().take(40).collect::<Vec<_>>().join("\n")
+    }
+}
+
+/// Every object under `value` that names a pane and its folder.
+fn panes_under(value: &Value, panes: &mut Vec<Value>) {
+    match value {
+        Value::Object(fields) => {
+            if fields.contains_key("pane_id") && fields.contains_key("cwd") {
+                panes.push(value.clone());
+            }
+            for field in fields.values() {
+                panes_under(field, panes);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                panes_under(item, panes);
+            }
+        }
+        _ => {}
     }
 }
 

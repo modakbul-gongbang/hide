@@ -12,6 +12,7 @@ use crate::support::core_move::{ALIAS, DEVICE_ID, Fixture, SOURCE_NODE, TARGET_N
 use crate::support::fake_tailscale::FakeTailscale;
 use crate::support::remote_delivery::renderer::Renderer;
 use crate::support::remote_delivery::{wait_for, wait_within};
+use crate::support::screen::{screen_socket, send, type_and_read};
 
 /// B4: the move stops the source's core, places its brain state on the
 /// target and starts the core there, and the source's window, at the same
@@ -1792,6 +1793,156 @@ fn the_core_moves_back_and_the_window_shows_what_it_showed_before() -> Result<()
         Ok(())
     })();
     finish(fixture, journey)
+}
+
+/// A key typed through the window into a pane of the window's machine
+/// reaches it after the core leaves that machine and after it comes back.
+/// The process keeps running across each role swap, and the role it leaves
+/// lets go of every pane it held; a session left holding one would make the
+/// next role's attach meet an attached client (`owner_conflict`), fall back
+/// to observing, and refuse every key as read-only while the pane is still
+/// listed, linked and drawn.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_pane_of_the_window_s_machine_takes_keys_after_the_move_and_the_move_back() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        let pane = fixture.source_pane()?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        // The core's own session holds the pane before the core leaves.
+        typed_through_window(&fixture, &runtime, &pane, "before")?;
+
+        moved_forward(&fixture)?;
+        ensure!(fixture.role()? == "node");
+        // The node's own session for the pane, which the moved core names
+        // as its device's.
+        typed_through_window(
+            &fixture,
+            &runtime,
+            &format!("remote:{SOURCE_NODE}:pane:{pane}"),
+            "moved",
+        )?;
+        one_session_in_control(&fixture, &pane)?;
+
+        fixture.event("core_move", json!({"action": "back"}))?;
+        back_journal_until(&fixture, "done")?;
+        wait_for("this machine's core", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        typed_through_window(&fixture, &runtime, &pane, "back")?;
+        one_session_in_control(&fixture, &pane)?;
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// Types `echo <word>-"ok"` into `pane` through a window at the source's
+/// address once it shows the source's checkout, as the operator's window
+/// does, and waits for `<word>-ok` to come back; a refusal names what the
+/// source logged about held panes.
+fn typed_through_window(
+    fixture: &Fixture,
+    runtime: &tokio::runtime::Runtime,
+    pane: &str,
+    word: &str,
+) -> Result<()> {
+    let (port, token) = fixture.window();
+    let (workspace, checkout) = source_checkout(fixture)?;
+    runtime
+        .block_on(async {
+            let mut socket = screen_socket(port, &token).await?;
+            send(
+                &mut socket,
+                "focus_device",
+                json!({"device_id": SOURCE_NODE}),
+            )
+            .await?;
+            send(
+                &mut socket,
+                "focus_checkout",
+                json!({"workspace_id": workspace, "checkout_id": checkout, "focus_device": true}),
+            )
+            .await?;
+            type_and_read(
+                &mut socket,
+                pane,
+                &format!("echo {word}-\"ok\""),
+                &format!("{word}-ok"),
+            )
+            .await
+        })
+        .map(|_| ())
+        .with_context(|| {
+            format!(
+                "the keys typed after {word} never reached {pane}; held panes logged: {:?}",
+                held_pane_records(fixture)
+            )
+        })
+}
+
+/// The Project and checkout ids of the source's project, from whichever
+/// core the window reaches: its own navigator's, or its device's session.
+fn source_checkout(fixture: &Fixture) -> Result<(String, String)> {
+    let path = fixture.source.project().display().to_string();
+    wait_for("the source's checkout listed", || {
+        let snapshot = fixture.snapshot()?;
+        let mut listed: Vec<Value> = snapshot["navigator"]["workspaces"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        for remote in snapshot["status"]["remote"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            listed.extend(
+                remote["session"]["workspaces"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
+        Ok(listed
+            .iter()
+            .find(|workspace| workspace["path"] == path.as_str())
+            .and_then(|workspace| {
+                Some((
+                    workspace["id"].as_str()?.to_owned(),
+                    workspace["checkouts"][0]["id"].as_str()?.to_owned(),
+                ))
+            }))
+    })
+}
+
+/// The source runs one `herdr terminal session` for `pane`, in control: a
+/// session the role before still held would be a second, and the attach of
+/// the role now an observer.
+fn one_session_in_control(fixture: &Fixture, pane: &str) -> Result<()> {
+    let sessions = fixture.source_sessions(pane)?;
+    ensure!(
+        sessions.len() == 1 && sessions[0].contains("terminal session control "),
+        "the sessions the source runs for {pane}: {sessions:?}"
+    );
+    Ok(())
+}
+
+/// What the source logged about a pane held by another client or refusing
+/// keys.
+fn held_pane_records(fixture: &Fixture) -> Vec<String> {
+    let Ok(logs) = std::fs::read_dir(fixture.source.state.join("Logs")) else {
+        return Vec::new();
+    };
+    logs.flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+        .flat_map(|text| {
+            text.lines()
+                .filter(|line| line.contains("owner_conflict") || line.contains("read_only"))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// Moves the core to the target and waits until the window shows both
