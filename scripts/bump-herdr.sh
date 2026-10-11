@@ -222,9 +222,9 @@ begin, end = ("BEGIN HERDR PROVENANCE", "END HERDR PROVENANCE") if notice else (
 assert text.count(begin) == text.count(end) == 1, f"missing or ambiguous provenance block: {p}"
 if repo == "herdrdev/herdr":
     if notice:
-        prose = f"This application distributes the upstream Herdr release {tag} from {repo}.\nThe bundled binary is not modified by hide.\nhide monitors upstream stable through herdr-update.yml; updates must pass contract and runtime checks."
+        prose = f"This application distributes the upstream Herdr release {tag} from {repo}.\nThe bundled binary's code is not modified by hide; on macOS a release replaces only its ad-hoc signature with hide's Developer ID one, which notarization requires.\nhide monitors upstream stable through herdr-update.yml; updates must pass contract and runtime checks."
     else:
-        prose = f"hide distributes the [upstream Herdr release {tag}](https://github.com/{repo}/releases/tag/{tag}).\nThe bundled binary is not modified by hide.\nThe weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks."
+        prose = f"hide distributes the [upstream Herdr release {tag}](https://github.com/{repo}/releases/tag/{tag}).\nThe bundled binary's code is not modified by hide; a macOS release replaces only its ad-hoc signature with hide's Developer ID one, which notarization requires.\nThe weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks."
 else:
     commit = tag.rsplit("-", 1)[-1] if tag.startswith("preview-") else None
     if notice:

@@ -3,10 +3,12 @@
 // pinned Herdr in its resources folder, archived beside a SHA-256
 // checksum (the Electron release app PRD, D-03 and D-08).
 //
-// macOS builds hide.app, ad-hoc signed, as a zip, with the notification
-// permission helper compiled into Contents/MacOS. Windows x64 builds an
-// unsigned folder as a zip and Linux x64 an unsigned folder as a tar.gz
-// (operator decision 2026-10-03: no signing outside macOS for now). Each is
+// macOS builds hide.app as a zip, with the notification permission helper
+// compiled into Contents/MacOS, ad-hoc signed, or signed with the Developer
+// ID certificate and notarized when HIDE_MACOS_SIGNING asks for it
+// (macos-signing.mjs). Windows x64 builds an unsigned folder as a zip and
+// Linux x64 an unsigned folder as a tar.gz (operator decision 2026-10-03: no
+// signing outside macOS for now). Each is
 // built on its own system, because the release binaries come from that
 // system's cargo build; nothing is cross-built.
 //
@@ -22,6 +24,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { packager } from "@electron/packager";
+import { assertNotarized, developerIdOptions, macosSigning } from "./macos-signing.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repo = path.resolve(root, "..");
@@ -92,6 +95,9 @@ const arch = process.arch;
 if (arch !== system.arch) throw new Error(`the pinned Herdr serves ${system.label} ${system.arch} only, and this machine is ${arch}`);
 const exe = platform === "win32" ? ".exe" : "";
 const version = resolveVersion();
+// Read before the build, so a release missing a signing secret fails in
+// seconds rather than after it.
+const signing = platform === "darwin" ? macosSigning(process.env) : null;
 
 // A failed run leaves no app or archive behind, stale or otherwise (B12).
 const packaged = path.join(out, `hide-${platform}-${arch}`);
@@ -205,6 +211,20 @@ const [outputDir] = await packager({
   extraResource,
   // Only the bundles and the status page ship; sources, tests and tooling do not.
   ignore: (file) => file !== "" && file !== "/package.json" && !file.startsWith("/dist"),
+  // The helper goes beside the app's executable, where the host looks for it
+  // and where macOS resolves its bundle, before the packager signs anything.
+  afterCopyExtraResources: notificationHelper
+    ? [
+        async ({ buildPath }) => {
+          const target = path.join(buildPath, "hide.app", "Contents", "MacOS", path.basename(notificationHelper));
+          fs.copyFileSync(notificationHelper, target);
+          fs.chmodSync(target, 0o755);
+        },
+      ]
+    : [],
+  ...(signing?.mode === "developer-id"
+    ? developerIdOptions(signing, shipped.map(([name]) => name), path.join(resources, "entitlements"), { [path.basename(notificationHelper)]: APP_BUNDLE_ID })
+    : {}),
 });
 
 // The packager answers with the per-platform directory. On macOS the bundle
@@ -221,16 +241,16 @@ for (const companion of herdr.companions) {
   const name = path.basename(companion);
   if (!fs.existsSync(path.join(bundledResources, name))) throw new Error(`Herdr's ${name} did not land in ${bundledResources}`);
 }
-if (notificationHelper) {
-  // Beside the app's executable, where the host looks for it and where
-  // macOS resolves its bundle; signed under the app's identifier first.
-  const target = path.join(bundle, "Contents", "MacOS", path.basename(notificationHelper));
-  fs.copyFileSync(notificationHelper, target);
-  fs.chmodSync(target, 0o755);
-  run("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", APP_BUNDLE_ID, "--timestamp=none", target], { stdio: "inherit" });
-}
 if (platform === "darwin") {
-  run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", bundle], { stdio: "inherit" });
+  const helper = path.join(bundle, "Contents", "MacOS", path.basename(notificationHelper));
+  if (!fs.statSync(helper, { throwIfNoEntry: false })?.isFile()) throw new Error(`the notification permission helper did not land at ${helper}`);
+  // A Developer ID bundle was signed and notarized inside the packager; an
+  // ad-hoc one signs the helper under the app's identifier, since macOS keys
+  // notification settings to it, and then the bundle.
+  if (signing.mode === "adhoc") {
+    run("/usr/bin/codesign", ["--force", "--sign", "-", "--identifier", APP_BUNDLE_ID, "--timestamp=none", helper], { stdio: "inherit" });
+    run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", bundle], { stdio: "inherit" });
+  }
   run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundle], { stdio: "inherit" });
 }
 
@@ -248,6 +268,15 @@ if (platform === "darwin") {
 } else {
   // A tar keeps the executable bits a zip extracted by most tools would drop.
   run("tar", ["-czf", archive, "-C", out, path.basename(bundle)]);
+}
+// What a downloader gets is the archive, so Gatekeeper judges the app expanded from it.
+if (signing?.mode === "developer-id") {
+  try {
+    assertNotarized(archive, out);
+  } catch (error) {
+    fs.rmSync(archive, { force: true });
+    throw error;
+  }
 }
 const digest = createHash("sha256").update(fs.readFileSync(archive)).digest("hex");
 fs.writeFileSync(`${archive}.sha256`, `${digest}  ${archiveName}\n`);

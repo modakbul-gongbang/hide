@@ -391,7 +391,7 @@ const PR_TREE = Object.fromEntries(PR_STATES.map(([state, glyph, fill]) => [stat
 // Agent tree parts master: the state's icon and colour, the number unless compact.
 function screenPrMark(id, {state, number, compact = false}) {
   const [glyph, fill] = PR_TREE[state];
-  return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': compact ? {enabled: false} : {content: `#${number}`}});
+  return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': compact ? {enabled: false} : {content: `${number}`}});
 }
 function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground', provider = 'claude', age, depth = 0, last = false, rail = false, chevron = null, pr, mark, device, offline = false, more = false, bright = false, selected = false, inset = 0, width = 268}) {
   const descendants = {
@@ -405,7 +405,7 @@ function screenTreeRow(id, {title, symbol = '○', color = '$--muted-foreground'
     'ath-row-elbow-v': {height: last ? 13 : 28},
     'ath-row-chev': chevron ? {enabled: true, icon: chevron === 'open' ? 'chevron-down' : 'chevron-right'} : {enabled: false},
     'ath-row-pr': pr ? {enabled: true} : {enabled: false},
-    ...(pr ? {'ath-row-pr/ath-pr-g': {icon: PR_TREE[pr.state][0], fill: PR_TREE[pr.state][1]}, 'ath-row-pr/ath-pr-n': {content: `#${pr.number}`}} : {}),
+    ...(pr ? {'ath-row-pr/ath-pr-g': {icon: PR_TREE[pr.state][0], fill: PR_TREE[pr.state][1]}, 'ath-row-pr/ath-pr-n': {content: `${pr.number}`}} : {}),
     'ath-row-desc': mark ? {enabled: true} : {enabled: false},
     ...(mark ? {
       'ath-row-desc/ath-mark-bang': {enabled: mark.kind === 'raised'},

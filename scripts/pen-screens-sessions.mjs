@@ -14,7 +14,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
   // The PR mark (web/src/components/pr-mark.tsx), a ref of Component / Agent tree parts: the state's icon and colour, the number, and `+N` for several (B22).
   const prChip = (id, {number, state, more = 0}) => {
     const [, glyph, fill] = PR_STATES.find(([key]) => key === state);
-    return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: `#${number}`}, 'ath-pr-more': more ? {enabled: true, content: `+${more}`} : {enabled: false}});
+    return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: `${number}`}, 'ath-pr-more': more ? {enabled: true, content: `+${more}`} : {enabled: false}});
   };
   const chevron = (id, open) => frame(id, 'Chevron lane', {width:16,height:20,layout:'horizontal',justifyContent:'center',alignItems:'center'}, open === null ? [] : [icon(`${id}-g`, open ? 'chevron-down' : 'chevron-right', {size:12,fill:'$--muted-foreground'})]);
 
@@ -67,16 +67,13 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
     ]),
   ]);
   function panel(suffix, width=420, id=`sfu-panel-${suffix}`) {
-    const group=(key,title,rows,{folded=false,more=0,count}={})=>frame(`${id}-${key}`,title,{width:'fill_container',layout:'vertical',gap:0},[
+    const group=(key,title,rows,{folded=false,count}={})=>frame(`${id}-${key}`,title,{width:'fill_container',layout:'vertical',gap:0},[
       frame(`${id}-${key}-heading`,'Group heading',{width:'fill_container',height:32,layout:'horizontal',gap:6,alignItems:'center',padding:[0,12]},[
         ...(folded?[icon(`${id}-${key}-fold`,'chevron-right',{size:12,fill:'$--muted-foreground'})]:[]),
         caption(`${id}-${key}-label`,title,key==='needs'?'$--warning':'$--subtle-foreground',{weight:'500'}),
         caption(`${id}-${key}-group-count`,String(count ?? rows.length)),
       ]),
       ...(folded?[]:rows.map((spec,index)=>row(`${id}-${key}-${index}`,spec,width))),
-      ...(more?[frame(`${id}-${key}-more`,'Folded rest',{width:'fill_container',height:28,layout:'horizontal',gap:6,alignItems:'center',padding:[0,12,0,24]},[
-        icon(`${id}-${key}-more-g`,'chevron-right',{size:12,fill:'$--muted-foreground'}),caption(`${id}-${key}-more-l`,`그 외 ${more}`,'$--subtle-foreground'),
-      ])]:[]),
     ]);
     return frame(id,'Sessions panel',{width,height:760,layout:'vertical',gap:8,fill:'$--card',stroke:'$--border',strokeWidth:1,strokeAlignment:'inner',clip:true},[
       frame(`${id}-tabs`,'Tools tabs',{width:'fill_container',height:32,layout:'horizontal',gap:12,padding:[0,12],alignItems:'center'},[
@@ -106,7 +103,9 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
         {title:'P8 읽기 전용 준비 계획',provider:'codex',mark:'◐',tone:'$--warning',pr:{number:809,state:'failed'},age:'19h',line:'Grok 훅 연결 마무리 남음'},
         {title:'에이전트 막힘 상태 PRD',mark:'○',tone:'$--muted-foreground',pr:{number:861,state:'failed'},age:'3h'},
         {title:'세션 읽기 큰 레코드 건너뛰기',mark:'○',tone:'$--muted-foreground',pr:{number:869,state:'mergeable'},age:'2h'},
-      ],{more:2,count:5}),
+        {title:'코어 호스트 노드 이동 설계 문서',mark:'○',tone:'$--muted-foreground',age:'1d'},
+        {title:'Memory 기능 PRD 초안',mark:'○',tone:'$--muted-foreground',age:'1d'},
+      ]),
       group('resolved','Resolved',[],{folded:true,count:7}),
     ]);
   }

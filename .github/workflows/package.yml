@@ -1,7 +1,9 @@
 # The unsigned Windows x64 and Linux x64 packages (operator decision
 # 2026-10-03), each built on its own runner by `bash scripts/verify-web.sh desktop package`
 # and then started without a window by `desktop/scripts/smoke-package.mjs`,
-# because no machine of either system is at hand to try a package on.
+# because no machine of either system is at hand to try a package on. The
+# Windows package is then opened with its window
+# (`desktop/e2e/packaged-window.spec.ts`), and the shell it draws is kept.
 #
 # A release calls this workflow and attaches what it uploads, and the nightly
 # calls it on main. A pull request runs it as `pr.yml`'s `package` lane, which
@@ -83,6 +85,60 @@ jobs:
       - name: Unpack, install the kit, and replace the daemon without a window
         timeout-minutes: 5
         run: node desktop/scripts/smoke-package.mjs "desktop/out/hide-v${HIDE_VERSION}-${{ matrix.system }}-x64.${{ matrix.archive }}"
+      - name: Unpack the package for its window
+        # Extract All's reading of the zip, as smoke-package.mjs unpacks it.
+        id: unpacked
+        if: matrix.system == 'windows'
+        run: |
+          destination="$RUNNER_TEMP/packaged"
+          SMOKE_ARCHIVE="desktop/out/hide-v${HIDE_VERSION}-windows-x64.zip" SMOKE_DESTINATION="$destination" \
+            pwsh -NoProfile -Command 'Expand-Archive -LiteralPath $env:SMOKE_ARCHIVE -DestinationPath $env:SMOKE_DESTINATION'
+          app="$destination/hide-win32-x64"
+          # The fixture's own `hide status` and `hide stop` read target/debug;
+          # these are the package's binaries, so no workspace is built twice.
+          mkdir -p target/debug
+          cp "$app/resources/hide.exe" "$app/resources/hided.exe" target/debug/
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+      - name: The packaged app's window
+        # The packaged hide.exe with its window, against a private HOME, state
+        # and Herdr (desktop/e2e/packaged-window.spec.ts); the shell it draws
+        # is kept below.
+        id: window
+        if: matrix.system == 'windows'
+        timeout-minutes: 10
+        env:
+          HIDE_E2E_PACKAGED_APP: ${{ steps.unpacked.outputs.app }}/hide.exe
+          HIDE_E2E_HERDR_BIN: ${{ steps.unpacked.outputs.app }}/resources/herdr.exe
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          bash scripts/verify-web.sh desktop e2e packaged-window.spec.ts
+      - name: Report flaky and failed window tests
+        # See the macOS job below: this workflow has no `issues: write`.
+        id: flaky
+        if: ${{ !cancelled() && matrix.system == 'windows' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json
+      - name: Keep the packaged window
+        if: ${{ matrix.system == 'windows' && steps.window.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-package-window-windows
+          path: ${{ runner.temp }}/hide-e2e/*.png
+          if-no-files-found: error
+      - name: Keep the failed window run
+        # On Linux nothing is there to keep, and the step keeps nothing.
+        if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-package-window-logs-windows
+          path: |
+            ${{ runner.temp }}/hide-e2e
+            desktop/test-results
+          if-no-files-found: ignore
       - name: Keep the package
         uses: actions/upload-artifact@v7
         with:

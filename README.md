@@ -96,7 +96,7 @@ See [Browser displays](docs/BROWSER_DISPLAYS.md) for `hide browser open`, the pa
 
 <!-- herdr-provenance:start -->
 hide distributes the [upstream Herdr release v0.9.3](https://github.com/herdrdev/herdr/releases/tag/v0.9.3).
-The bundled binary is not modified by hide.
+The bundled binary's code is not modified by hide; a macOS release replaces only its ad-hoc signature with hide's Developer ID one, which notarization requires.
 The weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks.
 <!-- herdr-provenance:end -->
 

@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ComponentId, ComponentState, KitTarget};
 
-pub use hide_agent_adapter::{Feature, HerdrIntegration, Os};
+pub use hide_agent_adapter::{Feature, HerdrIntegration};
 
 /// A folder an agent reads skills from, under the account's home.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -120,8 +120,6 @@ pub struct AgentAdapter {
     pub executables: &'static [&'static str],
     /// The folder the agent reads skills from.
     pub skill_dir: SkillDir,
-    /// The systems the agent's documentation confirms that folder on.
-    pub skill_os: &'static [Os],
     pub hook: HookSupport,
     /// Herdr's integration for the agent. Every supported agent has one: an
     /// agent the pinned Herdr ships no integration for is not supported
@@ -146,7 +144,6 @@ const fn project(declaration: &'static hide_agent_adapter::AgentAdapter) -> Agen
             SkillLocation::Shared => SkillDir::Shared,
             SkillLocation::Claude => SkillDir::Claude,
         },
-        skill_os: declaration.skill_os,
         hook: match declaration.hook {
             HookInstall::Runtime(HookDialect::ClaudeCode) => {
                 HookSupport::Part(ComponentId::ClaudeCodeHook)
@@ -235,21 +232,6 @@ impl AgentAdapter {
     /// The existing wire field carries the Basic collaboration grade.
     pub fn partial(&self) -> bool {
         self.declaration.basic()
-    }
-
-    /// Whether the agent's documentation confirms its skill folder here.
-    pub fn skill_supported(&self) -> bool {
-        self.skill_os.contains(&Os::CURRENT)
-    }
-
-    /// Whether Hide writes this agent's hook on this system.
-    pub fn hook_supported(&self) -> bool {
-        match self.hook {
-            HookSupport::Part(_) => true,
-            HookSupport::Guidance(agent) => agent.supported_here().is_ok(),
-            HookSupport::Plugin(_) => hide_agent_hooks::plugin::supported_here().is_ok(),
-            HookSupport::None => false,
-        }
     }
 }
 
@@ -459,19 +441,21 @@ pub enum Availability {
     /// None of its programs is found on this machine.
     NotInstalled,
     /// Installed, but neither the skill folder nor the hook is documented for
-    /// this system, so there is nothing for the switch to do.
+    /// this system, so there is nothing for the switch to do. This build never
+    /// reports it, since every supported agent reads its skill folder on every
+    /// system (`docs/agent-hooks.md`, Support table); a connected device still
+    /// running an older build does, so it stays as the transition path and the
+    /// shells keep wording it.
     UnsupportedSystem,
 }
 
-/// What the switch can do for an agent: it needs the agent installed and at
-/// least one piece that works on this system.
-pub(crate) fn availability(installed: bool, skill_here: bool, hook_here: bool) -> Availability {
-    if !installed {
-        Availability::NotInstalled
-    } else if !skill_here && !hook_here {
-        Availability::UnsupportedSystem
-    } else {
+/// What the switch can do for an agent: every supported agent's skill can be
+/// put on every system, so it needs only the agent installed.
+pub(crate) fn availability(installed: bool) -> Availability {
+    if installed {
         Availability::Available
+    } else {
+        Availability::NotInstalled
     }
 }
 
