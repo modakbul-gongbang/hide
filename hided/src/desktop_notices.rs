@@ -31,17 +31,8 @@ pub struct DesktopNotices {
     /// The desktop windows whose switch is on.
     demand: ObservationDemand,
     wanted: AtomicBool,
-    inner: Mutex<Inner>,
+    transitions: Mutex<Transitions>,
     frames: broadcast::Sender<Arc<str>>,
-    /// Names this daemon's numbering, so a host that heard another daemon's
-    /// frames does not take this one's first frame for an old one.
-    epoch: String,
-}
-
-#[derive(Default)]
-struct Inner {
-    transitions: Transitions,
-    sequence: u64,
 }
 
 impl Default for DesktopNotices {
@@ -49,22 +40,15 @@ impl Default for DesktopNotices {
         Self {
             demand: ObservationDemand::default(),
             wanted: AtomicBool::new(false),
-            inner: Mutex::new(Inner::default()),
+            transitions: Mutex::default(),
             frames: broadcast::channel(FRAME_BACKLOG).0,
-            epoch: format!(
-                "{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |since| since.as_millis())
-            ),
         }
     }
 }
 
 impl DesktopNotices {
-    fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        self.inner
+    fn lock(&self) -> std::sync::MutexGuard<'_, Transitions> {
+        self.transitions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -82,7 +66,7 @@ impl DesktopNotices {
 
     fn turned(&self, on: bool) {
         self.wanted.store(on, Ordering::SeqCst);
-        self.lock().transitions.reset();
+        self.lock().reset();
         herdr_core::diagnostic!(json!({
             "component": "desktop_notices", "kind": "desktop_notices.demand", "on": on,
         }));
@@ -94,7 +78,7 @@ impl DesktopNotices {
 
     /// Whether the switch is on and no projection has seeded it since.
     pub fn seed_pending(&self) -> bool {
-        self.wanted() && !self.lock().transitions.seeded()
+        self.wanted() && !self.lock().seeded()
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Arc<str>> {
@@ -104,17 +88,16 @@ impl DesktopNotices {
     /// Judges one projection; a change worth a notification, or one that
     /// clears a notification shown before (B35), goes out as one frame.
     pub fn observe(&self, projection: &Projection) {
-        let mut inner = self.lock();
-        let (notices, seen) = inner.transitions.observe(projection);
+        let (notices, seen) = self.lock().observe(projection);
         if notices.is_empty() && seen.is_empty() {
             return;
         }
-        inner.sequence += 1;
-        let frame = frame(&self.epoch, inner.sequence, &notices, seen.iter());
         herdr_core::diagnostic!(json!({
             "component": "desktop_notices", "kind": "desktop_notice.judged",
-            "sequence": inner.sequence, "notices": notices.len(), "cleared": seen.len(),
+            "agents": notices.iter().map(|notice| notice.key.tag()).collect::<Vec<_>>(),
+            "cleared": seen.iter().map(AgentKey::tag).collect::<Vec<_>>(),
         }));
+        let frame = frame(&notices, seen.iter());
         // No window listening is no notification, which is the answer.
         let _ = self.frames.send(Arc::from(frame.to_string()));
     }
@@ -122,17 +105,10 @@ impl DesktopNotices {
 
 /// The `agent_notice` frame: data only, as the phone's push payload is; the
 /// window words the state in the interface language.
-fn frame<'a>(
-    epoch: &str,
-    sequence: u64,
-    notices: &[Notice],
-    clear: impl Iterator<Item = &'a AgentKey>,
-) -> Value {
+fn frame<'a>(notices: &[Notice], clear: impl Iterator<Item = &'a AgentKey>) -> Value {
     json!({
         "type": "agent_notice",
         "payload": {
-            "epoch": epoch,
-            "sequence": sequence,
             "notices": notices.iter().map(|notice| json!({
                 "tag": notice.key.tag(),
                 "device_id": notice.key.device_id,
@@ -201,7 +177,6 @@ mod tests {
         let cleared = judged(&notices, &rest("seen", "none")).expect("a clear");
         assert_eq!(cleared["payload"]["notices"], json!([]));
         assert_eq!(cleared["payload"]["clear"], json!([notice["tag"].clone()]));
-        assert!(cleared["payload"]["sequence"].as_u64() > frame["payload"]["sequence"].as_u64());
     }
 
     /// The switch follows the last window that has it on, and turning it on

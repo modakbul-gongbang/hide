@@ -235,11 +235,9 @@ export interface TerminalFrame {
   terminal_sequence: number;
 }
 /**
- * Payload of an agent_notice frame (PRD first-run-onboarding D-09): the daemon judged the agents' latest change the way the phone's push does. Each notice is a root agent that newly needs the operator or has finished; clear lists the tags of notifications to withdraw because the operator has seen that agent. epoch names the daemon that numbered the frame and sequence increases with each frame, so a host that hears the same frame from several windows shows it once. Whether a notification shows, and its words, is the window's and the host's to decide.
+ * Payload of an agent_notice frame (PRD first-run-onboarding D-09): the daemon judged the agents' latest change the way the phone's push does. Each notice is a root agent that newly needs the operator or has finished; clear lists the tags of notifications to withdraw because the operator has seen that agent. Whether a notification shows, and its words, is the window's and the host's to decide.
  */
 export interface AgentNotice {
-  epoch: string;
-  sequence: number;
   notices: {
     tag: string;
     device_id: string;
