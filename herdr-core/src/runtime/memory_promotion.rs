@@ -345,19 +345,28 @@ fn attempt_pull_request(
     })
 }
 
-/// Whether the PR catalog's answer for a repository is a current read of
-/// generation `asked` or later, so a pull request missing from it is missing on
-/// GitHub too; a repository with no GitHub remote has none to miss.
+/// Whether the PR catalog has answered generation `asked` or later for a
+/// repository: with a current read, a pull request missing from it is missing
+/// on GitHub too; with gh missing or logged out, or no GitHub remote, Hide
+/// cannot see one there at all, and the attempt is not left running forever
+/// on an agent that is gone. A failed read (network, rate limit) is waited
+/// out.
 fn catalog_answered(
     project: Option<&GithubProjectSnapshot>,
     read: Option<u64>,
     asked: u64,
 ) -> bool {
     project.is_some_and(|project| {
-        project.status.failure_category == Some(GithubFailureCategory::NoGithubRemote)
-            || (read.is_some_and(|read| read >= asked)
-                && project.pull_requests_read
-                && !project.status.stale)
+        read.is_some_and(|read| read >= asked)
+            && ((project.pull_requests_read && !project.status.stale)
+                || matches!(
+                    project.status.failure_category,
+                    Some(
+                        GithubFailureCategory::NotInstalled
+                            | GithubFailureCategory::NotLoggedIn
+                            | GithubFailureCategory::NoGithubRemote
+                    )
+                ))
     })
 }
 
@@ -777,8 +786,7 @@ mod tests {
     }
 
     #[test]
-    fn only_an_answer_asked_for_after_the_agent_went_or_a_repository_without_github_says_none_came()
-    {
+    fn only_an_answer_asked_for_after_the_agent_went_says_no_pull_request_came() {
         let project = |read: bool, stale: bool, category| GithubProjectSnapshot {
             pull_requests_read: read,
             status: crate::model::GithubStatusSnapshot {
@@ -807,22 +815,22 @@ mod tests {
         ));
         assert!(!catalog_answered(
             Some(&project(
-                false,
-                false,
-                Some(GithubFailureCategory::NotLoggedIn)
+                true,
+                true,
+                Some(GithubFailureCategory::NetworkOrRateLimit)
             )),
             Some(3),
             3
         ));
-        assert!(catalog_answered(
-            Some(&project(
-                false,
-                false,
-                Some(GithubFailureCategory::NoGithubRemote)
-            )),
-            None,
-            3
-        ));
+        for unseen in [
+            GithubFailureCategory::NotInstalled,
+            GithubFailureCategory::NotLoggedIn,
+            GithubFailureCategory::NoGithubRemote,
+        ] {
+            let project = project(false, false, Some(unseen));
+            assert!(catalog_answered(Some(&project), Some(3), 3), "{unseen:?}");
+            assert!(!catalog_answered(Some(&project), Some(2), 3), "{unseen:?}");
+        }
     }
 
     #[test]
