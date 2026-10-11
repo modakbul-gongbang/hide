@@ -910,12 +910,12 @@ fn update_core(
         }
     };
     log("update.started", json!({"core_release": core}));
-    let root = match build_root(&placement.program) {
-        Ok(root) => root,
+    let root = match hide_kit::build_of(&placement.program) {
+        Ok(build) => build.root,
         Err(reason) => return failed(reason),
     };
     let packages = hide_node::ssh::host::HelperPackages::new(Some(updates.packages.clone()));
-    let program = match upstream.install_build(&packages, root) {
+    let program = match upstream.install_build(&packages, &root) {
         Ok(program) => program,
         Err(reason) => return failed(format!("upload: {reason}")),
     };
@@ -963,21 +963,6 @@ fn update_core(
     }
     log("update.done", json!({"program": program}));
     LinkFailure::CoreUpdated { program }
-}
-
-/// The install root of a build's `hided` on the core's machine:
-/// `<root>/<version>/hided`, `/`-separated.
-fn build_root(program: &str) -> Result<&str, String> {
-    let (folder, name) = program
-        .rsplit_once('/')
-        .ok_or_else(|| format!("{program} is not a build's hided"))?;
-    let (root, version) = folder
-        .rsplit_once('/')
-        .ok_or_else(|| format!("{program} is not in a build folder"))?;
-    if name != "hided" || !hide_kit::is_build_name(version) || !root.starts_with('/') {
-        return Err(format!("{program} is not a build's hided"));
-    }
-    Ok(root)
 }
 
 /// Why a dial for the attach role failed. Only a dial that never reached

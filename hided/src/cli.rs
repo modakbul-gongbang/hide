@@ -1360,16 +1360,22 @@ fn update_started_core(
         );
         ConnectError::UpdateFailed(builds.clone())
     };
-    let root = program
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| failed(format!("{} is not in a build folder", program.display())))?;
+    // Only a build's own place is installed beside: a program anywhere else
+    // names no install root.
+    let root = hide_platform::path::to_wire(program)
+        .map_err(|error| format!("{}: {error}", program.display()))
+        .and_then(|wire| hide_kit::build_of(&wire))
+        .and_then(|place| {
+            hide_platform::path::from_wire(&place.root)
+                .map_err(|error| format!("{}: {error}", place.root))
+        })
+        .map_err(failed)?;
     let packages = daemon_binary()
         .map(|hided| {
             hide_node::ssh::host::HelperPackages::new(hided.parent().map(Path::to_path_buf))
         })
         .map_err(failed)?;
-    let new = packages.install_here(root).map_err(failed)?;
+    let new = packages.install_here(&root).map_err(failed)?;
     let mut command = std::process::Command::new(&new);
     command
         .arg("core-update")

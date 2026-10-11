@@ -170,6 +170,32 @@ pub fn is_build_name(name: &str) -> bool {
     name.len() == 16 && name.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+/// Where a build's `hided` sits: `<root>/<version>/hided`, the layout the
+/// kit installs and a core's login item runs.
+#[derive(Debug, Eq, PartialEq)]
+pub struct BuildPlace {
+    /// The install root, in the wire spelling (`/` between names).
+    pub root: String,
+    pub version: String,
+}
+
+/// `program`, an absolute path in the wire spelling on whichever machine
+/// holds it, as a build's place; anything else is refused with why. The one
+/// reading of a build's path, for a program on this machine and one on the
+/// core's.
+pub fn build_of(program: &str) -> Result<BuildPlace, String> {
+    let not_a_build = || format!("{program} is not a build's hided");
+    let (folder, name) = program.rsplit_once('/').ok_or_else(not_a_build)?;
+    let (root, version) = folder.rsplit_once('/').ok_or_else(not_a_build)?;
+    if name != "hided" || !is_build_name(version) || !hide_platform::path::is_wire_absolute(root) {
+        return Err(not_a_build());
+    }
+    Ok(BuildPlace {
+        root: root.to_owned(),
+        version: version.to_owned(),
+    })
+}
+
 /// What this Mac's kit pass retires: the folders the labels plugin era left
 /// (`hide-plugin-upgrade`, the plugin's log folder) and the share folder
 /// they leave empty (B9).

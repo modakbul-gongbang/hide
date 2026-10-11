@@ -119,25 +119,13 @@ struct Build {
     version: String,
 }
 
+/// `program` on this machine as a build's place (`hide_kit::build_of`).
 fn build_of(program: &Path) -> Result<Build, String> {
-    let named = |path: Option<&Path>| {
-        path.and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            .map(str::to_owned)
-    };
-    let version = named(program.parent())
-        .filter(|version| hide_kit::legacy::is_build_name(version))
-        .ok_or_else(|| format!("{} is not in a build folder", program.display()))?;
-    if named(Some(program)).as_deref() != Some("hided") {
-        return Err(format!("{} is not a build's hided", program.display()));
-    }
-    let root = program
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| format!("{} has no build root", program.display()))?;
+    let unspelled = |error| format!("{}: {error}", program.display());
+    let place = hide_kit::build_of(&hide_platform::path::to_wire(program).map_err(unspelled)?)?;
     Ok(Build {
-        root: root.to_path_buf(),
-        version,
+        root: hide_platform::path::from_wire(&place.root).map_err(unspelled)?,
+        version: place.version,
     })
 }
 
@@ -256,23 +244,5 @@ mod tests {
             outcome(r#"{"updated":{"pid":7}}"#, "0", "old"),
             Err("core-update exited 0: old".to_owned())
         );
-    }
-
-    #[test]
-    fn only_a_build_folder_s_hided_is_a_build() {
-        assert_eq!(
-            build_of(Path::new("/h/.hide/host-helper/0123456789abcdef/hided")),
-            Ok(Build {
-                root: PathBuf::from("/h/.hide/host-helper"),
-                version: "0123456789abcdef".to_owned(),
-            })
-        );
-        for program in [
-            "/h/.hide/host-helper/current/hided",
-            "/h/.hide/host-helper/0123456789abcdef/hide",
-            "/usr/local/bin/hided",
-        ] {
-            assert!(build_of(Path::new(program)).is_err(), "{program}");
-        }
     }
 }
