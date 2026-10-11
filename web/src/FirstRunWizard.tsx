@@ -180,9 +180,10 @@ function AgentsStep({ actions, reopened, desktop, primary }: StepProps & { deskt
     const chosen = appliedAgents(agents, flipped, start);
     setSent(chosen);
     if (reopened) {
-      // Help's walk switches only what changed, the way Settings > Agents does, and moves on at once.
+      // Help's walk switches only what changed, the way Settings > Agents does, and moves on at once;
+      // while the kit cannot run here it stays with its reason and only has the agents read again (B12).
       actions.applyAgentOnboarding(chosen);
-      useSetupWalk.getState().go("notifications");
+      if (!unavailable) useSetupWalk.getState().go("notifications");
       return;
     }
     setPressedAt(revision);
@@ -369,7 +370,8 @@ function NotificationsStep({ actions, reopened, primary }: StepProps) {
     } else actions.advanceFirstRun("notifications", notifications);
   };
   const next = () => leave(allowedOff ? true : undefined);
-  primary.current = goesOn ? next : state === "off" && control ? control.turnOn : null;
+  // Enter presses the step's main button (B40): Continue, or Turn on while it can be pressed, a blocked Mac included.
+  primary.current = goesOn ? next : control && state !== "asking" ? control.turnOn : null;
   const system = machineSystem(null);
   return (
     <>

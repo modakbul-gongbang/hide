@@ -261,11 +261,29 @@ fn a_pass_that_did_not_run_keeps_the_first_step_and_continue_again_sends_it() {
     }
 }
 
-/// B12: while this Mac's kit cannot run, Try again on a step that drew no
-/// tile records no choice and queues no pass, on the desktop and in a browser
-/// tab alike; it only has the agents read again.
+/// B12, B44: while this Mac's kit cannot run, Try again on a step that drew
+/// no tile records no choice and queues no pass, on the desktop, in a browser
+/// tab and in the walk Help reopens alike; it only has the agents read again,
+/// and the step's own line says why, so no error reaches a banner.
 #[test]
 fn try_again_while_the_kit_cannot_run_records_nothing_and_reads_the_agents_again() {
+    let mut reopened = runtime();
+    reopened.snapshot.ui_state.agent_onboarding = Some(crate::model::AgentOnboarding::Done);
+    reopened.snapshot.ui_state.first_run = Some(FirstRun {
+        version: crate::model::FIRST_RUN_VERSION,
+        step: FirstRunStep::Done,
+    });
+    reopened.set_local_kit_unavailable("timed out");
+    assert!(reopened.dispatch_json(&event(
+        "agent_onboarding_apply",
+        serde_json::json!({"agents": []}),
+    )));
+    assert!(reopened.snapshot().status.last_error.is_none());
+    assert!(matches!(
+        reopened.take_local_kit_job(Instant::now()),
+        Some(KitJob::Status)
+    ));
+
     for finish in [false, true] {
         let mut runtime = runtime();
         report_here(&mut runtime, &first_run_pass());
@@ -298,6 +316,10 @@ fn try_again_while_the_kit_cannot_run_records_nothing_and_reads_the_agents_again
                 Some(KitJob::Status)
             ),
             "finish {finish}: only the agents are read again"
+        );
+        assert!(
+            runtime.snapshot().status.last_error.is_none(),
+            "finish {finish}"
         );
     }
 }

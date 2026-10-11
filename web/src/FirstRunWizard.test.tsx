@@ -135,6 +135,20 @@ it("reopened from Help, starts from the agents switched on now, closes with Esca
   await unmount();
 });
 
+it("reopened from Help while the kit cannot run, stays on its first step with the reason and only has the agents read again (B12, B44)", async () => {
+  const next = state(false, []);
+  (next.rest.navigator.devices[0]!.kit as { unavailable?: string }).unavailable = "timed out";
+  const { events, unmount } = await mount(next);
+  await act(async () => { useSetupWalk.getState().open(); });
+  expect(document.querySelector("[data-first-run-unavailable]")?.textContent).toContain("timed out");
+  await act(async () => { continueButton().click(); });
+  expect(choices(events)).toEqual([{ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents: [], finish: false } }]);
+  expect(useSetupWalk.getState().step).toBe("agents");
+  expect(document.querySelector("[data-first-run]")?.getAttribute("data-first-run")).toBe("agents");
+  await act(async () => { useSetupWalk.getState().close(); });
+  await unmount();
+});
+
 it("has Continue as its only way out: Escape and a second button do nothing (the outside click is the e2e's), and it is not shown once decided", async () => {
   const shown = await mount(state(true, AGENTS));
   expect(document.querySelector("[data-onboarding-later]")).toBeNull();
@@ -238,6 +252,22 @@ it("on a Mac that already allows Hide, opens the notification step on, and its C
   await act(async () => { button.click(); });
   expect(choices(events)).toEqual([{ schema_version: 2, kind: "first_run_advance", payload: { from: "notifications", notifications: true } }]);
   expect(notify).not.toHaveBeenCalled();
+  await unmount();
+  vi.unstubAllGlobals();
+});
+
+it("on a Mac that blocks Hide with the switch off, Enter presses Turn on, the step's main button (B40)", async () => {
+  const notify = vi.fn();
+  vi.stubGlobal("hideHost", { kind: "electron", platform: "darwin", notify, notificationPermission: async () => "denied", onCommand: () => () => undefined, onNotificationOpen: () => () => undefined });
+  const next = state(true, AGENTS);
+  next.rest.ui_state.first_run.step = "notifications";
+  const { events, unmount } = await mount(next);
+  await act(async () => { await Promise.resolve(); });
+  expect(document.querySelector("[data-notification-line]")?.getAttribute("data-notification-line")).toBe("blocked");
+  const dialog = document.querySelector("[data-first-run]") as HTMLElement;
+  await act(async () => { dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+  expect(choices(events)).toEqual([{ schema_version: 2, kind: "desktop_notifications_set", payload: { enabled: true } }]);
+  expect(notify).toHaveBeenCalledTimes(1);
   await unmount();
   vi.unstubAllGlobals();
 });

@@ -502,15 +502,13 @@ impl Runtime {
             // Nothing can be written here, and the step may not even have
             // drawn a tile, so the press records and queues nothing: the first
             // run's question stays open and the agents are read again (B12).
+            // The step itself says why, so nothing reaches a banner (B44).
             crate::diagnostic!(serde_json::json!({
                 "component": "first_run",
                 "kind": "first_run.apply_kit_unavailable",
                 "answer": answer,
                 "reason": reason,
             }));
-            if !answer {
-                self.set_error("kit.unavailable", reason, false);
-            }
             self.local_kit_check_requested = true;
             return true;
         }
