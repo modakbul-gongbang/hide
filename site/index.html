@@ -9,12 +9,12 @@
     <meta property="og:type" content="website">
     <meta property="og:title" content="hide · The agent development environment">
     <meta property="og:description" content="Every coding agent, on every machine, in one clear view. Built on Herdr.">
-    <meta property="og:image" content="https://withhide.dev/assets/hide-overview.webp">
+    <meta property="og:image" content="https://withhide.dev/assets/hide-workspace.webp">
     <meta name="twitter:card" content="summary_large_image">
     <title>hide · Many agents. One clear view.</title>
     <link rel="icon" type="image/png" href="./assets/hide-mark.png">
-    <link rel="preload" as="font" href="./assets/fonts/Geist-Variable.woff2" type="font/woff2" crossorigin>
-    <link rel="preload" as="image" href="./assets/hide-overview.webp" type="image/webp">
+    <link rel="preload" as="font" href="./assets/fonts/BricolageGrotesque-Variable.woff2" type="font/woff2" crossorigin>
+    <link rel="preload" as="image" href="./assets/hide-workspace.webp" type="image/webp">
     <link rel="stylesheet" href="./styles.css">
     <script>document.documentElement.classList.remove("no-js");</script>
     <script type="module" src="./downloads.js"></script>
@@ -59,10 +59,11 @@
         </div>
 
         <figure class="stage wrap reveal">
+          <img class="peek" src="./assets/owls/owl-peek.webp" width="900" height="544" alt="">
           <div class="window">
-            <img src="./assets/hide-overview.webp" width="2400" height="1398" alt="The hide window on a project overview. A sidebar groups agents by whether they are working or seen, and a graph connects the main checkout's agents to the worktrees they delegate to.">
+            <img src="./assets/hide-workspace.webp" width="2912" height="1800" alt="The hide window. The sidebar raises two agents that need an answer above the project tree, two terminal panes run Claude Code and Codex side by side, and the Sessions panel on the right lists every session by group, with delegated agents nested under the one that started them.">
           </div>
-          <figcaption>The project overview: each agent beside its checkout, and the worktrees it delegated to.</figcaption>
+          <figcaption>Claude Code and Codex side by side, every session on the right, and the two that need you on top.</figcaption>
         </figure>
 
         <div class="agents-strip wrap reveal">
@@ -83,6 +84,7 @@
         <div class="pillars">
           <article class="pillar" id="agents" aria-labelledby="agents-title">
             <div class="pillar-copy reveal">
+              <img class="owl" src="./assets/owls/owl-agents.webp" alt="" loading="lazy">
               <p class="num">01 / Multi-agent</p>
               <h3 id="agents-title">Every agent.<br> The same experience.</h3>
               <p>Each agent keeps its own CLI, login and habits. hide reads them all the same way: one status, one generated title, one place to answer, one way to start, delegate and put to sleep.</p>
@@ -100,6 +102,7 @@
 
           <article class="pillar" id="devices" aria-labelledby="devices-title">
             <div class="pillar-copy reveal">
+              <img class="owl" src="./assets/owls/owl-devices.webp" alt="" loading="lazy">
               <p class="num">02 / Multi-device</p>
               <h3 id="devices-title">Every machine.<br> The same experience.</h3>
               <p>Add the desktop upstairs or a rented server by its SSH alias. Its agents join the same groups, its panes open files and diffs in the hide in front of you, and your phone answers the one that needs you.</p>
@@ -125,6 +128,7 @@
 
           <article class="pillar" id="ai" aria-labelledby="ai-title">
             <div class="pillar-copy reveal">
+              <img class="owl" src="./assets/owls/owl-ai.webp" alt="" loading="lazy">
               <p class="num">03 / Hide AI</p>
               <h3 id="ai-title">Less to hold<br> in your head.</h3>
               <p>Hide AI reads what your agents did and gives each one a short title and summary, names new worktrees, and keeps a Project Memory your agents can recall. It runs on the agent CLI you already signed in to, so there is no key to add.</p>
@@ -151,10 +155,13 @@
             </div>
           </article>
 
-          <article class="pillar" id="factory" aria-labelledby="factory-title">
+          <article class="pillar pillar-wide" id="factory" aria-labelledby="factory-title">
             <div class="pillar-copy reveal">
+              <img class="owl" src="./assets/owls/owl-factory.webp" alt="" loading="lazy">
               <p class="num">04 / Software Factory <span class="soon">Coming soon</span></p>
               <h3 id="factory-title">Queue the issue.<br> Review the pull request.</h3>
+            </div>
+            <div class="pillar-copy reveal">
               <p>Hand the Factory tasks whose requirements are clear. Worker agents take them in dependency order, verify and merge them, and bring back only what needs a person. Permissions always do.</p>
               <ul>
                 <li>Add work from any agent with <code>hide factory add</code>, or from the board.</li>
@@ -162,17 +169,9 @@
                 <li>GitHub issues and pull requests, or local issues without a remote.</li>
               </ul>
             </div>
-            <div class="mock reveal" aria-hidden="true">
-              <div class="mock-head"><span>Factory · board</span><span>1 decision needed</span></div>
-              <div class="mock-body">
-                <div class="board">
-                  <div class="col"><h4>Not started</h4><div class="card"><b>Export invoices as CSV</b>after #412</div><div class="card"><b>Retry rate-limited calls</b>#415</div></div>
-                  <div class="col"><h4>In progress</h4><div class="card"><b>Billing page totals</b>#412 · 2 workers</div></div>
-                  <div class="col"><h4>Paused</h4><div class="card you"><b>Rotate deploy key</b>needs your permission</div></div>
-                  <div class="col"><h4>Done</h4><div class="card"><b>Onboarding copy</b>#409 · merged</div></div>
-                </div>
-              </div>
-            </div>
+            <figure class="pillar-shot window reveal">
+              <img src="./assets/hide-factory.webp" width="2880" height="2440" loading="lazy" alt="The Factory's Line tab. Three decisions wait on top, each with a recommended answer and its evidence, above a list of Tasks with their stage and what each worker is doing now.">
+            </figure>
           </article>
         </div>
       </section>
@@ -266,7 +265,7 @@
 
       <section class="closing" aria-labelledby="closing-title">
         <div class="wrap reveal">
-          <img src="./assets/hide-mark.png" width="112" height="112" alt="The hide owl mark">
+          <img class="owl-rest" src="./assets/owls/owl-rest.webp" width="530" height="512" alt="" loading="lazy">
           <h2 id="closing-title">Run more agents.<br> <span class="accent">Hold less.</span></h2>
           <p>Every agent, every machine and every question in one clear view, so your attention goes where it is needed.</p>
           <div class="actions">

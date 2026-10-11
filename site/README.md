@@ -2,7 +2,7 @@
 
 This directory contains the static introduction-site source prepared for issue #338 and the intended `withhide.dev` domain.
 It has no build step, packages, framework, webfont service, analytics, cookies, or application environment variables.
-The Geist and Geist Mono variable fonts are served from `assets/fonts/` under the SIL Open Font License (`assets/fonts/OFL-Geist.txt`), copied unchanged from the `geist` 1.4.2 npm package.
+Bricolage Grotesque (headings and body) and Geist Mono (labels and drawn panels) are served from `assets/fonts/` under the SIL Open Font License (`OFL-BricolageGrotesque.txt`, `OFL-Geist.txt`), copied unchanged from the `@fontsource-variable/bricolage-grotesque` 5.3.0 and `geist` 1.4.2 npm packages.
 Serving this directory locally does not publish it or configure the domain.
 
 ## Preview and checks
@@ -55,7 +55,7 @@ The brand line, approved owl mark, palette and voice come from [BRAND.md](../doc
 The page presents hide as an agent development environment in four pillars: multi-agent, multi-device, Hide AI and Software Factory, followed by the Herdr relationship.
 Each pillar's claims follow the owning guide: the supported agents and their tiers [agent-hooks.md](../docs/agent-hooks.md), the four groups and status marks [status-model.md](../docs/status-model.md), devices and the phone [ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [INSTALL.md](../docs/INSTALL.md), Hide AI [AI_PROVIDERS.md](../docs/AI_PROVIDERS.md), the Factory [factory.md](../docs/factory.md), and adopting an existing Herdr server [INSTALL.md](../docs/INSTALL.md).
 The Factory is marked Coming soon until a public release carries it.
-The pillar panels are small HTML drawings of the app's own surfaces (the sidebar's four groups, Settings › Devices, an agent title, the Factory board) with invented example tasks; they are illustrations, not captures, and use the app's status marks and colors.
+The first three pillars' panels are small HTML drawings of the app's own surfaces (the sidebar's four groups, Settings › Devices, an agent title) with invented example tasks; they are illustrations, not captures, and use the app's status marks and colors. The Factory pillar shows the Factory render described below.
 Supported agents are named in text; third-party agent marks stay inside the app, where `web/src/assets/agents/manifest.json` records their terms.
 `site.js` runs the one-time scroll reveals and the sidebar panel's group changes, the page's only repeating animation; it pauses off screen and in a hidden tab, and both stop under `prefers-reduced-motion`.
 The workflow and feature descriptions follow [UI_BEHAVIOR.md](../docs/UI_BEHAVIOR.md), with current main's agent launcher, project overview and Workspace components as implementation references.
@@ -64,14 +64,16 @@ Performance copy quotes only the dated candidate measurements in [PERFORMANCE_RE
 Refresh that report and both the site and repository README together when changing a performance figure; internal buffer/frame endpoints must not be described as physical display latency.
 The recorded comparison attempt did not complete a matching Orca workload, so the site makes no relative performance claim.
 The site has its own small CSS scale and brand palette; it does not consume or replace the product's generated UI tokens.
-`assets/hide-overview.webp` is a real capture of the app's project overview, cropped to the app window with other projects' rows blurred and resized to 2400 pixels wide; the feature rows show crops of that same file.
-Its text is the capturing machine's own project data and Korean-language interface; it is a candidate screenshot, not a recorded demo.
+`assets/hide-workspace.webp` and `assets/hide-factory.webp` are renders of the design library, not captures of a running app.
+The workspace render is assembled from `design/hide-screens.pen` parts (the Projects sidebar, the Workspace toolbar and Agent column, the Sessions panel) with two terminal panes and example session titles written for the page; the Factory render is the Line sheet of that file with its text switched to the app's English catalog (`web/src/i18n/resources/`) and the example Tasks translated.
+Both were built in a scratch copy through the Pen CLI and exported at 2x; the committed `.pen` files are unchanged.
+`assets/owls/` holds the site's owl illustrations, generated with the approved mark as the style reference and keyed to transparency; they are page illustrations, not the mark, which stays the unchanged `hide-mark.png` in the header and favicon.
 The page is dark by default and follows `prefers-color-scheme` for a light variant that keeps the brand palette.
 
 ## Remaining publication work
 
 Source preparation does not complete issue #338's publication acceptance criteria.
-The overview screenshot still needs independent privacy review, and a recorded demo is pending the related product fixes and capture review.
+The workspace and Factory renders show invented example work and should be compared with the shipped app before publication; a recorded demo is pending the related product fixes and capture review.
 No video or placeholder demo link is included here.
 DNS ownership, hosting, HTTPS and live `withhide.dev` behavior have not been verified or changed by this source work.
 A complete public stable release must exist before real archive downloads can be verified end to end.
