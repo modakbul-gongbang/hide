@@ -16,6 +16,8 @@ use std::process::Command;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use hide_platform::user_agents::{Login, UserAgents};
+
 use super::control::{CheckId, FailedCheck};
 
 /// How long one check's program may take.
@@ -24,20 +26,21 @@ const PROGRAM_WITHIN: Duration = Duration::from_secs(5);
 /// each agent's login probe.
 const LOGINS_ANSWER_WITHIN: Duration = Duration::from_secs(30);
 
-/// The programs the `gh`, session and power checks run: the system's, or a
-/// fixture's stand-ins (`env::HIDE_PREFLIGHT_PROGRAMS`).
+/// What the `gh`, session and power checks ask: the system's programs and
+/// login agents, or a fixture's stand-ins (`env::HIDE_PREFLIGHT_PROGRAMS`).
 pub struct Programs {
     /// `None` finds `gh` on this account's PATH.
     gh: Option<PathBuf>,
-    session: Option<hide_platform::user_agents::UserAgents>,
-    pmset: Option<PathBuf>,
+    /// The login agents the core's login item would be one of, which also
+    /// answer whether the machine sleeps on its own.
+    agents: UserAgents,
     logins: Logins,
 }
 
 /// Where the logins' checks run.
 enum Logins {
-    /// A one-shot job of the account's GUI session, where the core runs.
-    InTheCoreSession(hide_platform::user_agents::UserAgents),
+    /// A one-shot job where the core's login item runs.
+    InTheCoreSession,
     /// A child of `inspect`: a fixture's, or a system with no login agents,
     /// whose GUI session check fails anyway.
     Here,
@@ -71,24 +74,20 @@ impl Programs {
                 })?;
             return Ok(Self {
                 gh: Some(folder.join("gh")),
-                session: Some(hide_platform::user_agents::UserAgents::fixture(
-                    folder.join("launchctl"),
-                    "gui/fixture".to_owned(),
-                )),
-                pmset: Some(folder.join("pmset")),
+                agents: UserAgents::fixture(&folder),
                 logins: Logins::Here,
             });
         }
-        let macos = cfg!(target_os = "macos");
+        let agents = UserAgents::current();
+        let logins = if agents.supported().is_ok() {
+            Logins::InTheCoreSession
+        } else {
+            Logins::Here
+        };
         Ok(Self {
             gh: None,
-            session: macos.then(hide_platform::user_agents::UserAgents::current),
-            pmset: macos.then(|| "/usr/bin/pmset".into()),
-            logins: if macos {
-                Logins::InTheCoreSession(hide_platform::user_agents::UserAgents::current())
-            } else {
-                Logins::Here
-            },
+            agents,
+            logins,
         })
     }
 }
@@ -122,7 +121,7 @@ pub fn failing(
     let no_session = failed
         .iter()
         .any(|check| check.check == CheckId::GuiSession);
-    if !(no_session && matches!(programs.logins, Logins::InTheCoreSession(_))) {
+    if !(no_session && matches!(programs.logins, Logins::InTheCoreSession)) {
         match logins_in_the_core_session(home, state_dir, ai, programs) {
             Ok(logins) => failed.extend(logins),
             Err(detail) => failed.push(FailedCheck {
@@ -230,7 +229,8 @@ fn run_logins_check(
                 ));
             }
         }
-        Logins::InTheCoreSession(agents) => {
+        Logins::InTheCoreSession => {
+            let agents = &programs.agents;
             let label = format!(
                 "{}.checks",
                 hide_kit::layout::core_login_item(home, state_dir)
@@ -250,7 +250,7 @@ fn run_logins_check(
                 log: &log,
             };
             agents
-                .start_once(&agent, &folder.join("check.plist"), home, &stop)
+                .start_once(&agent, folder, home, &stop)
                 .map_err(|error| format!("the job {label}: {error}"))?;
             let waited = wait_for_answer(&answer, &|| {
                 agents.last_exit(&label, home, &stop).ok().flatten()
@@ -279,7 +279,7 @@ fn wait_for_answer(answer: &Path, exited: &dyn Fn() -> Option<String>) -> Result
     let deadline = std::time::Instant::now() + LOGINS_ANSWER_WITHIN;
     let mut looks = 0_u32;
     while !answer.exists() {
-        // Every half second: each look runs `launchctl print`.
+        // Every half second: each look asks the job's system.
         looks += 1;
         if looks.is_multiple_of(5)
             && let Some(code) = exited()
@@ -366,62 +366,37 @@ fn gh_signed_in(home: &Path, programs: &Programs, stop: &AtomicBool) -> Result<(
     Ok(())
 }
 
-/// The account's GUI session runs, which the core's login item needs.
+/// Someone is logged in where the core's login item runs, when it runs only
+/// then: the account's GUI session.
 fn gui_session(home: &Path, programs: &Programs, stop: &AtomicBool) -> Result<(), String> {
-    let agents = programs
-        .session
-        .as_ref()
-        .ok_or("this system has no login session for the core to run in")?;
-    match agents.session_present(home, stop) {
-        Ok(true) => Ok(()),
-        Ok(false) => Err("no one is logged in to this machine's desktop".to_owned()),
-        Err(error) => Err(format!("launchctl did not answer: {error}")),
+    match programs.agents.login(home, stop) {
+        Ok(Login::NotNeeded | Login::LoggedIn) => Ok(()),
+        Ok(Login::LoggedOut) => Err("no one is logged in to this machine's desktop".to_owned()),
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
+            Err("this system has no login session for the core to run in".to_owned())
+        }
+        Err(error) => Err(error.to_string()),
     }
 }
 
-/// `pmset -g custom` says the machine never sleeps on its own on power.
+/// The machine never sleeps on its own on power.
 fn sleep_off(home: &Path, programs: &Programs, stop: &AtomicBool) -> Result<(), String> {
-    let pmset = programs
-        .pmset
-        .as_ref()
-        .ok_or("this system has no power settings hide can read")?;
-    let mut command = Command::new(pmset);
-    command
-        .args(["-g", "custom"])
-        .env_clear()
-        .env(hide_platform::host::HOME_VARIABLE, home);
-    let finished = run(command, stop)?;
-    if finished.code != Some(0) {
-        return Err(format!("pmset exited {:?}", finished.code));
-    }
-    match ac_sleep_minutes(&finished.stdout) {
-        Some(0) => Ok(()),
-        Some(minutes) => Err(format!("sleeps on power after {minutes} min")),
-        None => Err("pmset reports no sleep setting on power".to_owned()),
-    }
-}
-
-/// The `sleep` value of `pmset -g custom`'s `AC Power:` section.
-fn ac_sleep_minutes(text: &str) -> Option<u32> {
-    let mut on_power = false;
-    for line in text.lines() {
-        if !line.starts_with(char::is_whitespace) {
-            on_power = line.trim() == "AC Power:";
-            continue;
+    match programs.agents.sleeps_on_power(home, stop) {
+        Ok(None) => Ok(()),
+        Ok(Some(after)) => Err(format!(
+            "sleeps on power after {} min",
+            after.as_secs() / 60
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
+            Err("this system has no power settings hide can read".to_owned())
         }
-        let mut words = line.split_whitespace();
-        if on_power && words.next() == Some("sleep") {
-            return words.next()?.parse().ok();
-        }
+        Err(error) => Err(error.to_string()),
     }
-    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const LAPTOP: &str = "Battery Power:\n lidwake              1\n sleep                1\n displaysleep         2\nAC Power:\n lidwake              1\n sleep                0 (sleep prevented by sharingd)\n displaysleep         10\n";
 
     /// A fixture HOME never runs the system's programs, which would reach
     /// the account's real launchd domain: without its stand-ins, or with a
@@ -435,24 +410,7 @@ mod tests {
         assert!(Programs::chosen(home.path(), Some("stand-ins".as_ref())).is_err());
         let stand_ins = Programs::chosen(home.path(), Some(home.path().as_os_str())).unwrap();
         assert!(matches!(stand_ins.logins, Logins::Here));
-        assert_eq!(stand_ins.pmset, Some(home.path().join("pmset")));
-    }
-
-    #[test]
-    fn only_the_power_section_s_sleep_counts() {
-        assert_eq!(ac_sleep_minutes(LAPTOP), Some(0));
-        assert_eq!(
-            ac_sleep_minutes("AC Power:\n displaysleep         10\n sleep                10\n"),
-            Some(10)
-        );
-        assert_eq!(
-            ac_sleep_minutes("Battery Power:\n sleep                0\n"),
-            None
-        );
-        assert_eq!(
-            ac_sleep_minutes("AC Power:\n sleep                never\n"),
-            None
-        );
+        assert_eq!(stand_ins.gh, Some(home.path().join("gh")));
     }
 
     #[cfg(unix)]
@@ -508,11 +466,13 @@ mod tests {
             .is_err()
         );
 
-        let programs = |pmset: &str| Programs {
-            gh: None,
-            session: None,
-            pmset: Some(stand_in(dir.path(), "pmset", &format!("printf '{pmset}'"))),
-            logins: Logins::Here,
+        let programs = |pmset: &str| {
+            stand_in(dir.path(), "pmset", &format!("printf '{pmset}'"));
+            Programs {
+                gh: None,
+                agents: UserAgents::fixture(dir.path()),
+                logins: Logins::Here,
+            }
         };
         assert_eq!(
             sleep_off(dir.path(), &programs("AC Power:\\n sleep 0\\n"), &stop),
@@ -524,21 +484,25 @@ mod tests {
         );
         let none = Programs {
             gh: None,
-            session: None,
-            pmset: None,
+            agents: UserAgents::none(),
             logins: Logins::Here,
         };
-        assert!(sleep_off(dir.path(), &none, &stop).is_err());
-        assert!(gui_session(dir.path(), &none, &stop).is_err());
+        assert_eq!(
+            sleep_off(dir.path(), &none, &stop),
+            Err("this system has no power settings hide can read".to_owned())
+        );
+        assert_eq!(
+            gui_session(dir.path(), &none, &stop),
+            Err("this system has no login session for the core to run in".to_owned())
+        );
 
-        let gh = |script: &str| Programs {
-            gh: Some(stand_in(dir.path(), "gh", script)),
-            session: Some(hide_platform::user_agents::UserAgents::fixture(
-                stand_in(dir.path(), "launchctl", script),
-                "gui/fixture".to_owned(),
-            )),
-            pmset: None,
-            logins: Logins::Here,
+        let gh = |script: &str| {
+            stand_in(dir.path(), "launchctl", script);
+            Programs {
+                gh: Some(stand_in(dir.path(), "gh", script)),
+                agents: UserAgents::fixture(dir.path()),
+                logins: Logins::Here,
+            }
         };
         assert_eq!(gh_signed_in(dir.path(), &gh("exit 0"), &stop), Ok(()));
         assert_eq!(gui_session(dir.path(), &gh("exit 0"), &stop), Ok(()));
@@ -546,6 +510,9 @@ mod tests {
             gh_signed_in(dir.path(), &gh("exit 1"), &stop),
             Err("gh is not signed in".to_owned())
         );
-        assert!(gui_session(dir.path(), &gh("exit 113"), &stop).is_err());
+        assert_eq!(
+            gui_session(dir.path(), &gh("exit 113"), &stop),
+            Err("no one is logged in to this machine's desktop".to_owned())
+        );
     }
 }

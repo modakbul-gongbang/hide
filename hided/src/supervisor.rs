@@ -208,7 +208,12 @@ async fn core_turn(
                 return Ok(Some(Role::Core(running)));
             };
             stop_core(&env.state_dir, running).await;
-            give_back_pending(&env.state_dir, &env.home, &intent);
+            give_back_pending(
+                &env.state_dir,
+                &env.home,
+                &hide_kit::login_agents(&env.home),
+                &intent,
+            );
             Ok(None)
         }
     }
@@ -293,7 +298,12 @@ async fn lease_end(gate: &crate::core_move::gate::MoveGate) {
 /// A pending core whose move never linked gives its copy back to
 /// `move-incoming`, where the driver's retry finds it, and leaves the
 /// folder with no brain state.
-fn give_back_pending(state_dir: &Path, home: &Path, intent: &str) {
+fn give_back_pending(
+    state_dir: &Path,
+    home: &Path,
+    agents: &hide_platform::user_agents::UserAgents,
+    intent: &str,
+) {
     let given = (|| -> Result<(), String> {
         let held = crate::core_move::handover::hold(state_dir)?;
         match held.read()? {
@@ -310,7 +320,7 @@ fn give_back_pending(state_dir: &Path, home: &Path, intent: &str) {
         // Last, once nothing of the move is left: a login would otherwise
         // start an empty core on the folder. A copy not given back keeps it,
         // so the next login's pending core gives it back again.
-        crate::login_item::forget(home, state_dir)
+        crate::login_item::forget(agents, home, state_dir)
     })();
     log(
         "pending.lease_ended",
@@ -1630,8 +1640,12 @@ mod tests {
     /// A pending core whose lease ended gives its copy back and then
     /// forgets its login item, so no login starts an empty core on the
     /// folder; a record of another move is left with its item.
+    #[cfg(unix)]
     #[test]
     fn a_core_that_gives_its_copy_back_forgets_its_login_item() {
+        use hide_platform::user_agents::{LoginAgent, UserAgents};
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::AtomicBool;
         let home = tempfile::tempdir().unwrap();
         let state = home.path().join("state");
         std::fs::create_dir_all(&state).unwrap();
@@ -1646,16 +1660,36 @@ mod tests {
                 },
             ))
             .unwrap();
+        // Nothing is loaded; a bootstrap loads nothing either.
+        let launchctl = home.path().join("launchctl");
+        std::fs::write(
+            &launchctl,
+            "#!/bin/sh\n[ \"$1\" = print ] && exit 113\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&launchctl, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let agents = UserAgents::fixture(home.path());
         let label = hide_kit::layout::core_login_item(home.path(), &state);
-        let list = hide_platform::user_agents::UserAgents::plist(home.path(), &label);
-        std::fs::create_dir_all(list.parent().unwrap()).unwrap();
-        std::fs::write(&list, "").unwrap();
+        agents
+            .install(
+                &LoginAgent {
+                    label: &label,
+                    program: Path::new("/usr/bin/true"),
+                    arguments: &[],
+                    environment: &[],
+                    log: &home.path().join("core.log"),
+                },
+                home.path(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        let installed = || agents.is_installed(&label, home.path()).unwrap();
 
-        give_back_pending(&state, home.path(), "i2");
-        assert!(list.exists(), "another move's item was forgotten");
-        give_back_pending(&state, home.path(), "i1");
+        give_back_pending(&state, home.path(), &agents, "i2");
+        assert!(installed(), "another move's item was forgotten");
+        give_back_pending(&state, home.path(), &agents, "i1");
         assert!(handover::read(&state).unwrap().is_none());
-        assert!(!list.exists(), "the login item's list is left");
+        assert!(!installed(), "the login item is still installed");
     }
 
     /// A release its asker gave up on never stops the core: one given up

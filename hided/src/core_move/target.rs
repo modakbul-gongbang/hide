@@ -756,20 +756,31 @@ mod tests {
         )
         .unwrap();
         std::fs::set_permissions(&launchctl, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let agents = hide_platform::user_agents::UserAgents::fixture(home.path());
         let label = hide_kit::layout::core_login_item(home.path(), &state);
-        let list = hide_platform::user_agents::UserAgents::plist(home.path(), &label);
-        std::fs::create_dir_all(list.parent().unwrap()).unwrap();
-        std::fs::write(&list, "").unwrap();
+        agents
+            .install(
+                &hide_platform::user_agents::LoginAgent {
+                    label: &label,
+                    program: Path::new("/usr/bin/true"),
+                    arguments: &[],
+                    environment: &[],
+                    log: &home.path().join("core.log"),
+                },
+                home.path(),
+                &std::sync::atomic::AtomicBool::new(false),
+            )
+            .unwrap();
         std::fs::write(home.path().join("loaded"), "").unwrap();
         let starter = CoreStarter::LoginItem {
             home: home.path().to_path_buf(),
-            agents: hide_platform::user_agents::UserAgents::fixture(
-                launchctl,
-                "gui/fixture".to_owned(),
-            ),
+            agents: agents.clone(),
         };
         assert_eq!(abort(&state, "i1", || Ok(starter)), Ok(StepAnswer::Aborted));
-        assert!(!list.exists(), "the login item's list is left");
+        assert!(
+            !agents.is_installed(&label, home.path()).unwrap(),
+            "the login item is still installed"
+        );
         assert!(
             !home.path().join("loaded").exists(),
             "the login item is still loaded"
