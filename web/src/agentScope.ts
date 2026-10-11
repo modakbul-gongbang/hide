@@ -6,8 +6,8 @@ export type AgentRef = { pane_id: string; occurrence: number };
 
 export type AgentScope = {
   sessions: {
-    /** Nonempty groups in order; `more` holds the Idle rows folded as "N more". */
-    groups: { group: SessionGroup; members: number[]; more: number[] }[];
+    /** Nonempty groups in order, each with its members in drawing order. */
+    groups: { group: SessionGroup; members: number[] }[];
   };
   overview_needs_you: number;
   has_working: boolean;

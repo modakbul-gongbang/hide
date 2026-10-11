@@ -571,9 +571,9 @@ describe("the PRs tab", () => {
 
 describe("the board's words follow the interface language", () => {
   it("writes a failed read with the project, the source, the value's age and the log pointer", () => {
-    const failure = { project: "herdr-ide", source: "GitHub", value: { minutes: 1 } };
-    expect(readFailureText(failure, english)).toBe("herdr-ide · GitHub read failed · Value from 1 minute ago · Reason in logs");
-    expect(readFailureText({ ...failure, value: { minutes: 5 } }, english)).toBe("herdr-ide · GitHub read failed · Value from 5 minutes ago · Reason in logs");
+    const failure = { project: "hide", source: "GitHub", value: { minutes: 1 } };
+    expect(readFailureText(failure, english)).toBe("hide · GitHub read failed · Value from 1 minute ago · Reason in logs");
+    expect(readFailureText({ ...failure, value: { minutes: 5 } }, english)).toBe("hide · GitHub read failed · Value from 5 minutes ago · Reason in logs");
     expect(readFailureText({ project: null, source: "Local", value: "last" }, english)).toBe("Local read failed · Last known value · Reason in logs");
     expect(readFailureText({ project: null, source: "GitHub", value: "none" }, english)).toBe("GitHub read failed · No value read yet · Reason in logs");
     expect(readFailureText({ project: null, source: "GitHub", value: "omitted" }, english)).toBe("GitHub read failed · Reason in logs");

@@ -34,7 +34,7 @@ export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogS
   // A checkout's pull request as the one PR mark (web/src/components/pr-mark.tsx).
   const prMark = (id, [number, state]) => {
     const [, glyph, fill] = PR_STATES.find(([key]) => key === state);
-    return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: `#${number}`}});
+    return themedXref(id, AGENT_TREE_MASTERS.prIcon, `PR #${number}`, {}, {'ath-pr-g': {icon: glyph, fill}, 'ath-pr-n': {content: `${number}`}});
   };
   const HAIR = num(tokens, '--size-hairline');
   const DIM = num(tokens, '--opacity-dimmed');
@@ -178,7 +178,7 @@ export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogS
       frame(`en-${kind}-title-${s}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
         text(`en-${kind}-c1-${s}`, 'Overview', {size: '$--text-caption', fill: '$--subtle-foreground'}),
         text(`en-${kind}-c2-${s}`, '/', {size: '$--text-caption', fill: '$--muted-foreground'}),
-        text(`en-${kind}-c3-${s}`, 'herdr-ide', {size: '$--text-headline', weight: '600'}),
+        text(`en-${kind}-c3-${s}`, 'hide', {size: '$--text-headline', weight: '600'}),
       ]),
       frame(`en-${kind}-facts-${s}`, 'Facts', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center'}, facts),
       ...(kind === 'low' ? [] : [frame(`en-${kind}-tipwrap-${s}`, 'Tooltip anchor', {padding: [0, 0, 0, 96]}, [breakdown(`en-${kind}-tip-${s}`, size, partial)])]),

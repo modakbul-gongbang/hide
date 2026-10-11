@@ -649,7 +649,7 @@ Regression owners: `herdr-core/src/request_view/tests.rs` for the verb, the pull
 A Needs You row draws its `row.state.ask` (verb and what to do) in place of a line, and a blocked one, which has no ask, its cause; a Working row its label line, or while it waits on its children the line of its most recently changed working descendant; a Done row its label line.
 An Idle row carries a line only for a stopped turn (`◐`, the same rule as the sidebar's Stopped mark), marked `unfinished`.
 Needs You is ordered by when the ask began, Working puts a failed PR first and then the most recent, Done is most recent first, and Resolved is most recently resolved first.
-Idle puts unfinished work first, then a failed, mergeable, pending, draft and merged PR, then the rest, and publishes those with neither a PR nor unfinished work as `more`, which the panel folds behind `그 외 N`.
+Idle puts unfinished work first, then a failed, mergeable, pending, draft and merged PR, then the rest, and the panel draws every Idle row as it draws the other groups, with no fold.
 A blocked menu takes Approval before an unread AI question's Answer.
 A current native `user_turn.kind = question` instead takes Answer while its session holds for a reply, including after it is read and when its content is absent.
 Native plan approval keeps Approval; the typed native wait, rather than a provider name or an AI question label, distinguishes these cases.

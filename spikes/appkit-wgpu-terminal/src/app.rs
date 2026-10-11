@@ -72,7 +72,7 @@ impl Options {
                 }
                 "--help" => {
                     println!(
-                        "herdr-ide-native-spike [--report PATH] [--probe-count N] [--autoclose-ms N]"
+                        "hide-native-spike [--report PATH] [--probe-count N] [--autoclose-ms N]"
                     );
                     std::process::exit(0);
                 }
@@ -729,7 +729,7 @@ impl AppDelegate {
             )
         };
         unsafe { window.setReleasedWhenClosed(false) };
-        window.setTitle(ns_string!("Herdr IDE Native Spike"));
+        window.setTitle(ns_string!("Hide Native Spike"));
         window.center();
         window.setContentMinSize(NSSize::new(760.0, 480.0));
         window.setDelegate(Some(ProtocolObject::from_ref(self)));

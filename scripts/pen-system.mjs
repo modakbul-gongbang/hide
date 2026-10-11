@@ -771,7 +771,7 @@ function buildAgentGraphBox(tokens) {
       // a change request keeps its word, red as failed checks are.
       frame('agb-pr', 'PR mark', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-xxs'], height: LINE, cornerRadius: '$--radius-xs'}, [
         frame('agb-pr-mark', 'Mark', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-          icon('agb-pr-g', 'git-pull-request', {size: ICON, fill: '$--pr-mergeable'}), caption('agb-pr-n', '#221', '$--subtle-foreground', true),
+          icon('agb-pr-g', 'git-pull-request', {size: ICON, fill: '$--pr-mergeable'}), caption('agb-pr-n', '221', '$--subtle-foreground', true),
         ]),
         disabled(caption('agb-pr-rv', '변경 요청', '$--pr-failed')),
       ]),
@@ -876,7 +876,7 @@ function buildAgentGraphBox(tokens) {
     'agb-pr': {enabled: Boolean(pr)},
     ...(pr ? {
       'agb-pr-g': prGlyph(pr.state),
-      'agb-pr-n': {content: `#${pr.number}`},
+      'agb-pr-n': {content: `${pr.number}`},
       'agb-pr-rv': {enabled: Boolean(pr.changes)},
     } : {}),
     'agb-dist': {enabled: Boolean(distance), content: distance ?? ''},
@@ -915,12 +915,12 @@ function buildAgentGraphBox(tokens) {
         ...headOf({glyph: 'house', tone: '$--muted-foreground', branch: 'main', purpose: 'Observer · 계획과 위임', agents: 1}),
         ...rowsOn({symbol: '●', fill: '$--agent-working', title: 'agent-tab-groups', age: '8m', tucked: 2}),
       }),
-      // A delegation into another project (issue 718): `→ sasu 2` on the parent's row, `← herdr-ide` on a child's.
+      // A delegation into another project (issue 718): `→ sasu 2` on the parent's row, `← hide` on a child's.
       state('cross', 'Rows with cross-project chips', {}, {
         ...headOf({glyph: 'house', tone: '$--muted-foreground', branch: 'main', purpose: 'Observer · 계획과 위임', agents: 2}),
         ...rowsOn(
           {symbol: '●', fill: '$--agent-working', title: 'Lead', age: '1m', cross: {direction: 'out', project: 'sasu', count: 2}},
-          {symbol: '○', fill: '$--muted-foreground', title: '명세 정리', age: '3m', cross: {direction: 'in', project: 'herdr-ide', count: 1}},
+          {symbol: '○', fill: '$--muted-foreground', title: '명세 정리', age: '3m', cross: {direction: 'in', project: 'hide', count: 1}},
         ),
       }),
       state('selected', 'Selected', {stroke: '$--primary'}, {

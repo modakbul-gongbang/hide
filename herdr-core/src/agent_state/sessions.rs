@@ -105,8 +105,8 @@ pub(crate) fn row(agent: &SidebarAgentSnapshot) -> Row {
             line: label_line(),
             unfinished: false,
         },
-        // A read block rests here with its cause, ahead of the fold
-        // (agent-blocked-state B2).
+        // A read block rests here with its cause, ahead of the other Idle
+        // rows (agent-blocked-state B2).
         _ if agent.demand == "error" => Row {
             group: Group::Idle,
             line: agent.detail.clone(),
@@ -163,8 +163,6 @@ pub struct Section {
     pub group: Group,
     /// Member indices, in the order the panel draws them.
     pub members: Vec<usize>,
-    /// Idle rows with neither a PR nor unfinished work, folded as "N more".
-    pub more: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -235,13 +233,9 @@ pub(crate) fn scope<'a>(members: impl Iterator<Item = (usize, &'a SidebarAgentSn
         if rows.is_empty() {
             continue;
         }
-        let (shown, more): (Vec<_>, Vec<_>) = rows
-            .into_iter()
-            .partition(|(_, row)| group != Group::Idle || idle_rank(row) < 5);
         result.groups.push(Section {
             group,
-            members: shown.into_iter().map(|(member, _)| member).collect(),
-            more: more.into_iter().map(|(member, _)| member).collect(),
+            members: rows.into_iter().map(|(member, _)| member).collect(),
         });
     }
     result

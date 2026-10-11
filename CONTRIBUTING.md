@@ -212,14 +212,20 @@ They never enter a commit; write them under `agents/runs/<slug>/`, which is igno
 ## Releases
 
 A release is a tag on a commit that is already on `main`, never on a branch.
-Pushing a stable `vX.Y.Z` tag runs `verify-cargo.sh test` and `verify-web.sh` again on macOS, then packages the app with `HIDE_VERSION=<version> pnpm --dir desktop package` on macOS, Windows and Linux runners.
-The last two use `package.yml`, whose `node desktop/scripts/smoke-package.mjs` unpacks each package, installs the kit, resolves the command in a fresh shell and checks daemon replacement with a second complete package fixture, and on Windows `desktop/e2e/packaged-window.spec.ts` opens the unpacked `hide.exe` with its window on a private HOME and keeps a screenshot of the shell it draws.
-The [release asset gate](docs/BUILD.md#release-asset-gate) requires that version's `hide-v<version>-macos-arm64.zip`, `hide-v<version>-windows-x64.zip` and `hide-v<version>-linux-x64.tar.gz`, each with its verified `.sha256`, before draft preparation.
+Pushing a stable `vX.Y.Z` tag publishes that version when every gate passes, with nothing for a person to do (operator decision 2026-10-12, `release.yml`):
+- The tagged commit's own `verify` push run on main must have passed; it ran every lane, the desktop and web end-to-end suites, Windows and the packages included.
+  The release waits up to 90 minutes for it, and refuses a run that was cancelled or failed: rerun that run, or tag a later main commit whose run passed.
+- `verify-cargo.sh test` and `verify-web.sh` pass again on macOS.
+- `package.yml` builds each package with `HIDE_VERSION=<version> pnpm --dir desktop package` on its own runner and starts it.
+  The macOS app is signed and notarized, then opened from its archive by the packaged-app specs (`local-kit.spec.ts` and `server-session-search.spec.ts`); on Windows and Linux `node desktop/scripts/smoke-package.mjs` unpacks each package, installs the kit, resolves the command in a fresh shell and checks daemon replacement with a second complete package fixture, and on Windows `desktop/e2e/packaged-window.spec.ts` opens the unpacked `hide.exe` with its window on a private HOME and keeps a screenshot of the shell it draws.
+- The [release asset gate](docs/BUILD.md#release-asset-gate) requires that version's `hide-v<version>-macos-arm64.zip`, `hide-v<version>-windows-x64.zip` and `hide-v<version>-linux-x64.tar.gz`, each with its verified `.sha256`.
+
+The writer then adds the six files to its exact draft, never deleting or overwriting one, reads the complete draft back, and publishes it as the latest release, which withhide.dev's download links follow; legacy drafts require separate coverage review.
 The operator keeps immutable releases turned on in the repository's Settings; the workflow does not check it.
-The writer adds only missing assets to its exact verified draft and never deletes, overwrites, or publishes a release; legacy drafts require separate coverage review.
-A maintainer publishes only after reviewing separate installation, native first-launch and terminal input/output evidence on every supported system.
-A package checksum or headless daemon smoke check does not provide that native evidence.
-The macOS archive is ad-hoc signed, not notarized, so the first launch needs the Gatekeeper step [docs/INSTALL.md](docs/INSTALL.md) describes; the Windows and Linux packages are not signed, and the same guide gives the SmartScreen and sandbox steps.
+A published release is therefore final: a fault the gates missed is fixed by the next version, not by changing the release.
+The macOS archive is signed with the Developer ID certificate and notarized (`HIDE_MACOS_SIGNING=developer-id`, [docs/BUILD.md](docs/BUILD.md)), and the release fails rather than ship it any other way.
+Its secrets belong to the repository's `release` environment, which only `package.yml`'s macOS job in a release run reads: `MACOS_DEVELOPER_ID_P12` (the certificate with its private key, as base64) and `MACOS_DEVELOPER_ID_P12_PASSWORD`, and the App Store Connect API key notarytool uses, `APPLE_NOTARY_KEY_P8` (the `.p8` file's text), `APPLE_NOTARY_KEY_ID` and `APPLE_NOTARY_ISSUER_ID`.
+The Windows and Linux packages are not signed, and [docs/INSTALL.md](docs/INSTALL.md) gives the SmartScreen and sandbox steps.
 `package.yml` also runs as `pr.yml`'s `package` lane on a pull request that changes what goes into a package (`PACKAGE_PATHS` in `scripts/ci-plan.py`: `desktop/scripts/`, `desktop/package.json`, `desktop/resources/`, the Herdr pin and its fetch scripts, `verify-cargo.sh`, `verify-web.sh` and `toolchain-env.sh`, `hided/build.rs`, which embeds the web shell, `hided/src/cli.rs`, `hide-kit/` and `hide-agent-hooks/`, and the package and release workflows).
 There it also builds the macOS archive and runs the packaged app's own specs on it, keeps the packages for a week as the run's artifacts, and `verify` requires it like any planned lane.
 

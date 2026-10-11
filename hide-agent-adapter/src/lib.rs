@@ -378,25 +378,6 @@ pub enum SkillLocation {
     Claude,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Os {
-    Macos,
-    Linux,
-    Windows,
-}
-
-impl Os {
-    pub const CURRENT: Self = if cfg!(target_os = "macos") {
-        Self::Macos
-    } else if cfg!(windows) {
-        Self::Windows
-    } else {
-        Self::Linux
-    };
-    pub const ALL: &'static [Self] = &[Self::Macos, Self::Linux, Self::Windows];
-    pub const UNIX: &'static [Self] = &[Self::Macos, Self::Linux];
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct HerdrIntegration {
     pub name: &'static str,
@@ -438,7 +419,6 @@ pub struct AgentAdapter {
     pub aliases: &'static [&'static str],
     pub executables: &'static [&'static str],
     pub skill_location: SkillLocation,
-    pub skill_os: &'static [Os],
     pub hook: HookInstall,
     pub herdr: HerdrIntegration,
     pub default_on: bool,

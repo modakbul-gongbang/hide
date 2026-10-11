@@ -31,8 +31,8 @@ const BANDS: [string, PaneHeader["band"]][] = [
   ["device", { kind: "device_offline", tone: "muted", reason: "mini", since_unix_ms: null, action: null, more: 0, exit_code: null }],
   ["approval", { kind: "approval", tone: "warning", reason: "검증 명령 실행 권한이 필요합니다", since_unix_ms: null, action: null, more: 0, exit_code: null }],
   ["answer", { kind: "answer", tone: "warning", reason: "기존 stdin 종료 경로도 남길까요?", since_unix_ms: null, action: null, more: 0, exit_code: null }],
-  ["fix", { kind: "fix", tone: "error", reason: "verify 실패", since_unix_ms: null, action: { kind: "pr", workspace_id: "herdr-ide", url: "https://github.com/acme/app/pull/221", number: 221, checks: "failed", tone: "error" }, more: 0, exit_code: null }],
-  ["merge", { kind: "merge", tone: "pr", reason: "CI 통과 · 승인됨", since_unix_ms: null, action: { kind: "pr", workspace_id: "herdr-ide", url: "https://github.com/acme/app/pull/221", number: 221, checks: "passing", tone: "pr" }, more: 0, exit_code: null }],
+  ["fix", { kind: "fix", tone: "error", reason: "verify 실패", since_unix_ms: null, action: { kind: "pr", workspace_id: "hide", url: "https://github.com/acme/app/pull/221", number: 221, checks: "failed", tone: "error" }, more: 0, exit_code: null }],
+  ["merge", { kind: "merge", tone: "pr", reason: "CI 통과 · 승인됨", since_unix_ms: null, action: { kind: "pr", workspace_id: "hide", url: "https://github.com/acme/app/pull/221", number: 221, checks: "passing", tone: "pr" }, more: 0, exit_code: null }],
   ["raised", { kind: "raised", tone: "warning", reason: null, since_unix_ms: null, action: { kind: "child", pane_id: "a1c1", label: RAISED.title }, more: 1, exit_code: null, raised: RAISED }],
   ["result", { kind: "result", tone: "success", reason: "보고서가 준비됐습니다", since_unix_ms: null, action: null, more: 0, exit_code: null }],
   ["working", null], ["idle", null],
@@ -52,7 +52,7 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale }: Sce
   const actions = useMemo(() => createActions(() => true), []);
   const fixture = useMemo(() => {
     const base = sidebarScene(content, REFERENCE_FOLDS, Date.now());
-    const project = base.rest.navigator!.workspaces!.find((row) => row.id === "herdr-ide")!;
+    const project = base.rest.navigator!.workspaces!.find((row) => row.id === "hide")!;
     const checkout = project.checkouts[0]!;
     const pane = checkout.tabs[0]!.panes[0]!;
     const seed = base.agents.find((row) => row.pane_id === "a1")!;
@@ -71,10 +71,10 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale }: Sce
       };
     });
     const feature = { ...checkout, id: "session-ui", label: "prd/session-ui", branch: "prd/session-ui" };
-    const scope = { ...project.agent_scope, members: agents.map((agent, index) => ({ pane_id: agent.pane_id, project_id: project.id, checkout_id: index === 5 ? checkout.id : feature.id })), work: { s3: { pull: 0, more: 0, issues: [], issue_chips: [] }, s4: { pull: 0, more: 0, issues: [], issue_chips: [] }, s5: { pull: null, more: 0, issues: ["issue-219"], issue_chips: ["issue-219"] }, s6: { pull: 0, more: 0, issues: [], issue_chips: [] } }, sessions: { groups: [{ group: "needs_you" as const, members: [0, 1, 2], more: [] }, { group: "working" as const, members: [4, 5], more: [] }, { group: "done" as const, members: [3], more: [] }, { group: "idle" as const, members: [6], more: [7] }, { group: "resolved" as const, members: [8], more: [] }] } };
+    const scope = { ...project.agent_scope, members: agents.map((agent, index) => ({ pane_id: agent.pane_id, project_id: project.id, checkout_id: index === 5 ? checkout.id : feature.id })), work: { s3: { pull: 0, more: 0, issues: [], issue_chips: [] }, s4: { pull: 0, more: 0, issues: [], issue_chips: [] }, s5: { pull: null, more: 0, issues: ["issue-219"], issue_chips: ["issue-219"] }, s6: { pull: 0, more: 0, issues: [], issue_chips: [] } }, sessions: { groups: [{ group: "needs_you" as const, members: [0, 1, 2] }, { group: "working" as const, members: [4, 5] }, { group: "done" as const, members: [3] }, { group: "idle" as const, members: [6, 7] }, { group: "resolved" as const, members: [8] }] } };
     project.agent_scope = scope;
     project.tasks = { source: null, overflow: false, tasks: [{ key: "issue-219", source: "github", id: `#${219}`, url: "https://example.invalid/issue/219", title: "세션 패널 구현", open: true }] };
-    checkout.agent_scope = { ...scope, members: [scope.members[5]!], sessions: { groups: [{ group: "working", members: [0], more: [] }] } };
+    checkout.agent_scope = { ...scope, members: [scope.members[5]!], sessions: { groups: [{ group: "working", members: [0] }] } };
     const panes = agents.map((agent) => ({ ...pane, id: agent.pane_id, identity_label: agent.identity_label }));
     checkout.tabs = [{ ...checkout.tabs[0]!, panes: [panes[5]!] }];
     feature.tabs = [{ ...checkout.tabs[0]!, id: "session-ui-tab", panes: panes.filter((_, index) => index !== 5) }];
@@ -82,6 +82,8 @@ export function SessionWorkflowScene({ scene: kind, theme, content, scale }: Sce
     base.rest.navigator!.workspaces = [project];
     base.rest.navigator!.focused_checkout_id = checkout.id;
     base.rest.navigator!.focused_workspace_id = project.id;
+    // The panel's tree opens on the row with children, so a child's columns are compared with its root's.
+    base.rest.ui_state = { ...base.rest.ui_state!, sessions_expanded_agent_pane_ids: ["s5"] };
     const children = base.agents.filter((row) => ["a1c1", "a1c2"].includes(row.pane_id));
     const headers = Object.fromEntries(BANDS.map(([id, band]) => [id, { working: id === "working", band: band && { ...band, since_unix_ms: ["approval", "answer", "fix", "merge", "raised", "result"].includes(id) ? Date.now() - 180_000 : band.since_unix_ms } }]));
     // The fix and merge panes own one PR each, so their header shows the own PR chip (B21, B22).

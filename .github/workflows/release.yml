@@ -1,10 +1,20 @@
 name: hide release
 
-# A `v*` tag builds every package from a tree both suites passed, and one job
-# drafts one release with all of them: the ad-hoc signed macOS app, and the
-# unsigned Windows and Linux packages `package.yml` builds and starts on their
-# own runners. Each upload is a workflow artifact first, so a failed package
-# drafts nothing and no two jobs race to create the same draft.
+# A `v*` tag on main publishes a release when every gate passed, with nothing
+# for a person to do (operator decision 2026-10-12):
+#   - the tagged commit's own `verify` push run on main passed, which ran every
+#     lane: the workspace, the desktop and web end-to-end suites, Windows and
+#     the packages;
+#   - the workspace tests and the web and desktop checks pass again here;
+#   - `package.yml` builds the three packages and starts each one: the macOS
+#     app signed with the Developer ID certificate and notarized, then opened
+#     by its packaged-app specs; the Windows app opened with its window; the
+#     Windows and Linux packages installed and their daemons started.
+# One job then drafts the release with exactly those six files, verifies it,
+# and publishes it as the latest, which withhide.dev's download links follow.
+# Each upload is a workflow artifact first, so a failed gate drafts nothing and
+# no two jobs race to create the same draft. Immutable releases make a
+# published release final: a bad one is followed by a new version, not edited.
 
 on:
   push:
@@ -46,51 +56,56 @@ jobs:
       - name: Typecheck, lint, unit test and build the web shell and the desktop app
         run: bash scripts/verify-web.sh
 
-  macos-arm64:
-    # A tag builds a release only from a tree both suites passed.
-    needs: test
-    runs-on: macos-15
+  main-verified:
+    # The tagged commit's push run is the full suite, so the release waits for
+    # it rather than run it twice. A commit whose run was cancelled (a later
+    # merge superseded it) or failed is not released: rerun that run, or tag a
+    # later main commit whose run passed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions:
+      actions: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - name: Package the ad-hoc signed app and its checksum
-        # The version is the tag; the packager builds the release binaries,
-        # fetches the pinned Herdr and refuses when any of them cannot run.
-        run: HIDE_VERSION="${GITHUB_REF_NAME#v}" pnpm --dir desktop package
-      - name: Verify the release archive
+      - name: Wait for main's verify run of the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          test -s desktop/out/*.zip
-          test -s desktop/out/*.zip.sha256
-          (cd desktop/out && shasum -a 256 -c ./*.zip.sha256)
-      - name: Keep the package
-        uses: actions/upload-artifact@v7
-        with:
-          name: hide-package-macos
-          path: |
-            desktop/out/*.zip
-            desktop/out/*.zip.sha256
-          if-no-files-found: error
-          retention-days: 7
+          query="repos/$GITHUB_REPOSITORY/actions/workflows/pr.yml/runs?event=push&branch=main&head_sha=$GITHUB_SHA&per_page=1"
+          for minute in $(seq 1 90); do
+            # A failed read is retried next minute; it is not an answer.
+            if ! run="$(gh api "$query" --jq '.workflow_runs[0] // {} | "\(.id // "") \(.status // "") \(.conclusion // "")"')"; then
+              sleep 60
+              continue
+            fi
+            read -r id status conclusion <<< "$run"
+            if [ -z "$id" ] && [ "$minute" -ge 10 ]; then
+              echo "::error::main has no verify push run for $GITHUB_SHA; tag the head of a merge into main"
+              exit 1
+            fi
+            if [ "$status" = completed ]; then
+              if [ "$conclusion" = success ]; then
+                echo "main's verify run $id passed for $GITHUB_SHA"
+                exit 0
+              fi
+              echo "::error::main's verify run $id for $GITHUB_SHA ended $conclusion; rerun it, or tag a later main commit whose run passed"
+              exit 1
+            fi
+            sleep 60
+          done
+          echo "::error::main's verify run for $GITHUB_SHA did not finish within 90 minutes"
+          exit 1
 
-  windows-linux:
-    needs: test
+  packages:
+    # A tag builds a release only from a tree every gate passed.
+    needs: [test, main-verified]
     uses: ./.github/workflows/package.yml
     with:
       version: ${{ github.ref_name }}
+      include-macos: true
+      macos-signing: developer-id
 
-  draft:
-    needs: [macos-arm64, windows-linux]
+  publish:
+    needs: packages
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -100,12 +115,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The three packages by name: package.yml uploads screenshots and logs
+      # beside them, and the asset gate refuses any file it does not expect.
       - uses: actions/download-artifact@v8
         with:
-          pattern: hide-package-*
+          name: hide-package-macos
           path: packages
-          merge-multiple: true
-      - name: Prepare an exact draft with append-only assets
+      - uses: actions/download-artifact@v8
+        with:
+          name: hide-package-windows
+          path: packages
+      - uses: actions/download-artifact@v8
+        with:
+          name: hide-package-linux
+          path: packages
+      - name: Draft the release, verify it and publish it as the latest
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/release-draft.mjs "$GITHUB_REF_NAME" "$GITHUB_SHA" packages
+        run: node scripts/release-draft.mjs "$GITHUB_REF_NAME" "$GITHUB_SHA" packages --publish

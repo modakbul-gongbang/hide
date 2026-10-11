@@ -15,7 +15,7 @@ function fixture() {
   const agents = [row("first", "needs_you"), row("second", "working")];
   const scope = (members: string[]): AgentScope => ({ ...emptyScope(),
     members: members.map((pane_id) => ({ pane_id, project_id: "project", checkout_id: pane_id === "first" ? "main" : "feature" })),
-    sessions: { groups: members.map((id, member) => ({ group: id === "first" ? "needs_you" as const : "working" as const, members: [member], more: [] })) },
+    sessions: { groups: members.map((id, member) => ({ group: id === "first" ? "needs_you" as const : "working" as const, members: [member] })) },
   });
   const checkouts = ["main", "feature"].map((id, index) => ({ id, workspace_id: "project", label: id, branch: id, path: `/fixture/${id}`, agent_scope: scope([agents[index]!.pane_id]), tabs: [{ id: `tab-${id}`, panes: [{ id: agents[index]!.pane_id }] }] })) as Checkout[];
   const project = { id: "project", device_id: "local", label: "프로젝트", path: "/fixture", is_git: true, agent_scope: scope(["first", "second"]), checkouts } as Workspace;

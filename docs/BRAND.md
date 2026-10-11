@@ -43,6 +43,24 @@ The macOS app icon at `desktop/resources/hide-icon-1024.png` is the mark inside 
 `desktop/resources/hide.icns` packages that icon for the app.
 The mobile web icons in `web/public/m/` are size derivatives of the full square mark.
 
+## The owl character
+
+The owl is hide's brand character: the mark's owl drawn whole, with a body, wings and a pose, for illustration.
+It gives the site and other outward material warmth that the calm interface does not try to carry.
+The character is not the mark: the header, the app icon, favicons and anywhere the product is named use the mark above.
+
+The character keeps the mark's palette and features: the broad ivory face, the dark eyes inside the connected lime shape, and a round, soft silhouette.
+A pose may hold one small prop that belongs to its scene, such as a laptop for devices or a conveyor for the Factory, and one owl appears per scene.
+It may be gently cute, but stays calm: no glow, no gradients on the owl, no speech bubbles, and no third-party agent mark drawn into the art.
+
+The character is a symbol of awareness, like the mark.
+It never speaks for an agent, never stands in for a status mark, and never signals live state; a scene shows the owl at ease or at work, not reacting to what an agent did.
+Copy beside it describes keeping work in view, never watching people or agents.
+Inside the app the character appears only where a PRD puts it, because the shell's states belong to its status marks (design principle 13).
+
+The current poses are in `site/assets/owls/`: `owl-peek` over the hero window, `owl-agents`, `owl-devices`, `owl-ai` and `owl-factory` beside the pillars, and `owl-rest` at the close.
+They were made with the mark as the style reference, so a new pose starts from the mark again rather than from an edited copy of another pose, and it is reviewed against this section before it ships.
+
 ## Third-party agent marks
 
 The first-run agent choice, the Agents tab and Hide AI's agent selects and Add menu draw an agent's mark on a fixed light plate (`--logo-plate`), so a dark-filled mark stays legible in both themes (`web/src/components/agent-logo.tsx`).

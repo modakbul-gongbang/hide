@@ -442,7 +442,7 @@
       "p-child": [
         {
           "issues": [
-            "github:acme/herdr-ide#273"
+            "github:acme/hide#273"
           ],
           "project_id": "w1",
           "checkout_id": "c-sand",
@@ -852,10 +852,10 @@
         "pull": null,
         "more": 0,
         "issues": [
-          "github:acme/herdr-ide#273"
+          "github:acme/hide#273"
         ],
         "issue_chips": [
-          "github:acme/herdr-ide#273"
+          "github:acme/hide#273"
         ]
       },
       "p-dag": {
@@ -977,10 +977,10 @@
           "needs_look": true,
           "group": "turn",
           "issue": {
-            "key": "github:acme/herdr-ide#273",
+            "key": "github:acme/hide#273",
             "label": "#273",
-            "url": "https://github.com/acme/herdr-ide/issues/273",
-            "task_key": "github:acme/herdr-ide#273"
+            "url": "https://github.com/acme/hide/issues/273",
+            "task_key": "github:acme/hide#273"
           }
         },
         {

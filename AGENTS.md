@@ -12,7 +12,7 @@ Before writing or changing a test, read `docs/TESTING.md` for which layer to tes
 
 - `hided/` - the product daemon and `hide` CLI. It links `herdr-core` on an owner thread, serves loopback HTTP (`/`, `/assets`, `/health`) and a token-gated WebSocket for dispatch and snapshot deltas.
 - `web/` - the React web shell (Vite, zustand, xterm.js). Build output is `web/dist/` inside this worktree and is gitignored.
-- `desktop/` - the Electron desktop host and the only shipped app: the web shell hided serves, in its own macOS window, attached through `hide connect`. The packaged `hide.app` carries `hided`, `hide`, `hide-agent-hooks`, the device helper and the pinned Herdr flat in `Contents/Resources`, ad-hoc signed by `pnpm --dir desktop package`; quitting the host leaves hided running, while the bundled `hide connect` replaces a healthy daemon of another build in the same state folder and an unbundled `hide` refuses that mismatch. Build output is `desktop/dist/` and the app and archive under `desktop/out/`, all gitignored; see `docs/ARCHITECTURE.md`, The desktop host.
+- `desktop/` - the Electron desktop host and the only shipped app: the web shell hided serves, in its own macOS window, attached through `hide connect`. The packaged `hide.app` carries `hided`, `hide`, `hide-agent-hooks`, the device helper and the pinned Herdr flat in `Contents/Resources`, ad-hoc signed by `pnpm --dir desktop package` and, for a release, signed with the Developer ID certificate and notarized (`docs/BUILD.md`); quitting the host leaves hided running, while the bundled `hide connect` replaces a healthy daemon of another build in the same state folder and an unbundled `hide` refuses that mismatch. Build output is `desktop/dist/` and the app and archive under `desktop/out/`, all gitignored; see `docs/ARCHITECTURE.md`, The desktop host.
 - `herdr-core/` - platform-neutral Rust runtime, an rlib whose owner-thread handle (`herdr-core/src/handle.rs`) `hided` drives. It projects Herdr-owned pane topology and owns Hide's UI state; the shell owns neither.
 - `hide-kit/` - the install kit and `hide_kit::layout`, the one place every hide-owned path under `~/.hide` is named; see `docs/INSTALL.md`, Where Hide keeps its files.
 - `hide-agent-hooks/` - the only code that writes a configuration file the operator owns (each agent runtime's hook file). A separate crate because a `settings.json` write must never sit behind the render lock; see `docs/agent-hooks.md`.
@@ -54,7 +54,7 @@ They once did: an evidence tree reached 123 MB and carried a browser profile wit
 - `[profile.dev] incremental = false` is deliberate: an agent worktree is built a few times and discarded, which never repays an incremental cache.
 - A debug build stays small (`docs/BUILD.md`, A debug build is kept small): the dev profile carries no debug info, a dependency or feature change is followed by `cargo hakari generate` and `cargo hakari manage-deps --yes`, no member feature exists only for tests, and a crate's integration tests are modules of its one `tests/it` binary.
 - `git worktree remove` takes the cache with the work; a worktree kept alive after its branch lands keeps its cache alive too.
-- The root checkout stays on `main`; every branch is worked on in its own worktree under `../herdr-ide.worktrees/`.
+- The root checkout stays on `main`; every branch is worked on in its own sibling worktree directory.
   `scripts/hooks/root-worktree-main-only.sh` is a `PreToolUse` hook (registered for Claude Code in `.claude/settings.json`, for Codex in `~/.codex/hooks.json`) that refuses a `git checkout`/`git switch` off `main` in the root worktree and answers with the `git worktree add` form to use instead.
 
 ## The Installed App Is The Operator's
@@ -101,7 +101,7 @@ The CLI is a wrapper over the same local socket API: use CLI wrappers for shell 
 
 <!-- herdr-provenance:start -->
 hide distributes the [upstream Herdr release v0.9.3](https://github.com/herdrdev/herdr/releases/tag/v0.9.3).
-The bundled binary is not modified by hide.
+The bundled binary's code is not modified by hide; a macOS release replaces only its ad-hoc signature with hide's Developer ID one, which notarization requires.
 The weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks.
 <!-- herdr-provenance:end -->
 

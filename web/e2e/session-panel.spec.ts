@@ -1,5 +1,5 @@
 // Sessions on a real isolated Herdr and daemon.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -50,6 +50,13 @@ async function ensureSessions(page: Page) {
   await expect(page.locator("[data-session-panel]")).toBeVisible();
 }
 
+/** Where a laid-out element ends on the right, for checking that rows share a column. */
+async function rightEdge(locator: Locator): Promise<number> {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error("element is not laid out");
+  return box.x + box.width;
+}
+
 test("Sessions groups, read rules, child navigation and durable resolution share one project scope", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   const herdr = await startHerdr();
@@ -89,8 +96,8 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     const row = (pane: string) => panel.locator(`[data-session-row="${pane}"]`);
     const group = (name: string) => panel.locator(`[data-session-group="${name}"]`);
     const head = (name: string) => group(name).locator('[data-session-focus="group"]');
-    // agent-hierarchy-screens B26 to B32: Needs You asks with the verb; unfinished work is Idle with ◐, a read question
-    // folds behind 그 외 N; a chevron opens one level of children; Resolved holds a resolved row, folded.
+    // B26 to B32: Needs You asks with the verb; unfinished work is Idle with ◐, a read question rests in Idle unfolded; a
+    // chevron opens children, whose Resolve slot keeps the root's time column; Resolved holds a resolved row, folded.
     await expect(group("needs_you").locator(`[data-session-row="${asking}"]`)).toContainText("Approve", { timeout: 30_000 });
     await expect(group("needs_you").locator(`[data-session-row="${question}"]`)).toContainText("Answer", { timeout: 30_000 });
     await expect(group("idle").locator(`[data-session-row="${stopped}"] [data-session-unfinished]`)).toBeVisible({ timeout: 30_000 });
@@ -103,6 +110,7 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await expect(row(parent).locator('[data-descendant-mark="working"]')).toContainText("1");
     await children.click();
     await expect(panel.locator(`[data-session-child="${child}"]`)).toContainText("하위 작업 검증");
+    expect(await rightEdge(panel.locator(`[data-session-child="${child}"] [data-resolve-slot]`))).toBe(await rightEdge(row(parent).locator("[data-session-resolve]")));
     await children.click();
     await expect(panel.locator(`[data-session-child="${child}"]`)).toHaveCount(0);
     await row(question).locator('[data-session-focus="row"]').focus();
@@ -110,7 +118,6 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     await expect(page.locator(`[data-pane-view="${question}"]`)).toHaveAttribute("data-focused", "true");
     await showSessions();
     await expect(group("needs_you").locator(`[data-session-row="${question}"]`)).toHaveCount(0);
-    await group("idle").locator("[data-session-more]").click();
     await expect(group("idle").locator(`[data-session-row="${question}"]`)).toBeVisible();
     await expect(row(question)).not.toContainText("Answer");
     await row(asking).locator('[data-session-focus="row"]').click();
