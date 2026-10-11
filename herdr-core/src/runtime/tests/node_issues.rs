@@ -745,6 +745,61 @@ fn a_node_checkout_s_issue_link_is_written_on_the_node_never_here() {
     );
 }
 
+/// Removing a node checkout's GitHub link reads no issue, so it is written
+/// on the node even before the node has named the project's repository.
+#[test]
+fn a_node_checkout_s_github_link_is_removed_before_its_repository_is_named() {
+    let repo = repo(None, "feature");
+    let node = Recording::of(Some(FakeDevice::new()));
+    let own = Recording::of(None);
+    let shared = node_runtime(&repo, node.clone(), own.clone(), Default::default());
+    dispatch(
+        &shared,
+        "issue_source_set",
+        serde_json::json!({"project_path": repo.root, "source": "github"}),
+    );
+    let checkout_id = {
+        let runtime = shared.lock().unwrap();
+        assert_eq!(
+            runtime.device_worktrees[NODE].projects[&repo.root].repository,
+            None
+        );
+        let project = node_project(&runtime).unwrap();
+        project
+            .checkouts
+            .iter()
+            .find(|checkout| checkout.path == repo.linked)
+            .unwrap()
+            .id
+            .clone()
+    };
+    dispatch(
+        &shared,
+        "set_checkout_issue",
+        serde_json::json!({"checkout_id": checkout_id, "text": ""}),
+    );
+    wait(&shared, "the removal on the node", |runtime| {
+        runtime
+            .snapshot
+            .task_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase != "working")
+    });
+    let runtime = shared.lock().unwrap();
+    assert_eq!(
+        runtime
+            .snapshot
+            .task_operation
+            .as_ref()
+            .map(|operation| operation.phase.as_str()),
+        Some("ready"),
+        "{:?}",
+        runtime.snapshot.status.last_error
+    );
+    assert_eq!(node.git_writes().len(), 1, "{:?}", node.git_writes());
+    assert!(own.git_writes().is_empty() && own.gh_calls().is_empty());
+}
+
 /// A device this core dials keeps its issues on that device: its projects
 /// carry no issue source here, so no board, New issue or link reaches them.
 #[test]

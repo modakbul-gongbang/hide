@@ -286,7 +286,8 @@ impl Runtime {
                 .map(|reference| reference.token())
                 .map_err(|error| ("checkout_issue.invalid", error))?
         };
-        let read = if local_source {
+        // Removing a link reads nothing, so it needs no repository name.
+        let read = if local_source || text.is_empty() {
             None
         } else {
             let place = self
