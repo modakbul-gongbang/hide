@@ -14,13 +14,13 @@ This is the only part of the tree Hide cannot read from the session snapshot, an
 | --- | --- |
 | Claude Code | `~/.claude/settings.json` |
 | Codex | `~/.codex/hooks.json` |
-| OpenCode | `~/.config/opencode/plugins/hide.js` (macOS, Linux; see [OpenCode: Hide's plugin](#opencode-hides-plugin)) |
-| Pi | `~/.pi/agent/extensions/hide.ts` (macOS, Linux; see [Pi and omp: Hide's extension](#pi-and-omp-hides-extension)) |
-| omp | `~/.omp/agent/extensions/hide.ts` (macOS, Linux; same section) |
+| OpenCode | `~/.config/opencode/plugins/hide.js` (see [OpenCode: Hide's plugin](#opencode-hides-plugin)) |
+| Pi | `~/.pi/agent/extensions/hide.ts` (see [Pi and omp: Hide's extension](#pi-and-omp-hides-extension)) |
+| omp | `~/.omp/agent/extensions/hide.ts` (same section) |
 | Grok | `~/.grok/hooks/hide.json`, Hide's own file ([Grok's and Cursor's own hooks](#groks-and-cursors-own-hooks)) |
 | Cursor | `~/.cursor/hooks.json`, shared with the operator's hooks |
 
-On Windows `~` is the account's profile folder (`%USERPROFILE%`), where Claude Code, Codex, Grok and Cursor keep these files; OpenCode's plugin and Pi's and omp's extension are not written there.
+On Windows `~` is the account's profile folder (`%USERPROFILE%`), where Claude Code, Codex, Grok and Cursor keep these files and OpenCode, Pi and omp load their plugins and extensions from.
 
 One entry is appended per registered event, and nothing else in the file is touched.
 The common writer retains JSON source spans through `serde_json::value::RawValue`, splicing only owned changes so unrelated members, groups and handlers retain their literal whitespace, ordering and escapes.
@@ -265,7 +265,9 @@ Claude Code's hook run inside OpenCode, through an operator plugin that bridges 
 The kit row reads the plugin as Claude Code's hook part is read: Installed when the file is this build's and unedited; Outdated with the reason when it is another build's, names a helper that is gone, is an older version or was edited; Removed when it was installed and taken out; Off when OpenCode is switched off.
 An older or another build's unedited plugin is replaced by the next pass; an edited one is replaced only by Reinstall, and a switch-off removes only an unedited file that carries Hide's marker.
 A `hide.js` without the marker is not Hide's and is never replaced or removed.
-The plugin is not written on Windows, since it has not been checked there.
+The plugin is written on Windows too, where OpenCode runs on Bun as it does elsewhere.
+On a `windows-latest` runner on 2026-10-11, OpenCode 1.18.35 (Bun 1.3.14) loaded a plugin from `%USERPROFILE%\.config\opencode\plugins`, and the plugin's own call, `spawn` of an absolute `.exe` path with no shell, wrote its stdin, read its stdout and killed it with `SIGKILL` there.
+`hide-agent-hooks/tests/it/windows_scripts.rs` runs this build's plugin in Node on Windows against the real helper in a folder whose name has a space, a quote, brackets and a `$`, and requires the session guidance to reach the first prompt.
 Memory receipts are read back from the OpenCode session's synthetic user parts by the label read (`hide-session`, `LabelTranscript.memory_receipts`) and recorded off the core lock, as the Claude and Codex transcripts' are.
 
 ## Pi and omp: Hide's extension
@@ -275,6 +277,7 @@ omp is a fork of Pi with the same extension shape, so Hide writes one source, `h
 `hide-agent-hooks/src/pi_extension.rs` declares both files on the owned script file of [OpenCode's plugin](#opencode-hides-plugin), so they are written, judged and removed by the same code.
 The first line, `// hide-extension@<version> sha256=<hash of the rest>`, works as the plugin's does; the body holds `const HELPER`, `const AGENT = "pi"` or `"omp"` and `const VERSION`, and the two files differ only in `AGENT`, so the other agent's file copied into a folder reads Outdated and is replaced.
 The file is plain JavaScript that is also TypeScript, as Herdr's own extension for these agents is, so both hosts load it without a build step.
+It is written on Windows too: on a `windows-latest` runner on 2026-10-11, Pi 1.0.4 (Node 22) and omp 18.7.0 (Bun 1.3.14) loaded an extension from `%USERPROFILE%\.pi\agent\extensions` and `%USERPROFILE%\.omp\agent\extensions`, emitted `session_start` to it, and its `spawn` of an absolute `.exe` path with no shell crossed stdin and stdout and ended with `SIGKILL`; `hide-agent-hooks/tests/it/windows_scripts.rs` runs this build's file for both on Windows as it does OpenCode's plugin.
 The agent's own folder (`~/.pi/agent`, `~/.omp/agent`) is never created, and only those default folders get the file: an omp profile or a `PI_CODING_AGENT_DIR` folder gets none.
 
 The extension does nothing outside a Herdr pane (no `HERDR_ENV=1`, `HERDR_PANE_ID` and `HERDR_SOCKET_PATH`), in an agent started from another Pi's or omp's shell (`PI_SESSION_ID`, `OMPCODE=1`, which those hosts set for every shell they start), or with no helper at its path; like OpenCode's plugin it does not ask whether a Hide daemon owns that Herdr, and the helper answers `{}` when none does.
@@ -462,9 +465,9 @@ Every row gets the skill stub where the system column says so.
 | Claude Code | `~/.claude/skills` (all) | done: six-event hook, a kit part | `claude` | [skills](https://code.claude.com/docs/en/skills) |
 | Codex | `~/.agents/skills` (macOS, Linux) | done: six-event hook, a kit part | `codex` | [skills](https://learn.chatgpt.com/docs/build-skills) |
 | Grok | `~/.agents/skills` (macOS, Linux) | done: spawn guard and subagent count in `~/.grok/hooks/hide.json`; no guidance, because `SessionStart` cannot add context, only tool-call events can | `grok` | [skills](https://docs.x.ai/build/features/skills-plugins-marketplaces) |
-| OpenCode | `~/.agents/skills` (macOS, Linux) | done: Hide's plugin in `~/.config/opencode/plugins/` (macOS, Linux), not a command hook; OpenCode has none, only JS plugins (<https://opencode.ai/docs/plugins/>), whose `chat.message` hook adds a synthetic part to the prompt and whose `tool.execute.before` refuses a call by throwing ([OpenCode: Hide's plugin](#opencode-hides-plugin)) | `opencode` | [skills](https://opencode.ai/docs/skills/) |
-| Pi | `~/.agents/skills` (all) | done: Hide's extension in `~/.pi/agent/extensions/` (macOS, Linux), not a command hook; Pi has none, only TS extensions, whose `before_agent_start` adds a hidden message to the prompt and whose `tool_call` refuses a call ([Pi and omp: Hide's extension](#pi-and-omp-hides-extension)) | `pi` | [skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
-| omp | `~/.agents/skills` (macOS, Linux) | done: the same extension in `~/.omp/agent/extensions/` (macOS, Linux), with omp's subagent counts and `ask` guard | `omp`, in `~/.omp/agent` | [skills](https://omp.sh/docs/skills) |
+| OpenCode | `~/.agents/skills` (macOS, Linux) | done: Hide's plugin in `~/.config/opencode/plugins/`, not a command hook; OpenCode has none, only JS plugins (<https://opencode.ai/docs/plugins/>), whose `chat.message` hook adds a synthetic part to the prompt and whose `tool.execute.before` refuses a call by throwing ([OpenCode: Hide's plugin](#opencode-hides-plugin)) | `opencode` | [skills](https://opencode.ai/docs/skills/) |
+| Pi | `~/.agents/skills` (all) | done: Hide's extension in `~/.pi/agent/extensions/`, not a command hook; Pi has none, only TS extensions, whose `before_agent_start` adds a hidden message to the prompt and whose `tool_call` refuses a call ([Pi and omp: Hide's extension](#pi-and-omp-hides-extension)) | `pi` | [skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
+| omp | `~/.agents/skills` (macOS, Linux) | done: the same extension in `~/.omp/agent/extensions/`, with omp's subagent counts and `ask` guard | `omp`, in `~/.omp/agent` | [skills](https://omp.sh/docs/skills) |
 | Cursor | `~/.agents/skills` (macOS, Linux) | done: spawn guard and guidance `sessionStart` in `~/.cursor/hooks.json`, no subagent count (above), returning `additional_context` ([hooks](https://cursor.com/docs/hooks)); the hooks page does not mention the CLI, and its changelog says the CLI runs session-start hooks (<https://cursor.com/docs/cli/changelog>), and the CLI honours `additional_context`: a Cursor CLI 2026.10.01 session started in a Hide pane on macOS on 2026-10-10 recorded Hide's guidance in its chat store (`~/.cursor/chats/<project>/<chat>/store.db`) as part of the model's context, inside a `<hooks_context>` block that Cursor labels as context from session hooks; on Windows the CLI runs the command inside a PowerShell pipeline, read from its package ([Installing](#installing)) | `cursor` | [skills](https://cursor.com/docs/context/skills) |
 
 Each row also carries what Hide can do for that agent as a list of features (`hide_agent_adapter::Feature`, re-exported by `hide_kit::agents`, and `KitAgentSnapshot.features`).

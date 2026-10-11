@@ -11,8 +11,9 @@ import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./ui
 
 /**
  * The one PR mark (docs/UI_BEHAVIOR.md, PR mark): the state's icon in its
- * colour and the number, `+N` for the other PRs the mark stands for. No
- * border; the icon's colour is the state. `compact` is the same mark without
+ * colour and the bare number, since the icon already says pull request, and
+ * `+N` for the other PRs the mark stands for. No border; the icon's colour is
+ * the state. `compact` is the same mark without
  * the number, where a row already names the pull request (a checkout's kind
  * glyph, a search row's icon). A stale mark dims.
  */
@@ -34,7 +35,7 @@ export function PrMark({
       {...rest}
     >
       <Icon aria-hidden="true" className={cn("size-(--size-pr-icon) shrink-0", tone)} />
-      {compact || number === undefined ? null : <span className="text-subtle-foreground">#{number}</span>}
+      {compact || number === undefined ? null : <span className="text-subtle-foreground">{number}</span>}
       {compact || more === 0 ? null : <span className="text-muted-foreground">+{more}</span>}
     </span>
   );
