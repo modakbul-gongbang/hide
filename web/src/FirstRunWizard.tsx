@@ -349,10 +349,11 @@ function ProjectStep({ actions, reopened }: { actions: Actions; reopened: boolea
   useEffect(() => {
     if (!added) return;
     finish();
-    // The start panel opens once, on this project, with the first agent D-15 picks (B23, B24).
+    // The start panel opens once, on this project, with the first agent D-15 picks (B23, B24); with no agent on it does not open.
     const rest = useShellStore.getState().rest;
     const agents = rest?.navigator?.devices?.find((device) => device.kind !== "remote")?.kit?.agents ?? [];
-    useStartPanel.getState().open(false, { projectId: added.id, kind: firstStartAgent(supportedAgents(agents), rest?.status?.background_ai?.providers) });
+    const kind = firstStartAgent(supportedAgents(agents), rest?.status?.background_ai?.providers);
+    if (kind) useStartPanel.getState().open(false, { projectId: added.id, kind });
     // `finish` reads only the store; the project appearing is the one trigger.
   }, [added?.id]);
   return (

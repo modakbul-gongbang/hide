@@ -121,7 +121,7 @@ function StartPanel({ actions }: { actions: Actions }) {
   const target = resolveTarget(targets, chosen);
   const [selection, setSelection] = useState<AgentSelection>(() => {
     const start = useShellStore.getState().rest?.ui_state?.agent_start;
-    return preset?.kind ? selectKind(preset.kind, start) : rememberedSelection(start);
+    return preset ? selectKind(preset.kind, start) : rememberedSelection(start);
   });
   const surface = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);

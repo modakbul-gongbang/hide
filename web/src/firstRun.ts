@@ -88,9 +88,8 @@ function startKind(id: string): ProviderKind | null {
 /**
  * The agent the start panel opens on after the wizard's project (D-15): the
  * first agent that is on and signed in, in the order D-06 checks sign-in,
- * then the first agent that is on. With none on it is null, and the panel
- * opens on the agent it remembers: it starts agents only, so D-15's
- * Terminal has no place there.
+ * then the first agent that is on. With none on it is null, and no panel
+ * opens: the empty Home's Start an agent is the way on (B28).
  */
 export function firstStartAgent(agents: readonly KitAgent[], providers: readonly AiProvider[] | undefined): ProviderKind | null {
   const on = agents.filter((agent) => agent.enabled && agent.availability === "available" && startKind(agent.id) !== null);

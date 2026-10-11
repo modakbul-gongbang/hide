@@ -10,7 +10,7 @@ import type { ProviderKind } from "./agentPicker";
 import type { MessageKey } from "./i18n/catalogs";
 
 /** What an open names instead of what is in front: the first-run wizard's new project and its first agent (PRD first-run-onboarding D-15). */
-export type StartPreset = { projectId: string; kind: ProviderKind | null };
+export type StartPreset = { projectId: string; kind: ProviderKind };
 
 /** Why a start did not go: the core's own sentence, shown as sent, or a catalog key the panel words in the operator's language. */
 export type StartFailure = { message: string } | { key: MessageKey };
