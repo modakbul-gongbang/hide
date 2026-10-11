@@ -202,7 +202,11 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       // A refusal before anything was drawn (a move's screen refusing an
       // event) leaves the window where it is.
       if (frame.type === "error" && !drawn) return;
-      useShellStore.getState().setConnection("live");
+      // What a role still sends while a move is under way (the core before it
+      // stops, the node before the move is done) leaves the window held; only
+      // the move's own frame releases it (W1).
+      const { coreMove } = useShellStore.getState();
+      if (coreMove === null || !moveUnderWay(coreMove.state)) useShellStore.getState().setConnection("live");
       backoff = 500;
       healthFails = 0;
     });
