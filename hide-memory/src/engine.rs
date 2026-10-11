@@ -123,7 +123,7 @@ impl HideNativeAnalyzer {
                 })
                 .collect::<Vec<_>>(),
         )
-        .map_err(|error| HideNativeOutputError::InvalidShape(error.to_string()))?;
+        .map_err(|error| HideNativeOutputError::InvalidShape(shape_error(&error)))?;
         let similar_memories = redact(&similar_json);
         let events_value = parse_input_array("new_events", &events.text)?;
         let similar_value = parse_input_array("similar_memories", &similar_memories.text)?;
@@ -162,7 +162,7 @@ impl HideNativeAnalyzer {
         similar: &[ComparisonCard],
     ) -> Result<AnalysisOutput, HideNativeOutputError> {
         let output: Output = serde_json::from_value(value)
-            .map_err(|error| HideNativeOutputError::InvalidShape(error.to_string()))?;
+            .map_err(|error| HideNativeOutputError::InvalidShape(shape_error(&error)))?;
         if output.candidates.len() > 64 || output.alias_backfill.len() > 64 {
             return Err(HideNativeOutputError::InvalidShape(
                 "more than 64 candidates".to_owned(),
@@ -176,9 +176,7 @@ impl HideNativeAnalyzer {
                 .iter()
                 .find(|card| card_name(card.number) == name.trim())
                 .map(|card| card.id.clone())
-                .ok_or_else(|| {
-                    HideNativeOutputError::InvalidShape(format!("unknown target {name}"))
-                })
+                .ok_or_else(|| HideNativeOutputError::InvalidShape("unknown target".to_owned()))
         };
         let mut secret_rejected = 0;
         let candidates = output
@@ -224,10 +222,10 @@ impl HideNativeAnalyzer {
                         target_id: target(candidate.target_id.as_ref(), "conflicts")?,
                     },
                     "discard" => CandidateRelation::Discard,
-                    other => {
-                        return Err(HideNativeOutputError::InvalidShape(format!(
-                            "unknown relation {other}"
-                        )));
+                    _ => {
+                        return Err(HideNativeOutputError::InvalidShape(
+                            "unknown relation".to_owned(),
+                        ));
                     }
                 };
                 let kind = match candidate.kind.as_str() {
@@ -235,10 +233,10 @@ impl HideNativeAnalyzer {
                     "decision" => CandidateKind::Decision,
                     "rule" => CandidateKind::Rule,
                     "lesson" => CandidateKind::Lesson,
-                    other => {
-                        return Err(HideNativeOutputError::InvalidShape(format!(
-                            "unknown kind {other}"
-                        )));
+                    _ => {
+                        return Err(HideNativeOutputError::InvalidShape(
+                            "unknown kind".to_owned(),
+                        ));
                     }
                 };
                 Ok(Candidate {
@@ -281,7 +279,10 @@ impl HideNativeAnalyzer {
 
 fn parse_input_array(field: &str, value: &str) -> Result<Value, HideNativeOutputError> {
     let parsed = serde_json::from_str::<Value>(value).map_err(|error| {
-        HideNativeOutputError::InvalidShape(format!("{field} is not valid JSON: {error}"))
+        HideNativeOutputError::InvalidShape(format!(
+            "{field} is not valid JSON: {}",
+            shape_error(&error)
+        ))
     })?;
     if !parsed.is_array() {
         return Err(HideNativeOutputError::InvalidShape(format!(
@@ -467,7 +468,8 @@ mod tests {
         }], "alias_backfill": []});
         assert!(matches!(
             HideNativeAnalyzer.parse(unshown, &[card(7, "memory:7")]),
-            Err(HideNativeOutputError::InvalidShape(reason)) if reason.contains("m9")
+            // The model's own words never reach the reason, which is logged.
+            Err(HideNativeOutputError::InvalidShape(reason)) if reason == "unknown target"
         ));
     }
 
@@ -497,4 +499,16 @@ mod tests {
         assert_eq!(output.backfill[0].target_id, "memory:seven");
         assert_eq!(output.backfill[0].aliases, ["테스트", "nextest"]);
     }
+}
+
+/// Why a provider answer did not parse, without any of its values: serde's
+/// message quotes the offending value, which is session text, and the reason
+/// reaches the diagnostic log.
+fn shape_error(error: &serde_json::Error) -> String {
+    format!(
+        "{:?} at line {} column {}",
+        error.classify(),
+        error.line(),
+        error.column()
+    )
 }

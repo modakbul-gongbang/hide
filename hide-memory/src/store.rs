@@ -1213,16 +1213,29 @@ impl MemoryStore {
                 }
                 // A contradiction is settled by rule, never by asking: the
                 // side resting on the operator's own words wins, and between
-                // equals the newer text wins. The losing text stays in the
+                // equals the text said later wins, whatever order the
+                // sessions are analyzed in. The losing text stays in the
                 // card's history (D-14, B18).
                 CandidateRelation::Supersedes { target_id }
                 | CandidateRelation::Conflicts { target_id } => {
                     let previous =
                         require_active_target(&transaction, &batch.project_id, target_id)?;
                     let revision = next_revision(&transaction, target_id)?;
-                    if !candidate.direct_human_source()
-                        && revision_has_human_source(&transaction, target_id, previous.1)?
+                    let candidate_human = candidate.direct_human_source();
+                    let outranked = if candidate_human
+                        != revision_has_human_source(&transaction, target_id, previous.1)?
                     {
+                        !candidate_human
+                    } else {
+                        let said_at = candidate
+                            .source_times
+                            .values()
+                            .max()
+                            .copied()
+                            .unwrap_or(batch.created_at_unix_ms);
+                        said_at < revision_said_at(&transaction, target_id, previous.1)?
+                    };
+                    if outranked {
                         transaction.execute("INSERT INTO memory_revisions(id,item_id,revision,body,title,aliases,cited_paths,kind,lifecycle,created_at_ms,batch_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'superseded',?9,?10)", params![revision_id(target_id,revision),target_id,revision,card.body,card.title,card.aliases_json(),card.cited_json(),candidate.kind.as_str(),batch.created_at_unix_ms,batch.id])?;
                         summary.kept += 1;
                         summary.outcomes.push(CandidateOutcome::Kept {
@@ -3009,6 +3022,20 @@ fn revision_has_human_source(
     )?)
 }
 
+/// When a revision's text was said: its newest source's time, else when the
+/// revision was written.
+fn revision_said_at(
+    transaction: &Transaction<'_>,
+    item_id: &str,
+    revision: u64,
+) -> Result<u64, MemoryError> {
+    Ok(transaction.query_row(
+        "SELECT COALESCE((SELECT MAX(at_ms) FROM memory_sources WHERE item_id=?1 AND revision=?2),created_at_ms) FROM memory_revisions WHERE item_id=?1 AND revision=?2",
+        params![item_id, revision],
+        |row| row.get(0),
+    )?)
+}
+
 fn current_revision(transaction: &Transaction<'_>, item_id: &str) -> Result<u64, MemoryError> {
     Ok(transaction.query_row(
         "SELECT current_revision FROM memory_items WHERE id=?1",
@@ -3557,6 +3584,51 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
     }
 
     #[test]
+    fn between_equals_the_text_said_later_wins_whatever_order_sessions_are_analyzed_in() {
+        // D-14: an older session analyzed after a newer one does not bring
+        // back what was said before.
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "newer-session", "h1"),
+                &[Candidate {
+                    source_times: BTreeMap::from([(7, 900)]),
+                    ..candidate("Use yarn", CandidateRelation::New)
+                }],
+            )
+            .unwrap();
+        let card = store.list_memories(&project).unwrap()[0].clone();
+        let summary = store
+            .apply_candidates(
+                &batch(&project, "older-session", "h2"),
+                &[Candidate {
+                    source_times: BTreeMap::from([(7, 100)]),
+                    ..candidate(
+                        "Use npm",
+                        CandidateRelation::Conflicts {
+                            target_id: card.id.clone(),
+                        },
+                    )
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            summary.outcomes,
+            [CandidateOutcome::Kept {
+                number: card.number
+            }]
+        );
+        let given = store
+            .retrieve(&RetrievalQuery::prompt(&project, "yarn npm", vec![]))
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|item| item.text)
+            .collect::<Vec<_>>();
+        assert_eq!(given, ["Use yarn"]);
+    }
+
+    #[test]
     fn a_replaced_card_shows_its_previous_text_and_undo_brings_it_back() {
         // B19: "N분 전에 바뀜 · 이전 내용", then Undo injects the old text again.
         let (_temp, mut store, project) = store();
@@ -3695,10 +3767,13 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
         store
             .apply_candidates(
                 &batch(&project, "b4", "h4"),
-                &[candidate(
-                    "Lint and format before tests",
-                    CandidateRelation::Supersedes { target_id: card.id },
-                )],
+                &[Candidate {
+                    source_times: BTreeMap::from([(7, 200)]),
+                    ..candidate(
+                        "Lint and format before tests",
+                        CandidateRelation::Supersedes { target_id: card.id },
+                    )
+                }],
             )
             .unwrap();
         assert_eq!(suggested(&store), [1, 2], "the changed card is asked again");

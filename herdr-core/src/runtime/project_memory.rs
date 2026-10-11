@@ -124,6 +124,24 @@ impl Runtime {
                 }),
             crate::workspace_control::Caller::Checkout { .. } => None,
         };
+        let caller_agents = match crate::workspace_control::Caller::parse(caller) {
+            crate::workspace_control::Caller::Pane(pane) => self
+                .delivery_state()
+                .map(|ledger| {
+                    ledger
+                        .agents
+                        .iter()
+                        .filter(|record| {
+                            !record.ended
+                                && record.pane == pane
+                                && record.machine == self.node.as_str()
+                        })
+                        .map(|record| record.id.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            crate::workspace_control::Caller::Checkout { .. } => Vec::new(),
+        };
         Ok(crate::memory_command::PreparedMemory {
             command,
             node: self.node.clone(),
@@ -132,6 +150,7 @@ impl Runtime {
             checkout_path: context.checkout_path,
             reader,
             settings: self.ai_active().then(|| self.ai_settings.clone()).flatten(),
+            caller_agents,
             context: self.worker_context.clone(),
         })
     }

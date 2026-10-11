@@ -84,7 +84,15 @@ impl MemoryCommand {
             Self::Add { text } => {
                 !text.trim().is_empty() && text.chars().count() <= ADD_LIMIT_CHARS
             }
-            Self::Placed { number, path } => *number > 0 && hide_memory::repository_path(path),
+            // Never Git's own folder: the path is shown to every agent once
+            // the card's pull request merges.
+            Self::Placed { number, path } => {
+                *number > 0
+                    && hide_memory::repository_path(path)
+                    && !path
+                        .split('/')
+                        .any(|part| part.eq_ignore_ascii_case(".git"))
+            }
         }
     }
 }
@@ -106,6 +114,9 @@ pub struct PreparedMemory {
     pub(crate) reader: Option<(String, String)>,
     /// Hide AI's settings while it is on.
     pub(crate) settings: Option<AiSettings>,
+    /// The coordination ids of the live agents in the caller's pane, so only
+    /// the agent a promotion started names its file (`placed`).
+    pub(crate) caller_agents: Vec<String>,
     /// Where a change is reported, so the screen reads Memory again.
     pub(crate) context: Option<RuntimeWorkerContext>,
 }
@@ -209,7 +220,10 @@ impl PreparedMemory {
                             promotion.state,
                             hide_memory::PromotionState::Running
                                 | hide_memory::PromotionState::PrOpen
-                        )
+                        ) && promotion
+                            .agent_id
+                            .as_ref()
+                            .is_some_and(|id| self.caller_agents.contains(id))
                     })
                     .ok_or("memory_card_not_promoting")?;
                 // The file must be in the caller's checkout, the worktree the
@@ -573,6 +587,7 @@ mod tests {
                 checkout_path: self.root.clone(),
                 reader: Some(("claude".to_owned(), "caller-session".to_owned())),
                 settings: ai.then(AiSettings::default),
+                caller_agents: vec!["agent-9".to_owned()],
                 context: None,
             }
             .run_with(|_| {
@@ -612,6 +627,26 @@ mod tests {
                 false,
             )
         };
+        assert_eq!(
+            placed("src/lib.rs"),
+            Err("memory_card_not_promoting".into())
+        );
+
+        // Another agent's promotion: only the agent Hide started names the file.
+        let theirs = hide_memory::Promotion {
+            state: hide_memory::PromotionState::Running,
+            revision: 1,
+            attempt: 1,
+            agent_id: Some("agent-1".into()),
+            branch: Some("hide-memory-m1".into()),
+            pr_number: None,
+            target_path: None,
+            updated_at_unix_ms: 1,
+        };
+        fixture
+            .store()
+            .set_promotion(&fixture.project_id, 1, &theirs)
+            .unwrap();
         assert_eq!(
             placed("src/lib.rs"),
             Err("memory_card_not_promoting".into())
@@ -903,7 +938,14 @@ mod tests {
         );
         assert!(!MemoryCommand::Show { number: 0 }.valid());
         assert!(!MemoryCommand::Forget { number: 0 }.valid());
-        for path in ["../outside.md", "/etc/hosts", "docs/./x.md", ""] {
+        for path in [
+            "../outside.md",
+            "/etc/hosts",
+            "docs/./x.md",
+            "",
+            ".git/config",
+            "sub/.GIT/hooks/x",
+        ] {
             assert!(
                 !MemoryCommand::Placed {
                     number: 1,
