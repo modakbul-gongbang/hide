@@ -1669,6 +1669,9 @@ pub struct Runtime {
     /// every window of the daemon: naming another replaces it.
     disk_project: Option<String>,
     cleanup: Option<live::cleanup::CleanupSnapshot>,
+    /// The node whose session last carried `cleanup`, so a cleanup that
+    /// replaces it on another project also leaves that node's rows.
+    cleanup_published_node: Option<String>,
     next_cleanup_id: u64,
     /// The id of the cleanup worker that is running, if one is. While it is,
     /// no other review starts and the snapshot cannot be dismissed, so two
@@ -2148,6 +2151,7 @@ impl Runtime {
             disk_generation: 0,
             disk_project: None,
             cleanup: None,
+            cleanup_published_node: None,
             next_cleanup_id: 0,
             cleanup_worker: None,
             worktree_generation: 0,

@@ -1987,3 +1987,56 @@ fn a_node_github_read_asks_the_links_its_rows_were_derived_with() {
     runtime.ingest_remote_session(NODE, Ok(raw));
     assert_eq!(asked(&mut runtime), [10]);
 }
+
+/// A cleanup started on another project replaces a node project's: the
+/// node's rows let go of the old review at once, so its sheet cannot stay
+/// open on a review that no longer takes a confirmation.
+#[test]
+fn a_cleanup_on_another_project_takes_a_node_project_s_review_off_its_rows() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    let node_id = node_project(&shared.lock().unwrap()).unwrap().id.clone();
+    dispatch(
+        &shared,
+        "cleanup_review",
+        serde_json::json!({"workspace_id": node_id}),
+    );
+    wait(&shared, "the node project's review to end", |runtime| {
+        runtime.cleanup_worker.is_none()
+            && runtime
+                .cleanup
+                .as_ref()
+                .is_some_and(|review| review.phase != "loading")
+    });
+    let mut runtime = shared.lock().unwrap();
+    assert!(node_project(&runtime).unwrap().cleanup.is_some());
+    // A project on this machine.
+    runtime.ingest_session(Ok(context_payload()));
+    runtime.snapshot.navigator.workspaces[0].is_git = true;
+    let project = runtime.snapshot.navigator.workspaces[0].clone();
+    runtime.focus_checkout(&project.id, &project.checkouts[0].id);
+    let root = runtime.focused_local_checkout().unwrap().0.path.clone();
+    runtime.ingest_worktrees(
+        crate::model::WorktreeCatalogSnapshot {
+            projects: vec![crate::model::ProjectWorktreesSnapshot {
+                root_path: root,
+                ..Default::default()
+            }],
+        },
+        0,
+    );
+    assert!(runtime.review_cleanup(&project.id));
+    assert_eq!(
+        runtime
+            .cleanup
+            .as_ref()
+            .map(|review| review.workspace_id.as_str()),
+        Some(project.id.as_str())
+    );
+    assert_eq!(node_project(&runtime).unwrap().cleanup, None);
+}

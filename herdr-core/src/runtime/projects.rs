@@ -621,9 +621,19 @@ impl Runtime {
     }
 
     /// Publishes the cleanup on the project it names: this machine's rows,
-    /// and the session of the node the project is on.
+    /// and the session of the node the project is on, and takes a cleanup it
+    /// replaced off the node whose session carried that one.
     pub(super) fn publish_cleanup(&mut self, node: Option<&str>) {
         self.refresh_worktree_projection();
+        let shown = self
+            .cleanup
+            .is_some()
+            .then(|| node.map(str::to_owned))
+            .flatten();
+        let previous = std::mem::replace(&mut self.cleanup_published_node, shown);
+        if let Some(previous) = previous.filter(|previous| Some(previous.as_str()) != node) {
+            self.refresh_device_catalog(&previous);
+        }
         if let Some(node) = node {
             self.refresh_device_catalog(node);
         }
