@@ -218,15 +218,6 @@ fn plugin_state(
 ) -> (ComponentState, Option<String>) {
     let file = plugin::file(dialect);
     let noun = file.noun;
-    if let Err(why) = plugin::supported_here() {
-        return (
-            ComponentState::Absent,
-            Some(format!(
-                "{}'s {noun} is not written here: {why}",
-                adapter.label
-            )),
-        );
-    }
     let helper = helper(target);
     let observed = file.observe(&target.home, &helper);
     if !matches!(
@@ -879,7 +870,7 @@ pub(crate) fn apply(
         }
         // An agent whose program is gone keeps the file Hide wrote: only the
         // operator's switch takes it out (D-20, D-26).
-        if !detection.installed(adapter) || plugin::supported_here().is_err() {
+        if !detection.installed(adapter) {
             continue;
         }
         let helper = helper(target);

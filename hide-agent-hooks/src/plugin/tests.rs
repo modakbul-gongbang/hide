@@ -147,7 +147,6 @@ fn pi_and_omp_get_one_source_that_differs_only_in_the_agents_name() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn install_writes_beside_herdrs_file_and_leaves_it_byte_for_byte() {
     for file in FILES {
@@ -170,7 +169,6 @@ fn install_writes_beside_herdrs_file_and_leaves_it_byte_for_byte() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn install_makes_the_extension_folder_but_never_the_agents_own() {
     for file in FILES {
@@ -187,7 +185,6 @@ fn install_makes_the_extension_folder_but_never_the_agents_own() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn an_edit_reads_edited_and_only_install_puts_hides_back() {
     for file in FILES {
@@ -206,7 +203,6 @@ fn an_edit_reads_edited_and_only_install_puts_hides_back() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn another_builds_file_or_a_gone_helper_reads_stale_with_the_reason() {
     for file in FILES {
@@ -245,7 +241,6 @@ fn another_builds_file_or_a_gone_helper_reads_stale_with_the_reason() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn a_file_hide_did_not_write_is_never_replaced_or_removed() {
     for file in FILES {
@@ -272,14 +267,10 @@ fn the_other_agents_file_in_an_agents_folder_reads_stale_and_is_replaced() {
     )
     .unwrap();
     assert!(matches!(fixture.observe(), PluginObserved::Stale(_)));
-    #[cfg(unix)]
-    {
-        assert_eq!(fixture.install(), Ok(true));
-        assert!(fixture.read().contains(r#"const AGENT = "pi";"#));
-    }
+    assert_eq!(fixture.install(), Ok(true));
+    assert!(fixture.read().contains(r#"const AGENT = "pi";"#));
 }
 
-#[cfg(unix)]
 #[test]
 fn remove_takes_hides_unedited_file_and_nothing_else() {
     for file in FILES {
@@ -295,15 +286,5 @@ fn remove_takes_hides_unedited_file_and_nothing_else() {
             b"herdr"
         );
         assert_eq!(fixture.remove(), Ok(false));
-    }
-}
-
-#[cfg(windows)]
-#[test]
-fn no_file_is_written_on_windows() {
-    for file in FILES {
-        let fixture = Fixture::new(file);
-        assert!(fixture.install().is_err());
-        assert!(!file.path(fixture.home()).exists());
     }
 }

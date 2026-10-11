@@ -988,7 +988,6 @@ fn opencode_plugin(fixture: &Fixture) -> PathBuf {
     hide_agent_hooks::opencode::PLUGIN.path(fixture.home())
 }
 
-#[cfg(unix)]
 #[test]
 fn opencode_switched_on_gets_hides_plugin_beside_herdrs_and_reads_installed() {
     let fixture = Fixture::new();
@@ -1018,7 +1017,6 @@ fn opencode_switched_on_gets_hides_plugin_beside_herdrs_and_reads_installed() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn an_edited_opencode_plugin_reads_outdated_and_stays_until_reinstall() {
     let fixture = Fixture::new();
@@ -1047,7 +1045,6 @@ fn an_edited_opencode_plugin_reads_outdated_and_stays_until_reinstall() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn switching_opencode_off_removes_only_an_unedited_plugin() {
     let fixture = Fixture::new();
@@ -1081,7 +1078,6 @@ fn switching_opencode_off_removes_only_an_unedited_plugin() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn opencode_without_its_config_folder_gets_no_folder_made_and_says_why() {
     let fixture = Fixture::new();
@@ -1095,7 +1091,6 @@ fn opencode_without_its_config_folder_gets_no_folder_made_and_says_why() {
     assert!(!fixture.home().join(".config/opencode").exists());
 }
 
-#[cfg(unix)]
 #[test]
 fn a_plugin_named_like_hides_that_hide_did_not_write_is_left_alone() {
     let fixture = Fixture::new();
