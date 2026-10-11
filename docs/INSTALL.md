@@ -337,6 +337,7 @@ What the move leaves on each machine:
 | The machine giving the core | `~/.hide/state/core-move.json` | The move's record, written before each step that cannot be undone; a move cut short resumes or undoes itself from it at the next start |
 | The core machine | `~/.hide/state/core-handover.json` | Whether its core waits for the move's first link, runs, or stopped or retired for a move back |
 | The core machine | `~/Library/LaunchAgents/dev.withhide.core.plist` | The login item that runs `hided core-login` at login and keeps the core running |
+| The core machine | `~/.hide/state/Logs/core.log` | What the login item's core prints, set aside as `core.log.1` at a start once it passes 1 MiB, replacing the one before |
 | The core machine | `~/.hide/state/move-incoming/` | A copy being received; empty once the move ends |
 
 Hide AI's settings move with the core and come back with it.
