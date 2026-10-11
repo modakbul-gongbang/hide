@@ -79,6 +79,9 @@ pub struct Core {
     _changes: Option<crate::changes::ChangesPump>,
     _kit: Option<crate::kit::KitPump>,
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
+    /// The record that tells a pane's hook where this daemon's Memory store
+    /// is when the state folder is not the default one; removed on drop.
+    _memory_registration: Option<hide_memory::locator::Registration>,
     _session_search: Option<crate::runtime::session_search::SearchWorker>,
     _links: Option<crate::links::worker::LinkWorker>,
     labels: Option<Arc<crate::labels::LabelServices>>,
@@ -143,6 +146,36 @@ impl Drop for Core {
     }
 }
 
+/// Leaves the record a pane's hook follows to this daemon's Memory store when
+/// the daemon's state folder is not the default one (`hide_memory::locator`).
+/// A daemon with no Herdr socket has no panes, and one that cannot register
+/// keeps the default store for its panes, which is recorded.
+fn register_memory_store(
+    options: &CoreOptions,
+    home: Option<&std::path::Path>,
+) -> Option<hide_memory::locator::Registration> {
+    let home = home?;
+    let socket = options.herdr_socket_path.as_deref()?;
+    let state_dir = std::path::Path::new(&options.app_state_path)
+        .parent()
+        .filter(|directory| !directory.as_os_str().is_empty())?;
+    match hide_memory::locator::register(
+        &hide_kit::layout::default_state_dir(home),
+        socket,
+        state_dir,
+    ) {
+        Ok(registration) => registration,
+        Err(error) => {
+            crate::diagnostic!(serde_json::json!({
+                "component": "memory",
+                "kind": "locator.register_failed",
+                "message": error.to_string(),
+            }));
+            None
+        }
+    }
+}
+
 fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     match mutex.lock() {
         Ok(guard) => guard,
@@ -180,6 +213,7 @@ impl Core {
             _changes: None,
             _kit: None,
             _session_sync: None,
+            _memory_registration: None,
             _session_search: None,
             _links: None,
             _delivery: None,
@@ -236,6 +270,7 @@ impl Core {
                 serde_json::json!({"kind": "diagnostics.open_failed", "message": error.to_string()})
             );
         }
+        let memory_registration = register_memory_store(&options, environment_home.as_deref());
         let runtime = Arc::new(Mutex::new(Runtime::new(
             options.clone(),
             environment,
@@ -427,6 +462,7 @@ impl Core {
             _kit: kit,
             own_node,
             _session_sync: session_sync,
+            _memory_registration: memory_registration,
             _session_search: session_search,
             _links: links,
             labels,
@@ -749,5 +785,53 @@ impl Core {
             return;
         }
         self.notifier.set_callback(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn options(state_dir: &std::path::Path, socket: &str) -> CoreOptions {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": crate::model::SCHEMA_VERSION,
+            "node_id": crate::node::test_node(),
+            "herdr_socket_path": socket,
+            "app_state_path": state_dir.join("core-state.json"),
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_hook_in_a_pane_of_a_relocated_daemon_reads_the_store_the_core_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let default = hide_kit::layout::default_state_dir(home);
+        let moved = home.join("elsewhere");
+        for folder in [&default, &moved] {
+            hide_platform::fs::private::create_dir_all(folder).unwrap();
+            hide_platform::fs::private::restrict_to_owner(folder).unwrap();
+        }
+        let socket = "/run/herdr-relocated.sock";
+        let registration = register_memory_store(&options(&moved, socket), Some(home));
+        let core_store = hide_memory::database_path(&moved);
+        assert_eq!(
+            hide_agent_hooks::memory::database_path_in(home, Some(socket)),
+            core_store
+        );
+        // A daemon on the default folder needs no record: the hook's default is its store.
+        let on_default =
+            register_memory_store(&options(&default, "/run/herdr-default.sock"), Some(home));
+        assert!(on_default.is_none());
+        assert_eq!(
+            hide_agent_hooks::memory::database_path_in(home, Some("/run/herdr-default.sock")),
+            hide_memory::database_path(&default)
+        );
+        drop(registration);
+        assert_eq!(
+            hide_agent_hooks::memory::database_path_in(home, Some(socket)),
+            hide_memory::database_path(&default),
+            "the record goes with its daemon"
+        );
     }
 }

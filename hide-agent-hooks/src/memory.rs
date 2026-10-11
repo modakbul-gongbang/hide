@@ -67,12 +67,31 @@ pub fn database_path(home: &Path) -> PathBuf {
     {
         return PathBuf::from(path);
     }
-    // The state folder a daemon on this home uses by default, which is where
-    // the core writes the store (`hide_kit::layout::default_state_dir`; hide-kit
-    // depends on this crate, and herdr-core's tests hold the two equal). A
-    // relocated state folder is not followed: production ignores the process
-    // environment here (see `production_hook_ignores_a_database_path_override`).
-    hide_memory::database_path(&home.join(".hide").join("state"))
+    database_path_in(
+        home,
+        std::env::var("HERDR_SOCKET_PATH")
+            .ok()
+            .as_deref()
+            .filter(|socket| !socket.is_empty()),
+    )
+}
+
+/// [`database_path`] for a pane of the Herdr at `herdr_socket`, the value
+/// Herdr puts in the pane as `HERDR_SOCKET_PATH`.
+///
+/// The state folder a daemon on this home uses by default is where the core
+/// writes the store (`hide_kit::layout::default_state_dir`; hide-kit depends
+/// on this crate, and herdr-core's tests hold the two equal). A daemon started
+/// with a moved state folder leaves a record there naming its folder, filed
+/// under the Herdr socket of its panes (`hide_memory::locator`); the socket is
+/// only the record's name, and no path is taken from the environment. Without
+/// a record, or with one that fails any check, the default store is read.
+pub fn database_path_in(home: &Path, herdr_socket: Option<&str>) -> PathBuf {
+    let default_state_dir = home.join(".hide").join("state");
+    let state_dir = herdr_socket
+        .and_then(|socket| hide_memory::locator::resolve(&default_state_dir, socket))
+        .unwrap_or(default_state_dir);
+    hide_memory::database_path(&state_dir)
 }
 
 pub fn project_memory_output(
@@ -408,6 +427,59 @@ mod tests {
         // SAFETY: guarded by ENV_LOCK and restored before the test returns.
         unsafe {
             std::env::remove_var(MEMORY_DATABASE_ENV);
+        }
+    }
+
+    #[test]
+    fn a_hook_reads_the_store_of_the_relocated_daemon_that_runs_its_pane_and_no_other() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let private = |path: &Path| {
+            hide_platform::fs::private::create_dir_all(path).unwrap();
+            hide_platform::fs::private::restrict_to_owner(path).unwrap();
+        };
+        let default = home.join(".hide/state");
+        let moved = home.join("moved-state");
+        private(&default);
+        private(&moved);
+        let registration = hide_memory::locator::register(&default, "/run/herdr-mine.sock", &moved)
+            .unwrap()
+            .unwrap();
+        let in_pane = |socket: &str, state_dir: Option<&str>| {
+            // SAFETY: this module serializes its environment-mutating tests.
+            unsafe {
+                std::env::remove_var(MEMORY_TESTING_ENV);
+                std::env::set_var("HERDR_SOCKET_PATH", socket);
+                match state_dir {
+                    Some(state_dir) => std::env::set_var("HIDE_STATE_DIR", state_dir),
+                    None => std::env::remove_var("HIDE_STATE_DIR"),
+                }
+            }
+            database_path(home)
+        };
+        assert_eq!(
+            in_pane("/run/herdr-mine.sock", None),
+            moved.join("project-memory.sqlite3")
+        );
+        // The pane of another Herdr, and an environment that names a folder, both read the default.
+        let default_store = default.join("project-memory.sqlite3");
+        assert_eq!(in_pane("/run/herdr-other.sock", None), default_store);
+        assert_eq!(
+            in_pane("/run/herdr-other.sock", Some("/tmp/attacker")),
+            default_store
+        );
+        assert_eq!(
+            in_pane("/run/herdr-mine.sock", Some("/tmp/attacker")),
+            moved.join("project-memory.sqlite3"),
+            "the record decides, not HIDE_STATE_DIR"
+        );
+        drop(registration);
+        assert_eq!(in_pane("/run/herdr-mine.sock", None), default_store);
+        // SAFETY: guarded by ENV_LOCK and restored before the test returns.
+        unsafe {
+            std::env::remove_var("HERDR_SOCKET_PATH");
+            std::env::remove_var("HIDE_STATE_DIR");
         }
     }
 
