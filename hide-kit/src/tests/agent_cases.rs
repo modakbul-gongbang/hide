@@ -719,7 +719,6 @@ fn a_machine_with_a_record_keeps_what_it_had_when_this_build_arrives() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn cursor_gets_the_guidance_hook_with_the_switch_and_loses_it_with_it() {
     let file = ".cursor/hooks.json";
