@@ -13,7 +13,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         aliases: &["claude", "claude_code"],
         executables: &["claude"],
         skill_location: SkillLocation::Claude,
-        skill_os: Os::ALL,
         hook: HookInstall::Runtime(HookDialect::ClaudeCode),
         herdr: HerdrIntegration {
             name: "claude",
@@ -59,7 +58,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         aliases: &[],
         executables: &["codex"],
         skill_location: SkillLocation::Shared,
-        skill_os: Os::ALL,
         hook: HookInstall::Runtime(HookDialect::Codex),
         herdr: HerdrIntegration {
             name: "codex",
@@ -105,7 +103,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         aliases: &[],
         executables: &["grok"],
         skill_location: SkillLocation::Shared,
-        skill_os: Os::ALL,
         hook: HookInstall::Guidance(GuidanceDialect::Grok),
         herdr: HerdrIntegration {
             name: "grok",
@@ -150,7 +147,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         aliases: &[],
         executables: &["opencode"],
         skill_location: SkillLocation::Shared,
-        skill_os: Os::ALL,
         hook: HookInstall::Plugin(PluginDialect::OpenCode),
         herdr: HerdrIntegration {
             name: "opencode",
@@ -198,7 +194,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         aliases: &[],
         executables: &["pi"],
         skill_location: SkillLocation::Shared,
-        skill_os: Os::ALL,
         hook: HookInstall::Plugin(PluginDialect::Pi),
         herdr: HerdrIntegration {
             name: "pi",
@@ -247,7 +242,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         aliases: &[],
         executables: &["omp"],
         skill_location: SkillLocation::Shared,
-        skill_os: Os::ALL,
         hook: HookInstall::Plugin(PluginDialect::Omp),
         herdr: HerdrIntegration {
             name: "omp",
@@ -296,7 +290,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         aliases: &[],
         executables: &["cursor-agent"],
         skill_location: SkillLocation::Shared,
-        skill_os: Os::ALL,
         hook: HookInstall::Guidance(GuidanceDialect::Cursor),
         herdr: HerdrIntegration {
             name: "cursor",

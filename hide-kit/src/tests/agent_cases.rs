@@ -613,19 +613,6 @@ fn a_program_on_the_login_shells_path_is_installed_and_the_shell_is_asked_again_
 }
 
 #[test]
-fn the_switch_works_while_either_the_skill_or_the_hook_does_here() {
-    use crate::agents::availability;
-    assert_eq!(availability(false, true, true), Availability::NotInstalled);
-    assert_eq!(availability(true, true, false), Availability::Available);
-    // A system with no documented skill folder but a working hook.
-    assert_eq!(availability(true, false, true), Availability::Available);
-    assert_eq!(
-        availability(true, false, false),
-        Availability::UnsupportedSystem
-    );
-}
-
-#[test]
 fn a_machine_the_kit_has_never_touched_waits_for_the_first_choice_before_any_agent_gets_anything() {
     let fixture = Fixture::fresh();
     install(&fixture, "codex", ".codex");
