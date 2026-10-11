@@ -32,7 +32,14 @@ The gallery also renders production screens on synthetic scenes, one document pe
 Its query takes `theme` (`light`, `dark`), `width` (the sidebar's CSS width, seeded as the core's `ui_state.sidebar_width`), `scale` (the interface text scale, which reaches only what lies outside the sidebar, since the sidebar keeps its sizes at every scale) and `content` (`reference`, or `long` for long Korean titles).
 `/gallery?scene=factory` is the shell's real `Sidebar` beside the real `FactoryScreen` over `web/src/gallery/factorySceneData.ts`, a `FactorySummary` of two Factories with the content `Screen / Factory` draws; the scene answers the screen's requests as the engine does (the settings tab's `config` read, and an answer, merge, retry or cancel taking its item off 내 차례).
 Its query takes `theme` (`light`, `dark`), `tab` (`turn`, `board`, `graph`, `settings`), `task` (a Task id such as `t-412`, which opens that Task's page) and `content` (`reference`, or `long` for a long Korean title and a long issue number).
+`/gallery?scene=onboarding` is the shell's real `Sidebar` and Home behind the real first-run wizard, start panel or Settings sheet over a synthetic This Mac with the seven agents and a stand-in desktop host (`web/src/gallery/OnboardingScene.tsx`), with the content `Screen / Onboarding` draws.
+Its query takes `theme` (`light`, `dark`), `state` (the step and what is open or answered, from `agents` to `settings-blocked`; `ONBOARDING_STATES` lists them), `system` (`mac`, `windows`, `linux`) and `content` (`reference`, or `long` for the Korean copy); the root carries `data-scene-ready` once the presses a state needs have landed.
 Every name, path and count in a scene is invented example data, so a capture of it is safe to publish.
+
+Onboarding is `Screen / Onboarding`, built by `onboardingBoards` in `scripts/pen-screens-onboarding.mjs`.
+It draws the first run as one board per subject, each in both themes: the wizard as a dialog over the dimmed shell, step 1 with its tiles, What changes and its failed, no-agent and reopened states, step 2 in every answer on macOS, Windows and Linux, step 3, the start panel it closes into, the empty Home, the sidebar's Add project on the Projects label, Settings > General Notifications on each system, the one-time line on Factory, the startup and failure screen, and the longest copy (Korean at the largest text, Light only).
+Each board's themed frame keeps the node id of the approved bundle (`<board>-light`, `<board>-dark`), so a design review exports the same node from the committed file.
+Its web files are `web/src/FirstRunWizard.tsx`, `web/src/NotificationControls.tsx`, `web/src/firstRun.ts`, `web/src/StartPanel.tsx`, `web/src/MainScreen.tsx`, `web/src/sidebar.tsx`, `web/src/settings/GeneralTab.tsx`, `web/src/ScreenIntro.tsx` and `desktop/static/status.css`.
 
 ## The flow: scratch to one PR
 
@@ -86,9 +93,11 @@ A design change is judged against the design that was chosen, not against whatev
 The `workspace-servers` and `session-search` gallery scenes render the production Workspace toolbar and Sessions screen with invented local history and reachable-address fixtures.
 A frame may name `referenceNode` when the approved scratch uses a different node ID; baseline exports that reference node while review exports the committed `node`, retaining both identities and their actual dimensions in the comparison.
 A target in `design/review-targets.json` names what one run covers: the committed Pen file and its `Screen /` sheet, the Pen nodes it pairs with the screen and each node's width, theme, text scale, content and state, the gallery scene, the states the scene can be put in, the conditions to measure, the default layout rules, and the questions left to a person.
-Targets exist for `projects-sidebar`, `workspace-servers`, `session-search`, `area-focus` and `factory`, and `design/review-targets.json` is the inventory; add one when a change touches another screen, not before.
+Targets exist for `projects-sidebar`, `workspace-servers`, `session-search`, `area-focus`, `factory` and `first-run-onboarding`, and `design/review-targets.json` is the inventory; add one when a change touches another screen, not before.
 `factory` pairs the Light and Dark `Screen / Factory` windows with the Factory scene's 라인, graph and Task page states, takes the delegated proposal's Light picture e3 as the graph's reference of both themes (the 라인 and Task page frames are their own reference), and measures the screen with `web/e2e/factory-geometry.mjs` (no overlapping parts, no sideways overflow).
-Its selector is the scene root, not `[data-factory-screen]`, because the Pen frame is the whole window and a comparison image has to be as wide as its frame.
+Its selector is the scene root, not `[data-factory-screen]`, because the Pen frame is the whole window and a comparison image has to be as wide as its frame; `[data-factory-screen]` is its `readySelector`, what a capture waits for after the scene loads.
+A target's `urlStates` lists the states its scene sets up from its address (`state=<name>`), or maps each state to the query it sets, as `first-run-onboarding` does to put a state on Windows or Linux.
+`first-run-onboarding` pairs the approved boards (PRD first-run-onboarding D-20, D-27) with the onboarding scene at rest and captures every state the scene draws in the state sheets, since one board draws several states; it measures the wizard with `web/e2e/onboarding-geometry.mjs` (no overlapping parts, no sideways overflow).
 `area-focus` measures the production shared area renderer and View tabs with read-only Korean content, enforcing one keyboard area, retained selections, stable geometry and unfiltered content; real terminal and native browser behavior still requires an isolated app capture.
 
 ### Keep the chosen design: `baseline`
@@ -198,9 +207,6 @@ Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
 
 Palette is `Screen / Palette`.
 It draws the sidebar's Search icon with its `Search ⌘K` hint, the ⌘K palette's wide list-and-detail layout with its relation list, grouped results, collapsed, no-match and GitHub states, and the ⌘P file palette on the same shell.
-`/gallery?scene=agent-onboarding&theme=light|dark` is the first-run agent choice over a synthetic local device that lists the seven supported agents (`web/src/gallery/AgentOnboardingScene.tsx`).
-`Screen / Onboarding` (built by `buildOnboarding` in `scripts/pen-screens.mjs`) is stale against it: it draws the removed 20-adapter grid of tiles and has no `Hide AI uses ...` line under Apply.
-The gallery scene is the current picture until that sheet is redrawn.
 `/gallery?scene=search-palette` is the real ⌘K over `web/src/gallery/cmdkSceneData.ts` (`front=agent|agent-short|terminal|none`, `github=results|pending|failed|empty`), which answers `github_search` as the core would.
 Its web files are `web/src/Palette.tsx`, `web/src/SearchPalette.tsx`, `web/src/search.ts`, and `web/src/components/sidebar-header.tsx`.
 
@@ -218,6 +224,7 @@ Projects Sidebar is `Screen / Projects Sidebar`.
 It draws the sidebar that follows the device rail.
 The rail is its full-height left column with This Mac and each registered device as 32 tiles with no name under them (the laptop glyph or the device's monogram), and `+` directly under the last tile; the selected tile is ringed, one mark at a tile's top-right shows the most urgent state (the Needs You count, `9+` from ten, else a dot for unseen Done), Working has no mark, and an unreachable device dims its glyph and wears a cross at the bottom-right with no mark.
 The rest frame is This Mac in front: a header line with the device name, Add project and Search, the shared Overview row with its count and shortcut, then the single sidebar's Needs You and Done groups, the Home row with the project count (`+` under the pointer, drawn beside it), the agents that belong to no project, and Projects.
+The committed sheet still draws Add project in the header line; the code puts it on the Projects title (PRD first-run-onboarding D-27), as `Screen / Onboarding` board 17 draws, until this sheet is redrawn.
 Five more frames draw the Agents tab (this device's agents by state with the three counts above, no device chip), a remote device in front with the `9+` pill and its Needs You past the cap (five rows and `More 7`), a device that is not connected (its name, `연결 안 됨` and one reconnect action, no tree), the one-device window (the rail with This Mac alone), and the rail hidden (the name with a chevron over the open device menu).
 In the list, pinned and activity-ordered projects contain checkout rows with their kind glyph, age and agent line, an opened checkout's agent rows, and both inactive folds.
 The shared Overview row owns selection on its page or modal; there is no per-project Overview child.

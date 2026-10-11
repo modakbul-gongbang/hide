@@ -334,6 +334,7 @@
     "sheet": "screen-factory",
     "scene": "factory",
     "selector": "[data-gallery-scene=\"factory\"]",
+    "readySelector": "[data-factory-screen]",
     "measurement": "web/e2e/factory-geometry.mjs",
     "frames": [
       {
@@ -428,6 +429,7 @@
     "sheet": "screen-factory",
     "scene": "factory",
     "selector": "[data-gallery-scene=\"factory\"]",
+    "readySelector": "[data-factory-screen]",
     "measurement": "web/e2e/factory-geometry.mjs",
     "frames": [
       {
@@ -515,6 +517,7 @@
     "sheet": "screen-factory",
     "scene": "factory",
     "selector": "[data-gallery-scene=\"factory\"]",
+    "readySelector": "[data-factory-screen]",
     "measurement": "web/e2e/factory-geometry.mjs",
     "frames": [
       {
@@ -668,6 +671,379 @@
       "Do the three mode cards and the table say who answers each kind of decision without reading a paragraph?",
       "With Hide AI off or the day's use full, is it plain that every decision comes to the person?",
       "On the worker pick, is Factory AI's pick and its reason one quiet line under what it explains?"
+    ]
+  },
+  "first-run-onboarding": {
+    "description": "The first run (PRD first-run-onboarding D-20, D-27): the three-step wizard over the dimmed shell in every state its steps carry, the start panel it closes into, the empty Home with Add project on the Projects label, and Settings > General Notifications on each system.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-onboarding",
+    "scene": "onboarding",
+    "selector": "[data-gallery-scene=\"onboarding\"]",
+    "readySelector": "[data-gallery-scene=\"onboarding\"][data-scene-ready]",
+    "measurement": "web/e2e/onboarding-geometry.mjs",
+    "frames": [
+      {
+        "node": "b01a-frame-A-dark",
+        "theme": "dark",
+        "width": 1328,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b01a-frame-A-light",
+        "theme": "light",
+        "width": 1328,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b02-step1-agents-dark",
+        "theme": "dark",
+        "width": 1400,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b02-step1-agents-light",
+        "theme": "light",
+        "width": 1400,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b03-step2-notifications-dark",
+        "theme": "dark",
+        "width": 1400,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b03-step2-notifications-light",
+        "theme": "light",
+        "width": 1400,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b04-step3-project-dark",
+        "theme": "dark",
+        "width": 1328,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b04-step3-project-light",
+        "theme": "light",
+        "width": 1328,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b05-start-panel-dark",
+        "theme": "dark",
+        "width": 1328,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b05-start-panel-light",
+        "theme": "light",
+        "width": 1328,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b06-empty-home-dark",
+        "theme": "dark",
+        "width": 1328,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b06-empty-home-light",
+        "theme": "light",
+        "width": 1328,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b07-settings-notifications-dark",
+        "theme": "dark",
+        "width": 1512,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b07-settings-notifications-light",
+        "theme": "light",
+        "width": 1512,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b08-first-visit-line-dark",
+        "theme": "dark",
+        "width": 948,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b08-first-visit-line-light",
+        "theme": "light",
+        "width": 948,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b09-startup-dark",
+        "theme": "dark",
+        "width": 1872,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b09-startup-light",
+        "theme": "light",
+        "width": 1872,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b10-longest-copy-ko-light",
+        "theme": "light",
+        "width": 1400,
+        "scale": 1.31,
+        "content": "long",
+        "state": "rest"
+      },
+      {
+        "node": "b11-linux-step2-on-dark",
+        "theme": "dark",
+        "width": 1400,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b11-linux-step2-on-light",
+        "theme": "light",
+        "width": 1400,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b12-linux-no-notification-service-dark",
+        "theme": "dark",
+        "width": 736,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b12-linux-no-notification-service-light",
+        "theme": "light",
+        "width": 736,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b13-settings-notifications-pc-dark",
+        "theme": "dark",
+        "width": 1512,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b13-settings-notifications-pc-light",
+        "theme": "light",
+        "width": 1512,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b14-empty-home-pc-dark",
+        "theme": "dark",
+        "width": 1328,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b14-empty-home-pc-light",
+        "theme": "light",
+        "width": 1328,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b15-step1-windows-dark",
+        "theme": "dark",
+        "width": 1328,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b15-step1-windows-light",
+        "theme": "light",
+        "width": 1328,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b17-sidebar-add-project-dark",
+        "theme": "dark",
+        "width": 2632,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      },
+      {
+        "node": "b17-sidebar-add-project-light",
+        "theme": "light",
+        "width": 2632,
+        "scale": 1,
+        "content": "reference",
+        "state": "rest"
+      }
+    ],
+    "conditions": {
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "widths": [
+        1328
+      ],
+      "contents": [
+        "reference",
+        "long"
+      ]
+    },
+    "urlStates": {
+      "agents-changes": {
+        "state": "agents-changes"
+      },
+      "agents-failed": {
+        "state": "agents-failed"
+      },
+      "agents-none": {
+        "state": "agents-none"
+      },
+      "agents-setup": {
+        "state": "agents-setup"
+      },
+      "agents-windows": {
+        "state": "agents",
+        "system": "windows"
+      },
+      "notifications": {
+        "state": "notifications"
+      },
+      "notifications-asking": {
+        "state": "notifications-asking"
+      },
+      "notifications-on": {
+        "state": "notifications-on"
+      },
+      "notifications-blocked": {
+        "state": "notifications-blocked"
+      },
+      "notifications-unreadable": {
+        "state": "notifications-unreadable"
+      },
+      "notifications-no-service": {
+        "state": "notifications-no-service",
+        "system": "linux"
+      },
+      "project": {
+        "state": "project"
+      },
+      "start-panel": {
+        "state": "start-panel"
+      },
+      "start-panel-signed-out": {
+        "state": "start-panel-signed-out"
+      },
+      "home-no-project": {
+        "state": "home-no-project"
+      },
+      "home-no-agent": {
+        "state": "home-no-agent"
+      },
+      "home-no-project-windows": {
+        "state": "home-no-project",
+        "system": "windows"
+      },
+      "settings-on": {
+        "state": "settings-on"
+      },
+      "settings-off": {
+        "state": "settings-off"
+      },
+      "settings-blocked": {
+        "state": "settings-blocked"
+      },
+      "settings-on-windows": {
+        "state": "settings-on",
+        "system": "windows"
+      }
+    },
+    "states": {
+      "rest": "Step 1 at rest: the seven tiles, What changes folded, the Hide AI line beside Continue (boards 01, 02).",
+      "agents-changes": "Step 1 with What changes open: one row per path with the agents that share it, then the hide command (board 02).",
+      "agents-failed": "Step 1 after Continue failed for Codex: the reason line and Try again (board 02, B12).",
+      "agents-none": "Step 1 with no agent installed: one line and two install links (board 02, B9).",
+      "agents-setup": "Step 1 reopened from Help > Set up Hide, with its close button (board 02, B46).",
+      "agents-windows": "Step 1 on Windows: OpenCode and Cursor read Not on Windows yet, Continue reads Ctrl+Enter (board 15).",
+      "notifications": "Step 2 on macOS before anything is pressed (board 03).",
+      "notifications-asking": "Step 2 while macOS asks (board 03, B14).",
+      "notifications-on": "Step 2 with notifications on (board 03, B15).",
+      "notifications-blocked": "Step 2 while macOS blocks Hide (board 03, B15).",
+      "notifications-unreadable": "Step 2 when the setting cannot be read (board 03, B17).",
+      "notifications-no-service": "Step 2 on Linux with no notification service (board 12, B48).",
+      "project": "Step 3, the first project (board 04).",
+      "start-panel": "The start panel the wizard closes into, on a signed-in agent (board 05).",
+      "start-panel-signed-out": "The start panel on an agent that is not signed in (board 05, B23).",
+      "home-no-project": "Empty Home with no project, and the + on the Projects label (boards 06, 17).",
+      "home-no-agent": "Empty Home with a project and no agent (board 06).",
+      "home-no-project-windows": "Empty Home on Windows, with its shortcut labels (board 14).",
+      "settings-on": "Settings > General with notifications on and allowed (board 07).",
+      "settings-off": "Settings > General with notifications off (board 07).",
+      "settings-blocked": "Settings > General while macOS blocks Hide (board 07).",
+      "settings-on-windows": "Settings > General on Windows with the Test notification row (board 13)."
+    },
+    "rules": {
+      "noOverlap": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Each board draws several states at once and the bundle pairs it with the scene at rest; the state sheets hold every state the scene draws. Do the built steps, the start panel, the empty Home and the Settings rows carry the spacing, weight, color and alignment of their boards in both themes?",
+      "The startup and failure screen (board 09) and the Factory line (board 08) are not on this scene; they are checked against their boards from the desktop app and the Factory scene."
     ]
   }
 }

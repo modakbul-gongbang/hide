@@ -7,7 +7,7 @@
 // what the host would answer. One scene fills one document, because the
 // stores it seeds are the app's singletons.
 
-import { useLayoutEffect, useMemo } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { FirstRunWizard, useSetupWalk } from "../FirstRunWizard";
@@ -178,16 +178,21 @@ export function OnboardingScene({ theme, state, system, language }: OnboardingSc
     useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" }, overviewOpen: false } as never);
   }, [state, system]);
 
+  // Set once the presses below have landed and a frame has drawn them, so a capture waits for it.
+  const [ready, setReady] = useState(false);
   // What a screen shows only after the operator opens or presses something.
   useLayoutEffect(() => {
+    setReady(false);
+    const settle = () => requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)));
     // A dialog's content mounts in its portal a frame later, so a press waits for its control.
     const click = (selector: string, then?: () => void) => {
       let frames = 60;
       const press = () => {
         const control = document.querySelector(selector) as HTMLElement | null;
-        if (!control) return void (frames-- > 0 && requestAnimationFrame(press));
+        if (!control) return void (frames-- > 0 ? requestAnimationFrame(press) : settle());
         control.click();
         then?.();
+        settle();
       };
       press();
     };
@@ -198,6 +203,7 @@ export function OnboardingScene({ theme, state, system, language }: OnboardingSc
     if (state === "agents-changes") click('[data-first-run-what-changes][aria-expanded="false"]');
     // The pass that took the press has landed.
     if (state === "agents-failed") click("[data-onboarding-apply]", () => useShellStore.setState((current) => ({ revision: current.revision + 1 }) as never));
+    if (state !== "agents-changes" && state !== "agents-failed") settle();
   }, [state]);
 
   useLayoutEffect(() => {
@@ -213,7 +219,7 @@ export function OnboardingScene({ theme, state, system, language }: OnboardingSc
 
   return (
     <TooltipProvider>
-      <div className="flex h-full bg-background text-foreground" data-gallery-scene="onboarding" data-scene-state={state} data-scene-system={system}>
+      <div className="flex h-full bg-background text-foreground" data-gallery-scene="onboarding" data-scene-state={state} data-scene-system={system} data-scene-ready={ready ? "true" : undefined}>
         <Sidebar actions={actions} />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           <OverviewPage actions={actions} />
