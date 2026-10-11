@@ -883,3 +883,68 @@ fn a_node_s_merged_worktree_is_removed_on_the_node_and_a_changed_one_is_refused(
         own.calls.lock().unwrap()
     );
 }
+
+/// A Factory on a node's project keeps its Local issues where that
+/// project's board reads them, under the node's id: its new issue continues
+/// the node project's numbers and shows on its Issues, and its marker finds
+/// that issue again; a project of this machine at the same path keeps its
+/// own issues untouched.
+#[test]
+fn a_factory_on_a_node_project_keeps_its_local_issues_under_the_node() {
+    use hide_factory::project::IssueBook;
+    let repo = repo(None, "feature");
+    let mut store = crate::local_issues::LocalIssueStore::default();
+    store
+        .projects
+        .insert(repo.root.clone(), local_project(&[(1, "this machine's")]));
+    store
+        .devices
+        .entry(NODE.to_owned())
+        .or_default()
+        .insert(repo.root.clone(), local_project(&[(4, "moved")]));
+    let shared = node_runtime(&repo, FakeDevice::new(), Recording::of(None), store);
+    let mut book = crate::factory::CoreIssues {
+        runtime: shared.weak(),
+    };
+    let number = book
+        .create(
+            Some(NODE),
+            &repo.root,
+            "Factory task",
+            "body <!-- f-1/t-1 -->",
+            "f-1/t-1",
+        )
+        .unwrap();
+    assert_eq!(number, 5);
+    assert_eq!(
+        book.create(Some(NODE), &repo.root, "again", "other body", "f-1/t-1")
+            .unwrap(),
+        5,
+        "the marker finds the issue it made"
+    );
+    assert_eq!(
+        book.read(Some(NODE), &repo.root, 5).unwrap().title,
+        "Factory task"
+    );
+    let runtime = shared.lock().unwrap();
+    assert_eq!(
+        task_ids(node_project(&runtime).unwrap()),
+        [
+            ("L-5".to_owned(), "Factory task".to_owned(), true),
+            ("L-4".to_owned(), "moved".to_owned(), true),
+        ]
+    );
+    let own = runtime
+        .local_issues
+        .as_ref()
+        .unwrap()
+        .project(None, &repo.root)
+        .unwrap();
+    assert_eq!(
+        own.issues
+            .iter()
+            .map(|issue| issue.title.as_str())
+            .collect::<Vec<_>>(),
+        ["this machine's"]
+    );
+}

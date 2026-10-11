@@ -85,6 +85,7 @@ struct Book(BTreeMap<u32, (String, String)>);
 impl IssueBook for Book {
     fn create(
         &mut self,
+        _machine: Option<&str>,
         _project: &str,
         title: &str,
         body: &str,
@@ -97,7 +98,12 @@ impl IssueBook for Book {
         self.0.insert(n, (title.into(), body.into()));
         Ok(n)
     }
-    fn read(&mut self, _project: &str, number: u32) -> Result<IssueText, Failure> {
+    fn read(
+        &mut self,
+        _machine: Option<&str>,
+        _project: &str,
+        number: u32,
+    ) -> Result<IssueText, Failure> {
         let (title, body) = self
             .0
             .get(&number)

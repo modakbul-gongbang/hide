@@ -224,10 +224,17 @@ impl FakeGh {
 
 struct NoIssues;
 impl IssueBook for NoIssues {
-    fn create(&mut self, _: &str, _: &str, _: &str, _: &str) -> Result<u32, Failure> {
+    fn create(
+        &mut self,
+        _: Option<&str>,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<u32, Failure> {
         unreachable!("a GitHub Factory never writes local issues")
     }
-    fn read(&mut self, _: &str, _: u32) -> Result<IssueText, Failure> {
+    fn read(&mut self, _: Option<&str>, _: &str, _: u32) -> Result<IssueText, Failure> {
         unreachable!()
     }
 }
