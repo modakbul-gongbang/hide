@@ -2518,6 +2518,10 @@ fn write_record(path: &std::path::Path, value: &Value) -> Result<()> {
 fn a_moved_machine_s_project_keeps_its_issues_through_the_move_and_back() -> Result<()> {
     let fixture = Fixture::start()?;
     let journey = (|| {
+        // A window open on the core, as the operator's is: a core reads a
+        // project's GitHub only while a window is attached to it.
+        let window = fixture.window();
+        let _open = Renderer::window(window.0, &window.1)?;
         // A Git project on the source whose checkout's branch names L-1.
         let app = fixture.source.home().join("app");
         std::fs::create_dir(&app)?;
@@ -2551,18 +2555,18 @@ fn a_moved_machine_s_project_keeps_its_issues_through_the_move_and_back() -> Res
             "create_workspace",
             json!({"path": app, "label": "App", "initialize_git": false}),
         )?;
-        // A project's source is GitHub until a GitHub read says the
-        // repository has no GitHub remote; the operator's Issue source menu
-        // picks Local without waiting for one.
-        fixture.event(
-            "issue_source_set",
-            json!({"project_path": app, "source": "local"}),
-        )?;
         let app_id = wait_for("the app project with a Local source", || {
             let snapshot = fixture.snapshot()?;
             Ok(app_project(&snapshot, None, &app)
                 .filter(|project| project.pointer("/tasks/source/kind") == Some(&json!("local")))
                 .and_then(|project| project["id"].as_str().map(str::to_owned)))
+        })
+        .with_context(|| {
+            let shown = fixture.snapshot().map(|snapshot| {
+                app_project(&snapshot, None, &app)
+                    .map(|project| json!({"is_git": project["is_git"], "tasks": project["tasks"], "github": project.pointer("/checkouts/0/github")}))
+            });
+            format!("app: {shown:?}")
         })?;
         fixture.event(
             "issue_create",
@@ -2615,6 +2619,8 @@ fn a_moved_machine_s_project_keeps_its_issues_through_the_move_and_back() -> Res
             Ok((fixture.role()? == "core").then_some(()))
         })?;
         fixture.device_ready()?;
+        let window = fixture.window();
+        let _back = Renderer::window(window.0, &window.1)?;
         wait_for("both issues back on this machine's core", || {
             let snapshot = fixture.snapshot()?;
             Ok(app_project(&snapshot, None, &app)
