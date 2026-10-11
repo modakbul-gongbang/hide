@@ -64,6 +64,10 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - name: Fetch main's history for the build order
+        # The packager counts the build's place in main's history
+        # (desktop/scripts/package.mjs), which a shallow checkout cannot.
+        run: git fetch --quiet --unshallow origin +refs/heads/main:refs/remotes/origin/main
       - name: Package the ad-hoc signed app and its checksum
         # The version is the tag; the packager builds the release binaries,
         # fetches the pinned Herdr and refuses when any of them cannot run.
