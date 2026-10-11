@@ -1,12 +1,12 @@
 import { emptyScope } from "../test/legacyAgentScope";
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, Profiler } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { translate } from "./i18n/client";
-import { issuePlace, StartIssueDialog } from "./IssueDialogs";
+import { issuePlace, NewIssueDialog, StartIssueDialog } from "./IssueDialogs";
 import type { BackgroundAi, Device, Task, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import type { DispatchFn } from "./ws";
@@ -79,4 +79,33 @@ it("names the machine of a node's project in New issue's list, so two projects a
   const node = { ...own, id: "ws-node", device_id: "macbook-node", remote_target_id: "macbook-node" } as Workspace;
   expect(issuePlace(own, devices, translate)).toBe("herdr-ide · Local");
   expect(issuePlace(node, devices, translate)).toBe("herdr-ide · Local · MacBook");
+});
+
+it("draws New issue again for a project change, not for a snapshot change it does not read", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
+  const own = { ...workspace, label: "herdr-ide", remote_target_id: null } as Workspace;
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const saved = useShellStore.getState();
+  let draws = 0;
+  await act(async () => {
+    useShellStore.setState({ connection: "live", rest: { navigator: { workspaces: [own], devices: [] }, status: {} } } as never);
+    root.render(
+      <Profiler id="new-issue" onRender={() => { draws += 1; }}>
+        <TooltipProvider>
+          <NewIssueDialog actions={createActions(() => true)} workspace={own} onClose={() => {}} />
+        </TooltipProvider>
+      </Profiler>,
+    );
+  });
+  const settled = draws;
+  const rest = useShellStore.getState().rest!;
+  await act(async () => { useShellStore.setState({ rest: { ...rest, task_operation: { phase: "working" } } } as never); });
+  expect(draws).toBe(settled);
+  await act(async () => { useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [{ ...own, label: "renamed" }] } } } as never); });
+  expect(draws).toBeGreaterThan(settled);
+  await act(async () => root.unmount());
+  useShellStore.setState(saved, true);
 });

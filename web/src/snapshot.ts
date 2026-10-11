@@ -1667,10 +1667,12 @@ export function focusedCheckout(rest: SnapshotRest | null): Checkout | null {
  * scoped, so one id never names checkouts on two machines.
  */
 export function catalogWorkspaces(rest: SnapshotRest | null): Workspace[] {
-  return [
-    ...(rest?.navigator?.workspaces ?? []),
-    ...(rest?.status?.remote ?? []).flatMap((remote) => remote.session?.workspaces ?? []),
-  ];
+  return catalogOf(rest?.navigator?.workspaces, rest?.status?.remote);
+}
+
+/** `catalogWorkspaces` from the two fields it reads, for a component that subscribes to those alone. */
+export function catalogOf(workspaces: Workspace[] | undefined, remote: RemoteStatus[] | undefined): Workspace[] {
+  return [...(workspaces ?? []), ...(remote ?? []).flatMap((row) => row.session?.workspaces ?? [])];
 }
 
 export function checkoutById(rest: SnapshotRest | null, id: string): Checkout | null {

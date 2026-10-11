@@ -21,7 +21,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { Note, Status } from "./components/settings-rows";
 import { defaultWorktreeName, firstPrompt, namePrefix } from "./issueStart";
 import { cn } from "./lib/utils";
-import { catalogWorkspaces, localDeviceId, type Device, type IssueSettings, type Task, type Workspace } from "./snapshot";
+import { catalogOf, localDeviceId, type Device, type IssueSettings, type Task, type Workspace } from "./snapshot";
 import { machineName } from "./screenMachine";
 import { hideAiCanAnswer } from "./hideAi";
 import { useShellStore } from "./store";
@@ -99,9 +99,10 @@ export function issuePlace(workspace: Workspace, devices: readonly Device[] | un
  */
 export function NewIssueDialog({ actions, workspace, onClose }: { actions: Actions; workspace: Workspace; onClose: () => void }) {
   const { t } = useInterfaceTranslation();
-  const rest = useShellStore((s) => s.rest);
-  const projects = useMemo(() => issueProjects(catalogWorkspaces(rest)), [rest]);
-  const devices = rest?.navigator?.devices;
+  const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
+  const remote = useShellStore((s) => s.rest?.status?.remote);
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
+  const projects = useMemo(() => issueProjects(catalogOf(workspaces, remote)), [workspaces, remote]);
   const [projectId, setProjectId] = useState(workspace.id);
   const project = projects.find((row) => row.id === projectId) ?? null;
   const [title, setTitle] = useState("");

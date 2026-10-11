@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, Profiler } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "../actions";
@@ -85,4 +85,30 @@ it("keeps the gh row as it was on the core's own machine, a node dialing in or n
   expect(q("[data-github-fix-on]")).toBeNull();
   expect(q("[data-issue-github-reason]")?.textContent).toBe("run gh auth login");
   await unmount();
+});
+
+it("draws the tab again for a project change, not for a snapshot change it does not read", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const saved = useShellStore.getState();
+  let draws = 0;
+  await act(async () => {
+    useShellStore.setState(signedOut() as never);
+    root.render(
+      <Profiler id="general" onRender={() => { draws += 1; }}>
+        <TooltipProvider><GeneralTab actions={createActions(() => true)} /></TooltipProvider>
+      </Profiler>,
+    );
+  });
+  const settled = draws;
+  const rest = useShellStore.getState().rest!;
+  await act(async () => { useShellStore.setState({ rest: { ...rest, task_operation: { phase: "working" } } } as never); });
+  expect(draws).toBe(settled);
+  await act(async () => { useShellStore.setState({ rest: { ...rest, navigator: { ...rest.navigator, workspaces: [] } } } as never); });
+  expect(draws).toBeGreaterThan(settled);
+  await act(async () => root.unmount());
+  useShellStore.setState(saved, true);
 });

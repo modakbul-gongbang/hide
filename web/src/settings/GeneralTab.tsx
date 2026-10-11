@@ -9,7 +9,7 @@ import { checkCommand } from "../coreMove";
 import { coreMachineAway } from "../screenMachine";
 import { diagnosticsText, environmentTone, githubAccess, githubAccessLine, herdrLine, herdrProtocolText, shownIn } from "../settings";
 import { readsHere } from "../devices";
-import { catalogWorkspaces } from "../snapshot";
+import { catalogOf } from "../snapshot";
 import { useShellStore } from "../store";
 import { AppearanceGroup } from "./AppearanceGroup";
 import { FixCommand } from "./FixCommand";
@@ -28,11 +28,12 @@ export function GeneralTab({ actions }: { actions: Actions }) {
 /** GitHub through `gh`: the state the core resolved across the Git projects it reads with its own login, and a way to read them again. */
 function ConnectionsGroup({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const rest = useShellStore((s) => s.rest);
-  const devices = rest?.navigator?.devices;
+  const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
+  const remote = useShellStore((s) => s.rest?.status?.remote);
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
   // The projects whose issues and pull requests are read with the core's `gh`:
   // its own Git projects and a node's that dials it, never a dialed device's.
-  const projects = catalogWorkspaces(rest).filter((workspace) => !workspace.is_home && workspace.is_git && readsHere(workspace, devices));
+  const projects = catalogOf(workspaces, remote).filter((workspace) => !workspace.is_home && workspace.is_git && readsHere(workspace, devices));
   const access = githubAccess(projects, devices);
   const coreMachine = coreMachineAway(devices, t);
   const line = access ? githubAccessLine(access, t, coreMachine) : null;
