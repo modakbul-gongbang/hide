@@ -247,6 +247,33 @@ it("a move back removes the node from the address, and an unfinished move leaves
   expect(addressAfterMove("#token=t&node=mbp", view("done", "forward", "mbp"))).toBeNull();
 });
 
+// Every role sends its move frame before the first snapshot: an idle one
+// holds no window, so a fresh window goes from connecting to live; a node
+// that holds its screens (`core_link`) does hold a window not drawn yet.
+it("an idle move frame before the first snapshot holds nothing, and a node holding its screens does", async () => {
+  const shell = connectShell({ onChunks: () => {} });
+  const first = made(0);
+  first.open();
+  const idle = { state: "idle", direction: null, device: null, node: null, sent: 0, total: 0, failed: [], step: null, cause: null, intent: null };
+  first.frame({ type: "core_move", payload: idle });
+  expect(useShellStore.getState().connection).not.toBe("moving");
+  first.frame({ type: "snapshot", payload: { revision: 1, rest: {} } });
+  expect(useShellStore.getState().connection).toBe("live");
+  first.closeWith(1006, "");
+  await Promise.resolve();
+  await vi.runOnlyPendingTimersAsync();
+
+  const held = made(1);
+  held.open();
+  held.frame({ type: "core_link", payload: { phase: "waiting", machine: null, alias: "mini" } });
+  held.frame({ type: "core_move", payload: idle });
+  expect(useShellStore.getState().connection).toBe("moving");
+  expect(shell.dispatch({ schema_version: 2, kind: "pane_input", payload: {} })).toBe(false);
+  held.frame({ type: "snapshot", payload: { revision: 1, rest: {} } });
+  expect(useShellStore.getState().connection).toBe("live");
+  shell.close();
+});
+
 // A move that is not under way leaves the window alone: a dropped socket
 // shows reconnecting, and a drawn window a frame held goes back to live when
 // the move turns out not to go ahead.
