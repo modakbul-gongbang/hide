@@ -15,6 +15,7 @@ pub mod cli_contract;
 pub mod core;
 pub mod delivery_cli;
 pub mod demand;
+pub mod desktop_notices;
 pub mod env;
 pub mod factory_cli;
 pub mod file_url;
@@ -419,6 +420,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         browser_routes.spawn_reaper(Arc::clone(&desktop_renderers), Arc::clone(&shutdown));
     let renderers = Arc::new(AtomicUsize::new(0));
     let start_demand = Arc::new(demand::ObservationDemand::default());
+    let desktop_notices = Arc::new(desktop_notices::DesktopNotices::default());
     let mobile = mobile::Mobile::start(mobile::Config {
         state_dir: env.state_dir.clone(),
         home: env.home.clone(),
@@ -432,6 +434,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         herdr_socket: env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
         renderers: Arc::clone(&renderers),
         start_demand: Arc::clone(&start_demand),
+        desktop: Arc::clone(&desktop_notices),
     });
     let app = AppState {
         core: Arc::clone(&core),
@@ -481,6 +484,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             "idle_secs": env.idle_secs,
         })),
         mobile: Arc::clone(&mobile),
+        desktop_notices,
         relay_grants: Arc::clone(&relay_grants),
         own_screens: Arc::new(Mutex::new(0)),
         pane_sizes: core.outputs.pane_sizes(),

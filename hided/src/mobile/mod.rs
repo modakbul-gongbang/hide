@@ -147,6 +147,9 @@ pub struct Config {
     pub renderers: Arc<AtomicUsize>,
     /// Which connections show a start surface; a phone's open start sheet is one.
     pub start_demand: Arc<crate::demand::ObservationDemand>,
+    /// The desktop windows' notifications, judged on the projection this
+    /// follower reads (`desktop_notices.rs`).
+    pub desktop: Arc<crate::desktop_notices::DesktopNotices>,
 }
 
 pub struct Mobile {
@@ -304,8 +307,17 @@ impl Mobile {
         inner.settings.enabled && !inner.phones.is_empty()
     }
 
+    /// The follower reads the core for the phones while Mobile is on with a
+    /// phone paired, and for the desktop windows while one has notifications
+    /// on, so the two share one snapshot read per burst.
     fn follower_active(&self) -> bool {
-        self.keep_alive()
+        self.keep_alive() || self.config.desktop.wanted()
+    }
+
+    /// A desktop window turned its notifications on: the follower starts if
+    /// it was resting, or seeds the windows' transitions on its next pass.
+    pub fn wake_follower(&self) {
+        self.wake.notify_one();
     }
 
     pub fn subscribe_frame(&self) -> watch::Receiver<Arc<Value>> {
@@ -1492,9 +1504,11 @@ impl Mobile {
         }
     }
 
-    /// Follows the core's snapshot while Mobile is on with a phone paired:
-    /// one read per notification burst, the phone projection republished
-    /// only when it changed, and push transitions judged on it.
+    /// Follows the core's snapshot while Mobile is on with a phone paired or
+    /// a desktop window has notifications on: one read per notification
+    /// burst, the phone projection republished only when it changed, and the
+    /// phones' and the desktop windows' transitions judged on it, each only
+    /// while its own side wants it.
     async fn follow(self: Arc<Self>) {
         let mut changes = self.config.core.notify.subscribe();
         let mut stopping = self.stopping.subscribe();
@@ -1580,13 +1594,29 @@ impl Mobile {
                                     true
                                 }
                             });
-                            if changed {
+                            if changed && self.keep_alive() {
                                 let (notices, seen) = transitions.observe(&next);
                                 self.deliver(notices, seen, &next);
+                            }
+                            if changed && self.config.desktop.wanted() {
+                                self.config.desktop.observe(&next);
                             }
                         }
                     }
                 }
+            }
+            // While the follower runs for one side only, the other's
+            // transitions wait unseeded; once it is wanted, what this follower
+            // last read seeds them, so a wait that began unwatched is never
+            // announced late (B33).
+            if !self.keep_alive() {
+                transitions.reset();
+            } else if cursor != 0 && !transitions.seeded() {
+                transitions.observe(&self.projection.borrow());
+            }
+            if cursor != 0 && self.config.desktop.seed_pending() {
+                let current = Arc::clone(&self.projection.borrow());
+                self.config.desktop.observe(&current);
             }
             tokio::select! {
                 changed = changes.recv() => {

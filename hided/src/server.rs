@@ -116,6 +116,8 @@ pub struct AppState {
     pub daemon_info: Arc<Value>,
     /// Settings > Mobile and the phones it pairs (`mobile/`).
     pub mobile: Arc<crate::mobile::Mobile>,
+    /// The desktop windows' agent notifications (`desktop_notices.rs`).
+    pub desktop_notices: Arc<crate::desktop_notices::DesktopNotices>,
     /// The grants this core handed linked nodes' screen relays (`relay`).
     pub relay_grants: Arc<crate::attach::RelayGrants>,
     /// Windows of this machine open now (`OwnScreen`).
@@ -813,6 +815,9 @@ async fn screen_loop(
         client_gone(&state, connection, renderer, desktop);
         return;
     }
+    // A desktop window shows the agent notifications (`agent_notice`); a
+    // browser tab never does (PRD first-run-onboarding D-14).
+    let mut agent_notices = state.desktop_notices.subscribe();
     // Settings > Mobile reads one `mobile` frame, sent now and on each change.
     let mut mobile_frames = state.mobile.subscribe_frame();
     if renderer {
@@ -928,6 +933,24 @@ async fn screen_loop(
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
                 }
             }
+            notice = agent_notices.recv(), if desktop => {
+                match notice {
+                    Ok(frame) => {
+                        if socket.send(Message::Text(frame.as_ref().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    // A window that fell behind misses those notifications;
+                    // the next change is announced as usual.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
+                        herdr_core::diagnostic!(json!({
+                            "component": "desktop_notices", "kind": "agent_notice.lagged",
+                            "connection": connection, "missed": missed,
+                        }));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
+                }
+            }
             changed = mobile_frames.changed(), if renderer => {
                 if changed.is_err() {
                     break;
@@ -969,7 +992,7 @@ async fn screen_loop(
                             }
                             continue;
                         }
-                        match handle_client_text(&state, &text, connection) {
+                        match handle_client_text(&state, &text, connection, desktop) {
                             Ok(ClientAction::FileBytes(event)) => {
                                 if let Some(device) = event_device(&state.boundary, &event) {
                                     let slot = relay.as_ref().map(RelayScreen::slot);
@@ -1693,6 +1716,7 @@ fn handle_client_text(
     state: &AppState,
     text: &str,
     connection: u64,
+    desktop: bool,
 ) -> Result<ClientAction, String> {
     let value: Value =
         serde_json::from_str(text).map_err(|error| format!("client json: {error}"))?;
@@ -1764,6 +1788,24 @@ fn handle_client_text(
             let (pane, size, new_view) = terminal_view(&event)?;
             let shown = state.pane_sizes.view(connection, &pane, size);
             state.core.terminals.view(&pane, shown, new_view);
+            return Ok(ClientAction::Replies(Vec::new()));
+        }
+        // A desktop window says whether its notifications are on; the daemon
+        // judges agent changes for it only then (`desktop_notices.rs`).
+        Some("desktop_notices") => {
+            if !desktop {
+                return Err("desktop_notices is a desktop window's".to_owned());
+            }
+            let Some(wanted) = event
+                .get("payload")
+                .and_then(|payload| payload.get("wanted"))
+                .and_then(Value::as_bool)
+            else {
+                return Err("desktop_notices.wanted must be a boolean".to_owned());
+            };
+            if state.desktop_notices.set(connection, wanted) {
+                state.mobile.wake_follower();
+            }
             return Ok(ClientAction::Replies(Vec::new()));
         }
         Some("request_view") => {
@@ -3508,6 +3550,7 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
     }
     state.attachments.release(connection);
     state.mobile.release(connection);
+    state.desktop_notices.release(connection);
     for (pane, size) in state.pane_sizes.left(connection) {
         send_grid(state, &pane, size);
     }
