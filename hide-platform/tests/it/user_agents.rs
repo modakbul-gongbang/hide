@@ -133,8 +133,10 @@ fn an_install_loads_the_written_list_and_a_removal_unloads_it_first() {
 
 /// The real launchd of a disposable macOS runner (PRD core-host-node-move
 /// D-16): a login agent installed with this list starts, comes back after it
-/// is killed, stays stopped after it exits successfully, and is gone with
-/// its process when removed. It refuses to run anywhere but a hosted CI
+/// is killed, stays stopped after it exits successfully, is replaced by the
+/// next install when only its list was removed (a core that gives its copy
+/// back leaves itself loaded, B9), and is gone with its process when
+/// removed. It refuses to run anywhere but a hosted CI
 /// runner, since `gui/<uid>` is the account's real session whatever HOME is.
 #[cfg(target_os = "macos")]
 #[test]
@@ -212,7 +214,22 @@ fn a_login_agent_restarts_after_a_kill_never_after_success_and_ends_when_removed
         wait("the start asked for", Duration::from_secs(20), &|| {
             starts().len() == 3
         });
-        starts()[2]
+        let third = starts()[2];
+        // Only the list goes; the job stays loaded and running.
+        std::fs::remove_file(UserAgents::plist(home, &label)).unwrap();
+        assert!(agents.is_loaded(&label, home, &stop).unwrap());
+        agents.install(&agent, home, &stop).unwrap();
+        wait(
+            "the start of the new install",
+            Duration::from_secs(20),
+            &|| starts().len() == 4,
+        );
+        wait(
+            "the end of what was left loaded",
+            Duration::from_secs(10),
+            &|| !alive(third),
+        );
+        starts()[3]
     }));
     let removal = agents.remove(&label, home, &stop);
     let running = removed.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
