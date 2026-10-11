@@ -5,7 +5,7 @@
 //! role this process mounts (the core, the move screen, the node) sends the
 //! frame to its windows.
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -280,14 +280,24 @@ pub struct MoveControl {
     view: watch::Sender<MoveView>,
     requests: mpsc::Sender<Asked>,
     receiver: Mutex<Option<mpsc::Receiver<Asked>>>,
-    /// The move whose wait offers an abandon now, which a resumed move's
+    /// The wait that offers an abandon now, whose move a resumed move's
     /// view does not name; changed only with the view's `abandon`, inside
     /// the view's own lock.
-    offered: Mutex<Option<String>>,
-    /// The intent of the move the operator gave up, for the wait that
-    /// offered it; level-triggered, so a wait between two looks still
-    /// hears it.
-    abandoned: watch::Sender<Option<String>>,
+    offered: Mutex<Option<Offer>>,
+    /// The offer the operator took; level-triggered, so a wait between two
+    /// looks still hears it. Only the wait of that offer hears it: one
+    /// published after its offer ended is left for no later wait to take.
+    abandoned: watch::Sender<Option<Offer>>,
+    /// The number the next offer is given.
+    offers: AtomicU64,
+}
+
+/// One wait's offer of an abandon: its move and its own number, since the
+/// same move can wait again.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Offer {
+    intent: String,
+    number: u64,
 }
 
 /// Why a request was not taken.
@@ -321,6 +331,7 @@ impl Default for MoveControl {
             receiver: Mutex::new(Some(receiver)),
             offered: Mutex::new(None),
             abandoned: watch::Sender::new(None),
+            offers: AtomicU64::new(0),
         }
     }
 }
@@ -381,7 +392,7 @@ impl MoveControl {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if view.state == MoveState::Waiting
                 && view.abandon
-                && let Some(intent) = offered.take()
+                && let Some(offer) = offered.take()
             {
                 // A move back given up goes on to commit here; a forward
                 // one restores this machine's core.
@@ -391,7 +402,7 @@ impl MoveControl {
                     MoveState::RollingBack
                 };
                 view.abandon = false;
-                taken = Some(intent);
+                taken = Some(offer);
                 return true;
             }
             if view.state.busy() {
@@ -399,37 +410,50 @@ impl MoveControl {
             }
             false
         });
-        let Some(intent) = taken else {
+        let Some(offer) = taken else {
             return Err(refusal);
         };
-        self.abandoned.send_replace(Some(intent));
+        self.abandoned.send_replace(Some(offer));
         Ok(())
     }
 
-    /// Offers an abandon of the move `intent` from its wait, or with `None`
-    /// ends the offer, dropping an abandon its wait did not hear because the
-    /// peer answered first: the answer says what is so.
-    pub fn offer_abandon(&self, intent: Option<&str>) {
-        if intent.is_none() {
-            self.abandoned.send_replace(None);
-        }
+    /// Offers an abandon of the move `intent` from its wait, which waits for
+    /// it with the offer this returns.
+    pub fn offer_abandon(&self, intent: &str) -> Offer {
+        let offer = Offer {
+            intent: intent.to_owned(),
+            number: self.offers.fetch_add(1, Ordering::Relaxed),
+        };
+        self.set_offer(Some(offer.clone()));
+        offer
+    }
+
+    /// Ends the wait's offer, dropping an abandon the wait did not hear
+    /// because the peer answered first: the answer says what is so.
+    pub fn end_abandon_offer(&self) {
+        self.abandoned.send_replace(None);
+        self.set_offer(None);
+    }
+
+    fn set_offer(&self, offer: Option<Offer>) {
         self.view.send_if_modified(|view| {
+            let offering = offer.is_some();
             *self
                 .offered
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = intent.map(str::to_owned);
-            let changed = view.abandon != intent.is_some();
-            view.abandon = intent.is_some();
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = offer;
+            let changed = view.abandon != offering;
+            view.abandon = offering;
             changed
         });
     }
 
-    /// Returns once the operator gave up the move `intent`.
-    pub async fn abandoned(&self, intent: &str) {
+    /// Returns once the operator took `offer`.
+    pub async fn abandoned(&self, offer: &Offer) {
         let mut abandoned = self.abandoned.subscribe();
         // The sender is this value's own, so the wait cannot lose it.
         let _ = abandoned
-            .wait_for(|abandoned| abandoned.as_deref() == Some(intent))
+            .wait_for(|abandoned| abandoned.as_ref() == Some(offer))
             .await;
     }
 
@@ -601,26 +625,60 @@ mod tests {
         // A wait that does not offer it, as the move back's.
         control.update(|view| view.state = MoveState::Waiting);
         assert_eq!(abandon(), Err("move_busy"));
-        control.offer_abandon(Some("move-1"));
+        let offer = control.offer_abandon("move-1");
         assert_eq!(abandon(), Ok(()));
         let view = control.view();
         assert_eq!(view.state, MoveState::RollingBack);
         assert!(!view.abandon);
         assert_eq!(abandon(), Err("move_busy"));
-        tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            control.abandoned("move-1"),
-        )
-        .await
-        .expect("the wait did not hear the abandon");
+        tokio::time::timeout(std::time::Duration::from_secs(1), control.abandoned(&offer))
+            .await
+            .expect("the wait did not hear the abandon");
         // A move back given up goes on to commit here, not back.
         control.set(MoveView {
             state: MoveState::Waiting,
             direction: Some(super::super::journal::Direction::Back),
             ..MoveView::default()
         });
-        control.offer_abandon(Some("move-2"));
+        control.offer_abandon("move-2");
         assert_eq!(abandon(), Ok(()));
         assert_eq!(control.view().state, MoveState::Starting);
+    }
+
+    /// An abandon taken from one wait and published after that wait's offer
+    /// ended, as an end that runs between the take and the publish leaves
+    /// it, ends no later wait of the same move; that wait hears only its own.
+    #[tokio::test]
+    async fn an_abandon_of_an_ended_offer_ends_no_later_wait_of_the_same_move() {
+        let control = MoveControl::default();
+        let _requests = control.take_requests().unwrap();
+        let waiting = || {
+            control.set(MoveView {
+                state: MoveState::Waiting,
+                ..MoveView::default()
+            })
+        };
+        waiting();
+        let first = control.offer_abandon("move-1");
+        assert_eq!(control.abandon(), Ok(()));
+        control.end_abandon_offer();
+        // The publish that came after the end.
+        control.abandoned.send_replace(Some(first));
+        waiting();
+        let second = control.offer_abandon("move-1");
+        // A zero timeout polls the wait once: a stale abandon would end it.
+        assert!(
+            tokio::time::timeout(std::time::Duration::ZERO, control.abandoned(&second))
+                .await
+                .is_err(),
+            "the later wait heard the earlier offer's abandon"
+        );
+        assert_eq!(control.abandon(), Ok(()));
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            control.abandoned(&second),
+        )
+        .await
+        .expect("the later wait heard its own abandon");
     }
 }

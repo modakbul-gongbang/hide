@@ -1228,13 +1228,13 @@ async fn offering_abandon<T>(
         view.alias = Some(journal.peer.alias.clone());
         view.intent = Some(journal.intent.clone());
     });
-    moves.offer_abandon(Some(intent));
+    let offer = moves.offer_abandon(intent);
     let ended = tokio::select! {
         biased;
         waited = wait => waited.map(Offered::Waited),
-        () = moves.abandoned(intent) => Ok(Offered::Abandoned),
+        () = moves.abandoned(&offer) => Ok(Offered::Abandoned),
     };
-    moves.offer_abandon(None);
+    moves.end_abandon_offer();
     ended
 }
 
