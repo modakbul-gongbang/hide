@@ -2509,6 +2509,162 @@ fn write_record(path: &std::path::Path, value: &Value) -> Result<()> {
     Ok(())
 }
 
+/// D-29: a project of the machine the core leaves keeps its Local issues and
+/// its checkout's link through the move and back. The new core shows the
+/// same tasks by key with the same link, an issue made there continues the
+/// project's numbers, and the core that comes back shows that issue too.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_moved_machine_s_project_keeps_its_issues_through_the_move_and_back() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        // A Git project on the source whose checkout's branch names L-1.
+        let app = fixture.source.home().join("app");
+        std::fs::create_dir(&app)?;
+        for args in [
+            &["init", "-q", "-b", "1-first"][..],
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        ] {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&app)
+                .args(args)
+                .env("HOME", fixture.source.home())
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()?;
+            ensure!(status.success(), "git {args:?} failed: {status}");
+        }
+        let app = app.display().to_string();
+        fixture.event(
+            "create_workspace",
+            json!({"path": app, "label": "App", "initialize_git": false}),
+        )?;
+        let app_id = wait_for("the app project with a Local source", || {
+            let snapshot = fixture.snapshot()?;
+            Ok(app_project(&snapshot, None, &app)
+                .filter(|project| project.pointer("/tasks/source/kind") == Some(&json!("local")))
+                .and_then(|project| project["id"].as_str().map(str::to_owned)))
+        })?;
+        fixture.event(
+            "issue_create",
+            json!({"workspace_id": app_id, "title": "Made before the move"}),
+        )?;
+        let before = wait_for("the issue and the checkout it links", || {
+            let snapshot = fixture.snapshot()?;
+            Ok(app_project(&snapshot, None, &app)
+                .map(|project| issues_of(&project, &app))
+                .filter(|issues| {
+                    issues["tasks"].as_array().map(Vec::len) == Some(1)
+                        && issues["linked"].is_string()
+                }))
+        })?;
+        ensure!(before["tasks"][0][1] == "L-1", "{before}");
+        ensure!(before["linked"] == before["tasks"][0][0], "{before}");
+
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        fixture.journal_until("done")?;
+        let node_app_id = wait_for("the same issues and link through the new core", || {
+            let snapshot = fixture.snapshot()?;
+            Ok(app_project(&snapshot, Some(SOURCE_NODE), &app)
+                .filter(|project| issues_of(project, &app) == before)
+                .and_then(|project| project["id"].as_str().map(str::to_owned)))
+        })
+        .with_context(|| {
+            let shown = fixture
+                .snapshot()
+                .map(|snapshot| app_project(&snapshot, Some(SOURCE_NODE), &app));
+            format!("before: {before}\nafter: {shown:?}")
+        })?;
+        fixture.event(
+            "issue_create",
+            json!({"workspace_id": node_app_id, "title": "Made on the new core"}),
+        )?;
+        let moved = wait_for("the new issue numbered after the old one", || {
+            let snapshot = fixture.snapshot()?;
+            Ok(app_project(&snapshot, Some(SOURCE_NODE), &app)
+                .map(|project| issues_of(&project, &app))
+                .filter(|issues| issues["tasks"].as_array().map(Vec::len) == Some(2)))
+        })?;
+        ensure!(
+            moved["tasks"][0][1] == "L-2" && moved["tasks"][0][2] == "Made on the new core",
+            "{moved}"
+        );
+
+        fixture.event("core_move", json!({"action": "back"}))?;
+        back_journal_until(&fixture, "done")?;
+        wait_for("this machine's core", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        fixture.device_ready()?;
+        wait_for("both issues back on this machine's core", || {
+            let snapshot = fixture.snapshot()?;
+            Ok(app_project(&snapshot, None, &app)
+                .filter(|project| issues_of(project, &app) == moved)
+                .map(|_| ()))
+        })
+        .with_context(|| {
+            let shown = fixture
+                .snapshot()
+                .map(|snapshot| app_project(&snapshot, None, &app));
+            format!("moved: {moved}\nreturned: {shown:?}")
+        })?;
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
+/// The project at `path` as a window shows it: one of the core's own
+/// (`node` none), or one in the session of node `node` that dials the core.
+fn app_project(snapshot: &Value, node: Option<&str>, path: &str) -> Option<Value> {
+    let projects = match node {
+        None => snapshot.pointer("/navigator/workspaces")?,
+        Some(node) => snapshot
+            .pointer("/status/remote")?
+            .as_array()?
+            .iter()
+            .find(|status| status["target_id"] == node)?
+            .pointer("/session/workspaces")?,
+    };
+    projects
+        .as_array()?
+        .iter()
+        .find(|project| project["path"] == path)
+        .cloned()
+}
+
+/// A project's tasks as (key, id, title, open) and the task its checkout at
+/// `path` links, which compare the same on either core: a Local task's key
+/// names the project's path and the issue's number.
+fn issues_of(project: &Value, path: &str) -> Value {
+    let tasks: Vec<Value> = project
+        .pointer("/tasks/tasks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|task| json!([task["key"], task["id"], task["title"], task["open"]]))
+        .collect();
+    let linked = project["checkouts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|checkout| checkout["path"] == path)
+        .map(|checkout| checkout["task_key"].clone())
+        .unwrap_or(Value::Null);
+    json!({"tasks": tasks, "linked": linked})
+}
+
 /// Ends `fixture` by how `journey` went (`support::run::finish`), with each
 /// machine's core log on a failure.
 fn finish(mut fixture: Fixture, journey: Result<()>) -> Result<()> {
