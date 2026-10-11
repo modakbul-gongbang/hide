@@ -11,13 +11,13 @@ import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { createActions } from "../actions";
 import { ConnectionBadge } from "../badge";
 import { TooltipProvider } from "../components/ui/tooltip";
-import { CoreMoveDialog } from "../settings/CoreMoveDialog";
+import { CoreMoveDialog, requestOfView } from "../settings/CoreMoveDialog";
 import { clientI18n } from "../i18n/translator";
 import { DevicesTab } from "../settings/DevicesTab";
 import { Sidebar } from "../sidebar";
 import { useShellStore } from "../store";
 import { entryLens, useUiStore } from "../ui";
-import { CORE_MOVE_STATES, CORE_WINDOW_STATES, coreMoveRest, DIALOG_VIEWS, MENU_STATES, NODE_DEVICE, sideOf, WINDOW_STATES, type CoreMoveState } from "./coreMoveSceneData";
+import { CORE_MOVE_STATES, CORE_WINDOW_STATES, coreMoveRest, DIALOG_VIEWS, GIVE_UP_STATES, MENU_STATES, NODE_DEVICE, sideOf, WINDOW_STATES, type CoreMoveState } from "./coreMoveSceneData";
 import type { SceneContent } from "./sceneData";
 
 export type CoreMoveSceneKind = "core-move" | "core-move-window";
@@ -79,7 +79,8 @@ export function CoreMoveScene({ scene, theme, state, content, language }: CoreMo
     return () => cancelAnimationFrame(frame);
   }, [state]);
 
-  const dialog = DIALOG_VIEWS[state] ? <CoreMoveDialog request={{ direction: "forward", device: "mini" }} asked={null} actions={actions} onClose={() => {}} onRequest={() => {}} /> : null;
+  const shownView = DIALOG_VIEWS[state];
+  const dialog = shownView ? <CoreMoveDialog request={requestOfView(shownView)} asked={null} giveUp={GIVE_UP_STATES.has(state)} actions={actions} onClose={() => {}} onRequest={() => {}} /> : null;
   return (
     <TooltipProvider>
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground" data-gallery-scene={scene} data-core-move-scene-ready={ready ? state : undefined}>

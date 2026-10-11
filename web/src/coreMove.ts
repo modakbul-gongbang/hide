@@ -19,7 +19,8 @@ export type MoveState =
   | "done"
   | "rolling_back"
   | "rolled_back"
-  | "waiting";
+  | "waiting"
+  | "abandoned";
 
 export type CheckId =
   | "connection"
@@ -51,7 +52,14 @@ export type MoveView = {
   step: MoveStep | null;
   cause: { kind: string } | null;
   node: string | null;
+  /** The move's wait on its other machine can be given up now (amendment 4): a forward move stops waiting, a move back takes the core here. */
+  abandon?: boolean;
 };
+
+/** Whether the operator can give up the move's wait on its other machine now. */
+export function giveUpOffered(view: MoveView | null): boolean {
+  return view?.state === "waiting" && view.abandon === true;
+}
 
 /**
  * Where a node's link to its core stands while its screens wait (`core_link` frame); `disconnected` is the operator's

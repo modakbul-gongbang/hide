@@ -7,6 +7,7 @@ import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import type { Device, DeviceHost, Kit, KitComponent } from "../snapshot";
 import { useShellStore } from "../store";
+import { useUiStore } from "../ui";
 import type { DispatchFn } from "../ws";
 import { DevicesTab } from "./DevicesTab";
 
@@ -191,6 +192,39 @@ it("walks the move dialog through the supervisor's frames: failing checks with t
   await act(async () => { (dialog().querySelector("[data-core-move-undo]") as HTMLElement).click(); });
   expect(sent(events, "core_move").at(-1)?.payload).toEqual({ action: "check_back" });
   expect(dialog().getAttribute("data-core-move-direction")).toBe("back");
+  await unmount();
+});
+
+it("gives up a move's wait only from its confirm, which the strip's action opens, and shows what is left (amendment 4)", async () => {
+  const { events, unmount } = await mount(state([remote("mini")]));
+  const dialog = () => document.querySelector("[data-core-move-dialog]") as HTMLElement | null;
+  const waiting = frame({ state: "waiting", step: "reattach", cause: { kind: "unreachable" }, abandon: true });
+  await act(async () => { useShellStore.setState({ coreMove: waiting as never }); });
+  await act(async () => { useUiStore.getState().openMoveGiveUp(); });
+  expect(dialog()?.getAttribute("data-core-move-dialog")).toBe("give_up");
+  expect(dialog()?.querySelector("h2")?.textContent).toBe("Stop waiting for Mac mini?");
+  expect(dialog()?.querySelector("[data-core-move-give-up-risk]")?.textContent).toBe("If Mac mini is only cut off, not gone, its core keeps running until this Mac reaches it.");
+  expect(sent(events, "core_move")).toEqual([]);
+  // Cancel goes back to the steps, whose footer offers it again.
+  await act(async () => { ([...dialog()!.querySelectorAll("button")].find((button) => button.textContent === "Cancel") as HTMLElement).click(); });
+  expect(dialog()?.getAttribute("data-core-move-dialog")).toBe("moving");
+  await act(async () => { (dialog()!.querySelector("[data-core-move-give-up]") as HTMLElement).click(); });
+  await act(async () => { (dialog()!.querySelector("[data-core-move-give-up-go]") as HTMLElement).click(); });
+  expect(sent(events, "core_move").map((event) => event.payload)).toEqual([{ action: "abandon" }]);
+  await act(async () => { useShellStore.setState({ coreMoveRefusal: "move_not_waiting" }); });
+  expect(dialog()?.querySelector('[data-core-move-refused="move_not_waiting"]')?.textContent).toBe("The move is no longer waiting");
+  // A wait that ended leaves no confirm, and the result names what is left.
+  await act(async () => { useShellStore.setState({ coreMove: frame({ state: "rolling_back", step: "reattach" }) as never }); });
+  expect(dialog()?.querySelector("[data-core-move-give-up]")).toBeNull();
+  await act(async () => { useShellStore.setState({ coreMove: frame({ state: "abandoned" }) as never }); });
+  expect(dialog()?.getAttribute("data-core-move-dialog")).toBe("abandoned");
+  // A move back's wait takes the core here, with no risk line.
+  await act(async () => { useShellStore.setState({ coreMove: frame({ state: "waiting", direction: "back", device: null, step: "start_target", abandon: true }) as never }); });
+  await act(async () => { useUiStore.getState().openMoveGiveUp(); });
+  expect(dialog()?.getAttribute("data-core-move-direction")).toBe("back");
+  expect(dialog()?.querySelector("h2")?.textContent).toBe("Take the core here?");
+  expect(dialog()?.querySelector("[data-core-move-give-up-risk]")).toBeNull();
+  expect(dialog()?.querySelector("[data-core-move-give-up-go]")?.textContent).toBe("Take it here");
   await unmount();
 });
 

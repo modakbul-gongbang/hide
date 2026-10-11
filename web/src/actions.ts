@@ -1096,10 +1096,11 @@ export function createActions(send: DispatchFn) {
     /**
      * Asks the process's supervisor about the core move (PRD
      * core-host-node-move B3 to B5): run the checks toward a device or back
-     * to this machine, or start the move once they passed. The answer is the
+     * to this machine, start the move once they passed, or give up its wait
+     * on its other machine where the frame offers it. The answer is the
      * `core_move` frame, or a refusal naming why.
      */
-    coreMove(request: { action: "check" | "start"; device: string } | { action: "check_back" | "back" }) {
+    coreMove(request: { action: "check" | "start"; device: string } | { action: "check_back" | "back" | "abandon" }) {
       useShellStore.setState({ coreMoveRefusal: null });
       dispatch({ schema_version: 2, kind: "core_move", payload: request });
     },

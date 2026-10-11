@@ -870,7 +870,11 @@
       "confirm",
       "moving",
       "failed",
-      "done"
+      "done",
+      "waiting",
+      "give-up",
+      "take-here",
+      "abandoned"
     ],
     "states": {
       "devices": "This Mac runs the core: its row wears the core badge, Mac mini and build-box are SSH devices this core dials.",
@@ -881,7 +885,11 @@
       "confirm": "Every check passed: what happens, that it can be undone, and Mac mini로 옮기기.",
       "moving": "The five steps with the current one running.",
       "failed": "The step that failed, that this Mac's core is unchanged, and Retry.",
-      "done": "Moved: the phone's QR line and 되돌리기."
+      "done": "Moved: the phone's QR line and 되돌리기.",
+      "waiting": "Amendment 4, drawn by analogy with the moving form (not in the approved bundle): Mac mini took the move's link and stopped answering; the steps, the waiting line and 그만 기다리기 as the footer's only action.",
+      "give-up": "Amendment 4: the confirm of giving the wait up, as a state of the same dialog: that it cannot be undone, that this Mac's core starts again as it was, that a core coming back on Mac mini is set aside, the one plain risk line, and 그만 기다리기 as the destructive action beside 취소.",
+      "take-here": "Amendment 4, the move back's counterpart from the MacBook's window: take the core here from the copy received, Mac mini's core held until it retires, no risk line, and 여기로 가져오기 beside 취소.",
+      "abandoned": "Amendment 4: the wait was given up; this Mac's core runs as it was and Mac mini's core stops once this Mac reaches it, with 닫기."
     },
     "rules": {
       "noOverlap": true,
@@ -891,7 +899,8 @@
       "Is the core badge on This Mac quiet beside the name, and does the move's entry sit in the ⋯ menu where the bundle puts it?",
       "Does each dialog form name the reason first and keep one primary action?",
       "Korean particles after the machine's name (로/으로, 는/은): do they read as Korean reads the name?",
-      "The Dark frames are set against the Light ones: does Dark use the tokens as Light does?"
+      "The Dark frames are set against the Light ones: does Dark use the tokens as Light does?",
+      "The give-up and take-here confirms have no approved frame: do they read as the move dialog's own confirm, with the line that it cannot be undone first, the risk line quiet, and the destructive action not the default?"
     ]
   },
   "core-move-window": {
@@ -1016,7 +1025,8 @@
       "window-moving",
       "window-updating",
       "window-unreachable",
-      "window-disconnected"
+      "window-disconnected",
+      "window-waiting"
     ],
     "states": {
       "rail-node": "The MacBook's window, core on Mac mini: This Mac first with the laptop glyph, then Mac mini with the crown in its bottom-left corner and a Needs You mark, then build-box not connected.",
@@ -1024,7 +1034,8 @@
       "window-moving": "W1: the strip names the move's step of five while the window takes no input.",
       "window-updating": "W2: the strip says the core is being updated to this app's build and agents keep running.",
       "window-unreachable": "W3: the strip says the core cannot be reached and the window reconnects.",
-      "window-disconnected": "B16, drawn by analogy with W3 (not in the approved bundle): the operator ended the link here and the strip offers 다시 연결."
+      "window-disconnected": "B16, drawn by analogy with W3 (not in the approved bundle): the operator ended the link here and the strip offers 다시 연결.",
+      "window-waiting": "Amendment 4, drawn by analogy with W1 (not in the approved bundle): the move waits on Mac mini, and the strip offers 그만 기다리기, which only opens the move dialog at its confirm."
     },
     "rules": {
       "noOverlap": true,
@@ -1033,7 +1044,8 @@
     "judgment": [
       "Is the crown readable at 9 px in the tile's bottom-left notch without fighting the Needs You mark or the ×?",
       "Does each strip state read in one line in the badge's place, with … for waiting and ! for a problem?",
-      "The disconnected strip has no approved frame: does it read as the same family as W3, with 다시 연결 as the only action?"
+      "The disconnected strip has no approved frame: does it read as the same family as W3, with 다시 연결 as the only action?",
+      "The waiting strip has no approved frame: does 그만 기다리기 sit as the strip's one action, the same family as 다시 연결?"
     ]
   }
 }

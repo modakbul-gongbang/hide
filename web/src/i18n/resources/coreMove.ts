@@ -93,6 +93,19 @@ export const coreMoveEnglish = {
   "coreMove.strip.unreachable": "Cannot reach the core on {{machine}} · reconnecting",
   "coreMove.strip.disconnected": "Disconnected from the core on {{machine}}",
   "coreMove.reconnect": "Reconnect",
+  "coreMove.final": "This cannot be undone.",
+  "coreMove.giveUp.stop": "Stop waiting",
+  "coreMove.giveUp.title": "Stop waiting for {{machine}}?",
+  "coreMove.giveUp.here": "This Mac's core starts again as it was.",
+  "coreMove.giveUp.back": "A core that comes back on {{machine}} is stopped and set aside, not merged.",
+  "coreMove.giveUp.risk": "If {{machine}} is only cut off, not gone, its core keeps running until this Mac reaches it.",
+  "coreMove.takeHere.take": "Take it here",
+  "coreMove.takeHere.title": "Take the core here?",
+  "coreMove.takeHere.here": "This Mac's core starts from the copy it received.",
+  "coreMove.takeHere.held": "The core on {{machine}} stays stopped and retires once this Mac reaches it.",
+  "coreMove.abandonedTitle": "Stopped waiting for {{machine}}",
+  "coreMove.abandoned": "This Mac's core runs as it was. The core on {{machine}} stops once this Mac reaches it.",
+  "coreMove.refused.notWaiting": "The move is no longer waiting",
 } as const;
 
 const ko = {
@@ -184,6 +197,19 @@ const ko = {
   "coreMove.strip.unreachable": "{{machine}}의 core에 연결할 수 없어요 · 다시 연결하는 중",
   "coreMove.strip.disconnected": "{{machine}} core와 연결을 끊었어요",
   "coreMove.reconnect": "다시 연결",
+  "coreMove.final": "되돌릴 수 없어요.",
+  "coreMove.giveUp.stop": "그만 기다리기",
+  "coreMove.giveUp.title": "{{machine}} 응답을 그만 기다릴까요?",
+  "coreMove.giveUp.here": "이 Mac의 core가 이전 그대로 다시 시작돼요.",
+  "coreMove.giveUp.back": "{{machine}}에서 core가 다시 돌아오면 멈추고 따로 보관해요. 합치지 않아요.",
+  "coreMove.giveUp.risk": "{{machine}}의 연결만 끊긴 거라면, 이 Mac이 연결될 때까지 그쪽 core는 계속 실행돼요.",
+  "coreMove.takeHere.take": "여기로 가져오기",
+  "coreMove.takeHere.title": "core를 여기로 가져올까요?",
+  "coreMove.takeHere.here": "이 Mac의 core가 받아 둔 사본으로 시작돼요.",
+  "coreMove.takeHere.held": "{{machine}}의 core는 멈춘 채로 있다가, 이 Mac이 연결되면 정리돼요.",
+  "coreMove.abandonedTitle": "{{machine}} 응답을 그만 기다렸어요",
+  "coreMove.abandoned": "이 Mac의 core가 이전 그대로 실행 중이에요. {{machine}}의 core는 이 Mac이 연결되면 멈춰요.",
+  "coreMove.refused.notWaiting": "옮기기가 더 이상 기다리고 있지 않아요",
 } satisfies Catalog<typeof coreMoveEnglish>;
 
 const zhCN = {
@@ -275,6 +301,19 @@ const zhCN = {
   "coreMove.strip.unreachable": "无法连接 {{machine}} 上的 core · 正在重新连接",
   "coreMove.strip.disconnected": "已断开与 {{machine}} 上 core 的连接",
   "coreMove.reconnect": "重新连接",
+  "coreMove.final": "此操作无法撤销。",
+  "coreMove.giveUp.stop": "停止等待",
+  "coreMove.giveUp.title": "停止等待 {{machine}}？",
+  "coreMove.giveUp.here": "此 Mac 的 core 会按原样重新启动。",
+  "coreMove.giveUp.back": "{{machine}} 上回来的 core 会被停止并另行保存，不会合并。",
+  "coreMove.giveUp.risk": "如果 {{machine}} 只是断开而不是不在了，它的 core 会一直运行，直到此 Mac 连上它。",
+  "coreMove.takeHere.take": "在此接管",
+  "coreMove.takeHere.title": "在此接管 core？",
+  "coreMove.takeHere.here": "此 Mac 的 core 会从收到的副本启动。",
+  "coreMove.takeHere.held": "{{machine}} 上的 core 保持停止，此 Mac 连上它后即退役。",
+  "coreMove.abandonedTitle": "已停止等待 {{machine}}",
+  "coreMove.abandoned": "此 Mac 的 core 按原样运行。{{machine}} 上的 core 会在此 Mac 连上它后停止。",
+  "coreMove.refused.notWaiting": "迁移已不再等待",
 } satisfies Catalog<typeof coreMoveEnglish>;
 
 const ja = {
@@ -366,6 +405,19 @@ const ja = {
   "coreMove.strip.unreachable": "{{machine}} の core に接続できません · 再接続中",
   "coreMove.strip.disconnected": "{{machine}} の core との接続を切りました",
   "coreMove.reconnect": "再接続",
+  "coreMove.final": "元に戻せません。",
+  "coreMove.giveUp.stop": "待つのをやめる",
+  "coreMove.giveUp.title": "{{machine}} を待つのをやめますか？",
+  "coreMove.giveUp.here": "この Mac の core が元のまま再び起動します。",
+  "coreMove.giveUp.back": "{{machine}} で戻ってきた core は停止して別に保管し、統合しません。",
+  "coreMove.giveUp.risk": "{{machine}} が切断されているだけなら、この Mac がつながるまでその core は動き続けます。",
+  "coreMove.takeHere.take": "ここで引き取る",
+  "coreMove.takeHere.title": "core をここで引き取りますか？",
+  "coreMove.takeHere.here": "この Mac の core が受け取ったコピーから起動します。",
+  "coreMove.takeHere.held": "{{machine}} の core は停止したままで、この Mac がつながると退役します。",
+  "coreMove.abandonedTitle": "{{machine}} を待つのをやめました",
+  "coreMove.abandoned": "この Mac の core が元のまま動いています。{{machine}} の core はこの Mac がつながると停止します。",
+  "coreMove.refused.notWaiting": "移動はもう待機していません",
 } satisfies Catalog<typeof coreMoveEnglish>;
 
 export const coreMoveCatalogs = { en: coreMoveEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof coreMoveEnglish>;

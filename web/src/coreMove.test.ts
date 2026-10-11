@@ -33,11 +33,20 @@ describe("which form the dialog shows", () => {
     expect(moveForm(view({ state: "waiting" }), before, request)).toBe("moving");
     expect(moveForm(view({ state: "rolled_back" }), before, request)).toBe("failed");
     expect(moveForm(view({ state: "done" }), before, request)).toBe("done");
+    expect(moveForm(view({ state: "abandoned" }), before, request)).toBe("abandoned");
   });
 });
 
 describe("the strip above the window (W1 to W3)", () => {
   const machines = { from: "This Mac", to: "Mac mini" };
+
+  it("offers to give up the move's wait only while the move offers it, and acts on nothing itself (amendment 4)", async () => {
+    const { t } = await createInterfaceI18n("en");
+    const strip = (move: MoveView) => windowStrip({ connection: "moving", refused: false, move, link: null, machines, coreMachine: "This Mac" }, t);
+    expect(strip(view({ state: "waiting", step: "reattach", abandon: true }))?.action).toBe("give_up");
+    expect(strip(view({ state: "waiting", step: "reattach" }))?.action).toBeUndefined();
+    expect(strip(view({ state: "rolling_back", step: "reattach" }))?.action).toBeUndefined();
+  });
 
   it("names the move's step while a move holds the window", async () => {
     const { t } = await createInterfaceI18n("ko");

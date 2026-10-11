@@ -1,5 +1,5 @@
 import type { TFunction } from "i18next";
-import { movingStripText, type CoreLink, type MoveMachines, type MoveView } from "./coreMove";
+import { giveUpOffered, movingStripText, type CoreLink, type MoveMachines, type MoveView } from "./coreMove";
 
 /** `moving`: a move holds the window until the machine that takes the core draws it; input is refused meanwhile. */
 export type ConnectionState = "connecting" | "live" | "reconnecting" | "gone" | "moving";
@@ -30,8 +30,12 @@ export function badgeText(state: ConnectionState, refused: boolean, t: TFunction
   }
 }
 
-/** The strip above the window, in the place and size the connection badge always had (D-08); `reconnect` offers the operator's way back after they ended the link (B16). */
-export type WindowStrip = { kind: ConnectionState | "updating" | "unreachable" | "disconnected"; text: string; mark: "pending" | "warn" | null; action?: "reconnect" };
+/**
+ * The strip above the window, in the place and size the connection badge always had (D-08); `reconnect` offers the
+ * operator's way back after they ended the link (B16), and `give_up` the move's wait on its other machine where the
+ * move offers it (amendment 4), which only opens the move dialog at its confirm.
+ */
+export type WindowStrip = { kind: ConnectionState | "updating" | "unreachable" | "disconnected"; text: string; mark: "pending" | "warn" | null; action?: "reconnect" | "give_up" };
 
 /**
  * What the strip says (PRD core-host-node-move W1 to W3, B16): the move's
@@ -46,7 +50,10 @@ export function windowStrip(
   t: TFunction<"translation">,
 ): WindowStrip | null {
   const { connection, move, link } = input;
-  if (connection === "moving" && move && input.machines) return { kind: "moving", text: movingStripText(move, input.machines, t), mark: "pending" };
+  if (connection === "moving" && move && input.machines) {
+    const strip: WindowStrip = { kind: "moving", text: movingStripText(move, input.machines, t), mark: "pending" };
+    return giveUpOffered(move) ? { ...strip, action: "give_up" } : strip;
+  }
   if (connection !== "live" && link && link.phase !== "connecting") {
     // A window that has not drawn the core yet knows no name for its machine but the alias it is dialed by.
     const machine = link.machine ?? (input.coreMachine || link.alias);

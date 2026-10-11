@@ -7,8 +7,8 @@ import type { Device, DeviceHost, Kit, SnapshotRest } from "../snapshot";
 import { REFERENCE_FOLDS, sidebarScene, type SceneContent } from "./sceneData";
 
 /** The states a frame of `design/review-targets.json` names, in the order the review lists them. */
-export const CORE_MOVE_STATES = ["devices", "devices-menu", "devices-offline", "node-menu", "checks-failed", "confirm", "moving", "failed", "done"] as const;
-export const CORE_WINDOW_STATES = ["rail-node", "rail-core", "window-moving", "window-updating", "window-unreachable", "window-disconnected"] as const;
+export const CORE_MOVE_STATES = ["devices", "devices-menu", "devices-offline", "node-menu", "checks-failed", "confirm", "moving", "failed", "done", "waiting", "give-up", "take-here", "abandoned"] as const;
+export const CORE_WINDOW_STATES = ["rail-node", "rail-core", "window-moving", "window-updating", "window-unreachable", "window-disconnected", "window-waiting"] as const;
 export type CoreMoveState = (typeof CORE_MOVE_STATES)[number] | (typeof CORE_WINDOW_STATES)[number];
 
 /**
@@ -58,7 +58,15 @@ export const DIALOG_VIEWS: Partial<Record<CoreMoveState, MoveView>> = {
   moving: view({ state: "copying", step: "copy", sent: 3, total: 5 }),
   failed: view({ state: "rolled_back", step: "start_target", cause: { kind: "start_target" } }),
   done: view({ state: "done", step: "reattach" }),
+  // Amendment 4: the peer took the move's link and then stopped answering.
+  waiting: view({ state: "waiting", step: "reattach", cause: { kind: "unreachable" }, abandon: true }),
+  "give-up": view({ state: "waiting", step: "reattach", cause: { kind: "unreachable" }, abandon: true }),
+  "take-here": view({ state: "waiting", direction: "back", device: null, step: "start_target", cause: { kind: "unreachable" }, abandon: true }),
+  abandoned: view({ state: "abandoned" }),
 };
+
+/** The dialog states that open at the give-up confirm, as the strip's action opens it. */
+export const GIVE_UP_STATES: ReadonlySet<CoreMoveState> = new Set(["give-up", "take-here"]);
 
 /** The window states: the move holding the window, or where the node's link stands. */
 export const WINDOW_STATES: Partial<Record<CoreMoveState, { connection: "moving" | "connecting" | "reconnecting"; move?: MoveView; link?: CoreLink }>> = {
@@ -66,12 +74,13 @@ export const WINDOW_STATES: Partial<Record<CoreMoveState, { connection: "moving"
   "window-updating": { connection: "connecting", link: { phase: "updating", machine: "Mac mini", alias: "mini" } },
   "window-unreachable": { connection: "reconnecting", link: { phase: "waiting", machine: "Mac mini", alias: "mini" } },
   "window-disconnected": { connection: "reconnecting", link: { phase: "disconnected", machine: null, alias: "mini" } },
+  "window-waiting": { connection: "moving", move: view({ state: "waiting", step: "reattach", cause: { kind: "unreachable" }, abandon: true }) },
 };
 
 /** Which side each state is drawn from. */
 export function sideOf(state: CoreMoveState): CoreMoveSide {
   if (state === "rail-core") return "linked";
-  return state === "node-menu" || state === "rail-node" || state === "window-updating" || state === "window-unreachable" || state === "window-disconnected" ? "node" : "core";
+  return state === "node-menu" || state === "take-here" || state === "rail-node" || state === "window-updating" || state === "window-unreachable" || state === "window-disconnected" ? "node" : "core";
 }
 
 /** The device whose ⋯ menu a state opens, and the item it points at. */

@@ -4,6 +4,7 @@ import { windowStrip } from "./connection";
 import { useInterfaceTranslation } from "./i18n/client";
 import { coreMachineName, moveMachines } from "./screenMachine";
 import { useShellStore } from "./store";
+import { useUiStore } from "./ui";
 import { cn } from "./lib/utils";
 
 export function ConnectionBadge({ actions }: { actions: Actions }) {
@@ -27,10 +28,16 @@ export function ConnectionBadge({ actions }: { actions: Actions }) {
         </span>
       ) : null}
       <span className="min-w-0 truncate">{strip.text}</span>
-      {strip.action === "reconnect" ? <span aria-hidden="true">·</span> : null}
+      {strip.action ? <span aria-hidden="true">·</span> : null}
       {strip.action === "reconnect" ? (
         <Button variant="link" size="sm" className="h-auto shrink-0 p-0 text-caption" data-core-reconnect="true" onClick={() => actions.coreLink("reconnect")}>
           {t("coreMove.reconnect")}
+        </Button>
+      ) : null}
+      {strip.action === "give_up" ? (
+        // It only opens the move dialog at its confirm; nothing is given up from the strip.
+        <Button variant="link" size="sm" className="h-auto shrink-0 p-0 text-caption" data-core-move-strip-give-up="true" onClick={() => useUiStore.getState().openMoveGiveUp()}>
+          {move?.direction === "back" ? t("coreMove.takeHere.take") : t("coreMove.giveUp.stop")}
         </Button>
       ) : null}
     </div>

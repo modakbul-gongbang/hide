@@ -15,7 +15,7 @@ import type { Device } from "../snapshot";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
 import { AddDevice } from "./AddDevice";
-import { askMove, CoreMoveDialog, type MoveRequest } from "./CoreMoveDialog";
+import { askMove, CoreMoveDialog, requestOfView, type MoveRequest } from "./CoreMoveDialog";
 import { DeviceDetails } from "./DeviceDetails";
 import { DeviceRow, type DeviceRowHandlers } from "./DeviceRow";
 import { KitTerms } from "./MachineKit";
@@ -31,7 +31,8 @@ export function DevicesTab({ actions }: { actions: Actions }) {
   const [revoking, setRevoking] = useState<Device | null>(null);
   const [details, setDetails] = useState<Device | null>(null);
   // The move the operator opened, and the frame it was asked beside (B3 to B5).
-  const [move, setMove] = useState<{ request: MoveRequest; asked: MoveView | null } | null>(null);
+  // `opened` counts the strip's requests, so each opens a fresh dialog at its confirm.
+  const [move, setMove] = useState<{ request: MoveRequest; asked: MoveView | null; giveUp?: boolean; opened?: number } | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
   // The device count when the Add dialog opened: a new row means the device was added, which closes it.
   const [adding, setAdding] = useState<number | null>(null);
@@ -74,6 +75,14 @@ export function DevicesTab({ actions }: { actions: Actions }) {
   useEffect(() => {
     if (adding !== null && rows.length > adding) setAdding(null);
   }, [adding, rows.length]);
+  // Settings opened from the window's strip to give up a move's wait: the move dialog opens once, at its confirm.
+  const giveUpRequested = useUiStore((s) => s.moveGiveUpRequested);
+  useEffect(() => {
+    if (!giveUpRequested) return;
+    useUiStore.getState().clearMoveGiveUpRequest();
+    const view = useShellStore.getState().coreMove;
+    if (view) setMove((current) => ({ request: requestOfView(view), asked: null, giveUp: true, opened: (current?.opened ?? 0) + 1 }));
+  }, [giveUpRequested]);
   const handlers: DeviceRowHandlers = {
     onAct: () => setActedAt(Date.now()),
     onDetails: setDetails,
@@ -136,8 +145,10 @@ export function DevicesTab({ actions }: { actions: Actions }) {
       ) : null}
       {move ? (
         <CoreMoveDialog
+          key={move.opened ?? 0}
           request={move.request}
           asked={move.asked}
+          giveUp={move.giveUp}
           actions={actions}
           onClose={() => setMove(null)}
           onRequest={(request) => setMove((current) => (current ? { ...current, request } : current))}

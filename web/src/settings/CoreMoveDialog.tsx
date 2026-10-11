@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Actions } from "../actions";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { checkCommand, moveCopy, stepMarks, type MoveView, type StepMark } from "../coreMove";
+import { checkCommand, giveUpOffered, moveCopy, stepMarks, type MoveView, type StepMark } from "../coreMove";
 import { useInterfaceTranslation } from "../i18n/client";
 import { takesEun, takesEuro } from "../i18n/koParticle";
 import { cn } from "../lib/utils";
@@ -13,8 +13,12 @@ import { FixCommand } from "./FixCommand";
 /** What the operator asked from Settings: the core toward a device, or back to this machine from a node's window. */
 export type MoveRequest = { direction: "forward"; device: string } | { direction: "back" };
 
-/** The dialog's five forms (PRD core-host-node-move B, approved round 3), and the wait before the first answer. */
-export type MoveForm = "checking" | "checks_failed" | "confirm" | "moving" | "failed" | "done";
+/**
+ * The dialog's five forms (PRD core-host-node-move B, approved round 3), the
+ * wait before the first answer, and amendment 4's confirm of giving up a
+ * move's wait on its other machine and its result.
+ */
+export type MoveForm = "checking" | "checks_failed" | "confirm" | "moving" | "give_up" | "failed" | "done" | "abandoned";
 
 /**
  * Which form the move's frame puts the dialog in. Until the supervisor
@@ -41,9 +45,16 @@ export function moveForm(view: MoveView | null, asked: MoveView | null, request:
       return "failed";
     case "done":
       return "done";
+    case "abandoned":
+      return "abandoned";
     default:
       return "checking";
   }
+}
+
+/** The request a move's own frame stands for, for a dialog opened from the window's strip rather than a device's menu. */
+export function requestOfView(view: MoveView): MoveRequest {
+  return view.direction === "back" ? { direction: "back" } : { direction: "forward", device: view.device ?? "" };
 }
 
 /** Sends `request` and answers the frame it was sent beside, which the dialog waits past. */
@@ -69,7 +80,7 @@ const MARK: Record<StepMark, { glyph: string; line: string; mark: string }> = {
  * dialog only asks; the supervisor's frame says where the move is, so a
  * window that closed it and opens Settings again finds the same state.
  */
-export function CoreMoveDialog({ request, asked: first, actions, onClose, onRequest }: { request: MoveRequest; asked: MoveView | null; actions: Actions; onClose: () => void; onRequest: (request: MoveRequest) => void }) {
+export function CoreMoveDialog({ request, asked: first, giveUp = false, actions, onClose, onRequest }: { request: MoveRequest; asked: MoveView | null; giveUp?: boolean; actions: Actions; onClose: () => void; onRequest: (request: MoveRequest) => void }) {
   const { t } = useInterfaceTranslation();
   const view = useShellStore((s) => s.coreMove);
   const refusal = useShellStore((s) => s.coreMoveRefusal);
@@ -77,10 +88,22 @@ export function CoreMoveDialog({ request, asked: first, actions, onClose, onRequ
   // The frame the last request was sent beside: the dialog waits until a newer one answers it.
   const [asked, setAsked] = useState<MoveView | null>(first);
   const ask = (next: MoveRequest, start: boolean) => setAsked(askMove(actions, next, start));
-  const form = moveForm(view, asked, request);
+  // Giving up the wait is confirmed first, and only while the move's wait offers it.
+  const [givingUp, setGivingUp] = useState(giveUp);
+  const offered = giveUpOffered(view);
+  // An offer that ended, taken or answered first, leaves no confirm behind for a later wait.
+  const wasOffered = useRef(offered);
+  useEffect(() => {
+    if (wasOffered.current && !offered) setGivingUp(false);
+    wasOffered.current = offered;
+  }, [offered]);
+  const asMoving = moveForm(view, asked, request);
+  const form: MoveForm = asMoving === "moving" && offered && givingUp ? "give_up" : asMoving;
   const machines = moveMachines(devices, request.direction === "back" ? { direction: "back", device: null } : { direction: "forward", device: request.device }, t);
   const values = moveCopy(machines);
   const back = request.direction === "back";
+  // The machine the move waits on: the core's machine for a move back, the device for a forward move.
+  const peer = back ? machines.from : machines.to;
   // Korean writes the particle after the machine's name by its last sound (`koParticle`).
   const euro = takesEuro(machines.to);
   const why = back ? null : takesEun(machines.to) ? t("coreMove.whyEun", values) : t("coreMove.why", values);
@@ -94,6 +117,10 @@ export function CoreMoveDialog({ request, asked: first, actions, onClose, onRequ
       case "moving":
         if (view?.state === "rolling_back") return t("coreMove.rollingBackTitle");
         return back ? t("coreMove.back.movingTitle", values) : euro ? t("coreMove.movingTitleEuro", values) : t("coreMove.movingTitle", values);
+      case "give_up":
+        return back ? t("coreMove.takeHere.title") : t("coreMove.giveUp.title", { machine: peer });
+      case "abandoned":
+        return t("coreMove.abandonedTitle", { machine: peer });
       case "failed":
         return t("coreMove.failedTitle");
       case "done":
@@ -102,7 +129,6 @@ export function CoreMoveDialog({ request, asked: first, actions, onClose, onRequ
   })();
   const failed = view?.failed ?? [];
   const passed = view?.checked === undefined ? null : Math.max(0, view.checked - failed.length);
-  const peer = back ? machines.from : machines.to;
   return (
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
       {/* The move stops the core: no button is the default, whichever form opens (design 6). */}
@@ -152,6 +178,20 @@ export function CoreMoveDialog({ request, asked: first, actions, onClose, onRequ
               {view.state === "waiting" ? <p className="text-body text-warning" data-core-move-waiting="true">{t("coreMove.waiting", { machine: peer })}</p> : null}
             </>
           ) : null}
+          {form === "give_up" ? (
+            <>
+              <p className="break-keep text-body font-semibold text-foreground">{t("coreMove.final")}</p>
+              <p className="break-keep text-body text-foreground">{back ? t("coreMove.takeHere.here") : t("coreMove.giveUp.here")}</p>
+              <p className="break-keep text-body text-foreground">{back ? t("coreMove.takeHere.held", { machine: peer }) : t("coreMove.giveUp.back", { machine: peer })}</p>
+              {back ? null : <p className="break-keep text-body text-muted-foreground" data-core-move-give-up-risk="true">{t("coreMove.giveUp.risk", { machine: peer })}</p>}
+              {refusal ? (
+                <p className="break-keep text-body text-destructive" data-core-move-refused={refusal}>
+                  {refusal === "move_not_waiting" ? t("coreMove.refused.notWaiting") : refusal === "move_busy" ? t("coreMove.refused.busy") : t("coreMove.refused.other")}
+                </p>
+              ) : null}
+            </>
+          ) : null}
+          {form === "abandoned" ? <p className="break-keep text-body text-subtle-foreground">{t("coreMove.abandoned", { machine: peer })}</p> : null}
           {form === "failed" && view ? (
             <>
               <p className="text-body text-destructive" data-core-move-failed={view.step ?? "check"}>
@@ -166,9 +206,27 @@ export function CoreMoveDialog({ request, asked: first, actions, onClose, onRequ
           ) : null}
           {form === "done" ? <p className="text-body text-subtle-foreground">{t("coreMove.rescan", values)}</p> : null}
         </DialogBody>
-        {/* While it moves the dialog only reports; its header's × closes it. */}
-        {form === "moving" ? null : (
+        {/* While it moves the dialog only reports, but for giving up a wait the move offers; its header's × closes it. */}
+        {form === "moving" && !offered ? null : (
         <DialogFooter>
+          {form === "moving" ? (
+            <Button variant="secondary" data-core-move-give-up="true" onClick={() => setGivingUp(true)}>
+              {back ? t("coreMove.takeHere.take") : t("coreMove.giveUp.stop")}
+            </Button>
+          ) : null}
+          {form === "give_up" ? (
+            <>
+              <Button variant="secondary" onClick={() => setGivingUp(false)}>{t("common.cancel")}</Button>
+              <Button
+                variant="destructive"
+                data-core-move-give-up-go="true"
+                onClick={() => actions.coreMove({ action: "abandon" })}
+              >
+                {back ? t("coreMove.takeHere.take") : t("coreMove.giveUp.stop")}
+              </Button>
+            </>
+          ) : null}
+          {form === "abandoned" ? <Button onClick={onClose}>{t("common.close")}</Button> : null}
           {form === "checking" ? (
             <Button variant="secondary" onClick={onClose}>{t("common.close")}</Button>
           ) : null}
