@@ -28,9 +28,12 @@ use super::run::Run;
 
 pub const SOURCE_NODE: &str = "fixture-move-source";
 pub const TARGET_NODE: &str = "fixture-move-target";
-/// The SSH alias the source reaches the target by, and the target's
-/// registration id in the source's core.
+/// The SSH alias the source reaches the target by.
 pub const ALIAS: &str = "mini";
+/// The target's registration id in the source's core: unlike its alias, as
+/// a second device registered under a taken id gets, so a move back that
+/// names the device by its alias instead of its id shows.
+pub const DEVICE_ID: &str = "mini-2";
 /// How long a resumed move's node waits for its link before it asks the
 /// peer (`LINK_WITHIN` in `hided/src/supervisor.rs`).
 const LINK_WITHIN: Duration = Duration::from_secs(30);
@@ -293,12 +296,12 @@ impl Fixture {
         )?;
         fixture.event(
             "register_device",
-            json!({"id": ALIAS, "label": "Target fixture", "ssh_alias": ALIAS, "herdr_socket_path": target_socket, "host_consent": true}),
+            json!({"id": DEVICE_ID, "label": "Target fixture", "ssh_alias": ALIAS, "herdr_socket_path": target_socket, "host_consent": true}),
         )?;
         fixture.device_ready()?;
         fixture.event(
             "create_workspace",
-            json!({"device_id": ALIAS, "path": fixture.target.project(), "label": "Target fixture", "initialize_git": false}),
+            json!({"device_id": DEVICE_ID, "path": fixture.target.project(), "label": "Target fixture", "initialize_git": false}),
         )?;
         wait_for("both machines' projects registered", || {
             let projects = fixture.projects()?;
@@ -337,7 +340,7 @@ impl Fixture {
             let host = snapshot
                 .pointer("/navigator/devices")
                 .and_then(Value::as_array)
-                .and_then(|rows| rows.iter().find(|row| row["id"] == ALIAS))
+                .and_then(|rows| rows.iter().find(|row| row["id"] == DEVICE_ID))
                 .and_then(|row| row.get("host"))
                 .cloned();
             if let Some(host) = &host
@@ -361,7 +364,7 @@ impl Fixture {
         let program = snapshot
             .pointer("/navigator/devices")
             .and_then(Value::as_array)
-            .and_then(|rows| rows.iter().find(|row| row["id"] == ALIAS))
+            .and_then(|rows| rows.iter().find(|row| row["id"] == DEVICE_ID))
             .and_then(|row| row.pointer("/host/helper_path"))
             .and_then(Value::as_str)
             .context("the target's helper path")?;
