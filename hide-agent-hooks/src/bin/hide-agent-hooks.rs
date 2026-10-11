@@ -561,14 +561,19 @@ fn memory_output_before_deadline(
 }
 
 /// The hook's event from stdin, read until EOF, the size cap or `deadline`.
-/// A leading UTF-8 byte order mark is dropped: the Cursor CLI on Windows
+/// Leading UTF-8 byte order marks are dropped: the Cursor CLI on Windows
 /// pipes the event through PowerShell, which writes one before the JSON
-/// (Cursor's forum, threads 166794 and 168407), and JSON does not allow it.
+/// (Cursor's forum, threads 166794 and 168407), and Windows PowerShell 5.1
+/// writes one more at each pipe the event crosses, so Hide's own `$input |`
+/// inside Cursor's wrapper makes two; JSON allows none.
 fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
+    const MARK: &[u8] = b"\xEF\xBB\xBF";
     let (mut payload, truncated) = read_raw_stdin_before_deadline(deadline)?;
-    if payload.starts_with(b"\xEF\xBB\xBF") {
-        payload.drain(..3);
-    }
+    let marks = payload
+        .chunks(MARK.len())
+        .take_while(|chunk| *chunk == MARK)
+        .count();
+    payload.drain(..marks * MARK.len());
     Some((payload, truncated))
 }
 

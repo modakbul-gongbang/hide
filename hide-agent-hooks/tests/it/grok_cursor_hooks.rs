@@ -91,18 +91,22 @@ fn a_grok_launch_is_refused_with_the_reason_claude_code_gets_and_other_calls_run
 }
 
 #[test]
-fn a_cursor_event_that_starts_with_a_byte_order_mark_is_still_read() {
+fn a_cursor_event_that_starts_with_byte_order_marks_is_still_read() {
     // The Cursor CLI on Windows pipes the event through PowerShell, which
-    // writes a UTF-8 byte order mark before the JSON.
+    // writes a UTF-8 byte order mark before the JSON, and Windows
+    // PowerShell 5.1 one more for the pipe inside Hide's own command (two
+    // were measured on a windows-latest runner).
     let machine = Machine::new("registered");
-    let run = machine.run_event(
-        "cursor",
-        "PreToolUse",
-        &format!("\u{feff}{}", cursor_shell(&machine, START)),
-        Some(PANE),
-        CURSOR,
-    );
-    assert_eq!(cursor_answer(&run)["permission"], "deny");
+    for marks in ["\u{feff}", "\u{feff}\u{feff}"] {
+        let run = machine.run_event(
+            "cursor",
+            "PreToolUse",
+            &format!("{marks}{}", cursor_shell(&machine, START)),
+            Some(PANE),
+            CURSOR,
+        );
+        assert_eq!(cursor_answer(&run)["permission"], "deny", "{marks:?}");
+    }
 }
 
 #[test]
