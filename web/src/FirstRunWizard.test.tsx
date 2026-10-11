@@ -193,7 +193,7 @@ it("asks for the sign-in probe while it is open and stops when it goes away", as
   expect(events.filter((event) => event.kind === "ai_settings").at(-1)).toEqual({ schema_version: 2, kind: "ai_settings", payload: { observing: false } });
 });
 
-it("says why when its pass could not run here, and Try again sends the choice anew until the agents are read again", async () => {
+it("says why when its pass could not run here, and Try again has the agents read again before the choice is sent", async () => {
   const { events, unmount } = await mount(state(true, AGENTS));
   await act(async () => { continueButton().click(); });
   // The kit link failed: the core keeps the step, its row is unavailable and lists no agent.

@@ -167,7 +167,7 @@ function AgentsStep({ actions, reopened, desktop, primary }: StepProps & { deskt
   const applying = pressed || busy;
   const failures = sent && !applying ? failedAgents(agents, sent) : [];
   // The kit could not run here, whether or not Continue was pressed: the step says why, and Try again
-  // sends the choice anew, which has the core read the agents again.
+  // only has the core read the agents again; the choice is sent once they are back.
   const unavailable = !applying ? (kit?.unavailable ?? null) : null;
   const toggle = (id: string) =>
     setFlipped((current) => {

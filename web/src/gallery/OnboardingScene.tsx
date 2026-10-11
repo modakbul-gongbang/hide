@@ -67,7 +67,7 @@ export function onboardingSceneParams(params: URLSearchParams): OnboardingSceneP
   return { theme: params.get("theme") === "light" ? "light" : "dark", state: state as OnboardingState, system, language };
 }
 
-const HOME = "/Users/you";
+const HOME = "/Users/me";
 const PLATFORM: Record<OnboardingSystem, string> = { mac: "darwin", windows: "win32", linux: "linux" };
 
 /** The kit's agents in its order, each as KitAgentSnapshot reports it on a Mac whose kit has not run. */

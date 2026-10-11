@@ -8,7 +8,7 @@ const agent = (id: string, overrides: Partial<KitAgent> = {}): KitAgent => ({
   availability: "available",
   enabled: false,
   chosen: false,
-  skill: { state: "off", reason: null, location: `/home/.${id}/skills/hide` },
+  skill: { state: "off", reason: null, location: `/home/me/.${id}/skills/hide` },
   hook: null,
   doc_url: "https://example.test",
   ...overrides,
@@ -43,23 +43,23 @@ describe("a tile's line (B8, B9)", () => {
 
 describe("What changes (B11)", () => {
   it("lists each place for the agents on, one row per place naming every agent that shares it, skips a piece the agent lacks, and ends with the hide link", () => {
-    const kit = { components: [{ id: "cli", label: "hide", state: "off", reason: null, location: "/home/.local/bin/hide" }] } as unknown as Kit;
-    const shared = { state: "off" as const, reason: null, location: "/home/.agents/skills/hide-browser/SKILL.md" };
+    const kit = { components: [{ id: "cli", label: "hide", state: "off", reason: null, location: "/home/me/.local/bin/hide" }] } as unknown as Kit;
+    const shared = { state: "off" as const, reason: null, location: "/home/me/.agents/skills/hide-browser/SKILL.md" };
     const agents = [
-      agent("claude-code", { hook: { state: "off", reason: null, location: "/home/.claude/settings.json" }, herdr: { state: "absent", reason: "none", location: null } }),
-      agent("codex", { skill: shared, hook: { state: "off", reason: null, location: "/home/.codex/hooks.json" } }),
-      agent("opencode", { label: "OpenCode", skill: shared, hook: { state: "off", reason: null, location: "/home/.config/opencode/plugins/hide.js" } }),
+      agent("claude-code", { hook: { state: "off", reason: null, location: "/home/me/.claude/settings.json" }, herdr: { state: "absent", reason: "none", location: null } }),
+      agent("codex", { skill: shared, hook: { state: "off", reason: null, location: "/home/me/.codex/hooks.json" } }),
+      agent("opencode", { label: "OpenCode", skill: shared, hook: { state: "off", reason: null, location: "/home/me/.config/opencode/plugins/hide.js" } }),
       agent("pi", { skill: shared }),
     ];
     expect(whatChanges(agents, new Set(["claude-code", "codex", "opencode"]), kit)).toEqual({
       rows: [
-        { path: "/home/.claude/settings.json", labels: ["claude-code"], part: "hook" },
-        { path: "/home/.claude-code/skills/hide", labels: ["claude-code"], part: "skill" },
-        { path: "/home/.codex/hooks.json", labels: ["codex"], part: "hook" },
-        { path: "/home/.agents/skills/hide-browser/SKILL.md", labels: ["codex", "OpenCode"], part: "skill" },
-        { path: "/home/.config/opencode/plugins/hide.js", labels: ["OpenCode"], part: "plugin" },
+        { path: "/home/me/.claude/settings.json", labels: ["claude-code"], part: "hook" },
+        { path: "/home/me/.claude-code/skills/hide", labels: ["claude-code"], part: "skill" },
+        { path: "/home/me/.codex/hooks.json", labels: ["codex"], part: "hook" },
+        { path: "/home/me/.agents/skills/hide-browser/SKILL.md", labels: ["codex", "OpenCode"], part: "skill" },
+        { path: "/home/me/.config/opencode/plugins/hide.js", labels: ["OpenCode"], part: "plugin" },
       ],
-      cli: "/home/.local/bin/hide",
+      cli: "/home/me/.local/bin/hide",
     });
   });
 
@@ -68,7 +68,7 @@ describe("What changes (B11)", () => {
     expect(accountHome("C:\\Users\\me\\hide")).toBe("C:\\Users\\me");
     expect(underHome("/Users/me/.claude/settings.json", "/Users/me")).toBe("~/.claude/settings.json");
     expect(underHome("C:\\Users\\me\\.codex\\hooks.json", "C:\\Users\\me")).toBe("~\\.codex\\hooks.json");
-    expect(underHome("/Users/meg/.claude", "/Users/me")).toBe("/Users/meg/.claude");
+    expect(underHome("/Users/alice/.claude", "/Users/al")).toBe("/Users/alice/.claude");
     expect(underHome("/opt/hide", "/Users/me")).toBe("/opt/hide");
     const kit = { components: [{ id: "cli", label: "hide", state: "off", reason: null, location: "/Users/me/.local/bin/hide" }] } as unknown as Kit;
     const herdr = agent("claude-code", { skill: { state: "off", reason: null, location: "/Users/me/.claude/skills/hide" }, herdr: { state: "off", reason: null, location: "/Users/me/.config/herdr/integrations/claude" } });
