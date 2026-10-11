@@ -2218,3 +2218,40 @@ fn a_node_worktree_the_window_selected_stays_out_of_the_inactive_fold() {
     runtime.refresh_inactive_groups();
     assert_eq!(folded(&runtime), [parked]);
 }
+
+/// Reading the Overview's project again reads a node's project on the node
+/// only: this machine's worktrees and disk are not read again for it.
+#[test]
+fn reading_a_node_project_again_reads_nothing_of_this_machine() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    let node = Recording::of(Some(FakeDevice::new()));
+    let shared = node_runtime(&repo, node.clone(), Recording::of(None), Default::default());
+    let mut runtime = shared.lock().unwrap();
+    let linked = node_project(&runtime)
+        .unwrap()
+        .checkouts
+        .iter()
+        .find(|checkout| checkout.path == repo.linked)
+        .unwrap()
+        .id
+        .clone();
+    runtime.snapshot.navigator.focused_checkout_id = Some(linked);
+    let before = (runtime.worktree_generation, runtime.disk_generation);
+    node.calls.lock().unwrap().clear();
+    runtime.reread_focused_project();
+    assert_eq!(
+        (runtime.worktree_generation, runtime.disk_generation),
+        before
+    );
+    drop(runtime);
+    wait(&shared, "the node's worktree read", |runtime| {
+        runtime.device_worktrees[NODE].in_flight.is_none()
+    });
+    assert!(
+        node.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|call| matches!(call, Call::Worktrees { .. }))
+    );
+}

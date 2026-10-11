@@ -3102,13 +3102,17 @@ impl Runtime {
     /// Reads the project in front of the Overview again, on whichever
     /// machine it is: its GitHub answer, its worktrees and its sizes.
     pub(super) fn reread_focused_project(&mut self) {
-        if let Some((workspace, _)) = self.focused_local_checkout() {
-            let project = workspace.path.clone();
-            self.refresh_pull_requests(&project);
-        } else if let Some((node, workspace, _)) = self.focused_node_checkout() {
+        // A node's project is read on the node; this machine's worktrees and
+        // disk have nothing to say about it.
+        if let Some((node, workspace, _)) = self.focused_node_checkout() {
             let (node, root) = (node.to_owned(), workspace.path.clone());
             self.reread_node_github(&node, &root);
             self.request_device_worktrees(&node, true);
+            return;
+        }
+        if let Some((workspace, _)) = self.focused_local_checkout() {
+            let project = workspace.path.clone();
+            self.refresh_pull_requests(&project);
         }
         self.refresh_worktrees();
         self.remeasure_disk();
