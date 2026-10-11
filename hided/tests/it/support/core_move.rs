@@ -13,6 +13,7 @@
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
 use hide_platform::process::OwnedChild;
@@ -20,7 +21,9 @@ use serde_json::{Value, json};
 
 use super::remote_core::Herdr;
 use super::remote_delivery::renderer::Renderer;
-use super::remote_delivery::{Environment, Ssh, read, successful, wait_for};
+use super::remote_delivery::{
+    Environment, READY_BOUND, Ssh, read, successful, wait_for, wait_within,
+};
 use super::run::Run;
 
 pub const SOURCE_NODE: &str = "fixture-move-source";
@@ -28,6 +31,9 @@ pub const TARGET_NODE: &str = "fixture-move-target";
 /// The SSH alias the source reaches the target by, and the target's
 /// registration id in the source's core.
 pub const ALIAS: &str = "mini";
+/// How long a resumed move's node waits for its link before it asks the
+/// peer (`LINK_WITHIN` in `hided/src/supervisor.rs`).
+const LINK_WITHIN: Duration = Duration::from_secs(30);
 
 /// The stand-ins of the target's checks: each passes until a `.fail` file
 /// beside it says otherwise.
@@ -561,10 +567,7 @@ impl Fixture {
 
     /// Waits until the source's hided ends on its own, within `bound`, and
     /// answers how it ended.
-    pub fn source_ended_within(
-        &mut self,
-        bound: std::time::Duration,
-    ) -> Result<std::process::ExitStatus> {
+    pub fn source_ended_within(&mut self, bound: Duration) -> Result<std::process::ExitStatus> {
         let daemon = self
             .daemon
             .as_mut()
@@ -587,8 +590,19 @@ impl Fixture {
 
     /// Waits until `machine`'s core logs a record of `kind`, and answers it.
     pub fn logged(&self, machine: &Machine, kind: &str) -> Result<Value> {
+        self.logged_within(machine, kind, READY_BOUND)
+    }
+
+    /// The same, for a record a resumed move writes only once its node
+    /// gave up waiting for the link, which takes the supervisor's own
+    /// bound before this one starts.
+    pub fn logged_after_link_wait(&self, machine: &Machine, kind: &str) -> Result<Value> {
+        self.logged_within(machine, kind, LINK_WITHIN + READY_BOUND)
+    }
+
+    fn logged_within(&self, machine: &Machine, kind: &str, bound: Duration) -> Result<Value> {
         let path = machine.state.join("Logs/core.jsonl");
-        wait_for(&format!("a {kind} record"), || {
+        wait_within(&format!("a {kind} record"), bound, || {
             let Ok(bytes) = read(&path) else {
                 return Ok(None);
             };

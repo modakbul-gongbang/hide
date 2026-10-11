@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 pub use ssh::Ssh;
 
-const READY_BOUND: Duration = Duration::from_secs(30);
+pub const READY_BOUND: Duration = Duration::from_secs(30);
 const READ_CAP: usize = 1024 * 1024;
 
 /// The prompt every fixture shell draws, so a test types into a pane only

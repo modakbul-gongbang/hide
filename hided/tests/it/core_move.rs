@@ -915,7 +915,7 @@ fn a_resumed_move_whose_alias_cannot_be_read_waits_for_its_peer() -> Result<()> 
         let away = config.with_file_name("config.away");
         std::fs::rename(&config, &away)?;
         fixture.start_source()?;
-        let failed = fixture.logged(&fixture.source, "status.failed")?;
+        let failed = fixture.logged_after_link_wait(&fixture.source, "status.failed")?;
         ensure!(
             failed["failure"]["kind"] == "unreachable"
                 && failed["failure"]["reason"]
@@ -1067,7 +1067,7 @@ fn a_move_given_up_while_its_peer_is_cut_off_ends_the_peer_s_core_once_it_is_bac
         )?;
         fixture.ssh.online(false)?;
         fixture.start_source()?;
-        fixture.logged(&fixture.source, "status.failed")?;
+        fixture.logged_after_link_wait(&fixture.source, "status.failed")?;
         ensure!(fixture.role()? == "node");
         let mut window = fixture.held_window()?;
         let offered = abandon_offered(&mut window)?;
