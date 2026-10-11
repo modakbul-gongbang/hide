@@ -595,21 +595,7 @@ fn adopt_agent<S>(
     let (project_id, number, _) = key;
     match spawn(&start) {
         Ok(agent_id) => {
-            match store.set_promotion_agent(project_id, *number, promotion, &agent_id) {
-                Ok(_) => None,
-                // The same intent answers the same agent, so the next check
-                // records it.
-                Err(error) => {
-                    crate::diagnostic!(json!({
-                        "component": "memory",
-                        "kind": "promotion.agent_not_recorded",
-                        "project_id": project_id,
-                        "card": hide_memory::card_name(*number),
-                        "message": error.to_string(),
-                    }));
-                    Some(start)
-                }
-            }
+            (!record_agent(store, project_id, *number, promotion, &agent_id)).then_some(start)
         }
         // Not seen yet, or another spawn held the lock: ask again next check.
         Err(reason) if reason == UNSEEN || reason == BUSY => Some(start),
@@ -622,6 +608,31 @@ fn adopt_agent<S>(
                 "reason": reason,
             }));
             None
+        }
+    }
+}
+
+/// Records the agent a spawn answered on its attempt; false when the write
+/// failed, so the caller keeps the start: the same intent answers the same
+/// agent at the next check. A row that moved on meanwhile counts as done.
+fn record_agent(
+    store: &mut MemoryStore,
+    project_id: &str,
+    number: u64,
+    promotion: &Promotion,
+    agent_id: &str,
+) -> bool {
+    match store.set_promotion_agent(project_id, number, promotion, agent_id) {
+        Ok(_) => true,
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "promotion.agent_not_recorded",
+                "project_id": project_id,
+                "card": hide_memory::card_name(number),
+                "message": error.to_string(),
+            }));
+            false
         }
     }
 }
@@ -743,10 +754,12 @@ pub(super) fn start_promotion(
             .map_err(|error| error.to_string())
     };
     match spawn_when_free(project_id, number, &promotion, &start) {
-        Ok(agent_id) => store
-            .set_promotion_agent(project_id, number, &promotion, &agent_id)
-            .map(|_| None)
-            .map_err(|error| error.to_string()),
+        // An agent that started but could not be recorded is the tracker's
+        // to ask for again, as an unseen one is.
+        Ok(agent_id) => Ok(
+            (!record_agent(store, project_id, number, &promotion, &agent_id))
+                .then_some((attempt, start)),
+        ),
         // The agent was started and has not shown its session yet: the
         // tracker asks the same spawn again until it shows or the grace ends.
         Err(reason) if reason == UNSEEN => {
@@ -1280,6 +1293,11 @@ mod tests {
         let (_, adopted) = &store.promotions("p1").unwrap()[0];
         assert_eq!(adopted.state, PromotionState::Running);
         assert_eq!(adopted.agent_id.as_deref(), Some("agent-7"));
+        assert_eq!(
+            adopt_agent(&mut store, &key, &promotion, (), |_| Ok("agent-7".into())),
+            None,
+            "an agent already recorded is done"
+        );
 
         let refused = adopt_agent(&mut store, &key, &promotion, (), |_| {
             Err("agent_not_startable".into())
