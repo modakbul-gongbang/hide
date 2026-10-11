@@ -426,20 +426,20 @@ impl Mapper<'_> {
             return Err("device_registrations is not a list".to_owned());
         };
         // The old owner takes the new owner's place in the list, so a move
-        // and a move back leave the devices in the order they were.
-        let at = rows.iter().position(|row| {
-            row.get("id").and_then(Value::as_str) == Some(&self.change.new_owner_was)
-        });
-        rows.retain(|row| {
-            let id = row.get("id").and_then(Value::as_str);
-            id != Some(self.change.new_owner_was.as_str())
-                && id != Some(self.change.old_owner_as.as_str())
-        });
+        // and a move back leave the devices in the order they were. The
+        // place is read once a row the old owner already had is gone, so it
+        // counts only the rows that stay.
+        let is = |row: &Value, id: &str| row.get("id").and_then(Value::as_str) == Some(id);
+        rows.retain(|row| !is(row, &self.change.old_owner_as));
+        let at = rows
+            .iter()
+            .position(|row| is(row, &self.change.new_owner_was));
+        rows.retain(|row| !is(row, &self.change.new_owner_was));
         let registration = serde_json::to_value(&self.change.old_owner_registration)
             .map_err(|error| error.to_string())?;
         match at {
-            Some(at) if at <= rows.len() => rows.insert(at, registration),
-            _ => rows.push(registration),
+            Some(at) => rows.insert(at, registration),
+            None => rows.push(registration),
         }
         Ok(())
     }
@@ -1902,5 +1902,34 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(1, "on the mini"), (2, "made on the mini's core")]
         );
+    }
+
+    /// A folder that already registered the machine giving up the core (a
+    /// row a hand edit or an older move left) still has the old owner take
+    /// the new owner's place among the rows that stay.
+    #[test]
+    fn the_old_owner_takes_the_new_owners_place_when_the_list_already_named_it() {
+        let ids = IdTable::default();
+        let change = forward();
+        let mut mapper = Mapper {
+            change: &change,
+            ids: &ids,
+            pruned: 0,
+        };
+        let mut core = json!({"device_registrations": [
+            {"id": M, "label": "MacBook (old)"},
+            {"id": X, "label": "Studio"},
+            mini_registration(),
+            {"id": "loft", "label": "Loft"},
+        ]});
+        mapper.device_registrations(&mut core).unwrap();
+        let ids: Vec<&str> = core["device_registrations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, [X, M, "loft"]);
+        assert_eq!(core["device_registrations"][1]["label"], json!("MacBook"));
     }
 }
