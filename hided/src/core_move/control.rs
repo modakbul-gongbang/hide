@@ -74,6 +74,22 @@ pub enum MoveState {
     Waiting,
 }
 
+impl MoveState {
+    /// Whether a move or its checks run, so another request is refused.
+    pub fn busy(self) -> bool {
+        matches!(
+            self,
+            Self::Checking
+                | Self::Stopping
+                | Self::Copying
+                | Self::Starting
+                | Self::Linking
+                | Self::RollingBack
+                | Self::Waiting
+        )
+    }
+}
+
 /// One check that did not pass, with what to do.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FailedCheck {
@@ -214,22 +230,52 @@ impl Default for MoveControl {
 }
 
 impl MoveControl {
-    /// Takes `request` when nothing else waits; a move running refuses any.
+    /// Takes `request` when no move or check runs. Taking it is the change
+    /// to Checking, made in one step with the look at the view, so of two
+    /// requests at once one is taken and the other refused as busy.
     pub fn request(&self, request: MoveRequest) -> Result<(), RequestRefusal> {
-        let busy = matches!(
-            self.view.borrow().state,
-            MoveState::Checking
-                | MoveState::Stopping
-                | MoveState::Copying
-                | MoveState::Starting
-                | MoveState::Linking
-                | MoveState::RollingBack
-                | MoveState::Waiting
-        );
-        if busy {
+        if !self.has_supervisor() {
+            return Err(RequestRefusal::Unavailable);
+        }
+        let checking = MoveView {
+            state: MoveState::Checking,
+            direction: match request {
+                MoveRequest::Check { .. } | MoveRequest::Start { .. } => None,
+                MoveRequest::CheckBack | MoveRequest::Back => Some(super::journal::Direction::Back),
+            },
+            device: match &request {
+                MoveRequest::Check { device } | MoveRequest::Start { device } => {
+                    Some(device.clone())
+                }
+                MoveRequest::CheckBack | MoveRequest::Back => None,
+            },
+            ..MoveView::default()
+        };
+        let mut before = None;
+        let taken = self.view.send_if_modified(|view| {
+            if view.state.busy() {
+                return false;
+            }
+            before = Some(std::mem::replace(view, checking));
+            true
+        });
+        if !taken {
             return Err(RequestRefusal::Busy);
         }
-        self.ask(Asked::Window(request))
+        self.ask(Asked::Window(request)).inspect_err(|_| {
+            if let Some(before) = before {
+                self.view.send_replace(before);
+            }
+        })
+    }
+
+    /// Whether this process's supervisor takes requests (it took the
+    /// receiver at its start).
+    fn has_supervisor(&self) -> bool {
+        self.receiver
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_none()
     }
 
     /// Takes a window's `core_move` event; the refusal is its reason code.
@@ -265,12 +311,7 @@ impl MoveControl {
     }
 
     fn ask(&self, asked: Asked) -> Result<(), RequestRefusal> {
-        if self
-            .receiver
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some()
-        {
+        if !self.has_supervisor() {
             return Err(RequestRefusal::Unavailable);
         }
         self.requests.try_send(asked).map_err(|error| match error {
@@ -321,4 +362,43 @@ pub fn frame(view: &MoveView) -> String {
 pub fn refusal_frame(reason: &str) -> String {
     serde_json::json!({"type": "error", "payload": {"kind": "core_move", "reason": reason}, "message": reason})
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// B20: once a request is taken, a second one is refused as busy even
+    /// before the supervisor has begun on the first, and the checks' end
+    /// takes requests again.
+    #[test]
+    fn a_second_request_is_busy_until_the_first_has_ended() {
+        let control = MoveControl::default();
+        let start = || MoveRequest::Start {
+            device: "mini".to_owned(),
+        };
+        assert_eq!(control.request(start()), Err(RequestRefusal::Unavailable));
+        assert_eq!(control.view().state, MoveState::Idle);
+        let mut requests = control.take_requests().unwrap();
+        assert_eq!(control.request(start()), Ok(()));
+        // The supervisor took it and has not yet said anything of it.
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(Asked::Window(MoveRequest::Start { .. }))
+        ));
+        assert_eq!(control.request(start()), Err(RequestRefusal::Busy));
+        assert_eq!(
+            control.request(MoveRequest::CheckBack),
+            Err(RequestRefusal::Busy)
+        );
+        assert!(requests.try_recv().is_err(), "a second request was queued");
+        let view = control.view();
+        assert_eq!(view.state, MoveState::Checking);
+        assert_eq!(view.device.as_deref(), Some("mini"));
+        control.set(MoveView {
+            state: MoveState::ChecksFailed,
+            ..MoveView::default()
+        });
+        assert_eq!(control.request(MoveRequest::CheckBack), Ok(()));
+    }
 }
