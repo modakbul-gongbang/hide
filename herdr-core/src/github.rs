@@ -1076,16 +1076,16 @@ pub(crate) struct PrFeedback {
     pub(crate) change_requests: Vec<crate::model::PrChangeRequest>,
 }
 
-/// `PrFeedback`, in one `gh pr view` on the caller's worker.
+/// `PrFeedback`, in one `gh pr view` at `place` on the caller's worker.
 pub(crate) fn pr_feedback(
     node: &dyn NodeLink,
-    root: &Path,
+    place: &Where,
     number: u32,
 ) -> Result<PrFeedback, String> {
     let number = number.to_string();
-    let output = gh(
+    let output = gh_at(
         node,
-        Some(root),
+        place,
         &["pr", "view", &number, "--json", PR_FEEDBACK_FIELDS],
     )
     .map_err(|error| error.reason)?;
@@ -1155,14 +1155,14 @@ fn parse_pr_feedback(output: &str) -> Result<PrFeedback, String> {
 /// GitHub closes the issue when it merges (PRD overview-lenses-prs D-13,
 /// D-47): the body is read first, and a body that already closes the issue
 /// is left as it is, so a retry never adds a second line. This is Hide's one
-/// write to a pull request.
+/// write to a pull request; `place` is where `gh` reads its repository.
 pub(crate) fn write_closing_line(
     node: &dyn NodeLink,
-    root: &Path,
+    place: &Where,
     number: u32,
     issue: u32,
 ) -> Result<bool, String> {
-    write_closing_line_with(|arguments| gh(node, Some(root), arguments), number, issue)
+    write_closing_line_with(|arguments| gh_at(node, place, arguments), number, issue)
 }
 
 /// `write_closing_line` through `gh`, which a test answers with a fixture.

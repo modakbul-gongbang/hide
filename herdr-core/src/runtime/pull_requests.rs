@@ -62,23 +62,26 @@ fn holds_pull_request(checkout: &CheckoutSnapshot, pull_request: &PullRequestSna
 }
 
 impl Runtime {
-    /// A local Git project and one of its open pull requests, or why not.
+    /// A Git project of this machine or of a node that dials this core,
+    /// with the node it is on, and one of its open pull requests, or why not.
+    /// A node's pull request is linked and handed on as this machine's is
+    /// (PRD core-host-node-move D-29); a device this core dials has none.
     fn open_pull_request(
         &self,
         workspace_id: &str,
         number: u32,
-    ) -> Result<(WorkspaceSnapshot, PullRequestSnapshot), String> {
-        let workspace = self
-            .local_project_by_id(workspace_id)
-            .filter(|workspace| workspace.is_git)
-            .ok_or_else(|| "이 Mac의 Git 프로젝트가 아닙니다".to_owned())?;
+    ) -> Result<(Option<String>, WorkspaceSnapshot, PullRequestSnapshot), String> {
+        let (node, workspace) = self
+            .issue_project(workspace_id)
+            .filter(|(_, workspace)| workspace.is_git)
+            .ok_or_else(|| "이 core가 아는 Git 프로젝트가 아닙니다".to_owned())?;
         let pull_request = workspace
             .pull_requests
             .iter()
             .find(|pull_request| pull_request.number == number && !pull_request.badge.is_settled())
             .cloned()
             .ok_or_else(|| format!("PR #{number}은 열려 있지 않습니다"))?;
-        Ok((workspace, pull_request))
+        Ok((node, workspace, pull_request))
     }
 
     fn fail_pr_link(&mut self, mut link: PrLinkSnapshot, step: &str, message: String) -> bool {
@@ -124,7 +127,7 @@ impl Runtime {
             created: false,
             message: None,
         };
-        let (workspace, pull_request) =
+        let (machine, workspace, pull_request) =
             match self.open_pull_request(&link.workspace_id, link.pr_number) {
                 Ok(target) => target,
                 Err(message) => return self.fail_pr_link(link, "link", message),
@@ -132,12 +135,14 @@ impl Runtime {
         crate::diagnostic!(serde_json::json!({
             "component": "pull_requests", "kind": "pr_link.requested",
             "request": link.request_id, "project": workspace.path, "pr": link.pr_number,
-            "new_issue": payload.new_issue.is_some(),
+            "node": machine, "new_issue": payload.new_issue.is_some(),
         }));
         let local = self.project_source_kind(&workspace) == crate::tasks::SourceKind::Local;
         match (payload.issue_key, payload.new_issue) {
             (Some(key), None) if local => self.link_local_pr(link, &workspace, &pull_request, key),
-            (Some(key), None) => self.link_github_pr(link, &workspace, &pull_request, &key),
+            (Some(key), None) => {
+                self.link_github_pr(link, machine.as_deref(), &workspace, &pull_request, &key)
+            }
             (None, Some(new)) => {
                 let checked = crate::local_issues::validated_title(&new.title).and_then(|title| {
                     crate::local_issues::validated_body(&new.body).map(|body| (title, body))
@@ -147,7 +152,12 @@ impl Runtime {
                     Err(message) => return self.fail_pr_link(link, "create", message),
                 };
                 if local {
-                    return match self.create_local_issue(None, &workspace.path, &title, &body) {
+                    return match self.create_local_issue(
+                        machine.as_deref(),
+                        &workspace.path,
+                        &title,
+                        &body,
+                    ) {
                         Err(message) => self.fail_pr_link(link, "create", message),
                         Ok(number) => {
                             let link = PrLinkSnapshot {
@@ -159,27 +169,26 @@ impl Runtime {
                         }
                     };
                 }
+                let place = match self.github_place(machine.as_deref(), &workspace.path) {
+                    Ok(place) => place,
+                    Err(message) => return self.fail_pr_link(link, "create", message),
+                };
                 let request_id = link.request_id.clone();
                 self.snapshot.pr_work.link = Some(PrLinkSnapshot {
                     step: "create".into(),
                     ..link
                 });
-                let root = PathBuf::from(&workspace.path);
                 let number = pull_request.number;
                 let node = self.own_node();
                 let spawned = self.spawn_issue_worker(
                     "pr-issue-create",
                     move || {
-                        let created = crate::github::create_issue(
-                            node.as_ref(),
-                            &crate::github::Where::Checkout(root.clone()),
-                            &title,
-                            &body,
-                        );
+                        let created =
+                            crate::github::create_issue(node.as_ref(), &place, &title, &body);
                         let written = created.as_ref().ok().map(|issue| {
                             crate::github::write_closing_line(
                                 node.as_ref(),
-                                &root,
+                                &place,
                                 number,
                                 issue.reference.number,
                             )
@@ -280,6 +289,7 @@ impl Runtime {
     fn link_github_pr(
         &mut self,
         mut link: PrLinkSnapshot,
+        machine: Option<&str>,
         workspace: &WorkspaceSnapshot,
         pull_request: &PullRequestSnapshot,
         key: &str,
@@ -290,19 +300,22 @@ impl Runtime {
         let Some(reference) = reference else {
             return self.fail_pr_link(link, "link", format!("{key}는 이 저장소의 이슈가 아닙니다"));
         };
+        let place = match self.github_place(machine, &workspace.path) {
+            Ok(place) => place,
+            Err(message) => return self.fail_pr_link(link, "body", message),
+        };
         link.issue_key = Some(key.to_owned());
         link.issue_id = Some(format!("#{}", reference.number));
         link.step = "body".into();
         let request_id = link.request_id.clone();
         self.snapshot.pr_work.link = Some(link);
         self.link_pr_branch(workspace, pull_request, &reference);
-        let root = PathBuf::from(&workspace.path);
         let number = pull_request.number;
         let issue = reference.number;
         let node = self.own_node();
         let spawned = self.spawn_issue_worker(
             "pr-body-write",
-            move || crate::github::write_closing_line(node.as_ref(), &root, number, issue),
+            move || crate::github::write_closing_line(node.as_ref(), &place, number, issue),
             move |runtime, written| runtime.finish_pr_body(&request_id, &reference, written),
         );
         if let Err(message) = spawned {
@@ -350,8 +363,8 @@ impl Runtime {
         };
         let reference = issue.reference.clone();
         let target = self.open_pull_request(&link.workspace_id, link.pr_number);
-        if let Some(workspace) = self.local_project_by_id(&link.workspace_id) {
-            self.remember_created_issue(None, &workspace.path, issue);
+        if let Some((machine, workspace)) = self.issue_project(&link.workspace_id) {
+            self.remember_created_issue(machine.as_deref(), &workspace.path, issue);
         }
         self.snapshot.pr_work.link = Some(PrLinkSnapshot {
             step: "body".into(),
@@ -360,7 +373,7 @@ impl Runtime {
             created: true,
             ..link
         });
-        if let Ok((workspace, pull_request)) = &target {
+        if let Ok((_, workspace, pull_request)) = &target {
             self.link_pr_branch(workspace, pull_request, &reference);
         }
         let written = written.unwrap_or_else(|| Err("PR 본문을 쓰지 않았습니다".to_owned()));
@@ -394,27 +407,36 @@ impl Runtime {
             "request": link.request_id, "pr": link.pr_number, "issue": reference.number,
             "already_there": !wrote,
         }));
-        if let Some(workspace) = self.local_project_by_id(&link.workspace_id)
-            && let Some(project) = self
-                .github
-                .projects
-                .iter_mut()
-                .find(|project| project.root_path == workspace.path)
-        {
-            for pull_request in &mut project.pull_requests {
-                if pull_request.number == link.pr_number
-                    && !pull_request.closing_issues.contains(reference)
-                {
-                    pull_request.closing_issues.push(reference.clone());
+        let machine = self.issue_project(&link.workspace_id);
+        if let Some((machine, workspace)) = &machine {
+            let github = match machine {
+                None => Some(&mut self.github),
+                Some(node) => self.device_github.get_mut(node),
+            };
+            if let Some(project) = github.and_then(|github| {
+                github
+                    .projects
+                    .iter_mut()
+                    .find(|project| project.root_path == workspace.path)
+            }) {
+                for pull_request in &mut project.pull_requests {
+                    if pull_request.number == link.pr_number
+                        && !pull_request.closing_issues.contains(reference)
+                    {
+                        pull_request.closing_issues.push(reference.clone());
+                    }
                 }
             }
-            self.refresh_pull_requests(&workspace.path);
+            match machine {
+                None => self.refresh_pull_requests(&workspace.path),
+                Some(node) => self.reread_node_github(node, &workspace.path),
+            }
         }
         self.snapshot.pr_work.link = Some(PrLinkSnapshot {
             phase: "ready".into(),
             ..link
         });
-        self.apply_pull_requests();
+        self.refresh_issue_rows(machine.and_then(|(machine, _)| machine).as_deref());
         true
     }
 
@@ -430,8 +452,13 @@ impl Runtime {
             change_requests: Vec::new(),
             message: None,
         };
-        let workspace = match self.open_pull_request(&payload.workspace_id, payload.pr_number) {
-            Ok((workspace, _)) => workspace,
+        let place = self
+            .open_pull_request(&payload.workspace_id, payload.pr_number)
+            .and_then(|(machine, workspace, _)| {
+                self.github_place(machine.as_deref(), &workspace.path)
+            });
+        let place = match place {
+            Ok(place) => place,
             Err(message) => {
                 slot.phase = "failed".into();
                 slot.message = Some(message);
@@ -441,13 +468,12 @@ impl Runtime {
         };
         let request_id = slot.request_id.clone();
         self.snapshot.pr_work.feedback = Some(slot);
-        let root = PathBuf::from(&workspace.path);
         let number = payload.pr_number;
         let answered = request_id.clone();
         let node = self.own_node();
         if let Err(message) = self.spawn_issue_worker(
             "pr-feedback",
-            move || crate::github::pr_feedback(node.as_ref(), &root, number),
+            move || crate::github::pr_feedback(node.as_ref(), &place, number),
             move |runtime, answer| runtime.ingest_pr_feedback(&answered, answer),
         ) {
             self.ingest_pr_feedback(&request_id, Err(message));
@@ -490,8 +516,9 @@ impl Runtime {
 
     /// `pr_delegate` (D-12, D-46): the agent starts in the checkout of the
     /// pull request's branch with the operator's first prompt, or, with no
-    /// checkout here, in a new worktree of that existing branch. Both report
-    /// through the task-operation slot, as every start does.
+    /// such checkout, in a new worktree of that existing branch, on the
+    /// machine the project is on. Both report through the task-operation
+    /// slot, as every start does.
     pub(super) fn delegate_pr(&mut self, mut payload: PrDelegatePayload) -> bool {
         let Some(provider) = hide_agent_adapter::start_kind(&payload.provider) else {
             self.set_error(
@@ -502,7 +529,7 @@ impl Runtime {
             return true;
         };
         payload.provider = provider.to_owned();
-        let (workspace, pull_request) =
+        let (machine, workspace, pull_request) =
             match self.open_pull_request(&payload.workspace_id, payload.pr_number) {
                 Ok(target) => target,
                 Err(message) => {
@@ -517,13 +544,13 @@ impl Runtime {
             .find(|checkout| checkout.exists && holds_pull_request(checkout, &pull_request));
         crate::diagnostic!(serde_json::json!({
             "component": "pull_requests", "kind": "pr_delegate.requested",
-            "project": workspace.path, "pr": pull_request.number,
+            "project": workspace.path, "pr": pull_request.number, "node": machine,
             "checkout": checkout.map(|checkout| checkout.id.clone()),
         }));
         match checkout {
             Some(checkout) => self.agent_start_in_checkout(AgentStartInCheckoutPayload {
                 checkout_path: Some(checkout.path.clone()),
-                device_id: None,
+                device_id: machine,
                 home: false,
                 provider: payload.provider,
                 prompt,
@@ -534,7 +561,7 @@ impl Runtime {
             }),
             None => self.start_worktree_task(
                 CreateWorktreePayload {
-                    device_id: None,
+                    device_id: machine,
                     repository_root: workspace.path.clone(),
                     branch: pull_request.head_branch.clone(),
                     base_branch: None,

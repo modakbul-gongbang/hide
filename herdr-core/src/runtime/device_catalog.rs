@@ -63,6 +63,15 @@ impl Runtime {
                     .and_then(|github| github.project(&project.path))
                 {
                     super::projects::associate_pull_requests(project, Some(found));
+                    // A node's project lists its pull requests on its PRs tab
+                    // as this machine's does (D-29).
+                    if reports_own_facts && project.is_git {
+                        project.pull_requests = super::pull_requests::shown_pull_requests(
+                            &found.pull_requests,
+                            &project.checkouts,
+                            unix_milliseconds(),
+                        );
+                    }
                 }
             }
         }

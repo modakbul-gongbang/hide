@@ -24,6 +24,8 @@ struct Recording {
     inner: Option<Arc<dyn NodeLink>>,
     calls: Mutex<Vec<Call>>,
     gh_stdout: Mutex<Option<String>>,
+    /// Answers by the `gh` command's first words, before `gh_stdout`.
+    gh_answers: Mutex<Vec<(&'static str, String)>>,
 }
 
 impl Recording {
@@ -32,6 +34,7 @@ impl Recording {
             inner,
             calls: Mutex::new(Vec::new()),
             gh_stdout: Mutex::new(None),
+            gh_answers: Mutex::new(Vec::new()),
         })
     }
 
@@ -72,9 +75,18 @@ impl Recording {
 impl NodeLink for Recording {
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         self.calls.lock().unwrap().push(call.clone());
-        if matches!(call, Call::Gh { .. })
-            && let Some(stdout) = self.gh_stdout.lock().unwrap().clone()
-        {
+        let answered = match &call {
+            Call::Gh { args, .. } => self
+                .gh_answers
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(command, _)| args.join(" ").starts_with(command))
+                .map(|(_, stdout)| stdout.clone())
+                .or_else(|| self.gh_stdout.lock().unwrap().clone()),
+            _ => None,
+        };
+        if let Some(stdout) = answered {
             return Ok(LinkAnswer::Parsed(
                 serde_json::to_value(hide_node_link::gh::GhAnswer::Output { stdout }).unwrap(),
             ));
@@ -1259,4 +1271,261 @@ fn starting_a_node_project_s_issue_links_the_new_worktree_on_the_node() {
         own.calls.lock().unwrap()
     );
     assert!(Path::new(&created).is_dir());
+}
+
+/// A node project's GitHub answer with issue #12 and pull request #7 open
+/// on `feature`, the branch of the repository's linked worktree.
+fn ingest_node_pull_request(runtime: &mut Runtime, repo: &Repo) {
+    runtime.ingest_device_github(
+        NODE,
+        crate::model::GithubSnapshot {
+            projects: vec![crate::model::GithubProjectSnapshot {
+                pull_requests_read: true,
+                issues_read: true,
+                issues: crate::issues::ProjectIssuesSnapshot {
+                    repository: Some("acme/app".to_owned()),
+                    issues: vec![github_issue("acme/app", 12, "Fix login")],
+                    ..Default::default()
+                },
+                root_path: repo.root.clone(),
+                status: crate::model::GithubStatusSnapshot {
+                    available: true,
+                    last_success_at_unix_ms: Some(5),
+                    ..Default::default()
+                },
+                pull_requests: vec![crate::model::PullRequestSnapshot {
+                    closing_issues: Vec::new(),
+                    title: "Fix login".to_owned(),
+                    checks: crate::model::PullRequestChecks::Failed,
+                    number: 7,
+                    head_branch: "feature".to_owned(),
+                    base_branch: "main".to_owned(),
+                    url: "https://github.com/acme/app/pull/7".to_owned(),
+                    badge: crate::model::PullRequestBadge::Open,
+                    review: None,
+                    is_draft: false,
+                    merged_at_unix_ms: None,
+                    updated_at_unix_ms: Some(1),
+                    created_at_unix_ms: None,
+                    closed_at_unix_ms: None,
+                    head_oid: None,
+                    cross_repository: false,
+                }],
+            }],
+        },
+    );
+}
+
+fn pr_link(shared: &SharedRuntime) -> crate::model::PrLinkSnapshot {
+    wait(shared, "the pull request link to settle", |runtime| {
+        runtime
+            .snapshot
+            .pr_work
+            .link
+            .as_ref()
+            .is_some_and(|link| link.phase != "working")
+    });
+    shared
+        .lock()
+        .unwrap()
+        .snapshot
+        .pr_work
+        .link
+        .clone()
+        .unwrap()
+}
+
+/// A node project's pull request links a GitHub issue as this machine's
+/// does: the link is written on the node's worktree of its branch, and
+/// `Closes #12` is written into the pull request's body by the repository's
+/// name with this machine's `gh`, never in a folder here.
+#[test]
+fn a_node_pull_request_links_its_github_issue_on_the_node_and_closes_it_by_name() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    let node = Recording::of(Some(FakeDevice::new()));
+    let own = Recording::of(None);
+    *own.gh_answers.lock().unwrap() = vec![
+        (
+            "api graphql",
+            r#"{"data":{"r0":{"issue":{"number":12,"title":"Fix login","url":"https://github.com/acme/app/issues/12","state":"OPEN","updatedAt":"2026-10-10T09:00:00Z","createdAt":"2026-10-09T09:00:00Z","closedAt":null,"labels":{"nodes":[]}}}}}"#.to_owned(),
+        ),
+        ("pr view", r#"{"body":"Fixes the login."}"#.to_owned()),
+        ("pr edit", String::new()),
+    ];
+    let shared = node_runtime(&repo, node.clone(), own.clone(), Default::default());
+    let workspace_id = {
+        let mut runtime = shared.lock().unwrap();
+        ingest_node_pull_request(&mut runtime, &repo);
+        node_project(&runtime).unwrap().id.clone()
+    };
+    dispatch(
+        &shared,
+        "pr_link_issue",
+        serde_json::json!({"request_id": "r1", "workspace_id": workspace_id, "pr_number": 7,
+            "issue_key": "github:acme/app#12"}),
+    );
+    let link = pr_link(&shared);
+    assert_eq!(link.phase, "ready", "{:?}", link.message);
+    let calls = own.gh_calls();
+    assert!(
+        calls
+            .iter()
+            .all(|(cwd, repository, _)| cwd.is_none() && repository.as_deref() == Some("acme/app")),
+        "{calls:?}"
+    );
+    let body: Vec<String> = calls
+        .iter()
+        .map(|(_, _, args)| args[..3].join(" "))
+        .filter(|call| call.starts_with("pr "))
+        .collect();
+    assert_eq!(body, ["pr view 7", "pr edit 7"]);
+    let linked = repo.linked.clone();
+    wait(&shared, "the link on the node's worktree", move |runtime| {
+        node_project(runtime).is_some_and(|project| {
+            project.checkouts.iter().any(|checkout| {
+                checkout.path == linked
+                    && checkout.task_key.as_deref() == Some("github:acme/app#12")
+            })
+        })
+    });
+    assert_eq!(
+        node.git_writes(),
+        [format!(
+            "{} SetBranchConfig {{ branch: \"feature\", key: Issue, value: \"acme/app#12\" }}",
+            repo.root
+        )]
+    );
+    assert!(own.git_writes().is_empty());
+}
+
+/// A node project's pull request made into a new Local issue makes it in
+/// the node's store slot, continuing its numbers, and links it on the node.
+#[test]
+fn a_node_pull_request_s_new_local_issue_is_made_under_the_node() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    let mut store = crate::local_issues::LocalIssueStore::default();
+    store
+        .devices
+        .entry(NODE.to_owned())
+        .or_default()
+        .insert(repo.root.clone(), local_project(&[(4, "moved")]));
+    let node = Recording::of(Some(FakeDevice::new()));
+    let own = Recording::of(None);
+    let shared = node_runtime(&repo, node.clone(), own.clone(), store);
+    let workspace_id = {
+        let mut runtime = shared.lock().unwrap();
+        ingest_node_pull_request(&mut runtime, &repo);
+        node_project(&runtime).unwrap().id.clone()
+    };
+    dispatch(
+        &shared,
+        "issue_source_set",
+        serde_json::json!({"project_path": repo.root, "source": "local"}),
+    );
+    dispatch(
+        &shared,
+        "pr_link_issue",
+        serde_json::json!({"request_id": "r2", "workspace_id": workspace_id, "pr_number": 7,
+            "new_issue": {"title": "From the pull request"}}),
+    );
+    let link = pr_link(&shared);
+    assert_eq!(
+        (link.phase.as_str(), link.issue_id.as_deref(), link.created),
+        ("ready", Some("L-5"), true),
+        "{:?}",
+        link.message
+    );
+    let runtime = shared.lock().unwrap();
+    let store = runtime.local_issues.as_ref().unwrap();
+    let kept = store.project(Some(NODE), &repo.root).unwrap();
+    assert_eq!(
+        kept.issues
+            .iter()
+            .map(|issue| (issue.number, issue.title.as_str()))
+            .collect::<Vec<_>>(),
+        [(4, "moved"), (5, "From the pull request")]
+    );
+    assert!(store.project(None, &repo.root).is_none());
+    assert_eq!(
+        node.git_writes(),
+        [format!(
+            "{} SetBranchConfig {{ branch: \"feature\", key: Issue, value: \"L-5\" }}",
+            repo.root
+        )]
+    );
+    assert!(own.gh_calls().is_empty() && own.git_writes().is_empty());
+}
+
+/// A node project's pull request is handed to an agent as this machine's
+/// is: its checks and reviews are read by the repository's name, and the
+/// agent starts on the node, in the node's worktree of its branch.
+#[test]
+fn a_node_pull_request_is_handed_to_an_agent_on_the_node() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    let own = Recording::of(None);
+    *own.gh_stdout.lock().unwrap() =
+        Some(r#"{"body":"b","statusCheckRollup":[],"reviews":[]}"#.to_owned());
+    let herdr = crate::fake_herdr::FakeHerdr::start_with_errors("node-delegate", |method, _| {
+        Err((
+            "unsupported".to_owned(),
+            format!("the fixture answers no {method}"),
+        ))
+    });
+    let shared = node_runtime_with(
+        &repo,
+        FakeDevice::new(),
+        own.clone(),
+        Default::default(),
+        Arc::new(herdr.connector()),
+        vec![
+            herdr_workspace(NODE, "w1", &repo.root, &[("t1", &repo.root)]),
+            herdr_workspace(NODE, "w2", &repo.linked, &[("t2", &repo.linked)]),
+        ],
+    );
+    let workspace_id = {
+        let mut runtime = shared.lock().unwrap();
+        ingest_node_pull_request(&mut runtime, &repo);
+        node_project(&runtime).unwrap().id.clone()
+    };
+    dispatch(
+        &shared,
+        "pr_feedback_read",
+        serde_json::json!({"request_id": "f1", "workspace_id": workspace_id, "pr_number": 7}),
+    );
+    wait(&shared, "the pull request's feedback", |runtime| {
+        runtime
+            .snapshot
+            .pr_work
+            .feedback
+            .as_ref()
+            .is_some_and(|feedback| feedback.phase != "reading")
+    });
+    let feedback = shared.lock().unwrap().snapshot.pr_work.feedback.clone();
+    assert_eq!(
+        feedback.as_ref().map(|feedback| feedback.phase.as_str()),
+        Some("ready"),
+        "{feedback:?}"
+    );
+    let (cwd, repository, args) = own.gh_calls().remove(0);
+    assert_eq!(
+        (cwd, repository.as_deref(), args[..3].join(" ")),
+        (None, Some("acme/app"), "pr view 7".to_owned())
+    );
+
+    dispatch(
+        &shared,
+        "pr_delegate",
+        serde_json::json!({"workspace_id": workspace_id, "pr_number": 7, "provider": "claude",
+            "prompt": "Fix the failing checks"}),
+    );
+    herdr.wait_for_requests(1, Duration::from_secs(10));
+    let opened = herdr.calls();
+    assert_eq!(
+        opened
+            .iter()
+            .map(|(method, params)| (method.as_str(), params["path"].as_str()))
+            .collect::<Vec<_>>(),
+        [("worktree.open", Some(repo.linked.as_str()))],
+        "{opened:?}"
+    );
 }

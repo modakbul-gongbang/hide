@@ -651,7 +651,7 @@ impl Runtime {
 
     /// Shows a change to a project's issues made here: this machine's
     /// projects are projected again, and a node's session rows are.
-    fn refresh_issue_rows(&mut self, node: Option<&str>) {
+    pub(super) fn refresh_issue_rows(&mut self, node: Option<&str>) {
         match node {
             None => {
                 self.apply_pull_requests();
