@@ -1,7 +1,7 @@
 import { FolderIcon, HomeIcon, ServerIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { rememberedSelection, modelToSend, type AgentSelection } from "./agentPicker";
+import { rememberedSelection, modelToSend, selectKind, type AgentSelection } from "./agentPicker";
 import { AgentPicker } from "./components/agent-picker";
 import { Button } from "./components/ui/button";
 import { useEscapeLayer } from "./components/ui/layer";
@@ -112,11 +112,16 @@ function StartPanel({ actions }: { actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const screen = useUiStore((s) => s.screen);
   const overSettings = useStartPanel((s) => s.overSettings);
+  const preset = useStartPanel((s) => s.preset);
   // What is in front is read again on every open; the panel itself lives only while open.
-  const overviewProjectId = useUiStore((s) => s.overviewOpen || s.screen?.kind === "main" ? s.overviewProjectId : null);
+  const frontProjectId = useUiStore((s) => s.overviewOpen || s.screen?.kind === "main" ? s.overviewProjectId : null);
+  const overviewProjectId = preset?.projectId ?? frontProjectId;
   const targets = useMemo(() => startTargets(rest, screen, t, overSettings, overviewProjectId), [rest, screen, t, overSettings, overviewProjectId]);
   const target = resolveTarget(targets, chosen);
-  const [selection, setSelection] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
+  const [selection, setSelection] = useState<AgentSelection>(() => {
+    const start = useShellStore.getState().rest?.ui_state?.agent_start;
+    return preset?.kind ? selectKind(preset.kind, start) : rememberedSelection(start);
+  });
   const surface = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);
   const previous = useRef<HTMLElement | null>(document.activeElement instanceof HTMLElement ? document.activeElement : null);

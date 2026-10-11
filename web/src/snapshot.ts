@@ -1074,6 +1074,17 @@ export type KitComponentState = "installed" | "outdated" | "not_installed" | "re
 export type KitAgentAvailability = "available" | "not_installed" | "unsupported_system";
 
 /** One piece of an agent (its skill or its hook) on its machine. */
+/** The first-run wizard's steps (`contracts/snapshot-wire-enums.json`: `first_run_step`). */
+export type FirstRunStep = "agents" | "notifications" | "project" | "done";
+
+export type FirstRun = { version: number; step: FirstRunStep };
+
+/** The flow version this build draws; the core keeps the same number (`FIRST_RUN_VERSION`). */
+export const FIRST_RUN_VERSION = 1;
+
+/** The screens introduced once (`contracts/snapshot-wire-enums.json`: `screen_intro`). */
+export type ScreenIntro = "factory" | "devices";
+
 export type KitPiece = {
   state: KitComponentState;
   reason: string | null;
@@ -1579,6 +1590,12 @@ export type SnapshotRest = {
     agent_onboarding?: "pending" | "done" | null;
     /** The agents left on in that choice. */
     agent_onboarding_agents?: string[];
+    /** The first-run wizard's progress (PRD first-run-onboarding D-07): absent on a Mac that never had one; another flow `version` is not this build's to show. */
+    first_run?: FirstRun | null;
+    /** Settings > General's Notify me when an agent needs me (D-21); the desktop app shows agent notifications only while it is on. */
+    desktop_notifications?: boolean;
+    /** The screens whose one-line introduction was shown (B43). */
+    screen_intros_seen?: ScreenIntro[];
     font_size?: number;
     /** The sidebar's width in CSS pixels, 220 to 440; the core refuses anything else (PRD sidebar-typography D-09). */
     sidebar_width?: number;

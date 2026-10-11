@@ -1,4 +1,6 @@
+import { receiveAgentNotice } from "./agentNotices";
 import { configureAttachments, receiveAttachmentRefusal } from "./attachments";
+import type { AgentNotice } from "./generated/hided-ws";
 import { connectionAfterHealthFails, nextBackoff } from "./connection";
 import { clearPending, receiveBytes, receiveBytesError, receiveBytesRefusal } from "./fileBytes";
 import { isOperatorFocus, numbered } from "./operatorFocus";
@@ -118,6 +120,10 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       // reads the snapshot that has not arrived yet.
       if (frame.type === "daemon" || frame.type === "mobile") {
         useShellStore.getState().applyFrame(frame);
+        return;
+      }
+      if (frame.type === "agent_notice") {
+        receiveAgentNotice(frame.payload as unknown as AgentNotice);
         return;
       }
       if (frame.type === "file_bytes_error") {

@@ -8,12 +8,23 @@ import { requireInterfaceLanguage } from "../i18n/locale";
 import { diagnosticsText, environmentTone, githubAccess, githubAccessLine, herdrLine, herdrProtocolText, shownIn } from "../settings";
 import { useShellStore } from "../store";
 import { AppearanceGroup } from "./AppearanceGroup";
+import { hostBridge } from "../host";
+import { NotificationControls } from "../NotificationControls";
 
-/** Language and look, the GitHub connection, and what this hide is running (PRD settings-cleanup D-03). */
+/** Language and look, the desktop app's notifications, the GitHub connection, and what this hide is running (PRD settings-cleanup D-03). */
 export function GeneralTab({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   return (
     <>
       <AppearanceGroup actions={actions} />
+      {/* Desktop notifications are the desktop app's (PRD first-run-onboarding D-14, D-21). */}
+      {hostBridge() ? (
+        <Group title={t("firstRun.settings.group")} data-settings-group="notifications">
+          <div className="px-md py-sm">
+            <NotificationControls actions={actions} place="settings" />
+          </div>
+        </Group>
+      ) : null}
       <ConnectionsGroup actions={actions} />
       <AboutGroup />
     </>

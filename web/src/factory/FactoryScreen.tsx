@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { CircleXIcon, ClockIcon, MessageSquareIcon, PauseIcon, PlayIcon, PlusIcon, SparklesIcon } from "lucide-react";
 import type { Actions } from "../actions";
+import { ScreenIntro } from "../ScreenIntro";
 import { useElapsed } from "../components/elapsed";
 import { Button } from "../components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
@@ -37,6 +38,7 @@ export function FactoryScreen({ actions }: { actions: Actions }) {
   if (!place) return null;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" data-factory-screen={summary === null ? "loading" : "ready"}>
+      <ScreenIntro screen="factory" actions={actions} />
       {summary === null ? <FactorySkeleton /> : <FactoryBody summary={summary} place={place} actions={actions} />}
       <CreateSheet actions={actions} />
     </div>

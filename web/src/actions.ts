@@ -53,6 +53,7 @@ import {
   type EditorTabSnapshot,
   type IssueSettings,
   type KitComponentId,
+  type ScreenIntro,
   type Tab,
   type Workspace,
   type LinkTarget,
@@ -1048,9 +1049,35 @@ export function createActions(send: DispatchFn) {
       });
     },
 
-    /** The first-run choice's Apply: the agents left on are switched on here and on every device that waits for the choice. */
-    applyAgentOnboarding(agents: string[]) {
-      dispatch({ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents } });
+    /**
+     * The wizard's first step, Continue: the agents left on are switched on
+     * here and on every device that waits for the choice; once the choice is
+     * answered, only the agents whose switch changed move (B45). The core
+     * moves the wizard on when this Mac's kit pass lands, and `finish` ends
+     * it there, a browser tab's whole wizard (B26).
+     */
+    applyAgentOnboarding(agents: string[], finish = false) {
+      dispatch({ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents, finish } });
+    },
+
+    /** The operator left the wizard's step `from` (Continue, Not now, Skip for now, a project added); the core moves only the step on screen. */
+    advanceFirstRun(from: "notifications" | "project") {
+      dispatch({ schema_version: 2, kind: "first_run_advance", payload: { from } });
+    },
+
+    /** Notify me when an agent needs me (D-21). */
+    setDesktopNotifications(enabled: boolean) {
+      dispatch({ schema_version: 2, kind: "desktop_notifications_set", payload: { enabled } });
+    },
+
+    /** A screen's one-line introduction was shown, so it is not shown again (B43). */
+    markScreenIntroSeen(screen: ScreenIntro) {
+      dispatch({ schema_version: 2, kind: "screen_intro_seen", payload: { screen } });
+    },
+
+    /** This desktop window shows agent notifications, or stops; hided judges agent changes only while one does. */
+    wantAgentNotices(wanted: boolean) {
+      dispatch({ schema_version: 2, kind: "desktop_notices", payload: { wanted } });
     },
 
     /** An agent's switch on its machine's row (agent adapters): its skill and hook go in or come out. */

@@ -1,9 +1,9 @@
-// The first-run agent choice on invented data: the production gate over a
+// The first-run wizard's agent step on invented data: the production wizard over a
 // synthetic local device that lists the seven adapters, no daemon. The installed
 // set mirrors a typical machine so the on, off and not-installed tiles all show.
 import { useLayoutEffect, useMemo } from "react";
 import { createActions } from "../actions";
-import { AgentOnboardingGate } from "../AgentOnboarding";
+import { FirstRunWizard } from "../FirstRunWizard";
 import { TooltipProvider } from "../components/ui/tooltip";
 import type { KitAgent } from "../snapshot";
 import { useShellStore } from "../store";
@@ -34,7 +34,7 @@ export function AgentOnboardingScene({ theme }: { theme: "light" | "dark" }) {
     useShellStore.setState({
       connection: "live",
       rest: {
-        ui_state: { agent_onboarding: "pending" },
+        ui_state: { agent_onboarding: "pending", first_run: { version: 1, step: "agents" } },
         navigator: { devices: [{ id: "local", kit: { agents } }] },
         // Claude Code is signed in, so the first-run line names it.
         status: { background_ai: { provider: null, chosen: false, providers: [{ id: "claude", label: "Claude Code", agent: "claude-code", state: "ready", selectable: true }] } },
@@ -46,7 +46,7 @@ export function AgentOnboardingScene({ theme }: { theme: "light" | "dark" }) {
   return (
     <TooltipProvider>
       <div className="h-full bg-background" data-gallery-scene="agent-onboarding" />
-      <AgentOnboardingGate actions={actions} />
+      <FirstRunWizard actions={actions} />
     </TooltipProvider>
   );
 }
