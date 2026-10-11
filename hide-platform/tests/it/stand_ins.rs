@@ -169,7 +169,8 @@ pub fn ready(program: &Path) {
             Ok(mut child) => {
                 child.capture_until(deadline, 1).unwrap_or_else(|error| {
                     panic!(
-                        "{} did not end its first start: {error:?}",
+                        "{} did not end its first start, which runs it with `--help` and must end \
+                         at once (a body that keeps running exits on that argument first): {error:?}",
                         program.display()
                     )
                 });

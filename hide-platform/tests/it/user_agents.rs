@@ -153,10 +153,11 @@ fn a_login_agent_restarts_after_a_kill_never_after_success_and_ends_when_removed
     let directory = tempfile::tempdir().unwrap();
     let home = directory.path();
     let program = home.join("agent");
-    // Records each start; a TERM ends it successfully.
+    // Records each start; a TERM ends it successfully. The store's own first
+    // start (`--help`) ends at once, as every stand-in's must.
     crate::stand_ins::program(
         &program,
-        "#!/bin/sh\ntrap 'exit 0' TERM\necho $$ >> \"$HOME/starts\"\nwhile :; do sleep 1; done\n",
+        "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\ntrap 'exit 0' TERM\necho $$ >> \"$HOME/starts\"\nwhile :; do sleep 1; done\n",
     );
     let label = format!("dev.withhide.contract.{}", std::process::id());
     let home_value = home.to_string_lossy().into_owned();
