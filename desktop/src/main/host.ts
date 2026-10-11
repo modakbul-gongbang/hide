@@ -136,7 +136,7 @@ export class DesktopHost {
     /** The language the host's own words are drawn in. */
     private readonly language: HostLanguage,
   ) {
-    this.permission = new NotificationPermissionReader(process.platform, path.dirname(process.execPath), log);
+    this.permission = new NotificationPermissionReader(process.platform, path.dirname(process.execPath), log, () => Notification.isSupported());
   }
 
   // --- lifecycle ------------------------------------------------------------

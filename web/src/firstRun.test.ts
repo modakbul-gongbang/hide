@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyHome, failedAgents, firstRunStep, firstStartAgent, notificationState, notSignedIn, tileStatus, whatChanges } from "./firstRun";
+import { accountHome, emptyHome, failedAgents, underHome, firstRunStep, firstStartAgent, notificationState, notSignedIn, tileStatus, whatChanges } from "./firstRun";
 import type { AiProvider, Kit, KitAgent, SnapshotRest } from "./snapshot";
 
 const agent = (id: string, overrides: Partial<KitAgent> = {}): KitAgent => ({
@@ -53,6 +53,21 @@ describe("What changes (B11)", () => {
       cli: "/home/.local/bin/hide",
     });
   });
+
+  it("writes the account home as ~ on every system, and a place outside it as it is (D-26)", () => {
+    expect(accountHome("/Users/me/hide")).toBe("/Users/me");
+    expect(accountHome("C:\\Users\\me\\hide")).toBe("C:\\Users\\me");
+    expect(underHome("/Users/me/.claude/settings.json", "/Users/me")).toBe("~/.claude/settings.json");
+    expect(underHome("C:\\Users\\me\\.codex\\hooks.json", "C:\\Users\\me")).toBe("~\\.codex\\hooks.json");
+    expect(underHome("/Users/meg/.claude", "/Users/me")).toBe("/Users/meg/.claude");
+    expect(underHome("/opt/hide", "/Users/me")).toBe("/opt/hide");
+    const kit = { components: [{ id: "cli", label: "hide", state: "off", reason: null, location: "/Users/me/.local/bin/hide" }] } as unknown as Kit;
+    const herdr = agent("claude-code", { skill: { state: "off", reason: null, location: "/Users/me/.claude/skills/hide" }, herdr: { state: "off", reason: null, location: "/Users/me/.config/herdr/integrations/claude" } });
+    expect(whatChanges([herdr], new Set(["claude-code"]), kit, "/Users/me")).toEqual({
+      agents: [{ id: "claude-code", label: "claude-code", locations: ["~/.claude/skills/hide", "~/.config/herdr/integrations/claude"] }],
+      cli: "~/.local/bin/hide",
+    });
+  });
 });
 
 describe("a failed agent (B12)", () => {
@@ -99,6 +114,11 @@ describe("the notification line (B14-B19, B30)", () => {
     expect(notificationState(false, "not_determined", "wizard")).toBe("off");
     expect(notificationState(true, null, "settings")).toBe("reading");
     expect(notificationState(false, null, "wizard")).toBe("off");
+  });
+
+  it("says only that nothing can be shown where no notification service answers, whatever the switch says (B47, B48)", () => {
+    expect(notificationState(false, "no_service", "wizard")).toBe("no_service");
+    expect(notificationState(true, "no_service", "settings")).toBe("no_service");
   });
 });
 

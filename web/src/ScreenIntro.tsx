@@ -1,6 +1,7 @@
 // A screen's one-line introduction (PRD first-run-onboarding D-18, B43): what
 // the screen does and its first step, shown the first time the screen opens
-// and never again. The core keeps which screens were introduced
+// and never again; today the Factory's alone, since Settings > Devices
+// already says what it is for. The core keeps which screens were introduced
 // (`ui_state.screen_intros_seen`), so another window or a restart does not
 // show it twice; this visit keeps the line it opened with.
 
@@ -13,7 +14,6 @@ import { useShellStore } from "./store";
 
 const WORDS: Record<Screen, MessageKey> = {
   factory: "firstRun.intro.factory",
-  devices: "firstRun.intro.devices",
 };
 
 export function ScreenIntro({ screen, actions }: { screen: Screen; actions: Actions }) {

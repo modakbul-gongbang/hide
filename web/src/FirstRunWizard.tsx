@@ -19,15 +19,16 @@ import { agentLogo, monogram } from "./agentLogos";
 import { appliedAgents, hideAiFirstRunKey, selection, tileSwitchable, type TileStart } from "./agentOnboardingRules";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
-import { failedAgents, firstRunStep, firstStartAgent, noAgentInstalled, notificationState, SUGGESTED_INSTALLS, tileStatus, whatChanges, type TileStatus, type WizardStep } from "./firstRun";
+import { accountHome, failedAgents, firstRunStep, firstStartAgent, noAgentInstalled, notificationState, SUGGESTED_INSTALLS, tileStatus, whatChanges, type TileStatus, type WizardStep } from "./firstRun";
 import { firstRunAgent } from "./hideAi";
 import { hostBridge } from "./host";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
 import { NotificationControls, usePermission } from "./NotificationControls";
-import { installDocUrl, supportedAgents } from "./settings/agentRows";
+import { NotOnSystem } from "./settings/AgentRow";
+import { installDocUrl, machineSystem, supportedAgents } from "./settings/agentRows";
 import { useAgentsDemand } from "./settings/useAgentsDemand";
-import type { KitAgent, WorkspaceRegistration } from "./snapshot";
+import { localDeviceId, type KitAgent, type WorkspaceRegistration } from "./snapshot";
 import { useStartPanel } from "./startDraft";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -135,7 +136,9 @@ function AgentsStep({ actions, reopened, desktop, primary }: StepProps & { deskt
   // The sign-in probe runs only while a page asks for it.
   useAgentsDemand(actions, false);
   const hideAi = firstRunAgent(ai, on);
-  const changes = whatChanges(agents, on, kit);
+  // This Mac's account home, the folder its Hide Home sits in: What changes writes it as `~` (D-26).
+  const home = useShellStore((s) => accountHome(s.rest?.ui_state?.workspace_registrations?.find((row) => row.home && row.device_id === localDeviceId(s.rest))?.path));
+  const changes = whatChanges(agents, on, kit, home);
   const applying = pressed || busy;
   const failures = sent && !applying ? failedAgents(agents, sent) : [];
   // A Continue whose pass could not run here: the core keeps the step and reads the agents again.
@@ -230,7 +233,7 @@ function AgentsStep({ actions, reopened, desktop, primary }: StepProps & { deskt
   );
 }
 
-const TILE_STATUS: Record<TileStatus, MessageKey> = {
+const TILE_STATUS: Record<Exclude<TileStatus, "unsupported">, MessageKey> = {
   checking: "firstRun.tile.checking",
   ready: "firstRun.tile.ready",
   not_signed_in: "firstRun.tile.notSignedIn",
@@ -247,7 +250,8 @@ function AgentTile({ agent, on, status, disabled, onToggle }: { agent: KitAgent;
   const { t } = useInterfaceTranslation();
   const switchable = tileSwitchable(agent);
   const logo = agentLogo(agent.id);
-  const install = switchable ? null : installDocUrl(agent.id);
+  // An agent installed on a system Hide cannot attach to yet has nothing to install (B49).
+  const install = switchable || status === "unsupported" ? null : installDocUrl(agent.id);
   // The mark and the name dim; the line that says why stays legible.
   const dim = switchable ? "" : "opacity-(--opacity-dimmed)";
   const body: ReactNode = (
@@ -263,7 +267,7 @@ function AgentTile({ agent, on, status, disabled, onToggle }: { agent: KitAgent;
       </span>
       <span className={`max-w-full truncate text-body font-semibold ${dim}`}>{agent.label}</span>
       <span className="text-caption text-muted-foreground" data-onboarding-status={status}>
-        {t(TILE_STATUS[status])}
+        {status === "unsupported" ? <NotOnSystem system={machineSystem(null)} /> : t(TILE_STATUS[status])}
       </span>
     </>
   );
@@ -304,7 +308,10 @@ function NotificationsStep({ actions, reopened, primary }: StepProps) {
   const enabled = useShellStore((s) => s.rest?.ui_state?.desktop_notifications === true);
   const permission = usePermission();
   // On a Mac that already allows Hide the step opens on, and Continue is what turns the switch on (B16).
-  const allowedOff = !enabled && notificationState(enabled, permission, "wizard") === "on";
+  const state = notificationState(enabled, permission, "wizard");
+  const allowedOff = !enabled && state === "on";
+  // Where nothing can be shown the step only says so and goes on (B47).
+  const goesOn = enabled || allowedOff || state === "no_service";
   const next = () => {
     if (reopened) {
       if (allowedOff) actions.setDesktopNotifications(true);
@@ -326,8 +333,8 @@ function NotificationsStep({ actions, reopened, primary }: StepProps) {
       </DialogBody>
       <DialogFooter>
         {/* Not now leaves the switch off; once it is on, the step goes on with Continue (B21). */}
-        <Button variant={enabled || allowedOff ? "default" : "secondary"} onClick={next} data-first-run-next="notifications">
-          {enabled || allowedOff ? t("firstRun.agents.continue") : t("firstRun.notifications.notNow")}
+        <Button variant={goesOn ? "default" : "secondary"} onClick={next} data-first-run-next="notifications">
+          {goesOn ? t("firstRun.agents.continue") : t("firstRun.notifications.notNow")}
         </Button>
       </DialogFooter>
     </>

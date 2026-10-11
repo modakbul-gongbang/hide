@@ -1082,7 +1082,7 @@ export type FirstRun = { version: number; step: FirstRunStep };
 export const FIRST_RUN_VERSION = 1;
 
 /** The screens introduced once (`contracts/snapshot-wire-enums.json`: `screen_intro`). */
-export type ScreenIntro = "factory" | "devices";
+export type ScreenIntro = "factory";
 
 /** One piece of an agent (its skill or its hook) on its machine. */
 export type KitPiece = {

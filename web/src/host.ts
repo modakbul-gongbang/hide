@@ -132,10 +132,12 @@ export const SETUP_COMMAND = "setup_hide";
 
 /**
  * The system's notification permission for Hide (`desktop/src/main/notificationPermission.ts`):
- * `unsupported` where the system has none to read (Windows, Linux), `unknown`
- * where macOS has one Hide could not read.
+ * `unsupported` where the system has none to read (Windows, Linux), `no_service`
+ * where it cannot show a notification at all (a Linux desktop with no
+ * notification service, PRD first-run-onboarding D-24), `unknown` where macOS
+ * has one Hide could not read.
  */
-export type NotificationPermission = "granted" | "denied" | "not_determined" | "unknown" | "unsupported";
+export type NotificationPermission = "granted" | "denied" | "not_determined" | "unknown" | "unsupported" | "no_service";
 
 declare global {
   interface Window {

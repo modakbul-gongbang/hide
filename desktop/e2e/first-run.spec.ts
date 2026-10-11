@@ -147,3 +147,31 @@ test("the first project closes the wizard into the start panel on it, Start runs
   await expect(page.locator("[data-project-list]")).toContainText("beta", { timeout: 20_000 });
   await expect(panel).toHaveCount(0);
 });
+
+test("with every agent off, the first project closes the wizard and opens no start panel", async () => {
+  const home = run.env.HOME!;
+  fs.mkdirSync(path.join(home, "projects", "alpha"), { recursive: true });
+  const alpha = fs.realpathSync(path.join(home, "projects", "alpha"));
+  let page;
+  ({ app, page } = await launch(run.env));
+  const wizard = page.locator("[data-first-run]");
+  await expect(wizard).toHaveAttribute("data-first-run", "agents", { timeout: 60_000 });
+  const onTiles = page.locator('[data-onboarding-tile$=":on"]');
+  // Each click turns a tile off, so the first tile still on is the next one.
+  for (let left = await onTiles.count(); left > 0; left -= 1) {
+    await onTiles.first().click();
+    await expect(onTiles).toHaveCount(left - 1);
+  }
+  await page.locator("[data-onboarding-apply]").click();
+  await expect(wizard).toHaveAttribute("data-first-run", "notifications", { timeout: 60_000 });
+  await page.locator('[data-first-run-next="notifications"]').click();
+  await expect(wizard).toHaveAttribute("data-first-run", "project");
+
+  // B50: no agent on, so no panel opens on the project. (The fixture's shared Herdr runs agents, so the
+  // Home here draws its graph; the empty Home with no agent is B28's own check.)
+  await stubPicker(app, [alpha]);
+  await page.locator("[data-add-project-browse]").click();
+  await expect(wizard).toHaveCount(0, { timeout: 20_000 });
+  await expect(page.locator("[data-project-list]")).toContainText("alpha", { timeout: 20_000 });
+  await expect(page.locator("[data-start-panel]")).toHaveCount(0);
+});

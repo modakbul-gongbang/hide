@@ -33,6 +33,7 @@ export const firstRunEnglish = {
   "firstRun.notifications.blocked": "macOS is blocking Hide's notifications",
   "firstRun.notifications.openSettings": "Open System Settings",
   "firstRun.notifications.unreadable": "Hide can't read the notification setting",
+  "firstRun.notifications.noService": "This desktop has no notification service, so Hide can't show notifications here.",
   "firstRun.notifications.phone": "Also on your phone →",
   "firstRun.notifications.testTitle": "Notifications work",
   "firstRun.notifications.testBody": "This is how Hide tells you an agent needs you.",
@@ -49,7 +50,6 @@ export const firstRunEnglish = {
   "firstRun.settings.switch": "Notify me when an agent needs me",
   "firstRun.settings.switchDetail": "A notification when an agent asks for you or finishes while Hide is in the background.",
   "firstRun.intro.factory": "The Factory turns issues you label into merged pull requests. Create a Factory for a project to start.",
-  "firstRun.intro.devices": "Devices run agents on your other machines over SSH. Add a device to start.",
 } as const;
 
 const ko = {
@@ -81,6 +81,7 @@ const ko = {
   "firstRun.notifications.blocked": "macOS가 Hide 알림을 막고 있습니다",
   "firstRun.notifications.openSettings": "시스템 설정 열기",
   "firstRun.notifications.unreadable": "Hide가 알림 설정을 읽지 못했습니다",
+  "firstRun.notifications.noService": "이 데스크톱에는 알림 서비스가 없어 Hide가 알림을 보일 수 없습니다.",
   "firstRun.notifications.phone": "폰으로도 받기 →",
   "firstRun.notifications.testTitle": "알림이 잘 옵니다",
   "firstRun.notifications.testBody": "에이전트가 나를 부르면 이렇게 알려 드립니다.",
@@ -97,7 +98,6 @@ const ko = {
   "firstRun.settings.switch": "에이전트가 나를 부르면 알림 받기",
   "firstRun.settings.switchDetail": "Hide가 뒤에 있을 때 에이전트가 나를 부르거나 일을 끝내면 알림을 보냅니다.",
   "firstRun.intro.factory": "Factory는 라벨을 붙인 이슈를 머지된 풀 리퀘스트로 만듭니다. 프로젝트에 Factory를 만들어 시작하세요.",
-  "firstRun.intro.devices": "장치는 SSH로 다른 컴퓨터에서 에이전트를 실행합니다. 장치를 추가해 시작하세요.",
 } satisfies Catalog<typeof firstRunEnglish>;
 
 const zhCN = {
@@ -129,6 +129,7 @@ const zhCN = {
   "firstRun.notifications.blocked": "macOS 正在阻止 Hide 的通知",
   "firstRun.notifications.openSettings": "打开系统设置",
   "firstRun.notifications.unreadable": "Hide 无法读取通知设置",
+  "firstRun.notifications.noService": "此桌面没有通知服务，Hide 无法在这里显示通知。",
   "firstRun.notifications.phone": "也在手机上接收 →",
   "firstRun.notifications.testTitle": "通知正常",
   "firstRun.notifications.testBody": "智能体需要你时，Hide 会这样通知你。",
@@ -145,7 +146,6 @@ const zhCN = {
   "firstRun.settings.switch": "智能体需要我时通知我",
   "firstRun.settings.switchDetail": "Hide 在后台时，智能体需要你或完成工作时发送通知。",
   "firstRun.intro.factory": "Factory 会把你加了标签的 issue 变成已合并的拉取请求。为项目创建一个 Factory 即可开始。",
-  "firstRun.intro.devices": "设备通过 SSH 在你的其他电脑上运行智能体。添加设备即可开始。",
 } satisfies Catalog<typeof firstRunEnglish>;
 
 const ja = {
@@ -177,6 +177,7 @@ const ja = {
   "firstRun.notifications.blocked": "macOSがHideの通知をブロックしています",
   "firstRun.notifications.openSettings": "システム設定を開く",
   "firstRun.notifications.unreadable": "Hideは通知の設定を読み取れません",
+  "firstRun.notifications.noService": "このデスクトップには通知サービスがないため、Hideは通知を表示できません。",
   "firstRun.notifications.phone": "スマートフォンでも受け取る →",
   "firstRun.notifications.testTitle": "通知は届いています",
   "firstRun.notifications.testBody": "エージェントに呼ばれると、Hideはこのようにお知らせします。",
@@ -193,7 +194,6 @@ const ja = {
   "firstRun.settings.switch": "エージェントに呼ばれたら通知する",
   "firstRun.settings.switchDetail": "Hideが背面にあるとき、エージェントがあなたを必要とするか作業を終えると通知します。",
   "firstRun.intro.factory": "Factoryはラベルを付けたissueをマージ済みのプルリクエストにします。プロジェクトにFactoryを作成して始めます。",
-  "firstRun.intro.devices": "デバイスはSSHで別のコンピュータ上のエージェントを動かします。デバイスを追加して始めます。",
 } satisfies Catalog<typeof firstRunEnglish>;
 
 export const firstRunCatalogs = { en: firstRunEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof firstRunEnglish>;

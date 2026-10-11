@@ -1,7 +1,6 @@
 import { PlusIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Actions } from "../actions";
-import { ScreenIntro } from "../ScreenIntro";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/alert-dialog";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
@@ -74,7 +73,6 @@ export function DevicesTab({ actions }: { actions: Actions }) {
   };
   return (
     <>
-      <ScreenIntro screen="devices" actions={actions} />
       <Group
         title={t("settings.tabs.devices")}
         action={

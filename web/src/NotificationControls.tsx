@@ -36,7 +36,7 @@ export function usePermission(): NotificationPermission | null {
       if (stopped) return;
       setPermission(answer);
       // A system with nothing to read is not asked again.
-      if (answer !== "unsupported") timer = window.setTimeout(() => void read(), PERMISSION_POLL_MS);
+      if (answer !== "unsupported" && answer !== "no_service") timer = window.setTimeout(() => void read(), PERMISSION_POLL_MS);
     };
     void read();
     return () => {
@@ -75,7 +75,13 @@ export function NotificationControls({ actions, place, permission }: { actions: 
             <span>{t("firstRun.settings.switch")}</span>
             <span className="text-body text-muted-foreground">{t("firstRun.settings.switchDetail")}</span>
           </span>
-          <Switch checked={enabled} onCheckedChange={(next) => (next ? turnOn() : actions.setDesktopNotifications(false))} data-notification-switch="true" />
+          {/* Locked off where nothing can be shown (B48). */}
+          <Switch
+            checked={enabled && state !== "no_service"}
+            disabled={state === "no_service"}
+            onCheckedChange={(next) => (next ? turnOn() : actions.setDesktopNotifications(false))}
+            data-notification-switch="true"
+          />
         </label>
       ) : state === "off" ? (
         <Button className="self-start" onClick={turnOn} data-notification-turn-on="true">
@@ -97,6 +103,10 @@ export function NotificationControls({ actions, place, permission }: { actions: 
       ) : state === "unreadable" ? (
         <Status tone="muted" data-notification-line="unreadable">
           {t("firstRun.notifications.unreadable")}
+        </Status>
+      ) : state === "no_service" ? (
+        <Status tone="muted" data-notification-line="no_service">
+          {t("firstRun.notifications.noService")}
         </Status>
       ) : null}
       <div className="flex flex-wrap gap-sm">

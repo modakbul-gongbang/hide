@@ -1,7 +1,7 @@
 //! The first-run wizard's progress (PRD first-run-onboarding D-07, B6): the
 //! step it opens on, when its first step's apply has settled, the desktop
 //! notification switch it and Settings > General share (D-21), and the
-//! one-time introductions of the Factory and Devices screens (B43). The shell
+//! one-time introduction of the Factory screen (B43). The shell
 //! draws the steps; each move is one event here, saved with the UI state.
 
 use super::Runtime;

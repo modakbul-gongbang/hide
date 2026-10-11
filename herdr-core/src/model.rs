@@ -2431,7 +2431,6 @@ impl FirstRunStep {
 #[serde(rename_all = "snake_case")]
 pub enum ScreenIntro {
     Factory,
-    Devices,
 }
 
 /// The web shell's color theme (Settings > Appearance). `System` follows the
@@ -5631,10 +5630,10 @@ mod wire_enum_tests {
         assert_wire(&contract, "first_run_step", &first_run);
         checked.insert("first_run_step");
 
-        let intros = [ScreenIntro::Factory, ScreenIntro::Devices];
+        let intros = [ScreenIntro::Factory];
         for variant in intros {
             match variant {
-                ScreenIntro::Factory | ScreenIntro::Devices => {}
+                ScreenIntro::Factory => {}
             }
         }
         assert_wire(&contract, "screen_intro", &intros);

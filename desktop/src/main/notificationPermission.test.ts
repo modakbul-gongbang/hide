@@ -30,9 +30,9 @@ describe("NotificationPermissionReader", () => {
     return folder;
   }
 
-  function reader(dir: string, platform: NodeJS.Platform = "darwin") {
+  function reader(dir: string, platform: NodeJS.Platform = "darwin", supported = true) {
     const events: { event: string; fields: unknown }[] = [];
-    return { events, reader: new NotificationPermissionReader(platform, dir, { event: (event, fields) => events.push({ event, fields }) }) };
+    return { events, reader: new NotificationPermissionReader(platform, dir, { event: (event, fields) => events.push({ event, fields }) }, () => supported) };
   }
 
   it.runIf(process.platform !== "win32")("asks the helper once for reads that overlap and answers both", async () => {
@@ -51,9 +51,10 @@ describe("NotificationPermissionReader", () => {
     expect(missing.events[0]?.fields).toEqual({ reason: "helper_missing" });
   });
 
-  it("has nothing to read outside macOS", async () => {
+  it("has nothing to read outside macOS, and says so where no notification service answers (D-24)", async () => {
     const { reader: permission, events } = reader("/nowhere", "win32");
     expect(await permission.read()).toBe("unsupported");
     expect(events).toEqual([]);
+    expect(await reader("/nowhere", "linux", false).reader.read()).toBe("no_service");
   });
 });

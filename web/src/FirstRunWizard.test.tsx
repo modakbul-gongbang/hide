@@ -226,3 +226,32 @@ it("on a Mac that already allows Hide, opens the notification step on, and its C
   await unmount();
   vi.unstubAllGlobals();
 });
+
+it("on a desktop with no notification service, says so with Continue and no Turn on (B47)", async () => {
+  vi.stubGlobal("hideHost", { kind: "electron", platform: "linux", notify: vi.fn(), notificationPermission: async () => "no_service", onCommand: () => () => undefined, onNotificationOpen: () => () => undefined });
+  const next = state(true, AGENTS);
+  next.rest.ui_state.first_run.step = "notifications";
+  const { events, unmount } = await mount(next);
+  await act(async () => { await Promise.resolve(); });
+  expect(document.querySelector("[data-notification-line=\"no_service\"]")?.textContent).toContain("This desktop has no notification service, so Hide can't show notifications here.");
+  expect(document.querySelector("[data-notification-turn-on]")).toBeNull();
+  expect(document.querySelector("[data-notification-test]")).toBeNull();
+  const button = document.querySelector('[data-first-run-next="notifications"]') as HTMLButtonElement;
+  expect(button.textContent).toBe("Continue");
+  await act(async () => { button.click(); });
+  expect(choices(events)).toEqual([{ schema_version: 2, kind: "first_run_advance", payload: { from: "notifications", turn_on_notifications: false } }]);
+  await unmount();
+  vi.unstubAllGlobals();
+});
+
+it("shows an agent installed on a system Hide cannot attach to yet as a dimmed tile with no switch, no install link and nothing under What changes (B49)", async () => {
+  const agents = [...AGENTS, agent("opencode", "OpenCode", "unsupported_system")];
+  const { unmount } = await mount(state(true, agents));
+  const tileEl = tile("opencode", "unavailable");
+  expect(tileEl?.getAttribute("role")).toBeNull();
+  expect(tileEl?.querySelector("[data-onboarding-status]")?.textContent).toMatch(/^Not on .+ yet$/);
+  expect(document.querySelector('[data-onboarding-install="opencode"]')).toBeNull();
+  await act(async () => { (document.querySelector("[data-first-run-what-changes]") as HTMLElement).click(); });
+  expect(document.querySelector('[data-first-run-change="opencode"]')).toBeNull();
+  await unmount();
+});

@@ -26,10 +26,11 @@ export function firstRunStep(rest: SnapshotRest | null, desktop: boolean): Wizar
 /** The agents whose sign-in Hide checks (D-06); the others can only say they are installed. */
 export const SIGN_IN_CHECKED: ReadonlySet<string> = new Set(["claude-code", "codex", "grok", "pi"]);
 
-/** What a tile says under the agent's name (B8, B9). */
-export type TileStatus = "checking" | "ready" | "not_signed_in" | "installed" | "not_installed";
+/** What a tile says under the agent's name (B8, B9, B49). */
+export type TileStatus = "checking" | "ready" | "not_signed_in" | "installed" | "not_installed" | "unsupported";
 
 export function tileStatus(agent: KitAgent, providers: readonly AiProvider[] | undefined): TileStatus {
+  if (agent.availability === "unsupported_system") return "unsupported";
   if (agent.availability !== "available") return "not_installed";
   if (!SIGN_IN_CHECKED.has(agent.id)) return "installed";
   const provider = providers?.find((row) => row.agent === agent.id);
@@ -51,21 +52,40 @@ export const SUGGESTED_INSTALLS = ["claude-code", "codex"] as const;
 export type ChangeRow = { id: string; label: string; locations: string[] };
 
 /**
- * What Continue changes on this Mac: for each agent left on, the files and
- * folders its pieces are written to (the hook file, the skill folder,
- * Herdr's integration), then the `hide` command's link, as the kit reports
- * them. A piece the agent does not have here (`absent`) writes nothing.
+ * The account home of the machine whose Hide Home (`~/hide`) is registered at
+ * `homeFolder`: the folder it sits in, in that machine's own spelling.
  */
-export function whatChanges(agents: readonly KitAgent[], on: ReadonlySet<string>, kit: Kit | null | undefined): { agents: ChangeRow[]; cli: string | null } {
+export function accountHome(homeFolder: string | null | undefined): string | null {
+  if (!homeFolder) return null;
+  const cut = Math.max(homeFolder.lastIndexOf("/"), homeFolder.lastIndexOf("\\"));
+  return cut > 0 ? homeFolder.slice(0, cut) : null;
+}
+
+/** `path` with the account `home` written as `~`, on every system (D-26); a path outside it as it is. */
+export function underHome(path: string, home: string | null): string {
+  if (!home) return path;
+  if (path === home) return "~";
+  const rest = path.slice(home.length);
+  return path.startsWith(home) && (rest.startsWith("/") || rest.startsWith("\\")) ? `~${rest}` : path;
+}
+
+/**
+ * What Continue changes on this Mac: for each agent left on, the files and
+ * folders its pieces are written to (the hook file, the skill folder, a
+ * plugin or extension, Herdr's integration), then the `hide` command's link,
+ * where the kit reports them, with the account home as `~` (B11, D-26). A
+ * piece the agent does not have here (`absent`) writes nothing.
+ */
+export function whatChanges(agents: readonly KitAgent[], on: ReadonlySet<string>, kit: Kit | null | undefined, home: string | null = null): { agents: ChangeRow[]; cli: string | null } {
   const rows = agents
     .filter((agent) => on.has(agent.id))
     .map((agent) => ({
       id: agent.id,
       label: agent.label,
-      locations: [agent.hook, agent.skill, agent.herdr ?? null].flatMap((piece) => (piece && piece.state !== "absent" && piece.location ? [piece.location] : [])),
+      locations: [agent.hook, agent.skill, agent.herdr ?? null].flatMap((piece) => (piece && piece.state !== "absent" && piece.location ? [underHome(piece.location, home)] : [])),
     }));
   const cli = kit?.components.find((component) => component.id === "cli")?.location ?? null;
-  return { agents: rows, cli };
+  return { agents: rows, cli: cli === null ? null : underHome(cli, home) };
 }
 
 /** A chosen agent whose piece failed to go in, with the first reason the kit gave (B12). */
@@ -114,14 +134,17 @@ export function notSignedIn(kind: ProviderKind | "terminal", providers: readonly
  * `off` before the operator turned it on, `reading` until the first answer
  * about the permission, `asking` while macOS's dialog waits for an answer,
  * `on`, `blocked` when macOS refuses, `unreadable` when Hide could not read
- * macOS's setting, and `on_unchecked` where the system has no permission to
- * read (Windows, Linux). On a Mac that already allows Hide the wizard's step
- * opens on `on` with the switch still off, and its Continue turns the switch
- * on (B16).
+ * macOS's setting, `on_unchecked` where the system has no permission to read
+ * (Windows, Linux), and `no_service` where nothing can be shown (a Linux
+ * desktop with no notification service). On a Mac that already allows Hide
+ * the wizard's step opens on `on` with the switch still off, and its Continue
+ * turns the switch on (B16).
  */
-export type NotificationState = "off" | "reading" | "asking" | "on" | "blocked" | "unreadable" | "on_unchecked";
+export type NotificationState = "off" | "reading" | "asking" | "on" | "blocked" | "unreadable" | "on_unchecked" | "no_service";
 
 export function notificationState(enabled: boolean, permission: NotificationPermission | null, place: "wizard" | "settings"): NotificationState {
+  // A desktop with no notification service shows nothing whatever the switch says (D-24, B47, B48).
+  if (permission === "no_service") return "no_service";
   if (permission === "unsupported") return enabled ? "on_unchecked" : "off";
   // macOS's refusal shows even with the switch off: turning it on would do nothing.
   if (permission === "denied") return "blocked";

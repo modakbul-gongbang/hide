@@ -7,7 +7,7 @@ import { Switch } from "../components/ui/switch";
 import { useInterfaceTranslation } from "../i18n/client";
 import { kitPartText } from "../settings";
 import type { Device, KitAgent } from "../snapshot";
-import { agentHookWait, agentLeftover, agentProblems, agentStatus, docsUrl, installDocUrl } from "./agentRows";
+import { agentHookWait, agentLeftover, agentProblems, agentStatus, agentUnsupportedHere, docsUrl, installDocUrl, machineSystem } from "./agentRows";
 import { PartialChip } from "./PartialChip";
 
 /** The link an agent row offers, as the row words it: a label and the arrow that says it leaves the app. */
@@ -34,6 +34,12 @@ function Name({ agent }: { agent: KitAgent }) {
       <span className="min-w-0 truncate font-semibold">{agent.label}</span>
     </span>
   );
+}
+
+/** "Not on Windows yet": an agent installed on a system Hide cannot attach to there yet (D-25). */
+export function NotOnSystem({ system }: { system: string | null }) {
+  const { t } = useInterfaceTranslation();
+  return <>{system ? t("agents.notOnSystem", { system }) : t("agents.notOnThisSystem")}</>;
 }
 
 /**
@@ -130,16 +136,23 @@ export function AgentRow({ device, agent, actions, onAct }: { device: Device; ag
           {t("agents.status.sessions", { count: status.count })}
         </Status>
       ) : null}
-      <Switch
-        checked={agent.enabled}
-        disabled={busy}
-        onCheckedChange={(checked) => {
-          onAct();
-          actions.setKitAgent(device.id, agent.id, checked);
-        }}
-        aria-label={agent.label}
-        data-agent-switch={`${device.id}:${agent.id}:${agent.enabled ? "on" : "off"}`}
-      />
+      {/* Installed with nothing to attach to on this system: no switch (B49). */}
+      {agentUnsupportedHere(agent) ? (
+        <Status tone="muted" data-agent-status={`${device.id}:${agent.id}:unsupported`}>
+          <NotOnSystem system={machineSystem(device)} />
+        </Status>
+      ) : (
+        <Switch
+          checked={agent.enabled}
+          disabled={busy}
+          onCheckedChange={(checked) => {
+            onAct();
+            actions.setKitAgent(device.id, agent.id, checked);
+          }}
+          aria-label={agent.label}
+          data-agent-switch={`${device.id}:${agent.id}:${agent.enabled ? "on" : "off"}`}
+        />
+      )}
     </Row>
   );
 }

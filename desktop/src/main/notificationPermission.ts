@@ -58,10 +58,13 @@ export class NotificationPermissionReader {
     /** The folder the app's own executable is in: Contents/MacOS in a packaged app. */
     private readonly executableDir: string,
     private readonly log: Pick<HostLog, "event">,
+    /** Whether the system can show a notification at all (Electron's `Notification.isSupported`). */
+    private readonly notificationsSupported: () => boolean,
   ) {}
 
   read(): Promise<NotificationPermission> {
-    if (this.platform !== "darwin") return Promise.resolve("unsupported");
+    // Outside macOS there is no permission to read, only whether a notification service answers (D-24).
+    if (this.platform !== "darwin") return Promise.resolve(this.notificationsSupported() ? "unsupported" : "no_service");
     this.inFlight ??= this.run().finally(() => {
       this.inFlight = null;
     });
