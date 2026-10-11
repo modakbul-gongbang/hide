@@ -36,7 +36,7 @@ export function FactoryScreen({ actions }: { actions: Actions }) {
   const place = useUiStore((s) => (s.screen?.kind === "factory" ? s.screen.place : null));
   const summary = useShellStore((s) => s.factory?.summary ?? null);
   // The first visit's line (PRD first-run-onboarding D-18) sits under the title, whichever body is drawn.
-  const intro = useScreenIntro("factory", actions);
+  const intro = useScreenIntro("factory");
   if (!place) return null;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" data-factory-screen={summary === null ? "loading" : "ready"}>
@@ -51,12 +51,12 @@ function FactoryBody({ summary, place, intro, actions }: { summary: FactorySumma
   // A filter naming a Factory that closed or went away shows them all.
   const factory = place.factory !== null && open.some((view) => view.id === place.factory) ? place.factory : null;
   const factories = useMemo(() => shownFactories(summary, factory), [summary, factory]);
-  if (open.length === 0) return <NoFactory intro={intro} />;
+  if (open.length === 0) return <NoFactory intro={intro} actions={actions} />;
   if (place.task) return <TaskPage summary={summary} place={place} actions={actions} />;
   return (
     <>
       <FactoryHeader factories={open} factory={factory} actions={actions} />
-      {intro ? <ScreenIntroLine screen="factory" /> : null}
+      {intro ? <ScreenIntroLine screen="factory" actions={actions} /> : null}
       <div className="flex shrink-0 items-center gap-md px-lg pb-md">
         <Tabs value={place.tab} onValueChange={(value) => useUiStore.getState().setFactoryPlace({ tab: value as FactoryTab })}>
           <TabsList data-factory-tabs="true">
@@ -215,14 +215,14 @@ function FactorySkeleton() {
 }
 
 /** No Factory on this machine (B1): only the way to make one. */
-function NoFactory({ intro }: { intro: boolean }) {
+function NoFactory({ intro, actions }: { intro: boolean; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   return (
     <>
       <div className="flex shrink-0 items-center px-lg pt-lg pb-sm">
         <h1 className="text-title font-semibold">{t("factory.title")}</h1>
       </div>
-      {intro ? <ScreenIntroLine screen="factory" /> : null}
+      {intro ? <ScreenIntroLine screen="factory" actions={actions} /> : null}
       <NoFactoryButton />
     </>
   );

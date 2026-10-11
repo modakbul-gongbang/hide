@@ -661,3 +661,45 @@ it("marks Factory AI's pick among the worker candidates before a worker starts (
   expect(container.querySelector("[data-factory-worker-pick]")!.getAttribute("data-factory-worker-pick")).toBe("2");
   expect(container.querySelector("[data-factory-picked]")!.textContent).toBe(english["factory.task.picked"].replace("{{description}}", "큰 리팩터 · 큰 변경"));
 });
+
+/** The one-time line (PRD first-run-onboarding B43): `seen` is what the core says about it; null is a snapshot not yet read. */
+function introduced(seen: boolean | null) {
+  useShellStore.setState({ rest: seen === null ? null : ({ ui_state: { screen_intros_seen: seen ? ["factory"] : [] } } as unknown as SnapshotRest) });
+}
+const intros = (events: Parameters<DispatchFn>[0][]) => events.filter((event) => event.kind === "screen_intro_seen");
+const LINE = english["firstRun.intro.factory"];
+
+it("shows the one-time line under the title on the first visit, records it once drawn, and keeps it for the visit (B43)", async () => {
+  introduced(false);
+  const { container, events } = await mount({ my_turn: 0, factories: [], inbox: [] });
+  const line = container.querySelector('[data-screen-intro="factory"]');
+  expect(line?.textContent).toBe(LINE);
+  // Under the title, above the way to make a Factory.
+  expect(line?.previousElementSibling?.querySelector("h1")?.textContent).toBe(english["factory.title"]);
+  expect(intros(events)).toEqual([{ schema_version: 2, kind: "screen_intro_seen", payload: { screen: "factory" } }]);
+  await act(async () => introduced(true));
+  expect(container.querySelector('[data-screen-intro="factory"]')).not.toBeNull();
+});
+
+it("does not show the line once it was seen, and records nothing (B43)", async () => {
+  introduced(true);
+  const { container, events } = await mount({ my_turn: 0, factories: [factory()], inbox: [] });
+  expect(container.querySelector("[data-screen-intro]")).toBeNull();
+  expect(intros(events)).toEqual([]);
+});
+
+it("records the line only when it draws: not while the summary loads or on a Task page opened first (B43)", async () => {
+  introduced(false);
+  const loading = await mount(null as unknown as FactorySummary);
+  expect(loading.container.querySelector("[data-screen-intro]")).toBeNull();
+  expect(intros(loading.events)).toEqual([]);
+  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 0, factories: [factory()], inbox: [] }, actions: [] } }));
+  expect(loading.container.querySelector('[data-screen-intro="factory"]')?.textContent).toBe(LINE);
+  expect(intros(loading.events)).toHaveLength(1);
+  await act(async () => root?.unmount());
+
+  introduced(false);
+  const task = await mount({ my_turn: 0, factories: [factory()], inbox: [] }, { task: { factory: "f1", task: "T-1" } });
+  expect(task.container.querySelector("[data-screen-intro]")).toBeNull();
+  expect(intros(task.events)).toEqual([]);
+});

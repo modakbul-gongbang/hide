@@ -23,21 +23,26 @@ const WORDS: Record<Screen, MessageKey> = {
  * screen calls it where it stays mounted and draws `ScreenIntroLine` where
  * its layout wants the line.
  */
-export function useScreenIntro(screen: Screen, actions: Actions): boolean {
+export function useScreenIntro(screen: Screen): boolean {
   // Unknown until the first snapshot says which screens were introduced.
   const seen = useShellStore((s) => (s.rest?.ui_state ? (s.rest.ui_state.screen_intros_seen ?? []).includes(screen) : null));
   const [shown, setShown] = useState<boolean | null>(null);
   useEffect(() => {
-    if (shown !== null || seen === null) return;
-    setShown(!seen);
-    if (!seen) actions.markScreenIntroSeen(screen);
-  }, [actions, screen, seen, shown]);
+    if (shown === null && seen !== null) setShown(!seen);
+  }, [seen, shown]);
   return shown === true;
 }
 
-/** The line itself, under the screen's title. */
-export function ScreenIntroLine({ screen }: { screen: Screen }) {
+/**
+ * The line itself, under the screen's title. It records the screen as
+ * introduced once it has been drawn, so a visit that never reaches the line
+ * (still loading, or straight to a Task page) leaves it for the next one (B43).
+ */
+export function ScreenIntroLine({ screen, actions }: { screen: Screen; actions: Actions }) {
   const { t } = useInterfaceTranslation();
+  useEffect(() => {
+    actions.markScreenIntroSeen(screen);
+  }, [actions, screen]);
   return (
     <p className="mx-lg mb-md flex items-center gap-sm rounded-md bg-card px-md py-sm text-body text-subtle-foreground" data-screen-intro={screen}>
       <FactoryIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-subtle-foreground" />
