@@ -113,106 +113,23 @@ jobs:
   # accelerators). A test that checks no such difference stays on macOS.
   desktop-e2e:
     name: desktop e2e (${{ matrix.system }} ${{ matrix.system == 'macos' && 'full' || '@platform' }})
-    runs-on: ${{ fromJSON('{"linux":"ubuntu-latest","macos":"macos-15","windows":"windows-latest"}')[matrix.system] }}
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      issues: write
     strategy:
       fail-fast: false
       matrix:
         # One system by hand, all three otherwise; the runner and the Herdr
         # platform follow from the system.
         system: ${{ fromJSON(inputs.lane == 'linux' && '["linux"]' || inputs.lane == 'macos' && '["macos"]' || inputs.lane == 'windows' && '["windows"]' || '["linux","macos","windows"]') }}
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Keep line endings as committed
-        run: git config --global core.autocrlf false
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install zsh and the virtual display on Linux
-        if: runner.os == 'Linux'
-        timeout-minutes: 5
-        run: sudo apt-get install -y --no-install-recommends zsh xvfb
-      - name: Build the desktop app's daemon and kit binaries
-        timeout-minutes: 20
-        run: bash scripts/verify-cargo.sh cli
-      - name: Install dependencies
-        timeout-minutes: 5
-        run: bash scripts/verify-web.sh install
-      - name: Install the pinned Electron runtime
-        timeout-minutes: 5
-        run: bash scripts/verify-web.sh desktop electron-install
-      - name: Build the web shell
-        timeout-minutes: 5
-        run: |
-          bash scripts/verify-web.sh web build
-      - name: Install Playwright Chromium
-        timeout-minutes: 5
-        run: bash scripts/verify-web.sh desktop playwright-install
-      - name: Fetch the pinned Herdr runtime
-        id: herdr
-        timeout-minutes: 5
-        env:
-          HERDR_PLATFORM: ${{ fromJSON('{"linux":"linux-x86_64","macos":"macos-aarch64","windows":"windows-x86_64"}')[matrix.system] }}
-        run: |
-          if [ "$RUNNER_OS" = Windows ]; then
-            bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
-          else
-            bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")
-          fi
-          echo "bin=$bin" >> "$GITHUB_OUTPUT"
-      - name: Compare the binary schema and version with the pin
-        run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
-      - name: Desktop suite (the whole suite on macOS, the @platform tests elsewhere)
-        timeout-minutes: 20
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
-        run: |
-          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          selection=()
-          if [ "$RUNNER_OS" != macOS ]; then
-            selection=(--grep @platform)
-          fi
-          if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a bash scripts/verify-web.sh desktop e2e "${selection[@]}"
-          else
-            bash scripts/verify-web.sh desktop e2e "${selection[@]}"
-          fi
-      - name: Report flaky and failed tests
-        id: flaky
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        timeout-minutes: 5
-        env:
-          GH_TOKEN: ${{ github.token }}
-        # One report per step: the step's annotations are its failed tests,
-        # and GitHub keeps 10 per step.
-        run: python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json
-      - name: Keep the failed desktop run
-        # A flaky run keeps it as a failed one does; see web-e2e.yml.
-        if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: hide-nightly-desktop-${{ matrix.system }}
-          path: |
-            ${{ runner.temp }}/hide-e2e
-            desktop/test-results
-          if-no-files-found: ignore
+    uses: ./.github/workflows/desktop-e2e.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      lane: nightly-${{ matrix.system }}
+      runner: ${{ fromJSON('{"linux":"ubuntu-latest","macos":"macos-15","windows":"windows-latest"}')[matrix.system] }}
+      herdr-platform: ${{ fromJSON('{"linux":"linux-x86_64","macos":"macos-aarch64","windows":"windows-x86_64"}')[matrix.system] }}
+      # The whole suite on macOS, the @platform tests elsewhere.
+      grep: ${{ matrix.system != 'macos' && '@platform' || '' }}
+      keep-screenshots: ${{ matrix.system != 'macos' }}
 
   verify:
     name: verify

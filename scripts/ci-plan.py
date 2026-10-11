@@ -33,6 +33,7 @@ LANES = (
     "os-contract-macos",
     "windows-check",
     "windows-e2e",
+    "windows-desktop",
     "web-e2e",
     "remote-mailbox",
     "desktop-e2e",
@@ -59,7 +60,9 @@ OS_CRATES = {
 # The OS contract's macOS leg tests only these two, so only a change to one of
 # them plans it; the others reach it through the nightly.
 OS_CONTRACT_CRATES = {"hide-herdr-client", "hide-platform"}
-OS_LANES = ("os-contract", "windows-check", "windows-e2e")
+# `windows-desktop` is among them because the desktop app starts hided
+# through `hide connect` there, the system's processes and local stream.
+OS_LANES = ("os-contract", "windows-check", "windows-e2e", "windows-desktop")
 # The remote mailbox lane builds `hided`, `hide`, the host helper and the hook
 # binary, and runs `hided`'s `remote_delivery` test against them over
 # private SSH, and its `held_letter_notice` test against the pinned Herdr; a
@@ -94,7 +97,7 @@ SHARED_WEB = (
     "web/src/App.tsx",
     "web/src/main.tsx",
 )
-SHARED_WEB_LANES = ("checks", "desktop-e2e", "windows-e2e")
+SHARED_WEB_LANES = ("checks", "desktop-e2e", "windows-e2e", "windows-desktop")
 
 # Files a lane outside their own directory reads: a change to one also plans
 # that lane, and the Rust crates whose tests read it. An entry ending in `/`
@@ -155,8 +158,8 @@ POLICY_ONLY = (
 # Paths whose readers are a known set of lanes. `web/e2e` helpers are imported
 # by the desktop suites too, and `desktop/e2e` unit tests run in `windows
 # check`, so neither is web-only or desktop-only.
-WEB_E2E_LANES = {"checks", "web-e2e", "windows-e2e", "desktop-e2e", "windows-check"}
-DESKTOP_E2E_LANES = {"checks", "desktop-e2e", "windows-check"}
+WEB_E2E_LANES = {"checks", "web-e2e", "windows-e2e", "desktop-e2e", "windows-desktop", "windows-check"}
+DESKTOP_E2E_LANES = {"checks", "desktop-e2e", "windows-desktop", "windows-check"}
 NAMED_LANES = (
     ("web/e2e/*", WEB_E2E_LANES),
     ("desktop/e2e/*", DESKTOP_E2E_LANES),
@@ -173,7 +176,7 @@ NAMED_LANES = (
     ("desktop/eslint.globals.mjs", {"checks"}),
     # `build.mjs` is the e2e's build; `package.mjs` and `smoke-package.mjs` run
     # in the `package` lane, which PACKAGE_PATHS plans for this folder.
-    ("desktop/scripts/build.mjs", {"checks", "desktop-e2e"}),
+    ("desktop/scripts/build.mjs", {"checks", "desktop-e2e", "windows-desktop"}),
     ("desktop/scripts/package.mjs", {"checks"}),
     ("desktop/scripts/smoke-package.mjs", {"checks"}),
     # The `package` lane's workflow and the release that calls it.
@@ -285,9 +288,14 @@ def classify(path, status, crates, root):
             return lanes, f"web shell: {path}", set()
     if parts[0] == "desktop" and len(parts) > 1:
         if parts[1] == "e2e" and len(parts) == 3 and path.name.endswith(".spec.ts"):
-            return {"checks", "desktop-e2e"}, f"desktop e2e spec: {path}", set()
-        if parts[1] in ("src", "static"):
             lanes = {"checks", "desktop-e2e"}
+            spec = root / path
+            # A deleted spec cannot be read; keep the Windows lane for it.
+            if status == "D" or "@platform" in spec.read_text(encoding="utf-8"):
+                lanes.add("windows-desktop")
+            return lanes, f"desktop e2e spec: {path}", set()
+        if parts[1] in ("src", "static"):
+            lanes = {"checks", "desktop-e2e", "windows-desktop"}
             if parts[1:3] == ("src", "main"):
                 # The main process owns paths, child processes and the daemon
                 # start; its unit suite runs on Windows in `windows check`.

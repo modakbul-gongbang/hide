@@ -122,7 +122,7 @@ Unverified means the feature is written to work there, but no check on that syst
 | --- | --- | --- | --- |
 | Package | signed app bundle | unsigned folder | unsigned folder |
 | Daemon, Herdr, install kit, agent hooks | supported | supported (CI runs them against the pinned Herdr) | supported (the web shell's whole e2e suite runs against the pinned Herdr) |
-| Desktop app window and menu | supported (desktop e2e) | unverified (no desktop e2e runs on Windows) | unverified (no desktop e2e runs on Linux) |
+| Desktop app window and menu | supported (desktop e2e) | supported (the desktop `@platform` tests in every pull request that can change them, and the packaged `hide.exe`'s window in the package checks) | supported (the desktop `@platform` tests in the nightly, under a virtual display) |
 | Keyboard shortcuts | supported | supported by registry tests; the table is in [UI_BEHAVIOR.md](UI_BEHAVIOR.md#keyboard-shortcuts-per-system) | same as Windows |
 | Device node (a remote machine's files and Git) | supported | not supported | supported |
 

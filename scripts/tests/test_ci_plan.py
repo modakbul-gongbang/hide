@@ -120,8 +120,21 @@ class Selection(unittest.TestCase):
 
     def test_desktop_changes_run_the_desktop_lanes(self):
         result = plan("desktop/src/preload/index.ts")
-        self.assertEqual(set(result["lanes"]), {"policy", "checks", "desktop-e2e"})
+        self.assertEqual(set(result["lanes"]), {"policy", "checks", "desktop-e2e", "windows-desktop"})
         self.assertIn("windows-check", plan("desktop/src/main/index.ts")["lanes"])
+
+    def test_a_desktop_spec_reaches_windows_only_when_it_checks_what_differs_by_system(self):
+        self.assertEqual(set(plan("desktop/e2e/desktop.spec.ts")["lanes"]), {"policy", "checks", "desktop-e2e", "windows-desktop"})
+        self.assertEqual(set(plan("desktop/e2e/keys.spec.ts")["lanes"]), {"policy", "checks", "desktop-e2e"})
+        self.assertIn("windows-desktop", plan("desktop/e2e/gone.spec.ts", status="D")["lanes"])
+
+    def test_the_windows_desktop_lane_follows_what_differs_by_system(self):
+        for path in ("hided/src/lib.rs", "hide-platform/src/process.rs", "hide-kit/src/lib.rs", "web/src/host.ts", "web/e2e/herdr-fixture.ts"):
+            with self.subTest(path=path):
+                self.assertIn("windows-desktop", plan(path)["lanes"])
+        for path in ("web/src/Overview.tsx", "hide-session/src/lib.rs", "web/e2e/new-tab.spec.ts", "docs/TESTING.md"):
+            with self.subTest(path=path):
+                self.assertNotIn("windows-desktop", plan(path)["lanes"])
 
     def test_a_platform_crate_reaches_every_os_and_its_consumers(self):
         result = plan("hide-platform/src/process.rs")
@@ -314,7 +327,7 @@ class NamedPaths(unittest.TestCase):
                 self.assertFalse(result["full"])
 
     def test_web_e2e_helpers_reach_the_desktop_and_windows_lanes_but_not_rust(self):
-        want = {"policy", "checks", "web-e2e", "windows-e2e", "desktop-e2e", "windows-check"}
+        want = {"policy", "checks", "web-e2e", "windows-e2e", "desktop-e2e", "windows-desktop", "windows-check"}
         for path in ("web/e2e/herdr-fixture.ts", "web/e2e/shims/build.ts", "web/e2e/shims/noop.c", "web/e2e/test-size-baseline.json"):
             with self.subTest(path=path):
                 self.assertEqual(self.lanes(path), want)
@@ -322,7 +335,7 @@ class NamedPaths(unittest.TestCase):
     def test_desktop_e2e_helpers_run_the_desktop_suites_and_windows_unit_tests(self):
         for path in ("desktop/e2e/fixture.ts", "desktop/e2e/fixture-cleanup.unit.ts", "desktop/playwright.config.ts", "desktop/vitest.config.ts"):
             with self.subTest(path=path):
-                self.assertEqual(self.lanes(path), {"policy", "checks", "desktop-e2e", "windows-check"})
+                self.assertEqual(self.lanes(path), {"policy", "checks", "desktop-e2e", "windows-desktop", "windows-check"})
 
     def test_configuration_names_the_lanes_that_read_it(self):
         expected = {
@@ -334,7 +347,7 @@ class NamedPaths(unittest.TestCase):
             "web/scripts/gen-types.mjs": {"checks", "web-e2e"},
             "desktop/eslint.config.mjs": {"checks"},
             "desktop/eslint.globals.mjs": {"checks"},
-            "desktop/scripts/build.mjs": {"checks", "desktop-e2e", "package"},
+            "desktop/scripts/build.mjs": {"checks", "desktop-e2e", "windows-desktop", "package"},
             "desktop/scripts/package.mjs": {"checks", "package"},
             "desktop/scripts/smoke-package.mjs": {"checks", "package"},
         }
@@ -457,8 +470,8 @@ class Workflows(unittest.TestCase):
                 self.assertIn('grep: "@platform"', call)
         # The desktop suite runs whole on macOS and only its `@platform` tests elsewhere.
         desktop = nightly[nightly.index("\n  desktop-e2e:\n"):nightly.index("\n  verify:\n")]
-        self.assertIn('if [ "$RUNNER_OS" != macOS ]; then', desktop)
-        self.assertIn("selection=(--grep @platform)", desktop)
+        self.assertIn("uses: ./.github/workflows/desktop-e2e.yml", desktop)
+        self.assertIn("grep: ${{ matrix.system != 'macos' && '@platform' || '' }}", desktop)
         # A desktop change plans the macOS desktop job; the OS contract's macOS leg does not bring it.
         self.assertIn("desktop-e2e", plan("desktop/e2e/fixture.ts")["lanes"])
         self.assertNotIn("desktop-e2e", plan("hide-platform/src/process.rs")["lanes"])
