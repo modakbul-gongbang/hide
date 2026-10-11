@@ -27,6 +27,9 @@ describe("the Memory tab's card list", () => {
     expect(opened.shown.map((card) => card.number)).toEqual([1, 2, 3, 4, 5, 7]);
     expect(opened.folded).toBe(1);
     expect(visibleCards(cards, null, true).folded).toBe(0);
+    // A card on its way into the repository is never folded either.
+    const moving = cards.map((card) => (card.number === 6 ? { ...card, promotion: { state: "running" as const, agent: null, pr_number: null, target_path: null, github_failure: null } } : card));
+    expect(visibleCards(moving, null, false).shown.map((card) => card.number)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it("names a row's time as minutes, hours, yesterday, then the date", () => {

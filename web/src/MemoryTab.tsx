@@ -262,7 +262,9 @@ function Cards({ project, actions, busy, onDelete }: { project: ProjectMemory; a
   const editing = useRef(false);
   const [all, setAll] = useState(false);
   useEffect(() => {
-    if (!editing.current) setQuery(shared);
+    // The core trims the words; a field that differs only by that keeps the
+    // space the operator just typed.
+    if (!editing.current) setQuery((current) => (current.trim() === shared ? current : shared));
   }, [shared]);
   useEffect(() => {
     if (!editing.current) return;
@@ -364,7 +366,12 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
           <span className="rounded-xs bg-secondary px-xxs">{t(KIND[row.kind])}</span>
           {merged ? (
             <>
-              {row.promotion?.target_path ? <span className="rounded-xs bg-secondary px-xxs font-mono">{row.promotion.target_path}</span> : null}
+              {row.promotion?.target_path ? (
+                <span className="rounded-xs bg-secondary px-xxs font-mono">{row.promotion.target_path}</span>
+              ) : row.promotion?.pr_number != null ? (
+                // No file was named: the pull request it went in by.
+                <PrMark state="merged" number={row.promotion.pr_number} />
+              ) : null}
               <span>{t("memory.merged")}</span>
             </>
           ) : (
@@ -389,6 +396,19 @@ function CardRow({ row, project, actions, busy }: { row: MemoryRow; project: Pro
               ) : (
                 <span className="min-w-0 truncate font-mono">{row.promotion.agent.name}</span>
               )
+            ) : null}
+          </span>
+        ) : null}
+        {row.promotion?.state === "unconfirmed" ? (
+          // The agent is gone and GitHub cannot say whether its pull request
+          // came; restoring GitHub settles it, so nothing here asks to act.
+          <span className="flex min-w-0 items-center gap-xs text-caption text-muted-foreground" data-memory-unconfirmed={row.number}>
+            <span className="shrink-0 whitespace-nowrap">{t("memory.unconfirmed")}</span>
+            {row.promotion.github_failure && row.promotion.github_failure !== "no_github_remote" ? (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="min-w-0 truncate">{t(`memory.github.${row.promotion.github_failure}`)}</span>
+              </>
             ) : null}
           </span>
         ) : null}

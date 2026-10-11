@@ -26,12 +26,14 @@ export function memoryCards(project: ProjectMemory): MemoryRow[] {
 
 /**
  * The cards on screen and how many are folded under `그 외 N`: the first
- * few, plus the card shown in full wherever it sits, so a card opened from
- * a conversation is never hidden; a search shows every match.
+ * few, plus the card shown in full and every card on its way into the
+ * repository wherever they sit, so neither a card opened from a
+ * conversation nor one just promoted is hidden; a search shows every match.
  */
 export function visibleCards(cards: MemoryRow[], expanded: number | null, all: boolean): { shown: MemoryRow[]; folded: number } {
   if (all || cards.length <= MEMORY_LIST_HEAD) return { shown: cards, folded: 0 };
-  const shown = cards.filter((row, index) => index < MEMORY_LIST_HEAD || row.number === expanded);
+  const moving = (row: MemoryRow) => row.promotion !== null && row.promotion.state !== "merged";
+  const shown = cards.filter((row, index) => index < MEMORY_LIST_HEAD || row.number === expanded || moving(row));
   return { shown, folded: cards.length - shown.length };
 }
 

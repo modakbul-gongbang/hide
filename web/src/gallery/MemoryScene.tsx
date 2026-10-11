@@ -27,9 +27,10 @@ const row = (number: number, title: string, kind: MemoryRow["kind"], given: numb
 });
 const ROWS: MemoryRow[] = [
   row(17, "스크린샷이 큰 세션을 읽다 막히면 종 알림이 멈추므로, 먼저 tool_result 크기를 확인한다", "lesson", 0, 0, 1, 60 * MINUTE),
-  row(7, "앱 교체는 운영자가 요청할 때만 한다", "rule", 6, 4, 2, 5 * 1440 * MINUTE, { state: "running", agent: { name: "memory-promote-m7", pane_id: "w1:p9" }, pr_number: null, target_path: null }),
-  row(9, "라이선스는 FCL로 바꾸고 저장소는 공개로 둔다", "decision", 3, 2, 2, 3 * 1440 * MINUTE, { state: "pr_open", agent: null, pr_number: 924, target_path: null }),
-  row(8, "하위 작업은 hide agent spawn --parent here로 띄운다", "rule", 7, 5, 1, 6 * 1440 * MINUTE, { state: "merged", agent: null, pr_number: 921, target_path: "AGENTS.md" }),
+  row(7, "앱 교체는 운영자가 요청할 때만 한다", "rule", 6, 4, 2, 5 * 1440 * MINUTE, { state: "running", agent: { name: "memory-promote-m7", pane_id: "w1:p9" }, pr_number: null, target_path: null, github_failure: null }),
+  row(9, "라이선스는 FCL로 바꾸고 저장소는 공개로 둔다", "decision", 3, 2, 2, 3 * 1440 * MINUTE, { state: "pr_open", agent: null, pr_number: 924, target_path: null, github_failure: null }),
+  row(10, "릴리스 노트는 운영자가 확인한 뒤 올린다", "rule", 2, 1, 1, 2 * 1440 * MINUTE, { state: "unconfirmed", agent: null, pr_number: null, target_path: null, github_failure: "not_logged_in" }),
+  row(8, "하위 작업은 hide agent spawn --parent here로 띄운다", "rule", 7, 5, 1, 6 * 1440 * MINUTE, { state: "merged", agent: null, pr_number: 921, target_path: "AGENTS.md", github_failure: null }),
   row(12, "nextest 0.9.145 미만은 macOS에서 가짜 LEAK를 낸다", "lesson", 2, 1, 1, 12 * MINUTE),
   row(3, "Rust 검증은 scripts/verify-cargo.sh로만 돌린다", "rule", 9, 12, 3, 1440 * MINUTE),
   row(5, "커밋 메시지에 도구 이름을 넣지 않는다", "rule", 6, 4, 2, 4 * 1440 * MINUTE),

@@ -1411,7 +1411,7 @@ export type ArchiveDetail = {
 export type MemoryCardKind = "rule" | "decision" | "lesson" | "fact";
 
 /** Where a card's promotion into the repository stands (`memory_promotion_state`). */
-export type MemoryPromotionState = "running" | "pr_open" | "merged" | "failed";
+export type MemoryPromotionState = "running" | "pr_open" | "merged" | "failed" | "unconfirmed";
 
 /** What the Memory tab's operator asks for (`memory_action`). */
 export type MemoryAction = "enable" | "disable" | "delete" | "forget" | "undo" | "promote" | "dismiss";
@@ -1434,6 +1434,8 @@ export type MemoryRow = {
     agent: { name: string; pane_id: string | null } | null;
     pr_number: number | null;
     target_path: string | null;
+    /** Why GitHub could not say whether an `unconfirmed` attempt's pull request came, when it said. */
+    github_failure: GithubFailureCategory | null;
   } | null;
 };
 

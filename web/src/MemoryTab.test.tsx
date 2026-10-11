@@ -112,12 +112,22 @@ describe("the Memory tab", () => {
   it("shows a promotion's agent, its pull request, and a merged card dimmed with its file", async () => {
     await render(memory({
       rows: [
-        row(7, { promotion: { state: "running", agent: { name: "memory-promote-m7", pane_id: "w1:p2" }, pr_number: null, target_path: null } }),
-        row(9, { promotion: { state: "pr_open", agent: null, pr_number: 924, target_path: null } }),
-        row(8, { promotion: { state: "merged", agent: null, pr_number: 924, target_path: "AGENTS.md" } }),
-        row(6, { promotion: { state: "running", agent: null, pr_number: null, target_path: null } }),
+        row(7, { promotion: { state: "running", agent: { name: "memory-promote-m7", pane_id: "w1:p2" }, pr_number: null, target_path: null, github_failure: null } }),
+        row(9, { promotion: { state: "pr_open", agent: null, pr_number: 924, target_path: null, github_failure: null } }),
+        row(8, { promotion: { state: "merged", agent: null, pr_number: 924, target_path: "AGENTS.md", github_failure: null } }),
+        row(4, { promotion: { state: "merged", agent: null, pr_number: 931, target_path: null, github_failure: null } }),
+        row(6, { promotion: { state: "running", agent: null, pr_number: null, target_path: null, github_failure: null } }),
+        row(5, { promotion: { state: "unconfirmed", agent: null, pr_number: null, target_path: null, github_failure: "not_logged_in" } }),
       ],
     }));
+    // GitHub could not say whether the gone agent's pull request came: a quiet
+    // line with its reason, no spinner and nothing to press.
+    const unconfirmed = container.querySelector("[data-memory-card='5']");
+    expect(unconfirmed?.querySelector("[data-memory-unconfirmed]")?.textContent).toBe("Couldn't check for a PR·gh not logged in");
+    expect(unconfirmed?.querySelector(".animate-spin")).toBeNull();
+    expect(unconfirmed?.textContent).not.toContain("Retry");
+    // A merged card no file was named for shows the pull request it went in by.
+    expect(container.querySelector("[data-memory-card='4'] [data-pr-mark]")?.textContent).toContain("931");
     expect(container.querySelector("[data-memory-running='7']")?.textContent).toBe("An agent is promoting it·memory-promote-m7");
     // An agent not seen yet: no name, and nothing it would follow.
     expect(container.querySelector("[data-memory-running='6']")?.textContent).toBe("An agent is promoting it");
@@ -163,7 +173,8 @@ describe("the Memory tab", () => {
       if (event.kind === "memory_search") {
         const { query } = event.payload as { query: string };
         const project = useShellStore.getState().memory?.project ?? null;
-        useShellStore.setState({ memory: { project: project && { ...project, search: { query, numbers: [7] } } } });
+        // The core trims the words it searches by.
+        useShellStore.setState({ memory: { project: project && { ...project, search: { query: query.trim(), numbers: [7] } } } });
       }
       return true;
     };
@@ -175,11 +186,13 @@ describe("the Memory tab", () => {
       await act(async () => otherRoot.render(tools));
       const field = container.querySelector<HTMLInputElement>("[data-memory-search]")!;
       await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "lint");
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "lint ");
         field.dispatchEvent(new Event("input", { bubbles: true }));
       });
       await act(async () => { vi.advanceTimersByTime(5_000); });
-      expect(sent("memory_search")).toEqual([{ workspace_id: "p", query: "lint" }]);
+      expect(sent("memory_search")).toEqual([{ workspace_id: "p", query: "lint " }]);
+      // The space typed before the next word stays in the field.
+      expect(field.value).toBe("lint ");
       expect(other.querySelector<HTMLInputElement>("[data-memory-search]")!.value).toBe("lint");
     } finally {
       vi.useRealTimers();
