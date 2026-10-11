@@ -394,6 +394,23 @@ describe("the Dependencies mode", () => {
     expect(ids(graph.unrelated)).toEqual(["#171"]);
   });
 
+  it("keeps the Local issues of two projects at the same path apart, each blocked only within its own project (D-29)", () => {
+    const local = (number: number, title: string): Task => ({ key: `local:/fixture#${number}`, source: "local", id: `L-${number}`, url: null, title, open: true });
+    const board = buildTasks(
+      [
+        { workspace: workspace([], { id: "mini", tasks: [local(1, "mini first"), blocked(local(2, "mini second"), { key: "local:/fixture#1", id: null })] }), agents: [], device: null },
+        { workspace: { ...workspace([], { id: "macbook", tasks: [local(1, "macbook first")] }), device_id: "macbook-node", remote_target_id: "macbook-node" }, agents: [], device: null },
+      ],
+      "all",
+      NOW,
+    );
+    const graph = buildDependencies(board);
+    expect(graph.edges).toEqual([{ from: "task:mini:local:/fixture#1", to: "task:mini:local:/fixture#2" }]);
+    expect(ids(graph.unrelated)).toEqual(["L-1"]);
+    expect(graph.unrelated[0]?.owner.id).toBe("macbook");
+    expect(board.cards.find((card) => card.task.id === "L-2")?.blockedBy).toEqual([{ key: "local:/fixture#1", label: "mini first" }]);
+  });
+
   it("names a blocker with no id by its title, orders a column by the rows it hangs from, and drops the arrow that closes a cycle", () => {
     const local = { ...task(1, true, "verify 슬롯 병렬화"), id: null };
     const board = buildTasks(

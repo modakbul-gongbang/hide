@@ -306,8 +306,19 @@ function subIssuesOf(workspace: Workspace, task: Task): CardSubIssues | null {
 /** Names each card's blockers once every project's tasks are known, since a blocker may be another project's task (D-10). */
 function nameBlockers(cards: TaskCard[], titles: Map<string, string>) {
   for (const value of cards) {
-    value.blockedBy = (value.task.blocked_by ?? []).map((ref) => ({ key: ref.key, label: ref.id ?? titles.get(ref.key) ?? ref.key }));
+    value.blockedBy = (value.task.blocked_by ?? []).map((ref) => ({ key: ref.key, label: ref.id ?? titles.get(scopedKey(value.owner, ref.key)) ?? ref.key }));
   }
+}
+
+/**
+ * A task key as one board names it across projects. A GitHub key names the
+ * same issue in every project of its repository, so a blocker in another
+ * project is that issue; a Local key spells only its project's path, which
+ * the core's project and a node's at the same path share (D-29), so it is
+ * scoped to the project that holds it.
+ */
+function scopedKey(owner: Workspace, key: string): string {
+  return key.startsWith("local:") ? `${owner.id}\n${key}` : key;
 }
 
 /**
@@ -333,7 +344,7 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
   const titles = new Map<string, string>();
   for (const { workspace, agents } of projects) {
     const rowsByCheckout = checkoutAgentRows(workspace, agents);
-    for (const task of workspace.tasks?.tasks ?? []) titles.set(task.key, task.title);
+    for (const task of workspace.tasks?.tasks ?? []) titles.set(scopedKey(workspace, task.key), task.title);
     const source = workspace.tasks?.source ?? null;
     if (source) {
       labels.add(source.label);
@@ -446,16 +457,20 @@ export type DependencyGraph = LayeredGraph<TaskCard>;
 
 /**
  * The Dependencies mode (D-09, D-10): the Board's task cards, laid out left
- * to right (`layerDependencies`). Keys name tasks across projects, so a
- * blocker in another project of the scope is an arrow too; one outside the
- * scope is only the lock line.
+ * to right (`layerDependencies`). A GitHub key names its issue across
+ * projects, so a blocker in another project of the scope is an arrow too;
+ * one outside the scope is only the lock line. A Local key stays in its
+ * project (`scopedKey`).
  */
 export function buildDependencies(board: TasksBoard): DependencyGraph {
   const byKey = new Map<string, TaskCard>();
-  for (const value of board.cards) if (!byKey.has(value.task.key)) byKey.set(value.task.key, value);
+  for (const value of board.cards) {
+    const key = scopedKey(value.owner, value.task.key);
+    if (!byKey.has(key)) byKey.set(key, value);
+  }
   return layerDependencies([...byKey.values()], (value) => value.id, (value) =>
     value.blockedBy.flatMap((blocker) => {
-      const from = byKey.get(blocker.key);
+      const from = byKey.get(scopedKey(value.owner, blocker.key));
       return from && from !== value ? [from] : [];
     }));
 }
