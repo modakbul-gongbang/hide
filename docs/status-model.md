@@ -780,6 +780,7 @@ A waiting root intentionally keeps its hollow row glyph with a working tone, and
 A read root question clears the server’s effective push state, while the phone’s existing open-page rule keeps its notification while the demand remains.
 The phone reads the core’s `holds_notification` value, and `emphasized` controls its compact title.
 The projection and push regression tests remain in `hided/src/mobile/{projection,push}.rs`, exercising the same public core functions the transport calls.
+The desktop app's agent notifications run the same transitions on their own ledger (`hided/src/desktop_notices.rs`, PRD first-run-onboarding D-09), so a desktop notification and a phone push agree on what is new without either one's seed or mode moving the other.
 
 ### Scope projections
 

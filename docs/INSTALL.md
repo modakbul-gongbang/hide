@@ -203,7 +203,7 @@ If you want to start agents from hide, install and sign in to the relevant CLI b
 ### What the first launch installs
 
 Every launch of the installed app installs Hide's kit on this Mac without asking, and puts back only what a newer app needs.
-The one exception is a Mac the kit has never run on: it holds Claude Code's and Codex's hook entries and skills until the operator answers the first-run agent choice (UI_BEHAVIOR.md, Settings > Agents); both agents are recorded off in the hold, installed or not, so an agent installed later also starts off, and the rest below is installed as usual:
+The one exception is a Mac the kit has never run on: it holds Claude Code's and Codex's hook entries and skills until the operator answers the first-run agent choice, the first step of the first-run wizard (UI_BEHAVIOR.md, First run); both agents are recorded off in the hold, installed or not, so an agent installed later also starts off, and the rest below is installed as usual:
 
 - `~/.local/bin/hide`, a link to the app's `hide` command, unless a `hide` that is not Hide's is already there;
 - Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex whose folder (`~/.claude`, `~/.codex`) is on this Mac, next to whatever other tools put there, among them a `PreToolUse` entry on the shell tool that refuses a direct `herdr agent start` and points to `hide agent spawn` ([agent-hooks.md](agent-hooks.md#the-spawn-guard));
@@ -333,7 +333,7 @@ The coordination transition has no rollback; the preserved old folders remain av
 
 ### The window shows a connection failure instead of the app
 
-The desktop host shows a status page while it is connecting, and a failure page with a `Retry` button when it cannot reach the daemon: `cli_missing` when no `hide` executable was found, `start_failed` when the CLI could not start it, `no_response` when it started but never answered, and `state_refused`, with the file's path under the reason, when the daemon stopped on a stored file it could not make this machine's.
+The desktop host shows `Starting Hide…` while it is connecting, and a failure page with `Retry` and `Copy diagnostics` (the app's build, the reason code and the host log's place) when it cannot reach the daemon: `cli_missing` when no `hide` executable was found, `start_failed` when the CLI could not start it, `no_response` when it started but never answered, and `state_refused`, with the file's path under the reason, when the daemon stopped on a stored file it could not make this machine's.
 Read the host log at `<profile>/logs/desktop.log` (the profile is `~/Library/Application Support/hide-desktop`, or `HIDE_DESKTOP_USER_DATA_DIR`) for the detail behind whichever reason the page shows.
 
 ### No Herdr session
