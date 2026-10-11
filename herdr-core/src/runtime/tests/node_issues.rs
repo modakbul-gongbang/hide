@@ -26,6 +26,9 @@ struct Recording {
     gh_stdout: Mutex<Option<String>>,
     /// Answers by the `gh` command's first words, before `gh_stdout`.
     gh_answers: Mutex<Vec<(&'static str, String)>>,
+    /// A kind of call, by the first word of its `Debug` form, the link
+    /// answers as lost once it has answered that many of them.
+    lost: Mutex<Option<(&'static str, usize)>>,
 }
 
 impl Recording {
@@ -35,6 +38,7 @@ impl Recording {
             calls: Mutex::new(Vec::new()),
             gh_stdout: Mutex::new(None),
             gh_answers: Mutex::new(Vec::new()),
+            lost: Mutex::new(None),
         })
     }
 
@@ -75,6 +79,14 @@ impl Recording {
 impl NodeLink for Recording {
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         self.calls.lock().unwrap().push(call.clone());
+        if let Some((kind, answered)) = self.lost.lock().unwrap().as_mut()
+            && format!("{call:?}").starts_with(*kind)
+        {
+            if *answered == 0 {
+                return Err(LinkError::NotConnected("the link was lost".to_owned()));
+            }
+            *answered -= 1;
+        }
         let answered = match &call {
             Call::Gh { args, .. } => self
                 .gh_answers
@@ -879,6 +891,51 @@ fn a_dialed_device_s_worktree_read_asks_no_branch_notes() {
     let calls = node.calls.lock().unwrap().len();
     assert!(calls > 0);
     assert_eq!(asked(&node), 0);
+}
+
+/// A worktree read whose link is lost partway asks no branch notes over it
+/// for the repositories that did answer: the reason it stopped is its
+/// answer.
+#[test]
+fn a_worktree_read_whose_link_is_lost_asks_no_branch_notes() {
+    let other = repo(None, "other");
+    let repo = repo(None, "feature");
+    let node = Recording::of(Some(FakeDevice::new()));
+    let shared = node_runtime(&repo, node.clone(), Recording::of(None), Default::default());
+    {
+        let mut runtime = shared.lock().unwrap();
+        runtime.ingest_remote_session(
+            NODE,
+            Ok(session(vec![
+                herdr_workspace(NODE, "w1", &repo.root, &[("t1", &repo.root)]),
+                herdr_workspace(NODE, "w3", &other.root, &[("t3", &other.root)]),
+            ])),
+        );
+        runtime.request_device_worktrees(NODE, true);
+    }
+    wait(&shared, "both repositories' worktrees", |runtime| {
+        let listed = &runtime.device_worktrees[NODE];
+        listed.in_flight.is_none() && listed.projects.contains_key(&other.root)
+    });
+    node.calls.lock().unwrap().clear();
+    *node.lost.lock().unwrap() = Some(("Worktrees", 1));
+    shared.lock().unwrap().request_device_worktrees(NODE, true);
+    wait(&shared, "the worktree read to stop", |runtime| {
+        runtime.device_worktrees[NODE].in_flight.is_none()
+    });
+    let calls = node.calls.lock().unwrap();
+    assert!(
+        calls
+            .iter()
+            .any(|call| matches!(call, Call::Worktrees { .. })),
+        "{calls:?}"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|call| matches!(call, Call::PathFacts { .. })),
+        "{calls:?}"
+    );
 }
 
 /// A device this core dials keeps its issues on that device: its projects

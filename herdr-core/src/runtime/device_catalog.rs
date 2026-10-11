@@ -560,14 +560,14 @@ impl Runtime {
         entry.again = false;
         entry.reread = false;
         let Some(context) = self.worker_context.clone() else {
-            let answer = ask_worktrees(channel.as_ref(), &wanted, notes);
+            let answer = ask_worktrees(channel.as_ref(), target, &wanted, notes);
             return self.ingest_device_worktrees(target, generation, answer);
         };
         let device = target.to_owned();
         let spawned = thread::Builder::new()
             .name("herdr-core-device-worktrees".to_owned())
             .spawn(move || {
-                let answer = ask_worktrees(channel.as_ref(), &wanted, notes);
+                let answer = ask_worktrees(channel.as_ref(), &device, &wanted, notes);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -711,18 +711,19 @@ pub(super) struct WorktreesAnswer {
 
 type BranchNotes = std::collections::BTreeMap<String, hide_node_link::catalog::BranchNote>;
 
-/// Reads each repository in turn, then, when `notes`, every one's branch
-/// notes in one `Call::PathFacts`; a refusal is that repository's answer (no
-/// rows), a connection failure stops the batch with the reason. Notes that
-/// cannot be read leave the issue a branch names unread, which is logged,
-/// not failed.
+/// Reads each repository of device `target` in turn, then, when `notes`,
+/// every one's branch notes in one `Call::PathFacts`; a refusal is that
+/// repository's answer (no rows), a connection failure stops the batch with
+/// the reason and asks no notes over the lost link. Notes that cannot be
+/// read leave the issue a branch names unread, which is logged, not failed.
 fn ask_worktrees(
     channel: &dyn crate::node_access::NodeLink,
+    target: &str,
     roots: &[String],
     notes: bool,
 ) -> WorktreesAnswer {
     let (answers, failure) = ask_repositories(channel, roots);
-    if !notes {
+    if !notes || failure.is_some() {
         return WorktreesAnswer {
             answers,
             notes: Vec::new(),
@@ -741,6 +742,7 @@ fn ask_worktrees(
             crate::diagnostic!(serde_json::json!({
                 "component": "device_worktrees",
                 "kind": "branch_notes.read_failed",
+                "target": target,
                 "message": error,
             }));
             Vec::new()
