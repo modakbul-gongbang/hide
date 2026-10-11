@@ -908,8 +908,8 @@ fn a_node_s_merged_worktree_is_removed_on_the_node_and_a_changed_one_is_refused(
 /// core move gave the checkout the MacBook had when it ran the core, so the
 /// links, label and fold kept under that id still meet it, and once nothing
 /// has worked in it for a week it folds under Inactive as this machine's do,
-/// a fold the sidebar opens. A device this core dials keeps only the
-/// checkouts its session opens.
+/// a fold the sidebar opens and a new derive of the session keeps. A device
+/// this core dials keeps only the checkouts its session opens.
 #[test]
 fn a_node_s_worktree_with_no_pane_keeps_its_id_from_before_the_move_and_folds_when_idle() {
     let repo = repo(None, "parked");
@@ -971,7 +971,7 @@ fn a_node_s_worktree_with_no_pane_keeps_its_id_from_before_the_move_and_folds_wh
         .clone();
 
     {
-        let runtime = shared.lock().unwrap();
+        let mut runtime = shared.lock().unwrap();
         let project = node_project(&runtime).unwrap();
         let row = project
             .checkouts
@@ -981,6 +981,19 @@ fn a_node_s_worktree_with_no_pane_keeps_its_id_from_before_the_move_and_folds_wh
         assert_eq!((row.id.as_str(), row.tabs.len()), (moved.as_str(), 0));
         assert_eq!(project.inactive_checkouts.checkout_ids, [moved.as_str()]);
         assert!(!project.inactive_checkouts.expanded);
+        // A node answer that moved nothing derives the session it published,
+        // fold included, so nothing changes and nothing is published again.
+        let raw = runtime.device_raw_sessions[NODE].clone();
+        let derived = runtime.derive_device_session(NODE, &raw);
+        let project = derived
+            .workspaces
+            .iter()
+            .find(|project| project.path == repo.root)
+            .unwrap();
+        assert_eq!(project.inactive_checkouts.checkout_ids, [moved.as_str()]);
+        assert!(!runtime.refresh_device_catalog(NODE));
+        let project = node_project(&runtime).unwrap();
+        assert_eq!(project.inactive_checkouts.checkout_ids, [moved.as_str()]);
     }
     dispatch(
         &shared,

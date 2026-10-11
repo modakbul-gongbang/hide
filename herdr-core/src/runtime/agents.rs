@@ -1124,9 +1124,8 @@ impl Runtime {
             &self.snapshot.ui_state,
             unix_milliseconds(),
         );
-        // A node that dials this core lists its pane-less worktrees, so its
-        // projects fold them as this machine's do (D-29); a dialed device's
-        // session shows only the checkouts it opens.
+        // The time that moves a checkout under Inactive reaches device
+        // sessions too, through the fold their derive uses.
         let nodes: BTreeSet<String> = self
             .node_sessions()
             .map(|(node, _)| node.to_owned())
@@ -1146,24 +1145,13 @@ impl Runtime {
                         workspace.session_folds.clone(),
                         workspace.inactive_checkouts.clone(),
                     );
-                    if node {
-                        workspace.inactive_checkouts =
-                            crate::project_context::inactive_checkout_group(
-                                workspace,
-                                &agents,
-                                focused,
-                                self.snapshot
-                                    .ui_state
-                                    .expanded_inactive_checkout_project_paths
-                                    .contains(&workspace.path),
-                                now,
-                            );
-                    }
-                    crate::project_context::refresh_session_folds(
+                    crate::project_context::refresh_device_folds(
                         workspace,
                         &agents,
                         &self.snapshot.ui_state,
                         focused,
+                        node,
+                        now,
                     );
                     changed |= (
                         workspace.session_folds.clone(),

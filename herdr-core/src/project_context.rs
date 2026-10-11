@@ -256,6 +256,35 @@ pub(crate) fn refresh_inactive_groups(
         )
 }
 
+/// The folds of a device session's project, the one place they are
+/// decided for a device: the session folds, and the Inactive fold when the
+/// device is a node that dials this core (`node`), whose pane-less
+/// worktrees are rows as this machine's are (D-29). A device this core
+/// dials shows only the checkouts its session opens, so it has no Inactive
+/// fold. The derive and the time-based pass both call it, so a published
+/// session and a newly derived one compare like with like.
+pub(crate) fn refresh_device_folds(
+    workspace: &mut WorkspaceSnapshot,
+    agents: &HashMap<&str, &SidebarAgentSnapshot>,
+    ui_state: &UiStateSnapshot,
+    focused_checkout_id: Option<&str>,
+    node: bool,
+    now_unix_ms: u64,
+) {
+    if node {
+        workspace.inactive_checkouts = inactive_checkout_group(
+            workspace,
+            agents,
+            focused_checkout_id,
+            ui_state
+                .expanded_inactive_checkout_project_paths
+                .contains(&workspace.path),
+            now_unix_ms,
+        );
+    }
+    refresh_session_folds(workspace, agents, ui_state, focused_checkout_id);
+}
+
 pub(crate) fn refresh_session_folds(
     workspace: &mut WorkspaceSnapshot,
     agents: &HashMap<&str, &SidebarAgentSnapshot>,

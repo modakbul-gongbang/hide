@@ -87,12 +87,15 @@ impl Runtime {
             .iter()
             .map(|agent| (agent.pane_id.as_str(), agent))
             .collect();
+        let now = unix_milliseconds();
         for workspace in &mut session.workspaces {
-            crate::project_context::refresh_session_folds(
+            crate::project_context::refresh_device_folds(
                 workspace,
                 &agents,
                 &self.snapshot.ui_state,
                 session.focused_checkout_id.as_deref(),
+                reports_own_facts,
+                now,
             );
         }
         session
