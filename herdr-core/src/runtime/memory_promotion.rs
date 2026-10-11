@@ -548,9 +548,20 @@ pub(super) fn start_promotion(
     store
         .set_promotion(project_id, number, &promotion)
         .map_err(|error| error.to_string())?;
-    let spawned = spawn_agent(project_id, number, attempt, &branch, start);
-    match spawned {
+    match spawn_until_seen(project_id, number, attempt, &branch, &start) {
         Ok(agent_id) => promotion.agent_id = Some(agent_id),
+        // The agent was started and has not shown its session yet: the
+        // attempt stays running with no agent, and the tracker's grace and
+        // catalog rules end it if no agent or pull request comes.
+        Err(reason) if STARTED_UNSEEN.contains(&reason.as_str()) => {
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "promotion.agent_unseen",
+                "project_id": project_id,
+                "card": hide_memory::card_name(number),
+                "reason": reason,
+            }));
+        }
         Err(reason) => {
             crate::diagnostic!(json!({
                 "component": "memory",
@@ -612,6 +623,38 @@ pub(super) fn dismiss_promotion(
         .map_err(|error| error.to_string())
 }
 
+/// The spawn's answers that mean the agent's pane was made and its start
+/// typed, or another spawn held the machine's spawn lock: asking the same
+/// intent again continues it (the Factory reads them the same way).
+const STARTED_UNSEEN: [&str; 2] = ["native_identity_unavailable", "spawn_busy"];
+/// How long a promotion's start keeps asking for an agent that has not shown
+/// its session yet; each ask waits up to the spawn's own five seconds.
+const START_SEEN_WITHIN: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// `spawn_agent`, asked again with the same intent while the agent has not
+/// shown its session, until [`START_SEEN_WITHIN`].
+#[allow(clippy::disallowed_methods)] // a production wait on the action worker
+fn spawn_until_seen(
+    project_id: &str,
+    number: u64,
+    attempt: u32,
+    branch: &str,
+    start: &PromotionStart,
+) -> Result<String, String> {
+    let deadline = std::time::Instant::now() + START_SEEN_WITHIN;
+    loop {
+        match spawn_agent(project_id, number, attempt, branch, start) {
+            Err(reason)
+                if STARTED_UNSEEN.contains(&reason.as_str())
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            answer => return answer,
+        }
+    }
+}
+
 /// The coordination spawn with Hide as origin (a handoff, so the agent is
 /// the operator's root with no watch); answers its coordination id.
 fn spawn_agent(
@@ -619,12 +662,12 @@ fn spawn_agent(
     number: u64,
     attempt: u32,
     branch: &str,
-    start: PromotionStart,
+    start: &PromotionStart,
 ) -> Result<String, String> {
     let dialect = hide_agent_adapter::adapter(&start.kind)
         .and_then(|row| row.start)
         .ok_or("agent_not_startable")?;
-    let mut args = start.args;
+    let mut args = start.args.clone();
     args.push(dialect.prompt_flag().to_owned());
     args.push(crate::live::prompt_argument(&prompt(number))?);
     crate::coordination::register_code_owned(&start.client, &start.authority, &start.actor)?;
@@ -632,16 +675,19 @@ fn spawn_agent(
     // continues the same spawn (rule 11).
     let digest = &stable_digest(project_id)[..12];
     let view = crate::coordination::run(
-        start.client,
-        start.authority,
-        start.actor,
+        start.client.clone(),
+        crate::delivery::worker::Authority {
+            caller: start.authority.caller.clone(),
+            context: start.authority.context.clone(),
+        },
+        start.actor.clone(),
         crate::coordination::Command::Spawn {
             parent: None,
             machine: None,
             name: agent_name(number),
             intent: format!("memory-promote-{digest}-m{number}-a{attempt}"),
-            kind: start.kind,
-            repo: start.repo,
+            kind: start.kind.clone(),
+            repo: start.repo.clone(),
             branch: branch.to_owned(),
             path: None,
             args,
