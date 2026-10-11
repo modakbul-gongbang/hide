@@ -1145,7 +1145,7 @@ fn a_node_pane_calls_its_core_through_the_link() -> Result<()> {
             // A pane's agent: vouched for by the node's kernel as that pane,
             // so it may act as the pane's agent.
             let answer = type_and_read(&mut socket, &pane, &call, "info-done").await?;
-            let info = workspace_answer(&answer)?;
+            let info = workspace_answer(&answer).with_context(|| format!("the pane read {answer:?}"))?;
             ensure!(
                 info["ok"] == true
                     && info["result"]["context"]["device_id"] == node.as_str()

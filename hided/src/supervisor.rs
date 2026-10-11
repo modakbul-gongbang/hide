@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use herdr_core::node_migration::{self, copy};
 use serde_json::json;
 
-use crate::core_move::abandoned::{self, Abandoned};
+use crate::core_move::abandoned::{self, Abandoned, PeerStep};
 use crate::core_move::back::{self, Released, Resumed};
 use crate::core_move::control::{
     Asked, CheckId, FailedCheck, MoveControl, MoveRequest, MoveState, MoveView, Release,
@@ -29,7 +29,8 @@ use crate::{RunningDaemon, RunningNode, seat, server, state_file};
 
 mod move_back;
 use move_back::{
-    back, back_checks_failed, back_rollback, prepare_back, release_core, retire_and_commit,
+    back, back_checks_failed, back_rollback, commit_back, prepare_back, release_core,
+    retire_and_commit,
 };
 
 /// How long past the target's lease a driver that cannot reach it waits
@@ -545,7 +546,15 @@ async fn resume(env: &Env, seat: &seat::Seat) -> Result<Option<Role>, Halt> {
         let screen = MoveScreen::mount(&seat.parts(), env.vite_origin.as_deref());
         let step = journal.phase.step();
         let role = if journal.phase == Phase::Back(BackPhase::Retiring) {
-            retire_and_commit(env, seat, journal, remote, screen).await?
+            // Taken here before the start that ended it could finish.
+            if abandoned::read(&env.state_dir)?
+                .iter()
+                .any(|kept| kept.intent == journal.intent)
+            {
+                commit_back(env, seat, journal, screen).await?
+            } else {
+                retire_and_commit(env, seat, journal, remote, screen).await?
+            }
         } else {
             back_rollback(
                 env,
@@ -1120,7 +1129,7 @@ async fn resolve_unlinked(
     let waited = offering_abandon(
         env,
         &seat.moves,
-        &journal.intent,
+        &journal,
         wait_on_peer(
             &seat.stop,
             &seat.moves,
@@ -1202,9 +1211,10 @@ static ABANDONED: std::sync::LazyLock<tokio::sync::Notify> =
 async fn offering_abandon<T>(
     env: &Env,
     moves: &MoveControl,
-    intent: &str,
+    journal: &Journal,
     wait: impl std::future::Future<Output = Result<Result<T, MoveFailure>, Halt>>,
 ) -> Result<Offered<T>, Halt> {
+    let intent = journal.intent.as_str();
     let room = abandoned::has_room(&env.state_dir).unwrap_or_else(|reason| {
         log(
             "abandon.unoffered",
@@ -1215,6 +1225,13 @@ async fn offering_abandon<T>(
     if !room {
         return wait.await.map(Offered::Waited);
     }
+    // A move resumed after a restart names its machine to the window
+    // only from here.
+    moves.update(|view| {
+        view.direction = Some(journal.phase.direction());
+        view.device = Some(journal.peer.device.clone());
+        view.intent = Some(journal.intent.clone());
+    });
     moves.offer_abandon(Some(intent));
     let ended = tokio::select! {
         biased;
@@ -1250,6 +1267,7 @@ async fn abandon_here(
         Abandoned {
             intent: journal.intent.clone(),
             peer: journal.peer.clone(),
+            step: PeerStep::Abandon,
         },
     )?;
     ABANDONED.notify_one();
@@ -1286,11 +1304,11 @@ async fn abandon_here(
     Ok(Role::Core(running))
 }
 
-/// Asks the machine of each move given up here to end what the move left
-/// there until it answers that no core of the move runs (amendment 4):
-/// every round asks every move the record holds; while one is not ended
-/// the next round waits, longer each time up to a minute, and a move given
-/// up meanwhile starts one at once. It ends with the process's stop.
+/// Asks the machine of each move whose wait was given up here for the step
+/// it still owes until it answers that the step is done (amendment 4):
+/// every round asks every move the record holds; while one is not done the
+/// next round waits, longer each time up to a minute, and a move given up
+/// meanwhile starts one at once. It ends with the process's stop.
 async fn end_abandoned(env: Env, stop: crate::ending::Ending) {
     let mut slower = crate::backoff::Backoff::default();
     // The last failure logged for each move, so a repeat is not.
@@ -1321,10 +1339,10 @@ async fn end_abandoned(env: Env, stop: crate::ending::Ending) {
                 return;
             };
             let failure = match asked.map_err(|error| error.to_string()) {
-                Ok(Ok(ended)) => {
+                Ok(Ok(answer)) => {
                     log(
                         "abandon.ended",
-                        json!({"intent": kept.intent, "peer": kept.peer.node, "answer": format!("{ended:?}")}),
+                        json!({"intent": kept.intent, "peer": kept.peer.node, "step": kept.step, "answer": answer}),
                     );
                     match abandoned::remove(&env.state_dir, &kept.intent) {
                         Ok(()) => continue,
@@ -1362,13 +1380,14 @@ async fn end_abandoned(env: Env, stop: crate::ending::Ending) {
     }
 }
 
-/// Has the peer of the move given up as `kept` end what the move left
-/// there, always with this machine's own build: the peer may run another
-/// build by then, whose step would act before its answer is refused as
-/// another build's, and its helper folder may have been replaced. So this
-/// build is installed under the peer's helper root first, which reuses
-/// what is already there, and the record names that `hided` from then on.
-fn end_on_peer(env: &Env, kept: &Abandoned) -> Result<driver::Abandoned, MoveFailure> {
+/// Has the peer of the move given up as `kept` run the step it owes, and
+/// answers what it said, always with this machine's own build: the peer
+/// may run another build by then, whose step would act before its answer
+/// is refused as another build's, and its helper folder may have been
+/// replaced. So this build is installed under the peer's helper root
+/// first, which reuses what is already there, and the record names that
+/// `hided` from then on.
+fn end_on_peer(env: &Env, kept: &Abandoned) -> Result<&'static str, MoveFailure> {
     let build = own_build(env).map_err(|reason| MoveFailure::Local { reason })?;
     let peer = &kept.peer;
     let remote = |program: &str| {
@@ -1389,7 +1408,15 @@ fn end_on_peer(env: &Env, kept: &Abandoned) -> Result<driver::Abandoned, MoveFai
         abandoned::set_program(&env.state_dir, &kept.intent, &program)
             .map_err(|reason| MoveFailure::Local { reason })?;
     }
-    driver::abandon_target(&remote(&program), &kept.intent)
+    let remote = remote(&program);
+    match kept.step {
+        PeerStep::Abandon => match driver::abandon_target(&remote, &kept.intent)? {
+            driver::Abandoned::Ended => Ok("ended"),
+            // No core of the given-up move runs beside another move's.
+            driver::Abandoned::OtherMove { .. } => Ok("other_move"),
+        },
+        PeerStep::Retire => back::retire(&remote, &kept.intent).map(|()| "retired"),
+    }
 }
 
 /// The move committed: this machine's brain state is set aside and the
@@ -1513,7 +1540,7 @@ async fn rollback(
         // peer says whether the move committed, and the operator may give
         // the wait up as in `resolve_unlinked`.
         let aborted = if attach_sent {
-            match offering_abandon(env, &seat.moves, &journal.intent, waiting).await? {
+            match offering_abandon(env, &seat.moves, &journal, waiting).await? {
                 Offered::Waited(aborted) => aborted,
                 Offered::Abandoned => {
                     drop(screen);

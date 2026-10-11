@@ -1,9 +1,11 @@
-//! `core-move-abandoned.json`: the forward moves this machine gave up while
-//! their other machine had not said whether they committed (PRD
-//! core-host-node-move amendment 4). Each is kept until that machine
-//! answers that no core of the move runs there any more, and this
-//! machine's supervisor asks it whatever role runs, so a later move neither
-//! carries nor migrates the record (`node_migration::UNBOUND`).
+//! `core-move-abandoned.json`: the moves whose wait on their other machine
+//! the operator gave up (PRD core-host-node-move amendment 4), with the step
+//! that machine still owes: a forward move given up before its peer said
+//! whether it committed is ended there, and a move back taken here before
+//! the core's machine retired is retired there. Each is kept until that
+//! machine answers that the step is done, and this machine's supervisor
+//! asks it whatever role runs, so a later move neither carries nor migrates
+//! the record (`node_migration::UNBOUND`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -19,11 +21,26 @@ const VERSION: u32 = 1;
 pub const LIMIT: usize = 8;
 const RECORD_CAP: u64 = 64 * 1024;
 
-/// A move given up here, and the machine its core may still run on.
+/// A move whose wait was given up here, the machine its core may still
+/// run on or be held on, and what that machine still owes.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Abandoned {
     pub intent: String,
     pub peer: Peer,
+    pub step: PeerStep,
+}
+
+/// The step the other machine of a given-up move still owes.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerStep {
+    /// A forward move given up: a core of the move there is stopped and set
+    /// aside, and its starter, handover and copy go (`hided core-move
+    /// abandon`).
+    Abandon,
+    /// A move back taken here: the core held there for it is retired
+    /// (`hided core-move retire`).
+    Retire,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -154,6 +171,7 @@ mod tests {
                 program: "/c/hided".to_owned(),
                 state_dir: "/c/state".to_owned(),
             },
+            step: PeerStep::Abandon,
         }
     }
 

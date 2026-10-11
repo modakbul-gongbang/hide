@@ -1203,6 +1203,92 @@ fn a_move_given_up_while_its_pending_peer_is_busy_leaves_nothing_of_it() -> Resu
     finish(fixture, journey)
 }
 
+/// Amendment 4: a move back whose core machine does not answer its
+/// retirement offers to take the core here. Taken, the move back commits
+/// on the copy placed here and this machine runs the core, while the core's
+/// machine stays held for the move: a start there, as its login item would
+/// make, starts no core. Once that machine answers, it retires as it would
+/// have, its state set aside, and nothing of the move is left to ask.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_move_back_taken_here_retires_the_held_core_once_its_machine_answers() -> Result<()> {
+    let fixture = Fixture::start()?;
+    let journey = (|| {
+        let before = fixture.projects()?;
+        moved_forward(&fixture)?;
+        let program = std::path::PathBuf::from(placed_program(&fixture)?);
+        let asked = fixture.root.join("retire-asked");
+        let go = fixture.root.join("retire-go");
+        // The first retirement waits until the test holds the core
+        // machine's handover, which every retirement then waits on.
+        fixture.stand_in_peer(
+            &program,
+            &format!(
+                r#"if [ "$1 $2" = "core-move retire" ] && [ ! -e '{go}' ]; then
+  : > '{asked}'
+  while [ ! -e '{go}' ]; do sleep 0.1; done
+fi"#,
+                asked = asked.display(),
+                go = go.display()
+            ),
+        )?;
+        fixture.event("core_move", json!({"action": "back"}))?;
+        wait_for("the retirement asked", || Ok(asked.exists().then_some(())))?;
+        let held = fixture.hold_target_handover()?;
+        std::fs::write(&go, b"")?;
+        let mut window = fixture.held_window()?;
+        let offered = abandon_offered(&mut window)?;
+        ensure!(offered["direction"] == "back", "{offered}");
+        let refused = abandon(&mut window)?;
+        ensure!(
+            refused.is_none(),
+            "taking the core here was refused: {refused:?}"
+        );
+        wait_for("this machine's core", || {
+            Ok((fixture.role()? == "core").then_some(()))
+        })?;
+        back_journal_until(&fixture, "done")?;
+        ensure!(!fixture.source.state.join("core-placement.json").exists());
+        let kept = fixture
+            .source
+            .record("core-move-abandoned.json")?
+            .context("the retirement owed")?;
+        ensure!(kept["moves"][0]["step"] == "retire", "{kept}");
+        let after = fixture.projects()?;
+        ensure!(after == before, "before: {before:?}\nafter: {after:?}");
+        // The core's machine is held for the move meanwhile.
+        let handover = fixture
+            .target
+            .record("core-handover.json")?
+            .context("the core machine's handover")?;
+        ensure!(handover["state"]["state"] == "stopped_for", "{handover}");
+        let ended = fixture.start_target_hided()?;
+        ensure!(ended.success(), "the held machine's hided: {ended}");
+        ensure!(fixture.target_core()?.is_none(), "a held core started");
+        drop(held);
+        wait_for("the held core retired", || {
+            Ok(fixture
+                .target
+                .record("core-handover.json")?
+                .filter(|handover| handover["state"]["state"] == "retired"))
+        })?;
+        ensure!(!fixture.target.state.join("core-state.json").exists());
+        let ended = fixture.logged(&fixture.source, "abandon.ended")?;
+        ensure!(ended["answer"] == "retired", "{ended}");
+        wait_for("nothing of the move left to ask", || {
+            Ok(fixture
+                .source
+                .record("core-move-abandoned.json")?
+                .is_none()
+                .then_some(()))
+        })?;
+        ensure!(fixture.target_core()?.is_none());
+        ensure!(fixture.role()? == "core");
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The target stops its pending core for the rollback but cannot take the
 /// copy back out of its folder: it says so, and this machine, knowing no
 /// core of the move runs or starts there, starts its own core rather than

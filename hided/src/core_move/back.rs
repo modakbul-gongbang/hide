@@ -380,8 +380,9 @@ pub fn unplace_here(state_dir: &Path, ai_settings: &Path, journal: &Journal) -> 
     remove_staging(state_dir, &journal.intent)
 }
 
-pub fn retire(remote: &Remote, journal: &Journal) -> Result<(), MoveFailure> {
-    match remote.step("retire", &[("intent", &journal.intent)])? {
+/// Has the core's machine retire its core held for the move back `intent`.
+pub fn retire(remote: &Remote, intent: &str) -> Result<(), MoveFailure> {
+    match remote.step("retire", &[("intent", intent)])? {
         StepAnswer::Retired => Ok(()),
         other => Err(super::driver::unexpected("retire", &other)),
     }

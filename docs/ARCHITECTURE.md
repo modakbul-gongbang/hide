@@ -1301,6 +1301,8 @@ Giving up records the move in that file first, which is the decision; then the p
 A task of the supervisor asks each recorded peer, with the capped backoff, to run `hided core-move abandon` with this machine's build, installed under the peer's helper root first (`Upstream::install_build`), since another build's step would act before its answer is refused as another build's.
 That step stops a pending or active core of the move by its proven pid, sets its state aside under `moved-out/<move>/` rather than merging it, and removes the starter, the handover and the copy, so the machine is as it was before the move; another move's handover is left alone and answered `OtherMove`, which ends the entry too, since no core of the given-up move runs beside it.
 An entry goes only on such an answer, so a peer that is cut off rather than gone keeps its core running until this machine reaches it.
+A move back's Retiring wait offers the same give-up as taking the core here: the record keeps the move with the retirement the core's machine still owes (`PeerStep::Retire`), the move back commits on the copy already placed and this machine's core starts; that machine's core stays `StoppedFor`, which its start (`start.held`) and its gate refuse, until the task reaches it and `hided core-move retire` sets its state aside as a normal retirement.
+A move back's rollback before the copy is whole offers nothing: it waits, and a core machine that never returns leaves this machine with no core.
 Labels after the release are the same as after a restart: the release reads to the label worker as the summary switch turning on, so each pane's latest turn that ended while the core was pending is labelled and the turns before it are not.
 
 ### Updating the core

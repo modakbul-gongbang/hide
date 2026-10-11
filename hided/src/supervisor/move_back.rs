@@ -9,6 +9,7 @@
 //! may still start its own.
 
 use super::*;
+use crate::core_move::abandoned::PeerStep;
 use crate::core_move::journal::Peer;
 
 /// What a move back is made from, once every check passed.
@@ -403,7 +404,8 @@ pub(super) async fn back(env: &Env, seat: &seat::Seat, running: RunningNode) -> 
 
 /// Has the core's machine retire its core, which commits the move back,
 /// then starts this machine's core. A machine that cannot be reached is
-/// asked again; one that refuses is resumed and the move undone.
+/// asked again, and meanwhile the operator may take the core here
+/// (`take_here`); one that refuses is resumed and the move undone.
 pub(super) async fn retire_and_commit(
     env: &Env,
     seat: &seat::Seat,
@@ -420,19 +422,28 @@ pub(super) async fn retire_and_commit(
         journal.phase = Phase::Back(BackPhase::Retiring);
         journal::write(&env.state_dir, &journal)?;
     }
-    let retired = wait_on_peer(
-        &seat.stop,
+    let waited = offering_abandon(
+        env,
         &seat.moves,
-        "retire.failed",
-        &journal.intent,
-        Permanent::Ends,
-        {
-            let (remote, journal) = (Arc::clone(&remote), journal.clone());
-            move || back::retire(&remote, &journal)
-        },
-        |_| false,
+        &journal,
+        wait_on_peer(
+            &seat.stop,
+            &seat.moves,
+            "retire.failed",
+            &journal.intent,
+            Permanent::Ends,
+            {
+                let (remote, intent) = (Arc::clone(&remote), journal.intent.clone());
+                move || back::retire(&remote, &intent)
+            },
+            |_| false,
+        ),
     )
     .await?;
+    let retired = match waited {
+        Offered::Waited(retired) => retired,
+        Offered::Abandoned => return take_here(env, seat, journal, screen).await,
+    };
     if let Err(cause) = retired {
         return back_rollback(
             env,
@@ -449,6 +460,46 @@ pub(super) async fn retire_and_commit(
         "move.committed",
         json!({"intent": journal.intent, "direction": "back"}),
     );
+    commit_back(env, seat, journal, screen).await
+}
+
+/// The operator took the core here while its machine had not answered the
+/// retirement (amendment 4): recording the move with the retirement that
+/// machine still owes is the decision, and the move back then commits here
+/// on the copy already placed. That machine's core stays held for the move
+/// (`StoppedFor`), which no start there gets past, until a task of the
+/// supervisor reaches it and it retires as it would have (`end_abandoned`).
+async fn take_here(
+    env: &Env,
+    seat: &seat::Seat,
+    journal: Journal,
+    screen: MoveScreen,
+) -> Result<Role, Halt> {
+    log(
+        "move.taken_here",
+        json!({"intent": journal.intent, "peer": journal.peer.node}),
+    );
+    abandoned::add(
+        &env.state_dir,
+        Abandoned {
+            intent: journal.intent.clone(),
+            peer: journal.peer.clone(),
+            step: PeerStep::Retire,
+        },
+    )?;
+    ABANDONED.notify_one();
+    commit_back(env, seat, journal, screen).await
+}
+
+/// The move back committed, by the retirement or by the operator taking
+/// the core here: this machine's placement and staging go, and its core
+/// starts on the copy placed.
+pub(super) async fn commit_back(
+    env: &Env,
+    seat: &seat::Seat,
+    mut journal: Journal,
+    screen: MoveScreen,
+) -> Result<Role, Halt> {
     // The journal stays at Retiring until both are gone, so a start
     // meanwhile commits again, which the peer answers as retired.
     until_removed(seat, &journal.intent, "commit.unfinished", || {

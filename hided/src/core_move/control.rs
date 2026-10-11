@@ -318,7 +318,13 @@ impl MoveControl {
                 && view.abandon
                 && let Some(intent) = offered.take()
             {
-                view.state = MoveState::RollingBack;
+                // A move back given up goes on to commit here; a forward
+                // one restores this machine's core.
+                view.state = if view.direction == Some(super::journal::Direction::Back) {
+                    MoveState::Starting
+                } else {
+                    MoveState::RollingBack
+                };
                 view.abandon = false;
                 taken = Some(intent);
                 return true;
@@ -533,5 +539,14 @@ mod tests {
         )
         .await
         .expect("the wait did not hear the abandon");
+        // A move back given up goes on to commit here, not back.
+        control.set(MoveView {
+            state: MoveState::Waiting,
+            direction: Some(super::super::journal::Direction::Back),
+            ..MoveView::default()
+        });
+        control.offer_abandon(Some("move-2"));
+        assert_eq!(abandon(), Ok(()));
+        assert_eq!(control.view().state, MoveState::Starting);
     }
 }
