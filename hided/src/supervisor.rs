@@ -360,7 +360,9 @@ async fn stop_core(state_dir: &Path, running: RunningDaemon) {
     if let (Some(record), Some(fields)) = (record.as_object_mut(), unconfirmed.as_object()) {
         record.extend(fields.clone());
     }
-    // Written at once: the queued sink's records end with the process.
+    // The records queued before it first, then this one at once, which a
+    // drain that timed out leaves written too.
+    herdr_core::diagnostics::drain();
     if let Err(error) = herdr_core::diagnostics::record_now(
         &state_dir.join(herdr_core::node_migration::CORE_STATE),
         record,

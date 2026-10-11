@@ -16,6 +16,8 @@ fn main() {
         }
     };
     let result = run();
+    // Before every exit below, so the records queued last reach the log.
+    herdr_core::diagnostics::drain();
     // After `run` has dropped the runtime, and with it the core.
     if let Some(watch) = owner_watch
         && let Err(error) = watch.close()
