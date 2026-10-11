@@ -883,6 +883,55 @@ fn a_lost_link_answer_after_the_target_took_the_move_goes_forward() -> Result<()
     finish(fixture, journey)
 }
 
+/// A move resumed while the alias it reaches the peer by cannot be read
+/// (the SSH config is gone) still starts the daemon: this machine
+/// runs its node from the placement and waits on the peer, and once the
+/// alias resolves again the peer's handover takes the move forward.
+#[test]
+#[ignore = "external lane requires this worktree's CLI binaries and HIDE_E2E_HERDR_BIN"]
+fn a_resumed_move_whose_alias_cannot_be_read_waits_for_its_peer() -> Result<()> {
+    let mut fixture = Fixture::start()?;
+    let journey = (|| {
+        fixture.event("core_move", json!({"action": "start", "device": ALIAS}))?;
+        let mut journal = fixture.journal_until("done")?;
+        fixture.kill_source()?;
+        let intent = journal["intent"].as_str().context("intent")?.to_owned();
+        journal["phase"] = json!({"direction": "forward", "phase": "attach_sent"});
+        write_record(&fixture.source.state.join("core-move.json"), &journal)?;
+        let mut placement = fixture
+            .source
+            .record("core-placement.json")?
+            .context("placement")?;
+        placement["move_intent"] = json!(intent);
+        write_record(
+            &fixture.source.state.join("core-placement.json"),
+            &placement,
+        )?;
+        write_record(
+            &fixture.target.state.join("core-handover.json"),
+            &json!({"version": 1, "intent": intent, "source": SOURCE_NODE, "target": TARGET_NODE, "state": {"state": "active"}}),
+        )?;
+        let config = fixture.source.home().join(".ssh/config");
+        let away = config.with_file_name("config.away");
+        std::fs::rename(&config, &away)?;
+        fixture.start_source()?;
+        let failed = fixture.logged(&fixture.source, "status.failed")?;
+        ensure!(
+            failed["failure"]["kind"] == "unreachable"
+                && failed["failure"]["reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.starts_with("ssh_alias")),
+            "{failed}"
+        );
+        ensure!(fixture.role()? == "node");
+        std::fs::rename(&away, &config)?;
+        fixture.journal_until("done")?;
+        ensure!(fixture.target.record("core-handover.json")?.is_none());
+        Ok(())
+    })();
+    finish(fixture, journey)
+}
+
 /// The new core refuses this machine's first link (here it cannot record
 /// the commit while another change holds its record): this machine runs no
 /// core until that machine's pending core is stopped and its copy taken

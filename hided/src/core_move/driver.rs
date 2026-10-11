@@ -24,7 +24,14 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The other machine, reached over one SSH connection for the move.
 pub struct Remote {
-    upstream: Upstream,
+    /// The account's SSH config and the alias the move reaches the peer
+    /// by, read at the first step that reaches it.
+    ssh_config: PathBuf,
+    alias: String,
+    /// Made by the first step that resolves the alias: until then a step
+    /// fails as the peer not reached, which a wait asks again, so an alias
+    /// that does not resolve at a start never keeps the daemon from it.
+    upstream: std::sync::OnceLock<Upstream>,
     program: String,
     state_dir: Option<String>,
     /// This machine's build: the only build whose answers it reads.
@@ -32,23 +39,33 @@ pub struct Remote {
 }
 
 impl Remote {
-    /// Dials nothing yet: the first step does.
-    pub fn new(home: &Path, alias: &str, program: &str, build: &str) -> Result<Self, MoveFailure> {
-        let alias =
-            SshAlias::from_config_file(&home.join(".ssh/config"), alias).map_err(|error| {
-                MoveFailure::Unreachable {
-                    reason: format!("ssh_alias: {}", error.diagnostic().reason),
-                }
-            })?;
-        let upstream = Upstream::new(alias).map_err(|error| MoveFailure::Unreachable {
-            reason: error.to_string(),
-        })?;
-        Ok(Self {
-            upstream,
+    /// Reads and dials nothing yet: the first step does.
+    pub fn new(home: &Path, alias: &str, program: &str, build: &str) -> Self {
+        Self {
+            ssh_config: home.join(".ssh/config"),
+            alias: alias.to_owned(),
+            upstream: std::sync::OnceLock::new(),
             program: program.to_owned(),
             state_dir: None,
             build: build.to_owned(),
-        })
+        }
+    }
+
+    /// The connection, made on first use from the alias as the SSH config
+    /// names it then.
+    fn upstream(&self) -> Result<&Upstream, MoveFailure> {
+        if let Some(upstream) = self.upstream.get() {
+            return Ok(upstream);
+        }
+        let alias = SshAlias::from_config_file(&self.ssh_config, &self.alias).map_err(|error| {
+            MoveFailure::Unreachable {
+                reason: format!("ssh_alias: {}", error.diagnostic().reason),
+            }
+        })?;
+        let upstream = Upstream::new(alias).map_err(|error| MoveFailure::Unreachable {
+            reason: error.to_string(),
+        })?;
+        Ok(self.upstream.get_or_init(|| upstream))
     }
 
     pub fn with_state_dir(mut self, state_dir: &str) -> Self {
@@ -68,7 +85,7 @@ impl Remote {
             command.push_str(&format!(" --{flag} {}", shell_quote(value)));
         }
         let output = self
-            .upstream
+            .upstream()?
             .exec("core-move-step", &command, STEP_OUTPUT_CAP, STEP_TIMEOUT)
             .map_err(|error| {
                 if error.never_reached_server() || error.a_move_can_change() {
@@ -100,7 +117,7 @@ impl Remote {
         files: &[FileCopy],
         sent: &(dyn Fn(u64) + Sync),
     ) -> Result<(), MoveFailure> {
-        self.upstream
+        self.upstream()?
             .upload(files, sent)
             .map_err(|error| MoveFailure::Copy {
                 reason: error.to_string(),
@@ -114,7 +131,7 @@ impl Remote {
         files: &[FileCopy],
         received: &(dyn Fn(u64) + Sync),
     ) -> Result<(), MoveFailure> {
-        self.upstream
+        self.upstream()?
             .download(into, files, received)
             .map_err(|error| MoveFailure::Copy {
                 reason: error.to_string(),
@@ -122,7 +139,9 @@ impl Remote {
     }
 
     pub fn close(&self) {
-        self.upstream.close();
+        if let Some(upstream) = self.upstream.get() {
+            upstream.close();
+        }
     }
 }
 

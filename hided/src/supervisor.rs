@@ -490,12 +490,7 @@ async fn resume(env: &Env, seat: &seat::Seat) -> Result<Option<Role>, Halt> {
             "move.resumed",
             json!({"intent": journal.intent, "phase": journal.phase}),
         );
-        let remote = Arc::new(remote_for(env, &journal).map_err(|failure| {
-            format!(
-                "the move {} cannot reach its peer: {failure:?}",
-                journal.intent
-            )
-        })?);
+        let remote = Arc::new(remote_for(env, &journal)?);
         let screen = MoveScreen::mount(&seat.parts(), env.vite_origin.as_deref());
         let step = journal.phase.step();
         let role = if journal.phase == Phase::Back(BackPhase::Retiring) {
@@ -527,12 +522,7 @@ async fn resume_forward(env: &Env, seat: &seat::Seat) -> Result<Role, Halt> {
             "move.resumed",
             json!({"intent": journal.intent, "phase": journal.phase}),
         );
-        let remote = Arc::new(remote_for(env, &journal).map_err(|failure| {
-            format!(
-                "the move {} cannot reach its peer: {failure:?}",
-                journal.intent
-            )
-        })?);
+        let remote = Arc::new(remote_for(env, &journal)?);
         return match journal.phase {
             Phase::Forward(ForwardPhase::Committed) => {
                 let node = crate::start_node_role(env.clone(), seat.parts()).await?;
@@ -570,14 +560,16 @@ async fn resume_forward(env: &Env, seat: &seat::Seat) -> Result<Role, Halt> {
     ))
 }
 
-fn remote_for(env: &Env, journal: &Journal) -> Result<Remote, MoveFailure> {
-    let build = own_build(env).map_err(|reason| MoveFailure::Local { reason })?;
+/// The peer `journal` names. It reaches nothing yet, so a peer whose alias
+/// does not resolve now is a failure of the first wait that asks it, never
+/// of the start that resumes the move.
+fn remote_for(env: &Env, journal: &Journal) -> Result<Remote, String> {
     Ok(Remote::new(
         &env.home,
         &journal.peer.alias,
         &journal.peer.program,
-        &build,
-    )?
+        &own_build(env)?,
+    )
     .with_state_dir(&journal.peer.state_dir))
 }
 
@@ -686,7 +678,7 @@ async fn prepare(
     let own = build.clone();
     let stranded = retry.clone();
     let inspected = tokio::task::spawn_blocking(move || {
-        let remote = Remote::new(&home, &alias, &program, &own)?;
+        let remote = Remote::new(&home, &alias, &program, &own);
         let inspected = driver::inspect(&remote, &asks)?;
         // A copy an earlier try placed there and could not take back (the
         // device unreachable as it rolled back) is taken back first.
