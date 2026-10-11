@@ -1141,6 +1141,8 @@ enum ScopedRequest {
     },
     /// `hide links`: a read of the link record, which needs no shell.
     Links(herdr_core::links::query::LinksQuery),
+    /// `hide memory`: Project Memory's own store, which needs no shell.
+    Memory(herdr_core::memory_command::MemoryCommand),
 }
 
 impl ScopedRequest {
@@ -1153,6 +1155,7 @@ impl ScopedRequest {
                 | Self::Factory(..)
                 | Self::FactoryQuestionGuard { .. }
                 | Self::Links(..)
+                | Self::Memory(..)
         )
     }
 }
@@ -1248,6 +1251,12 @@ async fn scoped_client_loop(
                                 value["caller_pane"].as_str().map(str::to_owned),
                             )
                         }),
+                        Some("memory") => serde_json::from_value::<
+                            herdr_core::memory_command::MemoryCommand,
+                        >(value["command"].clone())
+                        .ok()
+                        .filter(herdr_core::memory_command::MemoryCommand::valid)
+                        .map(ScopedRequest::Memory),
                         Some("factory_question_guard") => factory_question_guard(&value),
                         _ => None,
                     };
@@ -1392,6 +1401,14 @@ async fn scoped_client_loop(
                                     ))?;
                                     herdr_core::links::query::run(&scope, &query, own.as_ref())
                                         .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?
+                                }
+                                ScopedRequest::Memory(command) => {
+                                    core.prepare_memory(&cap.context.device_id, &cap.pane_id, &cap.context, command)
+                                        .and_then(herdr_core::memory_command::PreparedMemory::run)
+                                        .map_err(|code| {
+                                            let next = herdr_core::memory_command::next_action(&code);
+                                            (code, next)
+                                        })?
                                 }
                                 ScopedRequest::Query(query) => {
                                     let mut result = core
@@ -3985,7 +4002,8 @@ mod tests {
         );
     }
 
-    /// B43: `hide links` and delivery answer with no shell open; every
+    /// B43: `hide links`, `hide memory` and delivery answer with no shell
+    /// open; every
     /// Workspace command still needs one.
     #[test]
     fn only_the_daemons_own_reads_answer_without_a_shell() {
@@ -3995,6 +4013,10 @@ mod tests {
             all_projects: false,
         });
         assert!(!links.needs_renderer());
+        assert!(
+            !ScopedRequest::Memory(herdr_core::memory_command::MemoryCommand::Show { number: 1 })
+                .needs_renderer()
+        );
         assert!(ScopedRequest::Query(herdr_core::workspace_control::Query::Info).needs_renderer());
         assert!(ScopedRequest::BrowserConnect(None).needs_renderer());
     }

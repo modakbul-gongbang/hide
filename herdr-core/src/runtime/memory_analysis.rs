@@ -114,7 +114,7 @@ enum PassReport {
 
 /// Why one analysis did not finish.
 #[derive(Clone, Debug)]
-pub(super) enum AnalysisFailure {
+pub(crate) enum AnalysisFailure {
     Provider(AiError),
     Local(String),
     /// The machine's daily cap or the provider's weekly usage holds it back;
@@ -754,7 +754,7 @@ fn walk_project(
 
 /// Admits one analysis call against the machine's daily cap and, for
 /// background analysis, the provider's weekly usage (D-10), and counts it.
-pub(super) fn admit_call(
+pub(crate) fn admit_call(
     store: &MemoryStore,
     weekly_used: Option<f64>,
     background: bool,
@@ -1131,18 +1131,18 @@ fn analyze_session(
 }
 
 /// Where a batch of new text came from.
-pub(super) struct BatchSource<'a> {
-    pub(super) project_id: &'a str,
+pub(crate) struct BatchSource<'a> {
+    pub(crate) project_id: &'a str,
     /// The session's agent, or `hide` for `hide memory add`.
-    pub(super) provider: &'a str,
-    pub(super) session_id: &'a str,
+    pub(crate) provider: &'a str,
+    pub(crate) session_id: &'a str,
     /// The checkout cited paths are checked in.
-    pub(super) checkout_path: &'a str,
+    pub(crate) checkout_path: &'a str,
 }
 
-pub(super) struct WrittenCards {
-    pub(super) summary: ApplySummary,
-    pub(super) batch_id: String,
+pub(crate) struct WrittenCards {
+    pub(crate) summary: ApplySummary,
+    pub(crate) batch_id: String,
     content_hash: String,
 }
 
@@ -1152,7 +1152,7 @@ pub(super) struct WrittenCards {
 /// checkout, and the cards written in one batch. A batch already written
 /// asks no provider again.
 #[allow(clippy::too_many_arguments)] // one batch: its store, nodes, source, text and limits
-pub(super) fn write_cards(
+pub(crate) fn write_cards(
     store: &mut MemoryStore,
     sessions_node: &dyn NodeLink,
     router: &AiRouter,

@@ -66,9 +66,13 @@ pub enum CommandKind {
     },
     /// `hide links`: a read of the link record (PRD link-graph D-19).
     Links(herdr_core::links::query::LinksQuery),
+    /// `hide memory show|search|add` (PRD project-memory-v2 D-03, D-11).
+    Memory(herdr_core::memory_command::MemoryCommand),
 }
 
 const LINKS_USAGE: &str = "usage: hide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]";
+
+const MEMORY_USAGE: &str = "usage: hide memory show <card> | search <words> | add <text>";
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
@@ -141,6 +145,7 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
         Some("diff") => parse_open(iter, false),
         Some("view") => parse_view(iter),
         Some("links") => parse_links(iter),
+        Some("memory") => parse_memory(iter),
         Some(other) => Err(format!("unknown command: {other}")),
     }
 }
@@ -183,6 +188,27 @@ fn parse_links<'a>(iter: impl Iterator<Item = &'a String>) -> Result<CommandKind
         target,
         all_projects,
     }))
+}
+
+fn parse_memory<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
+    use herdr_core::memory_command::MemoryCommand;
+    let verb = iter.next().map(String::as_str);
+    let words = iter.map(String::as_str).collect::<Vec<_>>();
+    let rest = words.join(" ");
+    let command = match (verb, words.as_slice()) {
+        (Some("show"), [card]) => herdr_core::memory_command::parse_card(card)
+            .map(|number| MemoryCommand::Show { number }),
+        (Some("search"), [_, ..]) if !rest.trim().is_empty() => {
+            Some(MemoryCommand::Search { words: rest })
+        }
+        (Some("add"), [_, ..]) if !rest.trim().is_empty() => {
+            Some(MemoryCommand::Add { text: rest })
+        }
+        _ => None,
+    };
+    command
+        .map(CommandKind::Memory)
+        .ok_or_else(|| MEMORY_USAGE.to_owned())
 }
 
 fn parse_open<'a>(
@@ -402,7 +428,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::agent_cli::USAGE);
         println!("{}", hide_factory::command::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads and adds to the caller's Project Memory on the machine that runs Hide."
         );
         return Ok(());
     }
@@ -428,6 +454,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                     | CommandKind::BrowserPage(_)
                     | CommandKind::WorkspaceAction { .. }
                     | CommandKind::Links(_)
+                    | CommandKind::Memory(_)
             ) =>
         {
             return workspace_refusal(
@@ -499,6 +526,109 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             workspace_action(&env, action, request_id.as_deref())
         }
         CommandKind::Links(query) => links(&env, &query),
+        CommandKind::Memory(command) => memory(&env, &command),
+    }
+}
+
+/// Prints a `hide memory` answer as text an agent reads; a refusal prints
+/// its reason and next action as one JSON line and exits non-zero (B8, B16).
+fn memory(env: &Env, command: &herdr_core::memory_command::MemoryCommand) -> Result<(), String> {
+    use herdr_core::memory_command::{MemoryCommand, next_action};
+    if !command.valid() {
+        let reason = match command {
+            MemoryCommand::Add { .. } => "memory_text_too_long",
+            _ => "invalid_request",
+        };
+        return workspace_refusal(reason, next_action(reason));
+    }
+    let mut credential = match crate::workspace_cli::Credential::acquire(env) {
+        Ok(credential) => credential,
+        Err(reason) => return query_refusal(&reason, bootstrap_next_action(&reason), true),
+    };
+    let answer = match crate::workspace_cli::request_memory(&mut credential, command) {
+        Ok(answer) => answer,
+        Err(reason) => return query_refusal(&reason, request_next_action(&reason), true),
+    };
+    if answer["ok"] != true {
+        println!("{answer}");
+        return Err(answer["reason"]
+            .as_str()
+            .unwrap_or("memory_request_failed")
+            .to_owned());
+    }
+    print!("{}", memory_text(command, &answer["result"]));
+    Ok(())
+}
+
+fn memory_text(
+    command: &herdr_core::memory_command::MemoryCommand,
+    result: &serde_json::Value,
+) -> String {
+    use herdr_core::memory_command::MemoryCommand;
+    let text = |value: &serde_json::Value| value.as_str().unwrap_or_default().to_owned();
+    match command {
+        MemoryCommand::Show { .. } => {
+            let mut lines = vec![
+                format!(
+                    "{} · {} · {} · {} sources, {} from the operator",
+                    text(&result["card"]),
+                    text(&result["kind"]),
+                    text(&result["state"]).replace('_', " "),
+                    result["sources"],
+                    result["operator_sources"],
+                ),
+                text(&result["title"]),
+                String::new(),
+                text(&result["body"]),
+            ];
+            if let Some(other) = result["conflicts_with"].as_str() {
+                lines.push(format!("Conflicts with {other}."));
+            }
+            let cited = result["cited_paths"]
+                .as_array()
+                .map(|paths| paths.iter().map(text).collect::<Vec<_>>())
+                .unwrap_or_default();
+            if !cited.is_empty() {
+                lines.push(format!("Files: {}", cited.join(", ")));
+            }
+            lines.join("\n") + "\n"
+        }
+        MemoryCommand::Search { .. } => {
+            let cards = result["cards"].as_array().cloned().unwrap_or_default();
+            if cards.is_empty() {
+                return "No card matches.\n".to_owned();
+            }
+            cards
+                .iter()
+                .map(|card| format!("{}  {}\n", text(&card["card"]), text(&card["title"])))
+                .collect()
+        }
+        MemoryCommand::Add { .. } => {
+            let outcomes = result["outcomes"].as_array().cloned().unwrap_or_default();
+            if outcomes.is_empty() {
+                return "Nothing kept: the text holds nothing a card would.\n".to_owned();
+            }
+            outcomes
+                .iter()
+                .map(|outcome| {
+                    let card = text(&outcome["card"]);
+                    match outcome["outcome"].as_str() {
+                        Some("added") => format!("Added {card}.\n"),
+                        Some("already_added") => format!("Already added as {card}.\n"),
+                        Some("same_as") => format!("{card} already says this; added it as a source.\n"),
+                        Some("replaced") => format!("Replaced {card}.\n"),
+                        Some("needs_review") => format!(
+                            "Added {card}, which conflicts with {} and waits for review; {} stays in use.\n",
+                            text(&outcome["conflicts_with"]),
+                            text(&outcome["conflicts_with"]),
+                        ),
+                        Some("secret") => "Not kept: it looked like a secret.\n".to_owned(),
+                        Some("full") => "Not kept: this Project's Memory is full.\n".to_owned(),
+                        _ => "Nothing kept: the text holds nothing a card would.\n".to_owned(),
+                    }
+                })
+                .collect()
+        }
     }
 }
 
@@ -2007,6 +2137,74 @@ mod tests {
         ] {
             assert_eq!(parse(bad), Err(BROWSER_USAGE.to_owned()), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn memory_reads_a_card_name_and_joins_words_and_text() {
+        use herdr_core::memory_command::MemoryCommand;
+        let parse = |line: &[&str]| {
+            parse_args(&line.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            parse(&["hide", "memory", "show", "m3"]),
+            Ok(CommandKind::Memory(MemoryCommand::Show { number: 3 }))
+        );
+        assert_eq!(
+            parse(&["hide", "memory", "search", "테스트", "nextest"]),
+            Ok(CommandKind::Memory(MemoryCommand::Search {
+                words: "테스트 nextest".into()
+            }))
+        );
+        assert_eq!(
+            parse(&["hide", "memory", "add", "Lint runs before tests"]),
+            Ok(CommandKind::Memory(MemoryCommand::Add {
+                text: "Lint runs before tests".into()
+            }))
+        );
+        for bad in [
+            &["hide", "memory"][..],
+            &["hide", "memory", "show", "m0"],
+            &["hide", "memory", "show", "m1", "m2"],
+            &["hide", "memory", "search"],
+            &["hide", "memory", "add", " "],
+            &["hide", "memory", "edit", "m1"],
+        ] {
+            assert_eq!(parse(bad), Err(MEMORY_USAGE.to_owned()), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn memory_answers_read_as_text_with_the_files_a_card_cites() {
+        use herdr_core::memory_command::MemoryCommand;
+        let shown = memory_text(
+            &MemoryCommand::Show { number: 3 },
+            &serde_json::json!({
+                "card": "m3", "title": "Tests run with nextest", "kind": "rule",
+                "state": "needs_review", "body": "Run tests with nextest.",
+                "sources": 2, "operator_sources": 1, "conflicts_with": "m1",
+                "cited_paths": ["docs/TESTING.md"],
+            }),
+        );
+        assert_eq!(
+            shown,
+            "m3 · rule · needs review · 2 sources, 1 from the operator\nTests run with nextest\n\nRun tests with nextest.\nConflicts with m1.\nFiles: docs/TESTING.md\n"
+        );
+        let search = MemoryCommand::Search { words: "x".into() };
+        assert_eq!(
+            memory_text(&search, &serde_json::json!({"cards": []})),
+            "No card matches.\n"
+        );
+        let add = MemoryCommand::Add { text: "x".into() };
+        assert_eq!(
+            memory_text(
+                &add,
+                &serde_json::json!({"outcomes": [
+                    {"outcome": "needs_review", "card": "m4", "conflicts_with": "m1"},
+                    {"outcome": "already_added", "card": "m2"},
+                ]})
+            ),
+            "Added m4, which conflicts with m1 and waits for review; m1 stays in use.\nAlready added as m2.\n"
+        );
     }
 
     #[test]

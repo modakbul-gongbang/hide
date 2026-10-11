@@ -357,6 +357,18 @@ pub(crate) fn memory_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> 
     )
 }
 
+/// The router one `hide memory add` asks, whose every try ends before the
+/// caller stops waiting (PRD project-memory-v2 B8).
+pub(crate) fn memory_add_router(node: &Arc<dyn NodeLink>, settings: &AiSettings) -> AiRouter {
+    let mut config = memory_router_config(settings);
+    config.overall_deadline_cap = crate::memory_command::ADD_PROVIDER_DEADLINE;
+    AiRouter::new(
+        backends(node, &settings.models_by_provider(), None),
+        config,
+        Arc::new(DiagnosticLogSink),
+    )
+}
+
 /// The Software Factory's own router (PRD software-factory D-13, D-44): the
 /// operator's provider choice with one request in flight, separate from the
 /// label and Project Memory routers so its queue never takes their budget.

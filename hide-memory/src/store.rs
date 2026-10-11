@@ -223,8 +223,8 @@ pub struct MemoryItem {
     pub source_count: usize,
     /// Sources that are the operator's own words.
     pub human_source_count: usize,
-    /// Distinct sessions a receipt shows the card was given to, in the index
-    /// or in full (D-18).
+    /// Distinct sessions a receipt shows the card was given to in full, in a
+    /// prompt or by `hide memory show`; an index line is no delivery (D-18).
     pub provided_session_count: usize,
     /// How many times an agent read it with `hide memory show` (B14).
     pub pull_count: u64,
@@ -1154,6 +1154,21 @@ impl MemoryStore {
         )?)
     }
 
+    /// The cards a written batch rests on, by number: those it created and
+    /// those it added a source to, whatever became of them since.
+    pub fn batch_card_numbers(&self, batch_id: &str) -> Result<Vec<u64>, MemoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT DISTINCT i.number FROM analysis_batches b \
+             JOIN memory_sources s ON s.provider=b.provider AND s.session_id=b.session_id AND s.content_hash=b.content_hash \
+             JOIN memory_items i ON i.id=s.item_id AND i.project_id=b.project_id \
+             WHERE b.id=?1 ORDER BY i.number",
+        )?;
+        let numbers = statement
+            .query_map([batch_id], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<u64>>>()?;
+        Ok(numbers)
+    }
+
     /// Writes a title and aliases for a card that has no aliases yet, onto
     /// its current revision; a card that has them keeps its own (D-23).
     pub fn fill_aliases(
@@ -1290,8 +1305,6 @@ impl MemoryStore {
             .optional()?)
     }
 
-    /// An agent reading card `number` in full: counts the read and its time
-    /// unless the card was forgotten (B14, D-18).
     /// The card numbered `number`, counted as read (B14): its pull count
     /// rises and, when `reader` names the asking session as `(runtime,
     /// session)`, the session is recorded as given it in full, so its prompts

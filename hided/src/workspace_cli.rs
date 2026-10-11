@@ -339,6 +339,34 @@ pub fn request_links(
     })
 }
 
+/// `hide memory`: answered without a shell. An `add` asks the provider, so
+/// it has the minute B8 gives it; it writes nothing after its own deadline,
+/// and running it again adds nothing twice.
+pub fn request_memory(
+    credential: &mut Credential,
+    command: &herdr_core::memory_command::MemoryCommand,
+) -> Result<Value, String> {
+    let (action, timeout) = match command {
+        herdr_core::memory_command::MemoryCommand::Add { .. } => {
+            (true, herdr_core::memory_command::ADD_TIMEOUT)
+        }
+        herdr_core::memory_command::MemoryCommand::Show { .. } => (true, TIMEOUT),
+        herdr_core::memory_command::MemoryCommand::Search { .. } => (false, TIMEOUT),
+    };
+    credential.run(|path| {
+        let reference = read_reference(path)?;
+        let request_id = fresh_request_id()?;
+        run_exchange_within(
+            path,
+            &reference,
+            json!({"type":"memory","request_id":request_id,"command":command}),
+            &request_id,
+            action,
+            timeout,
+        )
+    })
+}
+
 /// Losing the final capability claim cannot turn durable success into retry.
 pub fn request_delivery(
     credential: &mut Credential,

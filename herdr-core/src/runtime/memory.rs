@@ -341,7 +341,7 @@ impl Runtime {
 
 /// The Project that holds `checkout_path`, as the node that holds it reads
 /// it; the id names the node.
-pub(super) fn project_identity(
+pub(crate) fn project_identity(
     sessions_node: &dyn NodeLink,
     node: &NodeId,
     checkout_path: &str,
@@ -451,7 +451,7 @@ pub(super) fn digest(parts: &[&str]) -> String {
     format!("{:x}", hash.finalize())
 }
 
-pub(super) fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

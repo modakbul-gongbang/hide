@@ -30,6 +30,52 @@ pub(super) struct ProjectMemoryReads {
 }
 
 impl Runtime {
+    /// Checks a `hide memory` caller like a Factory command does and takes
+    /// what the command needs (B16, D-22): only a caller on this machine is
+    /// answered, and an agent pane's own session is the one a `show` is
+    /// recorded for.
+    pub(crate) fn prepare_memory(
+        &self,
+        device: &str,
+        caller: &str,
+        expected: &crate::workspace_control::Context,
+        command: crate::memory_command::MemoryCommand,
+    ) -> Result<crate::memory_command::PreparedMemory, String> {
+        if device != self.node.as_str() {
+            return Err("memory_device_unsupported".into());
+        }
+        // The caller's checkout as it is now; Memory needs no window, so
+        // the Views a Workspace query also checks do not matter here.
+        let context = self
+            .resolve_caller(device, crate::workspace_control::Caller::parse(caller))
+            .map_err(|refusal| refusal.reason.to_owned())?;
+        if context != *expected {
+            return Err("caller_context_changed".into());
+        }
+        let reader = match crate::workspace_control::Caller::parse(caller) {
+            crate::workspace_control::Caller::Pane(pane) => self
+                .snapshot
+                .navigator
+                .agents
+                .iter()
+                .find(|agent| agent.pane_id == pane)
+                .and_then(|agent| {
+                    let provider = hide_session::Agent::from_kind(&agent.agent_kind)?;
+                    Some((provider.as_str().to_owned(), agent.session_id.clone()?))
+                }),
+            crate::workspace_control::Caller::Checkout { .. } => None,
+        };
+        Ok(crate::memory_command::PreparedMemory {
+            command,
+            node: self.node.clone(),
+            sessions_node: self.own_node(),
+            database: self.memory_database_path(),
+            checkout_path: context.checkout_path,
+            reader,
+            settings: self.ai_active().then(|| self.ai_settings.clone()).flatten(),
+        })
+    }
+
     /// Memory's Project id for the Project the screen names, once its
     /// history read answered for it.
     pub(super) fn named_memory_project(&self) -> Option<&str> {
