@@ -1,8 +1,8 @@
 //! A pane's hook finds the Memory store of a daemon started with a moved state
-//! folder (issue 942): the daemon leaves a record in the default state folder
-//! while it runs, the hook resolves its pane's Herdr socket through it, and the
-//! record goes when the daemon ends or, after a crash, when the next daemon of
-//! that socket starts.
+//! folder (issue 942): the daemon leaves a record beside the default state
+//! folder while it runs, the hook resolves its pane's Herdr socket through it,
+//! and the record goes when the daemon ends or, after a crash, when the next
+//! daemon of that socket starts.
 //!
 //! Each daemon is a child process with the test's own home and state folder.
 //! It names a Herdr socket that no server listens on: registration needs only
@@ -86,7 +86,7 @@ impl Run {
     }
 
     fn records(&self) -> PathBuf {
-        self.home.join(".hide/state").join("daemons")
+        self.home.join(".hide/daemons")
     }
 
     fn store_a_pane_reads(&self) -> PathBuf {

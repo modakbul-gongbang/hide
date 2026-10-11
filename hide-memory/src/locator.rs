@@ -2,12 +2,19 @@
 //!
 //! A daemon started with a moved state folder (`HIDE_STATE_DIR`,
 //! `XDG_STATE_HOME`) writes its store there, and a hook takes no path from
-//! its environment. The daemon therefore leaves a record in the default state
-//! folder, which the hook already trusts for the default store, naming its
-//! Herdr socket and its state folder. The hook looks the record up by the
-//! socket Herdr puts in every pane (`HERDR_SOCKET_PATH`), used only as the
-//! record's name and never opened: the folder it reads comes from the record
-//! the daemon wrote, under the account's own private folder.
+//! its environment. The daemon therefore leaves a record, naming its Herdr
+//! socket and its state folder, in `daemons/` beside the default state folder
+//! under the same private `~/.hide` the hook already trusts for the default
+//! store. The hook looks the record up by the socket Herdr puts in every pane
+//! (`HERDR_SOCKET_PATH`), used only as the record's name and never opened: the
+//! folder it reads comes from the record the daemon wrote.
+//!
+//! The records sit beside the default state folder, not in it, because a
+//! daemon that uses the default folder is the only thing that may make it:
+//! `hide connect` moves an older default folder into place only while the new
+//! one does not exist, so a record written inside it by a daemon of a moved
+//! folder would keep the older folder, and the daemon running from it, where
+//! they are.
 //!
 //! The record names one daemon per Herdr socket. A daemon never replaces the
 //! record of a live daemon, a record of a dead one is removed when any daemon
@@ -25,7 +32,7 @@ use hide_platform::process;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// The folder under the default state folder that holds the records.
+/// The folder beside the default state folder that holds the records.
 pub const REGISTRY_DIR: &str = "daemons";
 /// Records one folder holds; a daemon that would make more is not registered.
 pub const REGISTRY_LIMIT: usize = 32;
@@ -93,8 +100,10 @@ impl Drop for Registration {
     }
 }
 
+/// Beside `default_state_dir` and never inside it: registering must not make
+/// the default state folder.
 fn registry(default_state_dir: &Path) -> PathBuf {
-    default_state_dir.join(REGISTRY_DIR)
+    default_state_dir.with_file_name(REGISTRY_DIR)
 }
 
 fn record_path(default_state_dir: &Path, herdr_socket: &str) -> PathBuf {
@@ -243,7 +252,24 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        assert!(!default.join(REGISTRY_DIR).exists());
+        assert!(!registry(&default).exists());
+    }
+
+    #[test]
+    fn registering_a_relocated_daemon_leaves_the_default_state_folder_unmade() {
+        let root = tempfile::tempdir().unwrap();
+        let default = root.path().join("home").join("state");
+        let moved = private_dir(root.path(), "moved");
+        let registration = register(&default, "/run/herdr.sock", &moved)
+            .unwrap()
+            .expect("a moved folder is registered");
+        assert!(
+            !default.exists(),
+            "an older default folder is moved into place only while this one does not exist"
+        );
+        assert_eq!(resolve(&default, "/run/herdr.sock"), Some(moved));
+        drop(registration);
+        assert!(!default.exists());
     }
 
     #[test]
