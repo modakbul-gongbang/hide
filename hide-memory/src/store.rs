@@ -2184,7 +2184,9 @@ ALTER TABLE hook_projection_cursors RENAME TO receipt_cursors;
 CREATE TABLE analysis_calls(day INTEGER PRIMARY KEY,calls INTEGER NOT NULL);
 CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id,project_id);
 CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
-CREATE INDEX memory_items_conflict ON memory_items(conflict_with_id);"#,
+CREATE INDEX memory_items_conflict ON memory_items(conflict_with_id);
+ALTER TABLE memory_items ADD COLUMN archived_reason TEXT CHECK(archived_reason IS NULL OR archived_reason IN('review_expired'));
+CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('suggested','dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,agent_id TEXT,pr_number INTEGER,target_path TEXT,updated_at_ms INTEGER NOT NULL);"#,
         )?;
         let items = {
             let mut statement = connection.prepare(
@@ -2433,6 +2435,12 @@ fn check_projection_integrity(connection: &Connection) -> Result<(), MemoryError
     Ok(())
 }
 
+/// A new store's tables. `card_promotions` (one row per card: the promotion
+/// state, the card revision it applies to so a dismissal lapses when the card
+/// changes, and the spawned agent, pull request and target path) and
+/// `memory_items.archived_reason` are reserved for promotion to repository
+/// files and for expired needs-review cards; nothing writes them yet, so the
+/// feature lands without a second migration.
 const SCHEMA: &str = r#"
 CREATE TABLE projects(id TEXT PRIMARY KEY,root TEXT NOT NULL,device_id TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0,disclosure_accepted_at_ms INTEGER,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,disclosure_version INTEGER NOT NULL DEFAULT 0,next_number INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE project_receipt_keys(project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,auth_key BLOB NOT NULL);
@@ -2440,7 +2448,7 @@ CREATE TABLE session_sources(id TEXT NOT NULL,project_id TEXT NOT NULL REFERENCE
 CREATE TABLE session_cursors(project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,session_id TEXT NOT NULL,byte_offset INTEGER NOT NULL,pending_bytes BLOB NOT NULL,last_content_hash TEXT,updated_at_ms INTEGER NOT NULL,PRIMARY KEY(project_id,provider,session_id));
 CREATE TABLE receipt_cursors(project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,session_id TEXT NOT NULL,byte_offset INTEGER NOT NULL,pending_bytes BLOB NOT NULL,last_content_hash TEXT,updated_at_ms INTEGER NOT NULL,PRIMARY KEY(project_id,provider,session_id));
 CREATE TABLE analysis_batches(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,analysis_provider TEXT NOT NULL,session_id TEXT NOT NULL,content_hash TEXT NOT NULL,created_at_ms INTEGER NOT NULL,UNIQUE(project_id,provider,session_id,content_hash));
-CREATE TABLE memory_items(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,lifecycle TEXT NOT NULL CHECK(lifecycle IN('active','superseded','conflicting','tombstoned')),current_revision INTEGER NOT NULL,confidence REAL NOT NULL,salience REAL NOT NULL,conflict_with_id TEXT,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,number INTEGER NOT NULL DEFAULT 0,pull_count INTEGER NOT NULL DEFAULT 0,last_used_at_ms INTEGER);
+CREATE TABLE memory_items(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,lifecycle TEXT NOT NULL CHECK(lifecycle IN('active','superseded','conflicting','tombstoned')),current_revision INTEGER NOT NULL,confidence REAL NOT NULL,salience REAL NOT NULL,conflict_with_id TEXT,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,number INTEGER NOT NULL DEFAULT 0,pull_count INTEGER NOT NULL DEFAULT 0,last_used_at_ms INTEGER,archived_reason TEXT CHECK(archived_reason IS NULL OR archived_reason IN('review_expired')));
 CREATE INDEX memory_items_project_state ON memory_items(project_id,lifecycle,updated_at_ms DESC);
 CREATE UNIQUE INDEX memory_items_project_number ON memory_items(project_id,number);
 CREATE INDEX memory_items_conflict ON memory_items(conflict_with_id);
@@ -2452,6 +2460,7 @@ CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id
 CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
 CREATE TABLE injection_receipt_items(receipt_id TEXT NOT NULL REFERENCES injection_receipts(id) ON DELETE CASCADE,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,PRIMARY KEY(receipt_id,item_id));
 CREATE TABLE analysis_calls(day INTEGER PRIMARY KEY,calls INTEGER NOT NULL);
+CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('suggested','dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,agent_id TEXT,pr_number INTEGER,target_path TEXT,updated_at_ms INTEGER NOT NULL);
 CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXED,body,normalized_terms,tokenize='unicode61');
 "#;
 
@@ -4302,6 +4311,33 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             "the un-hidden card's history agrees with it"
         );
         assert_eq!(revision_lifecycle("r4"), "conflicting");
+        // The migrated tables and columns are a new store's.
+        let fresh_path = temp.path().join("fresh.sqlite3");
+        let fresh = MemoryStore::open(&fresh_path).unwrap();
+        let shape = |connection: &Connection| {
+            let mut statement = connection
+                .prepare(
+                    "SELECT m.name,c.name,c.type,c.\"notnull\",COALESCE(c.dflt_value,'') FROM sqlite_master m \
+                     JOIN pragma_table_info(m.name) c WHERE m.type='table' AND m.name NOT LIKE 'memory_fts%' \
+                     ORDER BY m.name,c.name",
+                )
+                .unwrap();
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, bool>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert_eq!(shape(&store.connection), shape(&fresh.connection));
+        drop(fresh);
         drop(store);
 
         // Deleting the Project takes it out of the backup too.

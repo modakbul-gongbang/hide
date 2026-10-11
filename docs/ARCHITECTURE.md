@@ -100,6 +100,7 @@ Raw transcript bodies remain in the providers' files.
 
 `hide-memory` owns Hide's extraction prompt and output schema (`engine.rs`), one app SQLite store, its schema and migrations, Project hard filters, session cursors, card and revision lifecycle, provenance, receipts, usage counts, the matcher, and the FTS5 projection.
 No third-party memory engine, service, prompt asset or vector database is part of it.
+Schema 8 also reserves each card's promotion state toward repository files (`card_promotions`: state, the card revision a dismissal applies to, the agent, pull request and target path) and an archive reason for an expired needs-review card; nothing writes them yet, so that feature needs no second migration.
 The extraction prompt is Hide's own, held under 8 KiB by a test, and asks for each card's text, a one-line title, three to eight Korean and English aliases, its kind, the files it rests on (`cited_paths`) and its relation to a similar card (PRD project-memory-v2 D-09, D-26).
 Every analysis result is a proposal only: the write service validates Project identity, provenance, redaction, lifecycle, capacity, relation authority and transaction boundaries before any durable change, and keeps a cited path only when it names a file inside the checkout (`Call::RealPaths`, a repository-relative path with no `..`).
 Normalized session events and the comparison cards both pass through the current local redactor at the final provider egress boundary.
