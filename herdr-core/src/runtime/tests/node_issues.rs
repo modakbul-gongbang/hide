@@ -1226,6 +1226,8 @@ fn a_node_s_merged_worktree_is_removed_on_the_node_and_a_changed_one_is_refused(
     });
     let review = shared.lock().unwrap().cleanup.clone().unwrap();
     assert_eq!(review.phase, "review", "{review:?}");
+    // Named as the node's rows spell the project, the key its facts are under.
+    assert_eq!(review.repository_root, repo.root);
     let eligible = |path: &str| {
         review
             .rows

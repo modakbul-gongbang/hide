@@ -565,6 +565,7 @@ impl Runtime {
         };
         let input = live::cleanup::ReviewInput {
             workspace_id: workspace.id.clone(),
+            repository_root: workspace.path.clone(),
             root: PathBuf::from(&workspace.path),
             current,
             checkouts: self.checkout_facts(node, workspace),
@@ -701,7 +702,7 @@ impl Runtime {
         let mut review = live::cleanup::CleanupSnapshot {
             id: self.next_cleanup_id,
             workspace_id: workspace_id.to_owned(),
-            repository_root: hide_platform::path::to_wire_lossy(&input.root),
+            repository_root: input.repository_root.clone(),
             phase: "loading".into(),
             ..Default::default()
         };
@@ -709,7 +710,7 @@ impl Runtime {
         // The sizes the sheet shows come from the reader the facts line uses;
         // reviewing again measures again.
         self.measure_project_disk(workspace_id);
-        let root = hide_platform::path::to_wire_lossy(&input.root);
+        let root = input.repository_root.clone();
         let started = self
             .cleanup_place(node.as_deref(), &root)
             .and_then(|place| live::cleanup::spawn_review(place, review.id, input));

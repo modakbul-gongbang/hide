@@ -206,6 +206,10 @@ use crate::agent_state::AgentUse;
 #[derive(Clone, Debug)]
 pub(crate) struct ReviewInput {
     pub workspace_id: String,
+    /// The project's path as its rows spell it: the key its repository facts
+    /// are filed under, and the root every answer names, never respelled
+    /// through `root`.
+    pub repository_root: String,
     pub root: PathBuf,
     /// The checkout the operator is looking at, when it is in this project.
     pub current: Option<PathBuf>,
@@ -799,7 +803,6 @@ fn inspect_with_merge_proofs(
         }
     }
     Ok(CleanupSnapshot {
-        repository_root: hide_platform::path::to_wire_lossy(root),
         main_head: local_main,
         rows,
         phase: "review".into(),
@@ -1037,7 +1040,7 @@ pub fn spawn_review(context: CleanupPlace, id: u64, input: ReviewInput) -> Resul
             let base = CleanupSnapshot {
                 id,
                 workspace_id: input.workspace_id.clone(),
-                repository_root: hide_platform::path::to_wire_lossy(&input.root),
+                repository_root: input.repository_root.clone(),
                 phase: "loading".into(),
                 free_bytes: disk::volume_free_bytes(context.node.as_ref(), &input.root),
                 ..Default::default()
@@ -1098,6 +1101,7 @@ pub fn spawn_review(context: CleanupPlace, id: u64, input: ReviewInput) -> Resul
                 Ok(value) => CleanupSnapshot {
                     id,
                     workspace_id: input.workspace_id.clone(),
+                    repository_root: input.repository_root.clone(),
                     usage_error,
                     free_bytes: base.free_bytes,
                     ..value
