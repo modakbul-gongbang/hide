@@ -1154,10 +1154,8 @@ impl Runtime {
                         node,
                         now,
                     );
-                    changed |= (
-                        workspace.session_folds.clone(),
-                        workspace.inactive_checkouts.clone(),
-                    ) != before;
+                    changed |= workspace.session_folds != before.0
+                        || workspace.inactive_checkouts != before.1;
                 }
             }
         }
