@@ -4,6 +4,7 @@ import type { Actions } from "../actions";
 import { Disclosure, Group, Note, Row } from "../components/settings-rows";
 import { Button } from "../components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
+import { thisMachineKey } from "../devices";
 import { useInterfaceTranslation } from "../i18n/client";
 import { localDeviceId } from "../snapshot";
 import { useShellStore } from "../store";
@@ -44,7 +45,7 @@ export function AgentsTab({ actions }: { actions: Actions }) {
         >
           {machines.map((row) => (
             <ToggleGroupItem key={row.device.id} value={row.device.id} data-agents-machine={row.device.id}>
-              {row.device.kind !== "remote" ? t("common.thisMac") : row.device.label}
+              {row.device.kind !== "remote" ? t(thisMachineKey(row.device.host?.platform)) : row.device.label}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>

@@ -7,6 +7,7 @@
 
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
+import { thisMachineKey } from "./devices";
 import type { Device, WorkspaceRegistration } from "./snapshot";
 
 export type Host = { id: string; label: string };
@@ -14,7 +15,7 @@ export type Host = { id: string; label: string };
 /** This Mac (the core's own node) first, then every registered device, as the Host selector lists them. */
 export function addProjectHosts(devices: readonly Device[] | undefined, t: TFunction<"translation">): Host[] {
   const local = devices?.find((device) => device.kind !== "remote");
-  return [{ id: local?.id ?? "", label: local?.label ?? t("common.thisMac") }, ...(devices ?? []).filter((device) => device !== local).map((device) => ({ id: device.id, label: device.label }))];
+  return [{ id: local?.id ?? "", label: local?.label ?? t(thisMachineKey(null)) }, ...(devices ?? []).filter((device) => device !== local).map((device) => ({ id: device.id, label: device.label }))];
 }
 
 /** The host the dialog opens on: the focused device while it is still listed, this Mac otherwise. */

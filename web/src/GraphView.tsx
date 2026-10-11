@@ -1,4 +1,5 @@
 import { useEscapeLayer } from "./components/ui/layer";
+import { thisMachineKey } from "./devices";
 import { ArrowLeftIcon, ArrowRightIcon, CornerDownRightIcon, SearchIcon, XIcon } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
@@ -609,7 +610,7 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers, onCross }
  */
 function CrossProjectChip({ chip, onClick }: { chip: CrossChip; onClick: () => void }) {
   const { t } = useInterfaceTranslation();
-  const device = chip.device === null ? null : chip.device === THIS_DEVICE ? t("common.thisMac") : chip.device;
+  const device = chip.device === null ? null : chip.device === THIS_DEVICE ? t(thisMachineKey(null)) : chip.device;
   const place = device ? `${chip.project.label} · ${device}` : chip.project.label;
   const label = t(chip.direction === "out" ? "graph.cross.out" : "graph.cross.in", { project: place, agents: chip.names.join(", ") });
   const Arrow = chip.direction === "out" ? ArrowRightIcon : ArrowLeftIcon;
@@ -676,7 +677,7 @@ export function GraphFilterControls({ agents, filter, onChange }: { agents: read
         <ToggleGroup type="single" value={filter.device ?? ""} onValueChange={(device) => onChange({ ...filter, device: device || null })} aria-label={t("graph.filter.device")} data-graph-devices="true">
           {devices.map((device) => (
             <ToggleGroupItem key={device} value={device} data-graph-device={device === THIS_DEVICE ? "this" : device}>
-              {device === THIS_DEVICE ? t("common.thisMac") : device}
+              {device === THIS_DEVICE ? t(thisMachineKey(null)) : device}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>

@@ -3,7 +3,7 @@ import { memo, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { Actions } from "../actions";
 import { useInterfaceTranslation } from "../i18n/client";
-import { badgeText, deviceConnected, frontDeviceId, tileCounts, tileHint, tileMonogram, tileName, type TileCounts } from "../devices";
+import { badgeText, deviceConnected, thisMachineKey, frontDeviceId, tileCounts, tileHint, tileMonogram, tileName, type TileCounts } from "../devices";
 import { cn } from "../lib/utils";
 import { useShellStore } from "../store";
 import { EntryContextMenu } from "./entry-menu";
@@ -36,7 +36,7 @@ export function DeviceRail({ actions }: { actions: Actions }) {
     const list = devices ?? [];
     const local = list.find((device) => device.kind !== "remote");
     return [
-      { id: local?.id ?? "", label: local?.label ?? t("common.thisMac"), icon: "local" },
+      { id: local?.id ?? "", label: local?.label ?? t(thisMachineKey(null)), icon: "local" },
       ...list.filter((device) => device.kind === "remote").map((device): Tile => ({ id: device.id, label: device.label, icon: "remote" })),
     ];
   }, [devices, t]);
