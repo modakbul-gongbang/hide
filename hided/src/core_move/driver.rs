@@ -638,7 +638,7 @@ mod tests {
             vec!["labels.json".to_owned()]
         );
         for path in [
-            "/Users/someone/.ssh/id_ed25519",
+            "/var/elsewhere/.ssh/id_ed25519",
             "../labels.json",
             "mobile.json",
         ] {
@@ -772,7 +772,7 @@ mod tests {
             files[0].remote,
             "/core/move-incoming/i1/factory-files/a.prd"
         );
-        for path in ["/Users/someone/.zshrc", "factory-files/../../.zshrc"] {
+        for path in ["/var/elsewhere/.zshrc", "factory-files/../../.zshrc"] {
             assert!(
                 copies(&[path.to_owned()], staging, "/core/move-incoming/i1").is_err(),
                 "{path}"

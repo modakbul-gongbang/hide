@@ -62,9 +62,10 @@ BANNED = [
 # Each entry is the number of machine touches the file has and why.
 STORES = {
     "herdr-core/src/persistence.rs": (
-        10,
+        11,
         "the core's UI state file, including durable directory/write receipts "
-        "and explicit write-error variants before sleeping-session effects",
+        "and explicit write-error variants before sleeping-session effects, "
+        "and a moved copy of it read to name what this build cannot read",
     ),
     "herdr-core/src/workspace_views.rs": (6, "the core's saved View layouts"),
     "herdr-core/src/delivery/ledger.rs": (19, "the core's delivery ledger"),
@@ -103,6 +104,22 @@ STORES = {
         15,
         "converts the core's own stores to node ids once, where they were "
         "written, before any link exists (PRD core-host-node D-10)",
+    ),
+    "herdr-core/src/node_migration/copy.rs": (
+        56,
+        "copies, places and sets aside the core's own stores for a move of "
+        "the core (PRD core-host-node-move), run by the hided whose state "
+        "folder holds them while no core runs on it",
+    ),
+    "herdr-core/src/node_migration/reown.rs": (
+        2,
+        "converts a moved copy of the core's own link and Factory stores to "
+        "the receiving node's ids, before a core starts on it",
+    ),
+    "herdr-core/src/memory_hook.rs": (
+        1,
+        "looks whether the core's Memory store exists before asking a node, "
+        "a core store beside the core's state file",
     ),
 }
 

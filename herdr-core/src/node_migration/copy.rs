@@ -662,7 +662,7 @@ mod tests {
             manifest
         );
         for path in [
-            "/Users/someone/.zshrc",
+            "/var/elsewhere/.zshrc",
             "..",
             "factory-files/../../outside",
             "factory-files//a.prd",
