@@ -237,24 +237,14 @@ impl Runtime {
             .find_map(find)
             .map(|(workspace, checkout)| (None, workspace, checkout));
         own.or_else(|| {
-            self.snapshot
-                .status
-                .remote
-                .iter()
-                .filter(|status| {
-                    self.link_origin(&status.target_id)
-                        .is_some_and(LinkOrigin::reports_own_facts)
-                })
-                .find_map(|status| {
-                    let (workspace, checkout) = status
-                        .session
-                        .as_ref()?
-                        .workspaces
-                        .iter()
-                        .filter(|workspace| workspace.is_git)
-                        .find_map(find)?;
-                    Some((Some(status.target_id.clone()), workspace, checkout))
-                })
+            self.node_sessions().find_map(|(node, session)| {
+                let (workspace, checkout) = session
+                    .workspaces
+                    .iter()
+                    .filter(|workspace| workspace.is_git)
+                    .find_map(find)?;
+                Some((Some(node.to_owned()), workspace, checkout))
+            })
         })
     }
 
@@ -631,23 +621,13 @@ impl Runtime {
         if let Some(workspace) = self.local_project_by_id(workspace_id) {
             return Some((None, workspace));
         }
-        self.snapshot
-            .status
-            .remote
-            .iter()
-            .filter(|status| {
-                self.link_origin(&status.target_id)
-                    .is_some_and(LinkOrigin::reports_own_facts)
-            })
-            .find_map(|status| {
-                let workspace = status
-                    .session
-                    .as_ref()?
-                    .workspaces
-                    .iter()
-                    .find(|workspace| workspace.id == workspace_id)?;
-                Some((Some(status.target_id.clone()), workspace.clone()))
-            })
+        self.node_sessions().find_map(|(node, session)| {
+            let workspace = session
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == workspace_id)?;
+            Some((Some(node.to_owned()), workspace.clone()))
+        })
     }
 
     /// Where `gh` reads a project's repository: in its checkout on this
@@ -684,7 +664,7 @@ impl Runtime {
 
     /// Asks a node's repository again at its next read, as this machine's
     /// `refresh_pull_requests` does.
-    fn reread_node_github(&mut self, node: &str, root: &str) {
+    pub(super) fn reread_node_github(&mut self, node: &str, root: &str) {
         if let Some(read) = self
             .device_github_reads
             .get_mut(&(node.to_owned(), root.to_owned()))
@@ -1037,16 +1017,8 @@ impl Runtime {
         // with this machine's login (D-16); one not named yet is left out,
         // since its folder is not on this machine to resolve it in.
         let nodes = self
-            .snapshot
-            .status
-            .remote
-            .iter()
-            .filter(|status| {
-                self.link_origin(&status.target_id)
-                    .is_some_and(LinkOrigin::reports_own_facts)
-            })
-            .filter_map(|status| status.session.as_ref())
-            .flat_map(|session| session.workspaces.iter())
+            .node_sessions()
+            .flat_map(|(_, session)| session.workspaces.iter())
             .map(|workspace| (true, workspace));
         let own = self
             .snapshot
@@ -1524,11 +1496,10 @@ impl Runtime {
         let github = self.device_github.get(target);
         let sources = &self.snapshot.ui_state.project_issue_sources;
         let family = family_tokens(&session.issue_tokens.panes, &session.agents);
+        let (read, _) = self.node_github_repositories(target);
         for workspace in &mut session.workspaces {
             let found = github.and_then(|github| github.project(&workspace.path));
-            let asked = self
-                .device_github_reads
-                .contains_key(&(target.to_owned(), workspace.path.clone()));
+            let asked = read.iter().any(|(root, _)| *root == workspace.path);
             let status = node_github_status(
                 workspace.is_git,
                 listed.and_then(|listed| listed.projects.get(&workspace.path)),
@@ -1837,7 +1808,8 @@ fn project_tasks(
 /// What a node project's GitHub read says: the answer the node's pull
 /// request pass brought; else, for a repository whose `origin` the node said
 /// names no GitHub repository, no GitHub remote, so its issues default to
-/// Local as this machine's do; else still reading while a read is asked.
+/// Local as this machine's do; else still reading while the repository is
+/// among those read (`node_github_repositories`).
 fn node_github_status(
     is_git: bool,
     listed: Option<&crate::model::ProjectWorktreesSnapshot>,

@@ -27,6 +27,23 @@ impl Runtime {
             .map(|registration| &registration.origin)
     }
 
+    /// The sessions of the nodes that dial this core, each with its node id:
+    /// the machines whose projects this core reads and changes as it does
+    /// its own (D-29), unlike a device it dials.
+    pub(super) fn node_sessions(
+        &self,
+    ) -> impl Iterator<Item = (&str, &crate::model::RemoteSessionSnapshot)> {
+        self.snapshot
+            .status
+            .remote
+            .iter()
+            .filter(|status| {
+                self.link_origin(&status.target_id)
+                    .is_some_and(LinkOrigin::reports_own_facts)
+            })
+            .filter_map(|status| Some((status.target_id.as_str(), status.session.as_ref()?)))
+    }
+
     /// Takes the link of the node `node` dialed in on, registering the node
     /// on its first link. Refused, with the reason the node is told, when
     /// the id is this core's own node, a device this core dials, or a node

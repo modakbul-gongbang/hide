@@ -3269,6 +3269,17 @@ impl Runtime {
                             && workspace.remote_target_id.is_none()
                     })
                     .map(|workspace| workspace.path.clone());
+                if project.is_none()
+                    && let Some((Some(node), workspace)) = self.issue_project(&payload.workspace_id)
+                    && workspace.is_git
+                {
+                    // A node's repositories are all read without being
+                    // asked, up to the limit; a refresh reads one again.
+                    if payload.refresh {
+                        self.reread_node_github(&node, &workspace.path);
+                    }
+                    return payload.refresh;
+                }
                 let Some(project) = project else {
                     self.set_error(
                         "github.invalid_project",
@@ -3305,6 +3316,15 @@ impl Runtime {
                     })
                     .map(|workspace| workspace.path.clone());
                 let Some(project) = project else {
+                    // A node's Git project is read again on the node and by
+                    // its repository's name here, as this machine's is (D-29).
+                    if let Some((Some(node), workspace)) = self.issue_project(&payload.workspace_id)
+                        && workspace.is_git
+                    {
+                        self.reread_node_github(&node, &workspace.path);
+                        self.request_device_worktrees(&node, true);
+                        return true;
+                    }
                     crate::diagnostic!(serde_json::json!({
                         "component": "overview", "kind": "refresh.invalid_project",
                         "workspace_id": payload.workspace_id
@@ -3335,12 +3355,7 @@ impl Runtime {
                 // The card's one refresh button re-reads both the remote
                 // answer and the local counts, because the operator pressing
                 // it means "this is out of date", not "gh is out of date".
-                if let Some((workspace, _)) = self.focused_local_checkout() {
-                    let project = workspace.path.clone();
-                    self.refresh_pull_requests(&project);
-                }
-                self.refresh_worktrees();
-                self.remeasure_disk();
+                self.reread_focused_project();
                 true
             }
             Event::CardMeasureDisk(payload) => match payload.workspace_id {
@@ -3669,12 +3684,7 @@ impl Runtime {
                         RightPanelSection::Overview
                     );
                 if git_is_visible && !git_was_visible {
-                    if let Some((workspace, _)) = self.focused_local_checkout() {
-                        let project = workspace.path.clone();
-                        self.refresh_pull_requests(&project);
-                    }
-                    self.refresh_worktrees();
-                    self.remeasure_disk();
+                    self.reread_focused_project();
                 }
                 if git_is_visible != git_was_visible {
                     self.refresh_card();

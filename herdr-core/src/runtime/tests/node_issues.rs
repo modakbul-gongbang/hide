@@ -698,3 +698,79 @@ fn a_device_this_core_dials_keeps_no_issues_here() {
         1
     );
 }
+
+/// With a node's checkout in front of the Overview, the card is that
+/// checkout's, with the GitHub state its rows carry; opening the Overview
+/// again or the card's refresh reads its repository again; and past the
+/// limit its repository is among the ones read.
+#[test]
+fn the_overview_in_front_of_a_node_checkout_reads_the_node_s_project() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    let mut runtime = shared.lock().unwrap();
+    let generation = |runtime: &mut Runtime| {
+        runtime
+            .device_github_request(NODE, std::time::Instant::now())
+            .projects
+            .iter()
+            .find(|project| project.root == std::path::Path::new(&repo.root))
+            .map(|project| project.generation)
+    };
+    let first = generation(&mut runtime).unwrap();
+    let (workspace_id, checkout_id, github) = {
+        let project = node_project(&runtime).unwrap();
+        let linked = project
+            .checkouts
+            .iter()
+            .find(|checkout| checkout.path == repo.linked)
+            .unwrap();
+        (project.id.clone(), linked.id.clone(), linked.github.clone())
+    };
+    runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+    runtime.refresh_card();
+    assert_eq!(
+        runtime.snapshot.card.checkout_id.as_deref(),
+        Some(checkout_id.as_str())
+    );
+    assert_eq!(runtime.snapshot.card.github, github);
+    assert!(runtime.snapshot.card.github.loading, "{github:?}");
+    drop(runtime);
+
+    dispatch(
+        &shared,
+        "overview_refresh",
+        serde_json::json!({"workspace_id": workspace_id}),
+    );
+    let mut runtime = shared.lock().unwrap();
+    let opened = generation(&mut runtime).unwrap();
+    assert!(opened > first, "{opened} after {first}");
+    drop(runtime);
+    dispatch(&shared, "card_refresh", serde_json::json!({}));
+    let mut runtime = shared.lock().unwrap();
+    assert!(generation(&mut runtime).unwrap() > opened);
+
+    let listed = runtime.device_worktrees.get_mut(NODE).unwrap();
+    for index in 0..64 {
+        listed.projects.insert(
+            format!("/a/{index:02}"),
+            crate::model::ProjectWorktreesSnapshot {
+                repository: Some(format!("acme/x{index}")),
+                ..Default::default()
+            },
+        );
+    }
+    assert!(
+        generation(&mut runtime).is_some(),
+        "the project in front is read"
+    );
+    runtime.snapshot.navigator.focused_checkout_id = None;
+    assert!(
+        generation(&mut runtime).is_none(),
+        "past the limit in path order"
+    );
+}

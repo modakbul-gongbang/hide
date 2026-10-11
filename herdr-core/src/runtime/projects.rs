@@ -2772,25 +2772,49 @@ impl Runtime {
         true
     }
 
-    /// The repositories of a node that dials this core whose `origin` names
-    /// a GitHub repository, read with this machine's login by that name
-    /// (D-16): each once, then again every five minutes, as this machine's
-    /// are.
-    pub(crate) fn device_github_request(
-        &mut self,
+    /// The repositories of node `device_id` read for GitHub, as (root,
+    /// `owner/name`) in path order, so the request does not move with the
+    /// focus: those whose `origin` names one, at most `GITHUB_PROJECT_LIMIT`,
+    /// the one in front of the Overview first past it. The second value is
+    /// how many the node names in all.
+    pub(super) fn node_github_repositories(
+        &self,
         device_id: &str,
-        now: std::time::Instant,
-    ) -> crate::github::GithubRequest {
+    ) -> (Vec<(String, String)>, usize) {
         let Some(listed) = self.device_worktrees.get(device_id) else {
-            return crate::github::GithubRequest::default();
+            return (Vec::new(), 0);
         };
         let mut repositories: Vec<(String, String)> = listed
             .projects
             .iter()
             .filter_map(|(root, project)| Some((root.clone(), project.repository.clone()?)))
             .collect();
+        let total = repositories.len();
+        let in_front = self
+            .focused_node_checkout()
+            .filter(|(node, _, _)| *node == device_id)
+            .map(|(_, workspace, _)| workspace.path.as_str());
+        repositories.sort_by(|left, right| {
+            (Some(left.0.as_str()) != in_front)
+                .cmp(&(Some(right.0.as_str()) != in_front))
+                .then_with(|| left.cmp(right))
+        });
+        repositories.truncate(GITHUB_PROJECT_LIMIT);
         repositories.sort();
-        let over_limit = repositories.len().saturating_sub(GITHUB_PROJECT_LIMIT);
+        (repositories, total)
+    }
+
+    /// The repositories of a node that dials this core whose `origin` names
+    /// a GitHub repository, read with this machine's login by that name
+    /// (D-16): each once, then again every five minutes, as this machine's
+    /// are. Past the limit the one in front of the Overview is read first.
+    pub(crate) fn device_github_request(
+        &mut self,
+        device_id: &str,
+        now: std::time::Instant,
+    ) -> crate::github::GithubRequest {
+        let (repositories, total) = self.node_github_repositories(device_id);
+        let over_limit = total.saturating_sub(GITHUB_PROJECT_LIMIT);
         let logged = self
             .device_github_over_limit
             .insert(device_id.to_owned(), over_limit);
@@ -2800,10 +2824,9 @@ impl Runtime {
                 "kind": "projects.over_limit",
                 "target": device_id,
                 "limit": GITHUB_PROJECT_LIMIT,
-                "device_git_projects": repositories.len(),
+                "device_git_projects": total,
             }));
         }
-        repositories.truncate(GITHUB_PROJECT_LIMIT);
         self.device_github_reads.retain(|(device, root), _| {
             device != device_id || repositories.iter().any(|(listed, _)| listed == root)
         });
@@ -2964,6 +2987,39 @@ impl Runtime {
             })
     }
 
+    /// The checkout in front of the Overview when it is one of a node that
+    /// dials this core, with that node's id: its Overview reads and cleans
+    /// up on the node as one of this machine's does here (D-29).
+    pub(super) fn focused_node_checkout(
+        &self,
+    ) -> Option<(&str, &WorkspaceSnapshot, &CheckoutSnapshot)> {
+        let focused_checkout_id = self.snapshot.navigator.focused_checkout_id.as_deref()?;
+        self.node_sessions().find_map(|(node, session)| {
+            session.workspaces.iter().find_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == focused_checkout_id)
+                    .map(|checkout| (node, workspace, checkout))
+            })
+        })
+    }
+
+    /// Reads the project in front of the Overview again, on whichever
+    /// machine it is: its GitHub answer, its worktrees and its sizes.
+    pub(super) fn reread_focused_project(&mut self) {
+        if let Some((workspace, _)) = self.focused_local_checkout() {
+            let project = workspace.path.clone();
+            self.refresh_pull_requests(&project);
+        } else if let Some((node, workspace, _)) = self.focused_node_checkout() {
+            let (node, root) = (node.to_owned(), workspace.path.clone());
+            self.reread_node_github(&node, &root);
+            self.request_device_worktrees(&node, true);
+        }
+        self.refresh_worktrees();
+        self.remeasure_disk();
+    }
+
     pub(super) fn apply_pull_requests(&mut self) -> bool {
         let mut changed = false;
         let github = self.github.clone();
@@ -3067,45 +3123,46 @@ impl Runtime {
     }
 
     pub(super) fn projected_card(&self) -> crate::model::CheckoutCardSnapshot {
-        let Some((workspace, checkout)) = self.focused_local_checkout() else {
-            return crate::model::CheckoutCardSnapshot::default();
-        };
-        let github = if workspace.is_git {
-            self.github
-                .project(&workspace.path)
-                .map(|project| project.status.clone())
-                // An absent answer is loading until the first read of this
-                // project has answered; a project the core does not read
-                // (past the limit) has no work in flight.
-                .unwrap_or(crate::model::GithubStatusSnapshot {
-                    loading: self.github_awaiting(&workspace.path),
-                    ..crate::model::GithubStatusSnapshot::default()
-                })
-        } else {
-            crate::model::GithubStatusSnapshot::default()
-        };
-        let disk = self
-            .disk_usage
-            .iter()
-            .find(|disk| disk.path.as_deref() == Some(checkout.path.as_str()))
-            .cloned()
-            .unwrap_or_default();
-        let disk_measuring = checkout.is_worktree && disk.path.is_none();
-        crate::model::CheckoutCardSnapshot {
-            checkout_id: Some(checkout.id.clone()),
-            panes: crate::project_context::checkout_panes(
+        if let Some((workspace, checkout)) = self.focused_local_checkout() {
+            let github = if workspace.is_git {
+                self.github
+                    .project(&workspace.path)
+                    .map(|project| project.status.clone())
+                    // An absent answer is loading until the first read of this
+                    // project has answered; a project the core does not read
+                    // (past the limit) has no work in flight.
+                    .unwrap_or(crate::model::GithubStatusSnapshot {
+                        loading: self.github_awaiting(&workspace.path),
+                        ..crate::model::GithubStatusSnapshot::default()
+                    })
+            } else {
+                crate::model::GithubStatusSnapshot::default()
+            };
+            let panes = crate::project_context::checkout_panes(
                 checkout,
                 &self.snapshot.navigator.workspaces,
                 &self.snapshot.navigator.agents,
-            ),
-            github,
-            disk,
-            disk_measuring,
-            deletion_gate: checkout
-                .worktree
-                .as_ref()
-                .map(|worktree| worktree.deletion_gate.clone()),
+            );
+            return checkout_card(checkout, github, &self.disk_usage, panes);
         }
+        // A node's checkout: its GitHub state is the one its rows carry, its
+        // sizes the node measured, its panes those of the node's session.
+        if let Some((node, _, checkout)) = self.focused_node_checkout()
+            && let Some((_, session)) = self.node_sessions().find(|(id, _)| *id == node)
+        {
+            let panes = crate::project_context::checkout_panes(
+                checkout,
+                &session.workspaces,
+                &session.agents,
+            );
+            let disk = self
+                .device_disk
+                .get(node)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            return checkout_card(checkout, checkout.github.clone(), disk, panes);
+        }
+        crate::model::CheckoutCardSnapshot::default()
     }
 
     pub(super) fn create_project_worktree(&mut self, payload: CreateWorktreePayload) -> bool {
@@ -4081,6 +4138,32 @@ fn resume_session_arguments(kind: &str, session_id: &str) -> Option<Vec<String>>
         kind: kind.to_owned(),
         session_id: Some(session_id.to_owned()),
     })
+}
+
+/// The Overview card of `checkout`, whichever machine it is on.
+fn checkout_card(
+    checkout: &CheckoutSnapshot,
+    github: crate::model::GithubStatusSnapshot,
+    sizes: &[crate::model::DiskUsageSnapshot],
+    panes: Vec<crate::model::CheckoutPaneContext>,
+) -> crate::model::CheckoutCardSnapshot {
+    let disk = sizes
+        .iter()
+        .find(|disk| disk.path.as_deref() == Some(checkout.path.as_str()))
+        .cloned()
+        .unwrap_or_default();
+    let disk_measuring = checkout.is_worktree && disk.path.is_none();
+    crate::model::CheckoutCardSnapshot {
+        checkout_id: Some(checkout.id.clone()),
+        panes,
+        github,
+        disk,
+        disk_measuring,
+        deletion_gate: checkout
+            .worktree
+            .as_ref()
+            .map(|worktree| worktree.deletion_gate.clone()),
+    }
 }
 
 #[cfg(test)]
