@@ -1938,10 +1938,11 @@ fn project_tasks(
 }
 
 /// What a node project's GitHub read says: the answer the node's pull
-/// request pass brought; else, for a repository whose `origin` the node said
-/// names no GitHub repository, no GitHub remote, so its issues default to
-/// Local as this machine's do; else still reading while the repository is
-/// among those read (`node_github_repositories`).
+/// request pass brought; else, for a repository the node refused to read,
+/// that refusal, which no GitHub read follows; else, for a repository whose
+/// `origin` the node said names no GitHub repository, no GitHub remote, so
+/// its issues default to Local as this machine's do; else still reading
+/// while the repository is among those read (`node_github_repositories`).
 fn node_github_status(
     is_git: bool,
     listed: Option<&crate::model::ProjectWorktreesSnapshot>,
@@ -1952,9 +1953,14 @@ fn node_github_status(
         return found.status.clone();
     }
     match listed {
-        Some(listed)
-            if is_git && listed.repository.is_none() && listed.unavailable_reason.is_none() =>
-        {
+        Some(listed) if is_git && listed.unavailable_reason.is_some() => {
+            crate::model::GithubStatusSnapshot {
+                available: false,
+                unavailable_reason: listed.unavailable_reason.clone(),
+                ..Default::default()
+            }
+        }
+        Some(listed) if is_git && listed.repository.is_none() => {
             crate::model::GithubStatusSnapshot {
                 available: false,
                 unavailable_reason: Some(

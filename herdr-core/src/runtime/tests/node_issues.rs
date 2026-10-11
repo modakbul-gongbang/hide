@@ -627,6 +627,53 @@ fn a_node_project_says_when_this_machine_s_gh_is_signed_out() {
     );
 }
 
+/// A repository the node refused to read says why on its board; no GitHub
+/// read follows a refusal, so without it the board would stand empty and
+/// quiet.
+#[test]
+fn a_repository_the_node_refused_to_read_says_why_on_its_board() {
+    let repo = repo(Some("git@github.com:acme/app.git"), "feature");
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    let mut runtime = shared.lock().unwrap();
+    let refusal = "the node cannot read this repository";
+    runtime.device_worktrees.get_mut(NODE).unwrap().in_flight = Some(99);
+    assert!(runtime.ingest_device_worktrees(
+        NODE,
+        99,
+        crate::runtime::device_catalog::WorktreesAnswer {
+            answers: vec![(
+                repo.root.clone(),
+                Some(crate::model::ProjectWorktreesSnapshot {
+                    root_path: repo.root.clone(),
+                    unavailable_reason: Some(refusal.to_owned()),
+                    ..Default::default()
+                }),
+            )],
+            notes: Vec::new(),
+            failure: None,
+        },
+    ));
+    let source = node_project(&runtime)
+        .unwrap()
+        .tasks
+        .source
+        .clone()
+        .unwrap();
+    assert_eq!(
+        (
+            source.kind.as_str(),
+            source.failure.as_deref(),
+            source.reading
+        ),
+        ("github", Some(refusal), false)
+    );
+}
+
 /// Before this machine's GitHub read answers, and while every read fails,
 /// a node project is named by the repository the node read, so ⌘K's GitHub
 /// search covers it.
