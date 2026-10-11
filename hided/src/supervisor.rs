@@ -794,6 +794,9 @@ async fn prepare(
     if let Some(handover) = inspected.handover.as_ref().filter(|_| other_move) {
         held.push(format!("move {}", handover.intent));
     }
+    // Named here, before anything stops: the copy to that folder would
+    // fail only after this machine's core stopped.
+    held.extend(inspected.path_refused.clone());
     // Hide AI settings move with the core and are never merged.
     match (
         &inspected.ai,

@@ -105,6 +105,10 @@ pub struct Inspection {
     pub ai: Result<Option<serde_json::Value>, String>,
     /// Each of the move's checks that fails there (`preflight`).
     pub failed: Vec<FailedCheck>,
+    /// Why the move's copy cannot be sent to the state folder by its path:
+    /// a link or a file on the way, named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_refused: Option<String>,
 }
 
 impl StepAnswer {

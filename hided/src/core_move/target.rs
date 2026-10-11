@@ -192,7 +192,35 @@ fn inspect(state_dir: &Path, ai: Option<&str>) -> Answered {
         herdr_socket: env.herdr_socket_path,
         ai: herdr_core::stored_hide_ai_settings(&env.home),
         failed,
+        path_refused: path_refused(state_dir),
     })))
+}
+
+/// Why the move's copy cannot be sent to `state_dir` by its path: the copy
+/// goes over SFTP, which makes each folder on the way that is missing and
+/// refuses one that is a link or not a folder, so such a folder would fail
+/// the copy only after the source's core stopped. Names the first, from the
+/// root down; a folder that is missing below it is made by the copy.
+fn path_refused(state_dir: &Path) -> Option<String> {
+    let mut folders: Vec<&Path> = state_dir.ancestors().collect();
+    folders.reverse();
+    for folder in folders {
+        match std::fs::symlink_metadata(folder) {
+            Ok(found) if found.file_type().is_symlink() => {
+                return Some(format!(
+                    "{} is a link, and the move's copy is sent by a path without one",
+                    folder.display()
+                ));
+            }
+            Ok(found) if !found.is_dir() => {
+                return Some(format!("{} is not a folder", folder.display()));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(error) => return Some(format!("{} could not be read: {error}", folder.display())),
+        }
+    }
+    None
 }
 
 /// The checks of the account's logins, run as a one-shot job in its GUI
@@ -682,6 +710,33 @@ fn acquire_instance(state_dir: &Path) -> Result<std::fs::File, StepAnswer> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A state folder reached through a link, as macOS's `/tmp` is, is
+    /// named with the link, which the copy would refuse after the core
+    /// stopped; one reached by real folders, missing or not, is not.
+    #[cfg(unix)]
+    #[test]
+    fn a_state_folder_reached_through_a_link_is_named_at_the_check() {
+        let root = tempfile::tempdir().unwrap();
+        let root = hide_platform::fs::identity::canonical(root.path()).unwrap();
+        let real = root.join("real");
+        std::fs::create_dir_all(real.join("home/s")).unwrap();
+        std::os::unix::fs::symlink(&real, root.join("link")).unwrap();
+        std::fs::write(root.join("file"), "").unwrap();
+
+        assert_eq!(path_refused(&real.join("home/s")), None);
+        assert_eq!(path_refused(&real.join("home/missing/s")), None);
+        let through_link = path_refused(&root.join("link/home/s")).unwrap();
+        assert!(
+            through_link.starts_with(&format!("{} is a link", root.join("link").display())),
+            "{through_link}"
+        );
+        let through_file = path_refused(&root.join("file/s")).unwrap();
+        assert_eq!(
+            through_file,
+            format!("{} is not a folder", root.join("file").display())
+        );
+    }
 
     /// A move whose pending core already gave its copy back leaves no
     /// starter: the abort that finds no record removes the folder's login
