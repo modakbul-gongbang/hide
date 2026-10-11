@@ -12,7 +12,8 @@ use crate::matcher::{CardTerms, MINIMUM_SCORE, Query, normalize};
 use crate::{
     ACTIVE_MEMORY_LIMIT, ALIAS_LIMIT, ALIAS_LIMIT_CHARS, CITED_PATH_LIMIT, CITED_PATH_LIMIT_BYTES,
     HOOK_CANDIDATE_LIMIT, HOOK_DEADLINE_MS, INDEX_LINE_LIMIT, INJECTION_TOKEN_LIMIT,
-    PROMPT_ITEM_LIMIT, RECEIPT_LIMIT, RECEIPT_STALE_AFTER_MS, TITLE_LIMIT_CHARS, redact,
+    PROMOTION_HUMAN_SOURCES, PROMOTION_PULLED_SESSIONS, PROMOTION_WINDOW_MS, PROMPT_ITEM_LIMIT,
+    RECEIPT_LIMIT, RECEIPT_STALE_AFTER_MS, TITLE_LIMIT_CHARS, redact,
 };
 
 const SCHEMA_VERSION: i64 = 8;
@@ -248,6 +249,82 @@ pub struct MemorySource {
     /// When the cited words were said; `None` for a source written before
     /// Hide kept the time.
     pub at_unix_ms: Option<u64>,
+}
+
+/// Where a card stands on its way into the repository's own files (PRD
+/// project-memory-v2 D-25, B29-B32). A card with no row is not on its way;
+/// a suggestion is worked out from the card's use, never stored.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromotionState {
+    /// The operator said not to; asked again only once the card changes.
+    Dismissed,
+    /// An agent Hide started is putting it in the repository.
+    Running,
+    PrOpen,
+    /// Its pull request merged: the card is a pointer to its file and is
+    /// never given in full again.
+    Merged,
+    /// Its pull request closed unmerged: the card is back to normal and is
+    /// never suggested again.
+    ClosedUnmerged,
+    /// The agent ended without a pull request; the operator may try again.
+    Failed,
+}
+
+impl PromotionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dismissed => "dismissed",
+            Self::Running => "running",
+            Self::PrOpen => "pr_open",
+            Self::Merged => "merged",
+            Self::ClosedUnmerged => "closed_unmerged",
+            Self::Failed => "failed",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, MemoryError> {
+        match value {
+            "dismissed" => Ok(Self::Dismissed),
+            "running" => Ok(Self::Running),
+            "pr_open" => Ok(Self::PrOpen),
+            "merged" => Ok(Self::Merged),
+            "closed_unmerged" => Ok(Self::ClosedUnmerged),
+            "failed" => Ok(Self::Failed),
+            _ => Err(MemoryError::InvalidState(value.to_owned())),
+        }
+    }
+}
+
+/// One card's promotion as the core last decided it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Promotion {
+    pub state: PromotionState,
+    /// The card revision the state applies to; a dismissal lapses once the
+    /// card's text moves past it.
+    pub revision: u64,
+    /// How many times an agent was started for it; each start asks again
+    /// under its own intent.
+    pub attempt: u32,
+    /// The coordination id of the agent putting it in the repository.
+    pub agent_id: Option<String>,
+    /// The branch that agent works on, which its pull request is found by.
+    pub branch: Option<String>,
+    pub pr_number: Option<u64>,
+    /// The repository-relative file the agent said it put the card in.
+    pub target_path: Option<String>,
+    pub updated_at_unix_ms: u64,
+}
+
+/// A card whose use crossed the bar for a repository file, with the counts
+/// that say why (B29).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PromotionSuggestion {
+    pub number: u64,
+    pub human_source_count: usize,
+    /// Distinct sessions that read it with `hide memory show` in the window.
+    pub pulled_session_count: usize,
 }
 
 /// The text a card had before its current revision replaced it, which the
@@ -1523,6 +1600,160 @@ impl MemoryStore {
         self.item_by_number(project_id, number)
     }
 
+    /// Every promotion of a Project's cards, by card number.
+    pub fn promotions(&self, project_id: &str) -> Result<Vec<(u64, Promotion)>, MemoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT i.number,p.state,p.revision,p.attempt,p.agent_id,p.branch,p.pr_number,p.target_path,p.updated_at_ms \
+             FROM card_promotions p JOIN memory_items i ON i.id=p.item_id WHERE i.project_id=?1 ORDER BY i.number",
+        )?;
+        let rows = statement
+            .query_map([project_id], |row| {
+                Ok((
+                    row.get::<_, u64>(0)?,
+                    row.get::<_, String>(1)?,
+                    Promotion {
+                        state: PromotionState::Dismissed,
+                        revision: row.get(2)?,
+                        attempt: row.get(3)?,
+                        agent_id: row.get(4)?,
+                        branch: row.get(5)?,
+                        pr_number: row.get(6)?,
+                        target_path: row.get(7)?,
+                        updated_at_unix_ms: row.get(8)?,
+                    },
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(number, state, promotion)| {
+                Ok((
+                    number,
+                    Promotion {
+                        state: PromotionState::parse(&state)?,
+                        ..promotion
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    /// The promotions still waiting on an agent or a pull request, in every
+    /// Project on `device`, with the Project's root.
+    pub fn open_promotions(
+        &self,
+        device: &str,
+    ) -> Result<Vec<(String, String, u64, Promotion)>, MemoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT pr.id,pr.root,i.number FROM card_promotions p JOIN memory_items i ON i.id=p.item_id \
+             JOIN projects pr ON pr.id=i.project_id WHERE pr.device_id=?1 AND p.state IN ('running','pr_open') ORDER BY pr.id,i.number",
+        )?;
+        let rows = statement
+            .query_map([device], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u64>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut open = Vec::with_capacity(rows.len());
+        for (project_id, root, number) in rows {
+            let promotion = self
+                .promotions(&project_id)?
+                .into_iter()
+                .find(|(card, _)| *card == number)
+                .map(|(_, promotion)| promotion)
+                .ok_or(MemoryError::MemoryMissing)?;
+            open.push((project_id, root, number, promotion));
+        }
+        Ok(open)
+    }
+
+    /// Writes card `number`'s promotion as the core decided it.
+    pub fn set_promotion(
+        &mut self,
+        project_id: &str,
+        number: u64,
+        promotion: &Promotion,
+    ) -> Result<(), MemoryError> {
+        self.require_writer()?;
+        if let Some(path) = &promotion.target_path
+            && !repository_path(path)
+        {
+            return Err(MemoryError::InvalidState(format!(
+                "promotion_target:{path}"
+            )));
+        }
+        let item_id: String = self
+            .connection
+            .query_row(
+                "SELECT id FROM memory_items WHERE project_id=?1 AND number=?2",
+                params![project_id, number],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(MemoryError::MemoryMissing)?;
+        self.connection.execute(
+            "INSERT INTO card_promotions(item_id,state,revision,attempt,agent_id,branch,pr_number,target_path,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) \
+             ON CONFLICT(item_id) DO UPDATE SET state=excluded.state,revision=excluded.revision,attempt=excluded.attempt,agent_id=excluded.agent_id,branch=excluded.branch,pr_number=excluded.pr_number,target_path=excluded.target_path,updated_at_ms=excluded.updated_at_ms",
+            params![
+                item_id,
+                promotion.state.as_str(),
+                promotion.revision,
+                promotion.attempt,
+                promotion.agent_id,
+                promotion.branch,
+                promotion.pr_number,
+                promotion.target_path,
+                promotion.updated_at_unix_ms
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The rule, decision and lesson cards whose use crossed the bar for a
+    /// repository file and that no promotion holds (D-25, B29): the
+    /// operator's words in at least [`PROMOTION_HUMAN_SOURCES`] sources, or
+    /// reads from at least [`PROMOTION_PULLED_SESSIONS`] sessions in the last
+    /// [`PROMOTION_WINDOW_MS`]. A dismissal holds the card only while its text
+    /// is the one dismissed. The strongest first, at most `limit`.
+    pub fn promotion_suggestions(
+        &self,
+        project_id: &str,
+        now_unix_ms: u64,
+        limit: usize,
+    ) -> Result<Vec<PromotionSuggestion>, MemoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT number,human,pulled FROM (SELECT i.number,\
+             (SELECT COUNT(*) FROM memory_sources s WHERE s.item_id=i.id AND s.human=1) AS human,\
+             (SELECT COUNT(DISTINCT ir.runtime||':'||ir.session_id) FROM injection_receipt_items rii JOIN injection_receipts ir ON ir.id=rii.receipt_id \
+              WHERE rii.item_id=i.id AND ir.turn_id='show' AND ir.created_at_ms>=?2) AS pulled \
+             FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
+             LEFT JOIN card_promotions p ON p.item_id=i.id \
+             WHERE i.project_id=?1 AND i.lifecycle='active' AND r.kind IN ('rule','decision','lesson') \
+             AND (p.item_id IS NULL OR (p.state='dismissed' AND p.revision!=i.current_revision))) \
+             WHERE human>=?3 OR pulled>=?4 ORDER BY human DESC,pulled DESC,number LIMIT ?5",
+        )?;
+        Ok(statement
+            .query_map(
+                params![
+                    project_id,
+                    now_unix_ms.saturating_sub(PROMOTION_WINDOW_MS),
+                    PROMOTION_HUMAN_SOURCES,
+                    PROMOTION_PULLED_SESSIONS,
+                    limit as u64
+                ],
+                |row| {
+                    Ok(PromotionSuggestion {
+                        number: row.get(0)?,
+                        human_source_count: row.get::<_, u64>(1)? as usize,
+                        pulled_session_count: row.get::<_, u64>(2)? as usize,
+                    })
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     pub fn retrieve(&self, query: &RetrievalQuery) -> Result<Injection, MemoryError> {
         let started = Instant::now();
         self.retrieve_with_expiry(query, || started.elapsed() >= query.deadline)
@@ -1548,11 +1779,14 @@ impl MemoryStore {
         let selected = match query.kind {
             InjectionKind::Index => self.index(&query.project_id, query.maximum_items)?,
             InjectionKind::Bodies => {
-                let candidates = self.matching_active(
+                let mut candidates = self.matching_active(
                     &query.project_id,
                     &Query::new(&query.text),
                     HOOK_CANDIDATE_LIMIT,
                 )?;
+                // A card in the repository's own files is read there (B12).
+                let merged = self.merged_items(&query.project_id)?;
+                candidates.retain(|candidate| !merged.contains(&candidate.id));
                 if expired() {
                     return Ok(empty(InjectionOutcome::Deadline));
                 }
@@ -1575,21 +1809,44 @@ impl MemoryStore {
         })
     }
 
-    /// The index lines: rule, decision and lesson cards by salience.
+    /// The index lines: rule, decision and lesson cards by salience. A card
+    /// in the repository's own files is a line that points at the file
+    /// (B10, D-04).
     fn index(&self, project_id: &str, limit: usize) -> Result<Vec<InjectedItem>, MemoryError> {
         let mut statement = self.connection.prepare(
-            "SELECT i.id,i.number,r.revision,r.title FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE i.project_id=?1 AND i.lifecycle='active' AND r.kind IN ('rule','decision','lesson') ORDER BY i.salience DESC,i.confidence DESC,i.updated_at_ms DESC,i.id LIMIT ?2",
+            "SELECT i.id,i.number,r.revision,r.title,p.target_path,p.pr_number FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision \
+             LEFT JOIN card_promotions p ON p.item_id=i.id AND p.state='merged' \
+             WHERE i.project_id=?1 AND i.lifecycle='active' AND r.kind IN ('rule','decision','lesson') ORDER BY i.salience DESC,i.confidence DESC,i.updated_at_ms DESC,i.id LIMIT ?2",
         )?;
         Ok(statement
             .query_map(params![project_id, limit as u64], |row| {
+                let title: String = row.get(3)?;
+                let path: Option<String> = row.get(4)?;
+                let pull_request: Option<u64> = row.get(5)?;
                 Ok(InjectedItem {
                     id: row.get(0)?,
                     number: row.get(1)?,
                     revision: row.get(2)?,
-                    text: row.get(3)?,
+                    text: match (path, pull_request) {
+                        (Some(path), _) => format!("{title} -> {path}"),
+                        (None, Some(number)) => {
+                            format!("{title} -> merged in pull request #{number}")
+                        }
+                        (None, None) => title,
+                    },
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The cards of a Project whose promotion merged.
+    fn merged_items(&self, project_id: &str) -> Result<HashSet<String>, MemoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT p.item_id FROM card_promotions p JOIN memory_items i ON i.id=p.item_id WHERE i.project_id=?1 AND p.state='merged'",
+        )?;
+        Ok(statement
+            .query_map([project_id], |row| row.get(0))?
+            .collect::<rusqlite::Result<HashSet<String>>>()?)
     }
 
     /// Records a receipt a session carried for the cards it was given in
@@ -2109,7 +2366,7 @@ CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id
 CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
 ALTER TABLE memory_sources ADD COLUMN at_ms INTEGER;
 UPDATE memory_sources SET at_ms=(SELECT MIN(b.created_at_ms) FROM analysis_batches b WHERE b.provider=memory_sources.provider AND b.session_id=memory_sources.session_id AND b.content_hash=memory_sources.content_hash);
-CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('suggested','dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,agent_id TEXT,pr_number INTEGER,target_path TEXT,updated_at_ms INTEGER NOT NULL);"#,
+CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,updated_at_ms INTEGER NOT NULL);"#,
         )?;
         let items = {
             let mut statement = connection.prepare(
@@ -2393,12 +2650,7 @@ fn check_projection_integrity(connection: &Connection) -> Result<(), MemoryError
     Ok(())
 }
 
-/// A new store's tables. `card_promotions` (one row per card: the promotion
-/// state, the card revision it applies to so a dismissal lapses when the card
-/// changes, and the spawned agent, pull request and target path) and
-/// `memory_items.archived_reason` are reserved for promotion to repository
-/// files and for expired needs-review cards; nothing writes them yet, so the
-/// feature lands without a second migration.
+/// A new store's tables.
 const SCHEMA: &str = r#"
 CREATE TABLE projects(id TEXT PRIMARY KEY,root TEXT NOT NULL,device_id TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0,disclosure_accepted_at_ms INTEGER,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,disclosure_version INTEGER NOT NULL DEFAULT 0,next_number INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE project_receipt_keys(project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,auth_key BLOB NOT NULL);
@@ -2417,7 +2669,7 @@ CREATE INDEX injection_receipts_session ON injection_receipts(runtime,session_id
 CREATE INDEX memory_sources_session ON memory_sources(provider,session_id);
 CREATE TABLE injection_receipt_items(receipt_id TEXT NOT NULL REFERENCES injection_receipts(id) ON DELETE CASCADE,item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,revision INTEGER NOT NULL,PRIMARY KEY(receipt_id,item_id));
 CREATE TABLE analysis_calls(day INTEGER PRIMARY KEY,calls INTEGER NOT NULL);
-CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('suggested','dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,agent_id TEXT,pr_number INTEGER,target_path TEXT,updated_at_ms INTEGER NOT NULL);
+CREATE TABLE card_promotions(item_id TEXT PRIMARY KEY REFERENCES memory_items(id) ON DELETE CASCADE,state TEXT NOT NULL CHECK(state IN('dismissed','running','pr_open','merged','closed_unmerged','failed')),revision INTEGER NOT NULL,attempt INTEGER NOT NULL,agent_id TEXT,branch TEXT,pr_number INTEGER,target_path TEXT,updated_at_ms INTEGER NOT NULL);
 CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXED,body,normalized_terms,tokenize='unicode61');
 "#;
 
@@ -2480,15 +2732,7 @@ impl CardText {
     /// whether each exists in the checkout is the caller's check (D-26).
     fn citing(mut self, paths: &[String]) -> Self {
         for path in paths {
-            let shaped = !path.is_empty()
-                && path.len() <= CITED_PATH_LIMIT_BYTES
-                && !path.starts_with('/')
-                && !path.contains('\\')
-                && !path.chars().any(char::is_control)
-                && path
-                    .split('/')
-                    .all(|part| !part.is_empty() && part != "." && part != "..");
-            if shaped && !self.cited_paths.contains(path) {
+            if repository_path(path) && !self.cited_paths.contains(path) {
                 self.cited_paths.push(path.clone());
             }
             if self.cited_paths.len() >= CITED_PATH_LIMIT {
@@ -2599,6 +2843,20 @@ fn derive_title(body: &str) -> String {
         .collect::<String>()
         .trim_end()
         .to_owned()
+}
+
+/// Whether `path` is shaped like a file inside a repository: relative, `/`
+/// between names, no `.` or `..` step and no control character. Whether it
+/// exists is the caller's to check on the node that holds the checkout.
+pub fn repository_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= CITED_PATH_LIMIT_BYTES
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && !path.chars().any(char::is_control)
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
 }
 
 fn parse_aliases(value: &str) -> Vec<String> {
@@ -3345,6 +3603,163 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(item_id UNINDEXED,project_id UNINDEXE
             .map(|item| item.text)
             .collect::<Vec<_>>();
         assert_eq!(given, ["Use blue buttons"]);
+    }
+
+    #[test]
+    fn a_card_used_enough_is_suggested_until_dismissed_and_again_once_it_changes() {
+        // D-25, B29: the operator's words twice, or reads from three sessions
+        // in 14 days; a dismissal holds until the card's text moves.
+        let (_temp, mut store, project) = store();
+        let now = 30 * 86_400_000;
+        let words = |offsets: Vec<u64>| Candidate {
+            source_offsets: offsets.clone(),
+            human_offsets: offsets,
+            ..candidate("Lint before tests", CandidateRelation::New)
+        };
+        store
+            .apply_candidates(&batch(&project, "b1", "h1"), &[words(vec![1, 2])])
+            .unwrap();
+        store
+            .apply_candidates(
+                &batch(&project, "b2", "h2"),
+                &[Candidate {
+                    human_offsets: Vec::new(),
+                    kind: CandidateKind::Decision,
+                    ..candidate("Ship weekly on Monday", CandidateRelation::New)
+                }],
+            )
+            .unwrap();
+        store
+            .apply_candidates(
+                &batch(&project, "b3", "h3"),
+                &[Candidate {
+                    kind: CandidateKind::Fact,
+                    ..words(vec![1, 2])
+                }],
+            )
+            .unwrap();
+        let suggested = |store: &MemoryStore| {
+            store
+                .promotion_suggestions(&project, now, 3)
+                .unwrap()
+                .into_iter()
+                .map(|suggestion| suggestion.number)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(suggested(&store), [1], "a fact is never suggested");
+
+        // Reads from three sessions, one of them older than the window.
+        for (session, at) in [
+            ("a", now),
+            ("b", now - 1),
+            ("c", now - PROMOTION_WINDOW_MS - 1),
+        ] {
+            store
+                .record_receipt(&project, "codex", session, "show", "m2@1", at)
+                .unwrap();
+        }
+        assert_eq!(suggested(&store), [1]);
+        store
+            .record_receipt(&project, "codex", "d", "show", "m2@1", now)
+            .unwrap();
+        let both = store.promotion_suggestions(&project, now, 3).unwrap();
+        assert_eq!(
+            both,
+            [
+                PromotionSuggestion {
+                    number: 1,
+                    human_source_count: 2,
+                    pulled_session_count: 0
+                },
+                PromotionSuggestion {
+                    number: 2,
+                    human_source_count: 0,
+                    pulled_session_count: 3
+                },
+            ]
+        );
+
+        let dismissed = |revision| Promotion {
+            state: PromotionState::Dismissed,
+            revision,
+            attempt: 0,
+            agent_id: None,
+            branch: None,
+            pr_number: None,
+            target_path: None,
+            updated_at_unix_ms: now,
+        };
+        store.set_promotion(&project, 1, &dismissed(1)).unwrap();
+        assert_eq!(suggested(&store), [2]);
+        let card = store.item_by_number(&project, 1).unwrap().unwrap();
+        store
+            .apply_candidates(
+                &batch(&project, "b4", "h4"),
+                &[candidate(
+                    "Lint and format before tests",
+                    CandidateRelation::Supersedes { target_id: card.id },
+                )],
+            )
+            .unwrap();
+        assert_eq!(suggested(&store), [1, 2], "the changed card is asked again");
+        assert_eq!(store.promotions(&project).unwrap()[0].1, dismissed(1));
+    }
+
+    #[test]
+    fn a_merged_card_points_at_its_file_and_is_never_given_in_full() {
+        // B10, B12, B31.
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "b1", "h1"),
+                &[Candidate {
+                    title: "Lint before tests".to_owned(),
+                    ..candidate("Run the linter before the tests", CandidateRelation::New)
+                }],
+            )
+            .unwrap();
+        let given = |store: &MemoryStore| {
+            store
+                .retrieve(&RetrievalQuery::prompt(&project, "linter tests", vec![]))
+                .unwrap()
+                .items
+                .len()
+        };
+        let index = |store: &MemoryStore| {
+            store
+                .retrieve(&RetrievalQuery::session_start(&project))
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|item| item.text)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(given(&store), 1);
+        let merged = |target_path: Option<&str>| Promotion {
+            state: PromotionState::Merged,
+            revision: 1,
+            attempt: 1,
+            agent_id: Some("agent-7".to_owned()),
+            branch: Some("hide-memory-m1".to_owned()),
+            pr_number: Some(924),
+            target_path: target_path.map(str::to_owned),
+            updated_at_unix_ms: 1,
+        };
+        store.set_promotion(&project, 1, &merged(None)).unwrap();
+        assert_eq!(given(&store), 0);
+        assert_eq!(
+            index(&store),
+            ["Lint before tests -> merged in pull request #924"]
+        );
+        store
+            .set_promotion(&project, 1, &merged(Some("AGENTS.md")))
+            .unwrap();
+        assert_eq!(index(&store), ["Lint before tests -> AGENTS.md"]);
+        assert_eq!(
+            store.promotion_suggestions(&project, 1, 3).unwrap(),
+            [],
+            "a promoted card is not suggested again"
+        );
     }
 
     #[test]

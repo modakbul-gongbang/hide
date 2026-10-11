@@ -1,5 +1,5 @@
-//! `hide memory show|search|add|forget|undo` (PRD project-memory-v2 B7,
-//! B8, B14-B16, B27, D-03, D-11).
+//! `hide memory show|search|add|forget|undo|placed` (PRD project-memory-v2
+//! B7, B8, B14-B16, B27, B30, D-03, D-11, D-25).
 //!
 //! hided names the caller from its pane capability; the core checks the
 //! caller under its lock and hands back a [`PreparedMemory`] holding what the
@@ -12,8 +12,8 @@ use crate::node::NodeId;
 use crate::node_access::NodeLink;
 use crate::runtime::RuntimeWorkerContext;
 use crate::runtime::memory_analysis::{
-    AnalysisFailure, BatchSource, MemoryChange, WeeklyUsage, admit_call, batch_identity, report_memory_change,
-    write_cards,
+    AnalysisFailure, BatchSource, MemoryChange, WeeklyUsage, admit_call, batch_identity,
+    report_memory_change, write_cards,
 };
 use hide_ai::{AiError, AiRouter, AiSettings, CancelToken};
 use hide_memory::{CandidateOutcome, MemoryItem, MemoryLifecycle, MemoryStore, card_name};
@@ -67,6 +67,12 @@ pub enum MemoryCommand {
     Undo {
         number: u64,
     },
+    /// The agent promoting card `number` names the repository file it put
+    /// the card in, which the card points at once the pull request merges.
+    Placed {
+        number: u64,
+        path: String,
+    },
 }
 
 impl MemoryCommand {
@@ -78,6 +84,7 @@ impl MemoryCommand {
             Self::Add { text } => {
                 !text.trim().is_empty() && text.chars().count() <= ADD_LIMIT_CHARS
             }
+            Self::Placed { number, path } => *number > 0 && hide_memory::repository_path(path),
         }
     }
 }
@@ -190,6 +197,38 @@ impl PreparedMemory {
                         "restored"
                     },
                 }))
+            }
+            MemoryCommand::Placed { number, path } => {
+                let (_, mut promotion) = store
+                    .promotions(&identity.id)
+                    .map_err(|error| store_failure(&identity.id, &error))?
+                    .into_iter()
+                    .find(|(card, _)| *card == number)
+                    .filter(|(_, promotion)| {
+                        matches!(
+                            promotion.state,
+                            hide_memory::PromotionState::Running
+                                | hide_memory::PromotionState::PrOpen
+                        )
+                    })
+                    .ok_or("memory_card_not_promoting")?;
+                // The file must be in the caller's checkout, the worktree the
+                // promotion's agent changed it in.
+                let inside = crate::runtime::memory_analysis::paths_inside(
+                    self.sessions_node.as_ref(),
+                    &self.checkout_path,
+                    std::slice::from_ref(&path),
+                );
+                if !inside.contains(&path) {
+                    return Err("memory_path_not_found".into());
+                }
+                promotion.target_path = Some(path.clone());
+                promotion.updated_at_unix_ms = now;
+                store
+                    .set_promotion(&identity.id, number, &promotion)
+                    .map_err(|error| store_failure(&identity.id, &error))?;
+                self.report(&identity.id, MemoryChange::Other);
+                Ok(json!({"card": card_name(number), "path": path}))
             }
             MemoryCommand::Search { words } => {
                 let items = store
@@ -400,6 +439,12 @@ pub fn next_action(code: &str) -> &'static str {
             "The card was forgotten; find another with hide memory search <words>"
         }
         "memory_text_too_long" => "Shorten the text to 4,000 characters and retry",
+        "memory_card_not_promoting" => {
+            "Only the agent Hide started to put this card in the repository names its file"
+        }
+        "memory_path_not_found" => {
+            "Name a file that exists in this checkout, relative to its root, and retry"
+        }
         "agent_pane_required" | "caller_context_changed" => {
             "Run the command from the agent's own pane and retry"
         }
@@ -550,6 +595,52 @@ mod tests {
         fn calls(&self) -> usize {
             self.backend.calls.load(Ordering::SeqCst)
         }
+    }
+
+    #[test]
+    fn only_a_card_on_its_way_into_the_repository_takes_the_file_it_was_put_in() {
+        // B30, B31: the promoting agent names the file the merged card
+        // points at; it must be a file in its checkout.
+        let fixture = Fixture::new();
+        std::fs::write(format!("{}/src/lib.rs", fixture.root), "").unwrap();
+        let placed = |path: &str| {
+            fixture.run(
+                MemoryCommand::Placed {
+                    number: 1,
+                    path: path.to_owned(),
+                },
+                false,
+            )
+        };
+        assert_eq!(
+            placed("src/lib.rs"),
+            Err("memory_card_not_promoting".into())
+        );
+
+        let running = hide_memory::Promotion {
+            state: hide_memory::PromotionState::Running,
+            revision: 1,
+            attempt: 1,
+            agent_id: Some("agent-9".into()),
+            branch: Some("hide-memory-m1".into()),
+            pr_number: None,
+            target_path: None,
+            updated_at_unix_ms: 1,
+        };
+        fixture
+            .store()
+            .set_promotion(&fixture.project_id, 1, &running)
+            .unwrap();
+        assert_eq!(
+            placed("src/missing.rs"),
+            Err("memory_path_not_found".into())
+        );
+        assert_eq!(
+            placed("src/lib.rs").unwrap(),
+            json!({"card": "m1", "path": "src/lib.rs"})
+        );
+        let promotions = fixture.store().promotions(&fixture.project_id).unwrap();
+        assert_eq!(promotions[0].1.target_path.as_deref(), Some("src/lib.rs"));
     }
 
     #[test]
@@ -812,6 +903,23 @@ mod tests {
         );
         assert!(!MemoryCommand::Show { number: 0 }.valid());
         assert!(!MemoryCommand::Forget { number: 0 }.valid());
+        for path in ["../outside.md", "/etc/hosts", "docs/./x.md", ""] {
+            assert!(
+                !MemoryCommand::Placed {
+                    number: 1,
+                    path: path.into()
+                }
+                .valid(),
+                "{path}"
+            );
+        }
+        assert!(
+            MemoryCommand::Placed {
+                number: 1,
+                path: "docs/TESTING.md".into()
+            }
+            .valid()
+        );
         assert_eq!(parse_card("m12"), Some(12));
         assert_eq!(parse_card("m0"), None);
     }

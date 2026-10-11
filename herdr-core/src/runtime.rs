@@ -28,6 +28,7 @@ mod kit;
 pub(crate) mod links;
 pub(crate) mod memory;
 pub(crate) mod memory_analysis;
+mod memory_promotion;
 mod op_timing;
 mod operations;
 mod pane_prediction;

@@ -467,8 +467,7 @@ impl Runtime {
         }
         let mut changed = false;
         for project in self.memory_work.projects.values_mut() {
-            if project.retry_at_unix_ms != 0
-                || project.analysis == MemoryAnalysisState::AiNotReady
+            if project.retry_at_unix_ms != 0 || project.analysis == MemoryAnalysisState::AiNotReady
             {
                 project.retry_at_unix_ms = 0;
                 project.failures = 0;
@@ -1545,7 +1544,12 @@ pub(super) fn validate_candidates(candidates: &mut Vec<Candidate>, events: &[Val
         .collect::<HashSet<_>>();
     let times = events
         .iter()
-        .filter_map(|event| Some((event.get("offset")?.as_u64()?, event.get("at_unix_ms")?.as_u64()?)))
+        .filter_map(|event| {
+            Some((
+                event.get("offset")?.as_u64()?,
+                event.get("at_unix_ms")?.as_u64()?,
+            ))
+        })
         .collect::<HashMap<_, _>>();
     let before = candidates.len();
     candidates.retain(|candidate| {
@@ -1583,11 +1587,25 @@ fn keep_cited_paths(sessions_node: &dyn NodeLink, checkout: &str, candidates: &m
     if cited.is_empty() {
         return;
     }
+    let kept = paths_inside(sessions_node, checkout, &cited);
+    for candidate in candidates {
+        candidate.cited_paths.retain(|path| kept.contains(path));
+    }
+}
+
+/// Which of the repository-relative `relative` paths name a file or folder
+/// inside `checkout`, as the node that holds it resolves them: one outside
+/// it, one that does not exist, or one the node cannot read is left out.
+pub(crate) fn paths_inside(
+    sessions_node: &dyn NodeLink,
+    checkout: &str,
+    relative: &[String],
+) -> HashSet<String> {
     let mut paths = vec![checkout.to_owned()];
     paths.extend(
-        cited
+        relative
             .iter()
-            .map(|relative| format!("{}/{relative}", checkout.trim_end_matches('/'))),
+            .map(|path| format!("{}/{path}", checkout.trim_end_matches('/'))),
     );
     use hide_node_link::cleanup::PathState;
     let states = crate::node_access::call_as::<Vec<PathState>>(
@@ -1595,26 +1613,23 @@ fn keep_cited_paths(sessions_node: &dyn NodeLink, checkout: &str, candidates: &m
         hide_node_link::protocol::Call::RealPaths { paths },
         SESSION_CALL_TIMEOUT,
     );
-    let kept = match states {
-        Ok(states) if states.len() == cited.len() + 1 => {
+    match states {
+        Ok(states) if states.len() == relative.len() + 1 => {
             let root = match &states[0] {
                 PathState::Real { path } => format!("{}/", path.trim_end_matches('/')),
                 _ => String::new(),
             };
-            cited
+            relative
                 .iter()
                 .zip(&states[1..])
                 .filter(|(_, state)| {
                     !root.is_empty()
                         && matches!(state, PathState::Real { path } if path.starts_with(&root))
                 })
-                .map(|(relative, _)| relative.clone())
-                .collect::<HashSet<_>>()
+                .map(|(path, _)| path.clone())
+                .collect()
         }
         _ => HashSet::new(),
-    };
-    for candidate in candidates {
-        candidate.cited_paths.retain(|path| kept.contains(path));
     }
 }
 
@@ -2249,10 +2264,7 @@ mod tests {
     fn only_hide_ai_that_cannot_answer_reaches_the_screen_and_the_rest_backs_off() {
         // B4, B23, D-27.
         let now = 1_000_000;
-        for error in [
-            AiError::NotAuthenticated,
-            AiError::NoProvider(Vec::new()),
-        ] {
+        for error in [AiError::NotAuthenticated, AiError::NoProvider(Vec::new())] {
             let (shown, retry) = analysis_after_failure(&error, 1, now);
             assert_eq!(shown, MemoryAnalysisState::AiNotReady, "{error:?}");
             assert_eq!(retry, now + SIGN_IN_RETRY_MS);

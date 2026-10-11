@@ -16,10 +16,11 @@ pub use engine::{
 pub use redaction::{RedactedText, redact};
 pub use store::{
     AnalysisBatch, ApplySummary, Candidate, CandidateKind, CandidateOutcome, CandidateRelation,
-    ComparisonCard, CursorReader, DeleteProjectOutcome, InjectedItem, Injection,
-    InjectionKind, InjectionOutcome, MemoryDetail, MemoryError, MemoryItem, MemoryLifecycle,
-    MemorySource, MemoryStore, PreviousRevision, ProjectMemoryState, ReceiptRecord, RetrievalQuery,
-    SessionCursorRecord, SessionSourceRecord, StoreMode, card_name, parse_card_name,
+    ComparisonCard, CursorReader, DeleteProjectOutcome, InjectedItem, Injection, InjectionKind,
+    InjectionOutcome, MemoryDetail, MemoryError, MemoryItem, MemoryLifecycle, MemorySource,
+    MemoryStore, PreviousRevision, ProjectMemoryState, Promotion, PromotionState,
+    PromotionSuggestion, ReceiptRecord, RetrievalQuery, SessionCursorRecord, SessionSourceRecord,
+    StoreMode, card_name, parse_card_name, repository_path,
 };
 
 /// The Memory store's file name inside a state folder.
@@ -59,6 +60,15 @@ pub const RECEIPT_STALE_AFTER_MS: u64 = 30 * 86_400_000;
 /// Analysis calls one machine makes in a UTC day (D-10 a).
 pub const DAILY_ANALYSIS_CALL_LIMIT: u64 = 1_000;
 pub const HOOK_DEADLINE_MS: u64 = 100;
+/// The bar a rule, decision or lesson card crosses to be suggested for a
+/// repository file (PRD project-memory-v2 D-25, an assumption to check
+/// against two weeks of use): the operator's words in this many sources, or
+/// reads from this many sessions within the window.
+pub const PROMOTION_HUMAN_SOURCES: u64 = 2;
+pub const PROMOTION_PULLED_SESSIONS: u64 = 3;
+pub const PROMOTION_WINDOW_MS: u64 = 14 * 86_400_000;
+/// The most suggestions open at once (B29).
+pub const PROMOTION_OPEN_LIMIT: usize = 3;
 /// Budget available after the helper reaches Rust code.
 ///
 /// The public hook contract measures from process launch, so production keeps

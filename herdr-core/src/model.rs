@@ -2467,6 +2467,9 @@ pub struct ProjectMemorySnapshot {
     /// Live cards, the most recently changed first.
     #[serde(serialize_with = "serialize_memory_rows")]
     pub rows: Arc<Vec<MemoryRowSnapshot>>,
+    /// What the operator is asked about (B28): cards suggested for a
+    /// repository file, then promotions that ended without a pull request.
+    pub questions: Vec<MemoryQuestionSnapshot>,
     pub analysis: MemoryAnalysisState,
     /// The card the last forget took away, which Undo brings back (B24).
     pub forgotten: Option<u64>,
@@ -2507,6 +2510,54 @@ pub struct MemoryRowSnapshot {
     /// Reads with `hide memory show`.
     pub pull_count: u64,
     pub updated_at_unix_ms: u64,
+    /// The card's way into the repository's own files while it is on one;
+    /// absent for a card that is not, was dismissed or whose pull request
+    /// closed unmerged (B30-B32).
+    pub promotion: Option<MemoryPromotionSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryPromotionSnapshot {
+    pub state: MemoryPromotionState,
+    /// The agent putting the card in the repository, while it runs.
+    pub agent: Option<MemoryPromotionAgentSnapshot>,
+    pub pr_number: Option<u64>,
+    /// The repository-relative file the card went into, once the agent said.
+    pub target_path: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryPromotionState {
+    Running,
+    PrOpen,
+    /// The card points at its file and is never given in full again.
+    Merged,
+    /// The agent ended without a pull request; the card is asked about again.
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryPromotionAgentSnapshot {
+    pub name: String,
+    /// The pane the agent runs in now, which the name jumps to; absent once
+    /// it left its pane.
+    pub pane_id: Option<String>,
+}
+
+/// One thing the Memory tab asks the operator (B28-B32).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MemoryQuestionSnapshot {
+    /// "저장소 문서로 올릴까요?" with the counts that crossed the bar.
+    Promote {
+        number: u64,
+        title: String,
+        human_source_count: usize,
+        pulled_session_count: usize,
+    },
+    /// The agent ended without a pull request: "PR 없이 끝남", try again.
+    Failed { number: u64, title: String },
 }
 
 /// What a card is; the same words the extraction and `hide memory show`
@@ -2580,6 +2631,11 @@ pub enum MemoryAction {
     Delete,
     Forget,
     Undo,
+    /// Start an agent that puts the card in the repository (B30); on a failed
+    /// promotion, try again.
+    Promote,
+    /// "안 올림": not until the card changes (B29).
+    Dismiss,
 }
 
 impl MemoryAction {
@@ -2590,6 +2646,8 @@ impl MemoryAction {
             Self::Delete => "delete",
             Self::Forget => "forget",
             Self::Undo => "undo",
+            Self::Promote => "promote",
+            Self::Dismiss => "dismiss",
         }
     }
 }
@@ -5593,12 +5651,31 @@ mod wire_enum_tests {
         assert_wire(&contract, "memory_analysis_state", &analysis_states);
         checked.insert("memory_analysis_state");
 
+        let promotion_states = [
+            MemoryPromotionState::Running,
+            MemoryPromotionState::PrOpen,
+            MemoryPromotionState::Merged,
+            MemoryPromotionState::Failed,
+        ];
+        for variant in promotion_states {
+            match variant {
+                MemoryPromotionState::Running
+                | MemoryPromotionState::PrOpen
+                | MemoryPromotionState::Merged
+                | MemoryPromotionState::Failed => {}
+            }
+        }
+        assert_wire(&contract, "memory_promotion_state", &promotion_states);
+        checked.insert("memory_promotion_state");
+
         let actions = [
             MemoryAction::Enable,
             MemoryAction::Disable,
             MemoryAction::Delete,
             MemoryAction::Forget,
             MemoryAction::Undo,
+            MemoryAction::Promote,
+            MemoryAction::Dismiss,
         ];
         for variant in actions {
             match variant {
@@ -5606,7 +5683,9 @@ mod wire_enum_tests {
                 | MemoryAction::Disable
                 | MemoryAction::Delete
                 | MemoryAction::Forget
-                | MemoryAction::Undo => {}
+                | MemoryAction::Undo
+                | MemoryAction::Promote
+                | MemoryAction::Dismiss => {}
             }
             assert_eq!(serde_json::to_value(variant).unwrap(), variant.as_str());
         }

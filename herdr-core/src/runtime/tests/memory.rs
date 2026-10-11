@@ -441,7 +441,10 @@ fn turning_memory_on_updates_the_hooks_first_and_then_turns_it_on() {
     let (runtime, workspace) = opened_project();
     let runtime = Arc::new(Mutex::new(runtime));
     let mut guard = runtime.lock().unwrap();
-    guard.install_worker_context(Arc::downgrade(&runtime), crate::handle::ChangeNotifier::noop());
+    guard.install_worker_context(
+        Arc::downgrade(&runtime),
+        crate::handle::ChangeNotifier::noop(),
+    );
     let diagnosis = |status| hide_agent_hooks::Diagnosis {
         runtimes: vec![hide_agent_hooks::diagnosis::RuntimeDiagnosis {
             runtime: hide_agent_hooks::AgentRuntime::Codex,
@@ -499,8 +502,7 @@ fn turning_memory_on_updates_the_hooks_first_and_then_turns_it_on() {
         version: hide_agent_hooks::HOOK_VERSION,
     }));
     assert_eq!(
-        guard.snapshot.status.last_error,
-        None,
+        guard.snapshot.status.last_error, None,
         "a second hook read starts no second enable"
     );
 }

@@ -771,10 +771,11 @@ fn run(
                     .map_err(|_| "delivery_unavailable".to_owned())
                     .and_then(|guard| {
                         if actor.code_owned() {
-                            // Only the core's Factory host holds this
-                            // authority; it has no pane to re-check.
+                            // Only the core's Factory host and Hide itself
+                            // hold this authority; neither has a pane to
+                            // re-check.
                             return guard
-                                .factory_authority_current(&authority.caller, actor)
+                                .code_owned_authority_current(&authority.caller, actor)
                                 .then_some(())
                                 .ok_or_else(|| "caller_identity_changed".into());
                         }
@@ -810,7 +811,7 @@ fn run(
                         .map_err(|_| "delivery_unavailable".to_owned())
                         .and_then(|guard| {
                             if actor.code_owned() {
-                                if !guard.factory_authority_current(&authority.caller, actor) {
+                                if !guard.code_owned_authority_current(&authority.caller, actor) {
                                     return Err("caller_identity_changed".into());
                                 }
                             } else {

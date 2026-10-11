@@ -13,8 +13,8 @@ use super::memory_analysis::MemoryChange;
 use super::*;
 use crate::model::{
     MemoryAction, MemoryAnalysisState, MemoryCardKind, MemoryCardSnapshot, MemoryPreviousSnapshot,
-    MemoryRowSnapshot, MemorySearchSnapshot, MemorySnapshot, MemorySourceSnapshot,
-    MemoryUnavailableSnapshot, ProjectMemorySnapshot,
+    MemoryQuestionSnapshot, MemoryRowSnapshot, MemorySearchSnapshot, MemorySnapshot,
+    MemorySourceSnapshot, MemoryUnavailableSnapshot, ProjectMemorySnapshot,
 };
 use hide_agent_hooks::HookStatus;
 use hide_memory::{MemoryLifecycle, MemoryStore};
@@ -39,6 +39,8 @@ pub(super) struct ProjectMemoryWork {
     /// The Project whose Memory turns on once the hook update its switch
     /// started lands, by catalog Project.
     enable_after_hook_update: Option<String>,
+    /// The tracker of the cards on their way into the repository.
+    pub(super) promotions: super::memory_promotion::PromotionTracking,
 }
 
 /// One read in flight and at most one waiting; a read whose generation is
@@ -78,6 +80,10 @@ pub(super) struct OpenedMemoryLoad {
     /// `None` when the store has never held the Project.
     state: Option<hide_memory::ProjectMemoryState>,
     rows: Vec<MemoryRowSnapshot>,
+    /// Each card's promotion, drawn on its row once the ledger names its
+    /// agent under the lock.
+    promotions: Vec<(u64, hide_memory::Promotion)>,
+    suggestions: Vec<hide_memory::PromotionSuggestion>,
     expanded: Option<MemoryCardSnapshot>,
     search: Option<MemorySearchSnapshot>,
 }
@@ -219,7 +225,10 @@ impl Runtime {
                 .devices
                 .iter()
                 .find(|device| device.id == workspace.device_id)
-                .map_or_else(|| workspace.device_id.clone(), |device| device.label.clone());
+                .map_or_else(
+                    || workspace.device_id.clone(),
+                    |device| device.label.clone(),
+                );
             return Err(MemoryUnavailableSnapshot::RemoteDevice { device_name });
         }
         Ok(workspace.path.clone())
@@ -358,9 +367,45 @@ impl Runtime {
             .state
             .as_ref()
             .is_some_and(|state| state.capacity_reached);
-        if *project.rows != load.rows {
-            project.rows = Arc::new(load.rows);
+        let mut rows = load.rows;
+        let mut questions = Vec::new();
+        let mut open = false;
+        for (number, promotion) in &load.promotions {
+            open |= matches!(
+                promotion.state,
+                hide_memory::PromotionState::Running | hide_memory::PromotionState::PrOpen
+            );
+            let snapshot = self.promotion_snapshot(promotion);
+            let Some(row) = rows.iter_mut().find(|row| row.number == *number) else {
+                continue;
+            };
+            if promotion.state == hide_memory::PromotionState::Failed {
+                questions.push(MemoryQuestionSnapshot::Failed {
+                    number: *number,
+                    title: row.title.clone(),
+                });
+            }
+            row.promotion = snapshot;
         }
+        questions.extend(load.suggestions.iter().filter_map(|suggestion| {
+            let row = rows.iter().find(|row| row.number == suggestion.number)?;
+            Some(MemoryQuestionSnapshot::Promote {
+                number: suggestion.number,
+                title: row.title.clone(),
+                human_source_count: suggestion.human_source_count,
+                pulled_session_count: suggestion.pulled_session_count,
+            })
+        }));
+        if open {
+            self.project_memory.promotions.mark_open();
+        }
+        let Some(project) = self.memory_section().project.as_mut() else {
+            return false;
+        };
+        if *project.rows != rows {
+            project.rows = Arc::new(rows);
+        }
+        project.questions = questions;
         project.expanded = load.expanded;
         project.search = load.search;
         self.sync_project_memory();
@@ -474,6 +519,26 @@ impl Runtime {
         if matches!(payload.action, MemoryAction::Disable | MemoryAction::Delete) {
             self.cancel_memory_pass();
         }
+        let start = match payload.action {
+            MemoryAction::Promote => match self.promotion_start(&path) {
+                Ok(start) => Some(start),
+                Err(reason) => {
+                    crate::diagnostic!(json!({
+                        "component": "memory",
+                        "kind": "promotion.start_unavailable",
+                        "workspace_id": payload.workspace_id,
+                        "reason": reason,
+                    }));
+                    self.set_error(
+                        "memory.promotion_unavailable",
+                        "Hide cannot start an agent for this Project right now",
+                        true,
+                    );
+                    return true;
+                }
+            },
+            _ => None,
+        };
         let action = payload.action;
         let number = payload.number;
         self.project_memory.action = Some((payload.workspace_id.clone(), action));
@@ -484,8 +549,14 @@ impl Runtime {
         let spawn = thread::Builder::new()
             .name("hide-project-memory-write".to_owned())
             .spawn(move || {
-                let result =
-                    mutate_memory(&node, sessions_node.as_ref(), &database, &path, &payload);
+                let result = mutate_memory(
+                    &node,
+                    sessions_node.as_ref(),
+                    &database,
+                    &path,
+                    &payload,
+                    start,
+                );
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -536,6 +607,7 @@ impl Runtime {
                     (MemoryAction::Undo, Some(number)) => {
                         self.note_memory_change(&project_id, MemoryChange::Undid(number))
                     }
+                    (MemoryAction::Promote, _) => self.promotions_moved(),
                     _ => {}
                 }
             }
@@ -561,7 +633,6 @@ impl Runtime {
             number: None,
         });
     }
-
 }
 
 struct MemoryActionOutcome {
@@ -575,6 +646,7 @@ fn mutate_memory(
     database: &Path,
     checkout_path: &str,
     payload: &events::MemoryActionPayload,
+    start: Option<super::memory_promotion::PromotionStart>,
 ) -> Result<MemoryActionOutcome, String> {
     let identity = project_identity(sessions_node, node, checkout_path)?;
     let mut store = MemoryStore::open(database).map_err(|error| error.to_string())?;
@@ -639,6 +711,15 @@ fn mutate_memory(
                 .ok_or_else(|| format!("m{number} has no change to undo"))?;
             Ok(outcome())
         }
+        MemoryAction::Promote => {
+            let start = start.ok_or("The promotion has no agent to start")?;
+            super::memory_promotion::start_promotion(&mut store, &identity.id, named()?, start)?;
+            Ok(outcome())
+        }
+        MemoryAction::Dismiss => {
+            super::memory_promotion::dismiss_promotion(&mut store, &identity.id, named()?)?;
+            Ok(outcome())
+        }
     }
 }
 
@@ -657,6 +738,8 @@ fn load_opened_memory(
         project_id,
         state: None,
         rows: Vec::new(),
+        promotions: Vec::new(),
+        suggestions: Vec::new(),
         expanded: None,
         search: None,
     };
@@ -720,10 +803,22 @@ fn load_opened_memory(
         }),
         None => None,
     };
+    let promotions = store
+        .promotions(&identity.id)
+        .map_err(|error| error.to_string())?;
+    let suggestions = store
+        .promotion_suggestions(
+            &identity.id,
+            super::memory::now_ms(),
+            hide_memory::PROMOTION_OPEN_LIMIT,
+        )
+        .map_err(|error| error.to_string())?;
     Ok(OpenedMemoryLoad {
         project_id: identity.id,
         state: Some(state),
         rows,
+        promotions,
+        suggestions,
         expanded,
         search,
     })
@@ -738,6 +833,7 @@ fn memory_row(item: hide_memory::MemoryItem) -> MemoryRowSnapshot {
         provided_session_count: item.provided_session_count,
         pull_count: item.pull_count,
         updated_at_unix_ms: item.updated_at_unix_ms,
+        promotion: None,
     }
 }
 
@@ -854,5 +950,169 @@ mod tests {
             "a card that is not there shows nothing"
         );
         assert_eq!(load.search, None);
+    }
+
+    #[test]
+    fn a_read_puts_each_promotion_on_its_row_and_asks_only_about_suggestions_and_failures() {
+        // B28-B32.
+        use crate::model::{MemoryPromotionSnapshot, MemoryPromotionState};
+        use hide_memory::{Promotion, PromotionState};
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let root = std::fs::canonicalize(root)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let node: Arc<dyn crate::node_access::NodeLink> =
+            Arc::new(hide_node::Local::new(Some(temp.path().join("home"))));
+        let identity = project_identity(node.as_ref(), &crate::node::test_node(), &root).unwrap();
+        let database = temp.path().join("memory.sqlite3");
+        let mut store = MemoryStore::open(&database).unwrap();
+        store
+            .ensure_project(&identity.id, &identity.root, crate::node::TEST_NODE)
+            .unwrap();
+        store.set_enabled(&identity.id, true, true).unwrap();
+        let card = |text: &str, kind, human: Vec<u64>| Candidate {
+            text: text.to_owned(),
+            title: text.to_owned(),
+            aliases: Vec::new(),
+            kind,
+            confidence: 0.9,
+            salience: 0.9,
+            source_offsets: human.clone(),
+            human_offsets: human,
+            source_times: Default::default(),
+            cited_paths: Vec::new(),
+            relation: CandidateRelation::New,
+        };
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "b".to_owned(),
+                    project_id: identity.id.clone(),
+                    provider: "codex".to_owned(),
+                    analysis_provider: "codex".to_owned(),
+                    session_id: "s-1".to_owned(),
+                    content_hash: "h".to_owned(),
+                    created_at_unix_ms: 1,
+                },
+                &[
+                    card("Lint runs before tests", CandidateKind::Rule, vec![1, 2]),
+                    card(
+                        "Releases are tagged on main",
+                        CandidateKind::Decision,
+                        vec![3],
+                    ),
+                    card(
+                        "Migrations never rewrite a column",
+                        CandidateKind::Lesson,
+                        vec![4],
+                    ),
+                    card(
+                        "The service listens on port 8080",
+                        CandidateKind::Fact,
+                        vec![5, 6],
+                    ),
+                ],
+            )
+            .unwrap();
+        let promotion = |state, pr_number| Promotion {
+            state,
+            revision: 1,
+            attempt: 1,
+            agent_id: Some("agent-1".to_owned()),
+            branch: Some("hide-memory-m1".to_owned()),
+            pr_number,
+            target_path: None,
+            updated_at_unix_ms: 1,
+        };
+        store
+            .set_promotion(&identity.id, 2, &promotion(PromotionState::Failed, None))
+            .unwrap();
+        store
+            .set_promotion(
+                &identity.id,
+                3,
+                &promotion(PromotionState::PrOpen, Some(924)),
+            )
+            .unwrap();
+        drop(store);
+        let load = load_opened_memory(
+            &crate::node::test_node(),
+            node.as_ref(),
+            &database,
+            &root,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let mut runtime = crate::runtime::tests::runtime();
+        runtime.ingest_session(Ok(crate::runtime::tests::context_payload()));
+        let workspace = runtime.snapshot.navigator.workspaces[0].id.clone();
+        runtime.open_project_memory(Some(workspace));
+        let generation = runtime.project_memory.reads.begin().unwrap();
+        runtime.project_memory.promotions = Default::default();
+        assert!(runtime.ingest_project_memory(generation, Ok(load)));
+
+        let project = runtime
+            .snapshot
+            .memory
+            .as_ref()
+            .unwrap()
+            .project
+            .as_ref()
+            .unwrap();
+        let mut promotions = project
+            .rows
+            .iter()
+            .map(|row| {
+                (
+                    row.number,
+                    row.promotion.as_ref().map(|promotion| promotion.state),
+                )
+            })
+            .collect::<Vec<_>>();
+        promotions.sort_by_key(|(number, _)| *number);
+        assert_eq!(
+            promotions,
+            vec![
+                (1, None),
+                (2, Some(MemoryPromotionState::Failed)),
+                (3, Some(MemoryPromotionState::PrOpen)),
+                (4, None),
+            ]
+        );
+        assert_eq!(
+            project
+                .rows
+                .iter()
+                .find(|row| row.number == 3)
+                .unwrap()
+                .promotion,
+            Some(MemoryPromotionSnapshot {
+                state: MemoryPromotionState::PrOpen,
+                agent: None,
+                pr_number: Some(924),
+                target_path: None,
+            })
+        );
+        assert_eq!(
+            project.questions,
+            vec![
+                MemoryQuestionSnapshot::Failed {
+                    number: 2,
+                    title: "Releases are tagged on main".to_owned(),
+                },
+                MemoryQuestionSnapshot::Promote {
+                    number: 1,
+                    title: "Lint runs before tests".to_owned(),
+                    human_source_count: 2,
+                    pulled_session_count: 0,
+                },
+            ],
+            "a fact is never suggested, an open pull request asks nothing"
+        );
     }
 }
