@@ -39,6 +39,13 @@ export async function measure(page) {
       const style = getComputedStyle(part);
       const truncates = style.textOverflow === "ellipsis" || style.webkitLineClamp !== "none";
       if (part.scrollWidth > part.clientWidth + 1 && !truncates && style.overflowX !== "visible") rowsFit.push(`${part.textContent.trim().slice(0, 40)} is cut off`);
+      // An ellipsis shortens a line sideways only; a box shorter than its text cuts the letters themselves (B41).
+      if (part.scrollHeight > part.clientHeight + 1 && style.overflowY !== "visible") rowsFit.push(`${part.textContent.trim().slice(0, 40)} is cut off at the bottom`);
+    }
+    // A tile's mark keeps its size: a tile too short for its lines shrinks the mark first.
+    for (const mark of dialog.querySelectorAll("[data-onboarding-tile] > [aria-hidden]:not(.absolute)")) {
+      const size = getComputedStyle(mark);
+      if (visible(mark) && Math.abs(mark.getBoundingClientRect().height - parseFloat(size.width)) > 0.5) rowsFit.push(`${describe(mark.parentElement)}: its mark is squeezed to ${Math.round(mark.getBoundingClientRect().height)}px`);
     }
     if (dialog.scrollWidth > dialog.clientWidth + 1) overflow.push(`the wizard scrolls sideways ${dialog.scrollWidth} > ${dialog.clientWidth}`);
     const box = dialog.getBoundingClientRect();

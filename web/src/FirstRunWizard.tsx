@@ -305,7 +305,7 @@ function AgentTile({ agent, on, status, disabled, onToggle }: { agent: KitAgent;
     );
   const body: ReactNode = (
     <>
-      <span className={cn("flex size-(--size-agent-logo) items-center justify-center overflow-hidden rounded-md bg-(--logo-plate)", dim)} aria-hidden="true">
+      <span className={cn("flex size-(--size-agent-logo) shrink-0 items-center justify-center overflow-hidden rounded-md bg-(--logo-plate)", dim)} aria-hidden="true">
         {logo ? (
           <img src={logo} alt="" className="size-full object-contain p-xs" data-agent-logo={agent.id} />
         ) : (
@@ -320,7 +320,8 @@ function AgentTile({ agent, on, status, disabled, onToggle }: { agent: KitAgent;
       </span>
     </>
   );
-  const base = "relative flex h-(--size-onboarding-tile) min-w-0 flex-col items-center justify-center gap-xs rounded-md border p-sm text-center";
+  // The tile grows past its size when the interface text is larger, so its mark keeps its size and no line is cut (B41).
+  const base = "relative flex min-h-(--size-onboarding-tile) min-w-0 flex-col items-center justify-center gap-xs rounded-md border p-sm text-center";
   if (!switchable) {
     return (
       <div className={cn(base, "border-border")} data-onboarding-tile={`${agent.id}:unavailable`}>
