@@ -1584,3 +1584,159 @@ fn a_node_pull_request_is_handed_to_an_agent_on_the_node() {
         "{opened:?}"
     );
 }
+
+/// A GitHub issue #number of acme/app as the issue read answers it.
+fn graphql_issue(number: u32) -> String {
+    format!(
+        r#"{{"data":{{"r0":{{"issue":{{"number":{number},"title":"Issue {number}","url":"https://github.com/acme/app/issues/{number}","state":"OPEN","updatedAt":"2026-10-10T09:00:00Z","createdAt":"2026-10-09T09:00:00Z","closedAt":null,"labels":{{"nodes":[]}}}}}}}}}}"#
+    )
+}
+
+/// The node project's GitHub answer listing `numbers`.
+fn ingest_node_issues(runtime: &mut Runtime, repo: &Repo, numbers: &[u32]) {
+    runtime.ingest_device_github(
+        NODE,
+        crate::model::GithubSnapshot {
+            projects: vec![crate::model::GithubProjectSnapshot {
+                pull_requests_read: true,
+                issues_read: true,
+                issues: crate::issues::ProjectIssuesSnapshot {
+                    repository: Some("acme/app".to_owned()),
+                    issues: numbers
+                        .iter()
+                        .map(|number| github_issue("acme/app", *number, "work"))
+                        .collect(),
+                    ..Default::default()
+                },
+                root_path: repo.root.clone(),
+                status: crate::model::GithubStatusSnapshot {
+                    available: true,
+                    last_success_at_unix_ms: Some(5),
+                    ..Default::default()
+                },
+                pull_requests: Vec::new(),
+            }],
+        },
+    );
+}
+
+fn node_checkout_issue(runtime: &Runtime, path: &str) -> Option<(u32, String)> {
+    node_project(runtime)?
+        .checkouts
+        .iter()
+        .find(|checkout| checkout.path == path)?
+        .issue
+        .as_ref()
+        .map(|link| (link.issue.reference.number, link.source.clone()))
+}
+
+/// A node checkout links the issue an agent it delegated to names, as one
+/// of this machine's does: the child's pane in another checkout carries the
+/// token, and the lineage names the parent's pane its ancestor.
+#[test]
+fn a_node_checkout_links_the_issue_its_delegated_child_names() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    let shared = node_runtime(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+    );
+    let mut runtime = shared.lock().unwrap();
+    ingest_node_issues(&mut runtime, &repo, &[9]);
+    let parent = format!("remote:{NODE}:pane:t1");
+    let child = format!("remote:{NODE}:pane:t2");
+    let mut raw = session(vec![
+        herdr_workspace(NODE, "w1", &repo.root, &[("t1", &repo.root)]),
+        herdr_workspace(NODE, "w2", &repo.linked, &[("t2", &repo.linked)]),
+    ]);
+    raw.agents = crate::sidebar::project_agents(
+        crate::sidebar::owned_label_fixture(serde_json::json!({"agents": [
+            {"pane_id": parent, "agent": "claude", "agent_status": "working", "state_change_seq": 1},
+            {"pane_id": child, "agent": "claude", "agent_status": "working", "state_change_seq": 1}
+        ]}))
+        .unwrap(),
+    )
+    .agents;
+    raw.agents[1].declared_parent_pane_id = Some("t1".to_owned());
+    raw.agents[1].declared_parent_session = Some(crate::sidebar::fixture_lineage_session());
+    raw.issue_tokens
+        .panes
+        .insert(child.clone(), "acme/app#9".to_owned());
+    runtime.ingest_remote_session(NODE, Ok(raw));
+    // The node's next answer derives the session with the published lineage.
+    runtime.refresh_device_catalog(NODE);
+    assert_eq!(
+        node_checkout_issue(&runtime, &repo.root),
+        Some((9, "pane 토큰".to_owned()))
+    );
+}
+
+/// A node write that may have left its token behind keeps that value from
+/// reading as a direct link until the node's Herdr shows how it settled, as
+/// this machine's failed write does; a later value is a link again.
+#[test]
+fn a_failed_node_write_s_token_is_not_drawn_as_a_direct_link() {
+    let repo = repo(Some("https://github.com/acme/app.git"), "feature");
+    let own = Recording::of(None);
+    *own.gh_answers.lock().unwrap() = vec![("api graphql", graphql_issue(5))];
+    let workspaces = |token: Option<&str>| {
+        let mut linked = herdr_workspace(NODE, "w2", &repo.linked, &[("t2", &repo.linked)]);
+        linked.checkouts[0].owner_workspace_id = Some("w2".to_owned());
+        let mut raw = session(vec![
+            herdr_workspace(NODE, "w1", &repo.root, &[("t1", &repo.root)]),
+            linked,
+        ]);
+        if let Some(token) = token {
+            raw.issue_tokens
+                .workspaces
+                .insert("w2".to_owned(), token.to_owned());
+        }
+        raw
+    };
+    let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
+        hide_herdr_client::LocalSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+    );
+    let shared = node_runtime_with(
+        &repo,
+        FakeDevice::new(),
+        own,
+        Default::default(),
+        connector,
+        workspaces(None).workspaces,
+    );
+    let checkout_id = {
+        let mut runtime = shared.lock().unwrap();
+        ingest_node_issues(&mut runtime, &repo, &[5, 6]);
+        let project = node_project(&runtime).unwrap();
+        let linked = project
+            .checkouts
+            .iter()
+            .find(|checkout| checkout.path == repo.linked)
+            .unwrap();
+        assert_eq!(linked.owner_workspace_id.as_deref(), Some("w2"));
+        linked.id.clone()
+    };
+    // The node's Herdr cannot be reached, so the token write and its
+    // rollback both fail and the token may have landed.
+    dispatch(
+        &shared,
+        "set_checkout_issue",
+        serde_json::json!({"checkout_id": checkout_id, "text": "#5"}),
+    );
+    wait(&shared, "the write to fail", |runtime| {
+        runtime
+            .snapshot
+            .task_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase == "failed")
+    });
+    let mut runtime = shared.lock().unwrap();
+    runtime.ingest_remote_session(NODE, Ok(workspaces(Some("acme/app#5"))));
+    assert_eq!(node_checkout_issue(&runtime, &repo.linked), None);
+    runtime.ingest_remote_session(NODE, Ok(workspaces(Some("acme/app#6"))));
+    assert_eq!(
+        node_checkout_issue(&runtime, &repo.linked),
+        Some((6, "직접 연결".to_owned()))
+    );
+}

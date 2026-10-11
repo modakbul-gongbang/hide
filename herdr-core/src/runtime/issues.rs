@@ -48,8 +48,6 @@ impl Runtime {
         let mut candidates = BTreeMap::new();
         let mut refresh = BTreeSet::new();
         let mut changed = false;
-        let family_tokens =
-            family_tokens(&self.issue_tokens.panes, &self.snapshot.navigator.agents);
 
         let sessions: BTreeMap<_, _> = self
             .snapshot
@@ -67,19 +65,17 @@ impl Runtime {
                 })
             })
             .collect();
-        self.unconfirmed_issue_tokens.retain(|id, token| {
-            if !self.last_session_spaces.iter().any(|space| &space.id == id) {
-                return false;
-            }
-            if self.issue_tokens.workspaces.get(id) == Some(&token.value) {
-                token.observed = true;
-                true
-            } else {
-                // A delayed event for the failed write must be seen before a
-                // later replacement/clear can confirm reconciliation.
-                !token.observed
-            }
-        });
+        let spaces = &self.last_session_spaces;
+        settle_unconfirmed(
+            &mut self.unconfirmed_issue_tokens,
+            &self.issue_tokens.workspaces,
+            |id| spaces.iter().any(|space| space.id == id),
+        );
+        let links = LinkTokens::new(
+            &self.issue_tokens,
+            Some(&self.unconfirmed_issue_tokens),
+            &self.snapshot.navigator.agents,
+        );
         let sources = self.snapshot.ui_state.project_issue_sources.clone();
         let mut local_links = BTreeMap::new();
         for workspace in &mut self.snapshot.navigator.workspaces {
@@ -109,31 +105,19 @@ impl Runtime {
                     }
                     continue;
                 }
-                let physical: BTreeSet<_> = checkout
-                    .tabs
-                    .iter()
-                    .flat_map(|tab| tab.panes.iter().map(|pane| pane.id.clone()))
-                    .collect();
-                let manual = sessions.get(&checkout.id).and_then(|id| {
-                    self.issue_tokens.workspaces.get(id).filter(|value| {
-                        !self
-                            .unconfirmed_issue_tokens
-                            .get(id)
-                            .is_some_and(|token| token.value == **value)
-                    })
-                });
-                let pane = pane_token(&family_tokens, &physical);
                 let repository = workspace.home_issues.repository.as_deref();
-                let candidate = match chain_link(local_source, manual, pane, checkout, repository) {
-                    // A Local project's link is the same chain read as a
-                    // local id; it names no GitHub issue.
-                    Some(ChainLink::Local(number)) => {
-                        local_links.insert(checkout.id.clone(), number);
-                        None
-                    }
-                    Some(ChainLink::Github(candidate)) => Some(candidate),
-                    None => None,
-                };
+                let session = sessions.get(&checkout.id).map(String::as_str);
+                let candidate =
+                    match links.checkout_link(session, checkout, local_source, repository) {
+                        // A Local project's link is the same chain read as a
+                        // local id; it names no GitHub issue.
+                        Some(ChainLink::Local(number)) => {
+                            local_links.insert(checkout.id.clone(), number);
+                            None
+                        }
+                        Some(ChainLink::Github(candidate)) => Some(candidate),
+                        None => None,
+                    };
                 if local_source {
                     if checkout.issue.is_some() {
                         checkout.issue = None;
@@ -484,6 +468,11 @@ impl Runtime {
             Ok(issue) => {
                 let token = (!request.purpose.is_empty()).then(|| request.purpose.clone());
                 if let Some(owner) = &request.session_workspace_id
+                    && let Some(unconfirmed) = self.unconfirmed_node_issue_tokens.get_mut(node)
+                {
+                    unconfirmed.remove(owner);
+                }
+                if let Some(owner) = &request.session_workspace_id
                     && let Some(raw) = self.device_raw_sessions.get_mut(node)
                 {
                     match &token {
@@ -533,6 +522,20 @@ impl Runtime {
                     "checkout_id": request.checkout_id,
                     "unconfirmed_token": error.unconfirmed_token,
                 }));
+                if error.unconfirmed_token
+                    && let Some(owner) = &request.session_workspace_id
+                {
+                    self.unconfirmed_node_issue_tokens
+                        .entry(node.to_owned())
+                        .or_default()
+                        .insert(
+                            owner.clone(),
+                            UnconfirmedIssueToken {
+                                value: request.purpose.clone(),
+                                observed: false,
+                            },
+                        );
+                }
                 self.push_diagnostic("checkout_issue.save_failed", error.detail);
                 if let Some(operation) = self.snapshot.task_operation.as_mut() {
                     operation.phase = "failed".into();
@@ -541,6 +544,25 @@ impl Runtime {
         }
         self.refresh_device_catalog(node);
         true
+    }
+
+    /// Settles a node's unconfirmed tokens against the tokens its Herdr
+    /// reports now, by the rule this machine's follow (`settle_unconfirmed`).
+    pub(super) fn settle_node_issue_tokens(&mut self, node: &str, raw: &RemoteSessionSnapshot) {
+        let Some(unconfirmed) = self.unconfirmed_node_issue_tokens.get_mut(node) else {
+            return;
+        };
+        settle_unconfirmed(unconfirmed, &raw.issue_tokens.workspaces, |id| {
+            raw.workspaces.iter().any(|workspace| {
+                workspace
+                    .session_workspace_ids
+                    .iter()
+                    .any(|known| known == id)
+            })
+        });
+        if unconfirmed.is_empty() {
+            self.unconfirmed_node_issue_tokens.remove(node);
+        }
     }
 }
 
@@ -1511,7 +1533,21 @@ impl Runtime {
         let listed = self.device_worktrees.get(target);
         let github = self.device_github.get(target);
         let sources = &self.snapshot.ui_state.project_issue_sources;
-        let family = family_tokens(&session.issue_tokens.panes, &session.agents);
+        // The agents a pane delegated to are known from the lineage, which
+        // only the published session carries; a first derive has none yet.
+        let lineage = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == target)
+            .and_then(|status| status.session.as_ref())
+            .map_or(&session.agents, |published| &published.agents);
+        let links = LinkTokens::new(
+            &session.issue_tokens,
+            self.unconfirmed_node_issue_tokens.get(target),
+            lineage,
+        );
         let (read, _) = self.node_github_repositories(target);
         for workspace in &mut session.workspaces {
             let found = github.and_then(|github| github.project(&workspace.path));
@@ -1546,17 +1582,8 @@ impl Runtime {
                     .branch
                     .as_ref()
                     .and_then(|branch| notes?.get(branch)?.issue.clone());
-                let manual = checkout
-                    .owner_workspace_id
-                    .as_ref()
-                    .and_then(|owner| session.issue_tokens.workspaces.get(owner));
-                let physical: BTreeSet<String> = checkout
-                    .tabs
-                    .iter()
-                    .flat_map(|tab| tab.panes.iter().map(|pane| pane.id.clone()))
-                    .collect();
-                let pane = pane_token(&family, &physical);
-                checkout.issue = match chain_link(local, manual, pane, checkout, repository) {
+                let owner = checkout.owner_workspace_id.as_deref();
+                checkout.issue = match links.checkout_link(owner, checkout, local, repository) {
                     Some(ChainLink::Local(number)) => {
                         local_links.insert(checkout.id.clone(), number);
                         None
@@ -1597,7 +1624,11 @@ impl Runtime {
         else {
             return BTreeMap::new();
         };
-        let family = family_tokens(&session.issue_tokens.panes, &session.agents);
+        let tokens = LinkTokens::new(
+            &session.issue_tokens,
+            self.unconfirmed_node_issue_tokens.get(target),
+            &session.agents,
+        );
         let sources = &self.snapshot.ui_state.project_issue_sources;
         let listed = self.device_worktrees.get(target);
         let mut links = BTreeMap::new();
@@ -1617,22 +1648,13 @@ impl Runtime {
                 .checkouts
                 .iter()
                 .filter_map(|checkout| {
-                    let manual = checkout
-                        .owner_workspace_id
-                        .as_ref()
-                        .and_then(|owner| session.issue_tokens.workspaces.get(owner));
-                    let physical: BTreeSet<String> = checkout
-                        .tabs
-                        .iter()
-                        .flat_map(|tab| tab.panes.iter().map(|pane| pane.id.clone()))
-                        .collect();
-                    let pane = pane_token(&family, &physical);
                     let repository = workspace.home_issues.repository.clone().or_else(|| {
                         listed
                             .and_then(|listed| listed.projects.get(&workspace.path))
                             .and_then(|project| project.repository.clone())
                     });
-                    match chain_link(false, manual, pane, checkout, repository.as_deref())? {
+                    let owner = checkout.owner_workspace_id.as_deref();
+                    match tokens.checkout_link(owner, checkout, false, repository.as_deref())? {
                         ChainLink::Github(candidate) => Some(candidate.reference),
                         ChainLink::Local(_) => None,
                     }
@@ -1653,6 +1675,82 @@ impl Runtime {
 enum ChainLink {
     Local(u32),
     Github(IssueCandidate),
+}
+
+/// What one machine's Herdr says about its checkouts' links, gathered once
+/// per pass, for this machine's checkouts and a node's alike: each Herdr
+/// workspace's manual token, the values a failed write here may have left
+/// unconfirmed there, and each pane's token with those of every agent it
+/// delegated to.
+struct LinkTokens<'a> {
+    workspaces: &'a BTreeMap<String, String>,
+    unconfirmed: Option<&'a BTreeMap<String, UnconfirmedIssueToken>>,
+    family: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl<'a> LinkTokens<'a> {
+    /// `agents` carry the lineage that names a pane's descendants.
+    fn new(
+        tokens: &'a crate::wire::IssueTokens,
+        unconfirmed: Option<&'a BTreeMap<String, UnconfirmedIssueToken>>,
+        agents: &[crate::model::SidebarAgentSnapshot],
+    ) -> Self {
+        Self {
+            workspaces: &tokens.workspaces,
+            unconfirmed,
+            family: family_tokens(&tokens.panes, agents),
+        }
+    }
+
+    /// A checkout's issue by the link chain (`chain_link`): the manual token
+    /// of the Herdr workspace that carries it (`session`), unless it is a
+    /// value a failed write left unconfirmed, then its panes' and their
+    /// descendants' tokens, its branch note, its pull request and its branch.
+    fn checkout_link(
+        &self,
+        session: Option<&str>,
+        checkout: &crate::model::CheckoutSnapshot,
+        local: bool,
+        repository: Option<&str>,
+    ) -> Option<ChainLink> {
+        let manual = session.and_then(|id| {
+            self.workspaces.get(id).filter(|value| {
+                !self
+                    .unconfirmed
+                    .and_then(|unconfirmed| unconfirmed.get(id))
+                    .is_some_and(|token| token.value == **value)
+            })
+        });
+        let physical: BTreeSet<String> = checkout
+            .tabs
+            .iter()
+            .flat_map(|tab| tab.panes.iter().map(|pane| pane.id.clone()))
+            .collect();
+        let pane = pane_token(&self.family, &physical);
+        chain_link(local, manual, pane, checkout, repository)
+    }
+}
+
+/// Keeps a failed write's token aside until the machine's own tokens show
+/// how it settled: while the value is the one the write may have left, it is
+/// not a link; a delayed event for that write must be seen before a later
+/// replacement or clear confirms it, and a workspace that is gone drops it.
+fn settle_unconfirmed(
+    unconfirmed: &mut BTreeMap<String, UnconfirmedIssueToken>,
+    tokens: &BTreeMap<String, String>,
+    live: impl Fn(&str) -> bool,
+) {
+    unconfirmed.retain(|id, token| {
+        if !live(id) {
+            return false;
+        }
+        if tokens.get(id) == Some(&token.value) {
+            token.observed = true;
+            true
+        } else {
+            !token.observed
+        }
+    });
 }
 
 /// Each pane's issue token and every descendant agent's, by pane, so a

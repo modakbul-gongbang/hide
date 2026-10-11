@@ -1516,6 +1516,10 @@ pub struct Runtime {
     issue_candidates: BTreeMap<String, crate::issues::IssueCandidate>,
     issue_write_pending: Option<issues::IssueWritePending>,
     unconfirmed_issue_tokens: BTreeMap<String, issues::UnconfirmedIssueToken>,
+    /// The same, for each node that dials this core, by its Herdr's
+    /// workspace ids; kept while the node's session is.
+    unconfirmed_node_issue_tokens:
+        BTreeMap<String, BTreeMap<String, issues::UnconfirmedIssueToken>>,
     /// Every project's Local issues, read when the runtime is created; `Err`
     /// holds why the file could not be read, and then no change is accepted,
     /// so a damaged file is never replaced by a partial one.
@@ -2091,6 +2095,7 @@ impl Runtime {
             issue_candidates: Default::default(),
             issue_write_pending: None,
             unconfirmed_issue_tokens: BTreeMap::new(),
+            unconfirmed_node_issue_tokens: BTreeMap::new(),
             local_issues: match &local_issues_path {
                 Some(path) => crate::local_issues::load(path),
                 None => Ok(crate::local_issues::LocalIssueStore::default()),

@@ -675,6 +675,7 @@ impl Runtime {
     /// machine, forgets those answers too (`forget_device_directories`).
     pub(super) fn forget_device_catalog(&mut self, target: &str) {
         self.device_raw_sessions.remove(target);
+        self.unconfirmed_node_issue_tokens.remove(target);
         self.device_recent_tabs.remove(target);
         self.created_device_tabs
             .retain(|(owner, _), _| owner != target);

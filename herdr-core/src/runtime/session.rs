@@ -1872,6 +1872,7 @@ impl Runtime {
         }
         let fetched = fetched.map(|mut raw| {
             self.clamp_device_created_tabs(target_id, &mut raw, None);
+            self.settle_node_issue_tokens(target_id, &raw);
             // Keep the complete core projection when Herdr's facts did not
             // move. Rebuilding raw rows would temporarily discard resolved
             // state and cross-device lineage, making every idle fetch publish.
