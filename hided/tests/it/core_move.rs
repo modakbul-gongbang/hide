@@ -2108,7 +2108,17 @@ fn a_failed_pull_restarts_the_source_unchanged() -> Result<()> {
         fixture.event("core_move", json!({"action": "back"}))?;
         let journal = back_journal_until(&fixture, "rolled_back")?;
         ensure!(journal["phase"]["failed"] == "copy", "{journal}");
-        ensure!(fixture.role()? == "node");
+        // The journal says rolled back before the node role starts (#962).
+        wait_for("the window a node again", || {
+            Ok((fixture.role()? == "node").then_some(()))
+        })?;
+        // Nothing of the move is left to remove: the staging folder it
+        // could not make holds nothing.
+        ensure!(
+            records(&fixture, "rollback.unclean")?.is_empty(),
+            "{}",
+            fixture.log_tail(&fixture.source)
+        );
         let restarted = fixture.target_core()?.context("no core on the target")?;
         ensure!(restarted != core, "the target's core never stopped");
         ensure!(fixture.target.record("core-handover.json")?.is_none());
