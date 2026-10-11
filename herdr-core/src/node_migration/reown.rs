@@ -1621,4 +1621,286 @@ mod tests {
             vec![C]
         );
     }
+
+    /// The stores a move rewrites that the core loads whole and writes whole.
+    /// `labels.json` is not one: its writer keeps the owner's records only,
+    /// and a moved machine's are taken into memory
+    /// (`the_labels_a_move_carries_reach_the_new_core_in_memory_and_never_its_disk`).
+    const READ_AND_WRITTEN_WHOLE: [&str; 4] =
+        [CORE_STATE, WORKSPACE_VIEWS, DELIVERY_LEDGER, LOCAL_ISSUES];
+
+    /// `file` in `state` as the core's own reader loads it and its own writer
+    /// writes it back: what the store holds after the new core's first save.
+    fn through_its_reader(state: &Path, file: &str) -> Value {
+        let path = state.join(file);
+        let out = tempfile::tempdir().unwrap();
+        let written = out.path().join(file);
+        match file {
+            CORE_STATE => {
+                let (ui, sizes, disposition) = crate::persistence::load(&path);
+                assert_eq!(
+                    disposition,
+                    crate::persistence::LoadDisposition::Loaded,
+                    "{file}"
+                );
+                crate::persistence::save(&written, &ui, &sizes).unwrap();
+            }
+            WORKSPACE_VIEWS => {
+                let (views, outcome) = crate::workspace_views::load(&path, 0);
+                assert!(
+                    matches!(
+                        &outcome,
+                        crate::workspace_views::LoadOutcome::Loaded { repairs, .. } if repairs.is_empty()
+                    ),
+                    "{file}: {outcome:?}"
+                );
+                crate::workspace_views::save(&written, &views).unwrap();
+            }
+            DELIVERY_LEDGER => {
+                let ledger = crate::delivery::ledger::load(&path).unwrap();
+                crate::delivery::ledger::save(&written, &ledger).unwrap();
+            }
+            LOCAL_ISSUES => {
+                let store = crate::local_issues::load(&path).unwrap();
+                crate::local_issues::save(&written, &store).unwrap();
+            }
+            other => panic!("no reader for {other}"),
+        }
+        read(&written)
+    }
+
+    /// Every value under `value` that holds something, by its place.
+    fn leaves(value: &Value, at: &str, out: &mut BTreeMap<String, Value>) {
+        match value {
+            Value::Object(map) => {
+                for (key, entry) in map {
+                    leaves(entry, &format!("{at}/{key}"), out);
+                }
+            }
+            Value::Array(items) => {
+                for (index, entry) in items.iter().enumerate() {
+                    leaves(entry, &format!("{at}/{index}"), out);
+                }
+            }
+            Value::Null => {}
+            leaf => {
+                out.insert(at.to_owned(), leaf.clone());
+            }
+        }
+    }
+
+    /// The store's own empty file, with `fields` in place of its own.
+    fn store_with(file: &str, path: &Path, fields: Value) {
+        match file {
+            CORE_STATE => crate::persistence::save(
+                path,
+                &crate::model::UiStateSnapshot::default(),
+                &Default::default(),
+            )
+            .unwrap(),
+            WORKSPACE_VIEWS => crate::workspace_views::save(
+                path,
+                &crate::workspace_views::WorkspaceViews::default(),
+            )
+            .unwrap(),
+            DELIVERY_LEDGER => {
+                crate::delivery::ledger::save(path, &crate::delivery::ledger::Ledger::default())
+                    .unwrap()
+            }
+            LOCAL_ISSUES => {
+                crate::local_issues::save(path, &crate::local_issues::LocalIssueStore::default())
+                    .unwrap()
+            }
+            other => panic!("no writer for {other}"),
+        }
+        let mut value = read(path);
+        for (key, field) in fields.as_object().unwrap() {
+            value[key] = field.clone();
+        }
+        // Private, as every store's writer leaves its file.
+        hide_platform::fs::atomic::write_file_durable(
+            path,
+            &serde_json::to_vec(&value).unwrap(),
+            hide_platform::fs::Access::Private,
+        )
+        .unwrap();
+    }
+
+    fn local_issue(number: u32, title: &str) -> Value {
+        json!({"number": number, "title": title, "body": "", "open": true,
+               "created_at_unix_ms": 1, "updated_at_unix_ms": 1})
+    }
+
+    /// A folder the MacBook's core wrote through each store's own writer,
+    /// holding something in every place a move's whole-file code changes:
+    /// the owner's and the devices' expanded paths and registrations, the
+    /// agents' host scopes, a spawn on each machine, View layouts naming
+    /// tabs, and the owner's and the mini's Local issues.
+    fn reader_folder() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path();
+        let panes = before("pane");
+        let checkouts = before("checkout");
+        let registrations = before("registration");
+        let tabs = before("tab");
+        store_with(
+            CORE_STATE,
+            &state.join(CORE_STATE),
+            json!({
+                "workspace_registrations": [
+                    {"id": registrations[0], "label": "alpha", "path": M_ROOT, "device_id": M, "primary_checkout_id": checkouts[0], "pinned": false},
+                    {"id": registrations[1], "label": "beta", "path": C_ROOT, "device_id": ALIAS, "primary_checkout_id": checkouts[1], "pinned": false},
+                ],
+                "device_registrations": [mini_registration(), {"id": X, "label": "Studio", "ssh_alias": "studio"}],
+                "focused_device_id": ALIAS,
+                "expanded_paths": [M_ROOT],
+                "device_expanded_paths": {ALIAS: [C_ROOT], X: [X_ROOT]},
+                "selected_pane_id": panes[1],
+            }),
+        );
+        let layout = |tab: &str| {
+            json!({
+                "root": {"area": {"id": "a1", "active": tab, "displays": [{"id": tab}]}},
+                "active_area": "a1", "next_id": 2, "canvases": {"a1": tab},
+            })
+        };
+        store_with(
+            WORKSPACE_VIEWS,
+            &state.join(WORKSPACE_VIEWS),
+            json!({"workspaces": [
+                {"device_id": M, "path": M_ROOT, "agent_layout": layout(&tabs[0])},
+                {"device_id": ALIAS, "path": C_ROOT, "agent_layout": layout(&tabs[1])},
+            ]}),
+        );
+        // The ledger's own rule: an agent's actor is on its machine and names
+        // its session by digest.
+        let actor = |index: usize, machine: &str| {
+            json!({"pane_id": panes[index], "name": "a", "kind": "claude",
+            "device_id": machine, "session": crate::wire::session_digest(&format!("s{index}"))})
+        };
+        // `native_machine` is the machine's own node id, as its agent hooks report it.
+        let agent = |index: usize, machine: &str, native: &str, scope: &str, root: &str| {
+            json!({"id": format!("agent-{}", index + 1), "name": "a", "machine": machine, "host_scope": scope,
+                   "native_machine": native, "session": format!("s{index}"), "instance": format!("t{index}"),
+                   "pane": "w1:p1", "parent": null, "project": root, "actor": actor(index, machine), "ended": false})
+        };
+        let spawn = |index: usize, machine: Option<&str>, root: &str| {
+            let mut row = json!({"id": format!("spawn-{}", index + 3), "parent": "agent-1", "intent": "i", "name": "child",
+                   "kind": "claude", "repo": root, "branch": "main", "requested_path": root, "args": [],
+                   "path": root, "pane": "w1:p2", "child": null});
+            if let Some(machine) = machine {
+                row["machine"] = json!(machine);
+            }
+            row
+        };
+        store_with(
+            DELIVERY_LEDGER,
+            &state.join(DELIVERY_LEDGER),
+            json!({
+                // Each id's number is below `next_id` and taken once.
+                "next_id": 5,
+                "agents": [agent(0, M, M, M_SOCKET, M_ROOT), agent(1, ALIAS, C, ALIAS, C_ROOT)],
+                "spawns": [spawn(0, None, M_ROOT), spawn(1, Some(ALIAS), C_ROOT)],
+            }),
+        );
+        store_with(
+            LOCAL_ISSUES,
+            &state.join(LOCAL_ISSUES),
+            json!({
+                "projects": {M_ROOT: {"next_number": 3, "issues": [local_issue(1, "first"), local_issue(2, "second")]}},
+                "devices": {ALIAS: {C_ROOT: {"next_number": 2, "issues": [local_issue(1, "on the mini")]}}},
+            }),
+        );
+        write(
+            &state.join(MARKER_FILE),
+            &serde_json::to_vec(&json!({"version": 1, "node": M})).unwrap(),
+        )
+        .unwrap();
+        dir
+    }
+
+    /// A key a move writes that its store's type does not model is gone at
+    /// the new core's first save of that store, and a move back has nothing
+    /// to give back (engineering principle 13: every store, not the one that
+    /// lost its Local issues).
+    #[test]
+    fn every_value_a_move_writes_survives_the_new_cores_first_save_of_its_store() {
+        let dir = reader_folder();
+        let state = dir.path();
+        // What each value of a store's file is when its reader saved it.
+        let dropped = |file: &str, before: &Value, after: &Value| -> Vec<String> {
+            let (mut written, mut kept) = (BTreeMap::new(), BTreeMap::new());
+            leaves(&normalized(before), "", &mut written);
+            leaves(&normalized(after), "", &mut kept);
+            written
+                .iter()
+                .filter(|(at, value)| kept.get(*at) != Some(value))
+                .map(|(at, value)| format!("{file}{at} = {value}"))
+                .collect()
+        };
+        // The fixture holds only what its reader keeps, and the move reads
+        // each file as that reader wrote it.
+        for file in READ_AND_WRITTEN_WHOLE {
+            let saved = through_its_reader(state, file);
+            let lost = dropped(file, &read(&state.join(file)), &saved);
+            assert!(
+                lost.is_empty(),
+                "the fixture holds what its reader drops: {lost:#?}"
+            );
+            hide_platform::fs::atomic::write_file_durable(
+                &state.join(file),
+                &serde_json::to_vec(&saved).unwrap(),
+                hide_platform::fs::Access::Private,
+            )
+            .unwrap();
+        }
+        for (change, ids) in [(forward(), forward_ids()), (back(), back_ids())] {
+            reown(state, &change, &ids).unwrap();
+            for file in READ_AND_WRITTEN_WHOLE {
+                let saved = through_its_reader(state, file);
+                let lost = dropped(file, &read(&state.join(file)), &saved);
+                assert!(
+                    lost.is_empty(),
+                    "toward {}, the reader drops {lost:#?}",
+                    change.new_owner
+                );
+                hide_platform::fs::atomic::write_file_durable(
+                    &state.join(file),
+                    &serde_json::to_vec(&saved).unwrap(),
+                    hide_platform::fs::Access::Private,
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    /// The operator's MacBook Local issues ride the move, survive the new
+    /// core's own Local issue saves, and are the MacBook's own again after
+    /// the move back, with their numbers.
+    #[test]
+    fn local_issues_come_back_with_their_numbers_after_the_new_core_saves_its_own() {
+        let dir = reader_folder();
+        let state = dir.path();
+        let path = state.join(LOCAL_ISSUES);
+        let before = crate::local_issues::load(&path).unwrap();
+        reown(state, &forward(), &forward_ids()).unwrap();
+        let mut store = crate::local_issues::load(&path).unwrap();
+        assert_eq!(
+            store.create(C_ROOT, "made on the mini's core", "", 10),
+            Ok(2)
+        );
+        crate::local_issues::save(&path, &store).unwrap();
+
+        reown(state, &back(), &back_ids()).unwrap();
+        let after = crate::local_issues::load(&path).unwrap();
+        assert_eq!(after.projects, before.projects);
+        assert_eq!(
+            after.devices[ALIAS][C_ROOT]
+                .issues
+                .iter()
+                .map(|issue| (issue.number, issue.title.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(1, "on the mini"), (2, "made on the mini's core")]
+        );
+    }
 }
