@@ -10,7 +10,8 @@
 use super::*;
 use crate::delivery::HIDE_MEMORY_ROLE;
 use crate::model::{
-    MemoryPromotionAgentSnapshot, MemoryPromotionSnapshot, MemoryPromotionState, PullRequestBadge,
+    GithubFailureCategory, GithubProjectSnapshot, MemoryPromotionAgentSnapshot,
+    MemoryPromotionSnapshot, MemoryPromotionState, PullRequestBadge,
 };
 use hide_memory::{MemoryLifecycle, MemoryStore, Promotion, PromotionState};
 use serde_json::json;
@@ -296,12 +297,8 @@ impl Runtime {
         })
     }
 
-    /// Whether the PR catalog's answer for `root` is a current read, so a
-    /// pull request missing from it is missing on GitHub too.
     fn promotion_catalog_current(&self, root: &str) -> bool {
-        self.github
-            .project(root)
-            .is_some_and(|project| project.pull_requests_read && !project.status.stale)
+        catalog_current(self.github.project(root))
     }
 
     /// Whether the agent with coordination id `id` has ended: `None` while
@@ -316,6 +313,16 @@ impl Runtime {
                 .is_none_or(|record| record.ended),
         )
     }
+}
+
+/// Whether the PR catalog's answer for a repository is a current read, so a
+/// pull request missing from it is missing on GitHub too; a repository with
+/// no GitHub remote has none to miss.
+fn catalog_current(project: Option<&GithubProjectSnapshot>) -> bool {
+    project.is_some_and(|project| {
+        (project.pull_requests_read && !project.status.stale)
+            || project.status.failure_category == Some(GithubFailureCategory::NoGithubRemote)
+    })
 }
 
 struct TrackOutcome {
@@ -690,6 +697,32 @@ mod tests {
             next_promotion(&running(None, now - 1), None, None, true, now),
             None
         );
+    }
+
+    #[test]
+    fn only_a_current_read_or_a_repository_without_github_says_a_pull_request_is_missing() {
+        let project = |read: bool, stale: bool, category| GithubProjectSnapshot {
+            pull_requests_read: read,
+            status: crate::model::GithubStatusSnapshot {
+                stale,
+                failure_category: category,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(!catalog_current(None), "GitHub has not answered");
+        assert!(catalog_current(Some(&project(true, false, None))));
+        assert!(!catalog_current(Some(&project(true, true, None))));
+        assert!(!catalog_current(Some(&project(
+            false,
+            false,
+            Some(GithubFailureCategory::NotLoggedIn)
+        ))));
+        assert!(catalog_current(Some(&project(
+            false,
+            false,
+            Some(GithubFailureCategory::NoGithubRemote)
+        ))));
     }
 
     #[test]
