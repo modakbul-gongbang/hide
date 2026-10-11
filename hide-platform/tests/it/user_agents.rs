@@ -65,14 +65,15 @@ fn a_job_that_takes_its_time_to_stop_is_still_unloaded() {
     assert!(!directory.path().join("loaded").exists());
 }
 
-/// A bootout that answers before launchd has finished the teardown (0, or
-/// 36 "Operation now in progress") leaves the job loaded while it exits: the
+/// A bootout that answers before launchd has finished the teardown (0, 36
+/// "Operation now in progress", or 37 "Operation already in progress" when
+/// another bootout began it) leaves the job loaded while it exits: the
 /// unload waits until launchd no longer knows it.
 #[cfg(unix)]
 #[test]
 fn an_unload_waits_out_a_teardown_the_bootout_left_under_way() {
     use std::sync::atomic::AtomicBool;
-    for answer in [0, 36] {
+    for answer in [0, 36, 37] {
         let directory = tempfile::tempdir().unwrap();
         let command = directory.path().join("launchctl-fixture");
         // `print` answers loaded twice more after the bootout, then gone.
