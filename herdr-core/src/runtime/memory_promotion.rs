@@ -572,7 +572,8 @@ fn track_promotions(
     }
     if let Some(store) = store.as_mut() {
         for (key, promotion, start) in asks.drain(..) {
-            if let Some(start) = adopt_agent(store, &key, &promotion, start) {
+            let spawn = |start: &PromotionStart| spawn_agent(&key.0, key.1, &promotion, start);
+            if let Some(start) = adopt_agent(store, &key, &promotion, start, spawn) {
                 outcome.unseen.push((key, start));
             } else {
                 outcome.moved_projects.insert(key.0.clone());
@@ -583,27 +584,32 @@ fn track_promotions(
 }
 
 /// Asks an unseen agent's spawn again; records the agent when it shows, and
-/// hands the start back while it still has not.
-fn adopt_agent(
+/// hands the start back while it still has not or could not be recorded.
+fn adopt_agent<S>(
     store: &mut MemoryStore,
     key: &AttemptKey,
     promotion: &Promotion,
-    start: PromotionStart,
-) -> Option<PromotionStart> {
+    start: S,
+    spawn: impl FnOnce(&S) -> Result<String, String>,
+) -> Option<S> {
     let (project_id, number, _) = key;
-    match spawn_agent(project_id, *number, promotion, &start) {
+    match spawn(&start) {
         Ok(agent_id) => {
-            if let Err(error) = store.set_promotion_agent(project_id, *number, promotion, &agent_id)
-            {
-                crate::diagnostic!(json!({
-                    "component": "memory",
-                    "kind": "promotion.agent_not_recorded",
-                    "project_id": project_id,
-                    "card": hide_memory::card_name(*number),
-                    "message": error.to_string(),
-                }));
+            match store.set_promotion_agent(project_id, *number, promotion, &agent_id) {
+                Ok(_) => None,
+                // The same intent answers the same agent, so the next check
+                // records it.
+                Err(error) => {
+                    crate::diagnostic!(json!({
+                        "component": "memory",
+                        "kind": "promotion.agent_not_recorded",
+                        "project_id": project_id,
+                        "card": hide_memory::card_name(*number),
+                        "message": error.to_string(),
+                    }));
+                    Some(start)
+                }
             }
-            None
         }
         // Not seen yet, or another spawn held the lock: ask again next check.
         Err(reason) if reason == UNSEEN || reason == BUSY => Some(start),
@@ -1233,6 +1239,52 @@ mod tests {
             .insert(repo.into(), asked);
         track_promotions(&context, &node, &database).unwrap();
         assert_eq!(state(&store, "p"), PromotionState::Failed);
+    }
+
+    #[test]
+    fn an_unseen_agent_is_adopted_after_a_busy_lock_or_an_unrecorded_answer() {
+        // R2-R3: only an adoption or a terminal answer gives the start up.
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("memory.sqlite3");
+        let mut store = MemoryStore::open(&database).unwrap();
+        store
+            .ensure_project("p1", Path::new("/checkouts/p1"), "test-node")
+            .unwrap();
+        seed(
+            &mut store,
+            "p1",
+            "Run the release script from the repository root.",
+        );
+        let promotion = running(None, 1);
+        store.set_promotion("p1", 1, &promotion).unwrap();
+        let key = ("p1".to_owned(), 1, promotion.attempt);
+        let agent = |store: &MemoryStore| store.promotions("p1").unwrap()[0].1.agent_id.clone();
+
+        let busy = adopt_agent(&mut store, &key, &promotion, (), |_| Err(BUSY.into()));
+        assert_eq!(busy, Some(()), "a busy lock keeps the start");
+        let unseen = adopt_agent(&mut store, &key, &promotion, (), |_| Err(UNSEEN.into()));
+        assert_eq!(unseen, Some(()));
+        let mut reader = MemoryStore::open_read_only(&database).unwrap();
+        let unrecorded = adopt_agent(&mut reader, &key, &promotion, (), |_| Ok("agent-7".into()));
+        assert_eq!(
+            unrecorded,
+            Some(()),
+            "an answer the store refused keeps the start"
+        );
+        assert_eq!(agent(&store), None);
+
+        assert_eq!(
+            adopt_agent(&mut store, &key, &promotion, (), |_| Ok("agent-7".into())),
+            None
+        );
+        let (_, adopted) = &store.promotions("p1").unwrap()[0];
+        assert_eq!(adopted.state, PromotionState::Running);
+        assert_eq!(adopted.agent_id.as_deref(), Some("agent-7"));
+
+        let refused = adopt_agent(&mut store, &key, &promotion, (), |_| {
+            Err("agent_not_startable".into())
+        });
+        assert_eq!(refused, None, "a terminal answer gives the start up");
     }
 
     #[test]
