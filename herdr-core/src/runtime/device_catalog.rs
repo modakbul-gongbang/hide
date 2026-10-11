@@ -97,12 +97,16 @@ impl Runtime {
             .map(|agent| (agent.pane_id.as_str(), agent))
             .collect();
         let now = unix_milliseconds();
+        let focused = crate::project_context::device_fold_focus(
+            self.snapshot.navigator.focused_checkout_id.as_deref(),
+            &session,
+        );
         for workspace in &mut session.workspaces {
             crate::project_context::refresh_device_folds(
                 workspace,
                 &agents,
                 &self.snapshot.ui_state,
-                session.focused_checkout_id.as_deref(),
+                focused.as_deref(),
                 reports_own_facts,
                 now,
             );

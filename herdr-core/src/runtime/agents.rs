@@ -1131,6 +1131,7 @@ impl Runtime {
             .map(|(node, _)| node.to_owned())
             .collect();
         let now = unix_milliseconds();
+        let window = self.snapshot.navigator.focused_checkout_id.clone();
         for remote in &mut self.snapshot.status.remote {
             let node = nodes.contains(&remote.target_id);
             if let Some(session) = &mut remote.session {
@@ -1139,7 +1140,7 @@ impl Runtime {
                     .iter()
                     .map(|row| (row.pane_id.as_str(), row))
                     .collect();
-                let focused = session.focused_checkout_id.as_deref();
+                let focused = crate::project_context::device_fold_focus(window.as_deref(), session);
                 for workspace in &mut session.workspaces {
                     let before = (
                         workspace.session_folds.clone(),
@@ -1149,7 +1150,7 @@ impl Runtime {
                         workspace,
                         &agents,
                         &self.snapshot.ui_state,
-                        focused,
+                        focused.as_deref(),
                         node,
                         now,
                     );

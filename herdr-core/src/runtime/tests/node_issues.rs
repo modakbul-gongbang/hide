@@ -2105,3 +2105,59 @@ fn a_node_cleanup_says_why_github_cannot_prove_a_merge() {
         "{review:?}"
     );
 }
+
+/// A pane-less node worktree the window has selected stays out of the
+/// Inactive fold, as this machine's selected checkout does, through a new
+/// derive and the time pass alike; once the window looks elsewhere it folds.
+#[test]
+fn a_node_worktree_the_window_selected_stays_out_of_the_inactive_fold() {
+    let repo = repo(None, "parked");
+    let committed = std::process::Command::new("git")
+        .args(["-c", "commit.gpgsign=false", "-c", "user.name=t"])
+        .args(["-c", "user.email=t@t", "-C", &repo.linked])
+        .args(["commit", "-q", "--allow-empty", "-m", "parked"])
+        .env("GIT_COMMITTER_DATE", "1700000000 +0000")
+        .status()
+        .unwrap();
+    assert!(committed.success());
+    let shared = node_runtime_with(
+        &repo,
+        FakeDevice::new(),
+        Recording::of(None),
+        Default::default(),
+        Arc::new(hide_herdr_client::LocalSocketConnector::new(
+            "/tmp/herdr-core-never-connect.sock",
+        )),
+        vec![herdr_workspace(
+            NODE,
+            "w1",
+            &repo.root,
+            &[("t1", &repo.root)],
+        )],
+    );
+    let mut runtime = shared.lock().unwrap();
+    let folded = |runtime: &Runtime| {
+        node_project(runtime)
+            .unwrap()
+            .inactive_checkouts
+            .checkout_ids
+            .clone()
+    };
+    let parked = node_project(&runtime)
+        .unwrap()
+        .checkouts
+        .iter()
+        .find(|checkout| checkout.path == repo.linked)
+        .unwrap()
+        .id
+        .clone();
+    assert_eq!(folded(&runtime), std::slice::from_ref(&parked));
+    runtime.snapshot.navigator.focused_checkout_id = Some(parked.clone());
+    runtime.refresh_device_catalog(NODE);
+    assert!(folded(&runtime).is_empty());
+    runtime.refresh_inactive_groups();
+    assert!(folded(&runtime).is_empty());
+    runtime.snapshot.navigator.focused_checkout_id = None;
+    runtime.refresh_inactive_groups();
+    assert_eq!(folded(&runtime), [parked]);
+}

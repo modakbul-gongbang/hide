@@ -263,6 +263,26 @@ pub(crate) fn refresh_inactive_groups(
 /// dials shows only the checkouts its session opens, so it has no Inactive
 /// fold. The derive and the time-based pass both call it, so a published
 /// session and a newly derived one compare like with like.
+/// The checkout a device session's folds treat as in front: the window's
+/// selection when it is one of the session's checkouts, as a local
+/// project's folds read it, else the device Herdr's own focus.
+pub(crate) fn device_fold_focus(
+    window: Option<&str>,
+    session: &crate::model::RemoteSessionSnapshot,
+) -> Option<String> {
+    window
+        .filter(|id| {
+            session.workspaces.iter().any(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .any(|checkout| checkout.id == *id)
+            })
+        })
+        .or(session.focused_checkout_id.as_deref())
+        .map(str::to_owned)
+}
+
 pub(crate) fn refresh_device_folds(
     workspace: &mut WorkspaceSnapshot,
     agents: &HashMap<&str, &SidebarAgentSnapshot>,
