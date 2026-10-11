@@ -1094,7 +1094,7 @@ Web owner: `web/src/DiskCleanupSheet.tsx`, `web/src/diskCleanup.ts`; core owner:
 Allocated-on-disk sums main, linked worktree folders, and the shared Git directory once; nested roots belong to the longest matching root, hard links share one inode allocation, and descendant symlinks are not followed.
 Each checkout is measured under its own limit of one million entries and 30 seconds, so a checkout that exceeds it or cannot be read is the only row that has no size; the reason is in the diagnostic log.
 An incomplete measurement has no total, and allocated blocks are not a promise of reclaimable space, so the result states only the volume's free space before and after.
-Remote device projects are neither measured nor cleaned.
+A node's project is measured and cleaned up on that node; a project of a device the core dials is neither measured nor cleaned.
 
 Only what the ignore rules hide can fall into a layer, so every path git sees is worktree source and is never counted in a layer cell.
 An ignored folder holding a valid `CACHEDIR.TAG` is build cache, one Hide's ecosystem table names beside its marker file is build cache or dependencies, and every other ignored path is Other.
